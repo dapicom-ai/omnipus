@@ -1,0 +1,37 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Go
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# Node (frontend)
+node_modules/
+.next/
+dist/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Credentials (never commit)
+credentials.json
+security.yml
+*.pem
+*.key
+
+# Build artifacts
+/build/
+/out/
