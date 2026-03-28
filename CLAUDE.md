@@ -55,7 +55,9 @@ These are non-negotiable and apply to every decision:
 
 **Agent types:** System (`omnipus-system`, hardcoded, always on, 35 exclusive `system.*` tools), Core (hardcoded prompts compiled into binary, user can toggle/configure), Custom (user-defined with SOUL.md + AGENTS.md).
 
-**UI design rules:** Chat-first. Sidebar defaults to overlay drawer but can be pinned for persistent navigation. No separate canvas (rich content renders inline, expands to fullscreen). No emoji in stored data or UI chrome (emoji-to-Phosphor-icon translator in chat output only). Tool calls visible by default with collapsible detail.
+**Brand:** "The Sovereign Deep" — dark-first design. Colors: Deep Space Black (`#0A0A0B`), Liquid Silver (`#E2E8F0`), Forge Gold (`#D4AF37`). Fonts: Outfit (headlines), Inter (body), JetBrains Mono (code). Octopus mascot ("Master Tasker"). See `docs/brand/brand-guidelines.md`.
+
+**UI design rules:** Chat-first, dark-first. Sidebar defaults to overlay drawer but can be pinned for persistent navigation. No separate canvas (rich content renders inline, expands to fullscreen). No emoji in stored data or UI chrome (emoji-to-Phosphor-icon translator in chat output only). Tool calls visible by default with collapsible detail.
 
 ## Spec-Driven Workflow
 

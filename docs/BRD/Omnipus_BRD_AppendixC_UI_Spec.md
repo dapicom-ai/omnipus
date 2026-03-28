@@ -38,6 +38,37 @@ This appendix defines the complete user interface and experience design for Omni
 | Markdown | react-markdown + remark-gfm (non-chat), AssistantUI built-in (chat) |
 | Package format | `@omnipus/ui` npm package (library mode) |
 
+### C.2.0 Brand Design System
+
+See `docs/brand/brand-guidelines.md` for the complete brand identity. Key design tokens:
+
+**Color palette — "The Sovereign Deep":**
+
+| Token | Name | HEX | Usage |
+|---|---|---|---|
+| `--color-primary` | Deep Space Black | `#0A0A0B` | App background, primary surfaces (60%) |
+| `--color-secondary` | Liquid Silver | `#E2E8F0` | Typography, borders, secondary surfaces (30%) |
+| `--color-accent` | Forge Gold | `#D4AF37` | CTAs, interactive elements, highlights, mascot details (10%) |
+| `--color-success` | Emerald | `#10B981` | Success states, connected indicators |
+| `--color-error` | Ruby | `#EF4444` | Error states, denied actions |
+
+**Dark-first design:** The primary palette is dark-mode native (Deep Space Black background). Light mode is a secondary consideration — invert primary/secondary while maintaining accent and semantic colors.
+
+**Typography:**
+
+| Role | Font | Weight | Usage |
+|---|---|---|---|
+| Headlines | Outfit | 700 (Bold) | Section headers, modal titles, onboarding text |
+| Body | Inter | 400 (Regular) | All body text, settings, descriptions |
+| Technical | JetBrains Mono | 400/500 | Code blocks, tool call parameters, audit log entries, API metrics |
+
+**Mascot integration:** The octopus mascot ("Master Tasker") appears in:
+- Onboarding screens (full mascot with task icons)
+- System agent avatar (simplified octopus head)
+- Loading/empty states (subtle mascot illustration)
+- Favicon and app icons (simplified head)
+- README and marketing (full mascot on Deep Space Black)
+
 ### C.2.1 Three Product Variants
 
 Omnipus ships as three product variants, all sharing the same `@omnipus/ui` component library and Go agentic core. **Open Source ships first.**

@@ -24,7 +24,7 @@ The Omnipus agent is the bridge between conversational interaction and system ad
 |---|---|
 | ID | `omnipus-system` |
 | Name | Omnipus |
-| Icon | `shrimp` (Phosphor icon) |
+| Icon | Omnipus octopus mascot (simplified head variant). Not a Phosphor icon — custom brand asset. |
 | Color | Brand color (to be defined) |
 | Type | System (🔒 system) |
 | Prompt storage | Hardcoded in Go binary |
@@ -554,7 +554,7 @@ Omnipus ships with 1 system agent and 3 core agents. Users can create unlimited 
 
 | Agent | Type | Icon | Color | Default State |
 |---|---|---|---|---|
-| Omnipus | System | `shrimp` | Brand | Always on — cannot deactivate |
+| Omnipus | System | octopus mascot | Brand (Forge Gold) | Always on — cannot deactivate |
 | General Assistant | Core | `robot` | Green | Active by default |
 | Researcher | Core | `magnifying-glass` | Purple | User activates |
 | Content Creator | Core | `pencil-line` | Yellow | User activates |
