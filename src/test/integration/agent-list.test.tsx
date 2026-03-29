@@ -1,0 +1,83 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import { act } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { AgentListScreen } from '@/routes/_app/agents'
+import { useUiStore } from '@/store/ui'
+
+// test_agent_list_fetch (test #26)
+// Traces to: wave5a-wire-ui-spec.md — Scenario: Agent cards render in responsive grid
+
+// AgentCard uses useNavigate, so we need to mock TanStack Router
+const mockNavigate = vi.fn()
+
+vi.mock('@tanstack/react-router', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@tanstack/react-router')>()
+  return { ...actual, useNavigate: () => mockNavigate }
+})
+
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>()
+  return { ...actual, fetchAgents: vi.fn() }
+})
+
+import { fetchAgents } from '@/lib/api'
+
+const mockAgents = [
+  { id: 'omnipus-system', name: 'Omnipus System', type: 'system' as const, status: 'active' as const, model: 'claude-opus-4-6', description: 'System agent' },
+  { id: 'general-assistant', name: 'General Assistant', type: 'core' as const, color: 'green', status: 'active' as const, model: 'claude-sonnet-4-6', description: 'General assistant' },
+  { id: 'researcher', name: 'Researcher', type: 'core' as const, color: 'blue', status: 'idle' as const, model: 'claude-opus-4-6', description: 'Research specialist' },
+  { id: 'content-creator', name: 'Content Creator', type: 'custom' as const, color: 'purple', status: 'idle' as const, model: 'claude-sonnet-4-6', description: 'Content writer' },
+]
+
+function makeClient() {
+  return new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+}
+
+function wrapper({ children }: { children: React.ReactNode }) {
+  return <QueryClientProvider client={makeClient()}>{children}</QueryClientProvider>
+}
+
+beforeEach(() => {
+  mockNavigate.mockClear()
+  vi.mocked(fetchAgents).mockResolvedValue(mockAgents)
+  act(() => {
+    useUiStore.setState({ createAgentModalOpen: false })
+  })
+})
+
+describe('agent list integration (test #26) — data fetching', () => {
+  it('fetches agents and renders 4 agent cards in a grid', async () => {
+    // Traces to: wave5a-wire-ui-spec.md — Scenario: Agent cards render in responsive grid (AC1, AC2)
+    render(<AgentListScreen />, { wrapper })
+
+    await waitFor(() => {
+      // Case-sensitive match: agent name is "General Assistant" (capital A),
+      // description is "General assistant" (lowercase a) — avoid multiple-element error
+      expect(screen.getAllByText(/General Assistant/).length).toBeGreaterThan(0)
+      expect(screen.getByText(/Researcher/i)).toBeInTheDocument()
+      expect(screen.getByText(/Content Creator/i)).toBeInTheDocument()
+    })
+  })
+
+  it('shows "+ New Agent" button in the agent list', async () => {
+    // Traces to: wave5a-wire-ui-spec.md — US-6 AC4: "+ New Agent" button
+    render(<AgentListScreen />, { wrapper })
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /new agent/i })).toBeInTheDocument()
+    })
+  })
+
+  it('shows empty state when no agents are configured', async () => {
+    // Traces to: wave5a-wire-ui-spec.md — Scenario: Empty agent list (edge case)
+    vi.mocked(fetchAgents).mockResolvedValue([])
+    render(<AgentListScreen />, { wrapper })
+
+    await waitFor(() => {
+      expect(
+        screen.queryByText(/no agents/i) ?? screen.queryByText(/create/i) ?? screen.queryByText(/get started/i)
+      ).toBeTruthy()
+    })
+  })
+})

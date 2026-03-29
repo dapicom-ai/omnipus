@@ -1,27 +1,84 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Robot } from '@phosphor-icons/react'
+import { useQuery } from '@tanstack/react-query'
+import { Plus, Robot } from '@phosphor-icons/react'
+import { AgentCard } from '@/components/agents/AgentCard'
+import { CreateAgentModal } from '@/components/agents/CreateAgentModal'
+import { Button } from '@/components/ui/button'
+import { useUiStore } from '@/store/ui'
+import { fetchAgents } from '@/lib/api'
 
-// US-4: Agents empty state — Robot icon, Outfit Bold title
 function AgentsScreen() {
+  const { openCreateAgentModal } = useUiStore()
+  const { data: agents = [], isLoading, isError, refetch } = useQuery({
+    queryKey: ['agents'],
+    queryFn: fetchAgents,
+  })
+
   return (
-    <div className="flex flex-col items-center justify-center h-full min-h-[70vh] gap-6 p-8 text-center">
-      <Robot
-        size={64}
-        weight="thin"
-        className="text-[var(--color-secondary)] opacity-40"
-      />
-      <div>
-        <h1 className="font-headline text-3xl font-bold text-[var(--color-secondary)] mb-2">
-          Agents
-        </h1>
-        <p className="text-[var(--color-muted)] text-base max-w-sm">
-          Browse, create, and configure your AI agents here. Each agent has its
-          own persona, tools, and session history.
-        </p>
+    <div className="max-w-4xl mx-auto px-4 py-6">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="font-headline text-2xl font-bold text-[var(--color-secondary)]">Agents</h1>
+          <p className="text-sm text-[var(--color-muted)] mt-0.5">
+            Browse, configure, and create your AI agents.
+          </p>
+        </div>
+        <Button onClick={openCreateAgentModal} className="gap-2">
+          <Plus size={14} weight="bold" /> New Agent
+        </Button>
       </div>
+
+      {/* Content */}
+      {isLoading ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[1, 2, 3].map((i) => (
+            <div
+              key={i}
+              className="h-32 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-1)] animate-pulse"
+            />
+          ))}
+        </div>
+      ) : isError ? (
+        <div className="flex flex-col items-center justify-center py-16 gap-3">
+          <p className="text-[var(--color-muted)] text-sm">Could not load agents.</p>
+          <Button variant="outline" size="sm" onClick={() => refetch()}>
+            Retry
+          </Button>
+        </div>
+      ) : agents.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">
+          <Robot size={48} weight="thin" className="text-[var(--color-border)]" />
+          <div>
+            <p className="text-[var(--color-secondary)] font-medium">No agents yet</p>
+            <p className="text-[var(--color-muted)] text-sm mt-1">
+              Create your first agent to get started.
+            </p>
+          </div>
+          <Button onClick={openCreateAgentModal} className="gap-2">
+            <Plus size={14} weight="bold" /> Create Agent
+          </Button>
+        </div>
+      ) : (
+        <div
+          className={`grid gap-4 ${
+            agents.length < 4
+              ? 'grid-cols-1'
+              : 'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3'
+          }`}
+        >
+          {agents.map((agent) => (
+            <AgentCard key={agent.id} agent={agent} />
+          ))}
+        </div>
+      )}
+
+      <CreateAgentModal />
     </div>
   )
 }
+
+export { AgentsScreen as AgentListScreen }
 
 export const Route = createFileRoute('/_app/agents')({
   component: AgentsScreen,

@@ -1,0 +1,132 @@
+import { useState } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Database, FloppyDisk } from '@phosphor-icons/react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { fetchConfig, updateConfig, fetchStorageStats } from '@/lib/api'
+import { useUiStore } from '@/store/ui'
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+export function DataSection() {
+  const { addToast } = useUiStore()
+  const queryClient = useQueryClient()
+
+  const { data: config, isLoading: configLoading } = useQuery({
+    queryKey: ['config'],
+    queryFn: fetchConfig,
+  })
+
+  const { data: stats, isLoading: statsLoading } = useQuery({
+    queryKey: ['storage-stats'],
+    queryFn: fetchStorageStats,
+  })
+
+  const [retentionDays, setRetentionDays] = useState('90')
+
+  const [initialized, setInitialized] = useState(false)
+  if (config && !initialized) {
+    setRetentionDays(config.data.session_retention_days.toString())
+    setInitialized(true)
+  }
+
+  const { mutate: doSave, isPending: isSaving } = useMutation({
+    mutationFn: () =>
+      updateConfig({
+        data: { session_retention_days: parseInt(retentionDays, 10) },
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['config'] })
+      addToast({ message: 'Data settings saved', variant: 'success' })
+    },
+    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+  })
+
+  const isLoading = configLoading || statsLoading
+
+  if (isLoading) return <div className="text-sm text-[var(--color-muted)]">Loading...</div>
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="font-headline font-bold text-base text-[var(--color-secondary)]">Data & Backup</h2>
+          <p className="text-xs text-[var(--color-muted)] mt-0.5">
+            Manage session retention, storage, and backups.
+          </p>
+        </div>
+        <Button size="sm" onClick={() => doSave()} disabled={isSaving} className="gap-1.5">
+          <FloppyDisk size={13} weight="bold" />
+          {isSaving ? 'Saving...' : 'Save'}
+        </Button>
+      </div>
+
+      {/* Storage stats */}
+      <section className="space-y-2">
+        <h3 className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-wider">Storage</h3>
+        <div className="grid grid-cols-3 gap-3">
+          <StatBox
+            icon={<Database size={16} />}
+            label="Workspace"
+            value={stats ? formatBytes(stats.workspace_size_bytes) : '—'}
+          />
+          <StatBox
+            label="Sessions"
+            value={stats?.session_count.toString() ?? '—'}
+          />
+          <StatBox
+            label="Memory entries"
+            value={stats?.memory_entry_count.toString() ?? '—'}
+          />
+        </div>
+      </section>
+
+      {/* Session retention */}
+      <section className="space-y-2">
+        <h3 className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-wider">Session Retention</h3>
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-[var(--color-secondary)]">Retention period</p>
+              <p className="text-xs text-[var(--color-muted)]">Days to keep session transcripts before auto-deletion</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Input
+                type="number"
+                min="1"
+                max="365"
+                value={retentionDays}
+                onChange={(e) => setRetentionDays(e.target.value)}
+                className="w-20 h-8 text-xs font-mono"
+              />
+              <span className="text-xs text-[var(--color-muted)]">days</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  )
+}
+
+function StatBox({
+  label,
+  value,
+  icon,
+}: {
+  label: string
+  value: string
+  icon?: React.ReactNode
+}) {
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3">
+      {icon && <div className="text-[var(--color-muted)] mb-1">{icon}</div>}
+      <div className="font-headline font-bold text-base text-[var(--color-secondary)]">{value}</div>
+      <div className="text-[10px] text-[var(--color-muted)] mt-0.5">{label}</div>
+    </div>
+  )
+}

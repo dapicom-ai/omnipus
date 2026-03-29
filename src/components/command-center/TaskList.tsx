@@ -1,0 +1,219 @@
+import { useState } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import {
+  Plus,
+  Rows,
+  SquaresFour,
+  Robot,
+  CurrencyDollar,
+} from '@phosphor-icons/react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
+import { fetchTasks, createTask } from '@/lib/api'
+import type { Task } from '@/lib/api'
+import { useUiStore } from '@/store/ui'
+import { cn } from '@/lib/utils'
+
+const STATUS_CONFIG = {
+  inbox: { label: 'Inbox', color: 'text-[var(--color-muted)]', bg: 'bg-[var(--color-surface-2)]' },
+  next: { label: 'Next', color: 'text-[var(--color-info)]', bg: 'bg-[var(--color-info)]/10' },
+  active: { label: 'Active', color: 'text-[var(--color-success)]', bg: 'bg-[var(--color-success)]/10' },
+  waiting: { label: 'Waiting', color: 'text-[var(--color-warning)]', bg: 'bg-[var(--color-warning)]/10' },
+  done: { label: 'Done', color: 'text-[var(--color-muted)]', bg: 'bg-[var(--color-surface-1)]' },
+} as const
+
+function TaskRow({ task }: { task: Task }) {
+  const cfg = STATUS_CONFIG[task.status]
+  return (
+    <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--color-border)] last:border-0 hover:bg-[var(--color-surface-2)] transition-colors group">
+      <div className="flex-1 min-w-0">
+        <p className="text-sm text-[var(--color-secondary)] truncate">{task.name}</p>
+        {task.description && (
+          <p className="text-xs text-[var(--color-muted)] truncate mt-0.5">{task.description}</p>
+        )}
+      </div>
+      {task.agent_name && (
+        <div className="flex items-center gap-1 text-xs text-[var(--color-muted)] shrink-0">
+          <Robot size={11} />
+          <span className="hidden sm:inline truncate max-w-[80px]">{task.agent_name}</span>
+        </div>
+      )}
+      <Badge
+        className={cn('text-[10px] shrink-0', cfg.color, cfg.bg)}
+        variant="outline"
+      >
+        {cfg.label}
+      </Badge>
+      {task.cost != null && (
+        <div className="flex items-center gap-0.5 text-[10px] text-[var(--color-muted)] shrink-0">
+          <CurrencyDollar size={10} />
+          {task.cost.toFixed(4)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function TaskBoardColumn({ status, tasks }: { status: Task['status']; tasks: Task[] }) {
+  const cfg = STATUS_CONFIG[status]
+  return (
+    <div className="flex-1 min-w-[160px]">
+      <div className={cn('text-xs font-semibold px-3 py-2 rounded-t-lg border-b border-[var(--color-border)]', cfg.bg)}>
+        <span className={cfg.color}>{cfg.label}</span>
+        <span className="ml-2 text-[var(--color-muted)]">({tasks.length})</span>
+      </div>
+      <div className="space-y-2 pt-2 min-h-[120px]">
+        {tasks.map((task) => (
+          <div
+            key={task.id}
+            className="mx-1 p-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] text-xs hover:border-[var(--color-accent)]/30 transition-colors cursor-pointer"
+          >
+            <p className="text-[var(--color-secondary)] font-medium line-clamp-2">{task.name}</p>
+            {task.agent_name && (
+              <p className="text-[var(--color-muted)] mt-1 flex items-center gap-1">
+                <Robot size={10} /> {task.agent_name}
+              </p>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+export function TaskList() {
+  const { addToast } = useUiStore()
+  const queryClient = useQueryClient()
+  const [view, setView] = useState<'list' | 'board'>('list')
+  const [showCreate, setShowCreate] = useState(false)
+  const [newTaskName, setNewTaskName] = useState('')
+
+  const { data: tasks = [], isLoading } = useQuery({
+    queryKey: ['tasks'],
+    queryFn: fetchTasks,
+    refetchInterval: 10_000,
+  })
+
+  const { mutate: doCreate, isPending: isCreating } = useMutation({
+    mutationFn: () => createTask({ name: newTaskName }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
+      setNewTaskName('')
+      setShowCreate(false)
+    },
+    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+  })
+
+  const statuses: Task['status'][] = ['inbox', 'next', 'active', 'waiting', 'done']
+  const tasksByStatus = statuses.reduce<Record<string, Task[]>>((acc, s) => {
+    acc[s] = tasks.filter((t) => t.status === s)
+    return acc
+  }, {})
+
+  return (
+    <div className="flex-1 min-h-0 flex flex-col">
+      {/* Toolbar */}
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)]">
+        <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)]">Tasks</h2>
+        <span className="text-xs text-[var(--color-muted)]">({tasks.length})</span>
+        <div className="ml-auto flex items-center gap-2">
+          {/* View toggle */}
+          <div className="flex rounded-md border border-[var(--color-border)] overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setView('list')}
+              className={cn(
+                'px-2 py-1.5 transition-colors',
+                view === 'list'
+                  ? 'bg-[var(--color-surface-2)] text-[var(--color-secondary)]'
+                  : 'text-[var(--color-muted)] hover:text-[var(--color-secondary)]'
+              )}
+              aria-label="List view"
+            >
+              <Rows size={13} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setView('board')}
+              className={cn(
+                'px-2 py-1.5 border-l border-[var(--color-border)] transition-colors',
+                view === 'board'
+                  ? 'bg-[var(--color-surface-2)] text-[var(--color-secondary)]'
+                  : 'text-[var(--color-muted)] hover:text-[var(--color-secondary)]'
+              )}
+              aria-label="Board view"
+            >
+              <SquaresFour size={13} />
+            </button>
+          </div>
+
+          <Button
+            size="sm"
+            onClick={() => setShowCreate((v) => !v)}
+            className="h-7 px-2 gap-1 text-xs"
+          >
+            <Plus size={12} weight="bold" /> Task
+          </Button>
+        </div>
+      </div>
+
+      {/* Create task inline */}
+      {showCreate && (
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
+          <Input
+            value={newTaskName}
+            onChange={(e) => setNewTaskName(e.target.value)}
+            placeholder="Task name..."
+            className="h-7 text-xs flex-1"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') doCreate()
+              if (e.key === 'Escape') setShowCreate(false)
+            }}
+          />
+          <Button size="sm" className="h-7 px-3 text-xs" onClick={() => doCreate()} disabled={!newTaskName.trim() || isCreating}>
+            Add
+          </Button>
+          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => setShowCreate(false)}>
+            Cancel
+          </Button>
+        </div>
+      )}
+
+      {/* Content */}
+      <div className="flex-1 overflow-auto">
+        {isLoading ? (
+          <div className="space-y-1 p-2">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-12 rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] animate-pulse" />
+            ))}
+          </div>
+        ) : tasks.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-12 text-center gap-2">
+            <p className="text-sm text-[var(--color-muted)]">No tasks yet.</p>
+            <Button variant="ghost" size="sm" className="text-xs" onClick={() => setShowCreate(true)}>
+              <Plus size={11} /> Create the first task
+            </Button>
+          </div>
+        ) : view === 'list' ? (
+          <div className="rounded-lg border border-[var(--color-border)] overflow-hidden mx-4 my-3">
+            {tasks.map((task) => (
+              <TaskRow key={task.id} task={task} />
+            ))}
+          </div>
+        ) : (
+          <div className="flex gap-3 px-4 py-3 overflow-x-auto min-h-[300px]">
+            {statuses.map((status) => (
+              <TaskBoardColumn
+                key={status}
+                status={status}
+                tasks={tasksByStatus[status] ?? []}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

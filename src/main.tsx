@@ -1,10 +1,11 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createRouter, RouterProvider, createHashHistory } from '@tanstack/react-router'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { routeTree } from './routeTree.gen'
 import './styles/globals.css'
 
-// US-4 & US-8: Hash routing — required for go:embed static file serving.
+// Hash routing — required for go:embed static file serving.
 // go:embed serves a single index.html; history mode would 404 on deep links.
 const hashHistory = createHashHistory()
 
@@ -21,9 +22,21 @@ declare module '@tanstack/react-router' {
   }
 }
 
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30_000,
+      retry: 3,
+      retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 30_000),
+    },
+  },
+})
+
 const rootElement = document.getElementById('root')!
 createRoot(rootElement).render(
   <StrictMode>
-    <RouterProvider router={router} />
+    <QueryClientProvider client={queryClient}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>
   </StrictMode>
 )

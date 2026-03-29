@@ -344,19 +344,34 @@ func setupAndStartServices(
 		slog.Info("gateway: day-partitioned session store initialized", "agent_id", defaultAgentID)
 	}
 
-	// Register SSE chat endpoint (US-8: streaming response output).
 	allowedOrigin := fmt.Sprintf("http://%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
+
+	// Keep the Wave 1 SSE handler at /api/v1/chat for backward compatibility.
+	// The SSE endpoint no longer receives streaming tokens — those are now routed
+	// through the WebSocket handler registered below (Wave 5a).
 	sseHandler := newSSEHandler(msgBus, runningServices.PartitionStore, allowedOrigin)
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/chat", sseHandler)
 
-	// Register placeholder REST routes — Wave 1 stubs (return 501 Not Implemented).
-	// These will be implemented in subsequent waves.
-	notImplemented := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Error(w, "not implemented", http.StatusNotImplemented)
-	})
-	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions", notImplemented)
-	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/agents", notImplemented)
-	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/config", notImplemented)
+	// Register WebSocket chat endpoint (Wave 5a: replaces SSE for streaming).
+	// Also overwrites the bus stream delegate so tokens route to WebSocket connections.
+	wsHandler := newWSHandler(msgBus, agentLoop, runningServices.PartitionStore, allowedOrigin)
+	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/chat/ws", wsHandler)
+
+	// Register REST API endpoints (Wave 5a: replaces 501 stubs from Wave 1).
+	api := &restAPI{
+		cfg:           cfg,
+		agentLoop:     agentLoop,
+		partitions:    runningServices.PartitionStore,
+		allowedOrigin: allowedOrigin,
+	}
+	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions", http.HandlerFunc(api.HandleSessions))
+	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions/", http.HandlerFunc(api.HandleSessions))
+	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/agents", http.HandlerFunc(api.HandleAgents))
+	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/agents/", http.HandlerFunc(api.HandleAgents))
+	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/config", http.HandlerFunc(api.HandleConfig))
+	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/skills", http.HandlerFunc(api.HandleSkills))
+	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/skills/", http.HandlerFunc(api.HandleSkills))
+	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/doctor", http.HandlerFunc(api.HandleDoctor))
 
 	if err = runningServices.ChannelManager.StartAll(context.Background()); err != nil {
 		return nil, fmt.Errorf("error starting channels: %w", err)

@@ -1,0 +1,200 @@
+// WebSocket connection manager for /api/v1/chat/ws
+// Handles: connect, authenticate, streaming frames, reconnect with exponential backoff
+
+const BASE_URL = import.meta.env.VITE_API_URL ?? ''
+
+function getWsUrl(): string {
+  const httpBase = BASE_URL || window.location.origin
+  const wsBase = httpBase.replace(/^http/, 'ws')
+  return `${wsBase}/api/v1/chat/ws`
+}
+
+// ── Frame types ───────────────────────────────────────────────────────────────
+
+export interface WsAuthFrame {
+  type: 'auth'
+  token: string
+}
+
+export interface WsMessageFrame {
+  type: 'message'
+  content: string
+  session_id?: string
+  agent_id?: string
+}
+
+export interface WsCancelFrame {
+  type: 'cancel'
+  session_id: string
+}
+
+export interface WsExecApprovalResponseFrame {
+  type: 'exec_approval_response'
+  id: string
+  decision: 'allow' | 'deny' | 'always'
+}
+
+export type WsSendFrame = WsAuthFrame | WsMessageFrame | WsCancelFrame | WsExecApprovalResponseFrame
+
+export interface WsTokenFrame {
+  type: 'token'
+  content: string
+}
+
+export interface WsDoneFrame {
+  type: 'done'
+  stats: {
+    tokens?: number
+    cost?: number
+    duration_ms?: number
+  }
+}
+
+export interface WsErrorFrame {
+  type: 'error'
+  message: string
+}
+
+export interface WsToolCallStartFrame {
+  type: 'tool_call_start'
+  tool: string
+  call_id: string
+  params: Record<string, unknown>
+}
+
+export interface WsToolCallResultFrame {
+  type: 'tool_call_result'
+  tool: string
+  call_id: string
+  result: unknown
+  status: 'success' | 'error'
+  duration_ms?: number
+  error?: string
+}
+
+export interface WsExecApprovalRequestFrame {
+  type: 'exec_approval_request'
+  id: string
+  command: string
+  working_dir?: string
+  matched_policy?: string
+}
+
+export type WsReceiveFrame =
+  | WsTokenFrame
+  | WsDoneFrame
+  | WsErrorFrame
+  | WsToolCallStartFrame
+  | WsToolCallResultFrame
+  | WsExecApprovalRequestFrame
+
+// ── Connection ────────────────────────────────────────────────────────────────
+
+export interface WsConnectionCallbacks {
+  onFrame: (frame: WsReceiveFrame) => void
+  onConnected: () => void
+  onDisconnected: () => void
+  onError: (error: string) => void
+}
+
+export class WsConnection {
+  private ws: WebSocket | null = null
+  private reconnectAttempts = 0
+  private maxReconnectAttempts = 3
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private intentionalClose = false
+  private callbacks: WsConnectionCallbacks
+
+  constructor(callbacks: WsConnectionCallbacks) {
+    this.callbacks = callbacks
+  }
+
+  connect(): void {
+    this.intentionalClose = false
+    this.reconnectAttempts = 0
+    this._createSocket()
+  }
+
+  disconnect(): void {
+    this.intentionalClose = true
+    this._clearReconnectTimer()
+    this.ws?.close(1000, 'User disconnected')
+    this.ws = null
+  }
+
+  send(frame: WsSendFrame): boolean {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(frame))
+      return true
+    }
+    this.callbacks.onError('Not connected — message not sent')
+    return false
+  }
+
+  get isConnected(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN
+  }
+
+  private _createSocket(): void {
+    try {
+      this.ws = new WebSocket(getWsUrl())
+    } catch {
+      this.callbacks.onError('Failed to create WebSocket connection')
+      return
+    }
+
+    this.ws.onopen = () => {
+      this.reconnectAttempts = 0
+      const token = localStorage.getItem('omnipus_auth_token')
+      if (token) {
+        this.send({ type: 'auth', token })
+      }
+      this.callbacks.onConnected()
+    }
+
+    this.ws.onmessage = (event: MessageEvent) => {
+      let frame: WsReceiveFrame
+      try {
+        frame = JSON.parse(event.data as string) as WsReceiveFrame
+      } catch {
+        // Malformed JSON — log and discard, don't swallow downstream errors
+        console.warn('[ws] Malformed frame:', event.data)
+        return
+      }
+      this.callbacks.onFrame(frame)
+    }
+
+    this.ws.onerror = () => {
+      this.callbacks.onError('WebSocket connection error')
+    }
+
+    this.ws.onclose = (event: CloseEvent) => {
+      this.ws = null
+      this.callbacks.onDisconnected()
+      if (!this.intentionalClose && event.code !== 1000) {
+        this._scheduleReconnect()
+      }
+    }
+  }
+
+  private _scheduleReconnect(): void {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      this.callbacks.onError('Connection failed after 3 attempts. Click retry to reconnect.')
+      return
+    }
+
+    const delay = Math.pow(2, this.reconnectAttempts) * 1000 // 1s, 2s, 4s
+    this.reconnectAttempts++
+
+    this.reconnectTimer = setTimeout(() => {
+      this._createSocket()
+    }, delay)
+  }
+
+  private _clearReconnectTimer(): void {
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
+  }
+}

@@ -7,6 +7,7 @@
 package session
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -267,4 +268,88 @@ func writeMeta(sessionDir string, meta *SessionMeta) error {
 		return fmt.Errorf("session: write meta.json: %w", err)
 	}
 	return nil
+}
+
+// ListSessions returns all session metas in this store, sorted by UpdatedAt descending.
+// Missing or unreadable meta files are skipped with a warning.
+func (ps *PartitionStore) ListSessions() ([]*SessionMeta, error) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	entries, err := os.ReadDir(ps.baseDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("session: list sessions: %w", err)
+	}
+
+	var metas []*SessionMeta
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		meta, err := readMeta(filepath.Join(ps.baseDir, entry.Name()))
+		if err != nil {
+			slog.Warn("session: skipping unreadable session", "dir", entry.Name(), "error", err)
+			continue
+		}
+		metas = append(metas, meta)
+	}
+
+	slices.SortFunc(metas, func(a, b *SessionMeta) int {
+		return b.UpdatedAt.Compare(a.UpdatedAt)
+	})
+
+	return metas, nil
+}
+
+// ReadMessages returns all transcript entries for sessionID, merged across all
+// day partitions in chronological order. Missing partitions are skipped with a warning.
+func (ps *PartitionStore) ReadMessages(sessionID string) ([]TranscriptEntry, error) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	sessionDir := filepath.Join(ps.baseDir, sessionID)
+	meta, err := readMeta(sessionDir)
+	if err != nil {
+		return nil, err
+	}
+
+	var all []TranscriptEntry
+	for _, partition := range meta.Partitions {
+		entries, err := readPartition(filepath.Join(sessionDir, partition))
+		if err != nil {
+			slog.Warn("session: skipping unreadable partition", "session_id", sessionID, "partition", partition, "error", err)
+			continue
+		}
+		all = append(all, entries...)
+	}
+
+	return all, nil
+}
+
+// readPartition reads all TranscriptEntry values from a JSONL file.
+// Blank lines and malformed lines are silently skipped.
+func readPartition(path string) ([]TranscriptEntry, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("session: read partition %q: %w", path, err)
+	}
+
+	var entries []TranscriptEntry
+	for _, line := range bytes.Split(data, []byte{'\n'}) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var entry TranscriptEntry
+		if err := json.Unmarshal(line, &entry); err != nil {
+			slog.Warn("session: skipping malformed partition line", "path", path, "error", err)
+			continue
+		}
+		entries = append(entries, entry)
+	}
+
+	return entries, nil
 }

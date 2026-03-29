@@ -1,24 +1,44 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Gear } from '@phosphor-icons/react'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { ProvidersSection } from '@/components/settings/ProvidersSection'
+import { SecuritySection } from '@/components/settings/SecuritySection'
+import { GatewaySection } from '@/components/settings/GatewaySection'
+import { DataSection } from '@/components/settings/DataSection'
 
-// US-4: Settings empty state — Gear icon, Outfit Bold title
 function SettingsScreen() {
   return (
-    <div className="flex flex-col items-center justify-center h-full min-h-[70vh] gap-6 p-8 text-center">
-      <Gear
-        size={64}
-        weight="thin"
-        className="text-[var(--color-secondary)] opacity-40"
-      />
-      <div>
-        <h1 className="font-headline text-3xl font-bold text-[var(--color-secondary)] mb-2">
-          Settings
-        </h1>
-        <p className="text-[var(--color-muted)] text-base max-w-sm">
-          Configure Omnipus — gateway connection, credentials, appearance, agent
-          defaults, and privacy preferences.
+    <div className="max-w-3xl mx-auto px-4 py-6">
+      <div className="mb-6">
+        <h1 className="font-headline text-2xl font-bold text-[var(--color-secondary)]">Settings</h1>
+        <p className="text-sm text-[var(--color-muted)] mt-0.5">
+          Configure gateway, credentials, security, and data management.
         </p>
       </div>
+
+      <Tabs defaultValue="providers">
+        <TabsList className="mb-6">
+          <TabsTrigger value="providers">Providers</TabsTrigger>
+          <TabsTrigger value="security">Security</TabsTrigger>
+          <TabsTrigger value="gateway">Gateway</TabsTrigger>
+          <TabsTrigger value="data">Data</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="providers">
+          <ProvidersSection />
+        </TabsContent>
+
+        <TabsContent value="security">
+          <SecuritySection />
+        </TabsContent>
+
+        <TabsContent value="gateway">
+          <GatewaySection />
+        </TabsContent>
+
+        <TabsContent value="data">
+          <DataSection />
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

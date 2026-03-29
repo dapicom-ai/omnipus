@@ -20,6 +20,9 @@
   --color-accent: #d4af37;
   --color-success: #10b981;
   --color-error: #ef4444;
+  --color-warning: #EAB308;
+  --color-info: #3B82F6;
+  --color-cancelled: #F97316;
   --color-accent-hover: #c49e2f;
   --color-error-hover: #dc2626;
 

@@ -78,7 +78,6 @@ describe('sidebar store — persistence', () => {
   it('uses "omnipus-sidebar" as localStorage key', () => {
     // The persist middleware is configured with name: 'omnipus-sidebar'.
     // We verify the store name by inspecting the persist config.
-    // @ts-expect-error accessing internal persist api
     const persistName = useSidebarStore.persist?.getOptions?.()?.name
     // If persist is properly configured, this should be 'omnipus-sidebar'.
     // If the API is not accessible this way, we rely on integration behavior.

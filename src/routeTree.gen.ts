@@ -16,6 +16,7 @@ import { Route as AppSkillsRouteImport } from './routes/_app/skills'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
 import { Route as AppCommandCenterRouteImport } from './routes/_app/command-center'
 import { Route as AppAgentsRouteImport } from './routes/_app/agents'
+import { Route as AppAgentsAgentIdRouteImport } from './routes/_app/agents.$agentId'
 
 const LandingRoute = LandingRouteImport.update({
   id: '/landing',
@@ -51,32 +52,40 @@ const AppAgentsRoute = AppAgentsRouteImport.update({
   path: '/agents',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAgentsAgentIdRoute = AppAgentsAgentIdRouteImport.update({
+  id: '/$agentId',
+  path: '/$agentId',
+  getParentRoute: () => AppAgentsRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/landing': typeof LandingRoute
-  '/agents': typeof AppAgentsRoute
+  '/agents': typeof AppAgentsRouteWithChildren
   '/command-center': typeof AppCommandCenterRoute
   '/settings': typeof AppSettingsRoute
   '/skills': typeof AppSkillsRoute
+  '/agents/$agentId': typeof AppAgentsAgentIdRoute
 }
 export interface FileRoutesByTo {
   '/landing': typeof LandingRoute
-  '/agents': typeof AppAgentsRoute
+  '/agents': typeof AppAgentsRouteWithChildren
   '/command-center': typeof AppCommandCenterRoute
   '/settings': typeof AppSettingsRoute
   '/skills': typeof AppSkillsRoute
   '/': typeof AppIndexRoute
+  '/agents/$agentId': typeof AppAgentsAgentIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
   '/landing': typeof LandingRoute
-  '/_app/agents': typeof AppAgentsRoute
+  '/_app/agents': typeof AppAgentsRouteWithChildren
   '/_app/command-center': typeof AppCommandCenterRoute
   '/_app/settings': typeof AppSettingsRoute
   '/_app/skills': typeof AppSkillsRoute
   '/_app/': typeof AppIndexRoute
+  '/_app/agents/$agentId': typeof AppAgentsAgentIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -87,8 +96,16 @@ export interface FileRouteTypes {
     | '/command-center'
     | '/settings'
     | '/skills'
+    | '/agents/$agentId'
   fileRoutesByTo: FileRoutesByTo
-  to: '/landing' | '/agents' | '/command-center' | '/settings' | '/skills' | '/'
+  to:
+    | '/landing'
+    | '/agents'
+    | '/command-center'
+    | '/settings'
+    | '/skills'
+    | '/'
+    | '/agents/$agentId'
   id:
     | '__root__'
     | '/_app'
@@ -98,6 +115,7 @@ export interface FileRouteTypes {
     | '/_app/settings'
     | '/_app/skills'
     | '/_app/'
+    | '/_app/agents/$agentId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -156,11 +174,30 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAgentsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/agents/$agentId': {
+      id: '/_app/agents/$agentId'
+      path: '/$agentId'
+      fullPath: '/agents/$agentId'
+      preLoaderRoute: typeof AppAgentsAgentIdRouteImport
+      parentRoute: typeof AppAgentsRoute
+    }
   }
 }
 
+interface AppAgentsRouteChildren {
+  AppAgentsAgentIdRoute: typeof AppAgentsAgentIdRoute
+}
+
+const AppAgentsRouteChildren: AppAgentsRouteChildren = {
+  AppAgentsAgentIdRoute: AppAgentsAgentIdRoute,
+}
+
+const AppAgentsRouteWithChildren = AppAgentsRoute._addFileChildren(
+  AppAgentsRouteChildren,
+)
+
 interface AppRouteChildren {
-  AppAgentsRoute: typeof AppAgentsRoute
+  AppAgentsRoute: typeof AppAgentsRouteWithChildren
   AppCommandCenterRoute: typeof AppCommandCenterRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppSkillsRoute: typeof AppSkillsRoute
@@ -168,7 +205,7 @@ interface AppRouteChildren {
 }
 
 const AppRouteChildren: AppRouteChildren = {
-  AppAgentsRoute: AppAgentsRoute,
+  AppAgentsRoute: AppAgentsRouteWithChildren,
   AppCommandCenterRoute: AppCommandCenterRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppSkillsRoute: AppSkillsRoute,
