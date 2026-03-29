@@ -8,23 +8,23 @@
 
 ## User Stories & Acceptance Criteria
 
-### User Story 1 — SSE Chat Streaming (Priority: P0)
+### User Story 1 — WebSocket Chat Streaming (Priority: P0)
 
 A user wants to send a message in the Chat screen and see the agent's response stream in real-time, token-by-token, so that they can read the response as it generates without waiting for completion.
 
-The Chat screen is currently a static welcome page. The backend SSE endpoint (`POST /api/v1/chat`) exists and streams tokens. This story connects them: user types a message, it goes to the backend, and tokens render incrementally with a cursor indicator.
+The Chat screen is currently a static welcome page. The backend exposes a WebSocket endpoint (`ws://` upgrade from `/api/v1/chat/ws`) for bi-directional streaming. This story connects them: user types a message via WebSocket, the backend streams response tokens back over the same connection, and tokens render incrementally with a cursor indicator.
 
 **Why this priority**: Chat is the home screen where 80% of the user experience lives. Without streaming chat, the app has zero utility.
 
-**Independent Test**: Open the app in a browser, type a message, verify tokens appear incrementally with a blinking cursor, and a "done" state renders the final markdown.
+**Independent Test**: Open the app in a browser, type a message, verify the WebSocket connection is established, tokens appear incrementally with a blinking cursor, and a "done" state renders the final markdown.
 
 **Acceptance Scenarios**:
 
-1. **Given** the gateway is running and a provider is configured, **When** the user types a message and presses Enter (or clicks send), **Then** a POST request is sent to `/api/v1/chat`, the response streams as SSE events, and tokens render incrementally in the message thread.
-2. **Given** a streaming response is in progress, **When** a new token SSE event arrives, **Then** the token is appended to the current assistant message with a blinking cursor (█) at the end.
-3. **Given** a streaming response is in progress, **When** the `done` SSE event arrives, **Then** the cursor disappears, the full message renders as markdown (headings, code blocks, lists, links), and token count + cost appear below the message.
+1. **Given** the gateway is running and a provider is configured, **When** the user types a message and presses Enter (or clicks send), **Then** a JSON message `{"type":"message","content":"..."}` is sent over the WebSocket connection, and the server streams response frames back as JSON messages, rendering tokens incrementally in the message thread.
+2. **Given** a streaming response is in progress, **When** a `{"type":"token","content":"..."}` WebSocket frame arrives, **Then** the token is appended to the current assistant message with a blinking cursor (█) at the end.
+3. **Given** a streaming response is in progress, **When** a `{"type":"done","stats":{}}` WebSocket frame arrives, **Then** the cursor disappears, the full message renders as markdown (headings, code blocks, lists, links), and token count + cost appear below the message.
 4. **Given** no streaming response is active, **When** the user views the chat, **Then** a "thinking" indicator (`Thinking...`) appears between sending a message and receiving the first token.
-5. **Given** a streaming response is in progress, **When** the SSE connection drops or an `error` event arrives, **Then** an error message renders inline ("Connection lost. Retrying...") and a retry button appears.
+5. **Given** a streaming response is in progress, **When** the WebSocket connection drops or a `{"type":"error","message":"..."}` frame arrives, **Then** an error message renders inline ("Connection lost. Retrying...") and a retry button appears.
 6. **Given** the user sends a message, **When** the message is sent, **Then** the user's message appears immediately in the thread (optimistic rendering) with a timestamp.
 
 ---
@@ -82,7 +82,7 @@ The BRD defines a tool component registry (C.6.1.4) with custom components for b
 
 **Acceptance Scenarios**:
 
-1. **Given** the agent invokes a tool, **When** the tool call SSE events arrive, **Then** a tool call badge renders inline showing: tool icon, tool name, spinner (running state), and elapsed time.
+1. **Given** the agent invokes a tool, **When** `{"type":"tool_call_start","tool":"...","params":{}}` and `{"type":"tool_call_result","tool":"...","result":{}}` WebSocket frames arrive, **Then** a tool call badge renders inline showing: tool icon, tool name, spinner (running state), and elapsed time.
 2. **Given** a tool call completes successfully, **When** the success event arrives, **Then** the badge shows a green checkmark, duration, and collapses by default with "Click to expand" hint.
 3. **Given** a tool call fails, **When** the error event arrives, **Then** the badge shows a red X, the error message is visible, and a "Retry" button appears.
 4. **Given** a tool call badge is collapsed, **When** the user clicks it, **Then** it expands to show parameters and result in a formatted card.
@@ -103,7 +103,7 @@ The BRD defines the approval block (C.6.1.5) with command, working directory, ma
 
 **Acceptance Scenarios**:
 
-1. **Given** the agent requests exec approval, **When** the approval event arrives via SSE, **Then** an inline approval block renders showing: the command, working directory, and matched policy rule.
+1. **Given** the agent requests exec approval, **When** a `{"type":"exec_approval_request","command":"...","id":"..."}` WebSocket frame arrives, **Then** an inline approval block renders showing: the command, working directory, and matched policy rule.
 2. **Given** an approval block is displayed, **When** the user clicks "Allow", **Then** the approval is sent to the backend, the block updates to "Allowed", and the agent proceeds.
 3. **Given** an approval block is displayed, **When** the user clicks "Deny", **Then** the denial is sent to the backend, the block updates to "Denied", and the agent receives the denial.
 4. **Given** an approval block is displayed, **When** the user clicks "Always Allow", **Then** the "always allow" preference is sent to the backend, the block updates to "Always Allowed", and future identical commands auto-approve.
@@ -326,18 +326,39 @@ Implements C.6.5.3 (Routing & Policies) — which channels route to which agents
 
 ---
 
+### User Story 17 — Cancel/Interrupt Streaming (Priority: P0)
+
+A user wants to cancel an in-progress agent response or tool execution so that they can stop unwanted work, redirect the agent, or abort a long-running operation without waiting for it to complete.
+
+During streaming, the send button transforms into a "Stop" button. Clicking it sends a cancel signal over WebSocket. The backend stops the LLM call, saves the partial response, and the UI preserves what was generated so far.
+
+**Why this priority**: Without cancel, users are trapped waiting for long responses or runaway tool executions. This is a fundamental UX requirement for any streaming chat interface.
+
+**Independent Test**: Start a long streaming response, click the Stop button, verify the response stops within 1 second, the partial response is preserved and readable, and the chat returns to an input-ready state.
+
+**Acceptance Scenarios**:
+
+1. **Given** a streaming response is in progress, **When** the user clicks the "Stop" button (which replaces the send button during streaming), **Then** a `{"type":"cancel","session_id":"..."}` frame is sent over the WebSocket, the streaming stops, and the partial response is preserved in the chat with `status: "interrupted"`.
+2. **Given** a tool execution is in progress, **When** the user clicks the "Stop" button, **Then** a cancel frame is sent, the tool execution is aborted, and the tool badge updates to show "Cancelled" with an orange indicator.
+3. **Given** no streaming or tool execution is active (idle state), **When** the user triggers cancel (e.g., via keyboard shortcut), **Then** nothing happens (no-op) — the cancel is silently ignored.
+4. **Given** a cancel has been sent, **When** the backend acknowledges the cancel, **Then** the UI transitions back to the input-ready state within 1 second: the Stop button reverts to the Send button, and the input field is re-enabled.
+5. **Given** a partial response has been preserved after cancel, **When** the user views the message, **Then** the partial content is displayed with a muted "(interrupted)" label below the message, and the message is not marked as an error.
+
+---
+
 ## Behavioral Contract
 
 Primary flows:
-- When the user sends a chat message, the system streams the response token-by-token via SSE and renders it incrementally with a cursor indicator.
-- When streaming completes, the system renders the full response as formatted markdown with token count and cost.
+- When the user sends a chat message, the system sends it over the WebSocket connection and streams the response token-by-token via WebSocket JSON frames, rendering incrementally with a cursor indicator.
+- When streaming completes (a `done` frame arrives), the system renders the full response as formatted markdown with token count and cost.
+- When the user cancels a streaming response, the system sends a `{"type":"cancel","session_id":"..."}` frame, stops rendering, and preserves the partial response.
 - When the user navigates to the Agents screen, the system displays agent cards fetched from `/api/v1/agents`.
 - When the user navigates to Settings > Providers, the system shows configured and available providers with connection status.
 - When the user navigates to the Command Center, the system shows gateway status, task list, and agent summaries.
 - When the user opens the session panel, the system shows agents with their sessions in accordion format.
 
 Error flows:
-- When the SSE connection drops mid-stream, the system shows an inline error with a retry button.
+- When the WebSocket connection drops mid-stream, the system shows an inline error with a retry button and attempts auto-reconnect with exponential backoff.
 - When an API request fails (network error, 500), the system shows a toast notification with the error and does not crash.
 - When the provider connection test fails, the system shows the error inline and keeps the status indicator red.
 - When loading message history fails, the system shows a "Could not load messages" placeholder with a retry button.
@@ -353,8 +374,8 @@ Boundary conditions:
 ## Edge Cases
 
 - What happens when the user sends an empty message? Expected: the send button is disabled; empty messages are not submitted.
-- What happens when SSE reconnects after a brief network drop? Expected: streaming resumes from where it left off or the full response loads on reconnect.
-- What happens when two browser tabs are open to the same session? Expected: both tabs receive streaming updates; no data corruption.
+- What happens when the WebSocket reconnects after a brief network drop? Expected: a new WebSocket connection is established, any in-progress streaming resumes from where it left off or the full response loads on reconnect.
+- What happens when two browser tabs are open to the same session? Expected: each tab has its own WebSocket connection; both receive streaming updates; no data corruption.
 - What happens when the agent list returns an agent with an unrecognized icon name? Expected: a default icon (Robot) is used as fallback.
 - What happens when a very long message (>50KB) is loaded from history? Expected: it renders without freezing; code blocks are virtualized if necessary.
 - What happens when the gateway is unreachable? Expected: the UI shows a "Disconnected" banner with retry/reconnect logic.
@@ -371,7 +392,8 @@ Boundary conditions:
 - The system must not render emoji in UI chrome or stored data because Omnipus uses Phosphor Icons exclusively (emoji only in LLM chat output via translator).
 - The system must not expose the system agent's prompts in the agent profile because system and core agent prompts are hardcoded and hidden (C.6.3.2).
 - The system must not auto-approve exec commands because the approval flow is a security gate that requires explicit user interaction (C.6.1.5).
-- The system must not poll the backend for chat responses because SSE is the streaming mechanism — no polling fallback.
+- The system must not poll the backend for chat responses because WebSocket is the streaming mechanism — no polling fallback.
+- The system must not use SSE (Server-Sent Events) for chat streaming because the protocol has been upgraded to WebSocket for bi-directional communication (cancel, approval responses).
 - The system must not implement Electron-specific features because Wave 5a targets the browser-embedded open source variant only.
 - The system must not implement the onboarding flow because that is scoped to Wave 5b.
 - The system must not render the system agent (omnipus-system) in the agent selector dropdown for chat because the system agent is accessed separately.
@@ -382,11 +404,11 @@ Boundary conditions:
 
 ### Backend REST API (`/api/v1/*`)
 
-- **Data in**: JSON request bodies (message text, agent config, settings changes, task CRUD)
-- **Data out**: JSON response bodies (agent list, session metadata, config, task list, storage stats) and SSE event streams (token, tool_call, approval, done, error)
-- **Contract**: REST with JSON. SSE for streaming (POST `/api/v1/chat`). Auth via `Authorization: Bearer <token>` header when `OMNIPUS_BEARER_TOKEN` is set. CORS restricted to gateway origin.
-- **On failure**: Network errors → toast notification + retry button. 401 → redirect to auth/token entry. 500 → inline error + retry. SSE drop → auto-reconnect with exponential backoff (max 3 retries, then manual retry button).
-- **Development**: Real gateway service running locally — no mocks for SSE streaming. Unit tests may mock fetch/EventSource for component isolation.
+- **Data in**: JSON request bodies (agent config, settings changes, task CRUD) via REST; chat messages via WebSocket JSON frames (`{"type":"message","content":"..."}`, `{"type":"cancel","session_id":"..."}`, `{"type":"exec_approval_response","id":"...","decision":"allow|deny|always"}`)
+- **Data out**: JSON response bodies (agent list, session metadata, config, task list, storage stats) via REST; streaming via WebSocket JSON frames (`{"type":"token","content":"..."}`, `{"type":"tool_call_start","tool":"...","params":{}}`, `{"type":"tool_call_result","tool":"...","result":{}}`, `{"type":"exec_approval_request","command":"...","id":"..."}`, `{"type":"done","stats":{}}`, `{"type":"error","message":"..."}`)
+- **Contract**: REST with JSON for CRUD operations. WebSocket (`ws://` upgrade from `/api/v1/chat/ws`) for bi-directional chat streaming. WebSocket lifecycle: connect → authenticate via first message with `{"type":"auth","token":"..."}` when `OMNIPUS_BEARER_TOKEN` is set → keep-alive via WebSocket ping/pong → reconnect on disconnect. REST auth via `Authorization: Bearer <token>` header. CORS restricted to gateway origin.
+- **On failure**: Network errors → toast notification + retry button. 401 → redirect to auth/token entry. 500 → inline error + retry. WebSocket drop → auto-reconnect with exponential backoff (max 3 retries, then manual retry button).
+- **Development**: Real gateway service running locally — no mocks for WebSocket streaming. Unit tests may mock WebSocket for component isolation.
 
 ### File System (via backend)
 
@@ -427,9 +449,9 @@ Boundary conditions:
 - **And** the user is on the Chat screen
 - **When** the user types "Hello, world!" and presses Enter
 - **Then** the user message appears immediately in the thread
-- **And** a POST request is sent to `/api/v1/chat` with body `{"message": "Hello, world!"}`
+- **And** a `{"type":"message","content":"Hello, world!"}` frame is sent over the WebSocket connection
 - **And** a thinking indicator appears
-- **And** SSE tokens render incrementally as they arrive
+- **And** `{"type":"token","content":"..."}` WebSocket frames render incrementally as they arrive
 
 ---
 
@@ -439,7 +461,7 @@ Boundary conditions:
 **Category**: Happy Path
 
 - **Given** a streaming response is in progress with partial content
-- **When** the `done` SSE event arrives
+- **When** a `{"type":"done","stats":{}}` WebSocket frame arrives
 - **Then** the blinking cursor disappears
 - **And** the full message renders with markdown formatting (headings, code blocks, lists)
 - **And** token count and cost appear below the message
@@ -458,16 +480,16 @@ Boundary conditions:
 
 ---
 
-#### Scenario: SSE connection error during streaming
+#### Scenario: WebSocket connection error during streaming
 
 **Traces to**: User Story 1, Acceptance Scenario 5
 **Category**: Error Path
 
 - **Given** a streaming response is in progress
-- **When** the SSE connection drops
+- **When** the WebSocket connection drops
 - **Then** an inline error message renders ("Connection lost. Retrying...")
-- **And** a "Retry" button appears
-- **And** clicking "Retry" re-sends the original message
+- **And** auto-reconnect attempts with exponential backoff
+- **And** a "Retry" button appears if auto-reconnect fails after 3 attempts
 
 ---
 
@@ -480,6 +502,49 @@ Boundary conditions:
 - **When** they press Enter
 - **Then** the user message appears in the thread immediately with a timestamp
 - **And** the message appears before the server acknowledges the POST request
+
+---
+
+### Feature: Cancel/Interrupt
+
+#### Scenario: Cancel during streaming preserves partial response
+
+**Traces to**: User Story 17, Acceptance Scenario 1
+**Category**: Happy Path
+
+- **Given** a streaming response is in progress with partial content "Here is the analysis of..."
+- **And** the send button has transformed into a "Stop" button
+- **When** the user clicks the "Stop" button
+- **Then** a `{"type":"cancel","session_id":"..."}` frame is sent over the WebSocket
+- **And** streaming stops within 1 second
+- **And** the partial response "Here is the analysis of..." is preserved in the chat
+- **And** the message shows a muted "(interrupted)" label
+- **And** the Stop button reverts to the Send button
+
+---
+
+#### Scenario: Cancel during tool execution
+
+**Traces to**: User Story 17, Acceptance Scenario 2
+**Category**: Happy Path
+
+- **Given** a tool execution (`web_search`) is in progress with a running spinner badge
+- **When** the user clicks the "Stop" button
+- **Then** a cancel frame is sent over the WebSocket
+- **And** the tool badge updates to show "Cancelled" with an orange indicator
+- **And** the chat returns to input-ready state
+
+---
+
+#### Scenario: Cancel when idle is a no-op
+
+**Traces to**: User Story 17, Acceptance Scenario 3
+**Category**: Edge Case
+
+- **Given** no streaming response or tool execution is in progress
+- **And** the input field shows the normal Send button
+- **When** the user presses the cancel keyboard shortcut (Escape)
+- **Then** nothing happens — no WebSocket frame is sent, no UI change occurs
 
 ---
 
@@ -581,7 +646,7 @@ Boundary conditions:
 **Category**: Happy Path
 
 - **Given** the agent invokes the `web_search` tool
-- **When** the tool call event arrives via SSE with status "running"
+- **When** a `{"type":"tool_call_start","tool":"web_search","params":{}}` WebSocket frame arrives
 - **Then** a tool badge renders with: search icon, "web_search" label, spinner animation, and elapsed time counter
 
 ---
@@ -664,7 +729,7 @@ Boundary conditions:
 **Category**: Happy Path
 
 - **Given** the agent requests exec approval for `git pull origin main` in `~/projects/omnipus`
-- **When** the approval event arrives via SSE
+- **When** a `{"type":"exec_approval_request","command":"git pull origin main","id":"..."}` WebSocket frame arrives
 - **Then** an inline block renders with a warning border
 - **And** the command shows: `$ git pull origin main`
 - **And** the working directory shows: `~/projects/omnipus`
@@ -964,7 +1029,7 @@ Boundary conditions:
 
 | Order | Test Name | Level | Traces to BDD Scenario | Description |
 |-------|-----------|-------|------------------------|-------------|
-| 1 | test_sse_event_parser | Unit | Scenario: User sends message, streaming response | Parses SSE event strings into typed objects (token, done, error, tool_call, approval) |
+| 1 | test_websocket_message_parser | Unit | Scenario: User sends message, streaming response | Parses WebSocket JSON frames into typed objects (token, done, error, tool_call_start, tool_call_result, exec_approval_request) |
 | 2 | test_chat_message_component_user | Unit | Scenario: User message appears optimistically | User message renders with text, timestamp, correct alignment |
 | 3 | test_chat_message_component_assistant | Unit | Scenario: Streaming completes with markdown | Assistant message renders markdown (headings, code, lists) |
 | 4 | test_thinking_indicator | Unit | Scenario: Thinking indicator shows | Thinking component shows/hides based on streaming state |
@@ -987,7 +1052,7 @@ Boundary conditions:
 | 21 | test_sidebar_store | Unit | N/A (existing) | Sidebar pin state, open/close toggle |
 | 22 | test_chat_store | Unit | Scenario: User sends message | Chat state: messages, streaming status, active session |
 | 23 | test_agent_store | Unit | Scenario: Switching agents | Agent selection, active agent state |
-| 24 | test_chat_streaming_integration | Integration | Scenario: User sends message, streaming response | Component + real SSE mock → tokens render incrementally |
+| 24 | test_chat_streaming_integration | Integration | Scenario: User sends message, streaming response | Component + WebSocket mock → tokens render incrementally |
 | 25 | test_message_history_load | Integration | Scenario: Previous messages load | Component + API mock → history loads and renders |
 | 26 | test_agent_list_fetch | Integration | Scenario: Agent cards render | Component + TanStack Query → agents fetched and displayed |
 | 27 | test_provider_save_connect | Integration | Scenario: Adding new provider | Component + API mock → key saved, test runs, status updates |
@@ -999,20 +1064,29 @@ Boundary conditions:
 | 33 | test_e2e_settings_provider | E2E | Scenario: Adding new provider | Full browser: configure provider → connection test → status green |
 | 34 | test_e2e_session_switch | E2E | Scenario: Selecting a session | Full browser: session panel → click session → chat loads history |
 | 35 | test_e2e_command_center | E2E | Scenario: Status bar, task list | Full browser: command center → status + tasks visible |
+| 36 | test_cancel_button_states | Unit | Scenario: Cancel during streaming | Stop button appears during streaming, reverts to Send on cancel/done |
+| 37 | test_cancel_preserves_partial | Unit | Scenario: Cancel during streaming | Partial response preserved with "interrupted" label after cancel |
+| 38 | test_cancel_during_tool | Unit | Scenario: Cancel during tool execution | Tool badge shows "Cancelled" with orange indicator |
+| 39 | test_cancel_idle_noop | Unit | Scenario: Cancel when idle | Cancel in idle state sends no WebSocket frame, no UI change |
+| 40 | test_cancel_integration | Integration | Scenario: Cancel during streaming | Component + WebSocket mock → cancel sent, streaming stops, partial preserved |
+| 41 | test_e2e_cancel_streaming | E2E | Scenario: Cancel during streaming | Full browser: stream response → click Stop → partial preserved |
 
 ### Test Datasets
 
-#### Dataset: SSE Event Parsing
+#### Dataset: WebSocket Message Parsing
 
 | # | Input | Boundary Type | Expected Output | Traces to | Notes |
 |---|-------|---------------|-----------------|-----------|-------|
-| 1 | `event: token\ndata: {"content":"Hello"}\n\n` | Happy path | `{type: "token", content: "Hello"}` | Scenario: Streaming response | Standard token event |
-| 2 | `event: done\ndata: {}\n\n` | Happy path | `{type: "done"}` | Scenario: Streaming completes | Done event |
-| 3 | `event: error\ndata: {"error":"timeout"}\n\n` | Error | `{type: "error", error: "timeout"}` | Scenario: SSE connection error | Error event |
-| 4 | `event: token\ndata: {"content":""}\n\n` | Boundary | `{type: "token", content: ""}` | Edge case | Empty token (should not crash) |
-| 5 | `event: token\ndata: {"content":"<script>alert(1)</script>"}\n\n` | Security | Rendered as escaped HTML text | Edge case | XSS in token content |
-| 6 | `event: unknown\ndata: {}\n\n` | Boundary | Ignored (no error) | Edge case | Unknown event type |
-| 7 | `event: tool_call\ndata: {"id":"tc_1","tool":"exec","status":"pending","params":{"command":"ls"}}\n\n` | Happy path | `{type: "tool_call", ...}` | Scenario: Running tool call | Tool call event |
+| 1 | `{"type":"token","content":"Hello"}` | Happy path | `{type: "token", content: "Hello"}` | Scenario: Streaming response | Standard token frame |
+| 2 | `{"type":"done","stats":{"tokens":150,"cost":0.02}}` | Happy path | `{type: "done", stats: {...}}` | Scenario: Streaming completes | Done frame with stats |
+| 3 | `{"type":"error","message":"timeout"}` | Error | `{type: "error", message: "timeout"}` | Scenario: WebSocket connection error | Error frame |
+| 4 | `{"type":"token","content":""}` | Boundary | `{type: "token", content: ""}` | Edge case | Empty token (should not crash) |
+| 5 | `{"type":"token","content":"<script>alert(1)</script>"}` | Security | Rendered as escaped HTML text | Edge case | XSS in token content |
+| 6 | `{"type":"unknown_type"}` | Boundary | Ignored (no error) | Edge case | Unknown message type |
+| 7 | `{"type":"tool_call_start","tool":"exec","params":{"command":"ls"}}` | Happy path | `{type: "tool_call_start", ...}` | Scenario: Running tool call | Tool call start frame |
+| 8 | `{"type":"tool_call_result","tool":"exec","result":{"exit_code":0,"stdout":"..."}}` | Happy path | `{type: "tool_call_result", ...}` | Scenario: Successful tool call | Tool call result frame |
+| 9 | `{"type":"exec_approval_request","command":"rm -rf /tmp","id":"appr_1"}` | Happy path | `{type: "exec_approval_request", ...}` | Scenario: Approval block renders | Approval request frame |
+| 10 | `not valid json` | Error | Parse error handled gracefully, logged | Edge case | Malformed WebSocket message |
 
 #### Dataset: Agent Card Rendering
 
@@ -1058,11 +1132,11 @@ Boundary conditions:
 
 ## Functional Requirements
 
-- **FR-001**: System MUST stream chat responses token-by-token via SSE using the existing `POST /api/v1/chat` endpoint.
+- **FR-001**: System MUST stream chat responses token-by-token via WebSocket (`ws://` upgrade from `/api/v1/chat/ws`) using JSON frames with a `type` field.
 - **FR-002**: System MUST render streaming tokens incrementally with a blinking cursor indicator during active streaming.
 - **FR-003**: System MUST render completed messages as formatted markdown (headings, code blocks, lists, tables, links) using react-markdown + remark-gfm.
 - **FR-004**: System MUST display a thinking indicator between message send and first token arrival.
-- **FR-005**: System MUST show inline error messages with retry capability when SSE connections fail.
+- **FR-005**: System MUST show inline error messages with retry capability when WebSocket connections fail, with auto-reconnect using exponential backoff (max 3 retries).
 - **FR-006**: System MUST render user messages optimistically (before server acknowledgment).
 - **FR-007**: System MUST populate the session bar with: agent selector, model display, heartbeat timer, cost, token count.
 - **FR-008**: System MUST allow switching agents via the session bar dropdown.
@@ -1089,15 +1163,20 @@ Boundary conditions:
 - **FR-029**: System MUST use TanStack Query for all server state (agents, sessions, tasks, config, credentials).
 - **FR-030**: System MUST use Phosphor Icons exclusively — no emoji in UI chrome.
 - **FR-031**: System MUST be responsive across 3 breakpoints: desktop (>1024px), tablet (640-1024px), phone (<640px).
+- **FR-032**: System MUST support bi-directional WebSocket communication for chat, carrying all event types: token, tool_call_start, tool_call_result, exec_approval_request, done, error (server→client) and message, cancel, exec_approval_response (client→server).
+- **FR-033**: System MUST allow the user to cancel an in-progress streaming response or tool execution by clicking a "Stop" button that replaces the Send button during streaming.
+- **FR-034**: System MUST preserve partial responses after cancellation, displaying them with an "(interrupted)" label and `status: "interrupted"`.
+- **FR-035**: System MUST complete cancel operations within 1 second of the user clicking Stop.
+- **FR-036**: System MUST manage WebSocket connection lifecycle: connect, authenticate (Bearer token via first message), keep-alive (ping/pong), auto-reconnect on disconnect with exponential backoff.
 
 ---
 
 ## Success Criteria
 
-- **SC-001**: First token renders within 200ms of SSE event receipt at p95 on desktop Chrome.
+- **SC-001**: First token renders within 200ms of WebSocket frame receipt at p95 on desktop Chrome.
 - **SC-002**: All 5 main screens (Chat, Command Center, Agents, Skills, Settings) load data from the backend and render meaningful content (not empty placeholders).
 - **SC-003**: Message history loads within 500ms for sessions with up to 100 messages at p95.
-- **SC-004**: All unit tests pass (minimum 30 test cases covering all BDD scenarios).
+- **SC-004**: All unit tests pass (minimum 34 test cases covering all BDD scenarios including cancel/interrupt).
 - **SC-005**: All integration tests pass (minimum 7 test cases covering data fetching flows).
 - **SC-006**: Provider configuration flow completes end-to-end: add key → test connection → see models.
 - **SC-007**: Agent CRUD flow completes end-to-end: create → see in list → view profile → edit → save.
@@ -1111,11 +1190,11 @@ Boundary conditions:
 
 | Requirement | User Story | BDD Scenario(s) | Test Name(s) |
 |-------------|-----------|------------------|---------------|
-| FR-001 | US-1 | Scenario: User sends message, streaming response | test_sse_event_parser, test_chat_streaming_integration, test_e2e_chat_send_receive |
+| FR-001 | US-1 | Scenario: User sends message, streaming response | test_websocket_message_parser, test_chat_streaming_integration, test_e2e_chat_send_receive |
 | FR-002 | US-1 | Scenario: Streaming response; Scenario: Thinking indicator | test_streaming_cursor, test_thinking_indicator |
 | FR-003 | US-1 | Scenario: Streaming completes with markdown | test_chat_message_component_assistant |
 | FR-004 | US-1 | Scenario: Thinking indicator shows | test_thinking_indicator |
-| FR-005 | US-1 | Scenario: SSE connection error | test_chat_streaming_integration |
+| FR-005 | US-1 | Scenario: WebSocket connection error | test_chat_streaming_integration |
 | FR-006 | US-1 | Scenario: User message appears optimistically | test_chat_message_component_user |
 | FR-007 | US-2 | Scenario: Session bar renders | test_session_bar_elements |
 | FR-008 | US-2 | Scenario: Switching agents | test_agent_store |
@@ -1142,6 +1221,11 @@ Boundary conditions:
 | FR-029 | US-3, US-6, US-9, US-13, US-14 | All data-fetching scenarios | test_message_history_load, test_agent_list_fetch, test_provider_save_connect, test_task_crud |
 | FR-030 | US-6, US-4 | All rendering scenarios | test_agent_card_component, test_tool_call_badge_states |
 | FR-031 | All | All rendering scenarios | test_e2e_chat_send_receive (multi-viewport) |
+| FR-032 | US-1, US-17 | Scenario: User sends message; Scenario: Cancel during streaming | test_websocket_message_parser, test_chat_streaming_integration |
+| FR-033 | US-17 | Scenario: Cancel during streaming; Scenario: Cancel during tool execution | test_cancel_button_states, test_cancel_integration |
+| FR-034 | US-17 | Scenario: Cancel during streaming preserves partial | test_cancel_preserves_partial |
+| FR-035 | US-17 | Scenario: Cancel during streaming | test_cancel_integration, test_e2e_cancel_streaming |
+| FR-036 | US-1 | Scenario: WebSocket connection error during streaming | test_chat_streaming_integration |
 
 ---
 
@@ -1150,10 +1234,10 @@ Boundary conditions:
 | # | What's Ambiguous | Likely Agent Assumption | Question to Resolve |
 |---|------------------|------------------------|---------------------|
 | 1 | Backend API endpoints for agents, sessions, tasks, config, skills are currently 501 stubs. Wave 5a requires real endpoints. | Agent will implement the REST handlers on the Go backend alongside the frontend wiring. | Confirm: should Wave 5a include implementing the backend REST endpoints, or is that a separate wave? |
-| 2 | SSE event types for tool calls and approval are not formally specified in the SSE handler (`sse.go` currently only streams `token`, `done`, `error`). | Agent will extend the SSE handler to emit `tool_call` and `approval` event types. | Confirm: are tool_call and approval events delivered via the same SSE stream, or separate mechanisms? |
+| ~~2~~ | ~~SSE event types for tool calls and approval~~ | **RESOLVED**: WebSocket carries all event types (token, tool_call_start, tool_call_result, exec_approval_request, done, error) on a single bi-directional connection. SSE is no longer used. | Resolved 2026-03-29. |
 | 3 | The session bar "Sessions" trigger opens a slide-over. It's unclear if this is a separate route or an overlay component. | Agent will implement it as an overlay component (not a route), consistent with the sidebar pattern. | Accept assumption: overlay component, not a route. |
 | 4 | TanStack Query cache invalidation strategy is not specified. | Agent will use standard query key invalidation on mutations (e.g., creating an agent invalidates the agent list query). | Accept assumption: standard TanStack Query patterns. |
-| 5 | The BRD mentions `AssistantUI` for chat primitives with a "custom gateway runtime adapter." | Agent will use react-markdown + custom SSE hooks for streaming, not AssistantUI initially, and add AssistantUI integration later if needed. | Confirm: should the initial implementation use AssistantUI or plain SSE + react-markdown? |
+| 5 | The BRD mentions `AssistantUI` for chat primitives with a "custom gateway runtime adapter." | Agent will use react-markdown + custom WebSocket hooks for streaming, not AssistantUI initially, and add AssistantUI integration later if needed. | Confirm: should the initial implementation use AssistantUI or plain WebSocket + react-markdown? |
 | 6 | Agent profile page is described as "single-column scrollable" but responsive behavior for phone isn't specified. | Agent will use the same single-column layout at all breakpoints (naturally responsive). | Accept assumption: single-column layout is inherently responsive. |
 | 7 | Task drag-and-drop in board view requires a library. | Agent will use `@hello-pangea/dnd` (maintained fork of react-beautiful-dnd) or native HTML5 DnD. | Accept assumption: agent picks the lightest viable library. |
 
@@ -1212,18 +1296,18 @@ Boundary conditions:
 ## Assumptions
 
 - The Go gateway backend is running and accessible at the configured host:port during all frontend operations.
-- The SSE endpoint (`POST /api/v1/chat`) will be extended to support tool_call and approval event types (currently only supports token/done/error).
+- The WebSocket endpoint (`/api/v1/chat/ws`) will handle all chat event types bi-directionally: server→client (token, tool_call_start, tool_call_result, exec_approval_request, done, error) and client→server (message, cancel, exec_approval_response).
 - REST API endpoints (currently 501 stubs) will be implemented either as part of Wave 5a or a prerequisite wave.
 - The `@omnipus/ui` package structure is not yet created — Wave 5a implements directly in `src/` following the existing Vite + React setup.
 - `credentials.json` encryption/decryption is handled by the Go backend; the frontend only sends plaintext keys to the API which encrypts before storing.
 - The emoji-to-icon translator (C.3.2) is deferred to a separate task — it only applies to LLM output text and is not needed for the core UI wiring.
 - Drag-and-drop for task board requires a third-party library (to be selected during implementation).
-- WebSocket upgrade for bi-directional communication is deferred — SSE is sufficient for Wave 5a.
 
 ## Clarifications
 
 ### 2026-03-29
 
 - Q: Should backend REST endpoints be implemented in Wave 5a or assumed to exist? -> A: Pending user resolution (Ambiguity #1).
-- Q: Should AssistantUI be used for chat or plain SSE + react-markdown? -> A: Pending user resolution (Ambiguity #5).
-- Q: Are tool_call and approval events on the same SSE stream? -> A: Pending user resolution (Ambiguity #2).
+- Q: Should AssistantUI be used for chat or plain WebSocket + react-markdown? -> A: Pending user resolution (Ambiguity #5).
+- Q: Are tool_call and approval events on the same stream? -> A: **Resolved** — WebSocket carries all event types on a single bi-directional connection. SSE replaced with WebSocket.
+- Q: SSE vs WebSocket for chat streaming? -> A: **Resolved** — WebSocket. Enables bi-directional communication needed for cancel, approval responses, and future features.

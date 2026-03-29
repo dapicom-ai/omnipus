@@ -174,6 +174,67 @@ An operator wants to configure resource limits on browser sessions to prevent ru
 
 ---
 
+### User Story 8 — Channel Typing Indicators (Priority: P1)
+
+An end user wants to see a typing indicator in their messaging app when the Omnipus agent starts processing their message, so that they know the agent is working on a response. Typing indicators are a standard UX pattern across messaging platforms and reduce perceived latency.
+
+**Why this priority**: Typing indicators are a low-cost, high-impact UX improvement that makes the agent feel responsive. Without them, users may resend messages or assume the agent is offline.
+
+**Independent Test**: Send a message to the agent via WhatsApp, verify that a typing indicator appears in the chat within 500ms of the agent beginning to process the message.
+
+**Acceptance Scenarios**:
+
+1. **Given** a connected WhatsApp session, **When** the agent starts processing an inbound message, **Then** `sendPresenceUpdating` is called via whatsmeow within 500ms, and the user sees a "typing..." indicator in WhatsApp.
+2. **Given** a connected Telegram channel, **When** the agent starts processing an inbound message, **Then** `sendChatAction("typing")` is called via telego within 500ms, and the user sees a typing indicator in Telegram.
+3. **Given** a connected Discord channel, **When** the agent starts processing an inbound message, **Then** the typing intent is sent via discordgo within 500ms, and the user sees "Omnipus is typing..." in Discord.
+4. **Given** a connected Slack channel, **When** the agent starts processing an inbound message, **Then** a typing indicator is emitted via slack-go within 500ms, and the user sees a typing indicator in Slack.
+5. **Given** a channel that does not support typing indicators (e.g., IRC, Matrix without typing extensions), **When** the agent starts processing an inbound message, **Then** the typing indicator call is a graceful no-op — no error is logged and processing continues normally.
+6. **Given** any connected channel, **When** the agent finishes processing and sends its response, **Then** the typing indicator is implicitly cleared by the outbound message (no explicit "stop typing" call required).
+7. **Given** the agent takes longer than 10 seconds to process, **When** the typing indicator would expire on the platform, **Then** the channel re-sends the typing indicator at platform-appropriate intervals (e.g., every 5s for Discord, every 10s for WhatsApp).
+
+---
+
+### Acceptance Gate: Existing Channel Regression (Priority: P0)
+
+All 10 existing PicoClaw channels MUST continue to function correctly after Wave 4 changes. This is a non-negotiable regression gate — Wave 4 cannot ship if any existing channel breaks.
+
+**Channels under regression protection**:
+
+| # | Channel | Protocol | Regression Scope |
+|---|---------|----------|-----------------|
+| 1 | Telegram | telego | Message send/receive round-trip |
+| 2 | Discord | discordgo | Message send/receive round-trip |
+| 3 | Slack | slack-go | Message send/receive round-trip |
+| 4 | Matrix | mautrix-go | Message send/receive round-trip |
+| 5 | IRC | go-irc | Message send/receive round-trip |
+| 6 | LINE | line-bot-sdk-go | Message send/receive round-trip |
+| 7 | WeCom | wecom-sdk | Message send/receive round-trip |
+| 8 | QQ | qq-bot-sdk | Message send/receive round-trip |
+| 9 | DingTalk | dingtalk-sdk | Message send/receive round-trip |
+| 10 | WebChat | built-in HTTP/WS | Message send/receive round-trip |
+
+**Acceptance Criteria**:
+
+1. **Given** any of the 10 existing channels configured and enabled, **When** the gateway starts after Wave 4 changes, **Then** the channel starts successfully with no errors.
+2. **Given** any existing channel is running, **When** an inbound message arrives from an allowed sender, **Then** the message is published to MessageBus with correct channel name and metadata (identical to pre-Wave-4 behavior).
+3. **Given** any existing channel is running, **When** the agent sends an outbound response, **Then** the message is delivered to the channel's platform successfully.
+4. **Given** the channel registration system, **When** the new WhatsApp native and browser tools are registered, **Then** no existing channel factory registrations are displaced or overwritten.
+
+---
+
+### Acceptance Gate: Heartbeat, Cron & Sub-Agent Regression (Priority: P0)
+
+PicoClaw's HEARTBEAT.md, cron scheduling, and sub-agent spawning features are inherited by Omnipus. These MUST NOT regress after Wave 4 changes.
+
+**Acceptance Criteria**:
+
+1. **Given** a valid `HEARTBEAT.md` file in the project directory, **When** the configured interval elapses, **Then** the heartbeat is executed with the same behavior as pre-Wave-4.
+2. **Given** cron jobs configured in `config.json`, **When** the scheduled time arrives, **Then** the cron job fires and executes correctly.
+3. **Given** an agent that spawns sub-agents, **When** a sub-agent is spawned during message processing, **Then** the `spawn_status` tracking works correctly and the sub-agent completes its task.
+4. **Given** Wave 4 channels (WhatsApp, browser tools) are active, **When** heartbeat, cron, and sub-agent features are used concurrently, **Then** there is no resource contention or deadlock between the new and existing features.
+
+---
+
 ## Behavioral Contract
 
 Primary flows:
@@ -185,6 +246,13 @@ Primary flows:
 - When `browser.click(selector)` targets a valid element, the system clicks it and returns success.
 - When `browser.screenshot()` is called, the system captures a PNG and returns the file path.
 - When `tools.browser.cdp_url` is set, the system uses remote CDP instead of launching local Chromium.
+
+- When any channel begins processing an inbound message, the system sends a platform-appropriate typing indicator within 500ms.
+- When the channel does not support typing indicators, the system does nothing (graceful no-op).
+- When all 10 existing PicoClaw channels are configured, they continue to send/receive messages normally after Wave 4 changes.
+- When HEARTBEAT.md is configured, the heartbeat fires at the configured interval, unaffected by Wave 4 changes.
+- When cron jobs are scheduled, they fire at scheduled times, unaffected by Wave 4 changes.
+- When sub-agents are spawned, spawn_status tracking works correctly, unaffected by Wave 4 changes.
 
 Error flows:
 - When Chromium is not installed and no `cdp_url` is configured, the system returns a descriptive error on any browser tool invocation.
@@ -737,6 +805,175 @@ Boundary conditions:
 
 ---
 
+### Feature: Channel Typing Indicators
+
+#### Scenario: WhatsApp typing indicator on message processing
+
+**Traces to**: User Story 8, Acceptance Scenario 1
+**Category**: Happy Path
+
+- **Given** a connected WhatsApp session
+- **When** an inbound message is received and the agent starts processing
+- **Then** `sendPresenceUpdating` is called via whatsmeow within 500ms
+- **And** the typing indicator is visible to the sender in WhatsApp
+
+---
+
+#### Scenario: Telegram typing indicator on message processing
+
+**Traces to**: User Story 8, Acceptance Scenario 2
+**Category**: Happy Path
+
+- **Given** a connected Telegram channel
+- **When** an inbound message is received and the agent starts processing
+- **Then** `sendChatAction("typing")` is called via telego within 500ms
+
+---
+
+#### Scenario: Discord typing indicator on message processing
+
+**Traces to**: User Story 8, Acceptance Scenario 3
+**Category**: Happy Path
+
+- **Given** a connected Discord channel
+- **When** an inbound message is received and the agent starts processing
+- **Then** a typing intent is sent via discordgo within 500ms
+- **And** the user sees "Omnipus is typing..." in the Discord channel
+
+---
+
+#### Scenario: Slack typing indicator on message processing
+
+**Traces to**: User Story 8, Acceptance Scenario 4
+**Category**: Happy Path
+
+- **Given** a connected Slack channel
+- **When** an inbound message is received and the agent starts processing
+- **Then** a typing indicator is emitted via slack-go within 500ms
+
+---
+
+#### Scenario: Typing indicator graceful no-op for unsupported channel
+
+**Traces to**: User Story 8, Acceptance Scenario 5
+**Category**: Alternate Path
+
+- **Given** a connected channel that does not support typing indicators (e.g., IRC)
+- **When** an inbound message is received and the agent starts processing
+- **Then** the typing indicator call is a no-op
+- **And** no error is logged
+- **And** message processing continues normally
+
+---
+
+#### Scenario: Typing indicator refresh for long-running processing
+
+**Traces to**: User Story 8, Acceptance Scenario 7
+**Category**: Alternate Path
+
+- **Given** a connected WhatsApp session
+- **When** the agent takes longer than 10 seconds to process a message
+- **Then** the typing indicator is re-sent at platform-appropriate intervals
+- **And** the user sees a continuous typing indicator without gaps
+
+---
+
+### Feature: Existing Channel Regression
+
+#### Scenario Outline: Existing channel message round-trip
+
+**Traces to**: Acceptance Gate: Existing Channel Regression, Acceptance Criteria 1-3
+**Category**: Regression
+
+- **Given** the `<channel>` channel is configured and enabled
+- **When** the gateway starts after Wave 4 changes
+- **Then** the channel starts successfully
+- **And** an inbound test message is published to MessageBus with `channel: "<channel_name>"`
+- **And** an outbound response is delivered to the platform
+
+**Examples**:
+
+| channel | channel_name |
+|---------|-------------|
+| Telegram | `telegram` |
+| Discord | `discord` |
+| Slack | `slack` |
+| Matrix | `matrix` |
+| IRC | `irc` |
+| LINE | `line` |
+| WeCom | `wecom` |
+| QQ | `qq` |
+| DingTalk | `dingtalk` |
+| WebChat | `webchat` |
+
+---
+
+#### Scenario: New channel registration does not displace existing channels
+
+**Traces to**: Acceptance Gate: Existing Channel Regression, Acceptance Criteria 4
+**Category**: Regression
+
+- **Given** all 10 existing channels are registered via `RegisterFactory`
+- **When** the WhatsApp native channel is also registered
+- **Then** all 11 channel factories are present in the registry
+- **And** no existing channel factory is overwritten or displaced
+
+---
+
+### Feature: Heartbeat, Cron & Sub-Agent Regression
+
+#### Scenario: HEARTBEAT.md execution continues after Wave 4
+
+**Traces to**: Acceptance Gate: Heartbeat/Cron/Sub-Agent Regression, Acceptance Criteria 1
+**Category**: Regression
+
+- **Given** a valid `HEARTBEAT.md` file exists with a 60-second interval
+- **And** WhatsApp native channel and browser tools are active
+- **When** 60 seconds elapse
+- **Then** the heartbeat executes with the same behavior as pre-Wave-4
+- **And** the heartbeat log entry is written
+
+---
+
+#### Scenario: Cron jobs fire on schedule after Wave 4
+
+**Traces to**: Acceptance Gate: Heartbeat/Cron/Sub-Agent Regression, Acceptance Criteria 2
+**Category**: Regression
+
+- **Given** a cron job is configured to run every 5 minutes
+- **And** WhatsApp native channel and browser tools are active
+- **When** the scheduled time arrives
+- **Then** the cron job fires and executes correctly
+- **And** no interference from Wave 4 channel goroutines
+
+---
+
+#### Scenario: Sub-agent spawning works after Wave 4
+
+**Traces to**: Acceptance Gate: Heartbeat/Cron/Sub-Agent Regression, Acceptance Criteria 3
+**Category**: Regression
+
+- **Given** an agent configured to spawn sub-agents
+- **And** WhatsApp native channel and browser tools are active
+- **When** a sub-agent is spawned during message processing
+- **Then** `spawn_status` tracking reports the sub-agent as running
+- **And** the sub-agent completes and `spawn_status` updates to completed
+
+---
+
+#### Scenario: No resource contention between Wave 4 and inherited features
+
+**Traces to**: Acceptance Gate: Heartbeat/Cron/Sub-Agent Regression, Acceptance Criteria 4
+**Category**: Regression
+
+- **Given** WhatsApp native channel, browser tools, heartbeat, cron, and sub-agents are all active
+- **When** all features operate concurrently for 10 minutes
+- **Then** no goroutine deadlocks occur
+- **And** no channel sends are blocked by heartbeat or cron execution
+- **And** memory usage stays within expected bounds
+
+---
+
 ## Test-Driven Development Plan
 
 ### Test Hierarchy
@@ -843,13 +1080,47 @@ Boundary conditions:
 
 ### Regression Test Requirements
 
-> No regression impact — new capability. Both WhatsApp native and browser tools are entirely new code paths.
-
-Integration seams protected by:
+Existing integration seams protected by:
 - `TestManagerDispatch` (existing) — verifies Manager dispatches to registered channels. WhatsApp native uses the same registration pattern.
 - `TestToolRegistryRegister` (existing) — verifies tool registration. Browser tools use the same pattern.
 - `TestBaseChannelAllowList` (existing) — verifies allow-list filtering. WhatsApp native reuses BaseChannel.
 - `TestSSRFCheck` (existing in `pkg/security/`) — verifies SSRF IP blocking. Browser reuses the same checker.
+
+**NEW — Existing Channel Regression Tests (Wave 4 acceptance gate)**:
+
+| Order | Test Name | Level | Traces to BDD Scenario | Description |
+|-------|-----------|-------|------------------------|-------------|
+| 36 | `TestExistingChannel_Telegram_RoundTrip` | Integration | Scenario Outline: Existing channel message round-trip | Verify Telegram send/receive after Wave 4 changes |
+| 37 | `TestExistingChannel_Discord_RoundTrip` | Integration | Scenario Outline: Existing channel message round-trip | Verify Discord send/receive after Wave 4 changes |
+| 38 | `TestExistingChannel_Slack_RoundTrip` | Integration | Scenario Outline: Existing channel message round-trip | Verify Slack send/receive after Wave 4 changes |
+| 39 | `TestExistingChannel_Matrix_RoundTrip` | Integration | Scenario Outline: Existing channel message round-trip | Verify Matrix send/receive after Wave 4 changes |
+| 40 | `TestExistingChannel_IRC_RoundTrip` | Integration | Scenario Outline: Existing channel message round-trip | Verify IRC send/receive after Wave 4 changes |
+| 41 | `TestExistingChannel_LINE_RoundTrip` | Integration | Scenario Outline: Existing channel message round-trip | Verify LINE send/receive after Wave 4 changes |
+| 42 | `TestExistingChannel_WeCom_RoundTrip` | Integration | Scenario Outline: Existing channel message round-trip | Verify WeCom send/receive after Wave 4 changes |
+| 43 | `TestExistingChannel_QQ_RoundTrip` | Integration | Scenario Outline: Existing channel message round-trip | Verify QQ send/receive after Wave 4 changes |
+| 44 | `TestExistingChannel_DingTalk_RoundTrip` | Integration | Scenario Outline: Existing channel message round-trip | Verify DingTalk send/receive after Wave 4 changes |
+| 45 | `TestExistingChannel_WebChat_RoundTrip` | Integration | Scenario Outline: Existing channel message round-trip | Verify WebChat send/receive after Wave 4 changes |
+| 46 | `TestChannelRegistryNoDisplacement` | Unit | Scenario: New channel registration does not displace | Verify WhatsApp native registration doesn't displace existing factories |
+
+**NEW — Heartbeat/Cron/Sub-Agent Regression Tests**:
+
+| Order | Test Name | Level | Traces to BDD Scenario | Description |
+|-------|-----------|-------|------------------------|-------------|
+| 47 | `TestHeartbeatExecution_PostWave4` | Integration | Scenario: HEARTBEAT.md execution continues | Verify HEARTBEAT.md fires at interval with Wave 4 channels active |
+| 48 | `TestCronJobFiring_PostWave4` | Integration | Scenario: Cron jobs fire on schedule | Verify cron jobs fire on schedule with Wave 4 channels active |
+| 49 | `TestSubAgentSpawning_PostWave4` | Integration | Scenario: Sub-agent spawning works | Verify sub-agent spawn and spawn_status tracking with Wave 4 active |
+| 50 | `TestConcurrentFeatures_NoDeadlock` | Integration | Scenario: No resource contention | Verify no deadlocks with all features running concurrently for 60s |
+
+**NEW — Typing Indicator Tests**:
+
+| Order | Test Name | Level | Traces to BDD Scenario | Description |
+|-------|-----------|-------|------------------------|-------------|
+| 51 | `TestTypingIndicator_WhatsApp` | Integration | Scenario: WhatsApp typing indicator | Verify sendPresenceUpdating called within 500ms of processing start |
+| 52 | `TestTypingIndicator_Telegram` | Integration | Scenario: Telegram typing indicator | Verify sendChatAction("typing") called within 500ms |
+| 53 | `TestTypingIndicator_Discord` | Integration | Scenario: Discord typing indicator | Verify typing intent sent within 500ms |
+| 54 | `TestTypingIndicator_Slack` | Integration | Scenario: Slack typing indicator | Verify typing indicator emitted within 500ms |
+| 55 | `TestTypingIndicator_UnsupportedChannel` | Unit | Scenario: Typing indicator graceful no-op | Verify no-op on unsupported channel, no error logged |
+| 56 | `TestTypingIndicator_Refresh` | Integration | Scenario: Typing indicator refresh | Verify re-send at intervals for long-running processing |
 
 ---
 
@@ -879,6 +1150,15 @@ Integration seams protected by:
 - **FR-022**: System MUST prioritize remote CDP when `tools.browser.cdp_url` is configured (over local managed mode).
 - **FR-023**: System MUST set `MaxOpenConns(1)` and `MaxIdleConns(1)` on the WhatsApp SQLite connection to prevent write contention.
 - **FR-024**: System MUST audit-log all browser tool invocations and WhatsApp connection state changes via SEC-15.
+- **FR-025**: System MUST emit a platform-appropriate typing indicator within 500ms of the agent starting to process an inbound message. WhatsApp: `sendPresenceUpdating` (whatsmeow). Telegram: `sendChatAction("typing")` (telego). Discord: typing intent (discordgo). Slack: typing indicator (slack-go).
+- **FR-026**: System MUST gracefully no-op when a channel does not support typing indicators. No error SHOULD be logged for unsupported channels.
+- **FR-027**: System MUST re-send typing indicators at platform-appropriate intervals when agent processing exceeds 10 seconds, to prevent indicator expiry.
+- **FR-028**: System MUST pass existing channel regression tests for all 10 PicoClaw channels (Telegram, Discord, Slack, Matrix, IRC, LINE, WeCom, QQ, DingTalk, WebChat) — message send/receive round-trip verified for each.
+- **FR-029**: System MUST NOT displace or overwrite existing channel factory registrations when registering new Wave 4 channels.
+- **FR-030**: System MUST continue to execute HEARTBEAT.md at the configured interval after Wave 4 changes. Heartbeat execution MUST NOT be blocked by Wave 4 channel goroutines.
+- **FR-031**: System MUST continue to fire cron jobs at scheduled times after Wave 4 changes.
+- **FR-032**: System MUST continue to support sub-agent spawning with correct `spawn_status` tracking after Wave 4 changes.
+- **FR-033**: System MUST NOT introduce goroutine deadlocks when Wave 4 channels (WhatsApp, browser tools) run concurrently with heartbeat, cron, and sub-agent features.
 
 ---
 
@@ -894,6 +1174,11 @@ Integration seams protected by:
 - **SC-008**: Managed Chromium process is fully terminated (no orphan processes) within 5 seconds of gateway shutdown.
 - **SC-009**: WhatsApp SQLite database uses zero CGo calls (verified by `go build` without CGo, no `import "C"` in dependency tree).
 - **SC-010**: Browser tools register in ToolRegistry and appear in agent tool lists when `tools.browser.enabled: true`.
+- **SC-011**: Typing indicator is emitted within 500ms of agent processing start for WhatsApp, Telegram, Discord, and Slack channels (p99).
+- **SC-012**: Channels without typing support (IRC, etc.) produce zero errors related to typing indicators during a 24-hour test run.
+- **SC-013**: All 10 existing PicoClaw channels pass message send/receive round-trip integration tests after Wave 4 changes (100% pass rate).
+- **SC-014**: HEARTBEAT.md, cron jobs, and sub-agent spawning all pass regression tests with Wave 4 channels active (100% pass rate).
+- **SC-015**: No goroutine deadlocks detected during 10-minute concurrent operation of all features (verified via `go test -race`).
 
 ---
 
