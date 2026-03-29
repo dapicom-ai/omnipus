@@ -38,6 +38,7 @@ func TestNewOmnipusCommand(t *testing.T) {
 		"auth",
 		"credentials",
 		"cron",
+		"doctor",
 		"gateway",
 		"migrate",
 		"model",

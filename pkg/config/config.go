@@ -973,6 +973,18 @@ type ExecConfig struct {
 	CustomDenyPatterns  []string `                                 json:"custom_deny_patterns"  env:"PICOCLAW_TOOLS_EXEC_CUSTOM_DENY_PATTERNS"`
 	CustomAllowPatterns []string `                                 json:"custom_allow_patterns" env:"PICOCLAW_TOOLS_EXEC_CUSTOM_ALLOW_PATTERNS"`
 	TimeoutSeconds      int      `                                 json:"timeout_seconds"       env:"PICOCLAW_TOOLS_EXEC_TIMEOUT_SECONDS"` // 0 means use default (60s)
+
+	// US-7: Interactive approval before exec commands.
+	// "ask" (default) prompts the user; "off" skips the prompt.
+	Approval string `json:"approval,omitempty" env:"PICOCLAW_TOOLS_EXEC_APPROVAL"`
+
+	// US-7/US-5: Glob patterns for binaries the exec tool is allowed to run.
+	// Non-empty list acts as an allowlist; all other commands are denied.
+	AllowedBinaries []string `json:"allowed_binaries,omitempty" env:"PICOCLAW_TOOLS_EXEC_ALLOWED_BINARIES"`
+
+	// US-14: Route exec child process HTTP traffic through the local SSRF proxy.
+	// When true (default), HTTP_PROXY and HTTPS_PROXY are set on child processes.
+	EnableProxy bool `json:"enable_proxy,omitempty" env:"PICOCLAW_TOOLS_EXEC_ENABLE_PROXY"`
 }
 
 type SkillsToolsConfig struct {
