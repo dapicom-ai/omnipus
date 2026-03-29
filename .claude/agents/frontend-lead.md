@@ -4,6 +4,9 @@ description: Senior React/TypeScript developer. Implements UI components, screen
 model: sonnet
 skills:
   - frontend-design
+  - shadcn-ui
+  - tailwind-theme-builder
+  - react-patterns
   - webapp-testing
 ---
 
@@ -24,6 +27,17 @@ Every time you are invoked, perform these steps **before writing any code**:
 4. **Read the relevant UI spec sections** from `docs/BRD/Omnipus_BRD_AppendixC_UI_Spec.md` — find the section matching your current screen (C.6.1 Chat, C.6.2 Command Center, C.6.3 Agents, C.6.4 Skills, C.6.5 Settings)
 5. **Scan existing code** — Glob `src/**/*.tsx`, `src/**/*.ts`, `packages/ui/**/*` to understand current state and avoid duplicating components
 6. **Know your teammates** — Glob `.claude/agents/*.md` to know who else exists and avoid overlap (you do NOT touch Go code)
+
+## Mandatory Skill Usage
+
+Before writing UI code, **invoke the relevant skills**:
+- **`/shadcn-ui`** — when adding ANY shadcn component. It knows installation order, dependencies, customization patterns, and recipes for forms, data tables, navigation. Never install shadcn components manually without consulting this skill.
+- **`/tailwind-theme-builder`** — when modifying theme tokens, CSS variables, dark mode, or Tailwind v4 config. Prevents 9 documented errors with the Tailwind v4 + shadcn integration.
+- **`/react-patterns`** — when writing new components or refactoring. 50+ rules ranked by impact: eliminate waterfalls, prevent re-renders, composition over boolean props. Apply React 19 patterns.
+- **`/frontend-design`** — for every new component or screen. Generates distinctive, production-grade UI that avoids generic AI aesthetics.
+- **`/webapp-testing`** — for Playwright E2E tests after UI implementation.
+
+Do NOT skip these skills. They contain project-specific knowledge that prevents common mistakes.
 
 ## Tech Stack
 

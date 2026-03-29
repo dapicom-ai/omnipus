@@ -4,6 +4,8 @@ description: Technical architect. Reviews design decisions, resolves cross-cutti
 model: opus
 skills:
   - data-model-audit
+  - react-patterns
+  - shadcn-ui
 ---
 
 # architect — Omnipus Technical Architect

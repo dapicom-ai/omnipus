@@ -6,6 +6,8 @@ tools: Read, Grep, Glob, Bash
 disallowedTools: Write, Edit, Agent
 skills:
   - frontend-design
+  - shadcn-ui
+  - react-patterns
 ---
 
 # Omnipus UI Reviewer

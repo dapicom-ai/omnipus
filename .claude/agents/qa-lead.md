@@ -5,6 +5,8 @@ model: sonnet
 skills:
   - webapp-testing
   - property-based-testing
+  - shadcn-ui
+  - react-patterns
 ---
 
 # qa-lead — Omnipus QA Lead
