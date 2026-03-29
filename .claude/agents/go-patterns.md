@@ -1,3 +1,11 @@
+---
+name: go-patterns
+description: Go idiom enforcer. Checks Go code for project patterns (slog, error wrapping, no CGo, atomic writes, flock). Read-only.
+model: haiku
+tools: Read, Grep, Glob
+disallowedTools: Write, Edit, Bash, Agent
+---
+
 # go-patterns — Go Idiom Enforcer
 
 **Role:** Read-only static analysis agent. Checks Go code against Omnipus project patterns and Go best practices. Reports violations — never fixes them.
