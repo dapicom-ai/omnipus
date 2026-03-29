@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Omnipus favicon — simplified octopus head -->
+  <rect width="32" height="32" rx="6" fill="#0a0a0b"/>
+  <ellipse cx="16" cy="14" rx="9" ry="8.5" fill="#d4af37"/>
+  <ellipse cx="16" cy="7" rx="5" ry="3.5" fill="#d4af37"/>
+  <circle cx="12.5" cy="12.5" r="1.8" fill="#0a0a0b"/>
+  <circle cx="19.5" cy="12.5" r="1.8" fill="#0a0a0b"/>
+  <circle cx="13.1" cy="11.9" r="0.6" fill="#e2e8f0"/>
+  <circle cx="20.1" cy="11.9" r="0.6" fill="#e2e8f0"/>
+  <path d="M9 19 Q6 25 8 29" stroke="#d4af37" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <path d="M11 21 Q9 27 11 31" stroke="#d4af37" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <path d="M14 22 Q13.5 28 14 32" stroke="#d4af37" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+  <path d="M16 22 Q16 28 16 32" stroke="#d4af37" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+  <path d="M18 22 Q18.5 28 18 32" stroke="#d4af37" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+  <path d="M21 21 Q23 27 21 31" stroke="#d4af37" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <path d="M23 19 Q26 25 24 29" stroke="#d4af37" stroke-width="2" fill="none" stroke-linecap="round"/>
+</svg>

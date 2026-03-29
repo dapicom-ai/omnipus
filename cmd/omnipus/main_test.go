@@ -36,6 +36,7 @@ func TestNewOmnipusCommand(t *testing.T) {
 	allowedCommands := []string{
 		"agent",
 		"auth",
+		"credentials",
 		"cron",
 		"gateway",
 		"migrate",

@@ -121,8 +121,87 @@ type Config struct {
 	// BuildInfo contains build-time version information
 	BuildInfo BuildInfo `json:"build_info,omitempty" yaml:"-"`
 
+	// Omnipus-specific sections (additive, does not break PicoClaw compatibility).
+	Storage         OmnipusStorageConfig            `json:"storage,omitempty"          yaml:"-"`
+	ChannelPolicies map[string]OmnipusChannelPolicy `json:"channel_policies,omitempty" yaml:"-"`
+	// Sandbox holds Wave 2 kernel sandboxing settings (SEC-01–SEC-20).
+	// Empty/disabled in Wave 1; parsed now so forward-compatible configs load cleanly.
+	Sandbox OmnipusSandboxConfig `json:"sandbox,omitempty" yaml:"-"`
+
+	// UnknownFields preserves JSON keys not recognized by this version of Omnipus.
+	// They are re-emitted verbatim during SaveConfig for round-trip safety (FR-004).
+	// Never serialized by json.Marshal or yaml.Marshal — only written back by MarshalJSON.
+	UnknownFields map[string]json.RawMessage `json:"-" yaml:"-"`
+
 	// cache for sensitive values and compiled regex (computed once)
 	sensitiveCache *SensitiveDataCache
+}
+
+// OmnipusStorageConfig holds storage-related settings per Appendix E §E.5.4.
+type OmnipusStorageConfig struct {
+	Retention OmnipusRetentionConfig `json:"retention,omitempty"`
+}
+
+// OmnipusRetentionConfig controls session transcript retention per Appendix E §E.5.4.
+type OmnipusRetentionConfig struct {
+	// SessionDays is how many days transcript partitions are kept. 0 = unlimited.
+	SessionDays int `json:"session_days,omitempty"`
+	// ArchiveBeforeDelete compresses old partitions to .jsonl.gz before deletion.
+	ArchiveBeforeDelete bool `json:"archive_before_delete,omitempty"`
+	// KeepCompactionSummary preserves last_compaction_summary in meta.json
+	// even when all partitions are purged by the retention policy.
+	KeepCompactionSummary bool `json:"keep_compaction_summary,omitempty"`
+}
+
+// RetentionSessionDays returns the configured session retention days, defaulting to 90.
+func (r OmnipusRetentionConfig) RetentionSessionDays() int {
+	if r.SessionDays <= 0 {
+		return 90
+	}
+	return r.SessionDays
+}
+
+// OmnipusCompactionConfig holds context compression settings per Appendix E §E.5.3.
+type OmnipusCompactionConfig struct {
+	Enabled        bool `json:"enabled,omitempty"`
+	ReserveTokens  int  `json:"reserve_tokens,omitempty"`
+	PreserveRecent int  `json:"preserve_recent,omitempty"`
+	MemoryFlush    bool `json:"memory_flush,omitempty"`
+}
+
+// OmnipusChannelPolicy holds per-channel Omnipus-specific policies.
+// Stored in config.json under channel_policies.<channel-name>.
+type OmnipusChannelPolicy struct {
+	// RoutingRules maps user patterns to agents for this channel.
+	// Loaded at startup and merged into config.Bindings automatically.
+	RoutingRules []OmnipusChannelRoutingRule `json:"routing_rules,omitempty"`
+}
+
+// OmnipusChannelRoutingRule maps a channel+user pattern to an agent.
+// Stored in config.json under channel_policies.<channel-name>.routing_rules[].
+type OmnipusChannelRoutingRule struct {
+	// UserID is the channel-specific user identifier. "*" matches any user.
+	UserID string `json:"user_id,omitempty"`
+	// AgentID is the agent that handles messages matching this rule.
+	AgentID string `json:"agent_id"`
+}
+
+// MergeChannelPoliciesIntoBindings converts OmnipusChannelPolicy routing rules
+// into AgentBinding entries and appends them to Bindings (if not already present).
+// Called automatically after config load so the existing RouteResolver picks them up.
+func (c *Config) MergeChannelPoliciesIntoBindings() {
+	for channelName, policy := range c.ChannelPolicies {
+		for _, rule := range policy.RoutingRules {
+			b := AgentBinding{
+				AgentID: rule.AgentID,
+				Match: BindingMatch{
+					Channel:   channelName,
+					AccountID: rule.UserID,
+				},
+			}
+			c.Bindings = append(c.Bindings, b)
+		}
+	}
 }
 
 // FilterSensitiveData filters sensitive values from content before sending to LLM.
@@ -179,8 +258,10 @@ type BuildInfo struct {
 	GoVersion string `json:"go_version"`
 }
 
-// MarshalJSON implements custom JSON marshaling for Config
-// to omit providers section when empty and session when empty
+// MarshalJSON implements custom JSON marshaling for Config.
+// It omits session when empty and merges back any unknown fields that were
+// collected during loading so that round-trip writes preserve forward-compat
+// keys (FR-004).
 func (c *Config) MarshalJSON() ([]byte, error) {
 	type Alias Config
 	aux := &struct {
@@ -195,7 +276,25 @@ func (c *Config) MarshalJSON() ([]byte, error) {
 		aux.Session = &c.Session
 	}
 
-	return json.Marshal(aux)
+	data, err := json.Marshal(aux)
+	if err != nil {
+		return nil, err
+	}
+
+	// Merge unknown fields back for round-trip safety (FR-004).
+	if len(c.UnknownFields) == 0 {
+		return data, nil
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		return data, nil // best-effort: return without merging
+	}
+	for k, v := range c.UnknownFields {
+		if _, exists := m[k]; !exists {
+			m[k] = v
+		}
+	}
+	return json.Marshal(m)
 }
 
 type AgentsConfig struct {
@@ -675,6 +774,15 @@ type ModelConfig struct {
 
 	APIKeys SecureStrings `json:"api_keys,omitzero" yaml:"api_keys,omitempty"` // API authentication keys (multiple keys for failover)
 
+	// APIKeyRef is an Omnipus-specific field that references a named credential in
+	// credentials.json (e.g. "ANTHROPIC_API_KEY"). At runtime the system resolves the
+	// reference, decrypts the value, and injects it via the process environment (SEC-22).
+	// Raw values must never appear here — use APIKeys for plaintext keys.
+	APIKeyRef string `json:"api_key_ref,omitempty" yaml:"api_key_ref,omitempty"`
+
+	// Name is an alias for ModelName used in some display contexts.
+	Name string `json:"name,omitempty" yaml:"name,omitempty"`
+
 	// isVirtual marks this model as a virtual model generated from multi-key expansion.
 	// Virtual models should not be persisted to config files.
 	isVirtual bool
@@ -1073,6 +1181,9 @@ func LoadConfig(path string) (*Config, error) {
 
 	// Migrate legacy channel config fields to new unified structures
 	cfg.migrateChannelConfigs()
+
+	// Merge Omnipus channel_policies routing rules into Bindings.
+	cfg.MergeChannelPoliciesIntoBindings()
 
 	// Validate model_list for uniqueness and required fields
 	if err := cfg.ValidateModelList(); err != nil {

@@ -7,6 +7,8 @@ package config
 
 import (
 	"encoding/json"
+	"log/slog"
+	"reflect"
 	"slices"
 	"strings"
 )
@@ -532,5 +534,43 @@ func loadConfig(data []byte) (*Config, error) {
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, err
 	}
+
+	// FR-004 / FR-027: detect unknown top-level fields, log them at debug level,
+	// and store them for round-trip preservation on SaveConfig.
+	detectUnknownConfigFields(data, cfg)
+
 	return cfg, nil
+}
+
+// detectUnknownConfigFields finds JSON keys not declared on the Config struct,
+// emits a slog.Debug per unknown key, and stores them in cfg.UnknownFields so
+// SaveConfig can write them back verbatim (round-trip safety per FR-004/FR-027).
+func detectUnknownConfigFields(data []byte, cfg *Config) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return // best-effort; parse errors already caught above
+	}
+
+	// Build set of known JSON field names from Config struct tags.
+	known := make(map[string]struct{})
+	t := reflect.TypeOf(Config{})
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		tag := strings.SplitN(f.Tag.Get("json"), ",", 2)[0]
+		if tag == "" || tag == "-" {
+			tag = f.Name
+		}
+		known[tag] = struct{}{}
+	}
+
+	for k, v := range raw {
+		if _, ok := known[k]; !ok {
+			slog.Debug("config: unknown field preserved for forward compatibility",
+				"field", k)
+			if cfg.UnknownFields == nil {
+				cfg.UnknownFields = make(map[string]json.RawMessage)
+			}
+			cfg.UnknownFields[k] = v
+		}
+	}
 }

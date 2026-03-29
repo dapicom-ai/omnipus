@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <!-- US-7: GitHub social preview — 1280x640, Deep Space Black bg, Forge Gold + Liquid Silver brand -->
+
+  <!-- Background -->
+  <rect width="1280" height="640" fill="#0a0a0b"/>
+
+  <!-- Subtle grid texture -->
+  <defs>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1a1a1e" stroke-width="1"/>
+    </pattern>
+    <radialGradient id="glow" cx="50%" cy="50%" r="60%">
+      <stop offset="0%" stop-color="#d4af37" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#0a0a0b" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1280" height="640" fill="url(#grid)"/>
+  <rect width="1280" height="640" fill="url(#glow)"/>
+
+  <!-- Octopus mascot (simplified, centered-left) -->
+  <!-- Head -->
+  <ellipse cx="380" cy="290" rx="110" ry="105" fill="#d4af37"/>
+  <!-- Mantle -->
+  <ellipse cx="380" cy="210" rx="62" ry="42" fill="#d4af37"/>
+  <!-- Eyes -->
+  <circle cx="348" cy="278" r="22" fill="#0a0a0b"/>
+  <circle cx="412" cy="278" r="22" fill="#0a0a0b"/>
+  <circle cx="354" cy="271" r="8" fill="#e2e8f0"/>
+  <circle cx="418" cy="271" r="8" fill="#e2e8f0"/>
+  <circle cx="358" cy="274" r="4" fill="#0a0a0b"/>
+  <circle cx="422" cy="274" r="4" fill="#0a0a0b"/>
+  <!-- Smile -->
+  <path d="M352 310 Q380 328 408 310" stroke="#0a0a0b" stroke-width="5" fill="none" stroke-linecap="round"/>
+  <!-- Tentacles -->
+  <path d="M300 370 Q265 430 280 500" stroke="#d4af37" stroke-width="22" fill="none" stroke-linecap="round"/>
+  <path d="M325 390 Q295 460 310 530" stroke="#d4af37" stroke-width="20" fill="none" stroke-linecap="round"/>
+  <path d="M355 400 Q345 475 355 545" stroke="#d4af37" stroke-width="19" fill="none" stroke-linecap="round"/>
+  <path d="M380 402 Q380 478 380 548" stroke="#d4af37" stroke-width="19" fill="none" stroke-linecap="round"/>
+  <path d="M405 400 Q415 475 405 545" stroke="#d4af37" stroke-width="19" fill="none" stroke-linecap="round"/>
+  <path d="M435 390 Q465 460 450 530" stroke="#d4af37" stroke-width="20" fill="none" stroke-linecap="round"/>
+  <path d="M460 370 Q495 430 480 500" stroke="#d4af37" stroke-width="22" fill="none" stroke-linecap="round"/>
+  <!-- Task icons held by tentacles -->
+  <!-- Lock icon -->
+  <rect x="255" y="505" width="32" height="26" rx="5" fill="#e2e8f0"/>
+  <path d="M263 505 L263 498 Q263 488 271 488 Q279 488 279 498 L279 505" stroke="#e2e8f0" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <!-- Check icon -->
+  <circle cx="322" cy="540" r="17" fill="#10b981"/>
+  <path d="M313 540 L319 546 L331 534" stroke="white" stroke-width="3.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Gear icon -->
+  <circle cx="448" cy="540" r="12" fill="none" stroke="#e2e8f0" stroke-width="4"/>
+  <circle cx="448" cy="540" r="5" fill="#e2e8f0"/>
+
+  <!-- Right side: Wordmark + tagline -->
+  <!-- "Omnipus" wordmark in Outfit Bold style -->
+  <text
+    x="700"
+    y="270"
+    font-family="'Outfit', 'Helvetica Neue', Arial, sans-serif"
+    font-size="96"
+    font-weight="700"
+    fill="#e2e8f0"
+    letter-spacing="-2"
+  >Omnipus</text>
+
+  <!-- Tagline in Inter -->
+  <text
+    x="700"
+    y="338"
+    font-family="'Inter', 'Helvetica Neue', Arial, sans-serif"
+    font-size="28"
+    font-weight="400"
+    fill="#d4af37"
+    letter-spacing="1"
+  >Elite Simplicity. Sovereign Control.</text>
+
+  <!-- Divider line -->
+  <line x1="700" y1="372" x2="1180" y2="372" stroke="#2d3748" stroke-width="1"/>
+
+  <!-- Descriptor copy -->
+  <text
+    x="700"
+    y="418"
+    font-family="'Inter', 'Helvetica Neue', Arial, sans-serif"
+    font-size="22"
+    font-weight="400"
+    fill="#4a5568"
+  >The autonomous command center with</text>
+  <text
+    x="700"
+    y="450"
+    font-family="'Inter', 'Helvetica Neue', Arial, sans-serif"
+    font-size="22"
+    font-weight="400"
+    fill="#4a5568"
+  >military-grade security.</text>
+
+  <!-- Feature pills -->
+  <rect x="700" y="488" width="180" height="34" rx="17" fill="#111113" stroke="#2d3748" stroke-width="1"/>
+  <text x="720" y="510" font-family="'Inter', sans-serif" font-size="13" fill="#e2e8f0" font-weight="500">Kernel Sandboxing</text>
+
+  <rect x="896" y="488" width="160" height="34" rx="17" fill="#111113" stroke="#2d3748" stroke-width="1"/>
+  <text x="916" y="510" font-family="'Inter', sans-serif" font-size="13" fill="#e2e8f0" font-weight="500">Single Go Binary</text>
+
+  <rect x="700" y="534" width="154" height="34" rx="17" fill="#111113" stroke="#2d3748" stroke-width="1"/>
+  <text x="720" y="556" font-family="'Inter', sans-serif" font-size="13" fill="#e2e8f0" font-weight="500">AES-256 Vault</text>
+
+  <rect x="870" y="534" width="192" height="34" rx="17" fill="#111113" stroke="#2d3748" stroke-width="1"/>
+  <text x="890" y="556" font-family="'Inter', sans-serif" font-size="13" fill="#e2e8f0" font-weight="500">Multi-Agent Orchestration</text>
+
+  <!-- Domain -->
+  <text
+    x="700"
+    y="610"
+    font-family="'Inter', 'Helvetica Neue', Arial, sans-serif"
+    font-size="18"
+    font-weight="400"
+    fill="#2d3748"
+  >omnipus.ai</text>
+</svg>

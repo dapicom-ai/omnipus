@@ -1,0 +1,45 @@
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+import { TanStackRouterVite } from '@tanstack/router-vite-plugin'
+import { fileURLToPath, URL } from 'url'
+
+// SPA build — embedded into Go binary via go:embed (hash routing required)
+export default defineConfig({
+  plugins: [
+    tailwindcss(),
+    react(),
+    TanStackRouterVite(),
+  ],
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    },
+  },
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: ['./src/test/setup.ts'],
+    include: ['src/**/*.test.{ts,tsx}'],
+    css: false,
+    pool: 'forks',
+    poolOptions: {
+      forks: {
+        singleFork: true,
+      },
+    },
+  },
+  build: {
+    outDir: 'dist/spa',
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ['react', 'react-dom'],
+          router: ['@tanstack/react-router'],
+          motion: ['framer-motion'],
+          icons: ['@phosphor-icons/react'],
+        },
+      },
+    },
+  },
+})

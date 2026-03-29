@@ -2,6 +2,8 @@ package session
 
 import (
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -195,13 +197,13 @@ func (sm *SessionManager) Save(key string) error {
 
 	data, err := json.MarshalIndent(snapshot, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("session: marshal %q: %w", key, err)
 	}
 
 	sessionPath := filepath.Join(sm.storage, filename+".json")
 	tmpFile, err := os.CreateTemp(sm.storage, "session-*.tmp")
 	if err != nil {
-		return err
+		return fmt.Errorf("session: create temp file for %q: %w", key, err)
 	}
 
 	tmpPath := tmpFile.Name()
@@ -214,22 +216,22 @@ func (sm *SessionManager) Save(key string) error {
 
 	if _, err := tmpFile.Write(data); err != nil {
 		_ = tmpFile.Close()
-		return err
+		return fmt.Errorf("session: write temp file for %q: %w", key, err)
 	}
 	if err := tmpFile.Chmod(0o600); err != nil {
 		_ = tmpFile.Close()
-		return err
+		return fmt.Errorf("session: chmod temp file for %q: %w", key, err)
 	}
 	if err := tmpFile.Sync(); err != nil {
 		_ = tmpFile.Close()
-		return err
+		return fmt.Errorf("session: sync temp file for %q: %w", key, err)
 	}
 	if err := tmpFile.Close(); err != nil {
-		return err
+		return fmt.Errorf("session: close temp file for %q: %w", key, err)
 	}
 
 	if err := os.Rename(tmpPath, sessionPath); err != nil {
-		return err
+		return fmt.Errorf("session: rename temp file for %q: %w", key, err)
 	}
 	cleanup = false
 	return nil
@@ -238,7 +240,7 @@ func (sm *SessionManager) Save(key string) error {
 func (sm *SessionManager) loadSessions() error {
 	files, err := os.ReadDir(sm.storage)
 	if err != nil {
-		return err
+		return fmt.Errorf("session: read storage dir %q: %w", sm.storage, err)
 	}
 
 	for _, file := range files {
@@ -253,11 +255,13 @@ func (sm *SessionManager) loadSessions() error {
 		sessionPath := filepath.Join(sm.storage, file.Name())
 		data, err := os.ReadFile(sessionPath)
 		if err != nil {
+			slog.Warn("session: skipping unreadable session file", "path", sessionPath, "error", err)
 			continue
 		}
 
 		var session Session
 		if err := json.Unmarshal(data, &session); err != nil {
+			slog.Warn("session: skipping corrupt session file", "path", sessionPath, "error", err)
 			continue
 		}
 

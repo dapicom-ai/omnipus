@@ -3,6 +3,8 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -13,6 +15,8 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
+	"github.com/dapicom-ai/omnipus/pkg/datamodel"
+	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/dingtalk"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/discord"
@@ -59,6 +63,9 @@ type services struct {
 	ChannelManager   *channels.Manager
 	DeviceService    *devices.Service
 	HealthServer     *health.Server
+	// PartitionStore is the primary Omnipus day-partitioned session backend (US-5).
+	// Initialized per default agent workspace during setupAndStartServices.
+	PartitionStore   *session.PartitionStore
 	manualReloadChan chan struct{}
 	reloading        atomic.Bool
 }
@@ -83,6 +90,11 @@ func (p *startupBlockedProvider) GetDefaultModel() string {
 
 // Run starts the gateway runtime using the configuration loaded from configPath.
 func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error {
+	// Bootstrap ~/.omnipus/ directory tree on every start (idempotent, US-1).
+	if err := datamodel.Init(homePath); err != nil {
+		return fmt.Errorf("directory initialization failed: %w", err)
+	}
+
 	panicPath := filepath.Join(homePath, logPath, panicFile)
 	panicFunc, err := logger.InitPanic(panicPath)
 	if err != nil {
@@ -133,7 +145,7 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 			"skills_available": skillsInfo["available"],
 		})
 
-	runningServices, err := setupAndStartServices(cfg, agentLoop, msgBus)
+	runningServices, err := setupAndStartServices(cfg, agentLoop, msgBus, homePath)
 	if err != nil {
 		return err
 	}
@@ -180,7 +192,7 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 		select {
 		case <-sigChan:
 			logger.Info("Shutting down...")
-			shutdownGateway(runningServices, agentLoop, provider, true)
+			omnipusGracefulShutdown(runningServices, agentLoop, provider)
 			return nil
 		case newCfg := <-configReloadChan:
 			if !runningServices.reloading.CompareAndSwap(false, true) {
@@ -248,6 +260,7 @@ func setupAndStartServices(
 	cfg *config.Config,
 	agentLoop *agent.AgentLoop,
 	msgBus *bus.MessageBus,
+	homePath string,
 ) (*services, error) {
 	runningServices := &services{}
 
@@ -316,6 +329,34 @@ func setupAndStartServices(
 	addr := fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
 	runningServices.HealthServer = health.NewServer(cfg.Gateway.Host, cfg.Gateway.Port)
 	runningServices.ChannelManager.SetupHTTPServer(addr, runningServices.HealthServer)
+
+	// Initialize PartitionStore for the default agent workspace (US-5).
+	// Uses "default" as the agent ID when no agents are configured.
+	defaultAgentID := "default"
+	if len(cfg.Agents.List) > 0 {
+		defaultAgentID = cfg.Agents.List[0].ID
+	}
+	if err := datamodel.InitAgentWorkspace(homePath, defaultAgentID); err != nil {
+		slog.Warn("gateway: could not init agent workspace for partition store", "agent_id", defaultAgentID, "error", err)
+	} else {
+		agentWorkspace := datamodel.AgentWorkspacePath(homePath, defaultAgentID)
+		runningServices.PartitionStore = session.NewPartitionStore(agentWorkspace, defaultAgentID)
+		slog.Info("gateway: day-partitioned session store initialized", "agent_id", defaultAgentID)
+	}
+
+	// Register SSE chat endpoint (US-8: streaming response output).
+	allowedOrigin := fmt.Sprintf("http://%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
+	sseHandler := newSSEHandler(msgBus, runningServices.PartitionStore, allowedOrigin)
+	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/chat", sseHandler)
+
+	// Register placeholder REST routes — Wave 1 stubs (return 501 Not Implemented).
+	// These will be implemented in subsequent waves.
+	notImplemented := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "not implemented", http.StatusNotImplemented)
+	})
+	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions", notImplemented)
+	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/agents", notImplemented)
+	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/config", notImplemented)
 
 	if err = runningServices.ChannelManager.StartAll(context.Background()); err != nil {
 		return nil, fmt.Errorf("error starting channels: %w", err)

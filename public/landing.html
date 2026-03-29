@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Omnipus — Elite Simplicity. Sovereign Control.</title>
+    <meta name="description" content="The autonomous command center with military-grade security. Hire AI agents safely. Pay for outcomes. Retain full control." />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Omnipus — Elite Simplicity. Sovereign Control." />
+    <meta property="og:description" content="Hire AI agents safely. Pay for outcomes. Retain full control." />
+    <meta property="og:image" content="/social-preview.png" />
+    <meta property="og:image:width" content="1280" />
+    <meta property="og:image:height" content="640" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!--
+      FR-022: This page is fully static HTML+CSS — all content readable with JS disabled.
+      The React SPA at /#/ provides the interactive app; this page is the marketing site.
+      For production (omnipus.ai), serve this file as the root index.html via your CDN.
+    -->
+    <style>
+      /* Sovereign Deep design tokens — inlined so no external CSS required */
+      :root {
+        --color-primary: #0a0a0b;
+        --color-secondary: #e2e8f0;
+        --color-accent: #d4af37;
+        --color-accent-hover: #c49e2f;
+        --color-success: #10b981;
+        --color-error: #ef4444;
+        --color-surface-1: #111113;
+        --color-surface-2: #1a1a1e;
+        --color-muted: #4a5568;
+        --color-border: #2d3748;
+        --font-headline: 'Outfit', system-ui, -apple-system, sans-serif;
+        --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+      }
+
+      *, *::before, *::after { box-sizing: border-box; }
+
+      html {
+        font-size: 16px;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      body {
+        margin: 0;
+        background-color: var(--color-primary);
+        color: var(--color-secondary);
+        font-family: var(--font-body);
+        line-height: 1.6;
+      }
+
+      /* --- Hero --- */
+      .hero {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+        padding: 5rem 1.5rem;
+        text-align: center;
+        gap: 2rem;
+      }
+
+      .hero-logo {
+        width: 96px;
+        height: 96px;
+        filter: drop-shadow(0 25px 50px rgba(0,0,0,.5));
+      }
+
+      .hero-title {
+        font-family: var(--font-headline);
+        font-size: clamp(3rem, 8vw, 5rem);
+        font-weight: 700;
+        color: var(--color-secondary);
+        margin: 0 0 .5rem;
+        line-height: 1.1;
+      }
+
+      .hero-tagline {
+        font-family: var(--font-headline);
+        font-size: clamp(1.125rem, 3vw, 1.5rem);
+        font-weight: 700;
+        color: var(--color-accent);
+        margin: 0 0 1rem;
+      }
+
+      .hero-desc {
+        color: var(--color-muted);
+        font-size: 1.125rem;
+        max-width: 38rem;
+        margin: 0;
+      }
+
+      .cta-group {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1rem;
+        justify-content: center;
+        margin-top: 1rem;
+      }
+
+      .btn-primary {
+        display: inline-flex;
+        align-items: center;
+        gap: .5rem;
+        padding: .75rem 1.5rem;
+        border-radius: .5rem;
+        background: var(--color-accent);
+        color: var(--color-primary);
+        font-family: var(--font-headline);
+        font-weight: 700;
+        font-size: 1rem;
+        text-decoration: none;
+        transition: background .15s;
+      }
+      .btn-primary:hover { background: var(--color-accent-hover); }
+
+      .btn-secondary {
+        display: inline-flex;
+        align-items: center;
+        gap: .5rem;
+        padding: .75rem 1.5rem;
+        border-radius: .5rem;
+        border: 1px solid var(--color-border);
+        color: var(--color-secondary);
+        font-size: 1rem;
+        font-weight: 500;
+        text-decoration: none;
+        transition: background .15s;
+      }
+      .btn-secondary:hover { background: var(--color-surface-2); }
+
+      /* --- Features --- */
+      .features {
+        padding: 5rem 1.5rem;
+        max-width: 72rem;
+        margin: 0 auto;
+      }
+
+      .features h2 {
+        font-family: var(--font-headline);
+        font-size: clamp(1.75rem, 4vw, 2.5rem);
+        font-weight: 700;
+        text-align: center;
+        margin: 0 0 .75rem;
+      }
+
+      .features-desc {
+        color: var(--color-muted);
+        text-align: center;
+        font-size: 1.125rem;
+        max-width: 38rem;
+        margin: 0 auto 4rem;
+      }
+
+      .features-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 1.5rem;
+      }
+
+      .feature-card {
+        background: var(--color-surface-1);
+        border: 1px solid var(--color-border);
+        border-radius: .75rem;
+        padding: 1.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+
+      .feature-icon {
+        font-size: 1.75rem;
+        line-height: 1;
+      }
+
+      .feature-card h3 {
+        font-family: var(--font-headline);
+        font-size: 1.125rem;
+        font-weight: 700;
+        margin: 0;
+      }
+
+      .feature-card p {
+        color: var(--color-muted);
+        font-size: .875rem;
+        line-height: 1.6;
+        margin: 0;
+      }
+
+      /* --- Footer --- */
+      footer {
+        border-top: 1px solid var(--color-border);
+        padding: 2.5rem 1.5rem;
+      }
+
+      .footer-inner {
+        max-width: 72rem;
+        margin: 0 auto;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+
+      .footer-brand {
+        display: flex;
+        align-items: center;
+        gap: .75rem;
+        font-family: var(--font-headline);
+        font-weight: 700;
+      }
+
+      .footer-brand img { width: 2rem; height: 2rem; }
+
+      .footer-links {
+        display: flex;
+        align-items: center;
+        gap: 1.5rem;
+        font-size: .875rem;
+        color: var(--color-muted);
+      }
+
+      .footer-links a {
+        color: inherit;
+        text-decoration: none;
+        transition: color .15s;
+      }
+      .footer-links a:hover { color: var(--color-secondary); }
+
+      .footer-copy {
+        font-size: .875rem;
+        color: var(--color-muted);
+        margin: 0;
+      }
+
+      @media (max-width: 640px) {
+        .hero-logo { width: 72px; height: 72px; }
+        .footer-inner { flex-direction: column; text-align: center; }
+      }
+    </style>
+  </head>
+  <body>
+
+    <!-- Hero — FR-022: all content static, no JS required -->
+    <section class="hero">
+      <img
+        src="/src/assets/logo/omnipus-avatar.svg"
+        alt="Omnipus mascot — Master Tasker"
+        class="hero-logo"
+        onerror="this.style.display='none'"
+      />
+      <div>
+        <h1 class="hero-title">Omnipus</h1>
+        <p class="hero-tagline">Elite Simplicity. Sovereign Control.</p>
+        <p class="hero-desc">
+          The autonomous command center with military-grade security.
+          Hire AI agents safely. Pay for outcomes. Retain full control.
+        </p>
+      </div>
+      <div class="cta-group">
+        <a
+          href="https://github.com/omnipus-ai/omnipus"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="btn-primary"
+        >
+          <!-- Inline SVG avoids external icon library dependency -->
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 256 256" fill="currentColor" aria-hidden="true">
+            <path d="M208.31,75.68A59.78,59.78,0,0,0,202.93,28,8,8,0,0,0,196,24a59.75,59.75,0,0,0-48,24H124A59.75,59.75,0,0,0,76,24a8,8,0,0,0-6.93,4,59.78,59.78,0,0,0-5.38,47.68A58.14,58.14,0,0,0,56,104v8a56.06,56.06,0,0,0,48.44,55.47A39.8,39.8,0,0,0,96,192v8H72a24,24,0,0,1-24-24,40,40,0,0,0-40-40,8,8,0,0,0,0,16,24,24,0,0,1,24,24,40,40,0,0,0,40,40H96v16a8,8,0,0,0,16,0V192a24,24,0,0,1,48,0v40a8,8,0,0,0,16,0V192a39.8,39.8,0,0,0-8.44-24.53A56.06,56.06,0,0,0,216,112v-8A58.14,58.14,0,0,0,208.31,75.68Z"/>
+          </svg>
+          View on GitHub
+        </a>
+        <a href="/#/" class="btn-secondary">Open App</a>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section class="features">
+      <h2>Built for professionals who demand more</h2>
+      <p class="features-desc">Every feature is a deliberate choice. Nothing is bolted on.</p>
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon" aria-hidden="true" style="color:#d4af37">&#9632;</div>
+          <h3>Kernel-Level Sandboxing</h3>
+          <p>Landlock + seccomp on Linux. Job Objects + Restricted Tokens on Windows. Your agents operate in security boundaries by default.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon" aria-hidden="true" style="color:#d4af37">&#9632;</div>
+          <h3>Multi-Agent Orchestration</h3>
+          <p>Spawn, coordinate, and monitor fleets of specialized agents working in parallel on complex tasks.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon" aria-hidden="true" style="color:#d4af37">&#9632;</div>
+          <h3>Single Binary Deployment</h3>
+          <p>One Go binary. Embedded web UI. No Docker, no node_modules, no runtime dependencies. Runs anywhere.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon" aria-hidden="true" style="color:#d4af37">&#9632;</div>
+          <h3>AES-256 Credential Vault</h3>
+          <p>Credentials encrypted with AES-256-GCM and Argon2id KDF. Never stored in plaintext. Never in config files.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon" aria-hidden="true" style="color:#d4af37">&#9632;</div>
+          <h3>Zero-IPC Go Channels</h3>
+          <p>Built-in channels (Discord, Slack, Telegram, WhatsApp) compiled directly into the binary. Zero inter-process overhead.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon" aria-hidden="true" style="color:#d4af37">&#9632;</div>
+          <h3>Multi-Variant Architecture</h3>
+          <p>Open Source, Desktop, and Cloud variants sharing the same agentic core and component library.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+      <div class="footer-inner">
+        <div class="footer-brand">
+          <img src="/src/assets/logo/omnipus-avatar.svg" alt="Omnipus" onerror="this.style.display='none'" />
+          Omnipus
+        </div>
+        <nav class="footer-links" aria-label="Footer links">
+          <a href="https://github.com/omnipus-ai/omnipus" target="_blank" rel="noopener noreferrer">GitHub</a>
+          <a href="#docs">Documentation</a>
+        </nav>
+        <p class="footer-copy">&copy; 2026 Omnipus. MIT License.</p>
+      </div>
+    </footer>
+
+  </body>
+</html>

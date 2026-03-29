@@ -16,6 +16,7 @@ import (
 	"github.com/dapicom-ai/omnipus/cmd/omnipus/internal/agent"
 	"github.com/dapicom-ai/omnipus/cmd/omnipus/internal/auth"
 	"github.com/dapicom-ai/omnipus/cmd/omnipus/internal/cron"
+	credcmd "github.com/dapicom-ai/omnipus/cmd/omnipus/internal/credentials"
 	"github.com/dapicom-ai/omnipus/cmd/omnipus/internal/gateway"
 	"github.com/dapicom-ai/omnipus/cmd/omnipus/internal/migrate"
 	"github.com/dapicom-ai/omnipus/cmd/omnipus/internal/model"
@@ -39,6 +40,7 @@ func NewOmnipusCommand() *cobra.Command {
 		onboard.NewOnboardCommand(),
 		agent.NewAgentCommand(),
 		auth.NewAuthCommand(),
+		credcmd.NewCredentialsCommand(),
 		gateway.NewGatewayCommand(),
 		status.NewStatusCommand(),
 		cron.NewCronCommand(),
@@ -51,21 +53,7 @@ func NewOmnipusCommand() *cobra.Command {
 	return cmd
 }
 
-const (
-	colorBlue = "\033[1;38;2;62;93;185m"
-	colorRed  = "\033[1;38;2;213;70;70m"
-	banner    = "\r\n" +
-		colorBlue + "██████╗ ██╗ ██████╗ ██████╗ " + colorRed + " ██████╗██╗      █████╗ ██╗    ██╗\n" +
-		colorBlue + "██╔══██╗██║██╔════╝██╔═══██╗" + colorRed + "██╔════╝██║     ██╔══██╗██║    ██║\n" +
-		colorBlue + "██████╔╝██║██║     ██║   ██║" + colorRed + "██║     ██║     ███████║██║ █╗ ██║\n" +
-		colorBlue + "██╔═══╝ ██║██║     ██║   ██║" + colorRed + "██║     ██║     ██╔══██║██║███╗██║\n" +
-		colorBlue + "██║     ██║╚██████╗╚██████╔╝" + colorRed + "╚██████╗███████╗██║  ██║╚███╔███╔╝\n" +
-		colorBlue + "╚═╝     ╚═╝ ╚═════╝ ╚═════╝ " + colorRed + " ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝\n " +
-		"\033[0m\r\n"
-)
-
 func main() {
-	fmt.Printf("%s", banner)
 	cmd := NewOmnipusCommand()
 	if err := cmd.Execute(); err != nil {
 		os.Exit(1)

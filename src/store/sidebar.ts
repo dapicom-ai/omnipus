@@ -1,0 +1,68 @@
+import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
+
+interface SidebarStore {
+  isOpen: boolean
+  isPinned: boolean
+  open: () => void
+  close: () => void
+  toggle: () => void
+  pin: () => void
+  unpin: () => void
+  togglePin: () => void
+}
+
+export const useSidebarStore = create<SidebarStore>()(
+  persist(
+    (set, get) => ({
+      isOpen: false,
+      // US-5: pin preference persists via localStorage
+      isPinned: false,
+
+      open: () => set({ isOpen: true }),
+      close: () => set((s) => s.isPinned ? {} : { isOpen: false }),
+      toggle: () => set((s) => ({ isOpen: !s.isOpen })),
+
+      pin: () => set({ isPinned: true, isOpen: true }),
+      unpin: () => set({ isPinned: false }),
+      togglePin: () => {
+        const { isPinned } = get()
+        if (isPinned) {
+          set({ isPinned: false })
+        } else {
+          set({ isPinned: true, isOpen: true })
+        }
+      },
+    }),
+    {
+      name: 'omnipus-sidebar',
+      // US-5: handle localStorage unavailability gracefully (private browsing)
+      storage: {
+        getItem: (name) => {
+          try {
+            const value = localStorage.getItem(name)
+            return value ? JSON.parse(value) : null
+          } catch {
+            return null
+          }
+        },
+        setItem: (name, value) => {
+          try {
+            localStorage.setItem(name, JSON.stringify(value))
+          } catch {
+            // localStorage unavailable — silent fail, no persistence
+          }
+        },
+        removeItem: (name) => {
+          try {
+            localStorage.removeItem(name)
+          } catch {
+            // silent fail
+          }
+        },
+      },
+      // Only persist the pin preference, not open/close state
+      partialize: (state) => ({ isPinned: state.isPinned }) as SidebarStore,
+    }
+  )
+)

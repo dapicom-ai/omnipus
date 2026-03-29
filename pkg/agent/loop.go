@@ -1358,6 +1358,14 @@ func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.Resolv
 		agent = registry.GetDefaultAgent()
 	}
 	if agent == nil {
+		// FR-015: log unroutable message with structured context before rejecting.
+		logger.WarnCF("agent", "Unroutable message rejected — no matching agent and no default",
+			map[string]any{
+				"channel":        msg.Channel,
+				"sender_id":      msg.SenderID,
+				"chat_id":        msg.ChatID,
+				"resolved_agent": route.AgentID,
+			})
 		return routing.ResolvedRoute{}, nil, fmt.Errorf("no agent available for route (agent_id=%s)", route.AgentID)
 	}
 

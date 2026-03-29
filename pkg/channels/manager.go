@@ -482,6 +482,14 @@ func (m *Manager) registerChannelHTTPHandler(name string, ch Channel) {
 	}
 }
 
+// RegisterHTTPHandler registers an arbitrary HTTP handler at the given path pattern
+// on the shared mux. Must be called after SetupHTTPServer.
+func (m *Manager) RegisterHTTPHandler(pattern string, handler http.Handler) {
+	if m.mux != nil {
+		m.mux.Handle(pattern, handler)
+	}
+}
+
 // unregisterChannelHTTPHandler removes the webhook/health handlers for a
 // single channel from m.mux.
 func (m *Manager) unregisterChannelHTTPHandler(name string, ch Channel) {

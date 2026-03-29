@@ -1,0 +1,270 @@
+// Omnipus - Ultra-lightweight personal AI agent
+// License: MIT
+// Copyright (c) 2026 Omnipus contributors
+
+// Package session provides day-partitioned JSONL session storage per
+// Appendix E §E.5 and Wave 1 user story US-5.
+package session
+
+import (
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"math/rand"
+	"os"
+	"path/filepath"
+	"slices"
+	"sync"
+	"time"
+
+	"github.com/oklog/ulid/v2"
+
+	"github.com/dapicom-ai/omnipus/pkg/fileutil"
+)
+
+// PartitionStore manages day-partitioned JSONL session transcripts per Appendix E §E.5.
+type PartitionStore struct {
+	mu      sync.Mutex
+	agentID string
+	baseDir string // ~/.omnipus/agents/<agentID>/sessions/
+}
+
+// NewPartitionStore returns a PartitionStore for the given agent workspace.
+func NewPartitionStore(agentWorkspaceDir, agentID string) *PartitionStore {
+	return &PartitionStore{
+		agentID: agentID,
+		baseDir: filepath.Join(agentWorkspaceDir, "sessions"),
+	}
+}
+
+// SessionMeta is the meta.json file per Appendix E §E.5.1.
+type SessionMeta struct {
+	ID         string       `json:"id"`
+	AgentID    string       `json:"agent_id"`
+	Title      string       `json:"title,omitempty"`
+	Status     string       `json:"status"` // "active" | "archived"
+	CreatedAt  time.Time    `json:"created_at"`
+	UpdatedAt  time.Time    `json:"updated_at"`
+	Model      string       `json:"model,omitempty"`
+	Provider   string       `json:"provider,omitempty"`
+	Stats      SessionStats `json:"stats"`
+	ProjectID  string       `json:"project_id,omitempty"`
+	TaskID     string       `json:"task_id,omitempty"`
+	Channel    string       `json:"channel"`
+	Partitions []string     `json:"partitions"`
+
+	LastCompactionSummary string `json:"last_compaction_summary,omitempty"`
+}
+
+// SessionStats aggregates usage across all partitions.
+type SessionStats struct {
+	TokensIn     int     `json:"tokens_in"`
+	TokensOut    int     `json:"tokens_out"`
+	TokensTotal  int     `json:"tokens_total"`
+	Cost         float64 `json:"cost"`
+	ToolCalls    int     `json:"tool_calls"`
+	MessageCount int     `json:"message_count"`
+}
+
+// TranscriptEntry represents one line in a partition JSONL file.
+type TranscriptEntry struct {
+	ID          string        `json:"id"`
+	Type        string        `json:"type,omitempty"` // "message" | "compaction" | "system"; empty = message
+	Role        string        `json:"role,omitempty"` // "user" | "assistant" | "system"
+	Content     string        `json:"content,omitempty"`
+	Summary     string        `json:"summary,omitempty"` // for compaction entries
+	Timestamp   time.Time     `json:"timestamp"`
+	Tokens      int           `json:"tokens,omitempty"`
+	Cost        float64       `json:"cost,omitempty"`
+	Status      string        `json:"status,omitempty"` // "ok" | "error" | "interrupted"
+	Attachments []Attachment  `json:"attachments,omitempty"`
+	ToolCalls   []ToolCall    `json:"tool_calls,omitempty"`
+
+	// For compaction entries.
+	MessagesCompacted int `json:"messages_compacted,omitempty"`
+}
+
+// Attachment represents a file attached to a message.
+type Attachment struct {
+	Type     string `json:"type"`
+	Path     string `json:"path"`
+	Size     int64  `json:"size"`
+	MIMEType string `json:"mime_type"`
+}
+
+// ToolCall represents one tool invocation within a message.
+type ToolCall struct {
+	ID         string         `json:"id"`
+	Tool       string         `json:"tool"`
+	Status     string         `json:"status"` // "success" | "error" | "pending" | "denied"
+	DurationMS int64          `json:"duration_ms,omitempty"`
+	Parameters map[string]any `json:"parameters,omitempty"`
+	Result     map[string]any `json:"result,omitempty"`
+}
+
+// NewSessionID generates a ULID-based session ID prefixed with "session_".
+// Returns an error instead of panicking if ULID generation fails.
+func NewSessionID() (string, error) {
+	entropy := rand.New(rand.NewSource(time.Now().UnixNano())) //nolint:gosec // non-security context
+	id, err := ulid.New(ulid.Timestamp(time.Now()), entropy)
+	if err != nil {
+		return "", fmt.Errorf("session: generate ULID: %w", err)
+	}
+	return "session_" + id.String(), nil
+}
+
+// NewSession creates a new session directory, writes meta.json, and returns the metadata.
+// Implements US-5 AC1.
+func (ps *PartitionStore) NewSession(channel, model, provider string) (*SessionMeta, error) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	now := time.Now().UTC()
+	sessionID, err := NewSessionID()
+	if err != nil {
+		return nil, err
+	}
+	meta := &SessionMeta{
+		ID:        sessionID,
+		AgentID:   ps.agentID,
+		Status:    "active",
+		CreatedAt: now,
+		UpdatedAt: now,
+		Model:     model,
+		Provider:  provider,
+		Channel:   channel,
+	}
+
+	sessionDir := filepath.Join(ps.baseDir, meta.ID)
+	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
+		return nil, fmt.Errorf("session: create dir %q: %w", sessionDir, err)
+	}
+
+	if err := writeMeta(sessionDir, meta); err != nil {
+		return nil, err
+	}
+
+	slog.Debug("session: created", "id", meta.ID, "agent", ps.agentID, "channel", channel)
+	return meta, nil
+}
+
+// AppendMessage appends a transcript entry to the correct day partition and
+// updates meta.json stats. Creates a new partition file when the date changes.
+// Implements US-5 AC2, AC3, AC4.
+func (ps *PartitionStore) AppendMessage(sessionID string, entry TranscriptEntry) error {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	sessionDir := filepath.Join(ps.baseDir, sessionID)
+	meta, err := readMeta(sessionDir)
+	if err != nil {
+		return err
+	}
+
+	// Determine partition file for entry's timestamp (UTC day boundary).
+	ts := entry.Timestamp
+	if ts.IsZero() {
+		ts = time.Now().UTC()
+		entry.Timestamp = ts
+	}
+	partitionName := ts.UTC().Format("2006-01-02") + ".jsonl"
+	partitionPath := filepath.Join(sessionDir, partitionName)
+
+	// Register partition in meta if new.
+	if !slices.Contains(meta.Partitions, partitionName) {
+		meta.Partitions = append(meta.Partitions, partitionName)
+	}
+
+	// Append entry to JSONL partition (O_APPEND, atomic per POSIX).
+	if err := fileutil.AppendJSONL(partitionPath, entry); err != nil {
+		return fmt.Errorf("session: append to partition %q: %w", partitionPath, err)
+	}
+
+	// Update aggregated stats. Assistant messages contribute to TokensOut;
+	// all other roles (user, system) contribute to TokensIn (FR-013).
+	if entry.Role == "assistant" {
+		meta.Stats.TokensOut += entry.Tokens
+	} else {
+		meta.Stats.TokensIn += entry.Tokens
+	}
+	meta.Stats.TokensTotal += entry.Tokens
+	meta.Stats.Cost += entry.Cost
+	meta.Stats.ToolCalls += len(entry.ToolCalls)
+	if entry.Type == "" || entry.Type == "message" {
+		meta.Stats.MessageCount++
+	}
+	meta.UpdatedAt = ts
+
+	return writeMeta(sessionDir, meta)
+}
+
+// UpdateStats atomically updates the session stats (e.g., after a streaming
+// response completes with final token counts).
+func (ps *PartitionStore) UpdateStats(sessionID string, delta SessionStats) error {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	sessionDir := filepath.Join(ps.baseDir, sessionID)
+	meta, err := readMeta(sessionDir)
+	if err != nil {
+		return err
+	}
+
+	meta.Stats.TokensIn += delta.TokensIn
+	meta.Stats.TokensOut += delta.TokensOut
+	meta.Stats.TokensTotal += delta.TokensIn + delta.TokensOut
+	meta.Stats.Cost += delta.Cost
+	meta.Stats.ToolCalls += delta.ToolCalls
+	meta.Stats.MessageCount += delta.MessageCount
+	meta.UpdatedAt = time.Now().UTC()
+
+	return writeMeta(sessionDir, meta)
+}
+
+// SetStatus updates the session status (e.g., "archived", "interrupted").
+func (ps *PartitionStore) SetStatus(sessionID, status string) error {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	sessionDir := filepath.Join(ps.baseDir, sessionID)
+	meta, err := readMeta(sessionDir)
+	if err != nil {
+		return err
+	}
+	meta.Status = status
+	meta.UpdatedAt = time.Now().UTC()
+	return writeMeta(sessionDir, meta)
+}
+
+// GetMeta returns the metadata for sessionID.
+func (ps *PartitionStore) GetMeta(sessionID string) (*SessionMeta, error) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+	return readMeta(filepath.Join(ps.baseDir, sessionID))
+}
+
+// readMeta reads meta.json from sessionDir.
+func readMeta(sessionDir string) (*SessionMeta, error) {
+	data, err := os.ReadFile(filepath.Join(sessionDir, "meta.json"))
+	if err != nil {
+		return nil, fmt.Errorf("session: read meta.json in %q: %w", sessionDir, err)
+	}
+	var meta SessionMeta
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return nil, fmt.Errorf("session: parse meta.json in %q: %w", sessionDir, err)
+	}
+	return &meta, nil
+}
+
+// writeMeta writes meta atomically to sessionDir/meta.json.
+func writeMeta(sessionDir string, meta *SessionMeta) error {
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("session: marshal meta: %w", err)
+	}
+	path := filepath.Join(sessionDir, "meta.json")
+	if err := fileutil.WriteFileAtomic(path, data, 0o600); err != nil {
+		return fmt.Errorf("session: write meta.json: %w", err)
+	}
+	return nil
+}

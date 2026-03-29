@@ -8,7 +8,9 @@
 package fileutil
 
 import (
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -106,10 +108,12 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
 
-	// Sync directory to ensure rename is durable
-	// This prevents the renamed file from disappearing after a crash
+	// Sync directory to ensure rename is durable.
+	// This prevents the renamed file from disappearing after a crash.
 	if dirFile, err := os.Open(dir); err == nil {
-		_ = dirFile.Sync()
+		if syncErr := dirFile.Sync(); syncErr != nil {
+			slog.Warn("fileutil: dir sync after write failed", "dir", dir, "error", syncErr)
+		}
 		dirFile.Close()
 	}
 
@@ -121,7 +125,61 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 func CopyFile(src, dst string, perm os.FileMode) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
-		return err
+		return fmt.Errorf("fileutil: read source file %q: %w", src, err)
 	}
 	return WriteFileAtomic(dst, data, perm)
+}
+
+// AppendJSONL appends a single JSON-encoded record followed by a newline to a
+// JSONL file. The file is opened with O_APPEND|O_CREATE. On Linux, the kernel
+// sets the write offset atomically to end-of-file before each write when
+// O_APPEND is set, so concurrent goroutines writing to the same file will not
+// interleave as long as each write is a single syscall (which a marshalled JSON
+// line always is).
+//
+// The directory is created if it does not exist.
+func AppendJSONL(path string, record any) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("fileutil: create dir for jsonl: %w", err)
+	}
+
+	data, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("fileutil: marshal jsonl record: %w", err)
+	}
+	// Append record + newline in one write to stay atomic on Linux.
+	line := append(data, '\n')
+
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	if err != nil {
+		return fmt.Errorf("fileutil: open jsonl file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := f.Write(line); err != nil {
+		return fmt.Errorf("fileutil: append jsonl record: %w", err)
+	}
+	return nil
+}
+
+// WithFlock acquires an OS-level advisory write lock on path before calling fn,
+// then releases it. This is defence-in-depth alongside single-writer goroutines
+// for shared files (config.json, credentials.json).
+//
+// On platforms where syscall.Flock is unavailable the fn is called without
+// locking (graceful degradation).
+func WithFlock(path string, fn func() error) error {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return fmt.Errorf("fileutil: open for flock %q: %w", path, err)
+	}
+	defer f.Close()
+
+	if err := flockExclusive(f); err != nil {
+		return fmt.Errorf("fileutil: acquire flock %q: %w", path, err)
+	}
+	defer flockUnlock(f) //nolint:errcheck
+
+	return fn()
 }

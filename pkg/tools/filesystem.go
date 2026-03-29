@@ -73,7 +73,30 @@ func validatePathWithAllowPaths(path, workspace string, restrict bool, patterns 
 		}
 	}
 
+	// FR-017: deny access to another agent's workspace even when restrict=false.
+	// Derives the agents directory from the current workspace (its parent) and
+	// blocks any path that lives under a sibling agent directory.
+	if workspace != "" && isCrossAgentPath(absPath, absWorkspace) {
+		return "", fmt.Errorf("access denied: path is inside another agent's workspace")
+	}
+
 	return absPath, nil
+}
+
+// isCrossAgentPath returns true when absPath is under a sibling agent workspace.
+// It assumes the layout: <home>/agents/<agent-id>/ so the agents root is the
+// grandparent of the current workspace.
+// Example: workspace=~/.omnipus/agents/agent-A, absPath=~/.omnipus/agents/agent-B/x
+// → agentsRoot = ~/.omnipus/agents, under agentsRoot but not under workspace → true
+func isCrossAgentPath(absPath, absWorkspace string) bool {
+	agentsRoot := filepath.Dir(filepath.Clean(absWorkspace))
+	if agentsRoot == absWorkspace || agentsRoot == "." {
+		return false // can't derive agents root
+	}
+	agentsRootSlash := agentsRoot + string(filepath.Separator)
+	workspaceSlash := absWorkspace + string(filepath.Separator)
+	return strings.HasPrefix(absPath, agentsRootSlash) &&
+		!strings.HasPrefix(absPath, workspaceSlash)
 }
 
 func isAllowedPath(path string, patterns []*regexp.Regexp) bool {

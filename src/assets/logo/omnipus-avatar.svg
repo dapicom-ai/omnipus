@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Omnipus simplified octopus head avatar — Forge Gold on transparent -->
+  <!-- Head -->
+  <ellipse cx="32" cy="26" rx="18" ry="17" fill="#d4af37"/>
+  <!-- Eyes -->
+  <circle cx="25" cy="24" r="3.5" fill="#0a0a0b"/>
+  <circle cx="39" cy="24" r="3.5" fill="#0a0a0b"/>
+  <!-- Eye shine -->
+  <circle cx="26.2" cy="22.8" r="1.2" fill="#e2e8f0"/>
+  <circle cx="40.2" cy="22.8" r="1.2" fill="#e2e8f0"/>
+  <!-- Mantle bump on top -->
+  <ellipse cx="32" cy="12" rx="10" ry="7" fill="#d4af37"/>
+  <!-- Tentacles (8 curved lines) -->
+  <path d="M18 38 Q10 50 14 58" stroke="#d4af37" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <path d="M22 42 Q16 54 20 62" stroke="#d4af37" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <path d="M28 44 Q26 56 28 64" stroke="#d4af37" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+  <path d="M32 44 Q32 56 32 64" stroke="#d4af37" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+  <path d="M36 44 Q38 56 36 64" stroke="#d4af37" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+  <path d="M42 42 Q48 54 44 62" stroke="#d4af37" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <path d="M46 38 Q54 50 50 58" stroke="#d4af37" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <!-- Small smile -->
+  <path d="M27 31 Q32 35 37 31" stroke="#0a0a0b" stroke-width="2" fill="none" stroke-linecap="round"/>
+</svg>
