@@ -56,9 +56,9 @@ describe('ExecApprovalBlock — rendering (test #9)', () => {
         }}
       />
     )
-    // Should have yellow warning styling
+    // Should have warning styling — component uses CSS variable class border-[var(--color-warning)]
     const block = container.firstElementChild as HTMLElement
-    expect(block?.className).toMatch(/yellow/)
+    expect(block?.className).toMatch(/warning/)
   })
 
   it('shows "Allowed" state when approval has been allowed', () => {

@@ -260,3 +260,48 @@ export interface StorageStats {
 export function fetchStorageStats(): Promise<StorageStats> {
   return request<StorageStats>('/storage/stats')
 }
+
+// ── App State ─────────────────────────────────────────────────────────────────
+
+export interface AppState {
+  onboarding_complete: boolean
+  last_doctor_run?: string
+  last_doctor_score?: number
+}
+
+export function fetchAppState(): Promise<AppState> {
+  return request<AppState>('/state')
+}
+
+export function completeOnboarding(): Promise<void> {
+  return request('/state', {
+    method: 'PATCH',
+    body: JSON.stringify({ onboarding_complete: true }),
+  })
+}
+
+// ── Doctor ────────────────────────────────────────────────────────────────────
+
+export interface DoctorIssue {
+  id: string
+  severity: 'high' | 'medium' | 'low'
+  title: string
+  description: string
+  recommendation: string
+  action_link?: string
+  action_label?: string
+}
+
+export interface DoctorResult {
+  score: number
+  issues: DoctorIssue[]
+  checked_at: string
+}
+
+export function fetchDoctorResults(): Promise<DoctorResult | null> {
+  return request<DoctorResult | null>('/doctor').catch(() => null)
+}
+
+export function runDoctor(): Promise<DoctorResult> {
+  return request<DoctorResult>('/doctor', { method: 'POST' })
+}

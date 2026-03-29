@@ -1,0 +1,234 @@
+// Omnipus — System Agent Tools
+// License: MIT
+// Copyright (c) 2026 Omnipus contributors
+
+package systools
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+
+	"github.com/dapicom-ai/omnipus/pkg/tools"
+	"github.com/oklog/ulid/v2"
+)
+
+type task struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Status      string `json:"status"`
+	ProjectID   string `json:"project_id,omitempty"`
+	AgentID     string `json:"agent_id,omitempty"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+func tasksDir(home string) string { return filepath.Join(home, "tasks") }
+
+// validTaskStatus returns true for allowed GTD status values.
+func validTaskStatus(s string) bool {
+	switch s {
+	case "inbox", "next", "active", "waiting", "done":
+		return true
+	}
+	return false
+}
+
+// ---- system.task.create ----
+
+type TaskCreateTool struct{ deps *Deps }
+
+func NewTaskCreateTool(d *Deps) *TaskCreateTool { return &TaskCreateTool{deps: d} }
+func (t *TaskCreateTool) Name() string           { return "system.task.create" }
+func (t *TaskCreateTool) Description() string {
+	return "Create a task on the GTD board.\nParameters: name (required), description, project_id, agent_id, status (inbox/next/active/waiting/done)."
+}
+func (t *TaskCreateTool) Parameters() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"name":        map[string]any{"type": "string"},
+			"description": map[string]any{"type": "string"},
+			"project_id":  map[string]any{"type": "string"},
+			"agent_id":    map[string]any{"type": "string"},
+			"status":      map[string]any{"type": "string"},
+		},
+		"required": []string{"name"},
+	}
+}
+func (t *TaskCreateTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
+	name, _ := args["name"].(string)
+	if name == "" {
+		return tools.ErrorResult(errorJSON("INVALID_INPUT", "name is required", ""))
+	}
+	status := "inbox"
+	if v, ok := args["status"].(string); ok && validTaskStatus(v) {
+		status = v
+	}
+	id := ulid.Make().String()
+	tk := task{
+		ID:        id,
+		Name:      name,
+		Status:    status,
+		CreatedAt: nowISO(),
+		UpdatedAt: nowISO(),
+	}
+	if v, ok := args["description"].(string); ok {
+		tk.Description = v
+	}
+	if v, ok := args["project_id"].(string); ok {
+		tk.ProjectID = v
+	}
+	if v, ok := args["agent_id"].(string); ok {
+		tk.AgentID = v
+	}
+	if err := writeEntity(tasksDir(t.deps.Home), id, tk); err != nil {
+		return tools.ErrorResult(errorJSON("SAVE_FAILED", err.Error(), ""))
+	}
+	return tools.NewToolResult(successJSON(map[string]any{
+		"id": id, "name": name, "status": status,
+		"project_id": tk.ProjectID, "agent_id": tk.AgentID,
+	}))
+}
+
+// ---- system.task.update ----
+
+type TaskUpdateTool struct{ deps *Deps }
+
+func NewTaskUpdateTool(d *Deps) *TaskUpdateTool { return &TaskUpdateTool{deps: d} }
+func (t *TaskUpdateTool) Name() string           { return "system.task.update" }
+func (t *TaskUpdateTool) Description() string {
+	return "Update a task's status, assignment, or details.\nParameters: id (required), name, description, status, agent_id, project_id."
+}
+func (t *TaskUpdateTool) Parameters() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"id":          map[string]any{"type": "string"},
+			"name":        map[string]any{"type": "string"},
+			"description": map[string]any{"type": "string"},
+			"status":      map[string]any{"type": "string"},
+			"agent_id":    map[string]any{"type": "string"},
+			"project_id":  map[string]any{"type": "string"},
+		},
+		"required": []string{"id"},
+	}
+}
+func (t *TaskUpdateTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
+	id, _ := args["id"].(string)
+	if id == "" {
+		return tools.ErrorResult(errorJSON("INVALID_INPUT", "id is required", ""))
+	}
+	var tk task
+	if err := readEntity(tasksDir(t.deps.Home), id, &tk); err != nil {
+		return tools.ErrorResult(errorJSON("TASK_NOT_FOUND", fmt.Sprintf("No task %q", id),
+			"Use system.task.list to see available tasks"))
+	}
+	updated := []string{}
+	if v, ok := args["name"].(string); ok && v != "" {
+		tk.Name = v
+		updated = append(updated, "name")
+	}
+	if v, ok := args["description"].(string); ok {
+		tk.Description = v
+		updated = append(updated, "description")
+	}
+	if v, ok := args["status"].(string); ok && validTaskStatus(v) {
+		tk.Status = v
+		updated = append(updated, "status")
+	}
+	if v, ok := args["agent_id"].(string); ok {
+		tk.AgentID = v
+		updated = append(updated, "agent_id")
+	}
+	if v, ok := args["project_id"].(string); ok {
+		tk.ProjectID = v
+		updated = append(updated, "project_id")
+	}
+	tk.UpdatedAt = nowISO()
+	if err := writeEntity(tasksDir(t.deps.Home), id, tk); err != nil {
+		return tools.ErrorResult(errorJSON("SAVE_FAILED", err.Error(), ""))
+	}
+	return tools.NewToolResult(successJSON(map[string]any{"id": id, "updated_fields": updated}))
+}
+
+// ---- system.task.delete ----
+
+type TaskDeleteTool struct{ deps *Deps }
+
+func NewTaskDeleteTool(d *Deps) *TaskDeleteTool { return &TaskDeleteTool{deps: d} }
+func (t *TaskDeleteTool) Name() string           { return "system.task.delete" }
+func (t *TaskDeleteTool) Description() string {
+	return "Delete a task. Parameters: id (required), confirm (bool, must be true)."
+}
+func (t *TaskDeleteTool) Parameters() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"id":      map[string]any{"type": "string"},
+			"confirm": map[string]any{"type": "boolean"},
+		},
+		"required": []string{"id", "confirm"},
+	}
+}
+func (t *TaskDeleteTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
+	id, _ := args["id"].(string)
+	confirm, _ := args["confirm"].(bool)
+	if id == "" {
+		return tools.ErrorResult(errorJSON("INVALID_INPUT", "id is required", ""))
+	}
+	if !confirm {
+		return tools.ErrorResult(errorJSON("CONFIRMATION_REQUIRED",
+			"confirm must be true to delete a task", ""))
+	}
+	if err := deleteEntity(tasksDir(t.deps.Home), id); err != nil {
+		return tools.ErrorResult(errorJSON("TASK_NOT_FOUND", err.Error(),
+			"Use system.task.list to see available tasks"))
+	}
+	return tools.NewToolResult(successJSON(map[string]any{"id": id, "deleted": true}))
+}
+
+// ---- system.task.list ----
+
+type TaskListTool struct{ deps *Deps }
+
+func NewTaskListTool(d *Deps) *TaskListTool { return &TaskListTool{deps: d} }
+func (t *TaskListTool) Name() string         { return "system.task.list" }
+func (t *TaskListTool) Description() string {
+	return "List tasks with optional filters.\nParameters: project_id, agent_id, status (all optional)."
+}
+func (t *TaskListTool) Parameters() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"project_id": map[string]any{"type": "string"},
+			"agent_id":   map[string]any{"type": "string"},
+			"status":     map[string]any{"type": "string"},
+		},
+	}
+}
+func (t *TaskListTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
+	all, err := listEntities[task](tasksDir(t.deps.Home))
+	if err != nil {
+		return tools.ErrorResult(errorJSON("LIST_FAILED", err.Error(), ""))
+	}
+	projectFilter, _ := args["project_id"].(string)
+	agentFilter, _ := args["agent_id"].(string)
+	statusFilter, _ := args["status"].(string)
+
+	var filtered []task
+	for _, tk := range all {
+		if projectFilter != "" && tk.ProjectID != projectFilter {
+			continue
+		}
+		if agentFilter != "" && tk.AgentID != agentFilter {
+			continue
+		}
+		if statusFilter != "" && tk.Status != statusFilter {
+			continue
+		}
+		filtered = append(filtered, tk)
+	}
+	return tools.NewToolResult(successJSON(map[string]any{"tasks": filtered}))
+}

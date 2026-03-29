@@ -311,7 +311,8 @@ describe('chat store — cancel/interrupt (test_cancel_preserves_partial)', () =
 describe('chat store — sendMessage optimistic render', () => {
   it('sendMessage appends user message immediately and sets isStreaming', () => {
     // Traces to: wave5a-wire-ui-spec.md — Scenario: User message appears optimistically
-    const mockSend = vi.fn()
+    // mockSend must return true — sendMessage reverts the optimistic update if send() returns falsy
+    const mockSend = vi.fn().mockReturnValue(true)
     act(() => {
       useChatStore.setState({
         activeSessionId: 'sess_1',

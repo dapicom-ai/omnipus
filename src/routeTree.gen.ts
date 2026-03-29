@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as OnboardingRouteImport } from './routes/onboarding'
 import { Route as LandingRouteImport } from './routes/landing'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
@@ -18,6 +19,11 @@ import { Route as AppCommandCenterRouteImport } from './routes/_app/command-cent
 import { Route as AppAgentsRouteImport } from './routes/_app/agents'
 import { Route as AppAgentsAgentIdRouteImport } from './routes/_app/agents.$agentId'
 
+const OnboardingRoute = OnboardingRouteImport.update({
+  id: '/onboarding',
+  path: '/onboarding',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const LandingRoute = LandingRouteImport.update({
   id: '/landing',
   path: '/landing',
@@ -61,6 +67,7 @@ const AppAgentsAgentIdRoute = AppAgentsAgentIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/landing': typeof LandingRoute
+  '/onboarding': typeof OnboardingRoute
   '/agents': typeof AppAgentsRouteWithChildren
   '/command-center': typeof AppCommandCenterRoute
   '/settings': typeof AppSettingsRoute
@@ -69,6 +76,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/landing': typeof LandingRoute
+  '/onboarding': typeof OnboardingRoute
   '/agents': typeof AppAgentsRouteWithChildren
   '/command-center': typeof AppCommandCenterRoute
   '/settings': typeof AppSettingsRoute
@@ -80,6 +88,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
   '/landing': typeof LandingRoute
+  '/onboarding': typeof OnboardingRoute
   '/_app/agents': typeof AppAgentsRouteWithChildren
   '/_app/command-center': typeof AppCommandCenterRoute
   '/_app/settings': typeof AppSettingsRoute
@@ -92,6 +101,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/landing'
+    | '/onboarding'
     | '/agents'
     | '/command-center'
     | '/settings'
@@ -100,6 +110,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/landing'
+    | '/onboarding'
     | '/agents'
     | '/command-center'
     | '/settings'
@@ -110,6 +121,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_app'
     | '/landing'
+    | '/onboarding'
     | '/_app/agents'
     | '/_app/command-center'
     | '/_app/settings'
@@ -121,10 +133,18 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   LandingRoute: typeof LandingRoute
+  OnboardingRoute: typeof OnboardingRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/onboarding': {
+      id: '/onboarding'
+      path: '/onboarding'
+      fullPath: '/onboarding'
+      preLoaderRoute: typeof OnboardingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/landing': {
       id: '/landing'
       path: '/landing'
@@ -217,6 +237,7 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   LandingRoute: LandingRoute,
+  OnboardingRoute: OnboardingRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

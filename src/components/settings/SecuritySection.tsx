@@ -15,6 +15,7 @@ import { Progress } from '@/components/ui/progress'
 import { Separator } from '@/components/ui/separator'
 import { fetchConfig, updateConfig } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
+import { DiagnosticsSection } from './DiagnosticsSection'
 
 export function SecuritySection() {
   const { addToast } = useUiStore()
@@ -176,6 +177,11 @@ export function SecuritySection() {
           </div>
         </div>
       </section>
+
+      <Separator />
+
+      {/* US-10: Doctor diagnostics panel */}
+      <DiagnosticsSection />
     </div>
   )
 }
