@@ -28,10 +28,18 @@ type restAPI struct {
 
 // --- CORS / JSON helpers ---
 
-func (a *restAPI) setCORSHeaders(w http.ResponseWriter) {
+func (a *restAPI) setCORSHeaders(w http.ResponseWriter, r ...* http.Request) {
 	origin := a.allowedOrigin
 	if origin == "" {
-		origin = "http://localhost:3000"
+		origin = "*"
+	}
+	// When the SPA is embedded (same-origin), reflect the request origin
+	// to avoid CORS issues with the public IP.
+	if len(r) > 0 && r[0] != nil {
+		reqOrigin := r[0].Header.Get("Origin")
+		if reqOrigin != "" {
+			origin = reqOrigin
+		}
 	}
 	w.Header().Set("Access-Control-Allow-Origin", origin)
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")

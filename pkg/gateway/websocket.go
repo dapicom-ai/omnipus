@@ -97,6 +97,11 @@ func newWSHandler(
 				if allowedOrigin != "" && origin == allowedOrigin {
 					return true
 				}
+				// Allow same-origin requests (SPA embedded in gateway).
+				// The origin host should match the request Host header.
+				if r.Host != "" && strings.Contains(origin, r.Host) {
+					return true
+				}
 				// Always allow localhost origins for development.
 				return strings.HasPrefix(origin, "http://localhost") ||
 					strings.HasPrefix(origin, "http://127.0.0.1")
