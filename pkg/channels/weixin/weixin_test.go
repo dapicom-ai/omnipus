@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	basechannels "github.com/sipeed/picoclaw/pkg/channels"
-	"github.com/sipeed/picoclaw/pkg/config"
+	basechannels "github.com/dapicom-ai/omnipus/pkg/channels"
+	"github.com/dapicom-ai/omnipus/pkg/config"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -255,7 +255,7 @@ func TestLoadSaveGetUpdatesBuf(t *testing.T) {
 	}
 }
 
-func TestBuildWeixinSyncBufPathUsesPicoclawHome(t *testing.T) {
+func TestBuildWeixinSyncBufPathUsesOmnipusHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv(config.EnvHome, home)
 

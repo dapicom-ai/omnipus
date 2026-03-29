@@ -36,9 +36,9 @@ func newReqIDStore(path string) *reqIDStore {
 
 func defaultReqIDStorePath() string {
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return filepath.Join(home, ".picoclaw", "wecom", "reqid-store.json")
+		return filepath.Join(home, ".omnipus", "wecom", "reqid-store.json")
 	}
-	return filepath.Join(os.TempDir(), "picoclaw-wecom-reqid-store.json")
+	return filepath.Join(os.TempDir(), "omnipus-wecom-reqid-store.json")
 }
 
 func (s *reqIDStore) Put(chatID, reqID string, chatType uint32, ttl time.Duration) error {

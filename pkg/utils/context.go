@@ -1,8 +1,8 @@
-// PicoClaw - Ultra-lightweight personal AI agent
+// Omnipus - Ultra-lightweight personal AI agent
 // Inspired by and based on nanobot: https://github.com/HKUDS/nanobot
 // License: MIT
 //
-// Copyright (c) 2026 PicoClaw contributors
+// Copyright (c) 2026 Omnipus contributors
 
 package utils
 
@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"unicode/utf8"
 
-	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/dapicom-ai/omnipus/pkg/providers"
 )
 
 // CalculateDefaultMaxContextRunes computes a default context limit based on the model's context window.

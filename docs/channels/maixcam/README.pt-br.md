@@ -28,8 +28,8 @@ MaixCam é um canal dedicado para conectar dispositivos de câmera AI Sipeed Mai
 
 ## Casos de uso
 
-O canal MaixCam permite que o PicoClaw atue como backend de IA para dispositivos de borda:
+O canal MaixCam permite que o Omnipus atue como backend de IA para dispositivos de borda:
 
-- **Vigilância inteligente**: MaixCAM envia quadros de imagem; PicoClaw os analisa usando modelos de visão
-- **Controle IoT**: Dispositivos enviam dados de sensores; PicoClaw coordena as respostas
-- **IA offline**: Implante o PicoClaw em uma rede local para inferência de baixa latência
+- **Vigilância inteligente**: MaixCAM envia quadros de imagem; Omnipus os analisa usando modelos de visão
+- **Controle IoT**: Dispositivos enviam dados de sensores; Omnipus coordena as respostas
+- **IA offline**: Implante o Omnipus em uma rede local para inferência de baixa latência

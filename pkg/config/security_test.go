@@ -1,7 +1,7 @@
-// PicoClaw - Ultra-lightweight personal AI agent
+// Omnipus - Ultra-lightweight personal AI agent
 // License: MIT
 //
-// Copyright (c) 2026 PicoClaw contributors
+// Copyright (c) 2026 Omnipus contributors
 
 package config
 
@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
-	"github.com/sipeed/picoclaw/pkg/credential"
+	"github.com/dapicom-ai/omnipus/pkg/credential"
 )
 
 func TestSecurityConfig(t *testing.T) {
@@ -40,8 +40,8 @@ func TestSecurityPath(t *testing.T) {
 	}{
 		{
 			name:      "standard path",
-			configDir: "/home/user/.picoclaw/config.json",
-			want:      "/home/user/.picoclaw/.security.yml",
+			configDir: "/home/user/.omnipus/config.json",
+			want:      "/home/user/.omnipus/.security.yml",
 		},
 		{
 			name:      "nested path",
@@ -335,7 +335,7 @@ func TestLoadSecurityValue(t *testing.T) {
 	assert.Equal(t, "token1", v5.Tools.Pico.Token.raw)
 
 	dir := t.TempDir()
-	sshKeyPath := filepath.Join(dir, "picoclaw_ed25519.key")
+	sshKeyPath := filepath.Join(dir, "omnipus_ed25519.key")
 	if err = os.WriteFile(sshKeyPath, []byte("fake-ssh-key-material\n"), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}

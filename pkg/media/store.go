@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
 
 // CleanupPolicy controls how the MediaStore treats the underlying file when
@@ -71,7 +71,7 @@ type MediaCleanerConfig struct {
 }
 
 // FileMediaStore is a pure in-memory implementation of MediaStore.
-// Files are expected to already exist on disk (e.g. in /tmp/picoclaw_media/).
+// Files are expected to already exist on disk (e.g. in /tmp/omnipus_media/).
 type FileMediaStore struct {
 	mu          sync.RWMutex
 	refs        map[string]mediaEntry

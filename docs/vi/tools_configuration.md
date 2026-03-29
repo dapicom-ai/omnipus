@@ -2,7 +2,7 @@
 
 > Quay lại [README](../../README.vi.md)
 
-Cấu hình công cụ của PicoClaw nằm trong trường `tools` của `config.json`.
+Cấu hình công cụ của Omnipus nằm trong trường `tools` của `config.json`.
 
 ## Cấu trúc thư mục
 
@@ -155,7 +155,7 @@ PICOCLAW_TOOLS_EXEC_ENABLED=false
 
 ### Các mẫu lệnh bị chặn mặc định
 
-Theo mặc định, PicoClaw chặn các lệnh nguy hiểm sau:
+Theo mặc định, Omnipus chặn các lệnh nguy hiểm sau:
 
 - Lệnh xóa: `rm -rf`, `del /f/q`, `rmdir /s`
 - Thao tác đĩa: `format`, `mkfs`, `diskpart`, `dd if=`, ghi vào `/dev/sd*`
@@ -172,7 +172,7 @@ Theo mặc định, PicoClaw chặn các lệnh nguy hiểm sau:
 
 ### Hạn chế kiến trúc đã biết
 
-Bộ bảo vệ exec chỉ xác thực lệnh cấp cao nhất được gửi đến PicoClaw. Nó **không** kiểm tra đệ quy các tiến trình con được tạo bởi các công cụ build hoặc script sau khi lệnh đó bắt đầu chạy.
+Bộ bảo vệ exec chỉ xác thực lệnh cấp cao nhất được gửi đến Omnipus. Nó **không** kiểm tra đệ quy các tiến trình con được tạo bởi các công cụ build hoặc script sau khi lệnh đó bắt đầu chạy.
 
 Ví dụ về các quy trình có thể bỏ qua bộ bảo vệ lệnh trực tiếp sau khi lệnh ban đầu được cho phép:
 

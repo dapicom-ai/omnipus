@@ -1,7 +1,7 @@
-// PicoClaw - Ultra-lightweight personal AI agent
+// Omnipus - Ultra-lightweight personal AI agent
 // License: MIT
 //
-// Copyright (c) 2026 PicoClaw contributors
+// Copyright (c) 2026 Omnipus contributors
 
 package providers
 
@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/config"
-	anthropicmessages "github.com/sipeed/picoclaw/pkg/providers/anthropic_messages"
-	"github.com/sipeed/picoclaw/pkg/providers/azure"
-	"github.com/sipeed/picoclaw/pkg/providers/bedrock"
+	"github.com/dapicom-ai/omnipus/pkg/config"
+	anthropicmessages "github.com/dapicom-ai/omnipus/pkg/providers/anthropic_messages"
+	"github.com/dapicom-ai/omnipus/pkg/providers/azure"
+	"github.com/dapicom-ai/omnipus/pkg/providers/bedrock"
 )
 
 // createClaudeAuthProvider creates a Claude provider using OAuth credentials from auth store.
@@ -24,7 +24,7 @@ func createClaudeAuthProvider() (LLMProvider, error) {
 		return nil, fmt.Errorf("loading auth credentials: %w", err)
 	}
 	if cred == nil {
-		return nil, fmt.Errorf("no credentials for anthropic. Run: picoclaw auth login --provider anthropic")
+		return nil, fmt.Errorf("no credentials for anthropic. Run: omnipus auth login --provider anthropic")
 	}
 	return NewClaudeProviderWithTokenSource(cred.AccessToken, createClaudeTokenSource()), nil
 }
@@ -36,7 +36,7 @@ func createCodexAuthProvider() (LLMProvider, error) {
 		return nil, fmt.Errorf("loading auth credentials: %w", err)
 	}
 	if cred == nil {
-		return nil, fmt.Errorf("no credentials for openai. Run: picoclaw auth login --provider openai")
+		return nil, fmt.Errorf("no credentials for openai. Run: omnipus auth login --provider openai")
 	}
 	return NewCodexProviderWithTokenSource(cred.AccessToken, cred.AccountID, createCodexTokenSource()), nil
 }

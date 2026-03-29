@@ -12,12 +12,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg"
-	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/logger"
-	"github.com/sipeed/picoclaw/pkg/providers"
-	"github.com/sipeed/picoclaw/pkg/skills"
-	"github.com/sipeed/picoclaw/pkg/utils"
+	"github.com/dapicom-ai/omnipus/pkg"
+	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/logger"
+	"github.com/dapicom-ai/omnipus/pkg/providers"
+	"github.com/dapicom-ai/omnipus/pkg/skills"
+	"github.com/dapicom-ai/omnipus/pkg/utils"
 )
 
 type ContextBuilder struct {
@@ -66,7 +66,7 @@ func getGlobalConfigDir() string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, pkg.DefaultPicoClawHome)
+	return filepath.Join(home, pkg.DefaultOmnipusHome)
 }
 
 func NewContextBuilder(workspace string) *ContextBuilder {
@@ -92,9 +92,9 @@ func (cb *ContextBuilder) getIdentity() string {
 	version := config.FormatVersion()
 
 	return fmt.Sprintf(
-		`# picoclaw 🦞 (%s)
+		`# omnipus 🦞 (%s)
 
-You are picoclaw, a helpful AI assistant.
+You are omnipus, a helpful AI assistant.
 
 ## Workspace
 Your workspace is at: %s

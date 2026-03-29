@@ -11,7 +11,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/sipeed/picoclaw/pkg/media"
+	"github.com/dapicom-ai/omnipus/pkg/media"
 )
 
 // MCPManager defines the interface for MCP manager operations

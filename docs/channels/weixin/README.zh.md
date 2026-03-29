@@ -1,24 +1,24 @@
 # 💬 微信个人号渠道 (Weixin)
 
-PicoClaw 支持使用腾讯官方 iLink API 连接您的个人微信账号。
+Omnipus 支持使用腾讯官方 iLink API 连接您的个人微信账号。
 
 ## 🚀 快速激活
 
 最简单的方法是使用交互式 onboarding 命令进行一键激活：
 
 ```bash
-picoclaw auth weixin
+omnipus auth weixin
 ```
 
 该命令将：
 1. 从 iLink API 获取二维码并在终端中打印。
 2. 等待您使用手机微信 App 扫码。
-3. 扫码确认后，自动将生成的 Access Token 保存至您的 `~/.picoclaw/config.json` 中。
+3. 扫码确认后，自动将生成的 Access Token 保存至您的 `~/.omnipus/config.json` 中。
 
 配置完成后，即可启动网关：
 
 ```bash
-picoclaw gateway
+omnipus gateway
 ```
 
 ---

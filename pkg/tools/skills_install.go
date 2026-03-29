@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/fileutil"
-	"github.com/sipeed/picoclaw/pkg/logger"
-	"github.com/sipeed/picoclaw/pkg/skills"
-	"github.com/sipeed/picoclaw/pkg/utils"
+	"github.com/dapicom-ai/omnipus/pkg/fileutil"
+	"github.com/dapicom-ai/omnipus/pkg/logger"
+	"github.com/dapicom-ai/omnipus/pkg/skills"
+	"github.com/dapicom-ai/omnipus/pkg/utils"
 )
 
 // InstallSkillTool allows the LLM agent to install skills from registries.

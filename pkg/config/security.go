@@ -1,7 +1,7 @@
-// PicoClaw - Ultra-lightweight personal AI agent
+// Omnipus - Ultra-lightweight personal AI agent
 // License: MIT
 //
-// Copyright (c) 2026 PicoClaw contributors
+// Copyright (c) 2026 Omnipus contributors
 
 package config
 
@@ -18,9 +18,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/sipeed/picoclaw/pkg/credential"
-	"github.com/sipeed/picoclaw/pkg/fileutil"
-	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/dapicom-ai/omnipus/pkg/credential"
+	"github.com/dapicom-ai/omnipus/pkg/fileutil"
+	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
 
 const (

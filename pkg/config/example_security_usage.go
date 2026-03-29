@@ -1,7 +1,7 @@
-// PicoClaw - Ultra-lightweight personal AI agent
+// Omnipus - Ultra-lightweight personal AI agent
 // License: MIT
 //
-// Copyright (c) 2026 PicoClaw contributors
+// Copyright (c) 2026 Omnipus contributors
 
 // This file demonstrates how to use the security configuration feature
 // It's not meant to be compiled, just for documentation purposes
@@ -26,7 +26,7 @@ your config.
 
 ## 1. Create .security.yml
 
-File: ~/.picoclaw/.security.yml
+File: ~/.omnipus/.security.yml
 
 ```yaml
 # Model API Keys
@@ -74,7 +74,7 @@ web:
 
 ## 2. Simplify config.json
 
-File: ~/.picoclaw/config.json
+File: ~/.omnipus/config.json
 
 Note: Sensitive fields are omitted because they're loaded from .security.yml
 
@@ -84,7 +84,7 @@ Note: Sensitive fields are omitted because they're loaded from .security.yml
 	  "version": 1,
 	  "agents": {
 	    "defaults": {
-	      "workspace": "~/picoclaw-workspace",
+	      "workspace": "~/omnipus-workspace",
 	      "model_name": "gpt-5.4"
 	    }
 	  },
@@ -139,7 +139,7 @@ Note: Sensitive fields are omitted because they're loaded from .security.yml
 ## 3. Set proper permissions
 
 ```bash
-chmod 600 ~/.picoclaw/.security.yml
+chmod 600 ~/.omnipus/.security.yml
 ```
 
 ## 4. Add to .gitignore
@@ -152,7 +152,7 @@ chmod 600 ~/.picoclaw/.security.yml
 ## 5. Verify it works
 
 ```bash
-picoclaw --version
+omnipus --version
 ```
 
 # Supported Fields in .security.yml
@@ -330,19 +330,19 @@ You can also mix security values and direct values:
 
 ## Step 1: Backup your config
 ```bash
-cp ~/.picoclaw/config.json ~/.picoclaw/config.json.backup
+cp ~/.omnipus/config.json ~/.omnipus/config.json.backup
 ```
 
 ## Step 2: Create .security.yml
 ```bash
-cp security.example.yml ~/.picoclaw/.security.yml
+cp security.example.yml ~/.omnipus/.security.yml
 ```
 
 ## Step 3: Fill in your API keys
-Edit ~/.picoclaw/.security.yml and replace placeholders with your actual keys.
+Edit ~/.omnipus/.security.yml and replace placeholders with your actual keys.
 
 ## Step 4: Simplify config.json (Recommended)
-Remove sensitive fields from ~/.picoclaw/config.json:
+Remove sensitive fields from ~/.omnipus/config.json:
 - `api_key` fields from model_list entries
 - `token` fields from channels
 - `api_key` fields from tools.web
@@ -350,17 +350,17 @@ Remove sensitive fields from ~/.picoclaw/config.json:
 
 ## Step 5: Set permissions
 ```bash
-chmod 600 ~/.picoclaw/.security.yml
+chmod 600 ~/.omnipus/.security.yml
 ```
 
 ## Step 6: Test
 ```bash
-picoclaw --version
+omnipus --version
 ```
 
 If everything works, you can delete the backup:
 ```bash
-rm ~/.picoclaw/config.json.backup
+rm ~/.omnipus/config.json.backup
 ```
 
 # Advanced Features
@@ -514,7 +514,7 @@ even when your config uses indexed model names for load balancing.
 The security file should have restricted permissions:
 
 ```bash
-chmod 600 ~/.picoclaw/.security.yml
+chmod 600 ~/.omnipus/.security.yml
 ```
 
 This ensures only the owner can read and write the file.
@@ -523,7 +523,7 @@ This ensures only the owner can read and write the file.
 
 1. Never commit .security.yml to version control
 2. Add .security.yml to your .gitignore file
-3. Set file permissions: chmod 600 ~/.picoclaw/.security.yml
+3. Set file permissions: chmod 600 ~/.omnipus/.security.yml
 4. Use different keys for different environments (dev, staging, production)
 5. Rotate keys regularly and update .security.yml
 6. Encrypt backups containing .security.yml
@@ -570,7 +570,7 @@ and .security.yml values.
 
 ## Keys Not Being Applied
 - Check that .security.yml is in the same directory as config.json
-- Verify the file permissions allow reading (chmod 600 ~/.picoclaw/.security.yml)
+- Verify the file permissions allow reading (chmod 600 ~/.omnipus/.security.yml)
 - Ensure the YAML structure matches the expected format
 - Check for typos in field names (case-sensitive)
 - Verify the model/channel names match exactly (case-sensitive)

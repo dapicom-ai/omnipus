@@ -4,12 +4,12 @@
 
 ## 🐳 Docker Compose
 
-Anda juga boleh menjalankan PicoClaw menggunakan Docker Compose tanpa memasang apa-apa secara setempat.
+Anda juga boleh menjalankan Omnipus menggunakan Docker Compose tanpa memasang apa-apa secara setempat.
 
 ```bash
 # 1. Clone repo ini
-git clone https://github.com/sipeed/picoclaw.git
-cd picoclaw
+git clone https://github.com/sipeed/omnipus.git
+cd omnipus
 
 # 2. Larian pertama — jana docker/data/config.json secara automatik kemudian keluar
 docker compose -f docker/docker-compose.yml --profile gateway up
@@ -27,7 +27,7 @@ docker compose -f docker/docker-compose.yml --profile gateway up -d
 
 ```bash
 # 5. Semak log
-docker compose -f docker/docker-compose.yml logs -f picoclaw-gateway
+docker compose -f docker/docker-compose.yml logs -f omnipus-gateway
 
 # 6. Hentikan
 docker compose -f docker/docker-compose.yml --profile gateway down
@@ -35,7 +35,7 @@ docker compose -f docker/docker-compose.yml --profile gateway down
 
 ### Mod Launcher (Konsol Web)
 
-Imej `launcher` merangkumi ketiga-tiga binari (`picoclaw`, `picoclaw-launcher`, `picoclaw-launcher-tui`) dan memulakan konsol web secara lalai, yang menyediakan UI berasaskan pelayar untuk konfigurasi dan sembang.
+Imej `launcher` merangkumi ketiga-tiga binari (`omnipus`, `omnipus-launcher`, `omnipus-launcher-tui`) dan memulakan konsol web secara lalai, yang menyediakan UI berasaskan pelayar untuk konfigurasi dan sembang.
 
 ```bash
 docker compose -f docker/docker-compose.yml --profile launcher up -d
@@ -50,10 +50,10 @@ Buka http://localhost:18800 dalam pelayar anda. Launcher mengurus proses gateway
 
 ```bash
 # Tanyakan soalan
-docker compose -f docker/docker-compose.yml run --rm picoclaw-agent -m "What is 2+2?"
+docker compose -f docker/docker-compose.yml run --rm omnipus-agent -m "What is 2+2?"
 
 # Mod interaktif
-docker compose -f docker/docker-compose.yml run --rm picoclaw-agent
+docker compose -f docker/docker-compose.yml run --rm omnipus-agent
 ```
 
 ### Kemas kini
@@ -66,21 +66,21 @@ docker compose -f docker/docker-compose.yml --profile gateway up -d
 ### 🚀 Quick Start
 
 > [!TIP]
-> Tetapkan API Key anda dalam `~/.picoclaw/config.json`. Dapatkan API Key: [Volcengine (CodingPlan)](https://www.volcengine.com/activity/codingplan?utm_campaign=PicoClaw&utm_content=PicoClaw&utm_medium=devrel&utm_source=OWO&utm_term=PicoClaw) (LLM) · [OpenRouter](https://openrouter.ai/keys) (LLM) · [Zhipu](https://open.bigmodel.cn/usercenter/proj-mgmt/apikeys) (LLM). Carian web adalah pilihan — dapatkan [Tavily API](https://tavily.com) percuma (1000 pertanyaan percuma/bulan) atau [Brave Search API](https://brave.com/search/api) (2000 pertanyaan percuma/bulan).
+> Tetapkan API Key anda dalam `~/.omnipus/config.json`. Dapatkan API Key: [Volcengine (CodingPlan)](https://www.volcengine.com/activity/codingplan?utm_campaign=Omnipus&utm_content=Omnipus&utm_medium=devrel&utm_source=OWO&utm_term=Omnipus) (LLM) · [OpenRouter](https://openrouter.ai/keys) (LLM) · [Zhipu](https://open.bigmodel.cn/usercenter/proj-mgmt/apikeys) (LLM). Carian web adalah pilihan — dapatkan [Tavily API](https://tavily.com) percuma (1000 pertanyaan percuma/bulan) atau [Brave Search API](https://brave.com/search/api) (2000 pertanyaan percuma/bulan).
 
 **1. Inisialisasi**
 
 ```bash
-picoclaw onboard
+omnipus onboard
 ```
 
-**2. Konfigurasi** (`~/.picoclaw/config.json`)
+**2. Konfigurasi** (`~/.omnipus/config.json`)
 
 ```json
 {
   "agents": {
     "defaults": {
-      "workspace": "~/.picoclaw/workspace",
+      "workspace": "~/.omnipus/workspace",
       "model_name": "gpt-5.4",
       "max_tokens": 8192,
       "temperature": 0.7,
@@ -141,7 +141,7 @@ picoclaw onboard
 ```
 
 > **Baharu**: Format konfigurasi `model_list` membolehkan penambahan penyedia tanpa perubahan kod. Lihat [Konfigurasi Model](#konfigurasi-model-model_list) untuk butiran.
-> `request_timeout` adalah pilihan dan menggunakan saat. Jika diabaikan atau ditetapkan kepada `<= 0`, PicoClaw menggunakan timeout lalai (120s).
+> `request_timeout` adalah pilihan dan menggunakan saat. Jika diabaikan atau ditetapkan kepada `<= 0`, Omnipus menggunakan timeout lalai (120s).
 
 **3. Dapatkan API Key**
 
@@ -158,7 +158,7 @@ picoclaw onboard
 **4. Sembang**
 
 ```bash
-picoclaw agent -m "What is 2+2?"
+omnipus agent -m "What is 2+2?"
 ```
 
 Itu sahaja! Anda kini mempunyai pembantu AI yang berfungsi dalam masa 2 minit.

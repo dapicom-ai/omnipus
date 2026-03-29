@@ -28,8 +28,8 @@ MaixCam là kênh chuyên dụng để kết nối với các thiết bị camer
 
 ## Trường hợp sử dụng
 
-Kênh MaixCam cho phép PicoClaw hoạt động như backend AI cho các thiết bị biên:
+Kênh MaixCam cho phép Omnipus hoạt động như backend AI cho các thiết bị biên:
 
-- **Giám sát thông minh**: MaixCAM gửi khung hình ảnh; PicoClaw phân tích bằng mô hình thị giác
-- **Điều khiển IoT**: Thiết bị gửi dữ liệu cảm biến; PicoClaw điều phối phản hồi
-- **AI ngoại tuyến**: Triển khai PicoClaw trên mạng nội bộ để suy luận độ trễ thấp
+- **Giám sát thông minh**: MaixCAM gửi khung hình ảnh; Omnipus phân tích bằng mô hình thị giác
+- **Điều khiển IoT**: Thiết bị gửi dữ liệu cảm biến; Omnipus điều phối phản hồi
+- **AI ngoại tuyến**: Triển khai Omnipus trên mạng nội bộ để suy luận độ trễ thấp

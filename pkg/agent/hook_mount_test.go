@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/sipeed/picoclaw/pkg/bus"
-	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/bus"
+	"github.com/dapicom-ai/omnipus/pkg/config"
 )
 
 type builtinAutoHookConfig struct {

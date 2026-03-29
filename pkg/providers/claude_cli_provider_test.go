@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/config"
 )
 
 // --- Compile-time interface check ---

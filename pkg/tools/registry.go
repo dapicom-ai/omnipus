@@ -8,9 +8,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/logger"
-	"github.com/sipeed/picoclaw/pkg/media"
-	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/dapicom-ai/omnipus/pkg/logger"
+	"github.com/dapicom-ai/omnipus/pkg/media"
+	"github.com/dapicom-ai/omnipus/pkg/providers"
 )
 
 type ToolEntry struct {

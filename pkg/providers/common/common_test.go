@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sipeed/picoclaw/pkg/providers/protocoltypes"
+	"github.com/dapicom-ai/omnipus/pkg/providers/protocoltypes"
 )
 
 // --- NewHTTPClient tests ---

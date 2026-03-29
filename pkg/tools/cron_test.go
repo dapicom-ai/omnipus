@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/bus"
-	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/cron"
+	"github.com/dapicom-ai/omnipus/pkg/bus"
+	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/cron"
 )
 
 func newTestCronToolWithConfig(t *testing.T, cfg *config.Config) *CronTool {

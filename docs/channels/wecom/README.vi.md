@@ -2,10 +2,10 @@
 
 # WeCom
 
-PicoClaw cung cấp WeCom dưới dạng một kênh duy nhất `channels.wecom`, được xây dựng trên API WebSocket chính thức của WeCom AI Bot.
+Omnipus cung cấp WeCom dưới dạng một kênh duy nhất `channels.wecom`, được xây dựng trên API WebSocket chính thức của WeCom AI Bot.
 Điều này thay thế việc phân tách cũ `wecom`, `wecom_app` và `wecom_aibot` bằng một mô hình cấu hình thống nhất.
 
-> Không cần URL callback webhook công khai. PicoClaw thiết lập kết nối WebSocket đi ra tới WeCom.
+> Không cần URL callback webhook công khai. Omnipus thiết lập kết nối WebSocket đi ra tới WeCom.
 
 ## Tính năng được hỗ trợ
 
@@ -33,7 +33,7 @@ Mở Web UI, điều hướng đến **Channels → WeCom** và nhấp vào nút
 Chạy:
 
 ```bash
-picoclaw auth wecom
+omnipus auth wecom
 ```
 
 Lệnh thực hiện:
@@ -45,7 +45,7 @@ Lệnh thực hiện:
 Thời gian chờ mặc định là **5 phút**. Sử dụng `--timeout` để kéo dài:
 
 ```bash
-picoclaw auth wecom --timeout 10m
+omnipus auth wecom --timeout 10m
 ```
 
 > ⚠️ Quét mã QR là chưa đủ — bạn cũng phải nhấn **Xác nhận** trong ứng dụng WeCom, nếu không lệnh sẽ hết thời gian chờ.
@@ -102,7 +102,7 @@ Tất cả các trường có thể được ghi đè bằng biến môi trườ
 
 ## Hành vi khi chạy
 
-- PicoClaw duy trì một lượt WeCom đang hoạt động để phản hồi streaming có thể tiếp tục trên cùng một luồng khi có thể.
+- Omnipus duy trì một lượt WeCom đang hoạt động để phản hồi streaming có thể tiếp tục trên cùng một luồng khi có thể.
 - Phản hồi streaming có thời lượng tối đa **5,5 phút** và khoảng cách gửi tối thiểu **500ms**.
 - Nếu streaming không còn khả dụng, phản hồi sẽ chuyển sang gửi push chủ động.
 - Các liên kết tuyến chat hết hạn sau **30 phút** không hoạt động.
@@ -130,12 +130,12 @@ Tất cả các trường có thể được ghi đè bằng biến môi trườ
 ### Liên kết QR hết thời gian chờ
 
 - Sau khi quét mã QR, bạn cũng phải **xác nhận đăng nhập trong ứng dụng WeCom**. Chỉ quét là chưa đủ.
-- Chạy lại với `--timeout` lớn hơn: `picoclaw auth wecom --timeout 10m`
+- Chạy lại với `--timeout` lớn hơn: `omnipus auth wecom --timeout 10m`
 - Nếu mã QR trên terminal khó quét, hãy sử dụng **Liên kết mã QR** được in bên dưới để mở trong trình duyệt.
 
 ### Mã QR đã hết hạn
 
-- Mã QR có thời hạn hiệu lực giới hạn. Chạy lại `picoclaw auth wecom` để lấy mã mới.
+- Mã QR có thời hạn hiệu lực giới hạn. Chạy lại `omnipus auth wecom` để lấy mã mới.
 
 ### Kết nối WebSocket thất bại
 

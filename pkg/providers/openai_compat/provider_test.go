@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/providers/common"
-	"github.com/sipeed/picoclaw/pkg/providers/protocoltypes"
+	"github.com/dapicom-ai/omnipus/pkg/providers/common"
+	"github.com/dapicom-ai/omnipus/pkg/providers/protocoltypes"
 )
 
 func TestProviderChat_UsesMaxCompletionTokensForGLM(t *testing.T) {

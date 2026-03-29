@@ -1,7 +1,7 @@
 .PHONY: all build install uninstall clean help test
 
 # Build variables
-BINARY_NAME=picoclaw
+BINARY_NAME=omnipus
 BUILD_DIR=build
 CMD_DIR=cmd/$(BINARY_NAME)
 MAIN_GO=$(CMD_DIR)/main.go
@@ -11,7 +11,7 @@ VERSION?=$(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 GIT_COMMIT=$(shell git rev-parse --short=8 HEAD 2>/dev/null || echo "dev")
 BUILD_TIME=$(shell date +%FT%T%z)
 GO_VERSION=$(shell $(GO) version | awk '{print $$3}')
-CONFIG_PKG=github.com/sipeed/picoclaw/pkg/config
+CONFIG_PKG=github.com/sipeed/omnipus/pkg/config
 LDFLAGS=-X $(CONFIG_PKG).Version=$(VERSION) -X $(CONFIG_PKG).GitCommit=$(GIT_COMMIT) -X $(CONFIG_PKG).BuildTime=$(BUILD_TIME) -X $(CONFIG_PKG).GoVersion=$(GO_VERSION) -s -w
 
 # Go variables
@@ -64,7 +64,7 @@ INSTALL_MAN_DIR=$(INSTALL_PREFIX)/share/man/man1
 INSTALL_TMP_SUFFIX=.new
 
 # Workspace and Skills
-PICOCLAW_HOME?=$(HOME)/.picoclaw
+PICOCLAW_HOME?=$(HOME)/.omnipus
 WORKSPACE_DIR?=$(PICOCLAW_HOME)/workspace
 WORKSPACE_SKILLS_DIR=$(WORKSPACE_DIR)/skills
 BUILTIN_SKILLS_DIR=$(CURDIR)/skills
@@ -118,7 +118,7 @@ generate:
 	@$(GO) generate ./...
 	@echo "Run generate complete"
 
-## build: Build the picoclaw binary for current platform
+## build: Build the omnipus binary for current platform
 build: generate
 	@echo "Building $(BINARY_NAME) for $(PLATFORM)/$(ARCH)..."
 	@mkdir -p $(BUILD_DIR)
@@ -126,25 +126,25 @@ build: generate
 	@echo "Build complete: $(BINARY_PATH)"
 	@ln -sf $(BINARY_NAME)-$(PLATFORM)-$(ARCH) $(BUILD_DIR)/$(BINARY_NAME)
 
-## build-launcher: Build the picoclaw-launcher (web console) binary
+## build-launcher: Build the omnipus-launcher (web console) binary
 build-launcher:
-	@echo "Building picoclaw-launcher for $(PLATFORM)/$(ARCH)..."
+	@echo "Building omnipus-launcher for $(PLATFORM)/$(ARCH)..."
 	@mkdir -p $(BUILD_DIR)
 	@if [ ! -f web/backend/dist/index.html ]; then \
 		echo "Building frontend..."; \
 		cd web/frontend && pnpm install && pnpm build:backend; \
 	fi
-	@$(WEB_GO) build $(GOFLAGS) -o $(BUILD_DIR)/picoclaw-launcher-$(PLATFORM)-$(ARCH) ./web/backend
-	@ln -sf picoclaw-launcher-$(PLATFORM)-$(ARCH) $(BUILD_DIR)/picoclaw-launcher
-	@echo "Build complete: $(BUILD_DIR)/picoclaw-launcher"
+	@$(WEB_GO) build $(GOFLAGS) -o $(BUILD_DIR)/omnipus-launcher-$(PLATFORM)-$(ARCH) ./web/backend
+	@ln -sf omnipus-launcher-$(PLATFORM)-$(ARCH) $(BUILD_DIR)/omnipus-launcher
+	@echo "Build complete: $(BUILD_DIR)/omnipus-launcher"
 
-## build-launcher-tui: Build the picoclaw-launcher TUI binary
+## build-launcher-tui: Build the omnipus-launcher TUI binary
 build-launcher-tui:
-	@echo "Building picoclaw-launcher-tui for $(PLATFORM)/$(ARCH)..."
+	@echo "Building omnipus-launcher-tui for $(PLATFORM)/$(ARCH)..."
 	@mkdir -p $(BUILD_DIR)
-	@$(GO) build $(GOFLAGS) -o $(BUILD_DIR)/picoclaw-launcher-tui-$(PLATFORM)-$(ARCH) ./cmd/picoclaw-launcher-tui
-	@ln -sf picoclaw-launcher-tui-$(PLATFORM)-$(ARCH) $(BUILD_DIR)/picoclaw-launcher-tui
-	@echo "Build complete: $(BUILD_DIR)/picoclaw-launcher-tui"
+	@$(GO) build $(GOFLAGS) -o $(BUILD_DIR)/omnipus-launcher-tui-$(PLATFORM)-$(ARCH) ./cmd/omnipus-launcher-tui
+	@ln -sf omnipus-launcher-tui-$(PLATFORM)-$(ARCH) $(BUILD_DIR)/omnipus-launcher-tui
+	@echo "Build complete: $(BUILD_DIR)/omnipus-launcher-tui"
 
 ## build-whatsapp-native: Build with WhatsApp native (whatsmeow) support; larger binary
 build-whatsapp-native: generate
@@ -190,7 +190,7 @@ build-linux-mipsle: generate
 build-pi-zero: build-linux-arm build-linux-arm64
 	@echo "Pi Zero 2 W builds: $(BUILD_DIR)/$(BINARY_NAME)-linux-arm (32-bit), $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 (64-bit)"
 
-## build-all: Build picoclaw for all platforms
+## build-all: Build omnipus for all platforms
 build-all: generate
 	@echo "Building for multiple platforms..."
 	@mkdir -p $(BUILD_DIR)
@@ -209,7 +209,7 @@ build-all: generate
 	GOOS=netbsd GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-netbsd-arm64 ./$(CMD_DIR)
 	@echo "All builds complete"
 
-## install: Install picoclaw to system and copy builtin skills
+## install: Install omnipus to system and copy builtin skills
 install: build
 	@echo "Installing $(BINARY_NAME)..."
 	@mkdir -p $(INSTALL_BIN_DIR)
@@ -220,7 +220,7 @@ install: build
 	@echo "Installed binary to $(INSTALL_BIN_DIR)/$(BINARY_NAME)"
 	@echo "Installation complete!"
 
-## uninstall: Remove picoclaw from system
+## uninstall: Remove omnipus from system
 uninstall:
 	@echo "Uninstalling $(BINARY_NAME)..."
 	@rm -f $(INSTALL_BIN_DIR)/$(BINARY_NAME)
@@ -228,7 +228,7 @@ uninstall:
 	@echo "Note: Only the executable file has been deleted."
 	@echo "If you need to delete all configurations (config.json, workspace, etc.), run 'make uninstall-all'"
 
-## uninstall-all: Remove picoclaw and all data
+## uninstall-all: Remove omnipus and all data
 uninstall-all:
 	@echo "Removing workspace and skills..."
 	@rm -rf $(PICOCLAW_HOME)
@@ -244,12 +244,12 @@ clean:
 ## vet: Run go vet for static analysis
 vet: generate
 	@packages="$$($(GO) list $(GOFLAGS) ./...)" && \
-		$(GO) vet $(GOFLAGS) $$(printf '%s\n' "$$packages" | grep -v '^github.com/sipeed/picoclaw/web/')
+		$(GO) vet $(GOFLAGS) $$(printf '%s\n' "$$packages" | grep -v '^github.com/sipeed/omnipus/web/')
 	@cd web/backend && $(WEB_GO) vet ./...
 
 ## test: Test Go code
 test: generate
-	@$(GO) test $(GOFLAGS) $$($(GO) list $(GOFLAGS) ./... | grep -v github.com/sipeed/picoclaw/web/)
+	@$(GO) test $(GOFLAGS) $$($(GO) list $(GOFLAGS) ./... | grep -v github.com/sipeed/omnipus/web/)
 	@cd web && make test
 
 ## fmt: Format Go code
@@ -277,19 +277,19 @@ update-deps:
 ## check: Run vet, fmt, and verify dependencies
 check: deps fmt vet test
 
-## run: Build and run picoclaw
+## run: Build and run omnipus
 run: build
 	@$(BUILD_DIR)/$(BINARY_NAME) $(ARGS)
 
 ## docker-build: Build Docker image (minimal Alpine-based)
 docker-build:
 	@echo "Building minimal Docker image (Alpine-based)..."
-	docker compose -f docker/docker-compose.yml build picoclaw-agent picoclaw-gateway
+	docker compose -f docker/docker-compose.yml build omnipus-agent omnipus-gateway
 
 ## docker-build-full: Build Docker image with full MCP support (Node.js 24)
 docker-build-full:
 	@echo "Building full-featured Docker image (Node.js 24)..."
-	docker compose -f docker/docker-compose.full.yml build picoclaw-agent picoclaw-gateway
+	docker compose -f docker/docker-compose.full.yml build omnipus-agent omnipus-gateway
 
 ## docker-test: Test MCP tools in Docker container
 docker-test:
@@ -297,30 +297,30 @@ docker-test:
 	@chmod +x scripts/test-docker-mcp.sh
 	@./scripts/test-docker-mcp.sh
 
-## docker-run: Run picoclaw gateway in Docker (Alpine-based)
+## docker-run: Run omnipus gateway in Docker (Alpine-based)
 docker-run:
 	docker compose -f docker/docker-compose.yml --profile gateway up
 
-## docker-run-full: Run picoclaw gateway in Docker (full-featured)
+## docker-run-full: Run omnipus gateway in Docker (full-featured)
 docker-run-full:
 	docker compose -f docker/docker-compose.full.yml --profile gateway up
 
-## docker-run-agent: Run picoclaw agent in Docker (interactive, Alpine-based)
+## docker-run-agent: Run omnipus agent in Docker (interactive, Alpine-based)
 docker-run-agent:
-	docker compose -f docker/docker-compose.yml run --rm picoclaw-agent
+	docker compose -f docker/docker-compose.yml run --rm omnipus-agent
 
-## docker-run-agent-full: Run picoclaw agent in Docker (interactive, full-featured)
+## docker-run-agent-full: Run omnipus agent in Docker (interactive, full-featured)
 docker-run-agent-full:
-	docker compose -f docker/docker-compose.full.yml run --rm picoclaw-agent
+	docker compose -f docker/docker-compose.full.yml run --rm omnipus-agent
 
 ## docker-clean: Clean Docker images and volumes
 docker-clean:
 	docker compose -f docker/docker-compose.yml down -v
 	docker compose -f docker/docker-compose.full.yml down -v
-	docker rmi picoclaw:latest picoclaw:full 2>/dev/null || true
+	docker rmi omnipus:latest omnipus:full 2>/dev/null || true
 
 
-## build-macos-app: Build PicoClaw macOS .app bundle (no terminal window)
+## build-macos-app: Build Omnipus macOS .app bundle (no terminal window)
 build-macos-app:
 	@echo "Building macOS .app bundle..."
 	@if [ "$(UNAME_S)" != "Darwin" ]; then \
@@ -329,11 +329,11 @@ build-macos-app:
 	fi
 	@cd web && $(MAKE) build && cd ..
 	@./scripts/build-macos-app.sh $(BINARY_NAME)-$(PLATFORM)-$(ARCH)
-	@echo "macOS .app bundle created: $(BUILD_DIR)/PicoClaw.app"
+	@echo "macOS .app bundle created: $(BUILD_DIR)/Omnipus.app"
 
 ## help: Show this help message
 help:
-	@echo "picoclaw Makefile"
+	@echo "omnipus Makefile"
 	@echo ""
 	@echo "Usage:"
 	@echo "  make [target]"
@@ -351,7 +351,7 @@ help:
 	@echo ""
 	@echo "Environment Variables:"
 	@echo "  INSTALL_PREFIX          # Installation prefix (default: ~/.local)"
-	@echo "  WORKSPACE_DIR           # Workspace directory (default: ~/.picoclaw/workspace)"
+	@echo "  WORKSPACE_DIR           # Workspace directory (default: ~/.omnipus/workspace)"
 	@echo "  VERSION                 # Version string (default: git describe)"
 	@echo ""
 	@echo "Current Configuration:"

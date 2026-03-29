@@ -82,7 +82,7 @@ HookManager 的排序规则是：
           "approve_tool"
         ],
         "env": {
-          "PICOCLAW_HOOK_LOG_FILE": "/tmp/picoclaw-hook-review-gate.log"
+          "PICOCLAW_HOOK_LOG_FILE": "/tmp/omnipus-hook-review-gate.log"
         }
       }
     }
@@ -93,10 +93,10 @@ HookManager 的排序规则是：
 观察方式：
 
 ```bash
-tail -f /tmp/picoclaw-hook-review-gate.log
+tail -f /tmp/omnipus-hook-review-gate.log
 ```
 
-如果你是在开发 PicoClaw 本体，而不是只想验证协议，那么再看后面的 Go in-process 示例。
+如果你是在开发 Omnipus 本体，而不是只想验证协议，那么再看后面的 Go in-process 示例。
 
 ## 两个示例的定位
 
@@ -132,8 +132,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/agent"
-	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/sipeed/omnipus/pkg/agent"
+	"github.com/sipeed/omnipus/pkg/logger"
 )
 
 type ExampleLoggerHookOptions struct {
@@ -278,7 +278,7 @@ func (h *ExampleLoggerHook) record(stage string, meta agent.EventMeta, payload a
 
 ```go
 hook := myhooks.NewExampleLoggerHook(myhooks.ExampleLoggerHookOptions{
-    LogFile:   "/tmp/picoclaw-hook-example-logger.log",
+    LogFile:   "/tmp/omnipus-hook-example-logger.log",
     LogEvents: true,
 })
 
@@ -299,8 +299,8 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/sipeed/picoclaw/pkg/agent"
-	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/sipeed/omnipus/pkg/agent"
+	"github.com/sipeed/omnipus/pkg/config"
 )
 
 func init() {
@@ -334,7 +334,7 @@ func init() {
         "enabled": true,
         "priority": 10,
         "config": {
-          "log_file": "/tmp/picoclaw-hook-example-logger.log",
+          "log_file": "/tmp/omnipus-hook-example-logger.log",
           "log_events": true
         }
       }
@@ -552,7 +552,7 @@ if __name__ == "__main__":
           "approve_tool"
         ],
         "env": {
-          "PICOCLAW_HOOK_LOG_FILE": "/tmp/picoclaw-hook-review-gate.log"
+          "PICOCLAW_HOOK_LOG_FILE": "/tmp/omnipus-hook-review-gate.log"
         }
       }
     }
@@ -616,12 +616,12 @@ if __name__ == "__main__":
 
 当前 process hook 使用 `JSON-RPC over stdio`：
 
-- PicoClaw 启动外部进程
+- Omnipus 启动外部进程
 - 请求和响应都按“一行一个 JSON 消息”传输
 - `hook.event` 是 notification，不需要响应
 - `hook.before_llm` / `hook.after_llm` / `hook.before_tool` / `hook.after_tool` / `hook.approve_tool` 是 request/response
 
-当前宿主不会接受 process hook 主动发起的新 RPC。也就是说，外部 hook 现在只能“响应 PicoClaw 的调用”，不能反向调用宿主去发送 channel 消息。
+当前宿主不会接受 process hook 主动发起的新 RPC。也就是说，外部 hook 现在只能“响应 Omnipus 的调用”，不能反向调用宿主去发送 channel 消息。
 
 ## 配置字段
 

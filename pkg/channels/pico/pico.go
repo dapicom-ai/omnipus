@@ -13,11 +13,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
-	"github.com/sipeed/picoclaw/pkg/bus"
-	"github.com/sipeed/picoclaw/pkg/channels"
-	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/identity"
-	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/dapicom-ai/omnipus/pkg/bus"
+	"github.com/dapicom-ai/omnipus/pkg/channels"
+	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/identity"
+	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
 
 // picoConn represents a single WebSocket connection.

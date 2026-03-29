@@ -4,39 +4,39 @@
 
 ## ⚙️ Konfigurasi
 
-Fail konfigurasi: `~/.picoclaw/config.json`
+Fail konfigurasi: `~/.omnipus/config.json`
 
 ### Pemboleh Ubah Persekitaran
 
-Anda boleh menggantikan laluan lalai menggunakan pemboleh ubah persekitaran. Ini berguna untuk pemasangan mudah alih, deployment dalam container, atau menjalankan picoclaw sebagai system service. Pemboleh ubah ini saling bebas dan mengawal laluan yang berbeza.
+Anda boleh menggantikan laluan lalai menggunakan pemboleh ubah persekitaran. Ini berguna untuk pemasangan mudah alih, deployment dalam container, atau menjalankan omnipus sebagai system service. Pemboleh ubah ini saling bebas dan mengawal laluan yang berbeza.
 
 | Pemboleh Ubah     | Penerangan                                                                                                                                          | Laluan Lalai              |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| `PICOCLAW_CONFIG` | Menindih laluan ke fail konfigurasi. Ini memberitahu picoclaw secara terus fail `config.json` yang perlu dimuatkan, dengan mengabaikan lokasi lain. | `~/.picoclaw/config.json` |
-| `PICOCLAW_HOME`   | Menindih direktori root untuk data picoclaw. Ini mengubah lokasi lalai bagi `workspace` dan direktori data lain.                                    | `~/.picoclaw`             |
+| `PICOCLAW_CONFIG` | Menindih laluan ke fail konfigurasi. Ini memberitahu omnipus secara terus fail `config.json` yang perlu dimuatkan, dengan mengabaikan lokasi lain. | `~/.omnipus/config.json` |
+| `PICOCLAW_HOME`   | Menindih direktori root untuk data omnipus. Ini mengubah lokasi lalai bagi `workspace` dan direktori data lain.                                    | `~/.omnipus`             |
 
 **Contoh:**
 
 ```bash
-# Jalankan picoclaw menggunakan fail config tertentu
+# Jalankan omnipus menggunakan fail config tertentu
 # Laluan workspace akan dibaca daripada fail config tersebut
-PICOCLAW_CONFIG=/etc/picoclaw/production.json picoclaw gateway
+PICOCLAW_CONFIG=/etc/omnipus/production.json omnipus gateway
 
-# Jalankan picoclaw dengan semua data disimpan di /opt/picoclaw
-# Config akan dimuatkan dari lalai ~/.picoclaw/config.json
-# Workspace akan dicipta di /opt/picoclaw/workspace
-PICOCLAW_HOME=/opt/picoclaw picoclaw agent
+# Jalankan omnipus dengan semua data disimpan di /opt/omnipus
+# Config akan dimuatkan dari lalai ~/.omnipus/config.json
+# Workspace akan dicipta di /opt/omnipus/workspace
+PICOCLAW_HOME=/opt/omnipus omnipus agent
 
 # Gunakan kedua-duanya untuk setup yang disesuaikan sepenuhnya
-PICOCLAW_HOME=/srv/picoclaw PICOCLAW_CONFIG=/srv/picoclaw/main.json picoclaw gateway
+PICOCLAW_HOME=/srv/omnipus PICOCLAW_CONFIG=/srv/omnipus/main.json omnipus gateway
 ```
 
 ### Susun Atur Workspace
 
-PicoClaw menyimpan data dalam workspace yang dikonfigurasikan (lalai: `~/.picoclaw/workspace`):
+Omnipus menyimpan data dalam workspace yang dikonfigurasikan (lalai: `~/.omnipus/workspace`):
 
 ```
-~/.picoclaw/workspace/
+~/.omnipus/workspace/
 ├── sessions/          # Sesi perbualan dan sejarah
 ├── memory/            # Memori jangka panjang (MEMORY.md)
 ├── state/             # Keadaan persisten (saluran terakhir, dll.)
@@ -53,8 +53,8 @@ PicoClaw menyimpan data dalam workspace yang dikonfigurasikan (lalai: `~/.picocl
 
 Secara lalai, skill dimuatkan daripada:
 
-1. `~/.picoclaw/workspace/skills` (workspace)
-2. `~/.picoclaw/skills` (global)
+1. `~/.omnipus/workspace/skills` (workspace)
+2. `~/.omnipus/skills` (global)
 3. `<current-working-directory>/skills` (builtin)
 
 Untuk setup lanjutan/ujian, anda boleh menindih root builtin skills dengan:
@@ -72,7 +72,7 @@ export PICOCLAW_BUILTIN_SKILLS=/path/to/skills
 
 ### 🔒 Security Sandbox
 
-PicoClaw berjalan dalam persekitaran bersandbox secara lalai. Agen hanya boleh mengakses fail dan melaksanakan arahan dalam workspace yang dikonfigurasikan.
+Omnipus berjalan dalam persekitaran bersandbox secara lalai. Agen hanya boleh mengakses fail dan melaksanakan arahan dalam workspace yang dikonfigurasikan.
 
 #### Konfigurasi Lalai
 
@@ -80,7 +80,7 @@ PicoClaw berjalan dalam persekitaran bersandbox secara lalai. Agen hanya boleh m
 {
   "agents": {
     "defaults": {
-      "workspace": "~/.picoclaw/workspace",
+      "workspace": "~/.omnipus/workspace",
       "restrict_to_workspace": true
     }
   }
@@ -89,7 +89,7 @@ PicoClaw berjalan dalam persekitaran bersandbox secara lalai. Agen hanya boleh m
 
 | Option                  | Default                 | Description                               |
 | ----------------------- | ----------------------- | ----------------------------------------- |
-| `workspace`             | `~/.picoclaw/workspace` | Direktori kerja untuk agen                |
+| `workspace`             | `~/.omnipus/workspace` | Direktori kerja untuk agen                |
 | `restrict_to_workspace` | `true`                  | Hadkan akses fail/arahan kepada workspace |
 
 #### Tools yang Dilindungi
@@ -136,7 +136,7 @@ Walaupun dengan `restrict_to_workspace: false`, tool `exec` menyekat arahan berb
 
 #### Had yang Diketahui: Proses Anak Daripada Build Tools
 
-Pengawal keselamatan exec hanya memeriksa baris arahan yang PicoClaw lancarkan secara terus. Ia tidak memeriksa secara rekursif proses anak yang dilancarkan oleh tools pembangun yang dibenarkan seperti `make`, `go run`, `cargo`, `npm run`, atau skrip build tersuai.
+Pengawal keselamatan exec hanya memeriksa baris arahan yang Omnipus lancarkan secara terus. Ia tidak memeriksa secara rekursif proses anak yang dilancarkan oleh tools pembangun yang dibenarkan seperti `make`, `go run`, `cargo`, `npm run`, atau skrip build tersuai.
 
 Ini bermakna arahan peringkat atas masih boleh mengkompil atau melancarkan binari lain selepas ia melepasi semakan awal pengawal. Dalam amalan, anggap build script, Makefile, package script, dan binari terjana sebagai kod boleh laksana yang memerlukan tahap semakan yang sama seperti arahan shell terus.
 
@@ -144,7 +144,7 @@ Untuk persekitaran yang lebih berisiko:
 
 * Semak build script sebelum pelaksanaan.
 * Utamakan kelulusan/semakan manual untuk aliran kerja compile-and-run.
-* Jalankan PicoClaw dalam container atau VM jika anda memerlukan pengasingan yang lebih kuat daripada pengawal terbina dalam.
+* Jalankan Omnipus dalam container atau VM jika anda memerlukan pengasingan yang lebih kuat daripada pengawal terbina dalam.
 
 #### Contoh Ralat
 
@@ -196,7 +196,7 @@ Semua laluan berkongsi sekatan workspace yang sama — tiada cara untuk memintas
 
 ### Heartbeat (Tugasan Berkala)
 
-PicoClaw boleh melaksanakan tugasan berkala secara automatik. Cipta fail `HEARTBEAT.md` dalam workspace anda:
+Omnipus boleh melaksanakan tugasan berkala secara automatik. Cipta fail `HEARTBEAT.md` dalam workspace anda:
 
 ```markdown
 # Periodic Tasks

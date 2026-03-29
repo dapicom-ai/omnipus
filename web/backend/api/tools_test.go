@@ -8,7 +8,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/config"
 )
 
 func TestHandleListTools(t *testing.T) {

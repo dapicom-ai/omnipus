@@ -1,6 +1,6 @@
 # Tools Configuration
 
-PicoClaw's tools configuration is located in the `tools` field of `config.json`.
+Omnipus's tools configuration is located in the `tools` field of `config.json`.
 
 ## Directory Structure
 
@@ -28,7 +28,7 @@ PicoClaw's tools configuration is located in the `tools` field of `config.json`.
 
 ## Sensitive Data Filtering
 
-Before tool results are sent to the LLM, PicoClaw can filter sensitive values (API keys, tokens, secrets) from the output. This prevents the LLM from seeing its own credentials.
+Before tool results are sent to the LLM, Omnipus can filter sensitive values (API keys, tokens, secrets) from the output. This prevents the LLM from seeing its own credentials.
 
 See [Sensitive Data Filtering](../sensitive_data_filtering.md) for full documentation.
 
@@ -144,7 +144,7 @@ At runtime, the `web_search` tool accepts the following parameters:
 | `count` | integer | no | Number of results to return. Default: `10`, max: `10` |
 | `range` | string | no | Optional time filter: `d` (day), `w` (week), `m` (month), `y` (year) |
 
-If `range` is omitted, PicoClaw performs an unrestricted search.
+If `range` is omitted, Omnipus performs an unrestricted search.
 
 ### Example `web_search` Call
 
@@ -195,7 +195,7 @@ PICOCLAW_TOOLS_EXEC_ENABLED=false
 
 ### Default Blocked Command Patterns
 
-By default, PicoClaw blocks the following dangerous commands:
+By default, Omnipus blocks the following dangerous commands:
 
 - Delete commands: `rm -rf`, `del /f/q`, `rmdir /s`
 - Disk operations: `format`, `mkfs`, `diskpart`, `dd if=`, writing to `/dev/sd*`
@@ -212,7 +212,7 @@ By default, PicoClaw blocks the following dangerous commands:
 
 ### Known Architectural Limitation
 
-The exec guard only validates the top-level command sent to PicoClaw. It does **not** recursively inspect child
+The exec guard only validates the top-level command sent to Omnipus. It does **not** recursively inspect child
 processes spawned by build tools or scripts after that command starts running.
 
 Examples of workflows that can bypass the direct command guard once the initial command is allowed:

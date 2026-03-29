@@ -4,12 +4,12 @@
 
 ## 🐳 Docker Compose
 
-Docker Compose を使用して PicoClaw を実行できます。ローカルに何もインストールする必要はありません。
+Docker Compose を使用して Omnipus を実行できます。ローカルに何もインストールする必要はありません。
 
 ```bash
 # 1. リポジトリをクローン
-git clone https://github.com/sipeed/picoclaw.git
-cd picoclaw
+git clone https://github.com/sipeed/omnipus.git
+cd omnipus
 
 # 2. 初回実行 — docker/data/config.json を自動生成して終了
 #    （config.json と workspace/ の両方が存在しない場合のみ実行）
@@ -28,7 +28,7 @@ docker compose -f docker/docker-compose.yml --profile gateway up -d
 
 ```bash
 # 5. ログを確認
-docker compose -f docker/docker-compose.yml logs -f picoclaw-gateway
+docker compose -f docker/docker-compose.yml logs -f omnipus-gateway
 
 # 6. 停止
 docker compose -f docker/docker-compose.yml --profile gateway down
@@ -36,7 +36,7 @@ docker compose -f docker/docker-compose.yml --profile gateway down
 
 ### Launcher モード (Web コンソール)
 
-`launcher` イメージには 3 つのバイナリ（`picoclaw`、`picoclaw-launcher`、`picoclaw-launcher-tui`）がすべて含まれており、デフォルトで Web コンソールを起動します。ブラウザベースの設定・チャット画面を提供します。
+`launcher` イメージには 3 つのバイナリ（`omnipus`、`omnipus-launcher`、`omnipus-launcher-tui`）がすべて含まれており、デフォルトで Web コンソールを起動します。ブラウザベースの設定・チャット画面を提供します。
 
 ```bash
 docker compose -f docker/docker-compose.yml --profile launcher up -d
@@ -51,10 +51,10 @@ docker compose -f docker/docker-compose.yml --profile launcher up -d
 
 ```bash
 # 質問する
-docker compose -f docker/docker-compose.yml run --rm picoclaw-agent -m "2+2は？"
+docker compose -f docker/docker-compose.yml run --rm omnipus-agent -m "2+2は？"
 
 # インタラクティブモード
-docker compose -f docker/docker-compose.yml run --rm picoclaw-agent
+docker compose -f docker/docker-compose.yml run --rm omnipus-agent
 ```
 
 ### イメージの更新
@@ -69,21 +69,21 @@ docker compose -f docker/docker-compose.yml --profile gateway up -d
 ## 🚀 クイックスタート
 
 > [!TIP]
-> `~/.picoclaw/config.json` に API Key を設定してください。API Key の取得先: [Volcengine (CodingPlan)](https://www.volcengine.com/activity/codingplan?utm_campaign=PicoClaw&utm_content=PicoClaw&utm_medium=devrel&utm_source=OWO&utm_term=PicoClaw) (LLM) · [OpenRouter](https://openrouter.ai/keys) (LLM) · [Zhipu](https://open.bigmodel.cn/usercenter/proj-mgmt/apikeys) (LLM)。Web 検索は**オプション**です — 無料の [Tavily API](https://tavily.com) (月 1000 回無料) または [Brave Search API](https://brave.com/search/api) (月 2000 回無料) を取得できます。
+> `~/.omnipus/config.json` に API Key を設定してください。API Key の取得先: [Volcengine (CodingPlan)](https://www.volcengine.com/activity/codingplan?utm_campaign=Omnipus&utm_content=Omnipus&utm_medium=devrel&utm_source=OWO&utm_term=Omnipus) (LLM) · [OpenRouter](https://openrouter.ai/keys) (LLM) · [Zhipu](https://open.bigmodel.cn/usercenter/proj-mgmt/apikeys) (LLM)。Web 検索は**オプション**です — 無料の [Tavily API](https://tavily.com) (月 1000 回無料) または [Brave Search API](https://brave.com/search/api) (月 2000 回無料) を取得できます。
 
 **1. 初期化**
 
 ```bash
-picoclaw onboard
+omnipus onboard
 ```
 
-**2. 設定** (`~/.picoclaw/config.json`)
+**2. 設定** (`~/.omnipus/config.json`)
 
 ```json
 {
   "agents": {
     "defaults": {
-      "workspace": "~/.picoclaw/workspace",
+      "workspace": "~/.omnipus/workspace",
       "model_name": "gpt-5.4",
       "max_tokens": 8192,
       "temperature": 0.7,
@@ -144,7 +144,7 @@ picoclaw onboard
 ```
 
 > **新機能**: `model_list` 設定形式により、コード変更なしで provider を追加できます。詳細は[モデル設定](providers.md#モデル設定-model_list)を参照してください。
-> `request_timeout` はオプションで、単位は秒です。省略または `<= 0` に設定した場合、PicoClaw はデフォルトのタイムアウト（120 秒）を使用します。
+> `request_timeout` はオプションで、単位は秒です。省略または `<= 0` に設定した場合、Omnipus はデフォルトのタイムアウト（120 秒）を使用します。
 
 **3. API Key の取得**
 
@@ -161,7 +161,7 @@ picoclaw onboard
 **4. チャット**
 
 ```bash
-picoclaw agent -m "2+2は？"
+omnipus agent -m "2+2は？"
 ```
 
 以上です！2 分で動作する AI アシスタントが手に入ります。

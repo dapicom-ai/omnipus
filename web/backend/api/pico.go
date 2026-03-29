@@ -9,7 +9,7 @@ import (
 	"net/http/httputil"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/config"
 )
 
 // registerPicoRoutes binds Pico Channel management endpoints to the ServeMux.

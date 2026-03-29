@@ -2,10 +2,10 @@
 
 # WeCom
 
-PicoClaw expose WeCom en tant que canal unique `channels.wecom`, basé sur l'API WebSocket officielle WeCom AI Bot.
+Omnipus expose WeCom en tant que canal unique `channels.wecom`, basé sur l'API WebSocket officielle WeCom AI Bot.
 Ce canal remplace l'ancienne séparation `wecom`, `wecom_app` et `wecom_aibot` par un modèle de configuration unifié.
 
-> Aucune URL de callback webhook publique n'est requise. PicoClaw établit une connexion WebSocket sortante vers WeCom.
+> Aucune URL de callback webhook publique n'est requise. Omnipus établit une connexion WebSocket sortante vers WeCom.
 
 ## Fonctionnalités prises en charge
 
@@ -33,7 +33,7 @@ Ouvrez l'interface Web, accédez à **Channels → WeCom** et cliquez sur le bou
 Exécutez :
 
 ```bash
-picoclaw auth wecom
+omnipus auth wecom
 ```
 
 La commande :
@@ -45,7 +45,7 @@ La commande :
 Le délai d'expiration par défaut est de **5 minutes**. Utilisez `--timeout` pour l'étendre :
 
 ```bash
-picoclaw auth wecom --timeout 10m
+omnipus auth wecom --timeout 10m
 ```
 
 > ⚠️ Scanner le QR code ne suffit pas — vous devez également appuyer sur **Confirmer** dans l'application WeCom, sinon la commande expirera.
@@ -102,7 +102,7 @@ Tous les champs peuvent être remplacés par des variables d'environnement avec 
 
 ## Comportement à l'exécution
 
-- PicoClaw maintient un tour WeCom actif pour que les réponses en streaming puissent continuer sur le même flux lorsque c'est possible.
+- Omnipus maintient un tour WeCom actif pour que les réponses en streaming puissent continuer sur le même flux lorsque c'est possible.
 - Les réponses en streaming ont une durée maximale de **5,5 minutes** et un intervalle d'envoi minimum de **500 ms**.
 - Si le streaming n'est plus disponible, les réponses basculent vers la livraison par push actif.
 - Les associations de routes de chat expirent après **30 minutes** d'inactivité.
@@ -130,12 +130,12 @@ Tous les champs peuvent être remplacés par des variables d'environnement avec 
 ### La liaison QR expire
 
 - Après avoir scanné le QR code, vous devez également **confirmer la connexion dans l'application WeCom**. Le scan seul ne suffit pas.
-- Relancez avec un `--timeout` plus long : `picoclaw auth wecom --timeout 10m`
+- Relancez avec un `--timeout` plus long : `omnipus auth wecom --timeout 10m`
 - Si le QR code dans le terminal est difficile à scanner, utilisez le **lien QR code** affiché en dessous pour l'ouvrir dans un navigateur.
 
 ### QR code expiré
 
-- Le QR code a une durée de validité limitée. Relancez `picoclaw auth wecom` pour en obtenir un nouveau.
+- Le QR code a une durée de validité limitée. Relancez `omnipus auth wecom` pour en obtenir un nouveau.
 
 ### Échec de la connexion WebSocket
 

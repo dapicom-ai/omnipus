@@ -12,7 +12,7 @@
 - **Salah:** `"model": "free"` → OpenRouter menerima `free` dan menolaknya.
 - **Betul:** `"model": "openrouter/free"` → OpenRouter menerima `openrouter/free` (routing auto free-tier).
 
-**Penyelesaian:** Dalam `~/.picoclaw/config.json` (atau laluan config anda):
+**Penyelesaian:** Dalam `~/.omnipus/config.json` (atau laluan config anda):
 
 1. **agents.defaults.model** mesti sepadan dengan `model_name` dalam `model_list` (contohnya `"openrouter-free"`).
 2. Medan **model** bagi entri tersebut mesti merupakan ID model OpenRouter yang sah, contohnya:

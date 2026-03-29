@@ -3,11 +3,11 @@ package agent
 import (
 	"sync"
 
-	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/logger"
-	"github.com/sipeed/picoclaw/pkg/providers"
-	"github.com/sipeed/picoclaw/pkg/routing"
-	"github.com/sipeed/picoclaw/pkg/tools"
+	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/logger"
+	"github.com/dapicom-ai/omnipus/pkg/providers"
+	"github.com/dapicom-ai/omnipus/pkg/routing"
+	"github.com/dapicom-ai/omnipus/pkg/tools"
 )
 
 // AgentRegistry manages multiple agent instances and routes messages to them.

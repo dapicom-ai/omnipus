@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/auth"
-	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/auth"
+	"github.com/dapicom-ai/omnipus/pkg/config"
 )
 
 func resetModelProbeHooks(t *testing.T) {

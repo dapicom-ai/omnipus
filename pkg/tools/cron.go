@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/bus"
-	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/constants"
-	"github.com/sipeed/picoclaw/pkg/cron"
-	"github.com/sipeed/picoclaw/pkg/utils"
+	"github.com/dapicom-ai/omnipus/pkg/bus"
+	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/constants"
+	"github.com/dapicom-ai/omnipus/pkg/cron"
+	"github.com/dapicom-ai/omnipus/pkg/utils"
 )
 
 // JobExecutor is the interface for executing cron jobs through the agent

@@ -6,12 +6,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/bus"
-	"github.com/sipeed/picoclaw/pkg/constants"
-	"github.com/sipeed/picoclaw/pkg/devices/events"
-	"github.com/sipeed/picoclaw/pkg/devices/sources"
-	"github.com/sipeed/picoclaw/pkg/logger"
-	"github.com/sipeed/picoclaw/pkg/state"
+	"github.com/dapicom-ai/omnipus/pkg/bus"
+	"github.com/dapicom-ai/omnipus/pkg/constants"
+	"github.com/dapicom-ai/omnipus/pkg/devices/events"
+	"github.com/dapicom-ai/omnipus/pkg/devices/sources"
+	"github.com/dapicom-ai/omnipus/pkg/logger"
+	"github.com/dapicom-ai/omnipus/pkg/state"
 )
 
 type Service struct {

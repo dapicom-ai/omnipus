@@ -1,7 +1,7 @@
-// PicoClaw - Ultra-lightweight personal AI agent
+// Omnipus - Ultra-lightweight personal AI agent
 // License: MIT
 //
-// Copyright (c) 2026 PicoClaw contributors
+// Copyright (c) 2026 Omnipus contributors
 
 package config
 
@@ -9,19 +9,19 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/sipeed/picoclaw/pkg"
+	"github.com/dapicom-ai/omnipus/pkg"
 )
 
-// DefaultConfig returns the default configuration for PicoClaw.
+// DefaultConfig returns the default configuration for Omnipus.
 func DefaultConfig() *Config {
 	// Determine the base path for the workspace.
-	// Priority: $PICOCLAW_HOME > ~/.picoclaw
+	// Priority: $PICOCLAW_HOME > ~/.omnipus
 	var homePath string
-	if picoclawHome := os.Getenv(EnvHome); picoclawHome != "" {
-		homePath = picoclawHome
+	if omnipusHome := os.Getenv(EnvHome); omnipusHome != "" {
+		homePath = omnipusHome
 	} else {
 		userHome, _ := os.UserHomeDir()
-		homePath = filepath.Join(userHome, pkg.DefaultPicoClawHome)
+		homePath = filepath.Join(userHome, pkg.DefaultOmnipusHome)
 	}
 	workspacePath := filepath.Join(homePath, pkg.WorkspaceName)
 

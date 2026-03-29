@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/dapicom-ai/omnipus/pkg/providers"
 )
 
 func writeJSONSession(

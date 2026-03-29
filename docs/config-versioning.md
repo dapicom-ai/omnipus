@@ -2,7 +2,7 @@
 
 ## Overview
 
-PicoClaw uses a schema versioning system for `config.json` to ensure smooth upgrades as the configuration format evolves.
+Omnipus uses a schema versioning system for `config.json` to ensure smooth upgrades as the configuration format evolves.
 
 ## Version History
 

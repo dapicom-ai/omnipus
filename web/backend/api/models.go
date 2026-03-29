@@ -8,8 +8,8 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
 
 // registerModelRoutes binds model list management endpoints to the ServeMux.

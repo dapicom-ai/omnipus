@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/config"
 )
 
 func TestHandleUpdateConfig_PreservesExecAllowRemoteDefaultWhenOmitted(t *testing.T) {
@@ -23,7 +23,7 @@ func TestHandleUpdateConfig_PreservesExecAllowRemoteDefaultWhenOmitted(t *testin
 "version": 1,
 		"agents": {
 			"defaults": {
-				"workspace": "~/.picoclaw/workspace"
+				"workspace": "~/.omnipus/workspace"
 			}
 		},
 		"model_list": [
@@ -62,7 +62,7 @@ func TestHandleUpdateConfig_DoesNotInheritDefaultModelFields(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewBufferString(`{
 		"agents": {
 			"defaults": {
-				"workspace": "~/.picoclaw/workspace"
+				"workspace": "~/.omnipus/workspace"
 			}
 		},
 		"model_list": [
@@ -155,7 +155,7 @@ func setupPicoEnabledEnv(t *testing.T) (string, func()) {
 	if err := os.Setenv("HOME", tmp); err != nil {
 		t.Fatalf("set HOME: %v", err)
 	}
-	if err := os.Setenv("PICOCLAW_HOME", filepath.Join(tmp, ".picoclaw")); err != nil {
+	if err := os.Setenv("PICOCLAW_HOME", filepath.Join(tmp, ".omnipus")); err != nil {
 		t.Fatalf("set PICOCLAW_HOME: %v", err)
 	}
 
@@ -198,7 +198,7 @@ func TestHandleUpdateConfig_SucceedsWhenPicoTokenInSecurityOnly(t *testing.T) {
 		"version": 1,
 		"agents": {
 			"defaults": {
-				"workspace": "~/.picoclaw/workspace",
+				"workspace": "~/.omnipus/workspace",
 				"model_name": "custom-default"
 			}
 		},

@@ -3,14 +3,14 @@ package routing
 import (
 	"testing"
 
-	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/config"
 )
 
 func testConfig(agents []config.AgentConfig, bindings []config.AgentBinding) *config.Config {
 	return &config.Config{
 		Agents: config.AgentsConfig{
 			Defaults: config.AgentDefaults{
-				Workspace: "/tmp/picoclaw-test",
+				Workspace: "/tmp/omnipus-test",
 				ModelName: "gpt-4",
 			},
 			List: agents,

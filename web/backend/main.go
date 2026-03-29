@@ -1,13 +1,13 @@
-// PicoClaw Web Console - Web-based chat and management interface
+// Omnipus Web Console - Web-based chat and management interface
 //
-// Provides a web UI for chatting with PicoClaw via the Pico Channel WebSocket,
+// Provides a web UI for chatting with Omnipus via the Pico Channel WebSocket,
 // with configuration management and gateway process control.
 //
 // Usage:
 //
-//	go build -o picoclaw-web ./web/backend/
-//	./picoclaw-web [config.json]
-//	./picoclaw-web -public config.json
+//	go build -o omnipus-web ./web/backend/
+//	./omnipus-web [config.json]
+//	./omnipus-web -public config.json
 
 package main
 
@@ -23,16 +23,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/logger"
-	"github.com/sipeed/picoclaw/web/backend/api"
-	"github.com/sipeed/picoclaw/web/backend/launcherconfig"
-	"github.com/sipeed/picoclaw/web/backend/middleware"
-	"github.com/sipeed/picoclaw/web/backend/utils"
+	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/logger"
+	"github.com/dapicom-ai/omnipus/web/backend/api"
+	"github.com/dapicom-ai/omnipus/web/backend/launcherconfig"
+	"github.com/dapicom-ai/omnipus/web/backend/middleware"
+	"github.com/dapicom-ai/omnipus/web/backend/utils"
 )
 
 const (
-	appName = "PicoClaw"
+	appName = "Omnipus"
 
 	logPath   = "logs"
 	panicFile = "launcher_panic.log"
@@ -57,10 +57,10 @@ func main() {
 	console := flag.Bool("console", false, "Console mode, no GUI")
 
 	flag.Usage = func() {
-		fmt.Fprintf(os.Stderr, "PicoClaw Launcher - A web-based configuration editor\n\n")
+		fmt.Fprintf(os.Stderr, "Omnipus Launcher - A web-based configuration editor\n\n")
 		fmt.Fprintf(os.Stderr, "Usage: %s [options] [config.json]\n\n", os.Args[0])
 		fmt.Fprintf(os.Stderr, "Arguments:\n")
-		fmt.Fprintf(os.Stderr, "  config.json    Path to the configuration file (default: ~/.picoclaw/config.json)\n\n")
+		fmt.Fprintf(os.Stderr, "  config.json    Path to the configuration file (default: ~/.omnipus/config.json)\n\n")
 		fmt.Fprintf(os.Stderr, "Options:\n")
 		flag.PrintDefaults()
 		fmt.Fprintf(os.Stderr, "\nExamples:\n")
@@ -75,7 +75,7 @@ func main() {
 	flag.Parse()
 
 	// Initialize logger
-	picoHome := utils.GetPicoclawHome()
+	picoHome := utils.GetOmnipusHome()
 
 	f := filepath.Join(picoHome, logPath, panicFile)
 	panicFunc, err := logger.InitPanic(f)
@@ -99,7 +99,7 @@ func main() {
 	}
 
 	logger.InfoC("web", fmt.Sprintf("%s Launcher %s starting...", appName, appVersion))
-	logger.InfoC("web", fmt.Sprintf("PicoClaw Home: %s", picoHome))
+	logger.InfoC("web", fmt.Sprintf("Omnipus Home: %s", picoHome))
 
 	// Set language from command line or auto-detect
 	if *lang != "" {
@@ -118,7 +118,7 @@ func main() {
 	}
 	err = utils.EnsureOnboarded(absPath)
 	if err != nil {
-		logger.Errorf("Warning: Failed to initialize PicoClaw config automatically: %v", err)
+		logger.Errorf("Warning: Failed to initialize Omnipus config automatically: %v", err)
 	}
 
 	var explicitPort bool

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/dapicom-ai/omnipus/pkg/providers"
 )
 
 func TestProcessHook_HelperProcess(t *testing.T) {

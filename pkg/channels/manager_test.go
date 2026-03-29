@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/sipeed/picoclaw/pkg/bus"
+	"github.com/dapicom-ai/omnipus/pkg/bus"
 )
 
 // mockChannel is a test double that delegates Send to a configurable function.

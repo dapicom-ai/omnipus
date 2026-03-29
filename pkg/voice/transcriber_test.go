@@ -3,7 +3,7 @@ package voice
 import (
 	"testing"
 
-	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/config"
 )
 
 func TestDetectTranscriber(t *testing.T) {

@@ -1,4 +1,4 @@
-module github.com/sipeed/picoclaw
+module github.com/dapicom-ai/omnipus
 
 go 1.25.8
 

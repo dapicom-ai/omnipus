@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"gopkg.in/yaml.v3"
 
-	"github.com/sipeed/picoclaw/pkg/credential"
+	"github.com/dapicom-ai/omnipus/pkg/credential"
 )
 
 // mustSetupSSHKey generates a temporary Ed25519 SSH key in t.TempDir() and sets
@@ -19,7 +19,7 @@ import (
 // whenever a test exercises encryption/decryption via credential.Encrypt or SaveConfig.
 func mustSetupSSHKey(t *testing.T) {
 	t.Helper()
-	keyPath := filepath.Join(t.TempDir(), "picoclaw_ed25519.key")
+	keyPath := filepath.Join(t.TempDir(), "omnipus_ed25519.key")
 	if err := credential.GenerateSSHKey(keyPath); err != nil {
 		t.Fatalf("mustSetupSSHKey: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestAgentConfig_FullParse(t *testing.T) {
 	jsonData := `{
 		"agents": {
 			"defaults": {
-				"workspace": "~/.picoclaw/workspace",
+				"workspace": "~/.omnipus/workspace",
 				"model": "glm-4.7",
 				"max_tokens": 8192,
 				"max_tool_iterations": 20
@@ -202,7 +202,7 @@ func TestConfig_BackwardCompat_NoAgentsList(t *testing.T) {
 	jsonData := `{
 		"agents": {
 			"defaults": {
-				"workspace": "~/.picoclaw/workspace",
+				"workspace": "~/.omnipus/workspace",
 				"model": "glm-4.7",
 				"max_tokens": 8192,
 				"max_tool_iterations": 20
@@ -685,7 +685,7 @@ func TestLoadConfig_HooksProcessConfig(t *testing.T) {
       "review-gate": {
         "enabled": true,
         "transport": "stdio",
-        "command": ["uvx", "picoclaw-hook-reviewer"],
+        "command": ["uvx", "omnipus-hook-reviewer"],
         "dir": "/tmp/hooks",
         "env": {
           "HOOK_MODE": "rewrite"
@@ -792,18 +792,18 @@ func TestDefaultConfig_WorkspacePath_Default(t *testing.T) {
 	}
 
 	cfg := DefaultConfig()
-	want := filepath.Join(fakeHome, ".picoclaw", "workspace")
+	want := filepath.Join(fakeHome, ".omnipus", "workspace")
 
 	if cfg.Agents.Defaults.Workspace != want {
 		t.Errorf("Default workspace path = %q, want %q", cfg.Agents.Defaults.Workspace, want)
 	}
 }
 
-func TestDefaultConfig_WorkspacePath_WithPicoclawHome(t *testing.T) {
-	t.Setenv("PICOCLAW_HOME", "/custom/picoclaw/home")
+func TestDefaultConfig_WorkspacePath_WithOmnipusHome(t *testing.T) {
+	t.Setenv("PICOCLAW_HOME", "/custom/omnipus/home")
 
 	cfg := DefaultConfig()
-	want := filepath.Join("/custom/picoclaw/home", "workspace")
+	want := filepath.Join("/custom/omnipus/home", "workspace")
 
 	if cfg.Agents.Defaults.Workspace != want {
 		t.Errorf("Workspace path with PICOCLAW_HOME = %q, want %q", cfg.Agents.Defaults.Workspace, want)

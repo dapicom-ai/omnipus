@@ -1,0 +1,52 @@
+package gateway
+
+import (
+	"fmt"
+
+	"github.com/spf13/cobra"
+
+	"github.com/dapicom-ai/omnipus/cmd/omnipus/internal"
+	"github.com/dapicom-ai/omnipus/pkg/gateway"
+	"github.com/dapicom-ai/omnipus/pkg/logger"
+	"github.com/dapicom-ai/omnipus/pkg/utils"
+)
+
+func NewGatewayCommand() *cobra.Command {
+	var debug bool
+	var noTruncate bool
+	var allowEmpty bool
+
+	cmd := &cobra.Command{
+		Use:     "gateway",
+		Aliases: []string{"g"},
+		Short:   "Start omnipus gateway",
+		Args:    cobra.NoArgs,
+		PreRunE: func(_ *cobra.Command, _ []string) error {
+			if noTruncate && !debug {
+				return fmt.Errorf("the --no-truncate option can only be used in conjunction with --debug (-d)")
+			}
+
+			if noTruncate {
+				utils.SetDisableTruncation(true)
+				logger.Info("String truncation is globally disabled via 'no-truncate' flag")
+			}
+
+			return nil
+		},
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return gateway.Run(debug, internal.GetOmnipusHome(), internal.GetConfigPath(), allowEmpty)
+		},
+	}
+
+	cmd.Flags().BoolVarP(&debug, "debug", "d", false, "Enable debug logging")
+	cmd.Flags().BoolVarP(&noTruncate, "no-truncate", "T", false, "Disable string truncation in debug logs")
+	cmd.Flags().BoolVarP(
+		&allowEmpty,
+		"allow-empty",
+		"E",
+		false,
+		"Continue starting even when no default model is configured",
+	)
+
+	return cmd
+}

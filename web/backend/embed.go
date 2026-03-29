@@ -9,7 +9,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
 
 //go:embed all:dist

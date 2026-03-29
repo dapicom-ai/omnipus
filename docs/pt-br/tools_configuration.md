@@ -2,7 +2,7 @@
 
 > Voltar ao [README](../../README.pt-br.md)
 
-A configuração de ferramentas do PicoClaw está localizada no campo `tools` do `config.json`.
+A configuração de ferramentas do Omnipus está localizada no campo `tools` do `config.json`.
 
 ## Estrutura de diretórios
 
@@ -155,7 +155,7 @@ PICOCLAW_TOOLS_EXEC_ENABLED=false
 
 ### Padrões de comandos bloqueados por padrão
 
-Por padrão, o PicoClaw bloqueia os seguintes comandos perigosos:
+Por padrão, o Omnipus bloqueia os seguintes comandos perigosos:
 
 - Comandos de exclusão: `rm -rf`, `del /f/q`, `rmdir /s`
 - Operações de disco: `format`, `mkfs`, `diskpart`, `dd if=`, escrita em `/dev/sd*`
@@ -172,7 +172,7 @@ Por padrão, o PicoClaw bloqueia os seguintes comandos perigosos:
 
 ### Limitação arquitetural conhecida
 
-O guarda exec apenas valida o comando de nível superior enviado ao PicoClaw. Ele **não** inspeciona recursivamente processos filhos gerados por ferramentas de build ou scripts após o início desse comando.
+O guarda exec apenas valida o comando de nível superior enviado ao Omnipus. Ele **não** inspeciona recursivamente processos filhos gerados por ferramentas de build ou scripts após o início desse comando.
 
 Exemplos de fluxos de trabalho que podem contornar o guarda de comando direto uma vez que o comando inicial é permitido:
 

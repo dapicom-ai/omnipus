@@ -10,8 +10,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/skills"
+	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/skills"
 )
 
 type skillSupportResponse struct {
@@ -316,7 +316,7 @@ func globalConfigDir() string {
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".picoclaw")
+	return filepath.Join(home, ".omnipus")
 }
 
 func builtinSkillsDir() string {

@@ -1,28 +1,28 @@
-# Debugging PicoClaw
+# Debugging Omnipus
 
-PicoClaw performs multiple complex interactions under the hood for every single request it receives—from routing messages and evaluating complexity, to executing tools and adapting to model failures. Being able to see exactly what is happening is crucial, not just for troubleshooting potential issues, but also for truly understanding how the agent operates.
-## Starting PicoClaw in Debug Mode
+Omnipus performs multiple complex interactions under the hood for every single request it receives—from routing messages and evaluating complexity, to executing tools and adapting to model failures. Being able to see exactly what is happening is crucial, not just for troubleshooting potential issues, but also for truly understanding how the agent operates.
+## Starting Omnipus in Debug Mode
 
-To get detailed information about what the agent is doing (LLM requests, tool calls, message routing), you can start the PicoClaw gateway with the debug flag:
+To get detailed information about what the agent is doing (LLM requests, tool calls, message routing), you can start the Omnipus gateway with the debug flag:
 
 ```bash
-picoclaw gateway --debug
+omnipus gateway --debug
 # or
-picoclaw gateway -d
+omnipus gateway -d
 ```
 
 In this mode, the system will format the logs extensively and display previews of system prompts and tool execution results.
 
 ## Disabling Log Truncation (Full Logs)
 
-By default, PicoClaw truncates very long strings (such as the *System Prompt* or large JSON output results) in the debug logs to keep the console readable.
+By default, Omnipus truncates very long strings (such as the *System Prompt* or large JSON output results) in the debug logs to keep the console readable.
 
 If you need to inspect the complete output of a command or the exact payload sent to the LLM model, you can use the `--no-truncate` flag.
 
 **Note:** This flag *only* works when combined with the `--debug` mode.
 
 ```bash
-picoclaw gateway --debug --no-truncate
+omnipus gateway --debug --no-truncate
 
 ```
 
@@ -50,7 +50,7 @@ A typical synchronous tool call produces two consecutive lines in the console:
 
 ```
 [...] [INFO] agent: LLM requested tool calls {tools=[web_search], count=1, iteration=1}
-[...] [INFO] agent: Tool call: web_search({"query":"picoclaw release notes"}) {tool=web_search, iteration=1}
+[...] [INFO] agent: Tool call: web_search({"query":"omnipus release notes"}) {tool=web_search, iteration=1}
 ```
 
 The arguments preview is hard-capped at **200 characters** in the logs regardless of the `--no-truncate` flag, because it belongs to the `INFO`-level path. Use `--no-truncate` together with `--debug` to see the full `tools_json` field emitted by the `Full LLM request` DEBUG entry, which contains every tool definition sent to the model.
@@ -76,7 +76,7 @@ When `enabled` is `true`, every tool call sends a short message to the chat befo
 
 ```bash
 🔧 `web_search`
-{"query": "picoclaw release notes"}
+{"query": "omnipus release notes"}
 ```
 
 

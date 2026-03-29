@@ -4,7 +4,7 @@
 
 ## 💬 Chat Apps
 
-Talk to your picoclaw through Telegram, Discord, WhatsApp, Matrix, QQ, DingTalk, LINE, WeCom, Feishu, Slack, IRC, OneBot, MaixCam, or Pico (native protocol)
+Talk to your omnipus through Telegram, Discord, WhatsApp, Matrix, QQ, DingTalk, LINE, WeCom, Feishu, Slack, IRC, OneBot, MaixCam, or Pico (native protocol)
 
 > **Note**: Channels that rely on HTTP callbacks share a single Gateway HTTP server (`gateway.host`:`gateway.port`, default `127.0.0.1:18790`). Socket/stream-based channels such as Feishu, DingTalk, and WeCom do not rely on the shared webhook server for inbound delivery.
 
@@ -24,7 +24,7 @@ Talk to your picoclaw through Telegram, Discord, WhatsApp, Matrix, QQ, DingTalk,
 | **IRC**              | ⭐⭐ Medium        | Server + TLS configuration                            | [Docs](#irc)                                                                                                     |
 | **OneBot**           | ⭐⭐ Medium        | NapCat/Go-CQHTTP compatible, community ecosystem      | [Docs](channels/onebot/README.md)                                                                            |
 | **MaixCam**          | ⭐ Easy            | Hardware integration channel for Sipeed AI cameras    | [Docs](channels/maixcam/README.md)                                                                           |
-| **Pico**             | ⭐ Easy            | Native PicoClaw protocol channel                      |                                                                                                                  |
+| **Pico**             | ⭐ Easy            | Native Omnipus protocol channel                      |                                                                                                                  |
 
 <a id="telegram"></a>
 <details>
@@ -56,15 +56,15 @@ Talk to your picoclaw through Telegram, Discord, WhatsApp, Matrix, QQ, DingTalk,
 **3. Run**
 
 ```bash
-picoclaw gateway
+omnipus gateway
 ```
 
 **4. Telegram command menu (auto-registered at startup)**
 
-PicoClaw now keeps command definitions in one shared registry. On startup, Telegram will automatically register supported bot commands (for example `/start`, `/help`, `/show`, `/list`, `/use`) so command menu and runtime behavior stay in sync.
+Omnipus now keeps command definitions in one shared registry. On startup, Telegram will automatically register supported bot commands (for example `/start`, `/help`, `/show`, `/list`, `/use`) so command menu and runtime behavior stay in sync.
 Telegram command menu registration remains channel-local discovery UX; generic command execution is handled centrally in the agent loop via the commands executor.
 
-If command registration fails (network/API transient errors), the channel still starts and PicoClaw retries registration in the background.
+If command registration fails (network/API transient errors), the channel still starts and Omnipus retries registration in the background.
 
 You can also manage installed skills directly from Telegram:
 
@@ -147,7 +147,7 @@ You can also trigger by keyword prefixes (e.g. `!bot`):
 **6. Run**
 
 ```bash
-picoclaw gateway
+omnipus gateway
 ```
 
 </details>
@@ -156,7 +156,7 @@ picoclaw gateway
 <details>
 <summary><b>WhatsApp</b> (native via whatsmeow)</summary>
 
-PicoClaw can connect to WhatsApp in two ways:
+Omnipus can connect to WhatsApp in two ways:
 
 - **Native (recommended):** In-process using [whatsmeow](https://github.com/tulir/whatsmeow). No separate bridge. Set `"use_native": true` and leave `bridge_url` empty. On first run, scan the QR code with WhatsApp (Linked Devices). Session is stored under your workspace (e.g. `workspace/whatsapp/`). The native channel is **optional** to keep the default binary small; build with `-tags whatsapp_native` (e.g. `make build-whatsapp-native` or `go build -tags whatsapp_native ./cmd/...`).
 - **Bridge:** Connect to an external WebSocket bridge. Set `bridge_url` (e.g. `ws://localhost:3001`) and keep `use_native` false.
@@ -176,7 +176,7 @@ PicoClaw can connect to WhatsApp in two ways:
 }
 ```
 
-If `session_store_path` is empty, the session is stored in `<workspace>/whatsapp/`. Run `picoclaw gateway`; on first run, scan the QR code printed in the terminal with WhatsApp → Linked Devices.
+If `session_store_path` is empty, the session is stored in `<workspace>/whatsapp/`. Run `omnipus gateway`; on first run, scan the QR code printed in the terminal with WhatsApp → Linked Devices.
 
 </details>
 
@@ -184,13 +184,13 @@ If `session_store_path` is empty, the session is stored in `<workspace>/whatsapp
 <details>
 <summary><b>Weixin</b> (WeChat Personal)</summary>
 
-PicoClaw supports connecting to your personal WeChat account using the official Tencent iLink API.
+Omnipus supports connecting to your personal WeChat account using the official Tencent iLink API.
 
 **1. Login**
 
 Run the interactive QR login flow:
 ```bash
-picoclaw auth weixin
+omnipus auth weixin
 ```
 Scan the printed QR code with your WeChat mobile app. On success, the token is saved to your config.
 
@@ -211,7 +211,7 @@ Scan the printed QR code with your WeChat mobile app. On success, the token is s
 
 **3. Run**
 ```bash
-picoclaw gateway
+omnipus gateway
 ```
 
 </details>
@@ -226,7 +226,7 @@ QQ Open Platform provides a one-click setup page for OpenClaw-compatible bots:
 
 1. Open [QQ Bot Quick Start](https://q.qq.com/qqbot/openclaw/index.html) and scan the QR code to log in
 2. A bot is created automatically — copy the **App ID** and **App Secret**
-3. Configure PicoClaw:
+3. Configure Omnipus:
 
 ```json
 {
@@ -241,7 +241,7 @@ QQ Open Platform provides a one-click setup page for OpenClaw-compatible bots:
 }
 ```
 
-4. Run `picoclaw gateway` and open QQ to chat with your bot
+4. Run `omnipus gateway` and open QQ to chat with your bot
 
 > The App Secret is only shown once. Save it immediately — viewing it again will force a reset.
 >
@@ -254,7 +254,7 @@ If you prefer to create the bot manually:
 * Log in at [QQ Open Platform](https://q.qq.com/) to register as a developer
 * Create a QQ bot — customize its avatar and name
 * Copy the **App ID** and **App Secret** from the bot settings
-* Configure as shown above and run `picoclaw gateway`
+* Configure as shown above and run `omnipus gateway`
 
 </details>
 
@@ -288,7 +288,7 @@ If you prefer to create the bot manually:
 **3. Run**
 
 ```bash
-picoclaw gateway
+omnipus gateway
 ```
 </details>
 
@@ -320,7 +320,7 @@ picoclaw gateway
 **3. Run**
 
 ```bash
-picoclaw gateway
+omnipus gateway
 ```
 
 For full options (`device_id`, `join_on_invite`, `group_trigger`, `placeholder`, `reasoning_channel_id`), see [Matrix Channel Configuration Guide](channels/matrix/README.md).
@@ -369,7 +369,7 @@ Then set the Webhook URL in LINE Developers Console to `https://your-domain/webh
 **4. Run**
 
 ```bash
-picoclaw gateway
+omnipus gateway
 ```
 
 > In group chats, the bot responds only when @mentioned. Replies quote the original message.
@@ -380,7 +380,7 @@ picoclaw gateway
 <details>
 <summary><b>WeCom (企业微信)</b></summary>
 
-PicoClaw now exposes WeCom as a single AI Bot channel over WebSocket.
+Omnipus now exposes WeCom as a single AI Bot channel over WebSocket.
 No public webhook callback URL is required.
 
 See [WeCom Configuration Guide](channels/wecom/README.md) for the full configuration reference and migration notes.
@@ -390,7 +390,7 @@ See [WeCom Configuration Guide](channels/wecom/README.md) for the full configura
 **1. Authenticate**
 
 ```bash
-picoclaw auth wecom
+omnipus auth wecom
 ```
 
 This command shows a QR code, waits for approval in WeCom, and writes `bot_id` + `secret` into `channels.wecom`.
@@ -416,7 +416,7 @@ This command shows a QR code, waits for approval in WeCom, and writes `bot_id` +
 **3. Run**
 
 ```bash
-picoclaw gateway
+omnipus gateway
 ```
 
 > Legacy `wecom_app` and `wecom_aibot` entries are replaced by the unified `channels.wecom` config in this branch.
@@ -427,7 +427,7 @@ picoclaw gateway
 <details>
 <summary><b>Feishu (Lark)</b></summary>
 
-PicoClaw connects to Feishu via WebSocket/SDK mode — no public webhook URL or callback server needed.
+Omnipus connects to Feishu via WebSocket/SDK mode — no public webhook URL or callback server needed.
 
 **1. Create an app**
 
@@ -456,7 +456,7 @@ Optional fields: `encrypt_key` and `verification_token` for event encryption (re
 **3. Run and chat**
 
 ```bash
-picoclaw gateway
+omnipus gateway
 ```
 
 Open Feishu, search for your bot name, and start chatting. You can also add the bot to a group — use `group_trigger.mention_only: true` to only respond when @mentioned.
@@ -494,7 +494,7 @@ For full options, see [Feishu Channel Configuration Guide](channels/feishu/READM
 **3. Run**
 
 ```bash
-picoclaw gateway
+omnipus gateway
 ```
 
 </details>
@@ -512,7 +512,7 @@ picoclaw gateway
       "enabled": true,
       "server": "irc.libera.chat:6697",
       "tls": true,
-      "nick": "picoclaw-bot",
+      "nick": "omnipus-bot",
       "channels": ["#your-channel"],
       "password": "",
       "allow_from": []
@@ -526,7 +526,7 @@ Optional: `nickserv_password` for NickServ authentication, `sasl_user`/`sasl_pas
 **2. Run**
 
 ```bash
-picoclaw gateway
+omnipus gateway
 ```
 
 The bot will connect to the IRC server and join the specified channels.
@@ -537,7 +537,7 @@ The bot will connect to the IRC server and join the specified channels.
 <details>
 <summary><b>OneBot (QQ via OneBot protocol)</b></summary>
 
-OneBot is an open protocol for QQ bots. PicoClaw connects to any OneBot v11 compatible implementation (e.g., [Lagrange](https://github.com/LagrangeDev/Lagrange.Core), [NapCat](https://github.com/NapNeko/NapCatQQ)) via WebSocket.
+OneBot is an open protocol for QQ bots. Omnipus connects to any OneBot v11 compatible implementation (e.g., [Lagrange](https://github.com/LagrangeDev/Lagrange.Core), [NapCat](https://github.com/NapNeko/NapCatQQ)) via WebSocket.
 
 **1. Set up a OneBot implementation**
 
@@ -567,7 +567,7 @@ Install and run a OneBot v11 compatible QQ bot framework. Enable its WebSocket s
 **3. Run**
 
 ```bash
-picoclaw gateway
+omnipus gateway
 ```
 
 </details>

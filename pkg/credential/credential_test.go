@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/sipeed/picoclaw/pkg/credential"
+	"github.com/dapicom-ai/omnipus/pkg/credential"
 )
 
 func TestResolve_PlainKey(t *testing.T) {
@@ -61,7 +61,7 @@ func TestResolve_FileKey_Empty(t *testing.T) {
 // TestResolve_EncKey_RoundTrip tests basic encryption/decryption round-trip with an SSH key.
 func TestResolve_EncKey_RoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	sshKeyPath := filepath.Join(dir, "picoclaw_ed25519.key")
+	sshKeyPath := filepath.Join(dir, "omnipus_ed25519.key")
 	if err := os.WriteFile(sshKeyPath, []byte("fake-ssh-key-material\n"), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestResolve_EncKey_RoundTrip(t *testing.T) {
 // TestResolve_EncKey_WithSSHKey tests that the SSH key file is incorporated into key derivation.
 func TestResolve_EncKey_WithSSHKey(t *testing.T) {
 	dir := t.TempDir()
-	sshKeyPath := filepath.Join(dir, "picoclaw_ed25519.key")
+	sshKeyPath := filepath.Join(dir, "omnipus_ed25519.key")
 	if err := os.WriteFile(sshKeyPath, []byte("fake-ssh-private-key-material\n"), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestResolve_EncKey_WithSSHKey(t *testing.T) {
 
 func TestResolve_EncKey_NoPassphrase(t *testing.T) {
 	dir := t.TempDir()
-	sshKeyPath := filepath.Join(dir, "picoclaw_ed25519.key")
+	sshKeyPath := filepath.Join(dir, "omnipus_ed25519.key")
 	if err := os.WriteFile(sshKeyPath, []byte("fake-ssh-key\n"), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestResolve_EncKey_PayloadTooShort(t *testing.T) {
 
 func TestResolve_EncKey_WrongPassphrase(t *testing.T) {
 	dir := t.TempDir()
-	sshKeyPath := filepath.Join(dir, "picoclaw_ed25519.key")
+	sshKeyPath := filepath.Join(dir, "omnipus_ed25519.key")
 	if err := os.WriteFile(sshKeyPath, []byte("fake-ssh-key\n"), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestEncrypt_EmptyPassphrase(t *testing.T) {
 func TestDeriveKey_SSHKeyNotFound(t *testing.T) {
 	// Encrypt with a real SSH key path, then try to decrypt with a missing path.
 	dir := t.TempDir()
-	sshKeyPath := filepath.Join(dir, "picoclaw_ed25519.key")
+	sshKeyPath := filepath.Join(dir, "omnipus_ed25519.key")
 	if err := os.WriteFile(sshKeyPath, []byte("fake-key\n"), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -267,7 +267,7 @@ func TestResolve_FileRef_withinConfigDir(t *testing.T) {
 // that are not under PICOCLAW_SSH_KEY_PATH, PICOCLAW_HOME, or ~/.ssh/.
 func TestEncrypt_SSHKeyOutsideAllowedDirs(t *testing.T) {
 	dir := t.TempDir()
-	sshKeyPath := filepath.Join(dir, "picoclaw_ed25519.key")
+	sshKeyPath := filepath.Join(dir, "omnipus_ed25519.key")
 	if err := os.WriteFile(sshKeyPath, []byte("fake-key\n"), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}

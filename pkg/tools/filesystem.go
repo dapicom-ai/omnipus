@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/fileutil"
-	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/dapicom-ai/omnipus/pkg/fileutil"
+	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
 
 const MaxReadFileSize = 64 * 1024 // 64KB limit to avoid context overflow

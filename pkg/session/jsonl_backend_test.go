@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/sipeed/picoclaw/pkg/memory"
-	"github.com/sipeed/picoclaw/pkg/providers"
-	"github.com/sipeed/picoclaw/pkg/session"
+	"github.com/dapicom-ai/omnipus/pkg/memory"
+	"github.com/dapicom-ai/omnipus/pkg/providers"
+	"github.com/dapicom-ai/omnipus/pkg/session"
 )
 
 // Compile-time interface satisfaction checks.

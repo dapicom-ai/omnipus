@@ -11,10 +11,10 @@ import (
 	"strings"
 	"time"
 
-	basechannels "github.com/sipeed/picoclaw/pkg/channels"
-	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/fileutil"
-	"github.com/sipeed/picoclaw/pkg/logger"
+	basechannels "github.com/dapicom-ai/omnipus/pkg/channels"
+	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/fileutil"
+	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
 
 const (
@@ -40,12 +40,12 @@ type contextTokensFile struct {
 	Tokens map[string]string `json:"tokens"`
 }
 
-func picoclawHomeDir() string {
+func omnipusHomeDir() string {
 	if home := os.Getenv(config.EnvHome); home != "" {
 		return home
 	}
 	userHome, _ := os.UserHomeDir()
-	return filepath.Join(userHome, ".picoclaw")
+	return filepath.Join(userHome, ".omnipus")
 }
 
 func genWeixinAccountKey(cfg config.WeixinConfig) string {
@@ -58,11 +58,11 @@ func genWeixinAccountKey(cfg config.WeixinConfig) string {
 }
 
 func buildWeixinSyncBufPath(cfg config.WeixinConfig) string {
-	return filepath.Join(picoclawHomeDir(), "channels", "weixin", "sync", genWeixinAccountKey(cfg)+".json")
+	return filepath.Join(omnipusHomeDir(), "channels", "weixin", "sync", genWeixinAccountKey(cfg)+".json")
 }
 
 func buildWeixinContextTokensPath(cfg config.WeixinConfig) string {
-	return filepath.Join(picoclawHomeDir(), "channels", "weixin", "context-tokens", genWeixinAccountKey(cfg)+".json")
+	return filepath.Join(omnipusHomeDir(), "channels", "weixin", "context-tokens", genWeixinAccountKey(cfg)+".json")
 }
 
 func loadGetUpdatesBuf(path string) (string, error) {

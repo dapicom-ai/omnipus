@@ -2,7 +2,7 @@
 
 > 返回 [README](../../README.zh.md)
 
-PicoClaw 的工具配置位于 `config.json` 的 `tools` 字段中。
+Omnipus 的工具配置位于 `config.json` 的 `tools` 字段中。
 
 ## 目录结构
 
@@ -30,7 +30,7 @@ PicoClaw 的工具配置位于 `config.json` 的 `tools` 字段中。
 
 ## 敏感数据过滤
 
-在将工具结果发送给 LLM 之前，PicoClaw 可以从输出中过滤敏感值（API 密钥、令牌、密码）。这可以防止 LLM 看到自己的凭据。
+在将工具结果发送给 LLM 之前，Omnipus 可以从输出中过滤敏感值（API 密钥、令牌、密码）。这可以防止 LLM 看到自己的凭据。
 
 详细说明请参阅[敏感数据过滤](../sensitive_data_filtering.md)。
 
@@ -181,7 +181,7 @@ PICOCLAW_TOOLS_EXEC_ENABLED=false
 
 ### 默认拦截的命令模式
 
-默认情况下，PicoClaw 会拦截以下危险命令：
+默认情况下，Omnipus 会拦截以下危险命令：
 
 - 删除命令：`rm -rf`、`del /f/q`、`rmdir /s`
 - 磁盘操作：`format`、`mkfs`、`diskpart`、`dd if=`、写入 `/dev/sd*`
@@ -198,7 +198,7 @@ PICOCLAW_TOOLS_EXEC_ENABLED=false
 
 ### 已知架构限制
 
-exec 守卫仅验证发送给 PicoClaw 的顶层命令。它**不会**递归检查该命令启动后由构建工具或脚本生成的子进程。
+exec 守卫仅验证发送给 Omnipus 的顶层命令。它**不会**递归检查该命令启动后由构建工具或脚本生成的子进程。
 
 以下工作流在初始命令被允许后可以绕过直接命令守卫：
 

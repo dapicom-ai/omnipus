@@ -16,7 +16,7 @@ before:
     - go-winres make --in web/backend/winres/winres.json --out web/backend/rsrc --product-version={{ .Version }} --file-version={{ .Version }}
 
 builds:
-  - id: picoclaw
+  - id: omnipus
     env:
       - CGO_ENABLED=0
     tags:
@@ -24,10 +24,10 @@ builds:
       - stdjson
     ldflags:
       - -s -w
-      - -X github.com/sipeed/picoclaw/pkg/config.Version={{ .Version }}
-      - -X github.com/sipeed/picoclaw/pkg/config.GitCommit={{ .ShortCommit }}
-      - -X github.com/sipeed/picoclaw/pkg/config.BuildTime={{ .Date }}
-      - -X github.com/sipeed/picoclaw/pkg/config.GoVersion={{ .Env.GOVERSION }}
+      - -X github.com/sipeed/omnipus/pkg/config.Version={{ .Version }}
+      - -X github.com/sipeed/omnipus/pkg/config.GitCommit={{ .ShortCommit }}
+      - -X github.com/sipeed/omnipus/pkg/config.BuildTime={{ .Date }}
+      - -X github.com/sipeed/omnipus/pkg/config.GoVersion={{ .Env.GOVERSION }}
     goos:
       - linux
       - windows
@@ -47,7 +47,7 @@ builds:
       - "7"
     gomips:
       - softfloat
-    main: ./cmd/picoclaw
+    main: ./cmd/omnipus
     ignore:
       - goos: windows
         goarch: arm
@@ -58,8 +58,8 @@ builds:
       - goos: netbsd
         goarch: arm
 
-  - id: picoclaw-launcher
-    binary: picoclaw-launcher
+  - id: omnipus-launcher
+    binary: omnipus-launcher
     env:
       - CGO_ENABLED=0
     tags:
@@ -97,8 +97,8 @@ builds:
       - goos: netbsd
         goarch: arm
 
-  - id: picoclaw-launcher-tui
-    binary: picoclaw-launcher-tui
+  - id: omnipus-launcher-tui
+    binary: omnipus-launcher-tui
     env:
       - CGO_ENABLED=0
     tags:
@@ -125,7 +125,7 @@ builds:
       - "7"
     gomips:
       - softfloat
-    main: ./cmd/picoclaw-launcher-tui
+    main: ./cmd/omnipus-launcher-tui
     ignore:
       - goos: windows
         goarch: arm
@@ -137,14 +137,14 @@ builds:
         goarch: arm
 
 dockers_v2:
-  - id: picoclaw
+  - id: omnipus
     dockerfile: docker/Dockerfile.goreleaser
     extra_files:
       - docker/entrypoint.sh
     ids:
-      - picoclaw
+      - omnipus
     images:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/picoclaw"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/omnipus"
       - 'docker.io/{{ .Env.DOCKERHUB_IMAGE_NAME }}'
     tags:
       - '{{ if isEnvSet "NIGHTLY_BUILD" }}nightly{{ else }}{{ .Tag }}{{ end }}'
@@ -154,14 +154,14 @@ dockers_v2:
       - linux/arm64
       - linux/riscv64
 
-  - id: picoclaw-launcher
+  - id: omnipus-launcher
     dockerfile: docker/Dockerfile.goreleaser.launcher
     ids:
-      - picoclaw
-      - picoclaw-launcher
-      - picoclaw-launcher-tui
+      - omnipus
+      - omnipus-launcher
+      - omnipus-launcher-tui
     images:
-      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/picoclaw"
+      - "ghcr.io/{{ .Env.GITHUB_REPOSITORY_OWNER }}/omnipus"
       - 'docker.io/{{ .Env.DOCKERHUB_IMAGE_NAME }}'
     tags:
       - '{{ if isEnvSet "NIGHTLY_BUILD" }}nightly-launcher{{ else }}{{ .Tag }}-launcher{{ end }}'
@@ -175,9 +175,9 @@ notarize:
   macos:
     - enabled: '{{ isEnvSet "MACOS_SIGN_P12" }}'
       ids:
-        - picoclaw
-        - picoclaw-launcher
-        - picoclaw-launcher-tui
+        - omnipus
+        - omnipus-launcher
+        - omnipus-launcher-tui
       sign:
         certificate: "{{.Env.MACOS_SIGN_P12}}"
         password: "{{.Env.MACOS_SIGN_PASSWORD}}"
@@ -204,32 +204,32 @@ archives:
         formats: [zip]
 
 nfpms:
-  - id: picoclaw
+  - id: omnipus
     ids:
-      - picoclaw
-      - picoclaw-launcher
-      - picoclaw-launcher-tui
-    package_name: picoclaw
+      - omnipus
+      - omnipus-launcher
+      - omnipus-launcher-tui
+    package_name: omnipus
     file_name_template: >-
       {{ .PackageName }}_
       {{- if eq .Arch "amd64" }}x86_64
       {{- else if eq .Arch "arm64" }}aarch64
       {{- else if eq .Arch "arm" }}armv{{ .Arm }}
       {{- else }}{{ .Arch }}{{ end }}
-    vendor: picoclaw
-    homepage: https://github.com/{{ .Env.GITHUB_REPOSITORY_OWNER }}/picoclaw
-    maintainer: picoclaw contributors
-    description: picoclaw - a tool for managing and running tasks
+    vendor: omnipus
+    homepage: https://github.com/{{ .Env.GITHUB_REPOSITORY_OWNER }}/omnipus
+    maintainer: omnipus contributors
+    description: omnipus - a tool for managing and running tasks
     license: MIT
     formats:
       - rpm
       - deb
     bindir: /usr/bin
     contents:
-      - src: web/picoclaw-launcher.desktop
-        dst: /usr/share/applications/picoclaw-launcher.desktop
-      - src: web/picoclaw-launcher.png
-        dst: /usr/share/icons/hicolor/512x512/apps/picoclaw-launcher.png
+      - src: web/omnipus-launcher.desktop
+        dst: /usr/share/applications/omnipus-launcher.desktop
+      - src: web/omnipus-launcher.png
+        dst: /usr/share/icons/hicolor/512x512/apps/omnipus-launcher.png
 
 changelog:
   sort: asc

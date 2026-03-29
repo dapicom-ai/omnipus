@@ -1,8 +1,8 @@
 > Retour au [README](../../README.fr.md)
 
-# 🖥️ PicoClaw Liste de compatibilité matérielle
+# 🖥️ Omnipus Liste de compatibilité matérielle
 
-PicoClaw fonctionne sur pratiquement n'importe quel appareil Linux. Cette page répertorie les puces, produits et cartes de développement vérifiés.
+Omnipus fonctionne sur pratiquement n'importe quel appareil Linux. Cette page répertorie les puces, produits et cartes de développement vérifiés.
 
 **Votre matériel n'est pas listé ?** Soumettez une PR pour l'ajouter ! Les fabricants de matériel sont invités à contribuer et à co-promouvoir.
 
@@ -59,7 +59,7 @@ PicoClaw fonctionne sur pratiquement n'importe quel appareil Linux. Cette page r
 
 ## 2. Produits vérifiés (par date de sortie)
 
-Produits grand public, routeurs et appareils industriels testés avec PicoClaw.
+Produits grand public, routeurs et appareils industriels testés avec Omnipus.
 
 | Année | Produit | Arch | SoC | RAM | Catégorie |
 |-------|---------|------|-----|-----|-----------|
@@ -97,7 +97,7 @@ Produits grand public, routeurs et appareils industriels testés avec PicoClaw.
 
 ### Téléphones Android (via Termux)
 
-Tout téléphone Android ARM64 (2015+) avec 1 Go+ de RAM. Installez [Termux](https://github.com/termux/termux-app), utilisez `proot` pour exécuter PicoClaw.
+Tout téléphone Android ARM64 (2015+) avec 1 Go+ de RAM. Installez [Termux](https://github.com/termux/termux-app), utilisez `proot` pour exécuter Omnipus.
 
 > Voir [README : Exécuter sur d'anciens téléphones Android](../../README.fr.md#-run-on-old-android-phones) pour les instructions de configuration.
 
@@ -130,14 +130,14 @@ Tout téléphone Android ARM64 (2015+) avec 1 Go+ de RAM. Installez [Termux](htt
 
 ```bash
 # 1. Télécharger pour votre architecture
-wget https://github.com/sipeed/picoclaw/releases/latest/download/picoclaw_Linux_arm64.tar.gz
-tar xzf picoclaw_Linux_arm64.tar.gz
+wget https://github.com/sipeed/omnipus/releases/latest/download/omnipus_Linux_arm64.tar.gz
+tar xzf omnipus_Linux_arm64.tar.gz
 
 # 2. Initialiser
-./picoclaw onboard
+./omnipus onboard
 
 # 3. Tester
-./picoclaw agent -m "Hello, what board am I running on?"
+./omnipus agent -m "Hello, what board am I running on?"
 ```
 
 Builds disponibles : `linux-amd64`, `linux-arm64`, `linux-arm`, `linux-riscv64`, `linux-loong64`, `linux-mipsle`

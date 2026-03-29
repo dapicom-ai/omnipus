@@ -20,8 +20,8 @@ import (
 
 	"github.com/h2non/filetype"
 
-	"github.com/sipeed/picoclaw/pkg/bus"
-	"github.com/sipeed/picoclaw/pkg/media"
+	"github.com/dapicom-ai/omnipus/pkg/bus"
+	"github.com/dapicom-ai/omnipus/pkg/media"
 )
 
 const (
@@ -324,7 +324,7 @@ func (c *WeComChannel) storeRemoteMedia(
 	if ext == "" {
 		ext = inferMediaExt(contentType, fallbackExt)
 	}
-	mediaDir := filepath.Join(os.TempDir(), "picoclaw_media")
+	mediaDir := filepath.Join(os.TempDir(), "omnipus_media")
 	if mkdirErr := os.MkdirAll(mediaDir, 0o700); mkdirErr != nil {
 		return "", fmt.Errorf("mkdir media dir: %w", mkdirErr)
 	}
@@ -390,7 +390,7 @@ func detectLocalWeComContentType(localPath, hint string) string {
 }
 
 func writeWeComTempFile(prefix, filename string, data []byte) (string, error) {
-	mediaDir := filepath.Join(os.TempDir(), "picoclaw_media")
+	mediaDir := filepath.Join(os.TempDir(), "omnipus_media")
 	if err := os.MkdirAll(mediaDir, 0o700); err != nil {
 		return "", fmt.Errorf("mkdir media dir: %w", err)
 	}

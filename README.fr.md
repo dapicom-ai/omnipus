@@ -1,17 +1,17 @@
 <div align="center">
-  <img src="assets/logo.webp" alt="PicoClaw" width="512">
+  <img src="assets/logo.webp" alt="Omnipus" width="512">
 
-  <h1>PicoClaw : Assistant IA Ultra-Efficace en Go</h1>
+  <h1>Omnipus : Assistant IA Ultra-Efficace en Go</h1>
 
-  <h3>Matériel à $10 · 10 Mo de RAM · Démarrage en ms · Let's Go, PicoClaw!</h3>
+  <h3>Matériel à $10 · 10 Mo de RAM · Démarrage en ms · Let's Go, Omnipus!</h3>
   <p>
     <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go&logoColor=white" alt="Go">
     <img src="https://img.shields.io/badge/Arch-x86__64%2C%20ARM64%2C%20MIPS%2C%20RISC--V%2C%20LoongArch-blue" alt="Hardware">
     <img src="https://img.shields.io/badge/license-MIT-green" alt="License">
     <br>
-    <a href="https://picoclaw.io"><img src="https://img.shields.io/badge/Website-picoclaw.io-blue?style=flat&logo=google-chrome&logoColor=white" alt="Website"></a>
-    <a href="https://docs.picoclaw.io/"><img src="https://img.shields.io/badge/Docs-Official-007acc?style=flat&logo=read-the-docs&logoColor=white" alt="Docs"></a>
-    <a href="https://deepwiki.com/sipeed/picoclaw"><img src="https://img.shields.io/badge/Wiki-DeepWiki-FFA500?style=flat&logo=wikipedia&logoColor=white" alt="Wiki"></a>
+    <a href="https://omnipus.io"><img src="https://img.shields.io/badge/Website-omnipus.io-blue?style=flat&logo=google-chrome&logoColor=white" alt="Website"></a>
+    <a href="https://docs.omnipus.io/"><img src="https://img.shields.io/badge/Docs-Official-007acc?style=flat&logo=read-the-docs&logoColor=white" alt="Docs"></a>
+    <a href="https://deepwiki.com/sipeed/omnipus"><img src="https://img.shields.io/badge/Wiki-DeepWiki-FFA500?style=flat&logo=wikipedia&logoColor=white" alt="Wiki"></a>
     <br>
     <a href="https://x.com/SipeedIO"><img src="https://img.shields.io/badge/X_(Twitter)-SipeedIO-black?style=flat&logo=x&logoColor=white" alt="Twitter"></a>
     <a href="./assets/wechat.png"><img src="https://img.shields.io/badge/WeChat-Group-41d56b?style=flat&logo=wechat&logoColor=white"></a>
@@ -24,9 +24,9 @@
 
 ---
 
-> **PicoClaw** est un projet open-source indépendant initié par [Sipeed](https://sipeed.com), entièrement écrit en **Go** à partir de zéro — ce n'est pas un fork d'OpenClaw, de NanoBot ou de tout autre projet.
+> **Omnipus** est un projet open-source indépendant initié par [Sipeed](https://sipeed.com), entièrement écrit en **Go** à partir de zéro — ce n'est pas un fork d'OpenClaw, de NanoBot ou de tout autre projet.
 
-**PicoClaw** est un assistant personnel IA ultra-léger inspiré de [NanoBot](https://github.com/HKUDS/nanobot). Il a été entièrement reconstruit en **Go** via un processus d'auto-amorçage (self-bootstrapping) — l'Agent IA lui-même a piloté la migration architecturale et l'optimisation du code.
+**Omnipus** est un assistant personnel IA ultra-léger inspiré de [NanoBot](https://github.com/HKUDS/nanobot). Il a été entièrement reconstruit en **Go** via un processus d'auto-amorçage (self-bootstrapping) — l'Agent IA lui-même a piloté la migration architecturale et l'optimisation du code.
 
 **Fonctionne sur du matériel à $10 avec <10 Mo de RAM** — c'est 99% de mémoire en moins qu'OpenClaw et 98% moins cher qu'un Mac mini !
 
@@ -35,7 +35,7 @@
 <tr align="center">
 <td align="center" valign="top">
 <p align="center">
-<img src="assets/picoclaw_mem.gif" width="360" height="240">
+<img src="assets/omnipus_mem.gif" width="360" height="240">
 </p>
 </td>
 <td align="center" valign="top">
@@ -49,17 +49,17 @@
 > [!CAUTION]
 > **Avis de sécurité**
 >
-> * **PAS DE CRYPTO :** PicoClaw n'a **pas** émis de tokens officiels ni de cryptomonnaie. Toute affirmation sur `pump.fun` ou d'autres plateformes de trading est une **arnaque**.
-> * **DOMAINE OFFICIEL :** Le **SEUL** site officiel est **[picoclaw.io](https://picoclaw.io)**, et le site de l'entreprise est **[sipeed.com](https://sipeed.com)**
+> * **PAS DE CRYPTO :** Omnipus n'a **pas** émis de tokens officiels ni de cryptomonnaie. Toute affirmation sur `pump.fun` ou d'autres plateformes de trading est une **arnaque**.
+> * **DOMAINE OFFICIEL :** Le **SEUL** site officiel est **[omnipus.io](https://omnipus.io)**, et le site de l'entreprise est **[sipeed.com](https://sipeed.com)**
 > * **ATTENTION :** De nombreux domaines `.ai/.org/.com/.net/...` ont été enregistrés par des tiers. Ne leur faites pas confiance.
-> * **NOTE :** PicoClaw est en développement rapide précoce. Des problèmes de sécurité non résolus peuvent exister. Ne pas déployer en production avant la v1.0.
-> * **NOTE :** PicoClaw a récemment fusionné de nombreuses PRs. Les builds récents peuvent utiliser 10-20 Mo de RAM. L'optimisation des ressources est prévue après la stabilisation des fonctionnalités.
+> * **NOTE :** Omnipus est en développement rapide précoce. Des problèmes de sécurité non résolus peuvent exister. Ne pas déployer en production avant la v1.0.
+> * **NOTE :** Omnipus a récemment fusionné de nombreuses PRs. Les builds récents peuvent utiliser 10-20 Mo de RAM. L'optimisation des ressources est prévue après la stabilisation des fonctionnalités.
 
 ## 📢 Actualités
 
-2026-03-25 🚀 **v0.2.4 publiée !** Refonte de l'architecture Agent (SubTurn, Hooks, Steering, EventBus), intégration WeChat/WeCom, renforcement de la sécurité (.security.yml, filtrage des données sensibles), nouveaux providers (AWS Bedrock, Azure, Xiaomi MiMo), et 35 corrections de bugs. PicoClaw a atteint **26K Stars** !
+2026-03-25 🚀 **v0.2.4 publiée !** Refonte de l'architecture Agent (SubTurn, Hooks, Steering, EventBus), intégration WeChat/WeCom, renforcement de la sécurité (.security.yml, filtrage des données sensibles), nouveaux providers (AWS Bedrock, Azure, Xiaomi MiMo), et 35 corrections de bugs. Omnipus a atteint **26K Stars** !
 
-2026-03-17 🚀 **v0.2.3 publiée !** Interface system tray (Windows & Linux), requête de statut des sous-agents (`spawn_status`), rechargement à chaud expérimental du Gateway, sécurisation Cron, et 2 correctifs de sécurité. PicoClaw a atteint **25K Stars** !
+2026-03-17 🚀 **v0.2.3 publiée !** Interface system tray (Windows & Linux), requête de statut des sous-agents (`spawn_status`), rechargement à chaud expérimental du Gateway, sécurisation Cron, et 2 correctifs de sécurité. Omnipus a atteint **25K Stars** !
 
 2026-03-09 🎉 **v0.2.1 — Plus grande mise à jour à ce jour !** Support du protocole MCP, 4 nouveaux channels (Matrix/IRC/WeCom/Discord Proxy), 3 nouveaux providers (Kimi/Minimax/Avian), pipeline vision, stockage mémoire JSONL, routage de modèles.
 
@@ -68,13 +68,13 @@
 <details>
 <summary>Actualités précédentes...</summary>
 
-2026-02-26 🎉 PicoClaw atteint **20K Stars** en seulement 17 jours ! L'orchestration automatique des channels et les interfaces de capacités sont disponibles.
+2026-02-26 🎉 Omnipus atteint **20K Stars** en seulement 17 jours ! L'orchestration automatique des channels et les interfaces de capacités sont disponibles.
 
-2026-02-16 🎉 PicoClaw dépasse 12K Stars en une semaine ! Rôles de mainteneurs communautaires et [Roadmap](ROADMAP.md) officiellement lancés.
+2026-02-16 🎉 Omnipus dépasse 12K Stars en une semaine ! Rôles de mainteneurs communautaires et [Roadmap](ROADMAP.md) officiellement lancés.
 
-2026-02-13 🎉 PicoClaw dépasse 5000 Stars en 4 jours ! Roadmap du projet et groupes de développeurs en cours.
+2026-02-13 🎉 Omnipus dépasse 5000 Stars en 4 jours ! Roadmap du projet et groupes de développeurs en cours.
 
-2026-02-09 🎉 **PicoClaw publié !** Construit en 1 jour pour apporter les Agents IA sur du matériel à $10 avec <10 Mo de RAM. Let's Go, PicoClaw !
+2026-02-09 🎉 **Omnipus publié !** Construit en 1 jour pour apporter les Agents IA sur du matériel à $10 avec <10 Mo de RAM. Let's Go, Omnipus !
 
 </details>
 
@@ -101,21 +101,21 @@ _*Les builds récents peuvent utiliser 10-20 Mo en raison des fusions rapides de
 
 <div align="center">
 
-|                                | OpenClaw      | NanoBot                  | **PicoClaw**                           |
+|                                | OpenClaw      | NanoBot                  | **Omnipus**                           |
 | ------------------------------ | ------------- | ------------------------ | -------------------------------------- |
 | **Langage**                    | TypeScript    | Python                   | **Go**                                 |
 | **RAM**                        | >1 Go         | >100 Mo                  | **< 10 Mo***                           |
 | **Temps de démarrage**</br>(cœur 0,8 GHz) | >500s | >30s              | **<1s**                                |
 | **Coût**                       | Mac Mini $599 | La plupart des cartes Linux ~$50 | **N'importe quelle carte Linux**</br>**à partir de $10** |
 
-<img src="assets/compare.jpg" alt="PicoClaw" width="512">
+<img src="assets/compare.jpg" alt="Omnipus" width="512">
 
 </div>
 
 > **[Liste de compatibilité matérielle](docs/fr/hardware-compatibility.md)** — Voir toutes les cartes testées, du RISC-V à $5 au Raspberry Pi en passant par les téléphones Android. Votre carte n'est pas listée ? Soumettez une PR !
 
 <p align="center">
-<img src="assets/hardware-banner.jpg" alt="PicoClaw Hardware Compatibility" width="100%">
+<img src="assets/hardware-banner.jpg" alt="Omnipus Hardware Compatibility" width="100%">
 </p>
 
 ## 🦾 Démonstration
@@ -129,9 +129,9 @@ _*Les builds récents peuvent utiliser 10-20 Mo en raison des fusions rapides de
 <th><p align="center">Recherche Web & Apprentissage</p></th>
 </tr>
 <tr>
-<td align="center"><p align="center"><img src="assets/picoclaw_code.gif" width="240" height="180"></p></td>
-<td align="center"><p align="center"><img src="assets/picoclaw_memory.gif" width="240" height="180"></p></td>
-<td align="center"><p align="center"><img src="assets/picoclaw_search.gif" width="240" height="180"></p></td>
+<td align="center"><p align="center"><img src="assets/omnipus_code.gif" width="240" height="180"></p></td>
+<td align="center"><p align="center"><img src="assets/omnipus_memory.gif" width="240" height="180"></p></td>
+<td align="center"><p align="center"><img src="assets/omnipus_search.gif" width="240" height="180"></p></td>
 </tr>
 <tr>
 <td align="center">Développer · Déployer · Mettre à l'échelle</td>
@@ -142,7 +142,7 @@ _*Les builds récents peuvent utiliser 10-20 Mo en raison des fusions rapides de
 
 ### 🐜 Déploiement innovant à faible empreinte
 
-PicoClaw peut être déployé sur pratiquement n'importe quel appareil Linux !
+Omnipus peut être déployé sur pratiquement n'importe quel appareil Linux !
 
 - $9,9 [LicheeRV-Nano](https://www.aliexpress.com/item/1005006519668532.html) édition E(Ethernet) ou W(WiFi6), pour un assistant domestique minimal
 - $30~50 [NanoKVM](https://www.aliexpress.com/item/1005007369816019.html), ou $100 [NanoKVM-Pro](https://www.aliexpress.com/item/1005010048471263.html), pour des opérations serveur automatisées
@@ -155,20 +155,20 @@ PicoClaw peut être déployé sur pratiquement n'importe quel appareil Linux !
 
 ## 📦 Installation
 
-### Télécharger depuis picoclaw.io (Recommandé)
+### Télécharger depuis omnipus.io (Recommandé)
 
-Visitez **[picoclaw.io](https://picoclaw.io)** — le site officiel détecte automatiquement votre plateforme et fournit un téléchargement en un clic. Pas besoin de choisir manuellement une architecture.
+Visitez **[omnipus.io](https://omnipus.io)** — le site officiel détecte automatiquement votre plateforme et fournit un téléchargement en un clic. Pas besoin de choisir manuellement une architecture.
 
 ### Télécharger le binaire précompilé
 
-Vous pouvez aussi télécharger le binaire pour votre plateforme depuis la page [GitHub Releases](https://github.com/sipeed/picoclaw/releases).
+Vous pouvez aussi télécharger le binaire pour votre plateforme depuis la page [GitHub Releases](https://github.com/sipeed/omnipus/releases).
 
 ### Compiler depuis les sources (pour le développement)
 
 ```bash
-git clone https://github.com/sipeed/picoclaw.git
+git clone https://github.com/sipeed/omnipus.git
 
-cd picoclaw
+cd omnipus
 make deps
 
 # Compiler le binaire principal
@@ -197,19 +197,19 @@ Le WebUI Launcher fournit une interface basée sur navigateur pour la configurat
 
 **Option 1 : Double-clic (Bureau)**
 
-Après téléchargement depuis [picoclaw.io](https://picoclaw.io), double-cliquez sur `picoclaw-launcher` (ou `picoclaw-launcher.exe` sous Windows). Votre navigateur s'ouvrira automatiquement sur `http://localhost:18800`.
+Après téléchargement depuis [omnipus.io](https://omnipus.io), double-cliquez sur `omnipus-launcher` (ou `omnipus-launcher.exe` sous Windows). Votre navigateur s'ouvrira automatiquement sur `http://localhost:18800`.
 
 **Option 2 : Ligne de commande**
 
 ```bash
-picoclaw-launcher
+omnipus-launcher
 # Ouvrez http://localhost:18800 dans votre navigateur
 ```
 
 > [!TIP]
 > **Accès distant / Docker / VM :** Ajoutez le flag `-public` pour écouter sur toutes les interfaces :
 > ```bash
-> picoclaw-launcher -public
+> omnipus-launcher -public
 > ```
 
 <p align="center">
@@ -220,15 +220,15 @@ picoclaw-launcher
 
 Ouvrez le WebUI, puis : **1)** Configurez un Provider (ajoutez votre clé API LLM) -> **2)** Configurez un Channel (ex. Telegram) -> **3)** Démarrez le Gateway -> **4)** Chattez !
 
-Pour la documentation détaillée du WebUI, voir [docs.picoclaw.io](https://docs.picoclaw.io).
+Pour la documentation détaillée du WebUI, voir [docs.omnipus.io](https://docs.omnipus.io).
 
 <details>
 <summary><b>Docker (alternative)</b></summary>
 
 ```bash
 # 1. Cloner ce dépôt
-git clone https://github.com/sipeed/picoclaw.git
-cd picoclaw
+git clone https://github.com/sipeed/omnipus.git
+cd omnipus
 
 # 2. Premier lancement — génère automatiquement docker/data/config.json puis s'arrête
 #    (se déclenche uniquement quand config.json et workspace/ sont tous deux absents)
@@ -262,15 +262,15 @@ docker compose -f docker/docker-compose.yml --profile launcher up -d
 <details>
 <summary><b>macOS — Avertissement de sécurité au premier lancement</b></summary>
 
-macOS peut bloquer `picoclaw-launcher` au premier lancement car il est téléchargé depuis Internet et n'est pas notarisé via le Mac App Store.
+macOS peut bloquer `omnipus-launcher` au premier lancement car il est téléchargé depuis Internet et n'est pas notarisé via le Mac App Store.
 
-**Étape 1 :** Double-cliquez sur `picoclaw-launcher`. Un avertissement de sécurité s'affiche :
+**Étape 1 :** Double-cliquez sur `omnipus-launcher`. Un avertissement de sécurité s'affiche :
 
 <p align="center">
 <img src="assets/macos-gatekeeper-warning.jpg" alt="Avertissement macOS Gatekeeper" width="400">
 </p>
 
-> *"picoclaw-launcher" n'a pas pu être ouvert — Apple n'a pas pu vérifier que "picoclaw-launcher" ne contient pas de logiciel malveillant susceptible de nuire à votre Mac ou de compromettre votre confidentialité.*
+> *"omnipus-launcher" n'a pas pu être ouvert — Apple n'a pas pu vérifier que "omnipus-launcher" ne contient pas de logiciel malveillant susceptible de nuire à votre Mac ou de compromettre votre confidentialité.*
 
 **Étape 2 :** Ouvrez **Réglages Système** → **Confidentialité et sécurité** → faites défiler jusqu'à la section **Sécurité** → cliquez sur **Ouvrir quand même** → confirmez en cliquant sur **Ouvrir quand même** dans la boîte de dialogue.
 
@@ -278,7 +278,7 @@ macOS peut bloquer `picoclaw-launcher` au premier lancement car il est télécha
 <img src="assets/macos-gatekeeper-allow.jpg" alt="macOS Confidentialité et sécurité — Ouvrir quand même" width="600">
 </p>
 
-Après cette étape unique, `picoclaw-launcher` s'ouvrira normalement lors des lancements suivants.
+Après cette étape unique, `omnipus-launcher` s'ouvrira normalement lors des lancements suivants.
 
 </details>
 
@@ -287,7 +287,7 @@ Après cette étape unique, `picoclaw-launcher` s'ouvrira normalement lors des l
 Le TUI (Terminal UI) Launcher fournit une interface terminal complète pour la configuration et la gestion. Idéal pour les serveurs, Raspberry Pi et autres environnements sans interface graphique.
 
 ```bash
-picoclaw-launcher-tui
+omnipus-launcher-tui
 ```
 
 <p align="center">
@@ -298,11 +298,11 @@ picoclaw-launcher-tui
 
 Utilisez les menus TUI pour : **1)** Configurer un Provider -> **2)** Configurer un Channel -> **3)** Démarrer le Gateway -> **4)** Chattez !
 
-Pour la documentation détaillée du TUI, voir [docs.picoclaw.io](https://docs.picoclaw.io).
+Pour la documentation détaillée du TUI, voir [docs.omnipus.io](https://docs.omnipus.io).
 
 ### 📱 Android
 
-Donnez une seconde vie à votre téléphone vieux de dix ans ! Transformez-le en assistant IA intelligent avec PicoClaw.
+Donnez une seconde vie à votre téléphone vieux de dix ans ! Transformez-le en assistant IA intelligent avec Omnipus.
 
 **Option 1 : Termux (disponible maintenant)**
 
@@ -311,15 +311,15 @@ Donnez une seconde vie à votre téléphone vieux de dix ans ! Transformez-le en
 
 ```bash
 # Télécharger la dernière version
-wget https://github.com/sipeed/picoclaw/releases/latest/download/picoclaw_Linux_arm64.tar.gz
-tar xzf picoclaw_Linux_arm64.tar.gz
+wget https://github.com/sipeed/omnipus/releases/latest/download/omnipus_Linux_arm64.tar.gz
+tar xzf omnipus_Linux_arm64.tar.gz
 pkg install proot
-termux-chroot ./picoclaw onboard   # chroot fournit une arborescence Linux standard
+termux-chroot ./omnipus onboard   # chroot fournit une arborescence Linux standard
 ```
 
 Suivez ensuite la section Terminal Launcher ci-dessous pour terminer la configuration.
 
-<img src="assets/termux.jpg" alt="PicoClaw on Termux" width="512">
+<img src="assets/termux.jpg" alt="Omnipus on Termux" width="512">
 
 **Option 2 : Installation APK (bientôt disponible)**
 
@@ -328,17 +328,17 @@ Un APK Android autonome avec WebUI intégré est en développement. Restez à l'
 <details>
 <summary><b>Terminal Launcher (pour les environnements à ressources limitées)</b></summary>
 
-Pour les environnements minimaux où seul le binaire principal `picoclaw` est disponible (sans Launcher UI), vous pouvez tout configurer via la ligne de commande et un fichier de configuration JSON.
+Pour les environnements minimaux où seul le binaire principal `omnipus` est disponible (sans Launcher UI), vous pouvez tout configurer via la ligne de commande et un fichier de configuration JSON.
 
 **1. Initialiser**
 
 ```bash
-picoclaw onboard
+omnipus onboard
 ```
 
-Cela crée `~/.picoclaw/config.json` et le répertoire workspace.
+Cela crée `~/.omnipus/config.json` et le répertoire workspace.
 
-**2. Configurer** (`~/.picoclaw/config.json`)
+**2. Configurer** (`~/.omnipus/config.json`)
 
 ```json
 {
@@ -363,13 +363,13 @@ Cela crée `~/.picoclaw/config.json` et le répertoire workspace.
 
 ```bash
 # Question ponctuelle
-picoclaw agent -m "What is 2+2?"
+omnipus agent -m "What is 2+2?"
 
 # Mode interactif
-picoclaw agent
+omnipus agent
 
 # Démarrer le gateway pour l'intégration d'applications de chat
-picoclaw gateway
+omnipus gateway
 ```
 
 </details>
@@ -377,7 +377,7 @@ picoclaw gateway
 
 ## 🔌 Providers (LLM)
 
-PicoClaw supporte plus de 30 providers LLM via la configuration `model_list`. Utilisez le format `protocole/modèle` :
+Omnipus supporte plus de 30 providers LLM via la configuration `model_list`. Utilisez le format `protocole/modèle` :
 
 | Provider | Protocole | Clé API | Notes |
 |----------|-----------|---------|-------|
@@ -439,7 +439,7 @@ Pour les détails complets de configuration des providers, voir [Providers & Mod
 
 ## 💬 Channels (Applications de chat)
 
-Parlez à votre PicoClaw via plus de 17 plateformes de messagerie :
+Parlez à votre Omnipus via plus de 17 plateformes de messagerie :
 
 | Channel | Configuration | Protocole | Docs |
 |---------|---------------|-----------|------|
@@ -468,7 +468,7 @@ Pour les instructions détaillées de configuration des channels, voir [Configur
 
 ### 🔍 Recherche Web
 
-PicoClaw peut effectuer des recherches sur le web pour fournir des informations à jour. Configurez dans `tools.web` :
+Omnipus peut effectuer des recherches sur le web pour fournir des informations à jour. Configurez dans `tools.web` :
 
 | Moteur de recherche | Clé API | Niveau gratuit | Lien |
 |--------------------|---------|----------------|------|
@@ -482,7 +482,7 @@ PicoClaw peut effectuer des recherches sur le web pour fournir des informations 
 
 ### ⚙️ Autres outils
 
-PicoClaw inclut des outils intégrés pour les opérations sur fichiers, l'exécution de code, la planification et plus encore. Voir [Configuration des outils](docs/fr/tools_configuration.md) pour les détails.
+Omnipus inclut des outils intégrés pour les opérations sur fichiers, l'exécution de code, la planification et plus encore. Voir [Configuration des outils](docs/fr/tools_configuration.md) pour les détails.
 
 ## 🎯 Skills
 
@@ -491,8 +491,8 @@ Les Skills sont des capacités modulaires qui étendent votre Agent. Elles sont 
 **Installer des Skills depuis ClawHub :**
 
 ```bash
-picoclaw skills search "web scraping"
-picoclaw skills install <skill-name>
+omnipus skills search "web scraping"
+omnipus skills install <skill-name>
 ```
 
 **Configurer le token ClawHub** (optionnel, pour des limites de débit plus élevées) :
@@ -516,7 +516,7 @@ Pour plus de détails, voir [Configuration des outils - Skills](docs/fr/tools_co
 
 ## 🔗 MCP (Model Context Protocol)
 
-PicoClaw supporte nativement [MCP](https://modelcontextprotocol.io/) — connectez n'importe quel serveur MCP pour étendre les capacités de votre Agent avec des outils et sources de données externes.
+Omnipus supporte nativement [MCP](https://modelcontextprotocol.io/) — connectez n'importe quel serveur MCP pour étendre les capacités de votre Agent avec des outils et sources de données externes.
 
 ```json
 {
@@ -539,7 +539,7 @@ Pour la configuration MCP complète (transports stdio, SSE, HTTP, Tool Discovery
 
 ## <img src="assets/clawdchat-icon.png" width="24" height="24" alt="ClawdChat"> Rejoignez le réseau social des Agents
 
-Connectez PicoClaw au réseau social des Agents simplement en envoyant un seul message via le CLI ou n'importe quelle application de chat intégrée.
+Connectez Omnipus au réseau social des Agents simplement en envoyant un seul message via le CLI ou n'importe quelle application de chat intégrée.
 
 **Lisez `https://clawdchat.ai/skill.md` et suivez les instructions pour rejoindre [ClawdChat.ai](https://clawdchat.ai)**
 
@@ -547,26 +547,26 @@ Connectez PicoClaw au réseau social des Agents simplement en envoyant un seul m
 
 | Commande                  | Description                              |
 | ------------------------- | ---------------------------------------- |
-| `picoclaw onboard`        | Initialiser la config & le workspace     |
-| `picoclaw auth weixin` | Connecter un compte WeChat via QR |
-| `picoclaw agent -m "..."` | Chatter avec l'agent                     |
-| `picoclaw agent`          | Mode chat interactif                     |
-| `picoclaw gateway`        | Démarrer le gateway                      |
-| `picoclaw status`         | Afficher le statut                       |
-| `picoclaw version`        | Afficher les informations de version     |
-| `picoclaw model`          | Voir ou changer le modèle par défaut     |
-| `picoclaw cron list`      | Lister toutes les tâches planifiées      |
-| `picoclaw cron add ...`   | Ajouter une tâche planifiée              |
-| `picoclaw cron disable`   | Désactiver une tâche planifiée           |
-| `picoclaw cron remove`    | Supprimer une tâche planifiée            |
-| `picoclaw skills list`    | Lister les Skills installées             |
-| `picoclaw skills install` | Installer une Skill                      |
-| `picoclaw migrate`        | Migrer les données depuis d'anciennes versions |
-| `picoclaw auth login`     | S'authentifier auprès des providers      |
+| `omnipus onboard`        | Initialiser la config & le workspace     |
+| `omnipus auth weixin` | Connecter un compte WeChat via QR |
+| `omnipus agent -m "..."` | Chatter avec l'agent                     |
+| `omnipus agent`          | Mode chat interactif                     |
+| `omnipus gateway`        | Démarrer le gateway                      |
+| `omnipus status`         | Afficher le statut                       |
+| `omnipus version`        | Afficher les informations de version     |
+| `omnipus model`          | Voir ou changer le modèle par défaut     |
+| `omnipus cron list`      | Lister toutes les tâches planifiées      |
+| `omnipus cron add ...`   | Ajouter une tâche planifiée              |
+| `omnipus cron disable`   | Désactiver une tâche planifiée           |
+| `omnipus cron remove`    | Supprimer une tâche planifiée            |
+| `omnipus skills list`    | Lister les Skills installées             |
+| `omnipus skills install` | Installer une Skill                      |
+| `omnipus migrate`        | Migrer les données depuis d'anciennes versions |
+| `omnipus auth login`     | S'authentifier auprès des providers      |
 
 ### ⏰ Tâches planifiées / Rappels
 
-PicoClaw supporte les rappels planifiés et les tâches récurrentes via l'outil `cron` :
+Omnipus supporte les rappels planifiés et les tâches récurrentes via l'outil `cron` :
 
 * **Rappels ponctuels** : "Rappelle-moi dans 10 minutes" -> se déclenche une fois après 10 min
 * **Tâches récurrentes** : "Rappelle-moi toutes les 2 heures" -> se déclenche toutes les 2 heures
@@ -594,7 +594,7 @@ Pour des guides détaillés au-delà de ce README :
 
 Les PRs sont les bienvenues ! Le code source est intentionnellement petit et lisible.
 
-Consultez notre [Roadmap communautaire](https://github.com/sipeed/picoclaw/issues/988) et [CONTRIBUTING.md](CONTRIBUTING.md) pour les directives.
+Consultez notre [Roadmap communautaire](https://github.com/sipeed/omnipus/issues/988) et [CONTRIBUTING.md](CONTRIBUTING.md) pour les directives.
 
 Groupe de développeurs en construction, rejoignez-le après votre première PR fusionnée !
 

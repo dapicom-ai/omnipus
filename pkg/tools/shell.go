@@ -18,8 +18,8 @@ import (
 
 	"github.com/creack/pty"
 
-	"github.com/sipeed/picoclaw/pkg/config"
-	"github.com/sipeed/picoclaw/pkg/constants"
+	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/constants"
 )
 
 var (

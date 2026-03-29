@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
 
 // runTray falls back to a headless mode on platforms where systray requires cgo.

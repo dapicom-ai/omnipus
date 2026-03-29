@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/sipeed/picoclaw/pkg/media"
-	"github.com/sipeed/picoclaw/pkg/providers"
+	"github.com/dapicom-ai/omnipus/pkg/media"
+	"github.com/dapicom-ai/omnipus/pkg/providers"
 )
 
 // --- mock types ---

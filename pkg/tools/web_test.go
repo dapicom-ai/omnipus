@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
 
 const (
@@ -1199,7 +1199,7 @@ func TestWebTool_TavilySearch_RangeMapping(t *testing.T) {
 }
 
 // TestWebFetchTool_CloudflareChallenge_RetryWithHonestUA verifies that a 403 response
-// with cf-mitigated: challenge triggers a retry using the honest picoclaw User-Agent,
+// with cf-mitigated: challenge triggers a retry using the honest omnipus User-Agent,
 // and that the retry response is returned when it succeeds.
 func TestWebFetchTool_CloudflareChallenge_RetryWithHonestUA(t *testing.T) {
 	withPrivateWebFetchHostsAllowed(t)
@@ -1247,9 +1247,9 @@ func TestWebFetchTool_CloudflareChallenge_RetryWithHonestUA(t *testing.T) {
 	if receivedUAs[0] != userAgent {
 		t.Errorf("first request UA = %q, want %q", receivedUAs[0], userAgent)
 	}
-	// Second request must use the honest picoclaw user agent
-	if !strings.Contains(receivedUAs[1], "picoclaw") {
-		t.Errorf("retry request UA = %q, want it to contain 'picoclaw'", receivedUAs[1])
+	// Second request must use the honest omnipus user agent
+	if !strings.Contains(receivedUAs[1], "omnipus") {
+		t.Errorf("retry request UA = %q, want it to contain 'omnipus'", receivedUAs[1])
 	}
 }
 

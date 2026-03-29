@@ -2,7 +2,7 @@
 
 > Retour au [README](../../README.fr.md)
 
-La configuration des outils de PicoClaw se trouve dans le champ `tools` de `config.json`.
+La configuration des outils de Omnipus se trouve dans le champ `tools` de `config.json`.
 
 ## Structure du répertoire
 
@@ -155,7 +155,7 @@ PICOCLAW_TOOLS_EXEC_ENABLED=false
 
 ### Modèles de commandes bloquées par défaut
 
-Par défaut, PicoClaw bloque les commandes dangereuses suivantes :
+Par défaut, Omnipus bloque les commandes dangereuses suivantes :
 
 - Commandes de suppression : `rm -rf`, `del /f/q`, `rmdir /s`
 - Opérations disque : `format`, `mkfs`, `diskpart`, `dd if=`, écriture vers `/dev/sd*`
@@ -172,7 +172,7 @@ Par défaut, PicoClaw bloque les commandes dangereuses suivantes :
 
 ### Limitation architecturale connue
 
-Le garde exec ne valide que la commande de niveau supérieur envoyée à PicoClaw. Il n'inspecte **pas** récursivement les processus enfants générés par les outils de build ou les scripts après le démarrage de cette commande.
+Le garde exec ne valide que la commande de niveau supérieur envoyée à Omnipus. Il n'inspecte **pas** récursivement les processus enfants générés par les outils de build ou les scripts après le démarrage de cette commande.
 
 Exemples de workflows pouvant contourner le garde de commande directe une fois la commande initiale autorisée :
 

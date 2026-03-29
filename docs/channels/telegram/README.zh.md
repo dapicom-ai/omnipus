@@ -36,7 +36,7 @@ Telegram Channel 通过 Telegram 机器人 API 使用长轮询实现基于机器
 
 ## 内置命令
 
-Telegram 会在启动时自动注册 PicoClaw 的顶级 Bot 命令，包括 `/start`、`/help`、`/show`、`/list` 和 `/use`。
+Telegram 会在启动时自动注册 Omnipus 的顶级 Bot 命令，包括 `/start`、`/help`、`/show`、`/list` 和 `/use`。
 
 与技能相关的命令：
 

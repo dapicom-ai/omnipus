@@ -12,9 +12,9 @@ import (
 
 	"github.com/caarlos0/env/v11"
 
-	"github.com/sipeed/picoclaw/pkg"
-	"github.com/sipeed/picoclaw/pkg/fileutil"
-	"github.com/sipeed/picoclaw/pkg/logger"
+	"github.com/dapicom-ai/omnipus/pkg"
+	"github.com/dapicom-ai/omnipus/pkg/fileutil"
+	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
 
 // rrCounter is a global counter for round-robin load balancing across models.
@@ -1082,10 +1082,10 @@ func LoadConfig(path string) (*Config, error) {
 	// Ensure Workspace has a default if not set
 	if cfg.Agents.Defaults.Workspace == "" {
 		homePath, _ := os.UserHomeDir()
-		if picoclawHome := os.Getenv(EnvHome); picoclawHome != "" {
-			homePath = picoclawHome
+		if omnipusHome := os.Getenv(EnvHome); omnipusHome != "" {
+			homePath = omnipusHome
 		} else if homePath != "" {
-			homePath = filepath.Join(homePath, pkg.DefaultPicoClawHome)
+			homePath = filepath.Join(homePath, pkg.DefaultOmnipusHome)
 		}
 		cfg.Agents.Defaults.Workspace = filepath.Join(homePath, pkg.WorkspaceName)
 	}

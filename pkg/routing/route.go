@@ -3,7 +3,7 @@ package routing
 import (
 	"strings"
 
-	"github.com/sipeed/picoclaw/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/config"
 )
 
 // RouteInput contains the routing context from an inbound message.

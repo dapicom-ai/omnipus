@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sipeed/picoclaw/pkg/commands"
+	"github.com/dapicom-ai/omnipus/pkg/commands"
 )
 
 func TestStartCommandRegistration_DoesNotBlock(t *testing.T) {

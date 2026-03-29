@@ -1,9 +1,9 @@
 //go:build bedrock
 
-// PicoClaw - Ultra-lightweight personal AI agent
+// Omnipus - Ultra-lightweight personal AI agent
 // License: MIT
 //
-// Copyright (c) 2026 PicoClaw contributors
+// Copyright (c) 2026 Omnipus contributors
 
 // Package bedrock implements the LLM provider interface for AWS Bedrock.
 // It uses the Bedrock Runtime Converse API for unified access to multiple
@@ -26,8 +26,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/document"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 
-	"github.com/sipeed/picoclaw/pkg/providers/common"
-	"github.com/sipeed/picoclaw/pkg/providers/protocoltypes"
+	"github.com/dapicom-ai/omnipus/pkg/providers/common"
+	"github.com/dapicom-ai/omnipus/pkg/providers/protocoltypes"
 )
 
 type (

@@ -13,9 +13,9 @@ import (
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
 
-	"github.com/sipeed/picoclaw/pkg/providers/common"
-	orc "github.com/sipeed/picoclaw/pkg/providers/openai_responses_common"
-	"github.com/sipeed/picoclaw/pkg/providers/protocoltypes"
+	"github.com/dapicom-ai/omnipus/pkg/providers/common"
+	orc "github.com/dapicom-ai/omnipus/pkg/providers/openai_responses_common"
+	"github.com/dapicom-ai/omnipus/pkg/providers/protocoltypes"
 )
 
 type (
