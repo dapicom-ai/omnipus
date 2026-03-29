@@ -1237,7 +1237,7 @@ Boundary conditions:
 | ~~2~~ | ~~SSE event types for tool calls and approval~~ | **RESOLVED**: WebSocket carries all event types (token, tool_call_start, tool_call_result, exec_approval_request, done, error) on a single bi-directional connection. SSE is no longer used. | Resolved 2026-03-29. |
 | 3 | The session bar "Sessions" trigger opens a slide-over. It's unclear if this is a separate route or an overlay component. | Agent will implement it as an overlay component (not a route), consistent with the sidebar pattern. | Accept assumption: overlay component, not a route. |
 | 4 | TanStack Query cache invalidation strategy is not specified. | Agent will use standard query key invalidation on mutations (e.g., creating an agent invalidates the agent list query). | Accept assumption: standard TanStack Query patterns. |
-| 5 | The BRD mentions `AssistantUI` for chat primitives with a "custom gateway runtime adapter." | Agent will use react-markdown + custom WebSocket hooks for streaming, not AssistantUI initially, and add AssistantUI integration later if needed. | Confirm: should the initial implementation use AssistantUI or plain WebSocket + react-markdown? |
+| 5 | ~~RESOLVED~~ The BRD mentions `AssistantUI` for chat primitives. | **RESOLVED: Use AssistantUI.** Build a custom gateway runtime adapter that connects AssistantUI's chat components to our WebSocket endpoint. AssistantUI handles message rendering, streaming display, tool call components, and markdown. We write the adapter layer translating our WebSocket JSON frames to AssistantUI's expected format. |
 | 6 | Agent profile page is described as "single-column scrollable" but responsive behavior for phone isn't specified. | Agent will use the same single-column layout at all breakpoints (naturally responsive). | Accept assumption: single-column layout is inherently responsive. |
 | 7 | Task drag-and-drop in board view requires a library. | Agent will use `@hello-pangea/dnd` (maintained fork of react-beautiful-dnd) or native HTML5 DnD. | Accept assumption: agent picks the lightest viable library. |
 
@@ -1307,7 +1307,7 @@ Boundary conditions:
 
 ### 2026-03-29
 
-- Q: Should backend REST endpoints be implemented in Wave 5a or assumed to exist? -> A: Pending user resolution (Ambiguity #1).
-- Q: Should AssistantUI be used for chat or plain WebSocket + react-markdown? -> A: Pending user resolution (Ambiguity #5).
+- Q: Should backend REST endpoints be implemented in Wave 5a or assumed to exist? -> A: **Resolved** — Wave 5a implements both frontend + backend together. Frontend-lead and backend-lead work in parallel.
+- Q: Should AssistantUI be used for chat or plain WebSocket + react-markdown? -> A: **Resolved** — Use AssistantUI with a custom gateway runtime adapter for our WebSocket protocol.
 - Q: Are tool_call and approval events on the same stream? -> A: **Resolved** — WebSocket carries all event types on a single bi-directional connection. SSE replaced with WebSocket.
 - Q: SSE vs WebSocket for chat streaming? -> A: **Resolved** — WebSocket. Enables bi-directional communication needed for cancel, approval responses, and future features.
