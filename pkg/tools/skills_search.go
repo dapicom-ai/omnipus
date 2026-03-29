@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -69,13 +70,19 @@ func (t *FindSkillsTool) Execute(ctx context.Context, args map[string]any) *Tool
 	// Check cache first.
 	if t.cache != nil {
 		if cached, hit := t.cache.Get(query); hit {
-			return SilentResult(formatSearchResults(query, cached, true))
+			return SilentResult(formatSearchResults(query, cached, true, nil))
 		}
 	}
 
 	// Search all registries.
 	results, err := t.registryMgr.SearchAll(ctx, query, limit)
-	if err != nil {
+	var partialErr *skills.PartialSearchError
+	switch {
+	case err == nil:
+		// full success
+	case errors.As(err, &partialErr):
+		// partial: proceed but note incomplete results in output below
+	default:
 		return ErrorResult(fmt.Sprintf("skill search failed: %v", err))
 	}
 
@@ -84,10 +91,10 @@ func (t *FindSkillsTool) Execute(ctx context.Context, args map[string]any) *Tool
 		t.cache.Put(query, results)
 	}
 
-	return SilentResult(formatSearchResults(query, results, false))
+	return SilentResult(formatSearchResults(query, results, false, partialErr))
 }
 
-func formatSearchResults(query string, results []skills.SearchResult, cached bool) string {
+func formatSearchResults(query string, results []skills.SearchResult, cached bool, partial *skills.PartialSearchError) string {
 	if len(results) == 0 {
 		return fmt.Sprintf("No skills found for query: %q", query)
 	}
@@ -98,6 +105,9 @@ func formatSearchResults(query string, results []skills.SearchResult, cached boo
 		source = " (cached)"
 	}
 	sb.WriteString(fmt.Sprintf("Found %d skills for %q%s:\n\n", len(results), query, source))
+	if partial != nil {
+		sb.WriteString(fmt.Sprintf("⚠️  Note: results may be incomplete — one or more registries failed: %v\n\n", partial.Cause))
+	}
 
 	for i, r := range results {
 		sb.WriteString(fmt.Sprintf("%d. **%s**", i+1, r.Slug))

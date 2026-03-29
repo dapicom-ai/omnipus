@@ -30,4 +30,9 @@ type OmnipusSandboxConfig struct {
 	// AuditLog enables the structured security audit log per SEC-17.
 	// Written to ~/.omnipus/system/audit.jsonl.
 	AuditLog bool `json:"audit_log,omitempty"`
+
+	// SkillTrust controls how skills without a verifiable SHA-256 hash are handled (SEC-09).
+	// Valid values: "block_unverified", "warn_unverified" (default), "allow_all".
+	// "allow_all" disables hash verification and triggers an omnipus doctor warning.
+	SkillTrust string `json:"skill_trust,omitempty"`
 }

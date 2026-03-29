@@ -55,6 +55,12 @@ func NewSkillInstaller(workspace, githubToken, proxy string) (*SkillInstaller, e
 	}, nil
 }
 
+// SetHTTPClient replaces the HTTP client used for GitHub downloads.
+// Use security.SSRFChecker.SafeClient() to enforce SSRF protection (W-2).
+func (si *SkillInstaller) SetHTTPClient(client *http.Client) {
+	si.client = client
+}
+
 // parseGitHubRef parses a GitHub reference.
 // Supports: "owner/repo", "owner/repo/path", or full URL like "https://github.com/owner/repo/tree/ref/path"
 func parseGitHubRef(repo string) (GitHubRef, error) {

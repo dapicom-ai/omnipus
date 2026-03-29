@@ -43,6 +43,10 @@ const (
 	reconnectInitial    = 5 * time.Second
 	reconnectMax        = 5 * time.Minute
 	reconnectMultiplier = 2.0
+
+	// Typing indicator constants (US-3 / US-8)
+	waTypingInterval    = 10 * time.Second
+	waMaxTypingDuration = 5 * time.Minute
 )
 
 // WhatsAppNativeChannel implements the WhatsApp channel using whatsmeow (in-process, no external bridge).
@@ -68,7 +72,11 @@ func NewWhatsAppNativeChannel(
 	bus *bus.MessageBus,
 	storePath string,
 ) (channels.Channel, error) {
-	base := channels.NewBaseChannel("whatsapp_native", cfg, bus, cfg.AllowFrom, channels.WithMaxMessageLength(65536))
+	base := channels.NewBaseChannel("whatsapp_native", cfg, bus, cfg.AllowFrom,
+		channels.WithMaxMessageLength(65536),
+		channels.WithGroupTrigger(cfg.GroupTrigger),
+		channels.WithReasoningChannelID(cfg.ReasoningChannelID),
+	)
 	if storePath == "" {
 		storePath = "whatsapp"
 	}
@@ -192,6 +200,11 @@ func (c *WhatsAppNativeChannel) Start(ctx context.Context) error {
 							Writer:     os.Stdout,
 							HalfBlocks: true,
 						})
+						// Emit structured log for headless / WebUI consumption (US-2.5)
+						logger.InfoCF("whatsapp", "QR code available", map[string]any{
+							"event": "whatsapp.qr_code",
+							"code":  evt.Code,
+						})
 					} else {
 						logger.InfoCF("whatsapp", "WhatsApp login event", map[string]any{"event": evt.Event})
 					}
@@ -270,6 +283,27 @@ func (c *WhatsAppNativeChannel) eventHandler(evt any) {
 	switch evt.(type) {
 	case *events.Message:
 		c.handleIncoming(evt.(*events.Message))
+	case *events.LoggedOut:
+		logger.WarnCF("whatsapp", "WhatsApp session logged out by server; re-pairing required", map[string]any{
+			"on_connect": evt.(*events.LoggedOut).OnConnect,
+		})
+		c.reconnectMu.Lock()
+		if c.stopping.Load() || c.reconnecting {
+			c.reconnectMu.Unlock()
+			return
+		}
+		c.reconnecting = true
+		c.wg.Add(1)
+		c.reconnectMu.Unlock()
+		go func() {
+			defer c.wg.Done()
+			defer func() {
+				c.reconnectMu.Lock()
+				c.reconnecting = false
+				c.reconnectMu.Unlock()
+			}()
+			c.handleLoggedOut()
+		}()
 	case *events.Disconnected:
 		logger.InfoCF("whatsapp", "WhatsApp disconnected, will attempt reconnection", nil)
 		c.reconnectMu.Lock()
@@ -356,6 +390,16 @@ func (c *WhatsAppNativeChannel) handleIncoming(evt *events.Message) {
 		return
 	}
 
+	// For group chats, apply group trigger filtering (US-3 / mention-only / prefix matching)
+	if evt.Info.Chat.Server == types.GroupServer {
+		isMentioned := c.isBotMentioned(evt)
+		respond, cleaned := c.ShouldRespondInGroup(isMentioned, content)
+		if !respond {
+			return
+		}
+		content = cleaned
+	}
+
 	var mediaPaths []string
 
 	metadata := make(map[string]string)
@@ -430,9 +474,145 @@ func (c *WhatsAppNativeChannel) Send(ctx context.Context, msg bus.OutboundMessag
 	}
 
 	if _, err = client.SendMessage(ctx, to, waMsg); err != nil {
-		return fmt.Errorf("whatsapp send: %w", channels.ErrTemporary)
+		return fmt.Errorf("whatsapp send: %v: %w", err, channels.ErrTemporary)
 	}
 	return nil
+}
+
+// handleLoggedOut clears the current session and starts QR re-pairing (US-2).
+// Must be called from a goroutine tracked by c.wg, with c.reconnecting already set.
+func (c *WhatsAppNativeChannel) handleLoggedOut() {
+	c.mu.Lock()
+	client := c.client
+	c.mu.Unlock()
+	if client == nil {
+		return
+	}
+
+	client.Disconnect()
+
+	// Clear session so the next connect triggers QR pairing.
+	if err := client.Store.Delete(); err != nil {
+		logger.ErrorCF("whatsapp", "Failed to clear session for re-pairing", map[string]any{"error": err.Error()})
+		return
+	}
+
+	qrChan, err := client.GetQRChannel(c.runCtx)
+	if err != nil {
+		logger.ErrorCF("whatsapp", "Failed to get QR channel for re-pairing", map[string]any{"error": err.Error()})
+		return
+	}
+	if err := client.Connect(); err != nil {
+		logger.ErrorCF("whatsapp", "Failed to connect for re-pairing", map[string]any{"error": err.Error()})
+		return
+	}
+
+	for {
+		select {
+		case <-c.runCtx.Done():
+			return
+		case evt, ok := <-qrChan:
+			if !ok {
+				return
+			}
+			if evt.Event == "code" {
+				logger.InfoCF("whatsapp", "Scan QR code to re-pair WhatsApp (Linked Devices):", nil)
+				qrterminal.GenerateWithConfig(evt.Code, qrterminal.Config{
+					Level:      qrterminal.L,
+					Writer:     os.Stdout,
+					HalfBlocks: true,
+				})
+				logger.InfoCF("whatsapp", "QR code available", map[string]any{
+					"event": "whatsapp.qr_code",
+					"code":  evt.Code,
+				})
+			} else {
+				logger.InfoCF("whatsapp", "WhatsApp re-pairing event", map[string]any{"event": evt.Event})
+			}
+		}
+	}
+}
+
+// isBotMentioned returns true when the bot's JID appears in the message's
+// mentioned JID list (WhatsApp group @-mentions in extended text messages).
+func (c *WhatsAppNativeChannel) isBotMentioned(evt *events.Message) bool {
+	c.mu.Lock()
+	client := c.client
+	c.mu.Unlock()
+	if client == nil || client.Store.ID == nil {
+		return false
+	}
+	botJID := client.Store.ID.ToNonAD().String()
+
+	if evt.Message.ExtendedTextMessage != nil {
+		ci := evt.Message.ExtendedTextMessage.GetContextInfo()
+		if ci != nil {
+			for _, jid := range ci.GetMentionedJID() {
+				if jid == botJID {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// StartTyping implements channels.TypingCapable (US-3 / US-8).
+// Sends WhatsApp "composing" presence immediately and re-sends every
+// waTypingInterval to keep the indicator alive for long-running processing.
+// The returned stop func is idempotent and safe to call multiple times.
+func (c *WhatsAppNativeChannel) StartTyping(ctx context.Context, chatID string) (func(), error) {
+	to, err := parseJID(chatID)
+	if err != nil {
+		return func() {}, err
+	}
+
+	c.mu.Lock()
+	client := c.client
+	c.mu.Unlock()
+	if client == nil || !client.IsConnected() {
+		return func() {}, nil
+	}
+
+	// Send initial composing presence
+	if err := client.SendChatPresence(to, types.ChatPresenceComposing, types.ChatPresenceMediaText); err != nil {
+		logger.DebugCF("whatsapp", "Failed to send composing presence", map[string]any{"chat_id": chatID, "error": err.Error()})
+	}
+
+	typingCtx, cancel := context.WithCancel(ctx)
+	maxCtx, maxCancel := context.WithTimeout(typingCtx, waMaxTypingDuration)
+
+	go func() {
+		defer maxCancel()
+		ticker := time.NewTicker(waTypingInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-maxCtx.Done():
+				// Send paused presence when the indicator stops
+				c.mu.Lock()
+				cl := c.client
+				c.mu.Unlock()
+				if cl != nil && cl.IsConnected() {
+					if err := cl.SendChatPresence(to, types.ChatPresencePaused, types.ChatPresenceMediaText); err != nil {
+						logger.DebugCF("whatsapp", "Failed to send paused presence", map[string]any{"chat_id": chatID, "error": err.Error()})
+					}
+				}
+				return
+			case <-ticker.C:
+				c.mu.Lock()
+				cl := c.client
+				c.mu.Unlock()
+				if cl != nil && cl.IsConnected() {
+					if err := cl.SendChatPresence(to, types.ChatPresenceComposing, types.ChatPresenceMediaText); err != nil {
+						logger.DebugCF("whatsapp", "Failed to re-send composing presence", map[string]any{"chat_id": chatID, "error": err.Error()})
+					}
+				}
+			}
+		}
+	}()
+
+	return cancel, nil
 }
 
 // parseJID converts a chat ID (phone number or JID string) to types.JID.

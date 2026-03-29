@@ -25,9 +25,17 @@ const (
 	MaxDescriptionLength = 1024
 )
 
+// SkillMetadata holds parsed SKILL.md frontmatter fields.
+// Supports both basic (name/description) and ClawHub-extended fields.
 type SkillMetadata struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
+	Name         string   `json:"name"`
+	Description  string   `json:"description"`
+	ArgumentHint string   `json:"argument_hint"` // ClawHub: argument-hint
+	Context      string   `json:"context"`       // ClawHub: context (workspace/global/builtin)
+	AllowedTools []string `json:"allowed_tools"` // ClawHub: allowed-tools
+	ModelHint    string   `json:"model_hint"`    // ClawHub: model-hint
+	// Extra holds unrecognised frontmatter keys for forward compatibility.
+	Extra map[string]string `json:"extra,omitempty"`
 }
 
 type SkillInfo struct {
@@ -107,6 +115,9 @@ func (sl *SkillsLoader) ListSkills() []SkillInfo {
 		}
 		dirs, err := os.ReadDir(dir)
 		if err != nil {
+			if !os.IsNotExist(err) {
+				slog.Warn("skills: failed to read skills directory", "dir", dir, "source", source, "error", err)
+			}
 			return
 		}
 		for _, d := range dirs {
@@ -266,6 +277,28 @@ func (sl *SkillsLoader) getSkillMetadata(skillPath string) *SkillMetadata {
 	if description := yamlMeta["description"]; description != "" {
 		metadata.Description = description
 	}
+	if hint := yamlMeta["argument-hint"]; hint != "" {
+		metadata.ArgumentHint = hint
+	}
+	if ctx := yamlMeta["context"]; ctx != "" {
+		metadata.Context = ctx
+	}
+	if mh := yamlMeta["model-hint"]; mh != "" {
+		metadata.ModelHint = mh
+	}
+	if tools := yamlMeta["allowed-tools"]; tools != "" {
+		metadata.AllowedTools = strings.Split(tools, ",")
+	}
+	// Collect extra keys.
+	extra := make(map[string]string)
+	for k, v := range yamlMeta {
+		if strings.HasPrefix(k, "extra:") {
+			extra[strings.TrimPrefix(k, "extra:")] = v
+		}
+	}
+	if len(extra) > 0 {
+		metadata.Extra = extra
+	}
 	return metadata
 }
 
@@ -323,22 +356,56 @@ func nodeText(n ast.Node) string {
 	return strings.Join(strings.Fields(b.String()), " ")
 }
 
-// parseSimpleYAML parses YAML frontmatter and extracts known metadata fields.
+// parseSimpleYAML parses YAML frontmatter into a key→value map.
+// Recognises standard fields and ClawHub-extended fields (argument-hint,
+// context, allowed-tools, model-hint). Unrecognised keys are collected
+// under "extra:<key>" for forward compatibility.
 func (sl *SkillsLoader) parseSimpleYAML(content string) map[string]string {
 	result := make(map[string]string)
 
-	var meta struct {
-		Name        string `yaml:"name"`
-		Description string `yaml:"description"`
-	}
-	if err := yaml.Unmarshal([]byte(content), &meta); err != nil {
+	// Unmarshal into a raw map to capture all keys.
+	var raw map[string]any
+	if err := yaml.Unmarshal([]byte(content), &raw); err != nil {
+		slog.Warn("SKILL.md: failed to parse YAML frontmatter", "error", err)
 		return result
 	}
-	if meta.Name != "" {
-		result["name"] = meta.Name
+
+	knownKeys := map[string]bool{
+		"name": true, "description": true, "argument-hint": true,
+		"context": true, "allowed-tools": true, "model-hint": true,
 	}
-	if meta.Description != "" {
-		result["description"] = meta.Description
+
+	for k, v := range raw {
+		switch k {
+		case "name", "description", "context", "model-hint":
+			if s, ok := v.(string); ok && s != "" {
+				result[k] = s
+			}
+		case "argument-hint":
+			if s, ok := v.(string); ok && s != "" {
+				result["argument-hint"] = s
+			}
+		case "allowed-tools":
+			// May be a YAML sequence — join as comma-separated for map storage.
+			switch vt := v.(type) {
+			case []any:
+				parts := make([]string, 0, len(vt))
+				for _, item := range vt {
+					if s, ok := item.(string); ok {
+						parts = append(parts, s)
+					}
+				}
+				result["allowed-tools"] = strings.Join(parts, ",")
+			case string:
+				result["allowed-tools"] = vt
+			}
+		default:
+			if !knownKeys[k] {
+				if s, ok := v.(string); ok {
+					result["extra:"+k] = s
+				}
+			}
+		}
 	}
 
 	return result

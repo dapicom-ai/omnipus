@@ -64,3 +64,4 @@ web/backend/dist/*
 
 # Docker
 docker/data
+.playwright-mcp/

@@ -1,0 +1,83 @@
+package browser
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/dapicom-ai/omnipus/pkg/security"
+	"github.com/dapicom-ai/omnipus/pkg/tools"
+)
+
+// TestBrowserToolRegistration verifies that RegisterTools registers all 7 browser tools.
+// Traces to: wave4-whatsapp-browser-spec.md line 1001 (Test #11: TestBrowserToolRegistration)
+// BDD: Given an empty ToolRegistry,
+// When RegisterTools(registry, DefaultConfig(), nil) is called,
+// Then 7 tools are registered: browser.navigate, browser.click, browser.type,
+// browser.screenshot, browser.get_text, browser.wait, browser.evaluate.
+
+func TestBrowserToolRegistration(t *testing.T) {
+	// Traces to: wave4-whatsapp-browser-spec.md line 527 (Scenario: Launch managed Chromium)
+	registry := tools.NewToolRegistry()
+	require.NotNil(t, registry)
+
+	cfg, err := DefaultConfig()
+	require.NoError(t, err, "DefaultConfig must not error")
+	ssrf := security.NewSSRFChecker(nil)
+	mgr, err := RegisterTools(registry, cfg, ssrf)
+	require.NoError(t, err, "RegisterTools must not return an error with valid config")
+	require.NotNil(t, mgr, "RegisterTools must return a non-nil BrowserManager")
+
+	expectedTools := []string{
+		"browser.navigate",
+		"browser.click",
+		"browser.type",
+		"browser.screenshot",
+		"browser.get_text",
+		"browser.wait",
+		"browser.evaluate",
+	}
+
+	for _, name := range expectedTools {
+		tool, ok := registry.Get(name)
+		assert.True(t, ok, "tool %q must be registered", name)
+		if ok {
+			assert.Equal(t, name, tool.Name(), "tool Name() must match registration key %q", name)
+		}
+	}
+
+	assert.Len(t, expectedTools, 7, "spec requires exactly 7 browser tools (FR-009)")
+}
+
+// TestBrowserToolNames verifies that each registered tool returns the correct name and
+// a non-empty description per the API contract.
+// Traces to: wave4-whatsapp-browser-spec.md line 1001 (Test #11 — tool API contract)
+
+func TestBrowserToolNames(t *testing.T) {
+	// Traces to: wave4-whatsapp-browser-spec.md line 527 (Scenario: Launch managed Chromium)
+	registry := tools.NewToolRegistry()
+	cfg, err := DefaultConfig()
+	require.NoError(t, err)
+	ssrf := security.NewSSRFChecker(nil)
+	_, err = RegisterTools(registry, cfg, ssrf)
+	require.NoError(t, err)
+
+	toolNames := []string{
+		"browser.navigate",
+		"browser.click",
+		"browser.type",
+		"browser.screenshot",
+		"browser.get_text",
+		"browser.wait",
+		"browser.evaluate",
+	}
+
+	for _, name := range toolNames {
+		tool, ok := registry.Get(name)
+		require.True(t, ok, "tool %q must be registered", name)
+		assert.NotEmpty(t, tool.Description(), "tool %q must have a non-empty description", name)
+		params := tool.Parameters()
+		assert.NotNil(t, params, "tool %q must return non-nil Parameters()", name)
+	}
+}

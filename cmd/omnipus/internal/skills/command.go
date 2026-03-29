@@ -79,6 +79,7 @@ func NewSkillsCommand() *cobra.Command {
 		newInstallBuiltinCommand(workspaceFn),
 		newListBuiltinCommand(),
 		newRemoveCommand(installerFn),
+		newUpdateCommand(installerFn),
 		newSearchCommand(),
 		newShowCommand(loaderFn),
 	)

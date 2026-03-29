@@ -2,9 +2,12 @@ package skills
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -65,6 +68,21 @@ func NewClawHubRegistry(cfg ClawHubConfig) *ClawHubRegistry {
 		maxResp = cfg.MaxResponseSize
 	}
 
+	// Use the caller-supplied HTTP client if provided (e.g., SSRF-safe client
+	// from security.SSRFChecker.SafeClient — see ClawHubConfig.HTTPClient, W-2).
+	// Otherwise build a minimal default client.
+	client := cfg.HTTPClient
+	if client == nil {
+		client = &http.Client{
+			Timeout: timeout,
+			Transport: &http.Transport{
+				MaxIdleConns:        5,
+				IdleConnTimeout:     30 * time.Second,
+				TLSHandshakeTimeout: 10 * time.Second,
+			},
+		}
+	}
+
 	return &ClawHubRegistry{
 		baseURL:         baseURL,
 		authToken:       cfg.AuthToken,
@@ -73,14 +91,7 @@ func NewClawHubRegistry(cfg ClawHubConfig) *ClawHubRegistry {
 		downloadPath:    downloadPath,
 		maxZipSize:      maxZip,
 		maxResponseSize: maxResp,
-		client: &http.Client{
-			Timeout: timeout,
-			Transport: &http.Transport{
-				MaxIdleConns:        5,
-				IdleConnTimeout:     30 * time.Second,
-				TLSHandshakeTimeout: 10 * time.Second,
-			},
-		},
+		client:          client,
 	}
 }
 
@@ -167,6 +178,7 @@ type clawhubSkillResponse struct {
 
 type clawhubVersionInfo struct {
 	Version string `json:"version"`
+	SHA256  string `json:"sha256"` // hex-encoded SHA-256 of the ZIP archive (SEC-09)
 }
 
 type clawhubModerationInfo struct {
@@ -200,6 +212,7 @@ func (c *ClawHubRegistry) GetSkillMeta(ctx context.Context, slug string) (*Skill
 
 	if resp.LatestVersion != nil {
 		meta.LatestVersion = resp.LatestVersion.Version
+		meta.ExpectedHash = resp.LatestVersion.SHA256
 	}
 	if resp.Moderation != nil {
 		meta.IsMalwareBlocked = resp.Moderation.IsMalwareBlocked
@@ -223,10 +236,16 @@ func (c *ClawHubRegistry) DownloadAndInstall(
 	}
 
 	// Step 1: Fetch metadata (with fallback).
+	// NOTE: when metadata is unavailable, hash verification is skipped and
+	// result.Verified stays false. Callers MUST enforce SkillTrustPolicy to
+	// decide whether to block or warn on unverified installs (SEC-09).
 	result := &InstallResult{}
 	meta, err := c.GetSkillMeta(ctx, slug)
 	if err != nil {
-		// Fallback: proceed without metadata.
+		slog.Warn("skill metadata fetch failed — hash verification will be skipped",
+			"slug", slug,
+			"error", err,
+		)
 		meta = nil
 	}
 
@@ -265,12 +284,42 @@ func (c *ClawHubRegistry) DownloadAndInstall(
 	}
 	defer os.Remove(tmpPath)
 
-	// Step 4: Extract from file on disk.
+	// Step 4: Verify SHA-256 hash if the registry provided one (SEC-09).
+	if meta != nil && meta.ExpectedHash != "" {
+		actual, hashErr := computeFileSHA256(tmpPath)
+		if hashErr != nil {
+			return nil, fmt.Errorf("hash computation failed: %w", hashErr)
+		}
+		if actual != meta.ExpectedHash {
+			return nil, fmt.Errorf(
+				"hash verification failed: expected %s got %s — skill may have been tampered with",
+				meta.ExpectedHash, actual,
+			)
+		}
+		result.Verified = true
+	}
+
+	// Step 5: Extract from file on disk.
 	if err := utils.ExtractZipFile(tmpPath, targetDir); err != nil {
 		return nil, err
 	}
 
 	return result, nil
+}
+
+// computeFileSHA256 returns the lowercase hex SHA-256 digest of the file at path.
+func computeFileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("open: %w", err)
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", fmt.Errorf("read: %w", err)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // --- HTTP helper ---

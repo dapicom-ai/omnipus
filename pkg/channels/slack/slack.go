@@ -137,10 +137,12 @@ func (c *SlackChannel) Send(ctx context.Context, msg bus.OutboundMessage) error 
 
 	if ref, ok := c.pendingAcks.LoadAndDelete(msg.ChatID); ok {
 		msgRef := ref.(slackMessageRef)
-		c.api.AddReaction("white_check_mark", slack.ItemRef{
+		if err := c.api.AddReaction("white_check_mark", slack.ItemRef{
 			Channel:   msgRef.ChannelID,
 			Timestamp: msgRef.Timestamp,
-		})
+		}); err != nil {
+			logger.DebugCF("slack", "Failed to add ack reaction", map[string]any{"channel_id": msgRef.ChannelID, "error": err.Error()})
+		}
 	}
 
 	logger.DebugCF("slack", "Message sent", map[string]any{
@@ -214,16 +216,14 @@ func (c *SlackChannel) ReactToMessage(ctx context.Context, chatID, messageID str
 		return func() {}, nil
 	}
 
-	c.api.AddReaction("eyes", slack.ItemRef{
-		Channel:   channelID,
-		Timestamp: messageID,
-	})
+	if err := c.api.AddReaction("eyes", slack.ItemRef{Channel: channelID, Timestamp: messageID}); err != nil {
+		logger.DebugCF("slack", "Failed to add reaction", map[string]any{"channel_id": channelID, "error": err.Error()})
+	}
 
 	return func() {
-		c.api.RemoveReaction("eyes", slack.ItemRef{
-			Channel:   channelID,
-			Timestamp: messageID,
-		})
+		if err := c.api.RemoveReaction("eyes", slack.ItemRef{Channel: channelID, Timestamp: messageID}); err != nil {
+			logger.DebugCF("slack", "Failed to remove reaction", map[string]any{"channel_id": channelID, "error": err.Error()})
+		}
 	}, nil
 }
 
@@ -331,11 +331,13 @@ func (c *SlackChannel) handleMessageEvent(ev *slackevents.MessageEvent) {
 				Source:        "slack",
 				CleanupPolicy: media.CleanupPolicyDeleteOnCleanup,
 			}, scope)
-			if err == nil {
+			if err != nil {
+				logger.ErrorCF("slack", "Failed to store media", map[string]any{"filename": filename, "error": err.Error()})
+			} else {
 				return ref
 			}
 		}
-		return localPath // fallback
+		return localPath // fallback: use raw path
 	}
 
 	if ev.Message != nil && len(ev.Message.Files) > 0 {
@@ -525,6 +527,13 @@ func (c *SlackChannel) stripBotMention(text string) string {
 	mention := fmt.Sprintf("<@%s>", c.botUserID)
 	text = strings.ReplaceAll(text, mention, "")
 	return strings.TrimSpace(text)
+}
+
+// StartTyping implements channels.TypingCapable.
+// Slack's Socket Mode API does not expose a bot typing indicator endpoint;
+// this is a graceful no-op so the framework can call it uniformly across all channels.
+func (c *SlackChannel) StartTyping(_ context.Context, _ string) (func(), error) {
+	return func() {}, nil
 }
 
 func parseSlackChatID(chatID string) (channelID, threadTS string) {

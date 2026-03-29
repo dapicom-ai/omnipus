@@ -2,6 +2,8 @@ package skills
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,11 +13,32 @@ import (
 
 	"github.com/dapicom-ai/omnipus/cmd/omnipus/internal"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/policy"
 	"github.com/dapicom-ai/omnipus/pkg/skills"
 	"github.com/dapicom-ai/omnipus/pkg/utils"
 )
 
 const skillsSearchMaxResults = 20
+
+// buildRegistryManager creates a RegistryManager from the application config.
+// Used by install, update, and search commands.
+func buildRegistryManager(cfg *config.Config) *skills.RegistryManager {
+	ch := cfg.Tools.Skills.Registries.ClawHub
+	return skills.NewRegistryManagerFromConfig(skills.RegistryConfig{
+		MaxConcurrentSearches: cfg.Tools.Skills.MaxConcurrentSearches,
+		ClawHub: skills.ClawHubConfig{
+			Enabled:         ch.Enabled,
+			BaseURL:         ch.BaseURL,
+			AuthToken:       ch.AuthToken.String(),
+			SearchPath:      ch.SearchPath,
+			SkillsPath:      ch.SkillsPath,
+			DownloadPath:    ch.DownloadPath,
+			Timeout:         ch.Timeout,
+			MaxZipSize:      ch.MaxZipSize,
+			MaxResponseSize: ch.MaxResponseSize,
+		},
+	})
+}
 
 func skillsListCmd(loader *skills.SkillsLoader) {
 	allSkills := loader.ListSkills()
@@ -50,6 +73,36 @@ func skillsInstallCmd(installer *skills.SkillInstaller, repo string) error {
 	return nil
 }
 
+// skillTrustFromConfig returns the effective SkillTrustPolicy from the sandbox config.
+func skillTrustFromConfig(cfg *config.Config) policy.SkillTrustPolicy {
+	switch cfg.Sandbox.SkillTrust {
+	case string(policy.SkillTrustBlockUnverified):
+		return policy.SkillTrustBlockUnverified
+	case string(policy.SkillTrustAllowAll):
+		return policy.SkillTrustAllowAll
+	default:
+		return policy.SkillTrustWarnUnverified
+	}
+}
+
+// enforceSkillTrust checks result.Verified against the configured trust policy.
+// It removes targetDir on block, returns an error if policy blocks the install,
+// and prints a warning if policy is warn_unverified and the skill is unverified.
+func enforceSkillTrust(trust policy.SkillTrustPolicy, verified bool, slug, targetDir string) error {
+	if verified || trust == policy.SkillTrustAllowAll {
+		return nil
+	}
+	if trust == policy.SkillTrustBlockUnverified {
+		if rmErr := os.RemoveAll(targetDir); rmErr != nil {
+			fmt.Printf("✗ Failed to remove partial install: %v\n", rmErr)
+		}
+		return fmt.Errorf("✗ skill '%s' could not be hash-verified and trust policy is block_unverified — install aborted", slug)
+	}
+	// warn_unverified
+	fmt.Printf("⚠️  Warning: skill '%s' hash could not be verified (no hash in registry manifest). Install proceeded per warn_unverified policy.\n", slug)
+	return nil
+}
+
 // skillsInstallFromRegistry installs a skill from a named registry (e.g. clawhub).
 func skillsInstallFromRegistry(cfg *config.Config, registryName, slug string) error {
 	err := utils.ValidateSkillIdentifier(registryName)
@@ -64,21 +117,7 @@ func skillsInstallFromRegistry(cfg *config.Config, registryName, slug string) er
 
 	fmt.Printf("Installing skill '%s' from %s registry...\n", slug, registryName)
 
-	clawHubConfig := cfg.Tools.Skills.Registries.ClawHub
-	registryMgr := skills.NewRegistryManagerFromConfig(skills.RegistryConfig{
-		MaxConcurrentSearches: cfg.Tools.Skills.MaxConcurrentSearches,
-		ClawHub: skills.ClawHubConfig{
-			Enabled:         clawHubConfig.Enabled,
-			BaseURL:         clawHubConfig.BaseURL,
-			AuthToken:       clawHubConfig.AuthToken.String(),
-			SearchPath:      clawHubConfig.SearchPath,
-			SkillsPath:      clawHubConfig.SkillsPath,
-			DownloadPath:    clawHubConfig.DownloadPath,
-			Timeout:         clawHubConfig.Timeout,
-			MaxZipSize:      clawHubConfig.MaxZipSize,
-			MaxResponseSize: clawHubConfig.MaxResponseSize,
-		},
-	})
+	registryMgr := buildRegistryManager(cfg)
 
 	registry := registryMgr.GetRegistry(registryName)
 	if registry == nil {
@@ -113,8 +152,12 @@ func skillsInstallFromRegistry(cfg *config.Config, registryName, slug string) er
 		if rmErr != nil {
 			fmt.Printf("\u2717 Failed to remove partial install: %v\n", rmErr)
 		}
-
 		return fmt.Errorf("\u2717 Skill '%s' is flagged as malicious and cannot be installed.\n", slug)
+	}
+
+	// Enforce skill trust policy (SEC-09).
+	if err := enforceSkillTrust(skillTrustFromConfig(cfg), result.Verified, slug, targetDir); err != nil {
+		return err
 	}
 
 	if result.IsSuspicious {
@@ -127,6 +170,104 @@ func skillsInstallFromRegistry(cfg *config.Config, registryName, slug string) er
 	}
 
 	return nil
+}
+
+// skillsUpdateCmd re-installs a skill from its registry at the latest available version.
+// It delegates to the ClawHub registry using the existing config.
+func skillsUpdateCmd(installer *skills.SkillInstaller, skillName string) error {
+	cfg, err := internal.LoadConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	err = utils.ValidateSkillIdentifier(skillName)
+	if err != nil {
+		return fmt.Errorf("✗  invalid skill name: %w", err)
+	}
+
+	// Determine which registry the skill came from via its .skill-origin.json.
+	originPath := filepath.Join(cfg.WorkspacePath(), "skills", skillName, ".skill-origin.json")
+	registryName, err := readSkillOriginRegistry(originPath)
+	if err != nil {
+		fmt.Printf("⚠️  Warning: could not read skill origin file (%v) — falling back to 'clawhub' registry.\n", err)
+		registryName = "clawhub"
+	}
+
+	fmt.Printf("Updating skill '%s' from %s...\n", skillName, registryName)
+
+	clawHubConfig := cfg.Tools.Skills.Registries.ClawHub
+	registryMgr := skills.NewRegistryManagerFromConfig(skills.RegistryConfig{
+		MaxConcurrentSearches: cfg.Tools.Skills.MaxConcurrentSearches,
+		ClawHub: skills.ClawHubConfig{
+			Enabled:         clawHubConfig.Enabled,
+			BaseURL:         clawHubConfig.BaseURL,
+			AuthToken:       clawHubConfig.AuthToken.String(),
+			SearchPath:      clawHubConfig.SearchPath,
+			SkillsPath:      clawHubConfig.SkillsPath,
+			DownloadPath:    clawHubConfig.DownloadPath,
+			Timeout:         clawHubConfig.Timeout,
+			MaxZipSize:      clawHubConfig.MaxZipSize,
+			MaxResponseSize: clawHubConfig.MaxResponseSize,
+		},
+	})
+
+	registry := registryMgr.GetRegistry(registryName)
+	if registry == nil {
+		return fmt.Errorf("✗  registry '%s' not found or not enabled. check your config.json.", registryName)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// Remove old version before reinstalling.
+	if unErr := installer.Uninstall(skillName); unErr != nil {
+		return fmt.Errorf("✗  failed to remove old version: %w", unErr)
+	}
+
+	workspace := cfg.WorkspacePath()
+	targetDir := filepath.Join(workspace, "skills", skillName)
+
+	if mkErr := os.MkdirAll(filepath.Join(workspace, "skills"), 0o755); mkErr != nil {
+		return fmt.Errorf("✗  failed to create skills directory: %w", mkErr)
+	}
+
+	result, err := registry.DownloadAndInstall(ctx, skillName, "", targetDir)
+	if err != nil {
+		_ = os.RemoveAll(targetDir)
+		return fmt.Errorf("✗  failed to install update: %w", err)
+	}
+
+	if result.IsMalwareBlocked {
+		_ = os.RemoveAll(targetDir)
+		return fmt.Errorf("✗  Skill '%s' is flagged as malicious and cannot be installed.", skillName)
+	}
+
+	// Enforce skill trust policy (SEC-09).
+	if trustErr := enforceSkillTrust(skillTrustFromConfig(cfg), result.Verified, skillName, targetDir); trustErr != nil {
+		return trustErr
+	}
+
+	if result.IsSuspicious {
+		fmt.Printf("⚠️  Warning: skill '%s' is flagged as suspicious.\n", skillName)
+	}
+
+	fmt.Printf("✓ Skill '%s' updated to v%s successfully!\n", skillName, result.Version)
+	return nil
+}
+
+// readSkillOriginRegistry reads the registry name from a .skill-origin.json file.
+func readSkillOriginRegistry(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var origin struct {
+		Registry string `json:"registry"`
+	}
+	if err := json.Unmarshal(data, &origin); err != nil || origin.Registry == "" {
+		return "", fmt.Errorf("no registry in origin file")
+	}
+	return origin.Registry, nil
 }
 
 func skillsRemoveCmd(installer *skills.SkillInstaller, skillName string) {
@@ -153,26 +294,37 @@ func skillsInstallBuiltinCmd(workspace string) {
 		"calculator",
 	}
 
+	var failed, installed int
 	for _, skillName := range skillsToInstall {
 		builtinPath := filepath.Join(builtinSkillsDir, skillName)
 		workspacePath := filepath.Join(workspaceSkillsDir, skillName)
 
 		if _, err := os.Stat(builtinPath); err != nil {
 			fmt.Printf("⊘ Builtin skill '%s' not found: %v\n", skillName, err)
+			failed++
 			continue
 		}
 
 		if err := os.MkdirAll(workspacePath, 0o755); err != nil {
 			fmt.Printf("✗ Failed to create directory for %s: %v\n", skillName, err)
+			failed++
 			continue
 		}
 
 		if err := copyDirectory(builtinPath, workspacePath); err != nil {
 			fmt.Printf("✗ Failed to copy %s: %v\n", skillName, err)
+			failed++
+			continue
 		}
+		installed++
 	}
 
-	fmt.Println("\n✓ All builtin skills installed!")
+	fmt.Println()
+	if failed == 0 {
+		fmt.Printf("✓ All %d builtin skills installed successfully!\n", installed)
+	} else {
+		fmt.Printf("⚠️  %d skill(s) installed, %d failed. Check the errors above.\n", installed, failed)
+	}
 	fmt.Println("Now you can use them in your workspace.")
 }
 
@@ -257,7 +409,13 @@ func skillsSearchCmd(query string) {
 	defer cancel()
 
 	results, err := registryMgr.SearchAll(ctx, query, skillsSearchMaxResults)
-	if err != nil {
+	var partialErr *skills.PartialSearchError
+	switch {
+	case err == nil:
+		// full success
+	case errors.As(err, &partialErr):
+		fmt.Printf("⚠️  Warning: results may be incomplete — one or more registries failed: %v\n\n", partialErr.Cause)
+	default:
 		fmt.Printf("✗ Failed to fetch skills list: %v\n", err)
 		return
 	}

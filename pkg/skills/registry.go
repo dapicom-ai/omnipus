@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sync"
 	"time"
 )
@@ -28,6 +29,7 @@ type SkillMeta struct {
 	DisplayName      string `json:"display_name"`
 	Summary          string `json:"summary"`
 	LatestVersion    string `json:"latest_version"`
+	ExpectedHash     string `json:"expected_hash"` // SHA-256 hex of the skill ZIP (SEC-09)
 	IsMalwareBlocked bool   `json:"is_malware_blocked"`
 	IsSuspicious     bool   `json:"is_suspicious"`
 	RegistryName     string `json:"registry_name"`
@@ -40,6 +42,8 @@ type InstallResult struct {
 	IsMalwareBlocked bool
 	IsSuspicious     bool
 	Summary          string
+	// Verified is true when the downloaded archive was checked against the registry hash.
+	Verified bool
 }
 
 // SkillRegistry is the interface that all skill registries must implement.
@@ -75,6 +79,12 @@ type ClawHubConfig struct {
 	Timeout         int    // seconds, 0 = default (30s)
 	MaxZipSize      int    // bytes, 0 = default (50MB)
 	MaxResponseSize int    // bytes, 0 = default (2MB)
+
+	// HTTPClient overrides the default HTTP client. When non-nil it is used as-is
+	// (the Timeout field is ignored). Callers should pass
+	// security.SSRFChecker.SafeClient() to enforce SSRF protection (W-2).
+	// This field is not serialized from JSON — it must be injected at runtime.
+	HTTPClient *http.Client `json:"-"`
 }
 
 // RegistryManager coordinates multiple skill registries.
@@ -198,6 +208,16 @@ func (rm *RegistryManager) SearchAll(ctx context.Context, query string, limit in
 		return nil, fmt.Errorf("all registries failed: %w", lastErr)
 	}
 
+	// If some (but not all) registries failed, log a warning and return a
+	// PartialSearchError so callers can surface the caveat to users.
+	var retErr error
+	if lastErr != nil && anyRegistrySucceeded {
+		slog.Warn("search returned partial results: one or more registries failed",
+			"error", lastErr,
+		)
+		retErr = &PartialSearchError{Cause: lastErr}
+	}
+
 	// Sort by score descending.
 	sortByScoreDesc(merged)
 
@@ -206,8 +226,21 @@ func (rm *RegistryManager) SearchAll(ctx context.Context, query string, limit in
 		merged = merged[:limit]
 	}
 
-	return merged, nil
+	return merged, retErr
 }
+
+// PartialSearchError is returned by SearchAll when at least one registry
+// succeeded but others failed. Results are still usable; the caller should
+// display a notice that results may be incomplete.
+type PartialSearchError struct {
+	Cause error
+}
+
+func (e *PartialSearchError) Error() string {
+	return fmt.Sprintf("partial results: one or more registries failed (%v)", e.Cause)
+}
+
+func (e *PartialSearchError) Unwrap() error { return e.Cause }
 
 // sortByScoreDesc sorts SearchResults by Score in descending order (insertion sort — small slices).
 func sortByScoreDesc(results []SearchResult) {

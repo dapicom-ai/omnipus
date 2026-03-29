@@ -66,7 +66,7 @@ func TestFindSkillsToolDescription(t *testing.T) {
 }
 
 func TestFormatSearchResultsEmpty(t *testing.T) {
-	result := formatSearchResults("test query", nil, false)
+	result := formatSearchResults("test query", nil, false, nil)
 	assert.Contains(t, result, "No skills found")
 }
 
@@ -81,7 +81,7 @@ func TestFormatSearchResultsWithData(t *testing.T) {
 			RegistryName: "clawhub",
 		},
 	}
-	output := formatSearchResults("github", results, false)
+	output := formatSearchResults("github", results, false, nil)
 	assert.Contains(t, output, "github")
 	assert.Contains(t, output, "v1.0.0")
 	assert.Contains(t, output, "0.950")

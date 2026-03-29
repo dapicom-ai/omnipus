@@ -89,7 +89,9 @@ func TestRegistryManagerSearchAllOneFailsGracefully(t *testing.T) {
 	})
 
 	results, err := mgr.SearchAll(context.Background(), "test query", 10)
-	assert.NoError(t, err)
+	// Partial failure: results are returned with a PartialSearchError notice.
+	var partialErr *PartialSearchError
+	assert.ErrorAs(t, err, &partialErr, "expected PartialSearchError when one registry fails")
 	assert.Len(t, results, 1)
 	assert.Equal(t, "skill-a", results[0].Slug)
 }
