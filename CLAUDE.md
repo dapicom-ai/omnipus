@@ -69,3 +69,50 @@ Use this sequence when implementing features:
 4. Use `/taskify` to decompose into structured task graphs
 5. Implement in Plan Mode first, then switch to normal mode
 6. Use `/grill-code` to verify spec compliance after implementation
+
+## Agent Team Structure
+
+**Team: `omnipus-dev`** — 4 implementing teammates + lead orchestrates reviews.
+
+**Teammates (implement features, own files):**
+- `frontend-lead` (sonnet) — owns `src/`, `app/`, `packages/ui/`
+- `backend-lead` (sonnet) — owns `pkg/`, `cmd/`, `internal/` (except security)
+- `security-lead` (opus) — owns `pkg/security/`, `pkg/sandbox/`, `pkg/audit/`, `pkg/policy/`
+- `qa-lead` (sonnet) — owns `*_test.go`, `*.test.ts`, `*.test.tsx`
+
+**Review subagents (spawned by lead after teammate completes work):**
+- `frontend-enforcer` (haiku) — brand/design compliance
+- `go-patterns` (haiku) — Go idiom enforcement
+- `spec-compliance` (sonnet) — spec traceability
+- `omnipus-ui-reviewer` (haiku) — UI spec compliance
+- `architect` (opus) — cross-cutting design review
+
+**Teammates cannot spawn subagents.** Only the lead spawns review agents.
+
+## Lead Review Protocol
+
+**MANDATORY: After any teammate completes a task, the lead runs this review pipeline before merging or moving on.**
+
+### Step 1 — Project-specific reviews (run in parallel)
+Based on what changed, spawn the relevant custom review agents:
+- **Go files changed** → `go-patterns` + `spec-compliance`
+- **Frontend files changed** → `frontend-enforcer` + `omnipus-ui-reviewer` + `spec-compliance`
+- **Security files changed** → `spec-compliance` + `architect`
+- **New types/interfaces added** → `architect`
+
+### Step 2 — PR-review-toolkit (run ALL 6 in parallel, always)
+After project-specific reviews pass, **always** run all 6 pr-review-toolkit agents:
+1. `pr-review-toolkit:code-reviewer` — CLAUDE.md compliance, bugs, quality
+2. `pr-review-toolkit:code-simplifier` — simplify for clarity and maintainability
+3. `pr-review-toolkit:comment-analyzer` — verify comment accuracy
+4. `pr-review-toolkit:pr-test-analyzer` — test coverage quality
+5. `pr-review-toolkit:silent-failure-hunter` — find silent failures, bad error handling
+6. `pr-review-toolkit:type-design-analyzer` — type/interface design quality
+
+### Step 3 — Resolve findings
+- Fix issues found by reviews (or have the teammate fix them)
+- Re-run failed reviews after fixes
+- Only create PR when all reviews pass
+
+### Why both custom + pr-toolkit?
+Custom agents know our project (brand rules, BRD specs, Go patterns). PR-toolkit agents are generic but deep (error handling, type design, test quality, comment rot). No redundancy — they complement each other.
