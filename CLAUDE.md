@@ -70,6 +70,43 @@ Use this sequence when implementing features:
 5. Implement in Plan Mode first, then switch to normal mode
 6. Use `/grill-code` to verify spec compliance after implementation
 
+## MANDATORY: Team-Based Implementation
+
+**CRITICAL INSTRUCTION — READ THIS BEFORE WRITING ANY CODE:**
+
+When the user requests implementation work for a wave or feature (e.g., "implement wave 0", "build the security layer", "start on the UI", "work on WhatsApp channel", or any task involving code changes across multiple files), you MUST:
+
+1. **Create the `omnipus-dev` team** using TeamCreate before writing any code
+2. **Decompose the work into tasks** using `/taskify` against the relevant wave spec
+3. **Spawn all 4 teammates** with their assigned file ownership
+4. **Coordinate via task list** — assign tasks, monitor progress, run reviews
+5. **Run the full review pipeline** (Steps 1-3 below) after each task completion
+
+**DO NOT implement wave/feature work as a solo agent.** Solo work is acceptable ONLY for:
+- Single-file bug fixes
+- Documentation updates
+- Config changes
+- Quick additions to one existing file
+
+**If in doubt, use the team.** The cost of coordination is less than the cost of unreviewed, uncoordinated changes across the codebase.
+
+### How to spawn the team
+
+```
+TeamCreate: omnipus-dev
+Then spawn 4 teammates:
+- frontend-lead (sonnet) → "Implement [frontend tasks]. You own src/, app/, packages/ui/. Read docs/plan/wave[N] spec."
+- backend-lead (sonnet) → "Implement [backend tasks]. You own pkg/, cmd/, internal/. Read docs/plan/wave[N] spec."
+- security-lead (opus) → "Implement [security tasks]. You own pkg/security/, pkg/sandbox/, pkg/audit/, pkg/policy/. Read docs/plan/wave[N] spec."
+- qa-lead (sonnet) → "Write tests for [scope]. You own *_test.go, *.test.ts. Read docs/plan/wave[N] spec BDD scenarios."
+```
+
+Not all 4 teammates are needed for every wave — only spawn those relevant to the work:
+- **Wave 0 (brand/UI):** frontend-lead + qa-lead
+- **Wave 1 (core):** backend-lead + qa-lead
+- **Wave 2 (security):** security-lead + backend-lead + qa-lead
+- **Wave 3+ (skills, channels, UI):** all 4
+
 ## Agent Team Structure
 
 **Team: `omnipus-dev`** — 4 implementing teammates + lead orchestrates reviews.

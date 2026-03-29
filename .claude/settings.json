@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "The user just submitted a prompt for the Omnipus project. Analyze whether this is an implementation task (writing code across multiple files, implementing a wave, building a feature). If it IS implementation work AND no agent team is currently active, respond with: {\"additionalContext\": \"REMINDER: Per CLAUDE.md, implementation work on Omnipus requires the omnipus-dev agent team. Create the team with TeamCreate and spawn the relevant teammates (frontend-lead, backend-lead, security-lead, qa-lead) before writing any code. Solo implementation is only for single-file bug fixes, docs, or config changes.\"}. If a team IS already active or this is NOT implementation work, respond with: {\"additionalContext\": \"\"}."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "prompt",
+            "prompt": "Claude just finished its turn on the Omnipus project. Check: did it write code across multiple files without spawning an agent team? If yes, respond with: {\"decision\": \"block\", \"reason\": \"Implementation work spanning multiple files requires the omnipus-dev agent team per CLAUDE.md. Please create the team and delegate to teammates instead of implementing solo.\"}. If it used a team, or only made single-file changes, or did non-code work, respond with: {\"decision\": \"allow\"}."
+          }
+        ]
+      }
+    ]
+  }
+}
