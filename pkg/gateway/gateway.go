@@ -373,6 +373,10 @@ func setupAndStartServices(
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/skills/", http.HandlerFunc(api.HandleSkills))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/doctor", http.HandlerFunc(api.HandleDoctor))
 
+	// Serve the embedded SPA (Sovereign Deep UI) as the default handler.
+	// API routes registered above take priority; anything else serves the SPA.
+	runningServices.ChannelManager.RegisterHTTPHandler("/", newSPAHandler())
+
 	if err = runningServices.ChannelManager.StartAll(context.Background()); err != nil {
 		return nil, fmt.Errorf("error starting channels: %w", err)
 	}
