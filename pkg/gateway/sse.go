@@ -61,8 +61,11 @@ func newSSEHandler(msgBus *bus.MessageBus, ps *session.PartitionStore, allowedOr
 		allowedOrigin: allowedOrigin,
 		sessions:      make(map[string]*sseSession),
 	}
-	// Register as a StreamDelegate so the agent loop can push tokens.
-	msgBus.SetStreamDelegate(h)
+	// NOTE: Do NOT call msgBus.SetStreamDelegate(h) here.
+	// The WebSocket handler (Wave 5a) is the primary stream delegate.
+	// SSE is kept for backward compatibility but does not receive streaming tokens.
+	// Calling SetStreamDelegate with both SSE and WS types causes an atomic.Value
+	// type mismatch panic.
 	return h
 }
 

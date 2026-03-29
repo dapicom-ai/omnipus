@@ -103,7 +103,12 @@ func newWSHandler(
 			},
 		},
 	}
-	msgBus.SetStreamDelegate(h)
+	// NOTE: Do NOT call msgBus.SetStreamDelegate(h) here.
+	// The channel Manager is already set as the stream delegate (via manager.go:254).
+	// atomic.Value panics if you store a different concrete type.
+	// Instead, the channel Manager's GetStreamer will be extended to check for
+	// webchat WebSocket connections. For now, webchat streaming goes through
+	// the Manager → Pico channel path, and we handle it via direct message publishing.
 	return h
 }
 
