@@ -12,6 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/bedrockruntime v1.50.2
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/caarlos0/env/v11 v11.4.0
+	github.com/chromedp/chromedp v0.15.1
 	github.com/creack/pty v1.1.24
 	github.com/ergochat/irc-go v0.6.0
 	github.com/ergochat/readline v0.1.3
@@ -24,10 +25,11 @@ require (
 	github.com/mdp/qrterminal/v3 v3.2.1
 	github.com/modelcontextprotocol/go-sdk v1.4.1
 	github.com/mymmrac/telego v1.7.0
+	github.com/oklog/ulid/v2 v2.1.1
 	github.com/open-dingtalk/dingtalk-stream-sdk-go v0.9.1
 	github.com/openai/openai-go/v3 v3.22.0
 	github.com/rivo/tview v0.42.0
-	github.com/rs/zerolog v1.34.0
+	github.com/rs/zerolog v1.35.0
 	github.com/slack-go/slack v0.17.3
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
@@ -61,7 +63,6 @@ require (
 	github.com/aws/smithy-go v1.24.2 // indirect
 	github.com/beeper/argo-go v1.1.2 // indirect
 	github.com/chromedp/cdproto v0.0.0-20260321001828-e3e3800016bc // indirect
-	github.com/chromedp/chromedp v0.15.1 // indirect
 	github.com/chromedp/sysutil v1.1.0 // indirect
 	github.com/coder/websocket v1.8.14 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
@@ -79,7 +80,6 @@ require (
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-sqlite3 v1.14.34 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
-	github.com/oklog/ulid/v2 v2.1.1 // indirect
 	github.com/petermattis/goid v0.0.0-20260226131333-17d1149c6ac6 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
