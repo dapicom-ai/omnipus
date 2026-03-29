@@ -1,37 +1,66 @@
+# Go build artifacts
+bin/
+build/
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/omnipus
+/omnipus-test
+cmd/**/workspace
+
+# Omnipus data
+.omnipus/
+sessions/
+
+# Coverage
+coverage.txt
+coverage.html
+
+# Secrets & Config
+.env
+.env.local
+.env.*.local
+credentials.json
+security.yml
+.security.yml
+*.pem
+*.key
+onboard
+config/config.json
+
 # OS
 .DS_Store
 Thumbs.db
 
-# IDE
-.idea/
+# Editors
 .vscode/
+.idea/
 *.swp
 *.swo
 
-# Go
-/bin/
-/dist/
-*.exe
-*.test
-*.out
-
 # Node (frontend)
 node_modules/
-.next/
-dist/
 *.tsbuildinfo
+.next/
 
-# Environment
-.env
-.env.local
-.env.*.local
+# goreleaser
+dist/
+*.vite/
 
-# Credentials (never commit)
-credentials.json
-security.yml
-*.pem
-*.key
+# Windows
+*.syso
 
-# Build artifacts
-/build/
-/out/
+# Test
+cmd/telegram/
+
+# Keep embedded backend dist placeholder
+!web/backend/dist/
+web/backend/dist/*
+!web/backend/dist/.gitkeep
+
+# Docker
+docker/data
