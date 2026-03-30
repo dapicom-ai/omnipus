@@ -7,10 +7,20 @@ import {
   Robot,
   CurrencyDollar,
 } from '@phosphor-icons/react'
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  useDroppable,
+  useDraggable,
+} from '@dnd-kit/core'
+import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { fetchTasks, createTask } from '@/lib/api'
+import { fetchTasks, createTask, updateTask } from '@/lib/api'
 import type { Task } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { cn } from '@/lib/utils'
@@ -23,10 +33,75 @@ const STATUS_CONFIG = {
   done: { label: 'Done', color: 'text-[var(--color-muted)]', bg: 'bg-[var(--color-surface-1)]' },
 } as const
 
-function TaskRow({ task }: { task: Task }) {
+// ── Draggable card (board view) ────────────────────────────────────────────────
+
+function DraggableCard({ task, onSelect }: { task: Task; onSelect: (t: Task) => void }) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: task.id })
+  return (
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      onClick={() => onSelect(task)}
+      className={cn(
+        'mx-1 p-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)]',
+        'text-xs hover:border-[var(--color-accent)]/30 transition-colors cursor-pointer',
+        isDragging && 'opacity-40',
+      )}
+    >
+      <p className="text-[var(--color-secondary)] font-medium line-clamp-2">{task.name}</p>
+      {task.agent_name && (
+        <p className="text-[var(--color-muted)] mt-1 flex items-center gap-1">
+          <Robot size={10} /> {task.agent_name}
+        </p>
+      )}
+    </div>
+  )
+}
+
+// ── Droppable column (board view) ──────────────────────────────────────────────
+
+function BoardColumn({
+  status,
+  tasks,
+  onSelect,
+}: {
+  status: Task['status']
+  tasks: Task[]
+  onSelect: (t: Task) => void
+}) {
+  const cfg = STATUS_CONFIG[status]
+  const { setNodeRef, isOver } = useDroppable({ id: status })
+  return (
+    <div className="flex-1 min-w-[160px]">
+      <div className={cn('text-xs font-semibold px-3 py-2 rounded-t-lg border-b border-[var(--color-border)]', cfg.bg)}>
+        <span className={cfg.color}>{cfg.label}</span>
+        <span className="ml-2 text-[var(--color-muted)]">({tasks.length})</span>
+      </div>
+      <div
+        ref={setNodeRef}
+        className={cn(
+          'space-y-2 pt-2 min-h-[120px] rounded-b-lg transition-colors',
+          isOver && 'bg-[var(--color-accent)]/5',
+        )}
+      >
+        {tasks.map((task) => (
+          <DraggableCard key={task.id} task={task} onSelect={onSelect} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── List row ───────────────────────────────────────────────────────────────────
+
+function TaskRow({ task, onSelect }: { task: Task; onSelect: (t: Task) => void }) {
   const cfg = STATUS_CONFIG[task.status]
   return (
-    <div className="flex items-center gap-3 px-4 py-3 border-b border-[var(--color-border)] last:border-0 hover:bg-[var(--color-surface-2)] transition-colors group">
+    <div
+      onClick={() => onSelect(task)}
+      className="flex items-center gap-3 px-4 py-3 border-b border-[var(--color-border)] last:border-0 hover:bg-[var(--color-surface-2)] transition-colors group cursor-pointer"
+    >
       <div className="flex-1 min-w-0">
         <p className="text-sm text-[var(--color-secondary)] truncate">{task.name}</p>
         {task.description && (
@@ -55,41 +130,24 @@ function TaskRow({ task }: { task: Task }) {
   )
 }
 
-function TaskBoardColumn({ status, tasks }: { status: Task['status']; tasks: Task[] }) {
-  const cfg = STATUS_CONFIG[status]
-  return (
-    <div className="flex-1 min-w-[160px]">
-      <div className={cn('text-xs font-semibold px-3 py-2 rounded-t-lg border-b border-[var(--color-border)]', cfg.bg)}>
-        <span className={cfg.color}>{cfg.label}</span>
-        <span className="ml-2 text-[var(--color-muted)]">({tasks.length})</span>
-      </div>
-      <div className="space-y-2 pt-2 min-h-[120px]">
-        {tasks.map((task) => (
-          <div
-            key={task.id}
-            className="mx-1 p-2.5 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] text-xs hover:border-[var(--color-accent)]/30 transition-colors cursor-pointer"
-          >
-            <p className="text-[var(--color-secondary)] font-medium line-clamp-2">{task.name}</p>
-            {task.agent_name && (
-              <p className="text-[var(--color-muted)] mt-1 flex items-center gap-1">
-                <Robot size={10} /> {task.agent_name}
-              </p>
-            )}
-          </div>
-        ))}
-      </div>
-    </div>
-  )
+// ── Main component ─────────────────────────────────────────────────────────────
+
+interface TaskListProps {
+  statusFilter?: Task['status'] | 'all'
+  onTaskSelect?: (task: Task) => void
 }
 
-export function TaskList() {
+export function TaskList({ statusFilter = 'all', onTaskSelect }: TaskListProps) {
   const { addToast } = useUiStore()
   const queryClient = useQueryClient()
   const [view, setView] = useState<'list' | 'board'>('list')
   const [showCreate, setShowCreate] = useState(false)
   const [newTaskName, setNewTaskName] = useState('')
+  const [draggingTask, setDraggingTask] = useState<Task | null>(null)
 
-  const { data: tasks = [], isLoading } = useQuery({
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+
+  const { data: allTasks = [], isLoading } = useQuery({
     queryKey: ['tasks'],
     queryFn: fetchTasks,
     refetchInterval: 10_000,
@@ -105,11 +163,40 @@ export function TaskList() {
     onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
   })
 
+  const { mutate: doUpdateStatus } = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: Task['status'] }) =>
+      updateTask(id, { status }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tasks'] }),
+    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+  })
+
+  const tasks = statusFilter === 'all'
+    ? allTasks
+    : allTasks.filter((t) => t.status === statusFilter)
+
   const statuses: Task['status'][] = ['inbox', 'next', 'active', 'waiting', 'done']
   const tasksByStatus = statuses.reduce<Record<string, Task[]>>((acc, s) => {
-    acc[s] = tasks.filter((t) => t.status === s)
+    acc[s] = allTasks.filter((t) => t.status === s)
     return acc
   }, {})
+
+  function handleDragStart(event: DragStartEvent) {
+    const task = allTasks.find((t) => t.id === event.active.id)
+    setDraggingTask(task ?? null)
+  }
+
+  function handleDragEnd(event: DragEndEvent) {
+    setDraggingTask(null)
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+    const newStatus = over.id as Task['status']
+    if (!statuses.includes(newStatus)) return
+    const task = allTasks.find((t) => t.id === active.id)
+    if (!task || task.status === newStatus) return
+    doUpdateStatus({ id: task.id, status: newStatus })
+  }
+
+  const handleSelect = (task: Task) => onTaskSelect?.(task)
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
@@ -127,7 +214,7 @@ export function TaskList() {
                 'px-2 py-1.5 transition-colors',
                 view === 'list'
                   ? 'bg-[var(--color-surface-2)] text-[var(--color-secondary)]'
-                  : 'text-[var(--color-muted)] hover:text-[var(--color-secondary)]'
+                  : 'text-[var(--color-muted)] hover:text-[var(--color-secondary)]',
               )}
               aria-label="List view"
             >
@@ -140,7 +227,7 @@ export function TaskList() {
                 'px-2 py-1.5 border-l border-[var(--color-border)] transition-colors',
                 view === 'board'
                   ? 'bg-[var(--color-surface-2)] text-[var(--color-secondary)]'
-                  : 'text-[var(--color-muted)] hover:text-[var(--color-secondary)]'
+                  : 'text-[var(--color-muted)] hover:text-[var(--color-secondary)]',
               )}
               aria-label="Board view"
             >
@@ -172,10 +259,20 @@ export function TaskList() {
               if (e.key === 'Escape') setShowCreate(false)
             }}
           />
-          <Button size="sm" className="h-7 px-3 text-xs" onClick={() => doCreate()} disabled={!newTaskName.trim() || isCreating}>
+          <Button
+            size="sm"
+            className="h-7 px-3 text-xs"
+            onClick={() => doCreate()}
+            disabled={!newTaskName.trim() || isCreating}
+          >
             Add
           </Button>
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => setShowCreate(false)}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 text-xs"
+            onClick={() => setShowCreate(false)}
+          >
             Cancel
           </Button>
         </div>
@@ -199,19 +296,29 @@ export function TaskList() {
         ) : view === 'list' ? (
           <div className="rounded-lg border border-[var(--color-border)] overflow-hidden mx-4 my-3">
             {tasks.map((task) => (
-              <TaskRow key={task.id} task={task} />
+              <TaskRow key={task.id} task={task} onSelect={handleSelect} />
             ))}
           </div>
         ) : (
-          <div className="flex gap-3 px-4 py-3 overflow-x-auto min-h-[300px]">
-            {statuses.map((status) => (
-              <TaskBoardColumn
-                key={status}
-                status={status}
-                tasks={tasksByStatus[status] ?? []}
-              />
-            ))}
-          </div>
+          <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+            <div className="flex gap-3 px-4 py-3 overflow-x-auto min-h-[300px]">
+              {statuses.map((status) => (
+                <BoardColumn
+                  key={status}
+                  status={status}
+                  tasks={tasksByStatus[status] ?? []}
+                  onSelect={handleSelect}
+                />
+              ))}
+            </div>
+            <DragOverlay>
+              {draggingTask ? (
+                <div className="mx-1 p-2.5 rounded-lg border border-[var(--color-accent)]/50 bg-[var(--color-surface-2)] text-xs shadow-lg rotate-1">
+                  <p className="text-[var(--color-secondary)] font-medium">{draggingTask.name}</p>
+                </div>
+              ) : null}
+            </DragOverlay>
+          </DndContext>
         )}
       </div>
     </div>

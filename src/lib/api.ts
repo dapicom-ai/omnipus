@@ -384,3 +384,18 @@ export function fetchDoctorResults(): Promise<DoctorResult | null> {
 export function runDoctor(): Promise<DoctorResult> {
   return request<DoctorResult>('/doctor', { method: 'POST' })
 }
+
+// ── Activity Feed ─────────────────────────────────────────────────────────────
+
+export interface ActivityEvent {
+  id: string
+  type: 'task_created' | 'task_updated' | 'session_started' | 'session_ended' | 'agent_error' | 'tool_called' | 'approval_requested' | string
+  summary: string
+  timestamp: string
+  agent_id?: string
+  agent_name?: string
+}
+
+export function fetchActivity(): Promise<ActivityEvent[]> {
+  return request<ActivityEvent[]>('/activity')
+}

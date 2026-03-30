@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -855,6 +856,7 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	cm.RegisterHTTPHandler("/api/v1/tools", a.withAuth(a.HandleTools))
 	cm.RegisterHTTPHandler("/api/v1/channels", a.withAuth(a.HandleChannels))
 	cm.RegisterHTTPHandler("/api/v1/config/gateway/rotate-token", a.withAuth(a.rotateGatewayToken))
+	cm.RegisterHTTPHandler("/api/v1/activity", a.withAuth(a.HandleActivity))
 }
 
 // rotateGatewayToken generates a new random bearer token, persists it to config, and returns it.
@@ -999,7 +1001,7 @@ func (a *restAPI) HandleTasks(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		if taskID == "" {
-			a.listTasks(w)
+			a.listTasks(w, r)
 		} else {
 			a.getTask(w, taskID)
 		}
@@ -1020,7 +1022,8 @@ func (a *restAPI) HandleTasks(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (a *restAPI) listTasks(w http.ResponseWriter) {
+func (a *restAPI) listTasks(w http.ResponseWriter, r *http.Request) {
+	statusFilter := r.URL.Query().Get("status")
 	dir := a.tasksDir()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -1045,6 +1048,9 @@ func (a *restAPI) listTasks(w http.ResponseWriter) {
 		var t taskEntity
 		if err := json.Unmarshal(data, &t); err != nil {
 			slog.Warn("rest: parse task file", "file", e.Name(), "error", err)
+			continue
+		}
+		if statusFilter != "" && t.Status != statusFilter {
 			continue
 		}
 		tasks = append(tasks, t)
@@ -1182,6 +1188,106 @@ func (a *restAPI) updateTask(w http.ResponseWriter, r *http.Request, id string) 
 		return
 	}
 	jsonOK(w, t)
+}
+
+// --- Activity ---
+
+// activityEvent is one item returned by GET /api/v1/activity.
+type activityEvent struct {
+	ID        string    `json:"id"`
+	Type      string    `json:"type"`              // "session_start" | "task_created" | "task_updated"
+	AgentID   string    `json:"agent_id,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
+	Summary   string    `json:"summary,omitempty"`
+}
+
+// HandleActivity handles GET /api/v1/activity.
+// Returns up to 50 activity events from the last 24 hours, sorted reverse-chronological.
+func (a *restAPI) HandleActivity(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	cutoff := time.Now().UTC().Add(-24 * time.Hour)
+	var events []activityEvent
+
+	// Collect session_start events from PartitionStore (last 24h).
+	if a.partitions != nil {
+		metas, err := a.partitions.ListSessions()
+		if err != nil {
+			slog.Error("rest: activity: list sessions", "error", err)
+		} else {
+			for _, m := range metas {
+				if m.CreatedAt.After(cutoff) {
+					summary := m.Title
+					if summary == "" {
+						summary = "New session"
+					}
+					events = append(events, activityEvent{
+						ID:        "session-" + m.ID,
+						Type:      "session_start",
+						AgentID:   m.AgentID,
+						Timestamp: m.CreatedAt,
+						Summary:   summary,
+					})
+				}
+			}
+		}
+	}
+
+	// Collect task_created and task_updated events from tasks directory.
+	taskEntries, err := os.ReadDir(a.tasksDir())
+	if err != nil && !os.IsNotExist(err) {
+		slog.Error("rest: activity: read tasks dir", "error", err)
+	}
+	for _, e := range taskEntries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(a.tasksDir(), e.Name()))
+		if err != nil {
+			slog.Warn("rest: activity: read task file", "file", e.Name(), "error", err)
+			continue
+		}
+		var t taskEntity
+		if err := json.Unmarshal(data, &t); err != nil {
+			slog.Warn("rest: activity: parse task file", "file", e.Name(), "error", err)
+			continue
+		}
+		if t.CreatedAt.After(cutoff) {
+			events = append(events, activityEvent{
+				ID:        "task-c-" + t.ID,
+				Type:      "task_created",
+				AgentID:   t.AgentID,
+				Timestamp: t.CreatedAt,
+				Summary:   t.Name,
+			})
+		}
+		if t.UpdatedAt.After(cutoff) && !t.UpdatedAt.Equal(t.CreatedAt) {
+			events = append(events, activityEvent{
+				ID:        "task-u-" + t.ID,
+				Type:      "task_updated",
+				AgentID:   t.AgentID,
+				Timestamp: t.UpdatedAt,
+				Summary:   t.Name,
+			})
+		}
+	}
+
+	// Sort reverse-chronological.
+	slices.SortFunc(events, func(a, b activityEvent) int {
+		return b.Timestamp.Compare(a.Timestamp)
+	})
+
+	// Limit to 50 entries.
+	if len(events) > 50 {
+		events = events[:50]
+	}
+	if events == nil {
+		events = []activityEvent{}
+	}
+	jsonOK(w, events)
 }
 
 // --- Providers ---

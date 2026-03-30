@@ -1,303 +1,247 @@
 {
-  "version": 1,
   "agents": {
     "defaults": {
-      "workspace": "/tmp/TestHandleAgentsCreateWithExplicitID2742727291/001",
-      "restrict_to_workspace": false,
       "allow_read_outside_workspace": false,
-      "provider": "",
-      "model_name": "test-model",
       "max_tokens": 4096,
       "max_tool_iterations": 0,
-      "summarize_message_threshold": 0,
-      "summarize_token_percent": 0,
+      "model_name": "test-model",
+      "provider": "",
+      "restrict_to_workspace": false,
+      "split_on_marker": false,
       "subturn": {
-        "max_depth": 0,
-        "max_concurrent": 0,
+        "concurrency_timeout_sec": 0,
         "default_timeout_minutes": 0,
         "default_token_budget": 0,
-        "concurrency_timeout_sec": 0
+        "max_concurrent": 0,
+        "max_depth": 0
       },
+      "summarize_message_threshold": 0,
+      "summarize_token_percent": 0,
       "tool_feedback": {
         "enabled": false,
         "max_args_length": 0
       },
-      "split_on_marker": false
+      "workspace": "/tmp/TestHandleAgentsCreateWithExplicitID3551437216/001"
     },
     "list": [
       {
-        "id": "eba74d63-ce47-465e-bf56-7394efe45014",
+        "id": "4a67bc32-a8e2-4dda-b722-69ebe8f480a6",
         "name": "Scout"
       }
     ]
   },
+  "build_info": {
+    "build_time": "",
+    "git_commit": "",
+    "go_version": "",
+    "version": ""
+  },
   "channels": {
-    "whatsapp": {
-      "enabled": false,
-      "bridge_url": "",
-      "use_native": false,
-      "session_store_path": "",
+    "dingtalk": {
       "allow_from": null,
-      "reasoning_channel_id": "",
-      "group_trigger": {}
-    },
-    "telegram": {
+      "client_id": "",
       "enabled": false,
-      "base_url": "",
-      "proxy": "",
-      "allow_from": null,
       "group_trigger": {},
-      "typing": {},
-      "placeholder": {
-        "enabled": false
-      },
-      "streaming": {},
-      "reasoning_channel_id": "",
-      "use_markdown_v2": false
-    },
-    "feishu": {
-      "enabled": false,
-      "app_id": "",
-      "allow_from": null,
-      "group_trigger": {},
-      "placeholder": {
-        "enabled": false
-      },
-      "reasoning_channel_id": "",
-      "random_reaction_emoji": null,
-      "is_lark": false
-    },
-    "discord": {
-      "enabled": false,
-      "proxy": "",
-      "allow_from": null,
-      "mention_only": false,
-      "group_trigger": {},
-      "typing": {},
-      "placeholder": {
-        "enabled": false
-      },
       "reasoning_channel_id": ""
     },
+    "discord": {
+      "allow_from": null,
+      "enabled": false,
+      "group_trigger": {},
+      "mention_only": false,
+      "placeholder": {
+        "enabled": false
+      },
+      "proxy": "",
+      "reasoning_channel_id": "",
+      "typing": {}
+    },
+    "feishu": {
+      "allow_from": null,
+      "app_id": "",
+      "enabled": false,
+      "group_trigger": {},
+      "is_lark": false,
+      "placeholder": {
+        "enabled": false
+      },
+      "random_reaction_emoji": null,
+      "reasoning_channel_id": ""
+    },
+    "irc": {
+      "allow_from": null,
+      "channels": null,
+      "enabled": false,
+      "group_trigger": {},
+      "nick": "",
+      "reasoning_channel_id": "",
+      "sasl_user": "",
+      "server": "",
+      "tls": false,
+      "typing": {}
+    },
+    "line": {
+      "allow_from": null,
+      "enabled": false,
+      "group_trigger": {},
+      "placeholder": {
+        "enabled": false
+      },
+      "reasoning_channel_id": "",
+      "typing": {},
+      "webhook_host": "",
+      "webhook_path": "",
+      "webhook_port": 0
+    },
     "maixcam": {
+      "allow_from": null,
       "enabled": false,
       "host": "",
       "port": 0,
-      "allow_from": null,
-      "reasoning_channel_id": ""
-    },
-    "qq": {
-      "enabled": false,
-      "app_id": "",
-      "allow_from": null,
-      "group_trigger": {},
-      "max_message_length": 0,
-      "max_base64_file_size_mib": 0,
-      "send_markdown": false,
-      "reasoning_channel_id": ""
-    },
-    "dingtalk": {
-      "enabled": false,
-      "client_id": "",
-      "allow_from": null,
-      "group_trigger": {},
-      "reasoning_channel_id": ""
-    },
-    "slack": {
-      "enabled": false,
-      "allow_from": null,
-      "group_trigger": {},
-      "typing": {},
-      "placeholder": {
-        "enabled": false
-      },
       "reasoning_channel_id": ""
     },
     "matrix": {
+      "allow_from": null,
       "enabled": false,
+      "group_trigger": {},
       "homeserver": "",
-      "user_id": "",
       "join_on_invite": false,
-      "allow_from": null,
-      "group_trigger": {},
       "placeholder": {
         "enabled": false
       },
-      "reasoning_channel_id": ""
-    },
-    "line": {
-      "enabled": false,
-      "webhook_host": "",
-      "webhook_port": 0,
-      "webhook_path": "",
-      "allow_from": null,
-      "group_trigger": {},
-      "typing": {},
-      "placeholder": {
-        "enabled": false
-      },
-      "reasoning_channel_id": ""
+      "reasoning_channel_id": "",
+      "user_id": ""
     },
     "onebot": {
-      "enabled": false,
-      "ws_url": "",
-      "reconnect_interval": 0,
-      "group_trigger_prefix": null,
       "allow_from": null,
+      "enabled": false,
       "group_trigger": {},
-      "typing": {},
+      "group_trigger_prefix": null,
       "placeholder": {
         "enabled": false
       },
-      "reasoning_channel_id": ""
-    },
-    "wecom": {
-      "enabled": false,
-      "bot_id": "",
-      "send_thinking_message": false,
-      "allow_from": null,
-      "reasoning_channel_id": ""
-    },
-    "weixin": {
-      "enabled": false,
-      "base_url": "",
-      "cdn_base_url": "",
-      "proxy": "",
-      "allow_from": null,
-      "reasoning_channel_id": ""
+      "reasoning_channel_id": "",
+      "reconnect_interval": 0,
+      "typing": {},
+      "ws_url": ""
     },
     "pico": {
-      "enabled": false,
       "allow_from": null,
+      "enabled": false,
       "placeholder": {
         "enabled": false
       }
     },
     "pico_client": {
-      "enabled": false,
-      "url": "",
-      "allow_from": null
-    },
-    "irc": {
-      "enabled": false,
-      "server": "",
-      "tls": false,
-      "nick": "",
-      "sasl_user": "",
-      "channels": null,
       "allow_from": null,
+      "enabled": false,
+      "url": ""
+    },
+    "qq": {
+      "allow_from": null,
+      "app_id": "",
+      "enabled": false,
       "group_trigger": {},
+      "max_base64_file_size_mib": 0,
+      "max_message_length": 0,
+      "reasoning_channel_id": "",
+      "send_markdown": false
+    },
+    "slack": {
+      "allow_from": null,
+      "enabled": false,
+      "group_trigger": {},
+      "placeholder": {
+        "enabled": false
+      },
+      "reasoning_channel_id": "",
+      "typing": {}
+    },
+    "telegram": {
+      "allow_from": null,
+      "base_url": "",
+      "enabled": false,
+      "group_trigger": {},
+      "placeholder": {
+        "enabled": false
+      },
+      "proxy": "",
+      "reasoning_channel_id": "",
+      "streaming": {},
       "typing": {},
+      "use_markdown_v2": false
+    },
+    "wecom": {
+      "allow_from": null,
+      "bot_id": "",
+      "enabled": false,
+      "reasoning_channel_id": "",
+      "send_thinking_message": false
+    },
+    "weixin": {
+      "allow_from": null,
+      "base_url": "",
+      "cdn_base_url": "",
+      "enabled": false,
+      "proxy": "",
       "reasoning_channel_id": ""
+    },
+    "whatsapp": {
+      "allow_from": null,
+      "bridge_url": "",
+      "enabled": false,
+      "group_trigger": {},
+      "reasoning_channel_id": "",
+      "session_store_path": "",
+      "use_native": false
     }
   },
-  "model_list": [],
+  "devices": {
+    "enabled": false,
+    "monitor_usb": false
+  },
   "gateway": {
     "host": "127.0.0.1",
-    "port": 8080,
-    "hot_reload": false
+    "hot_reload": false,
+    "port": 8080
+  },
+  "heartbeat": {
+    "enabled": false,
+    "interval": 0
   },
   "hooks": {
-    "enabled": false,
-    "defaults": {}
+    "defaults": {},
+    "enabled": false
+  },
+  "model_list": [],
+  "sandbox": {},
+  "storage": {
+    "retention": {}
   },
   "tools": {
     "allow_read_paths": null,
     "allow_write_paths": null,
-    "filter_sensitive_data": false,
-    "filter_min_length": 0,
-    "web": {
-      "enabled": false,
-      "brave": {
-        "enabled": false,
-        "max_results": 0
-      },
-      "tavily": {
-        "enabled": false,
-        "base_url": "",
-        "max_results": 0
-      },
-      "duckduckgo": {
-        "enabled": false,
-        "max_results": 0
-      },
-      "perplexity": {
-        "enabled": false,
-        "max_results": 0
-      },
-      "searxng": {
-        "enabled": false,
-        "base_url": "",
-        "max_results": 0
-      },
-      "glm_search": {
-        "enabled": false,
-        "base_url": "",
-        "search_engine": "",
-        "max_results": 0
-      },
-      "baidu_search": {
-        "enabled": false,
-        "base_url": "",
-        "max_results": 0
-      },
-      "prefer_native": false
-    },
-    "cron": {
-      "enabled": false,
-      "exec_timeout_minutes": 0,
-      "allow_command": false
-    },
-    "exec": {
-      "enabled": false,
-      "enable_deny_patterns": false,
-      "allow_remote": false,
-      "custom_deny_patterns": null,
-      "custom_allow_patterns": null,
-      "timeout_seconds": 0
-    },
-    "skills": {
-      "enabled": false,
-      "registries": {
-        "clawhub": {
-          "enabled": false,
-          "base_url": "",
-          "search_path": "",
-          "skills_path": "",
-          "download_path": "",
-          "timeout": 0,
-          "max_zip_size": 0,
-          "max_response_size": 0
-        }
-      },
-      "github": {},
-      "max_concurrent_searches": 0,
-      "search_cache": {
-        "max_size": 0,
-        "ttl_seconds": 0
-      }
-    },
-    "media_cleanup": {
-      "enabled": false,
-      "max_age_minutes": 0,
-      "interval_minutes": 0
-    },
-    "mcp": {
-      "enabled": false,
-      "discovery": {
-        "enabled": false,
-        "ttl": 0,
-        "max_search_results": 0,
-        "use_bm25": false,
-        "use_regex": false
-      }
-    },
     "append_file": {
       "enabled": false
+    },
+    "cron": {
+      "allow_command": false,
+      "enabled": false,
+      "exec_timeout_minutes": 0
     },
     "edit_file": {
       "enabled": false
     },
+    "exec": {
+      "allow_remote": false,
+      "custom_allow_patterns": null,
+      "custom_deny_patterns": null,
+      "enable_deny_patterns": false,
+      "enabled": false,
+      "timeout_seconds": 0
+    },
+    "filter_min_length": 0,
+    "filter_sensitive_data": false,
     "find_skills": {
       "enabled": false
     },
@@ -310,6 +254,21 @@
     "list_dir": {
       "enabled": false
     },
+    "mcp": {
+      "discovery": {
+        "enabled": false,
+        "max_search_results": 0,
+        "ttl": 0,
+        "use_bm25": false,
+        "use_regex": false
+      },
+      "enabled": false
+    },
+    "media_cleanup": {
+      "enabled": false,
+      "interval_minutes": 0,
+      "max_age_minutes": 0
+    },
     "message": {
       "enabled": false
     },
@@ -319,6 +278,27 @@
     },
     "send_file": {
       "enabled": false
+    },
+    "skills": {
+      "enabled": false,
+      "github": {},
+      "max_concurrent_searches": 0,
+      "registries": {
+        "clawhub": {
+          "base_url": "",
+          "download_path": "",
+          "enabled": false,
+          "max_response_size": 0,
+          "max_zip_size": 0,
+          "search_path": "",
+          "skills_path": "",
+          "timeout": 0
+        }
+      },
+      "search_cache": {
+        "max_size": 0,
+        "ttl_seconds": 0
+      }
     },
     "spawn": {
       "enabled": false
@@ -332,6 +312,43 @@
     "subagent": {
       "enabled": false
     },
+    "web": {
+      "baidu_search": {
+        "base_url": "",
+        "enabled": false,
+        "max_results": 0
+      },
+      "brave": {
+        "enabled": false,
+        "max_results": 0
+      },
+      "duckduckgo": {
+        "enabled": false,
+        "max_results": 0
+      },
+      "enabled": false,
+      "glm_search": {
+        "base_url": "",
+        "enabled": false,
+        "max_results": 0,
+        "search_engine": ""
+      },
+      "perplexity": {
+        "enabled": false,
+        "max_results": 0
+      },
+      "prefer_native": false,
+      "searxng": {
+        "base_url": "",
+        "enabled": false,
+        "max_results": 0
+      },
+      "tavily": {
+        "base_url": "",
+        "enabled": false,
+        "max_results": 0
+      }
+    },
     "web_fetch": {
       "enabled": false
     },
@@ -339,25 +356,8 @@
       "enabled": false
     }
   },
-  "heartbeat": {
-    "enabled": false,
-    "interval": 0
-  },
-  "devices": {
-    "enabled": false,
-    "monitor_usb": false
-  },
+  "version": 0,
   "voice": {
     "echo_transcription": false
-  },
-  "build_info": {
-    "version": "",
-    "git_commit": "",
-    "build_time": "",
-    "go_version": ""
-  },
-  "storage": {
-    "retention": {}
-  },
-  "sandbox": {}
+  }
 }
