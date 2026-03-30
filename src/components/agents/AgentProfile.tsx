@@ -17,6 +17,7 @@ import {
   CaretDown,
   CaretUp,
   Scroll,
+  NotePencil,
 } from '@phosphor-icons/react'
 import { useNavigate } from '@tanstack/react-router'
 import { Badge } from '@/components/ui/badge'
@@ -131,6 +132,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
   const [maxToolCallsPerMinute, setMaxToolCallsPerMinute] = useState<number | ''>('')
   const [maxCostPerDay, setMaxCostPerDay] = useState<number | ''>('')
   const [soul, setSoul] = useState('')
+  const [instructions, setInstructions] = useState('')
   const [heartbeat, setHeartbeat] = useState('')
 
   useEffect(() => {
@@ -151,6 +153,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     setMaxToolCallsPerMinute(agent.rate_limits?.max_tool_calls_per_minute ?? '')
     setMaxCostPerDay(agent.rate_limits?.max_cost_per_day ?? '')
     setSoul(agent.soul ?? '')
+    setInstructions(agent.instructions ?? '')
     setHeartbeat(agent.heartbeat ?? '')
   }, [agent])
 
@@ -186,6 +189,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
         max_cost_per_day: maxCostPerDay !== '' ? maxCostPerDay : undefined,
       },
       soul,
+      instructions,
     })
   }
 
@@ -448,6 +452,99 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
         )}
       </section>
 
+      {/* SOUL.md editor */}
+      {canEdit && (
+        <>
+          <Separator />
+          <section className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Scroll size={14} className="text-[var(--color-accent)]" />
+              <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)]">SOUL.md</h2>
+            </div>
+            <p className="text-xs text-[var(--color-muted)]">
+              The agent's personality and system prompt — defines who the agent is and how it behaves.
+            </p>
+            <Textarea
+              value={soul}
+              onChange={(e) => { markDirty(); setSoul(e.target.value) }}
+              placeholder={"# Soul\n\nDefine this agent's personality, expertise, and behavioral guidelines..."}
+              rows={8}
+              className="text-xs font-mono resize-none"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isSaving}
+              onClick={() => doUpdate({ soul })}
+            >
+              <FloppyDisk size={13} weight="bold" className="mr-1.5" />
+              Save SOUL.md
+            </Button>
+          </section>
+        </>
+      )}
+
+      {/* Additional Instructions editor */}
+      {canEdit && (
+        <>
+          <Separator />
+          <section className="space-y-3">
+            <div className="flex items-center gap-2">
+              <NotePencil size={14} className="text-[var(--color-accent)]" />
+              <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)]">Additional Instructions</h2>
+            </div>
+            <p className="text-xs text-[var(--color-muted)]">
+              Extra instructions appended to the agent's context — task-specific guidance, constraints, or domain knowledge.
+            </p>
+            <Textarea
+              value={instructions}
+              onChange={(e) => { markDirty(); setInstructions(e.target.value) }}
+              placeholder="Add specific instructions, constraints, or domain knowledge..."
+              rows={6}
+              className="text-xs font-mono resize-none"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isSaving}
+              onClick={() => doUpdate({ instructions })}
+            >
+              <FloppyDisk size={13} weight="bold" className="mr-1.5" />
+              Save Instructions
+            </Button>
+          </section>
+        </>
+      )}
+
+      {/* HEARTBEAT.md editor */}
+      {canEdit && (
+        <>
+          <Separator />
+          <section className="space-y-3">
+            <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)]">HEARTBEAT.md</h2>
+            <p className="text-xs text-[var(--color-muted)]">
+              The agent's persistent context — goals, preferences, and working memory.
+            </p>
+            <Textarea
+              value={heartbeat}
+              onChange={(e) => { markDirty(); setHeartbeat(e.target.value) }}
+              placeholder="# Heartbeat&#10;&#10;Write persistent context for this agent..."
+              rows={6}
+              className="text-xs font-mono resize-none"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isSaving}
+              onClick={() => doUpdate({ heartbeat })}
+            >
+              <FloppyDisk size={13} weight="bold" className="mr-1.5" />
+              Save HEARTBEAT.md
+            </Button>
+          </section>
+        </>
+      )}
+
       {/* Rate limits section */}
       {agent.type !== 'system' && (
         <>
@@ -574,67 +671,6 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
                 </Badge>
               ))}
             </div>
-          </section>
-        </>
-      )}
-
-      {/* SOUL.md editor */}
-      {canEdit && (
-        <>
-          <Separator />
-          <section className="space-y-3">
-            <div className="flex items-center gap-2">
-              <Scroll size={14} className="text-[var(--color-accent)]" />
-              <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)]">SOUL.md</h2>
-            </div>
-            <p className="text-xs text-[var(--color-muted)]">
-              The agent's personality and system prompt — defines who the agent is and how it behaves.
-            </p>
-            <Textarea
-              value={soul}
-              onChange={(e) => { markDirty(); setSoul(e.target.value) }}
-              placeholder={"# Soul\n\nDefine this agent's personality, expertise, and behavioral guidelines..."}
-              rows={8}
-              className="text-xs font-mono resize-none"
-            />
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={isSaving}
-              onClick={() => doUpdate({ soul })}
-            >
-              <FloppyDisk size={13} weight="bold" className="mr-1.5" />
-              Save SOUL.md
-            </Button>
-          </section>
-        </>
-      )}
-
-      {/* HEARTBEAT.md editor */}
-      {canEdit && (
-        <>
-          <Separator />
-          <section className="space-y-3">
-            <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)]">HEARTBEAT.md</h2>
-            <p className="text-xs text-[var(--color-muted)]">
-              The agent's persistent context — goals, preferences, and working memory.
-            </p>
-            <Textarea
-              value={heartbeat}
-              onChange={(e) => { markDirty(); setHeartbeat(e.target.value) }}
-              placeholder="# Heartbeat&#10;&#10;Write persistent context for this agent..."
-              rows={6}
-              className="text-xs font-mono resize-none"
-            />
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={isSaving}
-              onClick={() => doUpdate({ heartbeat })}
-            >
-              <FloppyDisk size={13} weight="bold" className="mr-1.5" />
-              Save HEARTBEAT.md
-            </Button>
           </section>
         </>
       )}

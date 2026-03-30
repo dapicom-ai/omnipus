@@ -486,10 +486,11 @@ func TestAgentListStatus_SystemAlwaysActive(t *testing.T) {
 }
 
 // TestAgentListStatus_CustomAgentIdle verifies that a custom agent with no active turn
-// has status "idle" in the agent list.
-// BDD: Given a custom agent "my-agent" configured with no active turn,
+// and no SOUL.md content has status "draft" in the agent list. An agent transitions to
+// "idle" once its SOUL.md is filled in and it has no active turn.
+// BDD: Given a custom agent "my-agent" configured with no active turn and no SOUL.md,
 // When GET /api/v1/agents is called,
-// Then "my-agent" has status "idle".
+// Then "my-agent" has status "draft".
 // Traces to: vivid-roaming-planet.md line 169
 func TestAgentListStatus_CustomAgentIdle(t *testing.T) {
 	t.Setenv("OMNIPUS_BEARER_TOKEN", "")
@@ -523,7 +524,7 @@ func TestAgentListStatus_CustomAgentIdle(t *testing.T) {
 
 	for _, ag := range agents {
 		if ag.ID == "my-agent" {
-			assert.Equal(t, "idle", ag.Status, "custom agent with no active turn must have status 'idle'")
+			assert.Equal(t, "draft", ag.Status, "custom agent with no SOUL.md and no active turn must have status 'draft'")
 			return
 		}
 	}

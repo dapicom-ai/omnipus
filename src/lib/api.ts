@@ -32,13 +32,14 @@ export interface Agent {
   description: string
   type: 'system' | 'core' | 'custom'
   model: string
-  status: 'active' | 'idle' | 'error'
+  status: 'active' | 'idle' | 'error' | 'draft'
   icon?: string
   color?: string
   tools?: string[]
   heartbeat_interval?: number
   soul?: string
   heartbeat?: string
+  instructions?: string
   fallback_models?: string[]
   model_params?: {
     temperature?: number
@@ -551,4 +552,18 @@ export interface AuditEntry {
 
 export function fetchAuditLog(): Promise<AuditEntry[]> {
   return request<AuditEntry[]>('/audit')
+}
+
+// ── User Context (USER.md) ────────────────────────────────────────────────────
+
+export function fetchUserContext(): Promise<{ content: string }> {
+  return request<{ content: string }>('/user-context')
+}
+
+export function updateUserContext(content: string): Promise<void> {
+  return request<void>('/user-context', {
+    method: 'PUT',
+    body: JSON.stringify({ content }),
+    headers: { 'Content-Type': 'application/json' },
+  })
 }

@@ -416,14 +416,15 @@ func fetchUpstreamModels(baseURL, apiKey string) ([]string, error) {
 
 // agentResponse is the JSON shape returned for a single agent.
 type agentResponse struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Type        string `json:"type"` // "system" | "core" | "custom"
-	Model       string `json:"model,omitempty"`
-	Description string `json:"description,omitempty"`
-	Status      string `json:"status"` // "active" | "idle"
-	Soul        string `json:"soul"`
-	Heartbeat   string `json:"heartbeat"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Type         string `json:"type"` // "system" | "core" | "custom"
+	Model        string `json:"model,omitempty"`
+	Description  string `json:"description,omitempty"`
+	Status       string `json:"status"` // "active" | "idle" | "draft"
+	Soul         string `json:"soul"`
+	Heartbeat    string `json:"heartbeat"`
+	Instructions string `json:"instructions"`
 }
 
 // agentWorkspacePath returns the expanded workspace directory for the named agent.
@@ -448,17 +449,46 @@ func agentWorkspacePath(cfg interface {
 	return cfg.WorkspacePath()
 }
 
-// readAgentFiles returns the contents of SOUL.md and HEARTBEAT.md from the
+// readAgentFiles returns the contents of SOUL.md, HEARTBEAT.md, and the body
+// of AGENT.md (everything after the closing frontmatter delimiter) from the
 // given workspace directory. Missing files return an empty string without
 // logging an error — their absence is expected for newly created agents.
-func readAgentFiles(workspace string) (soul, heartbeat string) {
+func readAgentFiles(workspace string) (soul, heartbeat, instructions string) {
 	if data, err := os.ReadFile(filepath.Join(workspace, "SOUL.md")); err == nil {
 		soul = string(data)
 	}
 	if data, err := os.ReadFile(filepath.Join(workspace, "HEARTBEAT.md")); err == nil {
 		heartbeat = string(data)
 	}
-	return soul, heartbeat
+	if data, err := os.ReadFile(filepath.Join(workspace, "AGENT.md")); err == nil {
+		_, body := splitAgentMDFrontmatter(string(data))
+		instructions = body
+	}
+	return soul, heartbeat, instructions
+}
+
+// splitAgentMDFrontmatter splits an AGENT.md file into its YAML frontmatter
+// and markdown body. The frontmatter is the raw YAML text between the opening
+// and closing "---" delimiters. When no valid frontmatter block is found the
+// entire content is returned as the body.
+func splitAgentMDFrontmatter(content string) (frontmatter, body string) {
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	if len(lines) == 0 || lines[0] != "---" {
+		return "", content
+	}
+	end := -1
+	for i := 1; i < len(lines); i++ {
+		if lines[i] == "---" {
+			end = i
+			break
+		}
+	}
+	if end == -1 {
+		return "", content
+	}
+	frontmatter = strings.Join(lines[1:end], "\n")
+	body = strings.TrimLeft(strings.Join(lines[end+1:], "\n"), "\n")
+	return frontmatter, body
 }
 
 // activeAgentIDSet returns a set of agent IDs that currently have an active turn.
@@ -480,13 +510,14 @@ func (a *restAPI) listAgents(w http.ResponseWriter) {
 	// interaction, unlike turn-based custom agents.
 	defaultModel := cfg.Agents.Defaults.ModelName
 	agents = append(agents, agentResponse{
-		ID:        "omnipus-system",
-		Name:      "Omnipus",
-		Type:      "system",
-		Model:     defaultModel,
-		Status:    "active",
-		Soul:      "",
-		Heartbeat: "",
+		ID:           "omnipus-system",
+		Name:         "Omnipus",
+		Type:         "system",
+		Model:        defaultModel,
+		Status:       "active",
+		Soul:         "",
+		Heartbeat:    "",
+		Instructions: "",
 	})
 
 	for _, ac := range cfg.Agents.List {
@@ -494,18 +525,23 @@ func (a *restAPI) listAgents(w http.ResponseWriter) {
 		if ac.Model != nil && ac.Model.Primary != "" {
 			model = ac.Model.Primary
 		}
+		workspace := agentWorkspacePath(cfg, ac.Workspace)
+		soul, _, _ := readAgentFiles(workspace)
 		status := "idle"
 		if activeIDs[ac.ID] {
 			status = "active"
+		} else if strings.TrimSpace(soul) == "" {
+			status = "draft"
 		}
 		agents = append(agents, agentResponse{
-			ID:        ac.ID,
-			Name:      ac.Name,
-			Type:      "custom",
-			Model:     model,
-			Status:    status,
-			Soul:      "",
-			Heartbeat: "",
+			ID:           ac.ID,
+			Name:         ac.Name,
+			Type:         "custom",
+			Model:        model,
+			Status:       status,
+			Soul:         soul,
+			Heartbeat:    "",
+			Instructions: "",
 		})
 	}
 
@@ -519,15 +555,16 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 	// interaction, unlike turn-based custom agents.
 	if id == "omnipus-system" {
 		workspace := agentWorkspacePath(cfg, "")
-		soul, heartbeat := readAgentFiles(workspace)
+		soul, heartbeat, instructions := readAgentFiles(workspace)
 		jsonOK(w, agentResponse{
-			ID:        "omnipus-system",
-			Name:      "Omnipus",
-			Type:      "system",
-			Model:     cfg.Agents.Defaults.ModelName,
-			Status:    "active",
-			Soul:      soul,
-			Heartbeat: heartbeat,
+			ID:           "omnipus-system",
+			Name:         "Omnipus",
+			Type:         "system",
+			Model:        cfg.Agents.Defaults.ModelName,
+			Status:       "active",
+			Soul:         soul,
+			Heartbeat:    heartbeat,
+			Instructions: instructions,
 		})
 		return
 	}
@@ -540,20 +577,23 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 			if ac.Model != nil && ac.Model.Primary != "" {
 				model = ac.Model.Primary
 			}
+			workspace := agentWorkspacePath(cfg, ac.Workspace)
+			soul, heartbeat, instructions := readAgentFiles(workspace)
 			status := "idle"
 			if activeIDs[ac.ID] {
 				status = "active"
+			} else if strings.TrimSpace(soul) == "" {
+				status = "draft"
 			}
-			workspace := agentWorkspacePath(cfg, ac.Workspace)
-			soul, heartbeat := readAgentFiles(workspace)
 			jsonOK(w, agentResponse{
-				ID:        ac.ID,
-				Name:      ac.Name,
-				Type:      "custom",
-				Model:     model,
-				Status:    status,
-				Soul:      soul,
-				Heartbeat: heartbeat,
+				ID:           ac.ID,
+				Name:         ac.Name,
+				Type:         "custom",
+				Model:        model,
+				Status:       status,
+				Soul:         soul,
+				Heartbeat:    heartbeat,
+				Instructions: instructions,
 			})
 			return
 		}
@@ -616,11 +656,14 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusCreated)
 	jsonOK(w, agentResponse{
-		ID:     ac.ID,
-		Name:   ac.Name,
-		Type:   "custom",
-		Model:  model,
-		Status: "idle",
+		ID:           ac.ID,
+		Name:         ac.Name,
+		Type:         "custom",
+		Model:        model,
+		Status:       "draft",
+		Soul:         "",
+		Heartbeat:    "",
+		Instructions: "",
 	})
 }
 
@@ -638,10 +681,11 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 	var req struct {
-		Name      *string `json:"name"`
-		Model     *string `json:"model"`
-		Soul      *string `json:"soul"`
-		Heartbeat *string `json:"heartbeat"`
+		Name         *string `json:"name"`
+		Model        *string `json:"model"`
+		Soul         *string `json:"soul"`
+		Heartbeat    *string `json:"heartbeat"`
+		Instructions *string `json:"instructions"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
@@ -714,22 +758,51 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 			return
 		}
 	}
+	if req.Instructions != nil {
+		agentMDPath := filepath.Join(workspace, "AGENT.md")
+		// Read existing AGENT.md to preserve frontmatter if it exists.
+		existingFrontmatter := ""
+		if data, err := os.ReadFile(agentMDPath); err == nil {
+			existingFrontmatter, _ = splitAgentMDFrontmatter(string(data))
+		}
+		if existingFrontmatter == "" {
+			existingFrontmatter = "name: " + cfg.Agents.List[foundIdx].Name
+		}
+		agentMDContent := "---\n" + existingFrontmatter + "\n---\n"
+		if *req.Instructions != "" {
+			agentMDContent += "\n" + *req.Instructions
+		}
+		if err := os.WriteFile(agentMDPath, []byte(agentMDContent), 0o644); err != nil {
+			slog.Error("rest: write AGENT.md for agent", "agent_id", id, "error", err)
+			jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not write AGENT.md: %v", err))
+			return
+		}
+	}
 	// Re-read the files so the response reflects what was just persisted.
-	soul, heartbeat := readAgentFiles(workspace)
+	soul, heartbeat, instructions := readAgentFiles(workspace)
 	// Build the response entirely from local variables (do NOT read from live config — race).
 	agentID := cfg.Agents.List[foundIdx].ID
 	model := cfg.Agents.Defaults.ModelName
 	if newModel != "" {
 		model = newModel
 	}
+	// Compute status: draft when soul is empty and agent is not active.
+	activeIDs := a.activeAgentIDSet()
+	status := "idle"
+	if activeIDs[agentID] {
+		status = "active"
+	} else if strings.TrimSpace(soul) == "" {
+		status = "draft"
+	}
 	jsonOK(w, agentResponse{
-		ID:        agentID,
-		Name:      newName,
-		Type:      "custom",
-		Model:     model,
-		Status:    "idle",
-		Soul:      soul,
-		Heartbeat: heartbeat,
+		ID:           agentID,
+		Name:         newName,
+		Type:         "custom",
+		Model:        model,
+		Status:       status,
+		Soul:         soul,
+		Heartbeat:    heartbeat,
+		Instructions: instructions,
 	})
 }
 
@@ -1067,6 +1140,48 @@ func (a *restAPI) runDiagnosticChecks(cfg *config.Config) []map[string]any {
 	return issues
 }
 
+// HandleUserContext handles GET and PUT /api/v1/user-context.
+// It reads and writes USER.md in the default workspace directory, which holds
+// workspace-level context about the user (their background, preferences, etc.).
+func (a *restAPI) HandleUserContext(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		a.getUserContext(w)
+	case http.MethodPut:
+		a.putUserContext(w, r)
+	default:
+		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (a *restAPI) getUserContext(w http.ResponseWriter) {
+	cfg := a.agentLoop.GetConfig()
+	userMDPath := filepath.Join(cfg.WorkspacePath(), "USER.md")
+	content := ""
+	if data, err := os.ReadFile(userMDPath); err == nil {
+		content = string(data)
+	}
+	jsonOK(w, map[string]string{"content": content})
+}
+
+func (a *restAPI) putUserContext(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	cfg := a.agentLoop.GetConfig()
+	userMDPath := filepath.Join(cfg.WorkspacePath(), "USER.md")
+	if err := os.WriteFile(userMDPath, []byte(req.Content), 0o644); err != nil {
+		slog.Error("rest: write USER.md", "error", err)
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not write USER.md: %v", err))
+		return
+	}
+	jsonOK(w, map[string]string{"content": req.Content})
+}
+
 // registerAdditionalEndpoints registers handlers for endpoints the frontend calls.
 // Each returns a valid JSON response matching the shape the frontend expects,
 // preventing "Unexpected token '<'" errors from the SPA catch-all.
@@ -1097,6 +1212,7 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	// Exact match takes precedence over the /sessions/ prefix handler for this specific path.
 	cm.RegisterHTTPHandler("/api/v1/sessions/all", a.withAuth(a.HandleClearSessions))
 	cm.RegisterHTTPHandler("/api/v1/about", a.withAuth(a.HandleAbout))
+	cm.RegisterHTTPHandler("/api/v1/user-context", a.withAuth(a.HandleUserContext))
 }
 
 // rotateGatewayToken generates a new random bearer token, persists it to config, and returns it.

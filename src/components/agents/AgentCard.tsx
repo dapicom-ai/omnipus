@@ -58,13 +58,22 @@ export function AgentCard({ agent }: AgentCardProps) {
             {agent.description || 'No description'}
           </p>
           <div className="flex items-center gap-2 flex-wrap">
-            <Badge variant={typeBadgeVariant[agent.type]}>{agent.type}</Badge>
+            {agent.status === 'draft' ? (
+              <Badge variant="warning" className="text-amber-400 border-amber-400/30 bg-amber-400/10">draft</Badge>
+            ) : (
+              <Badge variant={typeBadgeVariant[agent.type]}>{agent.type}</Badge>
+            )}
             {agent.model && (
               <span className="text-[10px] font-mono text-[var(--color-muted)] truncate max-w-[120px]">
                 {agent.model}
               </span>
             )}
           </div>
+          {agent.status === 'draft' && (
+            <p className="text-[10px] text-amber-400/70 mt-1">
+              Set up SOUL.md to activate this agent
+            </p>
+          )}
         </div>
       </div>
     </button>
