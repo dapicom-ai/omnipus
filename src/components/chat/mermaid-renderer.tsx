@@ -18,6 +18,8 @@ async function getMermaid() {
   if (!initialized) {
     m.initialize({
       startOnLoad: false,
+      securityLevel: 'loose',
+      suppressErrorRendering: true,
       theme: 'dark',
       themeVariables: {
         background: 'transparent',
@@ -54,7 +56,13 @@ function MermaidDiagramImpl({ code }: MermaidDiagramProps) {
         if (!cancelled) setSvg(rendered)
       } catch (e) {
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : 'Diagram parse error')
+          const msg = e instanceof Error ? e.message : 'Diagram parse error'
+          // Suppress non-fatal MIME/worker errors — these don't affect rendering
+          if (msg.includes('MIME') || msg.includes('is not a valid')) {
+            console.warn('[mermaid] Non-fatal worker error:', msg)
+            return
+          }
+          setError(msg)
         }
       }
     }
