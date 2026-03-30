@@ -44,6 +44,8 @@ async function getMermaid() {
 function MermaidDiagramImpl({ code }: MermaidDiagramProps) {
   const [svg, setSvg] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [renderFailed, setRenderFailed] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
   const idRef = useRef(`mermaid-${Math.random().toString(36).slice(2)}`)
 
   useEffect(() => {
@@ -52,14 +54,32 @@ function MermaidDiagramImpl({ code }: MermaidDiagramProps) {
     async function render() {
       try {
         const m = await getMermaid()
-        const { svg: rendered } = await m.render(idRef.current, code.trim())
-        if (!cancelled) setSvg(rendered)
+
+        // Create a temporary off-screen container for mermaid to render into.
+        // This avoids the ESM worker MIME issue by using DOM-based rendering.
+        const tempDiv = document.createElement('div')
+        tempDiv.id = idRef.current
+        tempDiv.style.position = 'absolute'
+        tempDiv.style.left = '-9999px'
+        tempDiv.style.top = '-9999px'
+        document.body.appendChild(tempDiv)
+
+        try {
+          const { svg: rendered } = await m.render(idRef.current, code.trim())
+          if (!cancelled) setSvg(rendered)
+        } finally {
+          // Clean up temp element
+          tempDiv.remove()
+          // Also remove any mermaid-injected elements with matching ID
+          document.getElementById('d' + idRef.current)?.remove()
+        }
       } catch (e) {
         if (!cancelled) {
-          const msg = e instanceof Error ? e.message : 'Diagram parse error'
-          // Suppress non-fatal MIME/worker errors — these don't affect rendering
-          if (msg.includes('MIME') || msg.includes('is not a valid')) {
-            console.warn('[mermaid] Non-fatal worker error:', msg)
+          const msg = e instanceof Error ? e.message : String(e)
+          // Suppress non-fatal MIME/worker errors — mermaid ESM workers fail over HTTP
+          if (msg.includes('MIME') || msg.includes('is not a valid') || msg.includes('text/html')) {
+            console.warn('[mermaid] Worker error (expected over HTTP):', msg)
+            if (!cancelled) setRenderFailed(true)
             return
           }
           setError(msg)
@@ -69,6 +89,7 @@ function MermaidDiagramImpl({ code }: MermaidDiagramProps) {
 
     setSvg(null)
     setError(null)
+    setRenderFailed(false)
     render()
     return () => {
       cancelled = true
@@ -83,7 +104,17 @@ function MermaidDiagramImpl({ code }: MermaidDiagramProps) {
     )
   }
 
-  if (!svg) {
+  // Fallback: mermaid worker failed (MIME error over HTTP) — show as styled code block
+  if (renderFailed) {
+    return (
+      <pre className="my-2 rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] p-4 text-xs font-mono text-[var(--color-secondary)] overflow-x-auto whitespace-pre-wrap">
+        <div className="text-[10px] text-[var(--color-accent)] mb-2 font-sans">mermaid diagram (live preview requires HTTPS)</div>
+        {code}
+      </pre>
+    )
+  }
+
+  if (!svg && !error) {
     return (
       <div className="my-2 flex items-center gap-2 text-xs text-[var(--color-muted)] px-1">
         <span className="inline-block w-1.5 h-1.5 rounded-full bg-[var(--color-accent)] animate-pulse" />
