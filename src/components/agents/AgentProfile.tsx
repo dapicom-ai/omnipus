@@ -36,7 +36,9 @@ import {
   updateAgent,
   fetchProviders,
   fetchAgentSessions,
+  fetchActivity,
   type AgentSession,
+  type ActivityEvent,
 } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { AVATAR_COLORS } from '@/lib/constants'
@@ -95,6 +97,16 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     queryFn: () => fetchAgentSessions(agentId),
   })
 
+  const { data: allActivity = [] } = useQuery({
+    queryKey: ['activity'],
+    queryFn: fetchActivity,
+    staleTime: 30_000,
+  })
+
+  const recentActivity = allActivity
+    .filter((e) => e.agent_id === agentId)
+    .slice(0, 5)
+
   const availableModels = (() => {
     const connected = providers.filter((p) => p.status === 'connected').flatMap((p) => p.models ?? [])
     return connected.length > 0 ? connected : FALLBACK_MODELS
@@ -115,6 +127,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
   const [maxLlmCallsPerHour, setMaxLlmCallsPerHour] = useState<number | ''>('')
   const [maxToolCallsPerMinute, setMaxToolCallsPerMinute] = useState<number | ''>('')
   const [maxCostPerDay, setMaxCostPerDay] = useState<number | ''>('')
+  const [heartbeat, setHeartbeat] = useState('')
 
   useEffect(() => {
     if (!agent) return
@@ -543,6 +556,66 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
           </section>
         </>
       )}
+
+      {/* HEARTBEAT.md editor */}
+      {canEdit && (
+        <>
+          <Separator />
+          <section className="space-y-3">
+            <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)]">HEARTBEAT.md</h2>
+            <p className="text-xs text-[var(--color-muted)]">
+              The agent's persistent context — goals, preferences, and working memory.
+            </p>
+            <Textarea
+              value={heartbeat}
+              onChange={(e) => setHeartbeat(e.target.value)}
+              placeholder="# Heartbeat&#10;&#10;Write persistent context for this agent..."
+              rows={6}
+              className="text-xs font-mono resize-none"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => addToast({ message: 'Saving HEARTBEAT.md requires file system access (coming soon)', variant: 'info' })}
+            >
+              Save HEARTBEAT.md
+            </Button>
+          </section>
+        </>
+      )}
+
+      {/* Workspace files */}
+      <Separator />
+      <section>
+        <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)] mb-2">Workspace Files</h2>
+        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-center">
+          <p className="text-xs text-[var(--color-muted)]">Workspace files browser coming soon</p>
+        </div>
+      </section>
+
+      {/* Memory viewer */}
+      <Separator />
+      <section>
+        <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)] mb-2">Memory</h2>
+        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-center">
+          <p className="text-xs text-[var(--color-muted)]">Memory viewer coming soon</p>
+        </div>
+      </section>
+
+      {/* Recent activity */}
+      <Separator />
+      <section>
+        <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)] mb-3">Recent Activity</h2>
+        {recentActivity.length === 0 ? (
+          <p className="text-xs text-[var(--color-muted)]">No recent activity for this agent.</p>
+        ) : (
+          <div className="space-y-1">
+            {recentActivity.map((event) => (
+              <ActivityRow key={event.id} event={event} />
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   )
 }
@@ -599,6 +672,20 @@ function RangeField({ label, value, min, max, step, onChange, format }: RangeFie
           background: `linear-gradient(to right, var(--color-accent) 0%, var(--color-accent) ${((value - min) / (max - min)) * 100}%, var(--color-border) ${((value - min) / (max - min)) * 100}%, var(--color-border) 100%)`,
         }}
       />
+    </div>
+  )
+}
+
+function ActivityRow({ event }: { event: ActivityEvent }) {
+  const date = new Date(event.timestamp)
+  return (
+    <div className="flex items-start gap-3 px-3 py-2 rounded-md hover:bg-[var(--color-surface-1)] transition-colors">
+      <span className="text-xs text-[var(--color-secondary)] flex-1 min-w-0 truncate">
+        {event.summary}
+      </span>
+      <span className="text-[10px] text-[var(--color-muted)] shrink-0 mt-0.5">
+        {date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+      </span>
     </div>
   )
 }

@@ -1,6 +1,19 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Robot } from '@phosphor-icons/react'
+import {
+  Robot,
+  Brain,
+  Lightbulb,
+  MagnifyingGlass,
+  PencilSimple,
+  Code,
+  Chat,
+  Gear,
+  Shield,
+  Rocket,
+  CaretDown,
+  CaretUp,
+} from '@phosphor-icons/react'
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -16,6 +29,25 @@ import { useUiStore } from '@/store/ui'
 import { createAgent } from '@/lib/api'
 import type { Agent } from '@/lib/api'
 import { AVATAR_COLORS } from '@/lib/constants'
+
+const ICON_OPTIONS = [
+  { name: 'Robot', component: Robot },
+  { name: 'Brain', component: Brain },
+  { name: 'Lightbulb', component: Lightbulb },
+  { name: 'MagnifyingGlass', component: MagnifyingGlass },
+  { name: 'PencilSimple', component: PencilSimple },
+  { name: 'Code', component: Code },
+  { name: 'Chat', component: Chat },
+  { name: 'Gear', component: Gear },
+  { name: 'Shield', component: Shield },
+  { name: 'Rocket', component: Rocket },
+] as const
+
+type IconName = typeof ICON_OPTIONS[number]['name']
+
+function getIconComponent(name: IconName) {
+  return ICON_OPTIONS.find((o) => o.name === name)?.component ?? Robot
+}
 
 const AVAILABLE_MODELS = [
   'claude-opus-4-6',
@@ -46,7 +78,12 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
   const [description, setDescription] = useState('')
   const [model, setModel] = useState('')
   const [color, setColor] = useState(AVATAR_COLORS[0])
+  const [icon, setIcon] = useState<IconName>('Robot')
+  const [temperature, setTemperature] = useState(1.0)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const [nameError, setNameError] = useState('')
+
+  const AvatarIcon = getIconComponent(icon)
 
   const { mutate: doCreate, isPending } = useMutation({
     mutationFn: async (data: Partial<Agent>) => {
@@ -71,6 +108,9 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
     setDescription('')
     setModel('')
     setColor(AVATAR_COLORS[0])
+    setIcon('Robot')
+    setTemperature(1.0)
+    setAdvancedOpen(false)
     setNameError('')
   }
 
@@ -79,7 +119,15 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
       setNameError('Name is required')
       return
     }
-    doCreate({ name: name.trim(), description, model: model || undefined, color, type: 'custom' })
+    doCreate({
+      name: name.trim(),
+      description,
+      model: model || undefined,
+      color,
+      icon,
+      type: 'custom',
+      model_params: { temperature },
+    })
   }
 
   return (
@@ -95,33 +143,59 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
           </DialogPrimitive.Description>
 
           <div className="space-y-4">
-            {/* Avatar color picker */}
+            {/* Avatar preview + color + icon */}
             <div>
               <label className="text-xs font-medium text-[var(--color-muted)] mb-2 block">
-                Avatar Color
+                Avatar
               </label>
-              <div className="flex items-center gap-3">
+              <div className="flex items-start gap-4">
+                {/* Preview */}
                 <div
-                  className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 font-bold text-sm"
+                  className="w-12 h-12 rounded-full flex items-center justify-center shrink-0"
                   style={{ backgroundColor: color }}
                 >
-                  {name ? (
-                    <span className="text-[var(--color-primary)]">{name.charAt(0).toUpperCase()}</span>
-                  ) : (
-                    <Robot size={18} className="text-[var(--color-primary)]" />
-                  )}
+                  <AvatarIcon size={20} className="text-[var(--color-primary)]" />
                 </div>
-                <div className="flex gap-2 flex-wrap">
-                  {AVATAR_COLORS.map((c) => (
-                    <button
-                      key={c}
-                      type="button"
-                      onClick={() => setColor(c)}
-                      className={`w-6 h-6 rounded-full transition-transform ${color === c ? 'ring-2 ring-[var(--color-secondary)] ring-offset-2 ring-offset-[var(--color-surface-1)] scale-110' : 'hover:scale-110'}`}
-                      style={{ backgroundColor: c }}
-                      aria-label={`Select color ${c}`}
-                    />
-                  ))}
+
+                <div className="flex-1 space-y-3">
+                  {/* Color palette */}
+                  <div>
+                    <p className="text-[10px] text-[var(--color-muted)] mb-1.5">Color</p>
+                    <div className="flex gap-2 flex-wrap">
+                      {AVATAR_COLORS.map((c) => (
+                        <button
+                          key={c}
+                          type="button"
+                          onClick={() => setColor(c)}
+                          className={`w-6 h-6 rounded-full transition-transform ${color === c ? 'ring-2 ring-[var(--color-secondary)] ring-offset-2 ring-offset-[var(--color-surface-1)] scale-110' : 'hover:scale-110'}`}
+                          style={{ backgroundColor: c }}
+                          aria-label={`Select color ${c}`}
+                        />
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Icon grid */}
+                  <div>
+                    <p className="text-[10px] text-[var(--color-muted)] mb-1.5">Icon</p>
+                    <div className="grid grid-cols-5 gap-1.5">
+                      {ICON_OPTIONS.map(({ name: iconName, component: IconComp }) => (
+                        <button
+                          key={iconName}
+                          type="button"
+                          onClick={() => setIcon(iconName)}
+                          title={iconName}
+                          className={`flex items-center justify-center w-8 h-8 rounded-md transition-colors ${
+                            icon === iconName
+                              ? 'bg-[var(--color-accent)] text-[var(--color-primary)]'
+                              : 'bg-[var(--color-surface-2)] text-[var(--color-muted)] hover:text-[var(--color-secondary)]'
+                          }`}
+                        >
+                          <IconComp size={16} />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -177,6 +251,38 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+
+            {/* Advanced model params */}
+            <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setAdvancedOpen((o) => !o)}
+                className="flex items-center justify-between w-full px-3 py-2.5 text-sm font-medium text-[var(--color-secondary)] hover:text-[var(--color-accent)] transition-colors"
+              >
+                <span>Advanced</span>
+                {advancedOpen ? <CaretUp size={13} /> : <CaretDown size={13} />}
+              </button>
+              {advancedOpen && (
+                <div className="px-3 pb-3 border-t border-[var(--color-border)] pt-3 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-[var(--color-muted)]">Temperature</span>
+                    <span className="text-xs font-mono text-[var(--color-secondary)]">{temperature.toFixed(2)}</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={2}
+                    step={0.05}
+                    value={temperature}
+                    onChange={(e) => setTemperature(Number(e.target.value))}
+                    className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
+                    style={{
+                      background: `linear-gradient(to right, var(--color-accent) 0%, var(--color-accent) ${(temperature / 2) * 100}%, var(--color-border) ${(temperature / 2) * 100}%, var(--color-border) 100%)`,
+                    }}
+                  />
+                </div>
+              )}
             </div>
           </div>
 

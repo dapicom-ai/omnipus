@@ -11,6 +11,7 @@ import {
   PushPinSlash,
 } from '@phosphor-icons/react'
 import { useSidebarStore } from '@/store/sidebar'
+import { useChatStore } from '@/store/chat'
 import { cn } from '@/lib/utils'
 import avatarUrl from '@/assets/logo/omnipus-avatar.svg?url'
 
@@ -27,6 +28,7 @@ const NAV_ITEMS = [
 // US-5: Sidebar — overlay default, pin option, Framer Motion, Zustand
 export function Sidebar() {
   const { isOpen, isPinned, close, toggle, togglePin, unpin } = useSidebarStore()
+  const pendingCount = useChatStore((s) => s.pendingApprovals.length)
   const location = useLocation()
 
   // US-5: Cmd+B / Ctrl+B keyboard shortcut + Escape to close
@@ -83,6 +85,7 @@ export function Sidebar() {
       <div className="flex-1 overflow-y-auto py-3">
         {NAV_ITEMS.map(({ to, label, Icon }) => {
           const isActive = location.pathname === to
+          const badge = to === '/command-center' && pendingCount > 0 ? pendingCount : null
           return (
             <Link
               key={to}
@@ -103,7 +106,12 @@ export function Sidebar() {
                 weight={isActive ? 'fill' : 'regular'}
                 className={isActive ? 'text-[var(--color-accent)]' : ''}
               />
-              {label}
+              <span className="flex-1">{label}</span>
+              {badge !== null && (
+                <span className="flex items-center justify-center min-w-[18px] h-[18px] rounded-full bg-[var(--color-error)] text-white text-[10px] font-bold px-1">
+                  {badge > 99 ? '99+' : badge}
+                </span>
+              )}
             </Link>
           )
         })}
