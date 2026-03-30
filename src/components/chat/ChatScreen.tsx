@@ -20,7 +20,6 @@ import {
   Copy,
   Check,
   Paperclip,
-  Check,
 } from '@phosphor-icons/react'
 import OmnipusAvatar from '@/assets/logo/omnipus-avatar.svg?url'
 import { SessionPanel } from './SessionPanel'

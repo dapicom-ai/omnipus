@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -41,6 +42,7 @@ type restAPI struct {
 	allowedOrigin  string
 	onboardingMgr  *onboarding.Manager     // manages first-launch + doctor state
 	homePath       string                  // ~/.omnipus — root of the data directory
+	configMu       sync.Mutex              // guards safeUpdateConfigJSON (read-modify-write cycle)
 }
 
 // --- CORS / JSON helpers ---
@@ -415,12 +417,16 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 	cfg.Agents.List = append(cfg.Agents.List, ac)
 	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
 		// Re-serialize just the agents/gateway section from the in-memory config
-		raw, _ := json.Marshal(cfg)
+		raw, err := json.Marshal(cfg)
+		if err != nil {
+			return fmt.Errorf("marshal config: %w", err)
+		}
 		var cfgMap map[string]any
-		json.Unmarshal(raw, &cfgMap)
-		// Only copy non-credential sections
+		if err := json.Unmarshal(raw, &cfgMap); err != nil {
+			return fmt.Errorf("unmarshal config: %w", err)
+		}
 		for k, v := range cfgMap {
-			if k != "model_list" { // model_list contains api_keys — preserve original
+			if k != "model_list" {
 				m[k] = v
 			}
 		}
@@ -476,12 +482,16 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 	}
 	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
 		// Re-serialize just the agents/gateway section from the in-memory config
-		raw, _ := json.Marshal(cfg)
+		raw, err := json.Marshal(cfg)
+		if err != nil {
+			return fmt.Errorf("marshal config: %w", err)
+		}
 		var cfgMap map[string]any
-		json.Unmarshal(raw, &cfgMap)
-		// Only copy non-credential sections
+		if err := json.Unmarshal(raw, &cfgMap); err != nil {
+			return fmt.Errorf("unmarshal config: %w", err)
+		}
 		for k, v := range cfgMap {
-			if k != "model_list" { // model_list contains api_keys — preserve original
+			if k != "model_list" {
 				m[k] = v
 			}
 		}
@@ -577,6 +587,8 @@ func (a *restAPI) configPath() string {
 // and writes it back atomically. This preserves SecureStrings (API keys) that would be
 // destroyed by config.SaveConfig's JSON round-trip through the Go struct.
 func (a *restAPI) safeUpdateConfigJSON(mutate func(m map[string]any) error) error {
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
 	raw, err := os.ReadFile(a.configPath())
 	if err != nil {
 		return fmt.Errorf("read config: %w", err)
@@ -615,10 +627,10 @@ func (a *restAPI) updateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Block credential fields
+	// Block credential fields and model_list (credentials must use /providers endpoint)
 	for k := range updates {
 		kl := strings.ToLower(k)
-		if strings.Contains(kl, "api_key") || strings.Contains(kl, "secret") || strings.Contains(kl, "password") {
+		if kl == "model_list" || strings.Contains(kl, "api_key") || strings.Contains(kl, "secret") || strings.Contains(kl, "password") {
 			jsonErr(w, http.StatusForbidden, fmt.Sprintf("credential field %q cannot be set via config endpoint", k))
 			return
 		}
@@ -863,12 +875,16 @@ func (a *restAPI) rotateGatewayToken(w http.ResponseWriter, r *http.Request) {
 	cfg.Gateway.Token = newToken
 	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
 		// Re-serialize just the agents/gateway section from the in-memory config
-		raw, _ := json.Marshal(cfg)
+		raw, err := json.Marshal(cfg)
+		if err != nil {
+			return fmt.Errorf("marshal config: %w", err)
+		}
 		var cfgMap map[string]any
-		json.Unmarshal(raw, &cfgMap)
-		// Only copy non-credential sections
+		if err := json.Unmarshal(raw, &cfgMap); err != nil {
+			return fmt.Errorf("unmarshal config: %w", err)
+		}
 		for k, v := range cfgMap {
-			if k != "model_list" { // model_list contains api_keys — preserve original
+			if k != "model_list" {
 				m[k] = v
 			}
 		}
@@ -1245,18 +1261,24 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
-		// Re-serialize just the agents/gateway section from the in-memory config
-		raw, _ := json.Marshal(cfg)
-		var cfgMap map[string]any
-		json.Unmarshal(raw, &cfgMap)
-		// Only copy non-credential sections
-		for k, v := range cfgMap {
-			if k != "model_list" { // model_list contains api_keys — preserve original
-				m[k] = v
+			// Patch the API key directly in the raw model_list JSON
+			modelList, _ := m["model_list"].([]any)
+			for _, entry := range modelList {
+				model, ok := entry.(map[string]any)
+				if !ok {
+					continue
+				}
+				modelStr, _ := model["model"].(string)
+				pName := "default"
+				if parts := strings.SplitN(modelStr, "/", 2); len(parts) == 2 {
+					pName = parts[0]
+				}
+				if pName == providerID {
+					model["api_keys"] = []string{req.APIKey}
+				}
 			}
-		}
-		return nil
-	}); err != nil {
+			return nil
+		}); err != nil {
 			slog.Error("rest: save config for provider update", "error", err)
 			jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
 			return

@@ -574,7 +574,7 @@ func (al *AgentLoop) drainBusToSteering(ctx context.Context, activeScope, active
 		}
 
 		// Transcribe audio if needed before steering, so the agent sees text.
-		msg, _ = al.transcribeAudioInMessage(ctx, msg)
+		msg, _ = al.transcribeAudioInMessage(ctx, msg) // errors handled internally with logging
 
 		logger.InfoCF("agent", "Redirecting inbound message to steering queue",
 			map[string]any{
@@ -1943,11 +1943,15 @@ turnLoop:
 						delta := accumulated[len(lastChunk):]
 						lastChunk = accumulated
 						if delta != "" {
-							_ = streamer.Update(providerCtx, delta)
+							if err := streamer.Update(providerCtx, delta); err != nil {
+								logger.DebugCF("agent", "Streaming update error (client may have disconnected)", map[string]any{"error": err.Error()})
+							}
 						}
 					})
 					if streamErr == nil {
-						_ = streamer.Finalize(providerCtx, lastChunk)
+						if err := streamer.Finalize(providerCtx, lastChunk); err != nil {
+							logger.WarnCF("agent", "Streaming finalize error", map[string]any{"error": err.Error()})
+						}
 					}
 					return resp, streamErr
 				}

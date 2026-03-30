@@ -18,7 +18,8 @@ func toChannelHashes(cfg *config.Config) map[string]string {
 	_ = json.Unmarshal(marshal, &channelConfig)
 
 	for key, value := range channelConfig {
-		if !value["enabled"].(bool) {
+		enabled, _ := value["enabled"].(bool)
+		if !enabled {
 			continue
 		}
 		hiddenValues(key, value, ch)
@@ -101,7 +102,8 @@ func toChannelConfig(cfg *config.Config, list []string) (*config.ChannelsConfig,
 				break
 			}
 		}
-		if !found || !value["enabled"].(bool) {
+		chEnabled, _ := value["enabled"].(bool)
+		if !found || !chEnabled {
 			continue
 		}
 		temp[key] = value
