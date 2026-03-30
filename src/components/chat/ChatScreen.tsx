@@ -235,7 +235,7 @@ function OmnipusComposer() {
   }
 
   return (
-    <div className="border-t border-[var(--color-border)] bg-[var(--color-surface-1)] px-4 py-3">
+    <div>
       {!isConnected && (
         <div className="mb-2 text-xs text-[var(--color-error)] flex items-center gap-1">
           <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-error)] inline-block" />
