@@ -77,6 +77,8 @@ export const rehypePhosphorEmoji: Plugin<[], Root> = () => {
   return (tree) => {
     visit(tree, 'text', (node: Text, index, parent) => {
       if (typeof index !== 'number' || !parent) return
+      // Skip emoji translation inside code/pre blocks — it breaks code literals
+      if ('tagName' in parent && (parent.tagName === 'code' || parent.tagName === 'pre')) return
       if (!EMOJI_REGEX.test(node.value)) return
 
       const nodes = textToNodes(node.value)

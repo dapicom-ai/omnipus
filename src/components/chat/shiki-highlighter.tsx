@@ -3,11 +3,12 @@
 // renders the language label + copy button above each block.
 // Special case: language "mermaid" renders MermaidDiagram instead of Shiki.
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { ShikiHighlighter } from 'react-shiki'
 import { Copy, Check } from '@phosphor-icons/react'
 import type { SyntaxHighlighterProps, CodeHeaderProps } from '@assistant-ui/react-markdown'
 import { MermaidDiagram } from './mermaid-renderer'
+import { useUiStore } from '@/store/ui'
 
 // ── Syntax highlighter ────────────────────────────────────────────────────────
 
@@ -39,14 +40,17 @@ export function SyntaxHighlighter({ language, code }: Omit<SyntaxHighlighterProp
 
 export function CopyCodeHeader({ language, code }: Omit<CodeHeaderProps, 'node'>) {
   const [copied, setCopied] = useState(false)
+  const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(code)
       setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+      // Clear any existing reset timer before starting a new one
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current)
+      resetTimerRef.current = setTimeout(() => setCopied(false), 2000)
     } catch {
-      // Clipboard access denied — silently ignore
+      useUiStore.getState().addToast({ message: 'Could not copy to clipboard', variant: 'error' })
     }
   }
 

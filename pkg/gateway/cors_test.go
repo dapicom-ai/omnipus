@@ -85,14 +85,15 @@ func TestIsAllowedOrigin(t *testing.T) {
 			configuredOrigin: "http://localhost:19000",
 			want:             true,
 		},
-		// Additional: different port but same hostname → allowed (hostname-only check by design)
-		// isAllowedOrigin matches on hostname only, not hostname+port, for same-server deployments.
+		// Additional: different port same hostname → denied (port is part of origin)
+		// isAllowedOrigin now compares hostname AND port for same-host requests to
+		// prevent cross-port CORS escalation (review finding #7).
 		{
-			name:             "different port but same hostname → allowed (hostname-only check)",
+			name:             "different port but same hostname → denied (port mismatch)",
 			reqOrigin:        "http://192.168.1.1:8080",
 			host:             "192.168.1.1:9000",
 			configuredOrigin: "",
-			want:             true,
+			want:             false,
 		},
 		// Additional: malformed URL in origin → denied
 		{

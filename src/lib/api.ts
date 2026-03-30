@@ -55,7 +55,7 @@ export function fetchAgents(): Promise<Agent[]> {
 }
 
 export function fetchAgent(id: string): Promise<Agent> {
-  return request<Agent>(`/agents/${id}`)
+  return request<Agent>(`/agents/${encodeURIComponent(id)}`)
 }
 
 export function createAgent(data: Partial<Agent>): Promise<Agent> {
@@ -63,7 +63,7 @@ export function createAgent(data: Partial<Agent>): Promise<Agent> {
 }
 
 export function updateAgent(id: string, data: Partial<Agent>): Promise<Agent> {
-  return request<Agent>(`/agents/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+  return request<Agent>(`/agents/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) })
 }
 
 // ── Sessions ──────────────────────────────────────────────────────────────────
@@ -137,7 +137,7 @@ export async function fetchSessions(agentId?: string): Promise<Session[]> {
 }
 
 export function fetchSessionMessages(sessionId: string): Promise<Message[]> {
-  return request<Message[]>(`/sessions/${sessionId}/messages`)
+  return request<Message[]>(`/sessions/${encodeURIComponent(sessionId)}/messages`)
 }
 
 export function createSession(agentId: string): Promise<Session> {
@@ -258,7 +258,7 @@ export function createTask(data: Pick<Task, 'name' | 'description' | 'agent_id'>
 }
 
 export function updateTask(id: string, data: Partial<Task>): Promise<Task> {
-  return request<Task>(`/tasks/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+  return request<Task>(`/tasks/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) })
 }
 
 // ── Gateway Status ────────────────────────────────────────────────────────────

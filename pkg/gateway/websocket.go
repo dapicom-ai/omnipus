@@ -428,8 +428,17 @@ type wsStreamer struct {
 }
 
 func (s *wsStreamer) Update(_ context.Context, content string) error {
-	sendConnFrame(s.conn, wsServerFrame{Type: "token", Content: content})
-	return nil
+	data, err := json.Marshal(wsServerFrame{Type: "token", Content: content})
+	if err != nil {
+		return fmt.Errorf("ws: marshal token frame: %w", err)
+	}
+	select {
+	case s.conn.sendCh <- data:
+		return nil
+	default:
+		slog.Warn("ws: token dropped — client send buffer full")
+		return fmt.Errorf("ws: token channel full, token dropped")
+	}
 }
 
 func (s *wsStreamer) Finalize(_ context.Context, _ string) error {

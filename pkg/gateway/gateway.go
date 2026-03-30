@@ -135,8 +135,14 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 
 	fmt.Println("\n📦 Agent Status:")
 	startupInfo := agentLoop.GetStartupInfo()
-	toolsInfo := startupInfo["tools"].(map[string]any)
-	skillsInfo := startupInfo["skills"].(map[string]any)
+	toolsInfo, _ := startupInfo["tools"].(map[string]any)
+	skillsInfo, _ := startupInfo["skills"].(map[string]any)
+	if toolsInfo == nil {
+		toolsInfo = map[string]any{"count": 0}
+	}
+	if skillsInfo == nil {
+		skillsInfo = map[string]any{"available": 0, "total": 0}
+	}
 	fmt.Printf("  • Tools: %d loaded\n", toolsInfo["count"])
 	fmt.Printf("  • Skills: %d/%d available\n", skillsInfo["available"], skillsInfo["total"])
 
@@ -339,7 +345,7 @@ func setupAndStartServices(
 		defaultAgentID = cfg.Agents.List[0].ID
 	}
 	if err := datamodel.InitAgentWorkspace(homePath, defaultAgentID); err != nil {
-		slog.Warn("gateway: could not init agent workspace for partition store", "agent_id", defaultAgentID, "error", err)
+		slog.Error("gateway: could not init agent workspace for partition store", "agent_id", defaultAgentID, "error", err)
 	} else {
 		agentWorkspace := datamodel.AgentWorkspacePath(homePath, defaultAgentID)
 		runningServices.PartitionStore = session.NewPartitionStore(agentWorkspace, defaultAgentID)
@@ -673,6 +679,7 @@ func setupConfigWatcherPolling(configPath string, debug bool) (chan *config.Conf
 func getFileModTime(path string) time.Time {
 	info, err := os.Stat(path)
 	if err != nil {
+		slog.Debug("gateway: could not stat file for mod time", "path", path, "error", err)
 		return time.Time{}
 	}
 	return info.ModTime()
@@ -681,6 +688,7 @@ func getFileModTime(path string) time.Time {
 func getFileSize(path string) int64 {
 	info, err := os.Stat(path)
 	if err != nil {
+		slog.Debug("gateway: could not stat file for size", "path", path, "error", err)
 		return 0
 	}
 	return info.Size()

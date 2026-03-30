@@ -362,6 +362,7 @@ func readPartition(path string) ([]TranscriptEntry, error) {
 	}
 
 	var entries []TranscriptEntry
+	skipped := 0
 	for _, line := range bytes.Split(data, []byte{'\n'}) {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 {
@@ -370,9 +371,13 @@ func readPartition(path string) ([]TranscriptEntry, error) {
 		var entry TranscriptEntry
 		if err := json.Unmarshal(line, &entry); err != nil {
 			slog.Warn("session: skipping malformed partition line", "path", path, "error", err)
+			skipped++
 			continue
 		}
 		entries = append(entries, entry)
+	}
+	if skipped > 0 {
+		slog.Warn("session: partition had skipped malformed lines", "path", path, "skipped", skipped)
 	}
 
 	return entries, nil

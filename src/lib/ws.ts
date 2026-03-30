@@ -34,7 +34,11 @@ export interface WsExecApprovalResponseFrame {
   decision: 'allow' | 'deny' | 'always'
 }
 
-export type WsSendFrame = WsAuthFrame | WsMessageFrame | WsCancelFrame | WsExecApprovalResponseFrame
+export interface WsPingFrame {
+  type: 'ping'
+}
+
+export type WsSendFrame = WsAuthFrame | WsMessageFrame | WsCancelFrame | WsExecApprovalResponseFrame | WsPingFrame
 
 export interface WsTokenFrame {
   type: 'token'
@@ -102,6 +106,7 @@ export class WsConnection {
   private reconnectAttempts = 0
   private maxReconnectAttempts = 3
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null
   private intentionalClose = false
   private callbacks: WsConnectionCallbacks
 
@@ -118,6 +123,7 @@ export class WsConnection {
   disconnect(): void {
     this.intentionalClose = true
     this._clearReconnectTimer()
+    this._stopHeartbeat()
     this.ws?.close(1000, 'User disconnected')
     this.ws = null
   }
@@ -145,10 +151,13 @@ export class WsConnection {
 
     this.ws.onopen = () => {
       this.reconnectAttempts = 0
+      // Auth token is re-read from localStorage on every (re-)connect
+      // so changes after initial load take effect without a page refresh.
       const token = localStorage.getItem('omnipus_auth_token')
       if (token) {
         this.send({ type: 'auth', token })
       }
+      this._startHeartbeat()
       this.callbacks.onConnected()
     }
 
@@ -174,6 +183,7 @@ export class WsConnection {
 
     this.ws.onclose = (event: CloseEvent) => {
       this.ws = null
+      this._stopHeartbeat()
       this.callbacks.onDisconnected()
       if (!this.intentionalClose && event.code !== 1000) {
         this._scheduleReconnect()
@@ -199,6 +209,23 @@ export class WsConnection {
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
+    }
+  }
+
+  private _startHeartbeat(): void {
+    this._stopHeartbeat()
+    // Send a ping every 30s to keep the connection alive through proxies and firewalls
+    this.heartbeatTimer = setInterval(() => {
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({ type: 'ping' }))
+      }
+    }, 30_000)
+  }
+
+  private _stopHeartbeat(): void {
+    if (this.heartbeatTimer !== null) {
+      clearInterval(this.heartbeatTimer)
+      this.heartbeatTimer = null
     }
   }
 }

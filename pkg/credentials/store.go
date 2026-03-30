@@ -367,7 +367,7 @@ func (s *Store) loadOrCreateSalt() ([]byte, error) {
 			return nil, fmt.Errorf("credentials: create store dir: %w", err)
 		}
 		if err := fileutil.WriteFileAtomic(s.path, raw, 0o600); err != nil {
-			slog.Warn("credentials: could not persist salt — will regenerate on next start", "error", err)
+			return nil, fmt.Errorf("credentials: persist salt: %w", err)
 		}
 		return salt, nil
 	}

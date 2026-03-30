@@ -7,6 +7,7 @@ package systools
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 )
@@ -44,15 +45,15 @@ func (t *SkillInstallTool) Execute(_ context.Context, args map[string]any) *tool
 			}
 		}
 	}
-	// Actual skill installation is implemented in pkg/tools/skills_install.go.
-	// The system tool records the intent and delegates to the skills manager.
+	slog.Info("sysagent: stub tool invoked", "tool", "system.skill.install", "name", name)
 	return tools.NewToolResult(successJSON(map[string]any{
-		"name":             name,
-		"version":          "latest",
-		"verified":         false,
-		"tools_provided":   []string{},
-		"agents_assigned":  agentIDs,
-		"status":           "installed",
+		"name":            name,
+		"version":         "latest",
+		"verified":        false,
+		"tools_provided":  []string{},
+		"agents_assigned": agentIDs,
+		"status":          "stub",
+		"note":            "not yet implemented — this is a placeholder response",
 	}))
 }
 
@@ -85,10 +86,12 @@ func (t *SkillRemoveTool) Execute(_ context.Context, args map[string]any) *tools
 		return tools.ErrorResult(errorJSON("CONFIRMATION_REQUIRED",
 			"confirm must be true to remove a skill", ""))
 	}
+	slog.Info("sysagent: stub tool invoked", "tool", "system.skill.remove", "name", name)
 	return tools.NewToolResult(successJSON(map[string]any{
-		"name":             name,
-		"removed":          true,
-		"agents_affected":  []string{},
+		"name":            name,
+		"status":          "stub",
+		"agents_affected": []string{},
+		"note":            "not yet implemented — this is a placeholder response",
 	}))
 }
 
@@ -139,6 +142,10 @@ func (t *SkillListTool) Parameters() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{}}
 }
 func (t *SkillListTool) Execute(_ context.Context, _ map[string]any) *tools.ToolResult {
-	// Enumerate skills from each agent's skills directory.
-	return tools.NewToolResult(successJSON(map[string]any{"skills": []any{}}))
+	slog.Info("sysagent: stub tool invoked", "tool", "system.skill.list")
+	return tools.NewToolResult(successJSON(map[string]any{
+		"skills": []any{},
+		"status": "stub",
+		"note":   "not yet implemented — this is a placeholder response",
+	}))
 }

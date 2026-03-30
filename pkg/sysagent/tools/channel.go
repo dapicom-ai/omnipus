@@ -7,7 +7,7 @@ package systools
 import (
 	"context"
 	"fmt"
-	"time"
+	"log/slog"
 
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 )
@@ -72,11 +72,13 @@ func (t *ChannelEnableTool) Execute(_ context.Context, args map[string]any) *too
 		))
 	}
 	ch.Enabled = true
-	ch.Status = "ready_to_configure"
+	slog.Info("sysagent: stub tool invoked", "tool", "system.channel.enable", "id", id)
 	return tools.NewToolResult(successJSON(map[string]any{
-		"id": id, "tier": ch.Tier,
+		"id":             id,
+		"tier":           ch.Tier,
 		"implementation": ch.Implementation,
-		"status":         "ready_to_configure",
+		"status":         "stub",
+		"note":           "not yet implemented — this is a placeholder response",
 	}))
 }
 
@@ -157,7 +159,12 @@ func (t *ChannelDisableTool) Execute(_ context.Context, args map[string]any) *to
 		return tools.ErrorResult(errorJSON("CHANNEL_NOT_FOUND",
 			fmt.Sprintf("Unknown channel %q", id), ""))
 	}
-	return tools.NewToolResult(successJSON(map[string]any{"id": id, "status": "disabled"}))
+	slog.Info("sysagent: stub tool invoked", "tool", "system.channel.disable", "id", id)
+	return tools.NewToolResult(successJSON(map[string]any{
+		"id":     id,
+		"status": "stub",
+		"note":   "not yet implemented — this is a placeholder response",
+	}))
 }
 
 // ---- system.channel.list ----
@@ -201,14 +208,10 @@ func (t *ChannelTestTool) Execute(_ context.Context, args map[string]any) *tools
 		return tools.ErrorResult(errorJSON("CHANNEL_NOT_FOUND",
 			fmt.Sprintf("Unknown channel %q", id), ""))
 	}
-	// Minimal connectivity probe (returns ok — actual connectivity test is in the
-	// channel manager, which is not accessible from a stateless tool without a handle
-	// to the live channel manager. We return a plausible placeholder per spec).
-	start := time.Now()
-	latency := time.Since(start).Milliseconds()
+	slog.Info("sysagent: stub tool invoked", "tool", "system.channel.test", "id", id)
 	return tools.NewToolResult(successJSON(map[string]any{
-		"id":         id,
-		"status":     "ok",
-		"latency_ms": latency,
+		"id":     id,
+		"status": "stub",
+		"note":   "not yet implemented — this is a placeholder response",
 	}))
 }

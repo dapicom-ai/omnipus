@@ -7,6 +7,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 
 	"github.com/dapicom-ai/omnipus/pkg/bus"
@@ -57,6 +58,9 @@ func (c *webchatChannel) Send(_ context.Context, msg bus.OutboundMessage) error 
 	case conn.sendCh <- data:
 	default:
 		slog.Warn("webchat: send channel full, outbound message dropped", "chat_id", msg.ChatID)
+		// TODO(webchat-media): add support for media/attachment messages once the
+		// OutboundMessage type includes media fields.
+		return fmt.Errorf("webchat: send channel full for chat %s", msg.ChatID)
 	}
 	return nil
 }

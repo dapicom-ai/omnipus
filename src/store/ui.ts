@@ -1,5 +1,12 @@
 import { create } from 'zustand'
 
+export interface Toast {
+  id: string
+  message: string
+  variant: 'default' | 'error' | 'success'
+  duration?: number
+}
+
 interface UiStore {
   // Session panel
   sessionPanelOpen: boolean
@@ -17,12 +24,8 @@ interface UiStore {
   removeToast: (id: string) => void
 }
 
-export interface Toast {
-  id: string
-  message: string
-  variant: 'default' | 'error' | 'success'
-  duration?: number
-}
+// Tracks auto-dismiss timers outside state so they can be cleared on manual dismiss
+const toastTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 export const useUiStore = create<UiStore>((set, get) => ({
   sessionPanelOpen: false,
@@ -35,10 +38,21 @@ export const useUiStore = create<UiStore>((set, get) => ({
 
   toasts: [],
   addToast: (toast) => {
-    const id = `toast-${Date.now()}`
+    const id = crypto.randomUUID()
     set((state) => ({ toasts: [...state.toasts, { ...toast, id }] }))
     const duration = toast.duration ?? 4000
-    setTimeout(() => get().removeToast(id), duration)
+    const timer = setTimeout(() => {
+      get().removeToast(id)
+      toastTimers.delete(id)
+    }, duration)
+    toastTimers.set(id, timer)
   },
-  removeToast: (id) => set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) })),
+  removeToast: (id) => {
+    const timer = toastTimers.get(id)
+    if (timer !== undefined) {
+      clearTimeout(timer)
+      toastTimers.delete(id)
+    }
+    set((state) => ({ toasts: state.toasts.filter((t) => t.id !== id) }))
+  },
 }))

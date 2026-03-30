@@ -15,7 +15,8 @@ import {
 } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { configureProvider, testProvider, completeOnboarding } from '@/lib/api'
+import { configureProvider, testProvider, completeOnboarding, fetchProviders } from '@/lib/api'
+import { useQuery } from '@tanstack/react-query'
 import OmnipusAvatar from '@/assets/logo/omnipus-avatar.svg?url'
 import { PROVIDER_HINTS } from '@/lib/constants'
 import { useUiStore } from '@/store/ui'
@@ -26,7 +27,8 @@ import { useUiStore } from '@/store/ui'
 type Step = 1 | 2 | 3
 type TestStatus = 'idle' | 'testing' | 'success' | 'error'
 
-const PROVIDERS = [
+// Fallback provider list used when the API is unreachable during onboarding
+const DEFAULT_PROVIDERS = [
   { id: 'anthropic', display_name: 'Anthropic' },
   { id: 'openrouter', display_name: 'OpenRouter' },
   { id: 'openai', display_name: 'OpenAI' },
@@ -56,6 +58,16 @@ function OnboardingWizard() {
   const navigate = useNavigate()
   const { addToast } = useUiStore()
 
+  // Fetch provider list from API; fall back to hardcoded defaults if unavailable
+  const { data: apiProviders = [] } = useQuery({
+    queryKey: ['providers'],
+    queryFn: fetchProviders,
+  })
+
+  const providers = apiProviders.length > 0
+    ? apiProviders.map((p) => ({ id: p.id, display_name: p.display_name ?? p.name ?? p.id }))
+    : DEFAULT_PROVIDERS
+
   const [step, setStep] = useState<Step>(1)
   const [direction, setDirection] = useState(1)
   const [selectedProvider, setSelectedProvider] = useState('')
@@ -65,7 +77,7 @@ function OnboardingWizard() {
   const [testError, setTestError] = useState('')
   const [isSaving, setIsSaving] = useState(false)
 
-  const providerDef = PROVIDERS.find((p) => p.id === selectedProvider)
+  const providerDef = providers.find((p) => p.id === selectedProvider)
   const providerHintText = selectedProvider ? PROVIDER_HINTS[selectedProvider] : undefined
 
   const goTo = (next: Step) => {
@@ -111,12 +123,12 @@ function OnboardingWizard() {
     setIsSaving(true)
     try {
       await completeOnboarding()
+      navigate({ to: '/' })
     } catch {
       addToast({ message: 'Could not save onboarding state', variant: 'error' })
     } finally {
       setIsSaving(false)
     }
-    navigate({ to: '/' })
   }
 
   // US-7: Skip option for advanced users
@@ -200,6 +212,7 @@ function OnboardingWizard() {
               transition={{ duration: 0.22, ease: 'easeInOut' }}
             >
               <ProviderStep
+                providers={providers}
                 selectedProvider={selectedProvider}
                 onSelect={handleSelectProvider}
                 apiKey={apiKey}
@@ -341,6 +354,7 @@ function WelcomeStep({
 // ── Step 2: Provider Setup ─────────────────────────────────────────────────────
 
 function ProviderStep({
+  providers,
   selectedProvider,
   onSelect,
   apiKey,
@@ -354,6 +368,7 @@ function ProviderStep({
   onContinue,
   providerHint,
 }: {
+  providers: { id: string; display_name: string }[]
   selectedProvider: string
   onSelect: (id: string) => void
   apiKey: string
@@ -381,7 +396,7 @@ function ProviderStep({
 
       {/* Provider selection grid */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-        {PROVIDERS.map((p) => (
+        {providers.map((p) => (
           <button
             key={p.id}
             type="button"

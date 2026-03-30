@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Copy, ArrowsClockwise, FloppyDisk, CheckCircle } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
@@ -34,13 +34,12 @@ export function GatewaySection() {
   const [port, setPort] = useState('8080')
   const [authMode, setAuthMode] = useState<'none' | 'token'>('none')
 
-  const [initialized, setInitialized] = useState(false)
-  if (config && !initialized) {
+  useEffect(() => {
+    if (!config) return
     setBindAddress(config.gateway.bind_address)
     setPort(config.gateway.port.toString())
     setAuthMode(config.gateway.auth_mode)
-    setInitialized(true)
-  }
+  }, [config])
 
   const { mutate: doSave, isPending: isSaving } = useMutation({
     mutationFn: () =>
@@ -75,9 +74,13 @@ export function GatewaySection() {
   const copyToken = async () => {
     const token = config?.gateway.token
     if (!token) return
-    await navigator.clipboard.writeText(token)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    try {
+      await navigator.clipboard.writeText(token)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      addToast({ message: 'Could not copy token to clipboard', variant: 'error' })
+    }
   }
 
   if (isLoading) return <div className="text-sm text-[var(--color-muted)]">Loading...</div>

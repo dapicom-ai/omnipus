@@ -9,7 +9,9 @@ package systools
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
@@ -32,8 +34,23 @@ type Deps struct {
 	CredStore *credentials.Store
 }
 
+// validateID rejects entity IDs containing path separators, "..", or null bytes
+// to prevent path traversal attacks on the entity storage.
+func validateID(id string) error {
+	if id == "" {
+		return fmt.Errorf("id must not be empty")
+	}
+	if strings.ContainsAny(id, "/\\") || strings.Contains(id, "..") || strings.ContainsRune(id, 0) {
+		return fmt.Errorf("invalid id: %q", id)
+	}
+	return nil
+}
+
 // readEntity reads a per-entity JSON file from dir/<id>.json.
 func readEntity(dir, id string, v any) error {
+	if err := validateID(id); err != nil {
+		return fmt.Errorf("read entity: %w", err)
+	}
 	path := entityPath(dir, id)
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -49,7 +66,11 @@ func readEntity(dir, id string, v any) error {
 }
 
 // writeEntity atomically writes a per-entity JSON file to dir/<id>.json.
+// Uses an advisory flock as defense-in-depth for multi-process scenarios.
 func writeEntity(dir, id string, v any) error {
+	if err := validateID(id); err != nil {
+		return fmt.Errorf("write entity: %w", err)
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create dir %s: %w", dir, err)
 	}
@@ -57,11 +78,18 @@ func writeEntity(dir, id string, v any) error {
 	if err != nil {
 		return fmt.Errorf("marshal entity %s: %w", id, err)
 	}
-	return fileutil.WriteFileAtomic(entityPath(dir, id), data, 0o600)
+	path := entityPath(dir, id)
+	return fileutil.WithFlock(path, func() error {
+		return fileutil.WriteFileAtomic(path, data, 0o600)
+	})
 }
 
 // deleteEntity removes dir/<id>.json.
+// A missing file is treated as success (idempotent delete).
 func deleteEntity(dir, id string) error {
+	if err := validateID(id); err != nil {
+		return fmt.Errorf("delete entity: %w", err)
+	}
 	path := entityPath(dir, id)
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("delete entity %s: %w", id, err)
@@ -86,10 +114,12 @@ func listEntities[T any](dir string) ([]T, error) {
 		id := e.Name()[:len(e.Name())-5]
 		data, err := os.ReadFile(entityPath(dir, id))
 		if err != nil {
+			slog.Warn("sysagent: skipping unreadable entity file", "file", e.Name(), "error", err)
 			continue
 		}
 		var v T
 		if err := json.Unmarshal(data, &v); err != nil {
+			slog.Warn("sysagent: skipping corrupt entity file", "file", e.Name(), "error", err)
 			continue
 		}
 		result = append(result, v)

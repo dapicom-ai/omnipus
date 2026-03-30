@@ -15,22 +15,22 @@ import { useUiStore } from '@/store/ui'
 function SkillsScreen() {
   const { addToast } = useUiStore()
 
-  const { data: skills = [], isLoading: skillsLoading } = useQuery({
+  const { data: skills = [], isLoading: skillsLoading, isError: skillsError } = useQuery({
     queryKey: ['skills'],
     queryFn: fetchSkills,
   })
 
-  const { data: mcpServers = [], isLoading: mcpLoading } = useQuery({
+  const { data: mcpServers = [], isLoading: mcpLoading, isError: mcpError } = useQuery({
     queryKey: ['mcp-servers'],
     queryFn: fetchMcpServers,
   })
 
-  const { data: tools = [], isLoading: toolsLoading } = useQuery({
+  const { data: tools = [], isLoading: toolsLoading, isError: toolsError } = useQuery({
     queryKey: ['tools'],
     queryFn: fetchTools,
   })
 
-  const { data: channels = [], isLoading: channelsLoading } = useQuery({
+  const { data: channels = [], isLoading: channelsLoading, isError: channelsError } = useQuery({
     queryKey: ['channels'],
     queryFn: fetchChannels,
   })
@@ -62,7 +62,9 @@ function SkillsScreen() {
 
         {/* Installed Skills */}
         <TabsContent value="skills">
-          {skillsLoading ? (
+          {skillsError ? (
+            <ErrorState message="Could not load skills." />
+          ) : skillsLoading ? (
             <SkeletonList />
           ) : skills.length === 0 ? (
             <EmptyState icon={<PuzzlePiece size={40} weight="thin" />} message="No skills installed." />
@@ -103,7 +105,9 @@ function SkillsScreen() {
 
         {/* MCP Servers */}
         <TabsContent value="mcp">
-          {mcpLoading ? (
+          {mcpError ? (
+            <ErrorState message="Could not load MCP servers." />
+          ) : mcpLoading ? (
             <SkeletonList />
           ) : mcpServers.length === 0 ? (
             <EmptyState icon={<HardDrives size={40} weight="thin" />} message="No MCP servers connected." />
@@ -137,7 +141,9 @@ function SkillsScreen() {
 
         {/* Channels */}
         <TabsContent value="channels">
-          {channelsLoading ? (
+          {channelsError ? (
+            <ErrorState message="Could not load channels." />
+          ) : channelsLoading ? (
             <SkeletonList />
           ) : channels.length === 0 ? (
             <EmptyState icon={<Hash size={40} weight="thin" />} message="No channels configured." />
@@ -174,7 +180,9 @@ function SkillsScreen() {
 
         {/* Built-in tools */}
         <TabsContent value="builtins">
-          {toolsLoading ? (
+          {toolsError ? (
+            <ErrorState message="Could not load tools." />
+          ) : toolsLoading ? (
             <SkeletonList />
           ) : tools.length === 0 ? (
             <EmptyState icon={<Wrench size={40} weight="thin" />} message="No tools available." />
@@ -217,6 +225,14 @@ function EmptyState({ icon, message }: { icon: React.ReactNode; message: string 
     <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
       <div className="text-[var(--color-border)]">{icon}</div>
       <p className="text-sm text-[var(--color-muted)]">{message}</p>
+    </div>
+  )
+}
+
+function ErrorState({ message }: { message: string }) {
+  return (
+    <div className="flex justify-center py-8">
+      <p className="text-sm text-[var(--color-error)]">{message}</p>
     </div>
   )
 }

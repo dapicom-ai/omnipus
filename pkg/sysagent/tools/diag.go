@@ -7,6 +7,7 @@ package systools
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -137,13 +138,14 @@ func (t *BackupCreateTool) Execute(_ context.Context, args map[string]any) *tool
 		suffix = ".tar.enc"
 	}
 	backupPath := filepath.Join(backupsDir, fmt.Sprintf("omnipus-backup-%s%s", timestamp, suffix))
-	// Stub: returns the planned backup path but does not create the archive yet.
+	slog.Info("sysagent: stub tool invoked", "tool", "system.backup.create", "path", backupPath)
 	return tools.NewToolResult(successJSON(map[string]any{
 		"path":       backupPath,
 		"size_bytes": 0,
 		"encrypted":  encrypt,
 		"created_at": timestamp,
-		"note":       "Backup file creation is not yet implemented — path reserved",
+		"status":     "stub",
+		"note":       "not yet implemented — this is a placeholder response",
 	}))
 }
 
@@ -173,11 +175,13 @@ func (t *CostQueryTool) Execute(_ context.Context, args map[string]any) *tools.T
 	if period == "" {
 		period = "today"
 	}
+	slog.Info("sysagent: stub tool invoked", "tool", "system.cost.query", "period", period)
 	return tools.NewToolResult(successJSON(map[string]any{
 		"period":       period,
 		"total_cost":   0.0,
 		"total_tokens": 0,
 		"breakdown":    []any{},
-		"note":         "Cost tracking from session transcripts is not yet aggregated in this version",
+		"status":       "stub",
+		"note":         "not yet implemented — this is a placeholder response",
 	}))
 }

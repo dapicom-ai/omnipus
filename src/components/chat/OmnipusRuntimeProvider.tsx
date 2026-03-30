@@ -52,7 +52,18 @@ export function OmnipusRuntimeProvider({ children }: { children: React.ReactNode
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      {/* Tool UI registrations — each component calls useAssistantToolUI on mount */}
+      {/*
+       * Tool UI registrations — each component calls useAssistantToolUI on mount.
+       * Tool name → UI component mapping (names match pkg/sysagent/tools/ exports):
+       *   exec         → TerminalOutputUI     (shell command execution)
+       *   read_file    → FileReadPreviewUI    (read file content)
+       *   write_file   → FileWriteConfirmUI   (create/overwrite file)
+       *   edit_file    → EditFileConfirmUI    (targeted string replacement)
+       *   append_file  → AppendFileConfirmUI  (append to file)
+       *   list_dir     → FileTreeViewUI       (directory listing)
+       *   web_search   → WebSearchResultUI    (search the web)
+       *   web_fetch    → WebFetchPreviewUI    (fetch a URL)
+       */}
       <TerminalOutputUI />
       <FileReadPreviewUI />
       <FileWriteConfirmUI />

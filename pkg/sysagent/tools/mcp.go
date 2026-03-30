@@ -6,6 +6,7 @@ package systools
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 )
@@ -40,10 +41,11 @@ func (t *MCPAddTool) Execute(_ context.Context, args map[string]any) *tools.Tool
 	if name == "" || transport == "" {
 		return tools.ErrorResult(errorJSON("INVALID_INPUT", "name and transport are required", ""))
 	}
+	slog.Info("sysagent: stub tool invoked", "tool", "system.mcp.add", "name", name)
 	return tools.NewToolResult(successJSON(map[string]any{
-		"name":             name,
-		"status":           "connected",
-		"tools_discovered": 0,
+		"name":   name,
+		"status": "stub",
+		"note":   "not yet implemented — this is a placeholder response",
 	}))
 }
 
@@ -76,10 +78,12 @@ func (t *MCPRemoveTool) Execute(_ context.Context, args map[string]any) *tools.T
 		return tools.ErrorResult(errorJSON("CONFIRMATION_REQUIRED",
 			"confirm must be true to remove an MCP server", ""))
 	}
+	slog.Info("sysagent: stub tool invoked", "tool", "system.mcp.remove", "name", name)
 	return tools.NewToolResult(successJSON(map[string]any{
-		"name":             name,
-		"removed":          true,
-		"agents_affected":  []string{},
+		"name":            name,
+		"status":          "stub",
+		"agents_affected": []string{},
+		"note":            "not yet implemented — this is a placeholder response",
 	}))
 }
 
@@ -96,5 +100,10 @@ func (t *MCPListTool) Parameters() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{}}
 }
 func (t *MCPListTool) Execute(_ context.Context, _ map[string]any) *tools.ToolResult {
-	return tools.NewToolResult(successJSON(map[string]any{"servers": []any{}}))
+	slog.Info("sysagent: stub tool invoked", "tool", "system.mcp.list")
+	return tools.NewToolResult(successJSON(map[string]any{
+		"servers": []any{},
+		"status":  "stub",
+		"note":    "not yet implemented — this is a placeholder response",
+	}))
 }

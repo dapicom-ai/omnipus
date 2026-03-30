@@ -12,13 +12,13 @@ export function SessionPanel() {
   const { activeSessionId, activeAgentId, setActiveSession } = useChatStore()
   const queryClient = useQueryClient()
 
-  const { data: agents = [] } = useQuery({
+  const { data: agents = [], isError: agentsError } = useQuery({
     queryKey: ['agents'],
     queryFn: fetchAgents,
     enabled: sessionPanelOpen,
   })
 
-  const { data: sessions = [] } = useQuery({
+  const { data: sessions = [], isError: sessionsError } = useQuery({
     queryKey: ['sessions'],
     queryFn: () => fetchSessions(),
     enabled: sessionPanelOpen,
@@ -55,6 +55,11 @@ export function SessionPanel() {
         </SheetHeader>
 
         <div className="flex-1 overflow-y-auto">
+          {(agentsError || sessionsError) && (
+            <div className="px-4 py-3 text-xs text-[var(--color-error)]">
+              Could not load sessions.
+            </div>
+          )}
           <Accordion type="multiple" defaultValue={activeAgentId ? [activeAgentId] : []}>
             {agents
               .filter((a) => a.type !== 'system')

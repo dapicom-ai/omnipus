@@ -77,7 +77,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   activeSessionId: null,
   activeAgentId: null,
   setActiveSession: (sessionId, agentId) =>
-    set({ activeSessionId: sessionId, activeAgentId: agentId ?? get().activeAgentId }),
+    set({
+      activeSessionId: sessionId,
+      activeAgentId: agentId ?? get().activeAgentId,
+      // Clear session-scoped state on switch to prevent stale data bleeding across sessions
+      toolCalls: {},
+      pendingApprovals: [],
+      sessionTokens: 0,
+      sessionCost: 0,
+      isStreaming: false,
+    }),
 
   messages: [],
   isStreaming: false,
@@ -93,7 +102,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       if (lastIdx === -1) {
         // Token arrived before placeholder — create it now
         const placeholder: ChatMessage = {
-          id: `assistant-${Date.now()}`,
+          id: crypto.randomUUID(),
           role: 'assistant',
           content: '',
           timestamp: new Date().toISOString(),
@@ -138,26 +147,32 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     })),
 
   resolveToolCall: (callId, result, status, durationMs, error) =>
-    set((state) => ({
-      toolCalls: {
-        ...state.toolCalls,
-        [callId]: {
-          ...state.toolCalls[callId],
-          result,
-          status,
-          duration_ms: durationMs,
-          error,
+    set((state) => {
+      if (!state.toolCalls[callId]) return state
+      return {
+        toolCalls: {
+          ...state.toolCalls,
+          [callId]: {
+            ...state.toolCalls[callId],
+            result,
+            status,
+            duration_ms: durationMs,
+            error,
+          },
         },
-      },
-    })),
+      }
+    }),
 
   cancelToolCall: (callId) =>
-    set((state) => ({
-      toolCalls: {
-        ...state.toolCalls,
-        [callId]: { ...state.toolCalls[callId], status: 'cancelled' },
-      },
-    })),
+    set((state) => {
+      if (!state.toolCalls[callId]) return state
+      return {
+        toolCalls: {
+          ...state.toolCalls,
+          [callId]: { ...state.toolCalls[callId], status: 'cancelled' },
+        },
+      }
+    }),
 
   pendingApprovals: [],
   addApprovalRequest: (req) =>
@@ -184,7 +199,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     if (!connection || isStreaming) return
 
     const userMsg: ChatMessage = {
-      id: `user-${Date.now()}`,
+      id: crypto.randomUUID(),
       session_id: activeSessionId ?? '',
       role: 'user',
       content,
@@ -192,15 +207,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       status: 'done',
     }
 
-    // Optimistic: add user message immediately
-    set((state) => ({
-      messages: [...state.messages, userMsg],
-      isStreaming: true,
-    }))
-
-    // Add streaming assistant placeholder
+    // Streaming assistant placeholder — created alongside user message
     const assistantMsg: ChatMessage = {
-      id: `assistant-${Date.now()}`,
+      id: crypto.randomUUID(),
       session_id: activeSessionId ?? '',
       role: 'assistant',
       content: '',
@@ -209,7 +218,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       isStreaming: true,
       streamCursor: true,
     }
-    set((state) => ({ messages: [...state.messages, assistantMsg] }))
+
+    // Optimistic: add both messages + set isStreaming in ONE update to avoid race
+    set((state) => ({
+      messages: [...state.messages, userMsg, assistantMsg],
+      isStreaming: true,
+    }))
 
     const sent = connection.send({
       type: 'message',
@@ -231,7 +245,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const { connection, activeSessionId, isStreaming } = get()
     if (!connection || !isStreaming) return
 
-    connection.send({ type: 'cancel', session_id: activeSessionId ?? '' })
+    const sent = connection.send({ type: 'cancel', session_id: activeSessionId ?? '' })
+    if (!sent) {
+      console.warn('[chat] cancelStream: send failed — connection may be closed')
+    }
     get().markLastMessageInterrupted()
 
     // Cancel any running tool calls

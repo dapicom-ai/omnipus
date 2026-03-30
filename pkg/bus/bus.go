@@ -38,6 +38,7 @@ type MessageBus struct {
 	closeOnce      sync.Once
 	done           chan struct{}
 	closed         atomic.Bool
+	publishMu      sync.Mutex  // guards closed+wg.Add to prevent TOCTOU race with Close()
 	wg             sync.WaitGroup
 	streamDelegate atomic.Pointer[StreamDelegate] // type-safe; avoids atomic.Value mixed-type panic
 }
@@ -52,21 +53,17 @@ func NewMessageBus() *MessageBus {
 }
 
 func publish[T any](ctx context.Context, mb *MessageBus, ch chan T, msg T) error {
-	// check bus closed before acquiring wg, to avoid unnecessary wg.Add and potential deadlock
+	// Atomically check closed and increment wg under publishMu to prevent a
+	// TOCTOU race with Close(): without the lock, Close() could call wg.Wait()
+	// and close the channels between our closed check and wg.Add(1), causing a
+	// panic when we subsequently try to send to the closed channel.
+	mb.publishMu.Lock()
 	if mb.closed.Load() {
+		mb.publishMu.Unlock()
 		return ErrBusClosed
 	}
-
-	// check again,before sending message, to avoid sending to closed channel
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-mb.done:
-		return ErrBusClosed
-	default:
-	}
-
 	mb.wg.Add(1)
+	mb.publishMu.Unlock()
 	defer mb.wg.Done()
 
 	select {
@@ -118,12 +115,12 @@ func (mb *MessageBus) GetStreamer(ctx context.Context, channel, chatID string) (
 
 func (mb *MessageBus) Close() {
 	mb.closeOnce.Do(func() {
-		// notify all blocked publishers to exit
+		// Hold publishMu while setting done+closed so no new publisher can slip
+		// between the closed check and wg.Add(1) after we start wg.Wait().
+		mb.publishMu.Lock()
 		close(mb.done)
-
-		// because every publisher will check mb.closed before acquiring wg
-		// so we can be sure that new publishers will not be added new messages after this point
 		mb.closed.Store(true)
+		mb.publishMu.Unlock()
 
 		// wait for all ongoing Publish calls to finish, ensuring all messages have been sent to channels or exited
 		mb.wg.Wait()

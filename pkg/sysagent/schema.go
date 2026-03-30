@@ -5,6 +5,8 @@
 package sysagent
 
 import (
+	"sort"
+
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 )
 
@@ -43,6 +45,7 @@ func extractParamNames(params map[string]any) []string {
 	for name := range props {
 		names = append(names, name)
 	}
+	sort.Strings(names)
 	return names
 }
 

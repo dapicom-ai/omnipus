@@ -42,22 +42,23 @@ export const useSidebarStore = create<SidebarStore>()(
           try {
             const value = localStorage.getItem(name)
             return value ? JSON.parse(value) : null
-          } catch {
+          } catch (err) {
+            console.warn('[sidebar] localStorage read failed:', err)
             return null
           }
         },
         setItem: (name, value) => {
           try {
             localStorage.setItem(name, JSON.stringify(value))
-          } catch {
-            // localStorage unavailable — silent fail, no persistence
+          } catch (err) {
+            console.warn('[sidebar] localStorage write failed:', err)
           }
         },
         removeItem: (name) => {
           try {
             localStorage.removeItem(name)
-          } catch {
-            // silent fail
+          } catch (err) {
+            console.warn('[sidebar] localStorage remove failed:', err)
           }
         },
       },

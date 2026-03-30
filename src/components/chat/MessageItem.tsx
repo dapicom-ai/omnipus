@@ -2,7 +2,6 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { User, Robot } from '@phosphor-icons/react'
 import { ToolCallBadge } from './ToolCallBadge'
-import { ExecApprovalBlock } from './ExecApprovalBlock'
 import type { ChatMessage } from '@/store/chat'
 import { useChatStore } from '@/store/chat'
 import { cn } from '@/lib/utils'
@@ -11,6 +10,7 @@ interface MessageItemProps {
   message: ChatMessage
 }
 
+// Wraps in try/catch because Date parsing can fail on malformed ISO strings
 function formatTimestamp(ts: string): string {
   try {
     return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -26,7 +26,7 @@ function formatCost(cost?: number): string {
 }
 
 export function MessageItem({ message }: MessageItemProps) {
-  const { toolCalls, pendingApprovals } = useChatStore()
+  const { toolCalls } = useChatStore()
   const isUser = message.role === 'user'
   const isSystem = message.role === 'system'
 
@@ -42,11 +42,6 @@ export function MessageItem({ message }: MessageItemProps) {
 
   // Find tool calls that belong to this message
   const messageToolCalls = message.tool_calls?.map((tc) => toolCalls[tc.id]).filter(Boolean) ?? []
-
-  // Find pending exec approvals (show inline in assistant messages)
-  const relevantApprovals = !isUser
-    ? pendingApprovals.filter((a) => a.status === 'pending')
-    : []
 
   return (
     <div className={cn('group flex gap-3 px-4 py-3', isUser && 'flex-row-reverse')}>
@@ -136,15 +131,6 @@ export function MessageItem({ message }: MessageItemProps) {
           <div className="w-full space-y-1">
             {messageToolCalls.map((tc) => (
               <ToolCallBadge key={tc.call_id} toolCall={tc} />
-            ))}
-          </div>
-        )}
-
-        {/* Exec approval blocks */}
-        {relevantApprovals.length > 0 && (
-          <div className="w-full space-y-2">
-            {relevantApprovals.map((approval) => (
-              <ExecApprovalBlock key={approval.id} approval={approval} />
             ))}
           </div>
         )}

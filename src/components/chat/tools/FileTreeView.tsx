@@ -21,7 +21,12 @@ interface TreeEntry {
   indent: number
 }
 
-/** Parse a text directory listing (ls -style or tree-style) into entries */
+/**
+ * Parses a text directory listing (ls-style or tree-style) into structured entries.
+ * Handles leading whitespace/tree chars (│, ├, └, ─) to infer indent depth.
+ * Directories are identified by a trailing "/" or "\".
+ * Capped at 200 entries to prevent runaway rendering on huge directories.
+ */
 function parseTree(text: string): TreeEntry[] {
   const lines = text.split('\n').filter((l) => l.trim() !== '')
   const entries: TreeEntry[] = []

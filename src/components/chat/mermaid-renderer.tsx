@@ -2,12 +2,15 @@
 // Dark-themed: transparent background, Liquid Silver text, Forge Gold lines.
 
 import { useEffect, useRef, useState, memo } from 'react'
+import DOMPurify from 'dompurify'
 
 interface MermaidDiagramProps {
   code: string
 }
 
-// Module-level flag to avoid re-initialising mermaid on every render
+// Module-level flag to avoid re-initialising mermaid on every render.
+// NOTE: This flag persists across HMR reloads in development — if you need to
+// re-initialise after a hot reload, reset it manually in the browser console.
 let initialized = false
 
 async function getMermaid() {
@@ -84,8 +87,10 @@ function MermaidDiagramImpl({ code }: MermaidDiagramProps) {
   return (
     <div
       className="my-3 flex justify-center overflow-x-auto rounded-lg bg-[var(--color-surface-2)] border border-[var(--color-border)] p-4"
-      // Mermaid generates sanitized SVG — safe to inject
-      dangerouslySetInnerHTML={{ __html: svg }}
+      // Sanitize SVG before injection to prevent XSS via crafted mermaid code
+      dangerouslySetInnerHTML={{
+        __html: DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true }, ADD_TAGS: ['foreignObject'] }),
+      }}
     />
   )
 }

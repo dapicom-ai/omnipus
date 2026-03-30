@@ -27,12 +27,16 @@ export function SessionBar() {
   const { activeAgentId, setActiveSession, sessionTokens, sessionCost, isStreaming } = useChatStore()
   const { openSessionPanel } = useUiStore()
 
-  const { data: agents = [] } = useQuery({
+  const { data: agents = [], isError: agentsError } = useQuery({
     queryKey: ['agents'],
     queryFn: fetchAgents,
   })
 
   // Auto-select first agent if none is active
+  if (agentsError) {
+    return <span className="text-xs text-[var(--color-error)] px-2">Could not load agents</span>
+  }
+
   const effectiveAgentId = activeAgentId || agents[0]?.id
   const activeAgent = agents.find((a) => a.id === effectiveAgentId)
   const chatAgents = agents.length <= 1 ? agents : agents.filter((a) => a.type !== 'system')

@@ -7,6 +7,7 @@ package systools
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"os"
 	"regexp"
@@ -82,9 +83,9 @@ func (t *AgentCreateTool) Execute(_ context.Context, args map[string]any) *tools
 	if err := t.deps.SaveConfig(); err != nil {
 		return tools.ErrorResult(errorJSON("SAVE_FAILED", "Failed to save config: "+err.Error(), "Check disk space and permissions"))
 	}
-	// Create agent workspace directory.
+	// Create agent workspace directory (non-fatal: config entry persisted above).
 	if err := datamodel.InitAgentWorkspace(t.deps.Home, id); err != nil {
-		// Non-fatal: agent is created in config, workspace can be re-created.
+		slog.Warn("sysagent: could not create agent workspace", "id", id, "error", err)
 	}
 	return tools.NewToolResult(successJSON(map[string]any{
 		"id":     id,
@@ -291,7 +292,12 @@ func (t *AgentActivateTool) Execute(_ context.Context, args map[string]any) *too
 	}
 	for _, a := range t.deps.Cfg.Agents.List {
 		if a.ID == id {
-			return tools.NewToolResult(successJSON(map[string]any{"id": id, "status": "active"}))
+			slog.Info("sysagent: stub tool invoked", "tool", "system.agent.activate", "id", id)
+			return tools.NewToolResult(successJSON(map[string]any{
+				"id":     id,
+				"status": "stub",
+				"note":   "not yet implemented — agent state is not persisted",
+			}))
 		}
 	}
 	return tools.ErrorResult(errorJSON("AGENT_NOT_FOUND",
@@ -325,7 +331,12 @@ func (t *AgentDeactivateTool) Execute(_ context.Context, args map[string]any) *t
 	}
 	for _, a := range t.deps.Cfg.Agents.List {
 		if a.ID == id {
-			return tools.NewToolResult(successJSON(map[string]any{"id": id, "status": "inactive"}))
+			slog.Info("sysagent: stub tool invoked", "tool", "system.agent.deactivate", "id", id)
+			return tools.NewToolResult(successJSON(map[string]any{
+				"id":     id,
+				"status": "stub",
+				"note":   "not yet implemented — agent state is not persisted",
+			}))
 		}
 	}
 	return tools.ErrorResult(errorJSON("AGENT_NOT_FOUND",

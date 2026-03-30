@@ -3,7 +3,7 @@ import { Circle, Robot, Hash, CurrencyDollar } from '@phosphor-icons/react'
 import { fetchGatewayStatus } from '@/lib/api'
 
 export function StatusBar() {
-  const { data: status } = useQuery({
+  const { data: status, isError } = useQuery({
     queryKey: ['gateway-status'],
     queryFn: fetchGatewayStatus,
     refetchInterval: 15_000,
@@ -19,7 +19,7 @@ export function StatusBar() {
           className={status?.online ? 'text-[var(--color-success)]' : 'text-[var(--color-error)]'}
         />
         <span className="text-[var(--color-secondary)]">
-          Gateway {status?.online ? 'online' : 'offline'}
+          {isError ? 'Gateway unreachable' : `Gateway ${status?.online ? 'online' : 'offline'}`}
         </span>
       </div>
 

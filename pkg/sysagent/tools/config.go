@@ -87,11 +87,17 @@ func (t *ConfigSetTool) Execute(_ context.Context, args map[string]any) *tools.T
 		return tools.ErrorResult(errorJSON("INVALID_INPUT", "value is required", ""))
 	}
 	lower := strings.ToLower(key)
-	if strings.Contains(lower, "api_key") || strings.Contains(lower, "secret") {
+	if strings.Contains(lower, "api_key") || strings.Contains(lower, "secret") ||
+		strings.Contains(lower, "token") || strings.Contains(lower, "password") {
 		return tools.ErrorResult(errorJSON("FORBIDDEN",
 			"Use system.provider.configure to set API keys",
 			"Credentials are stored encrypted in credentials.json, not config.json",
 		))
+	}
+	// Validate that the key refers to a known config path to prevent arbitrary injection.
+	if err := validateConfigKey(key); err != nil {
+		return tools.ErrorResult(errorJSON("INVALID_KEY", err.Error(),
+			"Use system.config.get to inspect available config keys"))
 	}
 	prevValue, _ := dotGet(t.deps.Cfg, key)
 	requiresRestart := isRestartRequired(key)
@@ -109,6 +115,23 @@ func (t *ConfigSetTool) Execute(_ context.Context, args map[string]any) *tools.T
 		"previous_value":   prevValue,
 		"requires_restart": requiresRestart,
 	}))
+}
+
+// knownConfigPrefixes are the top-level config sections that can be set at runtime.
+// Keys outside this set are rejected by system.config.set to avoid corrupting the config.
+var knownConfigPrefixes = []string{
+	"gateway.", "agents.", "sandbox.", "security.", "channels.", "tools.",
+	"heartbeat.", "devices.", "model_list", "workspace_path",
+}
+
+// validateConfigKey returns an error if key does not start with a known config prefix.
+func validateConfigKey(key string) error {
+	for _, prefix := range knownConfigPrefixes {
+		if strings.HasPrefix(key, prefix) || key == strings.TrimSuffix(prefix, ".") {
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown config key %q — only known sections may be set via this tool", key)
 }
 
 // isRestartRequired returns true for config keys that require a restart.

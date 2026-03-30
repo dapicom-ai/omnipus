@@ -185,6 +185,8 @@ interface SlashCommand {
   description: string
 }
 
+// Built-in slash commands. Extensibility: agents can register custom commands
+// by sending a "commands" frame over the WebSocket, keyed by agent_id.
 const SLASH_COMMANDS: SlashCommand[] = [
   { label: '/session new', description: 'Start a new session' },
   { label: '/clear', description: 'Clear all messages' },
@@ -236,7 +238,7 @@ function OmnipusComposer() {
 
     if (cmd === '/help') {
       appendMessage({
-        id: `system-help-${Date.now()}`,
+        id: crypto.randomUUID(),
         role: 'system',
         content: HELP_TEXT,
         timestamp: new Date().toISOString(),

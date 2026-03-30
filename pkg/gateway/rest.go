@@ -73,13 +73,16 @@ func isAllowedOrigin(reqOrigin, host, configuredOrigin string) bool {
 		return false
 	}
 	hostname := parsed.Hostname()
-	// Same-origin: request Origin hostname matches the Host header.
+	originPort := parsed.Port()
+	// Same-origin: request Origin hostname AND port must match the Host header.
 	if host != "" {
 		hostOnly := host
-		if h, _, err := net.SplitHostPort(host); err == nil {
+		hostPort := ""
+		if h, p, err := net.SplitHostPort(host); err == nil {
 			hostOnly = h
+			hostPort = p
 		}
-		if hostname == hostOnly {
+		if hostname == hostOnly && originPort == hostPort {
 			return true
 		}
 	}
@@ -437,6 +440,13 @@ func redactSensitiveFields(m map[string]any) {
 		if sub, ok := v.(map[string]any); ok {
 			redactSensitiveFields(sub)
 		}
+		if arr, ok := v.([]any); ok {
+			for _, elem := range arr {
+				if subMap, ok := elem.(map[string]any); ok {
+					redactSensitiveFields(subMap)
+				}
+			}
+		}
 	}
 }
 
@@ -696,6 +706,17 @@ func (a *restAPI) HandleState(w http.ResponseWriter, r *http.Request) {
 		}
 		jsonOK(w, resp)
 	case http.MethodPatch:
+		var body struct {
+			OnboardingComplete *bool `json:"onboarding_complete"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			jsonErr(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		if body.OnboardingComplete == nil || !*body.OnboardingComplete {
+			jsonErr(w, http.StatusBadRequest, "onboarding_complete must be true")
+			return
+		}
 		if a.onboardingMgr != nil {
 			if err := a.onboardingMgr.CompleteOnboarding(); err != nil {
 				slog.Error("rest: could not persist onboarding completion", "error", err)
@@ -810,7 +831,23 @@ func (a *restAPI) listTasks(w http.ResponseWriter) {
 	jsonOK(w, tasks)
 }
 
+// validateEntityID rejects IDs that contain path separators, "..", or null bytes
+// to prevent path traversal attacks.
+func validateEntityID(id string) error {
+	if id == "" {
+		return fmt.Errorf("id must not be empty")
+	}
+	if strings.ContainsAny(id, "/\\") || strings.Contains(id, "..") || strings.ContainsRune(id, 0) {
+		return fmt.Errorf("invalid id")
+	}
+	return nil
+}
+
 func (a *restAPI) getTask(w http.ResponseWriter, id string) {
+	if err := validateEntityID(id); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid task ID")
+		return
+	}
 	data, err := os.ReadFile(filepath.Join(a.tasksDir(), id+".json"))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -871,6 +908,10 @@ func (a *restAPI) createTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *restAPI) updateTask(w http.ResponseWriter, r *http.Request, id string) {
+	if err := validateEntityID(id); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid task ID")
+		return
+	}
 	taskPath := filepath.Join(a.tasksDir(), id+".json")
 	existing, err := os.ReadFile(taskPath)
 	if err != nil {
@@ -1103,7 +1144,7 @@ func (a *restAPI) HandleStorageStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Walk the home directory for workspace size.
-	homeDir := os.ExpandEnv("$HOME/.omnipus")
+	homeDir := a.homePath
 	_ = filepath.Walk(homeDir, func(_ string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return nil

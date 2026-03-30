@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeft, Robot, FloppyDisk } from '@phosphor-icons/react'
 import { useNavigate } from '@tanstack/react-router'
@@ -13,10 +13,11 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
-import { fetchAgent, updateAgent } from '@/lib/api'
+import { fetchAgent, updateAgent, fetchProviders } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 
-const AVAILABLE_MODELS = [
+// Fallback model list when no providers are connected
+const FALLBACK_MODELS = [
   'claude-opus-4-6',
   'claude-sonnet-4-6',
   'claude-haiku-4-5-20251001',
@@ -39,16 +40,26 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     queryFn: () => fetchAgent(agentId),
   })
 
+  const { data: providers = [] } = useQuery({
+    queryKey: ['providers'],
+    queryFn: fetchProviders,
+  })
+
+  // Collect models from connected providers; fall back to static list
+  const availableModels = (() => {
+    const connected = providers.filter((p) => p.status === 'connected').flatMap((p) => p.models ?? [])
+    return connected.length > 0 ? connected : FALLBACK_MODELS
+  })()
+
   const [model, setModel] = useState('')
   const [useGlobalRateLimits, setUseGlobalRateLimits] = useState(true)
 
-  // Initialize local state when data loads
-  const [initialized, setInitialized] = useState(false)
-  if (agent && !initialized) {
+  // Initialize local state when agent data loads
+  useEffect(() => {
+    if (!agent) return
     setModel(agent.model ?? '')
     setUseGlobalRateLimits(agent.rate_limits?.use_global_defaults ?? true)
-    setInitialized(true)
-  }
+  }, [agent])
 
   const { mutate: doUpdate, isPending: isSaving } = useMutation({
     mutationFn: (data: Parameters<typeof updateAgent>[1]) => updateAgent(agentId, data),
@@ -143,7 +154,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="__default__">Provider default</SelectItem>
-            {AVAILABLE_MODELS.map((m) => (
+            {availableModels.map((m) => (
               <SelectItem key={m} value={m}>{m}</SelectItem>
             ))}
           </SelectContent>

@@ -48,9 +48,10 @@ type SSEHandler struct {
 }
 
 type sseSession struct {
-	ch        chan string // token chunks
-	doneCh    chan struct{}
-	closeOnce sync.Once
+	ch          chan string    // token chunks
+	doneCh      chan struct{}
+	closeOnce   sync.Once // guards close(doneCh)
+	chCloseOnce sync.Once // guards close(ch)
 }
 
 func newSSEHandler(msgBus *bus.MessageBus, ps *session.PartitionStore, allowedOrigin string) *SSEHandler {
@@ -270,10 +271,18 @@ func (s *sseStreamer) Update(_ context.Context, content string) error {
 }
 
 func (s *sseStreamer) Finalize(_ context.Context, _ string) error {
-	close(s.sess.ch)
+	s.sess.chCloseOnce.Do(func() { close(s.sess.ch) })
 	return nil
 }
 
 func (s *sseStreamer) Cancel(_ context.Context) {
 	s.sess.closeOnce.Do(func() { close(s.sess.doneCh) })
+	// Drain any buffered tokens so goroutines blocked on ch send can unblock.
+	for {
+		select {
+		case <-s.sess.ch:
+		default:
+			return
+		}
+	}
 }

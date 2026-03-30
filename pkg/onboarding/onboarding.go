@@ -119,7 +119,17 @@ func (m *Manager) load() error {
 		LastDoctorScore *int       `json:"last_doctor_score,omitempty"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return fmt.Errorf("onboarding: parse %s: %w", m.statePath, err)
+		// Back up the corrupt file so the user can recover it manually, then
+		// reset to fresh-install state rather than blocking startup.
+		backupPath := m.statePath + ".corrupt." + time.Now().UTC().Format("20060102T150405Z")
+		if berr := os.Rename(m.statePath, backupPath); berr != nil {
+			slog.Warn("onboarding: could not back up corrupt state.json", "path", m.statePath, "error", berr)
+		} else {
+			slog.Warn("onboarding: state.json was corrupt — backed up and reset to fresh install",
+				"backup", backupPath, "parse_error", err)
+		}
+		m.state = State{Version: 1, CreatedAt: time.Now().UTC()}
+		return nil
 	}
 	complete := raw.OnboardingComplete
 	if raw.Onboarding != nil {

@@ -14,7 +14,7 @@ interface ChatThreadProps {
 export function ChatThread({ sessionId }: ChatThreadProps) {
   const { messages, setMessages } = useChatStore()
 
-  const { data: historyData } = useQuery({
+  const { data: historyData, isError } = useQuery({
     queryKey: ['messages', sessionId],
     queryFn: () => fetchSessionMessages(sessionId!),
     enabled: !!sessionId,
@@ -23,6 +23,14 @@ export function ChatThread({ sessionId }: ChatThreadProps) {
   useEffect(() => {
     if (historyData) setMessages(historyData)
   }, [historyData, setMessages])
+
+  if (isError) {
+    return (
+      <div className="flex justify-center py-4 text-sm text-[var(--color-error)]">
+        Could not load messages.
+      </div>
+    )
+  }
 
   return (
     <div role="log" aria-label="Chat messages">

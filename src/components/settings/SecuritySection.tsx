@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { FloppyDisk } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
@@ -36,14 +36,13 @@ export function SecuritySection() {
   const [injectionLevel, setInjectionLevel] = useState<'off' | 'low' | 'medium' | 'high'>('medium')
   const [dailyCostCap, setDailyCostCap] = useState('')
 
-  const [initialized, setInitialized] = useState(false)
-  if (config && !initialized) {
+  useEffect(() => {
+    if (!config) return
     setPolicyMode(config.security.policy_mode)
     setExecApproval(config.security.exec_approval)
     setInjectionLevel(config.security.prompt_injection_level)
     setDailyCostCap(config.security.daily_cost_cap?.toString() ?? '')
-    setInitialized(true)
-  }
+  }, [config])
 
   const { mutate: doSave, isPending: isSaving } = useMutation({
     mutationFn: () =>

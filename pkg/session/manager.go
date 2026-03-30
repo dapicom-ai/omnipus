@@ -34,8 +34,12 @@ func NewSessionManager(storage string) *SessionManager {
 	}
 
 	if storage != "" {
-		os.MkdirAll(storage, 0o700)
-		sm.loadSessions()
+		if err := os.MkdirAll(storage, 0o700); err != nil {
+			slog.Warn("session: could not create storage directory", "path", storage, "error", err)
+		}
+		if err := sm.loadSessions(); err != nil {
+			slog.Warn("session: could not load sessions from disk", "path", storage, "error", err)
+		}
 	}
 
 	return sm
