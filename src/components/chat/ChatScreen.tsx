@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import {
   ThreadPrimitive,
   MessagePrimitive,
+  MessagePartPrimitive,
   ComposerPrimitive,
   ActionBarPrimitive,
   AuiIf,
@@ -100,6 +101,18 @@ function ThinkingIndicator() {
   )
 }
 
+// Custom text renderer with streaming cursor (MessagePartPrimitive.InProgress)
+function AssistantTextPart() {
+  return (
+    <div>
+      <MarkdownText />
+      <MessagePartPrimitive.InProgress>
+        <span className="inline-block w-1.5 h-4 bg-[var(--color-accent)] ml-0.5 animate-pulse align-text-bottom" />
+      </MessagePartPrimitive.InProgress>
+    </div>
+  )
+}
+
 function AssistantMessage() {
   const storeToolCalls = useChatStore((s) => s.toolCalls)
 
@@ -110,22 +123,10 @@ function AssistantMessage() {
       </div>
       <div className="flex flex-col gap-1 max-w-[85%] min-w-0 flex-1">
         <div className="text-sm leading-relaxed text-[var(--color-secondary)]">
-          {/* Show thinking indicator when message is running and has no content yet */}
-          <AuiIf condition={(s) => s.message.isRunning}>
-            <AuiIf condition={(s) => {
-              const parts = s.message.content
-              const hasText = parts?.some((p: { type: string; text?: string }) => p.type === 'text' && p.text && p.text.length > 0)
-              return !hasText
-            }}>
-              <ThinkingIndicator />
-            </AuiIf>
-          </AuiIf>
-
           <MessagePrimitive.Parts>
             {({ part }) => {
               if (part.type === 'text') {
-                if (part.text === '') return null  // Handled by ThinkingIndicator above
-                return <MarkdownText />
+                return <AssistantTextPart />
               }
 
               if (part.type === 'tool-call') {
@@ -483,6 +484,16 @@ export function ChatScreen() {
                   return <AssistantMessage />
                 }}
               </ThreadPrimitive.Messages>
+
+              {/* Thinking indicator — shown while thread is running (before first token) */}
+              <AuiIf condition={(s) => s.thread.isRunning}>
+                <div className="flex gap-3 px-4 py-3">
+                  <div className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center bg-[var(--color-surface-3)] text-[var(--color-secondary)]">
+                    <Robot size={14} weight="bold" />
+                  </div>
+                  <ThinkingIndicator />
+                </div>
+              </AuiIf>
             </div>
           </ThreadPrimitive.Viewport>
 
