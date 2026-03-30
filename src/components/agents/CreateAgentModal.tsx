@@ -25,8 +25,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { useQuery } from '@tanstack/react-query'
 import { useUiStore } from '@/store/ui'
-import { createAgent } from '@/lib/api'
+import { createAgent, fetchProviders } from '@/lib/api'
 import type { Agent } from '@/lib/api'
 import { AVATAR_COLORS } from '@/lib/constants'
 
@@ -49,7 +50,8 @@ function getIconComponent(name: IconName) {
   return ICON_OPTIONS.find((o) => o.name === name)?.component ?? Robot
 }
 
-const AVAILABLE_MODELS = [
+// Fallback model list when no providers are connected
+const FALLBACK_MODELS = [
   'claude-opus-4-6',
   'claude-sonnet-4-6',
   'claude-haiku-4-5-20251001',
@@ -73,6 +75,14 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
 
   const isOpen = openProp !== undefined ? openProp : createAgentModalOpen
   const handleClose = onCloseProp ?? closeCreateAgentModal
+
+  const { data: providers = [] } = useQuery({
+    queryKey: ['providers'],
+    queryFn: fetchProviders,
+    enabled: isOpen,
+  })
+  const connectedModels = providers.filter((p) => p.status === 'connected').flatMap((p) => p.models ?? [])
+  const availableModels = connectedModels.length > 0 ? connectedModels : FALLBACK_MODELS
 
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')

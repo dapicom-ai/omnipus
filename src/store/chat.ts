@@ -198,7 +198,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   sendMessage: (content) => {
     const { connection, activeSessionId, activeAgentId, isStreaming } = get()
-    if (!connection || isStreaming) return
+    if (isStreaming) return // Already streaming — input is disabled in UI
+    if (!connection) {
+      set({ connectionError: 'Cannot send message — not connected to the server. Check your connection and try again.' })
+      return
+    }
 
     const userMsg: ChatMessage = {
       id: generateId(),
@@ -274,9 +278,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   respondToApproval: (id, decision) => {
     const { connection } = get()
-    if (!connection) return
+    if (!connection) {
+      set({ connectionError: 'Cannot respond to approval — not connected. Reconnect and try again.' })
+      return
+    }
 
-    connection.send({ type: 'exec_approval_response', id, decision })
+    const sent = connection.send({ type: 'exec_approval_response', id, decision })
+    if (!sent) {
+      set({ connectionError: 'Failed to send approval response — connection dropped. Reconnect and try again.' })
+      return
+    }
     const statusMap = { allow: 'allowed', deny: 'denied', always: 'always_allowed' } as const
     get().resolveApproval(id, statusMap[decision])
   },

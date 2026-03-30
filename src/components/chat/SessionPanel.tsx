@@ -35,8 +35,11 @@ export function SessionPanel() {
       await queryClient.invalidateQueries({ queryKey: ['sessions'] })
       setActiveSession(session.id, agentId)
       closeSessionPanel()
-    } catch {
-      addToast({ message: 'Could not create session', variant: 'error' })
+    } catch (err) {
+      addToast({
+        message: `Could not create session: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        variant: 'error',
+      })
     }
   }
 

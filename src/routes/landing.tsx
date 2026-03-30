@@ -135,7 +135,7 @@ function LandingPage() {
               GitHub
             </a>
             <a
-              href="https://github.com/dapicom-ai/omnipus"
+              href="https://github.com/omnipus-ai/omnipus"
               target="_blank"
               rel="noopener noreferrer"
               className="hover:text-[var(--color-secondary)] transition-colors"

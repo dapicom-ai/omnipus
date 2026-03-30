@@ -14,7 +14,7 @@ const STATUS_STYLE: Record<string, string> = {
 export function AgentSummarySection() {
   const [open, setOpen] = useState(true)
 
-  const { data: agents = [], isLoading } = useQuery({
+  const { data: agents = [], isLoading, isError: agentsError } = useQuery({
     queryKey: ['agents'],
     queryFn: fetchAgents,
     refetchInterval: 30_000,
@@ -52,7 +52,9 @@ export function AgentSummarySection() {
 
       {open && (
         <div className="pb-2">
-          {isLoading ? (
+          {agentsError ? (
+            <p className="px-4 pb-2 text-xs text-[var(--color-error)]">Could not load agents.</p>
+          ) : isLoading ? (
             <div className="space-y-1 px-4 py-1">
               {[1, 2].map((i) => (
                 <div key={i} className="h-9 rounded bg-[var(--color-surface-1)] animate-pulse" />

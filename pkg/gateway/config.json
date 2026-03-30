@@ -27,6 +27,37 @@
       {
         "id": "7b40cb7c-23fe-4ea1-9b51-80ef2ed2fa67",
         "name": "Scout"
+      },
+      {
+        "id": "7a3e23d1-37a5-4107-809d-2db9917b7586",
+        "name": "Agent X"
+      },
+      {
+        "id": "45e7982b-f4aa-4dd3-a0cb-7c0690b9ee04",
+        "name": "Agent X"
+      },
+      {
+        "id": "fc630db6-6778-4dc1-9efe-aa476f1ea5a1",
+        "name": "Agent X"
+      },
+      {
+        "id": "51900eab-8b66-492c-a9d8-bea618ecbfd7",
+        "name": "Agent X"
+      },
+      {
+        "id": "468ca920-eb71-41ed-bb41-a4893dd3c288",
+        "name": "Agent X"
+      },
+      {
+        "id": "052a75c8-4e25-4359-8298-5dd24ffa6383",
+        "model": {
+          "primary": "claude-sonnet-4-6"
+        },
+        "name": "Scout"
+      },
+      {
+        "id": "7918bbc8-0845-45a3-a8b4-b249ab772fc1",
+        "name": "Scout"
       }
     ]
   },

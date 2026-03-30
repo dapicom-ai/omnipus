@@ -59,7 +59,7 @@ function OnboardingWizard() {
   const { addToast } = useUiStore()
 
   // Fetch provider list from API; fall back to hardcoded defaults if unavailable
-  const { data: apiProviders = [] } = useQuery({
+  const { data: apiProviders = [], isError: providersError } = useQuery({
     queryKey: ['providers'],
     queryFn: fetchProviders,
   })
@@ -67,6 +67,7 @@ function OnboardingWizard() {
   const providers = apiProviders.length > 0
     ? apiProviders.map((p) => ({ id: p.id, display_name: p.display_name ?? p.name ?? p.id }))
     : DEFAULT_PROVIDERS
+  const usingFallbackProviders = providersError || apiProviders.length === 0
 
   const [step, setStep] = useState<Step>(1)
   const [direction, setDirection] = useState(1)
@@ -124,8 +125,11 @@ function OnboardingWizard() {
     try {
       await completeOnboarding()
       navigate({ to: '/' })
-    } catch {
-      addToast({ message: 'Could not save onboarding state', variant: 'error' })
+    } catch (err) {
+      addToast({
+        message: `Could not save onboarding state: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        variant: 'error',
+      })
     } finally {
       setIsSaving(false)
     }
@@ -135,8 +139,11 @@ function OnboardingWizard() {
   const handleSkip = async () => {
     try {
       await completeOnboarding()
-    } catch {
-      addToast({ message: 'Could not save onboarding state', variant: 'error' })
+    } catch (err) {
+      addToast({
+        message: `Could not save onboarding state: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        variant: 'error',
+      })
     }
     navigate({ to: '/' })
   }
@@ -213,6 +220,7 @@ function OnboardingWizard() {
             >
               <ProviderStep
                 providers={providers}
+                usingFallbackProviders={usingFallbackProviders}
                 selectedProvider={selectedProvider}
                 onSelect={handleSelectProvider}
                 apiKey={apiKey}
@@ -355,6 +363,7 @@ function WelcomeStep({
 
 function ProviderStep({
   providers,
+  usingFallbackProviders,
   selectedProvider,
   onSelect,
   apiKey,
@@ -369,6 +378,7 @@ function ProviderStep({
   providerHint,
 }: {
   providers: { id: string; display_name: string }[]
+  usingFallbackProviders: boolean
   selectedProvider: string
   onSelect: (id: string) => void
   apiKey: string
@@ -393,6 +403,17 @@ function ProviderStep({
           Omnipus needs an AI provider to power your agents.
         </p>
       </div>
+
+      {/* Warning when using fallback provider list */}
+      {usingFallbackProviders && (
+        <div
+          className="flex items-start gap-2 p-3 rounded-lg border text-xs"
+          style={{ borderColor: 'var(--color-warning)', color: 'var(--color-warning)', backgroundColor: 'rgba(212,175,55,0.06)' }}
+        >
+          <XCircle size={14} weight="fill" className="shrink-0 mt-0.5" />
+          <span>Could not reach the gateway — showing default provider list. Some providers may not be available.</span>
+        </div>
+      )}
 
       {/* Provider selection grid */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">

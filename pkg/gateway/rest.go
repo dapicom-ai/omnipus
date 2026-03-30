@@ -449,7 +449,6 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusUnprocessableEntity, "name is required")
 		return
 	}
-	cfg := a.agentLoop.GetConfig()
 	ac := config.AgentConfig{
 		ID:   uuid.New().String(),
 		Name: req.Name,
@@ -457,28 +456,32 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 	if req.Model != "" {
 		ac.Model = &config.AgentModelConfig{Primary: req.Model}
 	}
-	cfg.Agents.List = append(cfg.Agents.List, ac)
+	// Persist the new agent to config.json BEFORE mutating the live config.
+	// If persistence fails, the in-memory config stays consistent with disk.
 	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
-		// Re-serialize just the agents/gateway section from the in-memory config
-		raw, err := json.Marshal(cfg)
-		if err != nil {
-			return fmt.Errorf("marshal config: %w", err)
+		agents, _ := m["agents"].(map[string]any)
+		if agents == nil {
+			agents = map[string]any{}
+			m["agents"] = agents
 		}
-		var cfgMap map[string]any
-		if err := json.Unmarshal(raw, &cfgMap); err != nil {
-			return fmt.Errorf("unmarshal config: %w", err)
+		list, _ := agents["list"].([]any)
+		newAgent := map[string]any{
+			"id":   ac.ID,
+			"name": ac.Name,
 		}
-		for k, v := range cfgMap {
-			if k != "model_list" {
-				m[k] = v
-			}
+		if ac.Model != nil {
+			newAgent["model"] = map[string]any{"primary": ac.Model.Primary}
 		}
+		agents["list"] = append(list, newAgent)
 		return nil
 	}); err != nil {
 		slog.Error("rest: save config for new agent", "error", err)
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
 		return
 	}
+	// Persistence succeeded — now safe to update the live config.
+	cfg := a.agentLoop.GetConfig()
+	cfg.Agents.List = append(cfg.Agents.List, ac)
 	model := cfg.Agents.Defaults.ModelName
 	if ac.Model != nil && ac.Model.Primary != "" {
 		model = ac.Model.Primary
@@ -495,14 +498,14 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 
 func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string) {
 	cfg := a.agentLoop.GetConfig()
-	var found *config.AgentConfig
+	var foundIdx int = -1
 	for i := range cfg.Agents.List {
 		if cfg.Agents.List[i].ID == id {
-			found = &cfg.Agents.List[i]
+			foundIdx = i
 			break
 		}
 	}
-	if found == nil {
+	if foundIdx < 0 {
 		jsonErr(w, http.StatusNotFound, fmt.Sprintf("agent %q not found", id))
 		return
 	}
@@ -514,28 +517,43 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
+	// Persist to config.json BEFORE mutating the live config.
+	// Capture the new values to apply after persistence succeeds.
+	newName := cfg.Agents.List[foundIdx].Name
+	newModel := ""
+	if cfg.Agents.List[foundIdx].Model != nil {
+		newModel = cfg.Agents.List[foundIdx].Model.Primary
+	}
 	if req.Name != nil {
-		found.Name = *req.Name
+		newName = *req.Name
 	}
 	if req.Model != nil {
-		if found.Model == nil {
-			found.Model = &config.AgentModelConfig{}
-		}
-		found.Model.Primary = *req.Model
+		newModel = *req.Model
 	}
 	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
-		// Re-serialize just the agents/gateway section from the in-memory config
-		raw, err := json.Marshal(cfg)
-		if err != nil {
-			return fmt.Errorf("marshal config: %w", err)
+		agents, _ := m["agents"].(map[string]any)
+		if agents == nil {
+			return fmt.Errorf("agents section not found in config")
 		}
-		var cfgMap map[string]any
-		if err := json.Unmarshal(raw, &cfgMap); err != nil {
-			return fmt.Errorf("unmarshal config: %w", err)
-		}
-		for k, v := range cfgMap {
-			if k != "model_list" {
-				m[k] = v
+		list, _ := agents["list"].([]any)
+		for _, entry := range list {
+			agentMap, ok := entry.(map[string]any)
+			if !ok {
+				continue
+			}
+			if agentMap["id"] == id {
+				if req.Name != nil {
+					agentMap["name"] = newName
+				}
+				if req.Model != nil {
+					modelMap, _ := agentMap["model"].(map[string]any)
+					if modelMap == nil {
+						modelMap = map[string]any{}
+						agentMap["model"] = modelMap
+					}
+					modelMap["primary"] = newModel
+				}
+				break
 			}
 		}
 		return nil
@@ -543,6 +561,15 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		slog.Error("rest: save config for agent update", "error", err)
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
 		return
+	}
+	// Persistence succeeded — now safe to update the live config.
+	found := &cfg.Agents.List[foundIdx]
+	found.Name = newName
+	if newModel != "" {
+		if found.Model == nil {
+			found.Model = &config.AgentModelConfig{}
+		}
+		found.Model.Primary = newModel
 	}
 	model := cfg.Agents.Defaults.ModelName
 	if found.Model != nil && found.Model.Primary != "" {
@@ -937,29 +964,22 @@ func (a *restAPI) rotateGatewayToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	newToken := hex.EncodeToString(tokenBytes)
-	cfg := a.agentLoop.GetConfig()
-	cfg.Gateway.Token = newToken
+	// Persist to config.json BEFORE updating the live config.
 	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
-		// Re-serialize just the agents/gateway section from the in-memory config
-		raw, err := json.Marshal(cfg)
-		if err != nil {
-			return fmt.Errorf("marshal config: %w", err)
+		gw, _ := m["gateway"].(map[string]any)
+		if gw == nil {
+			gw = map[string]any{}
+			m["gateway"] = gw
 		}
-		var cfgMap map[string]any
-		if err := json.Unmarshal(raw, &cfgMap); err != nil {
-			return fmt.Errorf("unmarshal config: %w", err)
-		}
-		for k, v := range cfgMap {
-			if k != "model_list" {
-				m[k] = v
-			}
-		}
+		gw["token"] = newToken
 		return nil
 	}); err != nil {
 		slog.Error("rest: save config for token rotation", "error", err)
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
 		return
 	}
+	// Persistence succeeded — now safe to update the live config.
+	a.agentLoop.GetConfig().Gateway.Token = newToken
 	jsonOK(w, map[string]string{"token": newToken})
 }
 
@@ -1420,8 +1440,9 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, http.StatusUnprocessableEntity, "api_key is required")
 			return
 		}
+		// Check if the provider exists before persisting.
 		cfg := a.agentLoop.GetConfig()
-		updated := false
+		found := false
 		for _, m := range cfg.ModelList {
 			if m.IsVirtual() {
 				continue
@@ -1431,14 +1452,15 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 				pName = parts[0]
 			}
 			if pName == providerID {
-				m.SetAPIKey(req.APIKey)
-				updated = true
+				found = true
+				break
 			}
 		}
-		if !updated {
+		if !found {
 			jsonErr(w, http.StatusNotFound, fmt.Sprintf("provider %q not found", providerID))
 			return
 		}
+		// Persist to config.json BEFORE updating the live config.
 		if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
 			// Patch the API key directly in the raw model_list JSON
 			modelList, _ := m["model_list"].([]any)
@@ -1461,6 +1483,19 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 			slog.Error("rest: save config for provider update", "error", err)
 			jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
 			return
+		}
+		// Persistence succeeded — now safe to update the live config.
+		for _, m := range cfg.ModelList {
+			if m.IsVirtual() {
+				continue
+			}
+			pName := "default"
+			if parts := strings.SplitN(m.Model, "/", 2); len(parts) == 2 {
+				pName = parts[0]
+			}
+			if pName == providerID {
+				m.SetAPIKey(req.APIKey)
+			}
 		}
 		jsonOK(w, providerResponse{
 			ID:     providerID,

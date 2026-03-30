@@ -34,7 +34,19 @@ export function SessionBar() {
 
   // Auto-select first agent if none is active
   if (agentsError) {
-    return <span className="text-xs text-[var(--color-error)] px-2">Could not load agents</span>
+    return (
+      <div className="flex items-center gap-2 px-2">
+        <span className="text-xs text-[var(--color-error)]">Could not load agents</span>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 px-2 text-[10px]"
+          onClick={() => window.location.reload()}
+        >
+          Retry
+        </Button>
+      </div>
+    )
   }
 
   const effectiveAgentId = activeAgentId || agents[0]?.id

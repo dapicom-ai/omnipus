@@ -87,7 +87,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     queryFn: () => fetchAgent(agentId),
   })
 
-  const { data: providers = [] } = useQuery({
+  const { data: providers = [], isError: providersError } = useQuery({
     queryKey: ['providers'],
     queryFn: fetchProviders,
   })
@@ -107,10 +107,9 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     .filter((e) => e.agent_id === agentId)
     .slice(0, 5)
 
-  const availableModels = (() => {
-    const connected = providers.filter((p) => p.status === 'connected').flatMap((p) => p.models ?? [])
-    return connected.length > 0 ? connected : FALLBACK_MODELS
-  })()
+  const connectedModels = providers.filter((p) => p.status === 'connected').flatMap((p) => p.models ?? [])
+  const usingFallbackModels = connectedModels.length === 0
+  const availableModels = usingFallbackModels ? FALLBACK_MODELS : connectedModels
 
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -337,6 +336,13 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
       {/* Model section */}
       <section className="space-y-3">
         <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)]">Model</h2>
+        {(usingFallbackModels || providersError) && (
+          <p className="text-xs text-[var(--color-warning)]">
+            {providersError
+              ? 'Could not load providers — showing default model list.'
+              : 'No providers connected — showing default model list. Connect a provider in Settings for accurate options.'}
+          </p>
+        )}
         <Select
           value={model || '__default__'}
           onValueChange={(v) => setModel(v === '__default__' ? '' : v)}
@@ -576,7 +582,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
             <Button
               size="sm"
               variant="outline"
-              onClick={() => addToast({ message: 'Saving HEARTBEAT.md requires file system access (coming soon)', variant: 'info' })}
+              onClick={() => addToast({ message: 'Saving HEARTBEAT.md requires file system access (coming soon)', variant: 'default' })}
             >
               Save HEARTBEAT.md
             </Button>

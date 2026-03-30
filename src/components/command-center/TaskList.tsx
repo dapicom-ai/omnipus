@@ -147,7 +147,7 @@ export function TaskList({ statusFilter = 'all', onTaskSelect }: TaskListProps) 
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
-  const { data: allTasks = [], isLoading } = useQuery({
+  const { data: allTasks = [], isLoading, isError: tasksError } = useQuery({
     queryKey: ['tasks'],
     queryFn: fetchTasks,
     refetchInterval: 10_000,
@@ -280,7 +280,12 @@ export function TaskList({ statusFilter = 'all', onTaskSelect }: TaskListProps) 
 
       {/* Content */}
       <div className="flex-1 overflow-auto">
-        {isLoading ? (
+        {tasksError ? (
+          <div className="flex flex-col items-center justify-center py-12 text-center gap-2">
+            <p className="text-sm text-[var(--color-error)]">Could not load tasks.</p>
+            <p className="text-xs text-[var(--color-muted)]">Check your connection and try refreshing.</p>
+          </div>
+        ) : isLoading ? (
           <div className="space-y-1 p-2">
             {[1, 2, 3].map((i) => (
               <div key={i} className="h-12 rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] animate-pulse" />

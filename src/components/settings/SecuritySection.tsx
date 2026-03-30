@@ -63,9 +63,8 @@ export function SecuritySection() {
     setExecApproval(config.security.exec_approval)
     setInjectionLevel(config.security.prompt_injection_level)
     setDailyCostCap(config.security.daily_cost_cap?.toString() ?? '')
-    const rl = config.security.rate_limits as Record<string, unknown>
-    setAgentLlmCallsPerHour((rl?.max_agent_llm_calls_per_hour as number | undefined)?.toString() ?? '')
-    setAgentToolCallsPerMin((rl?.max_agent_tool_calls_per_minute as number | undefined)?.toString() ?? '')
+    setAgentLlmCallsPerHour(config.security.rate_limits.max_agent_llm_calls_per_hour?.toString() ?? '')
+    setAgentToolCallsPerMin(config.security.rate_limits.max_agent_tool_calls_per_minute?.toString() ?? '')
   }, [config])
 
   const { mutate: doSave, isPending: isSaving } = useMutation({

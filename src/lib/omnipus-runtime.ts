@@ -73,7 +73,10 @@ export function useOmnipusRuntime() {
     convertMessage: (msg) => convertMessage(msg, toolCalls),
     onNew: (message: AppendMessage) => {
       const textPart = message.content.find((p) => p.type === "text");
-      if (!textPart || textPart.type !== "text") return;
+      if (!textPart || textPart.type !== "text") {
+        console.warn("[omnipus-runtime] Message received without text content — skipping. Content types:", message.content.map((p) => p.type));
+        return;
+      }
       sendMessage(textPart.text);
     },
     onCancel: cancelStream,

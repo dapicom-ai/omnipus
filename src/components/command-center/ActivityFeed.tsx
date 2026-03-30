@@ -72,7 +72,7 @@ function EventRow({ event }: { event: ActivityEvent }) {
 export function ActivityFeed() {
   const [open, setOpen] = useState(true)
 
-  const { data: events = [], isLoading } = useQuery({
+  const { data: events = [], isLoading, isError: activityError } = useQuery({
     queryKey: ['activity'],
     queryFn: fetchActivity,
     refetchInterval: 30_000,
@@ -103,7 +103,9 @@ export function ActivityFeed() {
 
       {open && (
         <div className="pb-2">
-          {isLoading ? (
+          {activityError ? (
+            <p className="px-4 pb-2 text-xs text-[var(--color-error)]">Could not load activity feed.</p>
+          ) : isLoading ? (
             <div className="space-y-1 px-4 py-1">
               {[1, 2, 3].map((i) => (
                 <div key={i} className="h-8 rounded bg-[var(--color-surface-1)] animate-pulse" />

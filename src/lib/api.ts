@@ -185,6 +185,8 @@ export interface Config {
     rate_limits: {
       max_tokens_per_day?: number
       max_cost_per_day?: number
+      max_agent_llm_calls_per_hour?: number
+      max_agent_tool_calls_per_minute?: number
     }
   }
   data: {

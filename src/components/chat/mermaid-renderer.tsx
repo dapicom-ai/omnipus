@@ -35,7 +35,8 @@ async function getMermaid() {
         },
       })
       initialized = true
-    } catch {
+    } catch (err) {
+      console.error('[mermaid] Initialization failed:', err instanceof Error ? err.message : err)
       initFailed = true
       initialized = true
     }

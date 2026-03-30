@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { FloppyDisk } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -32,6 +32,7 @@ interface ChannelRoute {
 
 export function RoutingSection() {
   const { addToast } = useUiStore()
+  const queryClient = useQueryClient()
   const [isSaving, setIsSaving] = useState(false)
   const [routes, setRoutes] = useState<ChannelRoute[]>([])
 
@@ -73,6 +74,7 @@ export function RoutingSection() {
         }
       }
       await updateConfig({ channels: channelConfig } as Parameters<typeof updateConfig>[0])
+      queryClient.invalidateQueries({ queryKey: ['config'] })
       addToast({ message: 'Routing rules saved', variant: 'success' })
     } catch (err) {
       addToast({

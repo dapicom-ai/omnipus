@@ -430,14 +430,12 @@ function WelcomeState({ hasAgent }: { hasAgent: boolean }) {
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export function ChatScreen() {
-  const {
-    connectionError,
-    activeSessionId,
-    activeAgentId,
-    pendingApprovals,
-    setMessages,
-    reconnect,
-  } = useChatStore()
+  const connectionError = useChatStore((s) => s.connectionError)
+  const activeSessionId = useChatStore((s) => s.activeSessionId)
+  const activeAgentId = useChatStore((s) => s.activeAgentId)
+  const pendingApprovals = useChatStore((s) => s.pendingApprovals)
+  const setMessages = useChatStore((s) => s.setMessages)
+  const reconnect = useChatStore((s) => s.reconnect)
 
   // Load message history when session changes
   const {

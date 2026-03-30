@@ -33,7 +33,9 @@ func (a *restAPI) HandleAuditLog(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	auditPath := filepath.Join(a.homePath, "logs", "audit.jsonl")
+	// Read from system/ directory to match the audit logger's documented path
+	// (~/.omnipus/system/audit.jsonl per audit package).
+	auditPath := filepath.Join(a.homePath, "system", "audit.jsonl")
 	f, err := os.Open(auditPath)
 	if os.IsNotExist(err) {
 		jsonOK(w, []json.RawMessage{})
@@ -359,6 +361,10 @@ func (a *restAPI) HandleRestore(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]string{"status": "restored", "filename": req.Filename})
 }
 
+// maxRestoreFileSize is the maximum size of a single file extracted from a backup.
+// Defense-in-depth against tampered archives with decompression bombs.
+const maxRestoreFileSize = 256 * 1024 * 1024 // 256 MB
+
 // extractTarGz extracts archivePath into destDir, skipping config.json and
 // rejecting any entries with unsafe paths (absolute or traversal).
 func extractTarGz(archivePath, destDir string) error {
@@ -404,10 +410,15 @@ func extractTarGz(archivePath, destDir string) error {
 		if err != nil {
 			return fmt.Errorf("create %q: %w", clean, err)
 		}
-		_, copyErr := io.Copy(out, tr)
+		// Limit extraction size per file to defend against decompression bombs.
+		written, copyErr := io.Copy(out, io.LimitReader(tr, maxRestoreFileSize+1))
 		out.Close()
 		if copyErr != nil {
 			return fmt.Errorf("write %q: %w", clean, copyErr)
+		}
+		if written > maxRestoreFileSize {
+			os.Remove(destPath)
+			return fmt.Errorf("file %q exceeds maximum restore size (%d bytes)", clean, maxRestoreFileSize)
 		}
 	}
 	return nil
