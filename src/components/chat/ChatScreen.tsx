@@ -5,6 +5,7 @@ import {
   ThreadPrimitive,
   MessagePrimitive,
   ComposerPrimitive,
+  ActionBarPrimitive,
   AuiIf,
   useComposerRuntime,
 } from '@assistant-ui/react'
@@ -15,8 +16,7 @@ import {
   PaperPlaneRight,
   Stop,
   Copy,
-  PushPin,
-  ArrowsOut,
+  Check,
   Paperclip,
   Check,
 } from '@phosphor-icons/react'
@@ -71,24 +71,6 @@ function SystemMessage() {
 
 function AssistantMessage() {
   const storeToolCalls = useChatStore((s) => s.toolCalls)
-  const addToast = useUiStore((s) => s.addToast)
-  const contentRef = useRef<HTMLDivElement>(null)
-  const [copied, setCopied] = useState(false)
-
-  const handleCopy = async () => {
-    const text = contentRef.current?.innerText?.trim() || ''
-    if (!text) return
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    } catch {
-      addToast({ message: 'Could not access clipboard', variant: 'error' })
-    }
-  }
-
-  const handlePin = () => addToast({ message: 'Pin coming soon', variant: 'default' })
-  const handleExpand = () => addToast({ message: 'Expand coming soon', variant: 'default' })
 
   return (
     <MessagePrimitive.Root className="group flex gap-3 px-4 py-3">
@@ -96,10 +78,7 @@ function AssistantMessage() {
         <Robot size={14} weight="bold" />
       </div>
       <div className="flex flex-col gap-1 max-w-[85%] min-w-0 flex-1">
-        <div
-          ref={contentRef}
-          className="rounded-xl px-4 py-3 text-sm leading-relaxed text-[var(--color-secondary)] rounded-tl-sm"
-        >
+        <div className="text-sm leading-relaxed text-[var(--color-secondary)]">
           <MessagePrimitive.Parts>
             {({ part }) => {
               if (part.type === 'text') {
@@ -137,43 +116,25 @@ function AssistantMessage() {
           </MessagePrimitive.Parts>
         </div>
 
-        {/* Hover action bar — visible on group-hover */}
-        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-150 px-2">
-          <button
-            type="button"
-            onClick={handleCopy}
-            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-[var(--color-muted)] hover:text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors"
-            title="Copy message"
-            aria-label="Copy message"
-          >
-            {copied ? (
-              <Check size={11} weight="bold" className="text-[var(--color-success)]" />
-            ) : (
-              <Copy size={11} />
-            )}
-            <span>{copied ? 'Copied!' : 'Copy'}</span>
-          </button>
-          <button
-            type="button"
-            onClick={handlePin}
-            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-[var(--color-muted)] hover:text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors"
-            title="Pin message"
-            aria-label="Pin message"
-          >
-            <PushPin size={11} />
-            <span>Pin</span>
-          </button>
-          <button
-            type="button"
-            onClick={handleExpand}
-            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-[var(--color-muted)] hover:text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors"
-            title="Expand message"
-            aria-label="Expand message"
-          >
-            <ArrowsOut size={11} />
-            <span>Expand</span>
-          </button>
-        </div>
+        {/* Action bar — Copy button, visible on hover */}
+        <ActionBarPrimitive.Root className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+          <ActionBarPrimitive.Copy asChild>
+            <button
+              type="button"
+              className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-[var(--color-muted)] hover:text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors"
+              title="Copy message"
+            >
+              <AuiIf condition={(s) => s.message.isCopied}>
+                <Check size={11} weight="bold" className="text-[var(--color-success)]" />
+                <span>Copied!</span>
+              </AuiIf>
+              <AuiIf condition={(s) => !s.message.isCopied}>
+                <Copy size={11} />
+                <span>Copy</span>
+              </AuiIf>
+            </button>
+          </ActionBarPrimitive.Copy>
+        </ActionBarPrimitive.Root>
       </div>
     </MessagePrimitive.Root>
   )
@@ -310,20 +271,18 @@ function OmnipusComposer() {
 
       <ComposerPrimitive.Root
         className={cn(
-          'flex items-end gap-2 rounded-xl border bg-[var(--color-surface-2)] px-3 py-2 transition-colors',
-          'focus-within:border-[var(--color-accent)]/50 focus-within:ring-1 focus-within:ring-[var(--color-accent)]/20',
-          !isConnected ? 'border-[var(--color-error)]/30' : 'border-[var(--color-border)]',
+          'flex items-end gap-2 px-2 py-2',
         )}
       >
-        {/* File picker stub */}
+        {/* File attachment */}
         <button
           type="button"
           onClick={() => addToast({ message: 'File attachments coming soon', variant: 'default' })}
-          className="shrink-0 w-7 h-7 flex items-center justify-center rounded-md text-[var(--color-muted)] hover:text-[var(--color-secondary)] hover:bg-[var(--color-surface-3)] transition-colors"
-          aria-label="Attach file (coming soon)"
-          title="Attach file (coming soon)"
+          className="shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-[var(--color-muted)] hover:text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors"
+          aria-label="Attach file"
+          title="Attach file"
         >
-          <Paperclip size={14} />
+          <Paperclip size={16} />
         </button>
 
         <ComposerPrimitive.Input
@@ -332,13 +291,14 @@ function OmnipusComposer() {
               ? 'Connecting to gateway...'
               : isStreaming
                 ? 'Waiting for response...'
-                : 'Message your agent… (Enter to send, Shift+Enter for newline)'
+                : 'Message Omnipus…'
           }
           disabled={!isConnected || isStreaming}
           rows={1}
           className={cn(
-            'flex-1 resize-none bg-transparent text-sm text-[var(--color-secondary)] outline-none',
+            'flex-1 resize-none rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 py-2.5 text-sm text-[var(--color-secondary)] outline-none',
             'placeholder:text-[var(--color-muted)] min-h-[24px] max-h-[200px] leading-6 overflow-hidden',
+            'focus:border-[var(--color-accent)]/50 focus:ring-1 focus:ring-[var(--color-accent)]/20',
             (!isConnected || isStreaming) && 'opacity-60 cursor-not-allowed',
           )}
           aria-label="Message input"
