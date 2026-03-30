@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { FloppyDisk, Plus, Trash, Key } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
@@ -28,21 +28,24 @@ export function SecuritySection() {
   const { addToast } = useUiStore()
   const queryClient = useQueryClient()
 
-  const { data: config, isLoading } = useQuery({
+  const { data: config, isLoading, isError: configError } = useQuery({
     queryKey: ['config'],
     queryFn: fetchConfig,
   })
 
-  const { data: gatewayStatus } = useQuery({
+  const { data: gatewayStatus, isError: gatewayStatusError } = useQuery({
     queryKey: ['gateway-status'],
     queryFn: fetchGatewayStatus,
   })
 
-  const { data: credentials = [] } = useQuery({
+  const { data: credentials = [], isError: credentialsError } = useQuery({
     queryKey: ['credentials'],
     queryFn: fetchCredentials,
     retry: false,
   })
+
+  const isDirtyRef = useRef(false)
+  const markDirty = () => { isDirtyRef.current = true }
 
   const [policyMode, setPolicyMode] = useState<'allow' | 'deny'>('deny')
   const [execApproval, setExecApproval] = useState<'auto' | 'ask' | 'deny'>('ask')
@@ -59,6 +62,7 @@ export function SecuritySection() {
 
   useEffect(() => {
     if (!config) return
+    if (isDirtyRef.current) return
     setPolicyMode(config.security.policy_mode)
     setExecApproval(config.security.exec_approval)
     setInjectionLevel(config.security.prompt_injection_level)
@@ -83,6 +87,7 @@ export function SecuritySection() {
         },
       }),
     onSuccess: () => {
+      isDirtyRef.current = false
       queryClient.invalidateQueries({ queryKey: ['config'] })
       addToast({ message: 'Security settings saved', variant: 'success' })
     },
@@ -120,6 +125,10 @@ export function SecuritySection() {
     return <div className="text-sm text-[var(--color-muted)]">Loading...</div>
   }
 
+  if (configError) {
+    return <p className="text-sm text-red-400">Failed to load security settings. Please try again.</p>
+  }
+
   const todaySpend = gatewayStatus?.daily_cost ?? 0
   const capValue = parseFloat(dailyCostCap) || 10
   const spendPercent = Math.min((todaySpend / capValue) * 100, 100)
@@ -153,7 +162,7 @@ export function SecuritySection() {
               <span className="text-xs text-[var(--color-muted)]">Deny</span>
               <Switch
                 checked={policyMode === 'allow'}
-                onCheckedChange={(v) => setPolicyMode(v ? 'allow' : 'deny')}
+                onCheckedChange={(v) => { markDirty(); setPolicyMode(v ? 'allow' : 'deny') }}
               />
               <span className="text-xs text-[var(--color-secondary)]">Allow</span>
             </div>
@@ -166,7 +175,7 @@ export function SecuritySection() {
               <p className="text-sm text-[var(--color-secondary)]">Exec approval</p>
               <p className="text-xs text-[var(--color-muted)]">How shell command execution is handled</p>
             </div>
-            <Select value={execApproval} onValueChange={(v) => setExecApproval(v as typeof execApproval)}>
+            <Select value={execApproval} onValueChange={(v) => { markDirty(); setExecApproval(v as typeof execApproval) }}>
               <SelectTrigger className="w-[120px] h-8 text-xs">
                 <SelectValue />
               </SelectTrigger>
@@ -189,7 +198,7 @@ export function SecuritySection() {
               <p className="text-sm text-[var(--color-secondary)]">Detection level</p>
               <p className="text-xs text-[var(--color-muted)]">Sensitivity of prompt injection detection</p>
             </div>
-            <Select value={injectionLevel} onValueChange={(v) => setInjectionLevel(v as typeof injectionLevel)}>
+            <Select value={injectionLevel} onValueChange={(v) => { markDirty(); setInjectionLevel(v as typeof injectionLevel) }}>
               <SelectTrigger className="w-[120px] h-8 text-xs">
                 <SelectValue />
               </SelectTrigger>
@@ -218,7 +227,7 @@ export function SecuritySection() {
                   min="0"
                   step="0.5"
                   value={dailyCostCap}
-                  onChange={(e) => setDailyCostCap(e.target.value)}
+                  onChange={(e) => { markDirty(); setDailyCostCap(e.target.value) }}
                   className="w-24 h-7 text-xs font-mono"
                   placeholder="10.00"
                 />
@@ -226,7 +235,11 @@ export function SecuritySection() {
             </div>
             <div className="space-y-1">
               <div className="flex justify-between text-[10px] text-[var(--color-muted)]">
-                <span>Today's spend: ${todaySpend.toFixed(2)}</span>
+                <span>
+                  {gatewayStatusError
+                    ? 'Today\'s spend: unavailable'
+                    : `Today's spend: $${todaySpend.toFixed(2)}`}
+                </span>
                 <span>Cap: ${capValue.toFixed(2)}</span>
               </div>
               <Progress value={spendPercent} className="h-1.5" />
@@ -247,7 +260,7 @@ export function SecuritySection() {
                 type="number"
                 min="0"
                 value={agentLlmCallsPerHour}
-                onChange={(e) => setAgentLlmCallsPerHour(e.target.value)}
+                onChange={(e) => { markDirty(); setAgentLlmCallsPerHour(e.target.value) }}
                 className="w-24 h-7 text-xs font-mono"
                 placeholder="Unlimited"
               />
@@ -261,7 +274,7 @@ export function SecuritySection() {
                 type="number"
                 min="0"
                 value={agentToolCallsPerMin}
-                onChange={(e) => setAgentToolCallsPerMin(e.target.value)}
+                onChange={(e) => { markDirty(); setAgentToolCallsPerMin(e.target.value) }}
                 className="w-24 h-7 text-xs font-mono"
                 placeholder="Unlimited"
               />
@@ -280,7 +293,10 @@ export function SecuritySection() {
           </Button>
         </div>
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] divide-y divide-[var(--color-border)]">
-          {credentials.length === 0 && (
+          {credentialsError && (
+            <div className="p-4 text-sm text-red-400">Failed to load credentials. Please try again.</div>
+          )}
+          {!credentialsError && credentials.length === 0 && (
             <div className="p-4 text-sm text-[var(--color-muted)] flex items-center gap-2">
               <Key size={14} />
               No credentials stored. Add your first key above.

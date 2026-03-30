@@ -20,6 +20,7 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/constants"
+	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
 
 var (
@@ -442,7 +443,8 @@ func (t *ExecTool) runSync(ctx context.Context, command, cwd string) *ToolResult
 
 	maxLen := 10000
 	if len(output) > maxLen {
-		output = output[:maxLen] + fmt.Sprintf("\n... (truncated, %d more chars)", len(output)-maxLen)
+		totalLen := len(output)
+		output = output[:maxLen] + fmt.Sprintf("\n... (truncated, %d more chars)", totalLen-maxLen)
 	}
 
 	if err != nil {
@@ -517,7 +519,6 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 		if err != nil {
 			return ErrorResult(fmt.Sprintf("failed to create stdin pipe: %v", err))
 		}
-		session.stdoutPipe = io.MultiReader(stdoutReader, stderrReader)
 		session.stdinWriter = stdinWriter
 	}
 
@@ -574,15 +575,13 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 			}
 		}()
 	} else {
-		// Non-PTY mode: single goroutine reads pipes.
-		// When Read() returns EOF (pipe closed), we break.
-		// When process exits, OS closes pipe write end → Read() returns EOF → we exit.
-		go func() {
+		// Non-PTY mode: read stdout and stderr concurrently to avoid pipe-buffer deadlocks.
+		// Each goroutine drains one pipe until EOF. A third goroutine waits for both to
+		// finish before calling cmd.Wait() and marking the session done.
+		pipeReadFn := func(r io.Reader) {
 			buf := make([]byte, 4096)
-
-			// Read stdout
 			for {
-				n, err := stdoutReader.Read(buf)
+				n, err := r.Read(buf)
 				if n > 0 {
 					session.mu.Lock()
 					if session.outputBuffer.Len() >= maxOutputBufferSize {
@@ -599,33 +598,19 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 					break
 				}
 			}
+		}
 
-			// Read stderr
-			for {
-				n, err := stderrReader.Read(buf)
-				if n > 0 {
-					session.mu.Lock()
-					if session.outputBuffer.Len() >= maxOutputBufferSize {
-						if !session.outputTruncated {
-							session.outputBuffer.WriteString(outputTruncateMarker)
-							session.outputTruncated = true
-						}
-					} else {
-						session.outputBuffer.Write(buf[:n])
-					}
-					session.mu.Unlock()
-				}
-				if err != nil {
-					break
-				}
-			}
+		var pipeWG sync.WaitGroup
+		pipeWG.Add(2)
+		go func() { defer pipeWG.Done(); pipeReadFn(stdoutReader) }()
+		go func() { defer pipeWG.Done(); pipeReadFn(stderrReader) }()
 
-			// All pipes closed, get exit status
+		go func() {
+			pipeWG.Wait()
 			if stdinWriter != nil {
 				stdinWriter.Close()
 			}
 			cmd.Wait()
-
 			session.mu.Lock()
 			if cmd.ProcessState != nil {
 				session.ExitCode = cmd.ProcessState.ExitCode()
@@ -639,7 +624,11 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 		SessionID: sessionID,
 		Status:    "running",
 	}
-	data, _ := json.Marshal(resp)
+	data, err := json.Marshal(resp)
+	if err != nil {
+		logger.WarnCF("shell", "failed to marshal exec start response", map[string]any{"error": err.Error()})
+		data = []byte("{}")
+	}
 	return &ToolResult{
 		ForLLM:  string(data),
 		ForUser: fmt.Sprintf("Session %s started", sessionID),
@@ -652,7 +641,11 @@ func (t *ExecTool) executeList() *ToolResult {
 	resp := ExecResponse{
 		Sessions: sessions,
 	}
-	data, _ := json.Marshal(resp)
+	data, err := json.Marshal(resp)
+	if err != nil {
+		logger.WarnCF("shell", "failed to marshal exec list response", map[string]any{"error": err.Error()})
+		data = []byte("{}")
+	}
 	return &ToolResult{
 		ForLLM:  string(data),
 		ForUser: fmt.Sprintf("%d active sessions", len(sessions)),
@@ -679,7 +672,11 @@ func (t *ExecTool) executePoll(args map[string]any) *ToolResult {
 		Status:    session.GetStatus(),
 		ExitCode:  session.GetExitCode(),
 	}
-	data, _ := json.Marshal(resp)
+	data, err := json.Marshal(resp)
+	if err != nil {
+		logger.WarnCF("shell", "failed to marshal exec poll response", map[string]any{"error": err.Error()})
+		data = []byte("{}")
+	}
 	return &ToolResult{
 		ForLLM:  string(data),
 		IsError: false,
@@ -707,7 +704,11 @@ func (t *ExecTool) executeRead(args map[string]any) *ToolResult {
 		Output:    output,
 		Status:    session.GetStatus(),
 	}
-	data, _ := json.Marshal(resp)
+	data, err := json.Marshal(resp)
+	if err != nil {
+		logger.WarnCF("shell", "failed to marshal exec read response", map[string]any{"error": err.Error()})
+		data = []byte("{}")
+	}
 	return &ToolResult{
 		ForLLM:  string(data),
 		IsError: false,
@@ -748,7 +749,11 @@ func (t *ExecTool) executeWrite(args map[string]any) *ToolResult {
 		SessionID: sessionID,
 		Status:    session.GetStatus(),
 	}
-	respData, _ := json.Marshal(resp)
+	respData, err := json.Marshal(resp)
+	if err != nil {
+		logger.WarnCF("shell", "failed to marshal exec write response", map[string]any{"error": err.Error()})
+		respData = []byte("{}")
+	}
 	return &ToolResult{
 		ForLLM:  string(respData),
 		IsError: false,
@@ -783,7 +788,11 @@ func (t *ExecTool) executeKill(args map[string]any) *ToolResult {
 		SessionID: sessionID,
 		Status:    "done",
 	}
-	data, _ := json.Marshal(resp)
+	data, err := json.Marshal(resp)
+	if err != nil {
+		logger.WarnCF("shell", "failed to marshal exec kill response", map[string]any{"error": err.Error()})
+		data = []byte("{}")
+	}
 	return &ToolResult{
 		ForLLM:  string(data),
 		ForUser: fmt.Sprintf("Session %s killed", sessionID),
@@ -1007,7 +1016,11 @@ func (t *ExecTool) executeSendKeys(args map[string]any) *ToolResult {
 		Status:    "running",
 		Output:    fmt.Sprintf("Sent keys: %v", keys),
 	}
-	respData, _ := json.Marshal(resp)
+	respData, err := json.Marshal(resp)
+	if err != nil {
+		logger.WarnCF("shell", "failed to marshal exec sendkeys response", map[string]any{"error": err.Error()})
+		respData = []byte("{}")
+	}
 	return &ToolResult{
 		ForLLM:  string(respData),
 		IsError: false,
@@ -1055,7 +1068,7 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 
 		cwdPath, err := filepath.Abs(cwd)
 		if err != nil {
-			return ""
+			return "cannot resolve working directory"
 		}
 
 		// Web URL schemes whose path components (starting with //) should be exempt

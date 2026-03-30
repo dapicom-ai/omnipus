@@ -6,6 +6,7 @@ package gateway
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 
@@ -74,8 +75,7 @@ func (c *webchatChannel) Send(_ context.Context, msg bus.OutboundMessage) error 
 	c.wsHandler.mu.Unlock()
 
 	if !ok {
-		slog.Debug("webchat: no active connection for outbound message", "chat_id", msg.ChatID)
-		return nil
+		return fmt.Errorf("webchat: no active connection for chat %s", msg.ChatID)
 	}
 
 	if msg.Content != "" {

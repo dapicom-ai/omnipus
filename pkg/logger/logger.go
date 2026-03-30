@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/rs/zerolog"
 )
@@ -32,15 +33,16 @@ var (
 		FATAL: "FATAL",
 	}
 
-	currentLevel = INFO
-	logger       zerolog.Logger
-	fileLogger   zerolog.Logger
-	logFile      *os.File
-	once         sync.Once
-	mu           sync.RWMutex
+	currentLevelAtomic atomic.Int32 // stores zerolog.Level as int32; initialized to INFO in init()
+	logger             zerolog.Logger
+	fileLogger         zerolog.Logger
+	logFile            *os.File
+	once               sync.Once
+	mu                 sync.RWMutex
 )
 
 func init() {
+	currentLevelAtomic.Store(int32(INFO))
 	once.Do(func() {
 		zerolog.SetGlobalLevel(zerolog.InfoLevel)
 
@@ -89,9 +91,9 @@ func formatFieldValue(i any) string {
 }
 
 func SetLevel(level LogLevel) {
+	currentLevelAtomic.Store(int32(level))
 	mu.Lock()
 	defer mu.Unlock()
-	currentLevel = level
 	zerolog.SetGlobalLevel(level)
 }
 
@@ -108,9 +110,7 @@ func DisableConsole() {
 }
 
 func GetLevel() LogLevel {
-	mu.RLock()
-	defer mu.RUnlock()
-	return currentLevel
+	return LogLevel(currentLevelAtomic.Load())
 }
 
 // ParseLevel converts a case-insensitive level name to a LogLevel.
@@ -242,7 +242,7 @@ func getEvent(logger zerolog.Logger, level LogLevel) *zerolog.Event {
 }
 
 func logMessage(level LogLevel, component string, message string, fields map[string]any) {
-	if level < currentLevel {
+	if level < LogLevel(currentLevelAtomic.Load()) {
 		return
 	}
 

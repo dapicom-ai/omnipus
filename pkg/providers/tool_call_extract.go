@@ -2,6 +2,7 @@ package providers
 
 import (
 	"encoding/json"
+	"log/slog"
 	"strings"
 )
 
@@ -39,7 +40,14 @@ func extractToolCallsFromText(text string) []ToolCall {
 	var result []ToolCall
 	for _, tc := range wrapper.ToolCalls {
 		var args map[string]any
-		json.Unmarshal([]byte(tc.Function.Arguments), &args)
+		if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
+			slog.Warn("providers: tool call arguments not valid JSON; preserving raw",
+				"tool", tc.Function.Name,
+				"error", err,
+				"raw", tc.Function.Arguments,
+			)
+			args = map[string]any{"_raw": tc.Function.Arguments}
+		}
 
 		result = append(result, ToolCall{
 			ID:        tc.ID,

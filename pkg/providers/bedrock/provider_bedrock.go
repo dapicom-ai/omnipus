@@ -15,7 +15,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
 	"math"
 	"strings"
 	"time"
@@ -26,6 +25,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/document"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 
+	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/providers/common"
 	"github.com/dapicom-ai/omnipus/pkg/providers/protocoltypes"
 )
@@ -367,14 +367,14 @@ func buildUserContent(msg Message) []types.ContentBlock {
 			const maxImageSize = 10 * 1024 * 1024
 			decodedLen := base64.StdEncoding.DecodedLen(len(parts[1]))
 			if decodedLen > maxImageSize {
-				log.Printf("bedrock: skipping image exceeding size limit (%d bytes > %d)", decodedLen, maxImageSize)
+				logger.WarnCF("bedrock", "skipping image exceeding size limit", map[string]any{"bytes": decodedLen, "limit": maxImageSize})
 				continue
 			}
 
 			// Decode base64 data
 			imageData, err := base64.StdEncoding.DecodeString(parts[1])
 			if err != nil {
-				log.Printf("bedrock: failed to decode base64 image data: %v", err)
+				logger.WarnCF("bedrock", "failed to decode base64 image data", map[string]any{"error": err.Error()})
 				continue
 			}
 
@@ -412,7 +412,7 @@ func buildAssistantContent(msg Message) []types.ContentBlock {
 	for _, tc := range msg.ToolCalls {
 		// Validate tool call ID - Bedrock requires non-empty ToolUseId
 		if strings.TrimSpace(tc.ID) == "" {
-			log.Printf("bedrock: skipping tool call with empty ID (name: %q)", tc.Name)
+			logger.WarnCF("bedrock", "skipping tool call with empty ID", map[string]any{"tool": tc.Name})
 			continue
 		}
 
@@ -430,7 +430,7 @@ func buildAssistantContent(msg Message) []types.ContentBlock {
 		args := tc.Arguments
 		if args == nil && tc.Function != nil && tc.Function.Arguments != "" {
 			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-				log.Printf("bedrock: failed to parse Function.Arguments for tool %q: %v", toolName, err)
+				logger.WarnCF("bedrock", "failed to parse Function.Arguments", map[string]any{"tool": toolName, "error": err.Error()})
 				args = map[string]any{}
 			}
 		}
@@ -514,11 +514,11 @@ func parseResponse(output *bedrockruntime.ConverseOutput) (*LLMResponse, error) 
 					args := make(map[string]any)
 					if b.Value.Input != nil {
 						if err := b.Value.Input.UnmarshalSmithyDocument(&args); err != nil {
-							log.Printf("bedrock: failed to unmarshal tool input for tool %q (id %q): %v",
-								aws.ToString(b.Value.Name),
-								aws.ToString(b.Value.ToolUseId),
-								err,
-							)
+							logger.WarnCF("bedrock", "failed to unmarshal tool input", map[string]any{
+								"tool":  aws.ToString(b.Value.Name),
+								"id":    aws.ToString(b.Value.ToolUseId),
+								"error": err.Error(),
+							})
 							args = make(map[string]any)
 						}
 					}
@@ -526,11 +526,11 @@ func parseResponse(output *bedrockruntime.ConverseOutput) (*LLMResponse, error) 
 					// Serialize arguments to JSON string for FunctionCall
 					argsJSON, err := json.Marshal(args)
 					if err != nil {
-						log.Printf("bedrock: failed to marshal tool arguments for tool %q (id %q): %v",
-							aws.ToString(b.Value.Name),
-							aws.ToString(b.Value.ToolUseId),
-							err,
-						)
+						logger.WarnCF("bedrock", "failed to marshal tool arguments", map[string]any{
+							"tool":  aws.ToString(b.Value.Name),
+							"id":    aws.ToString(b.Value.ToolUseId),
+							"error": err.Error(),
+						})
 						argsJSON = []byte("{}")
 					}
 

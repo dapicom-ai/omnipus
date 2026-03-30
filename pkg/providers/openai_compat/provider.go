@@ -7,12 +7,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/providers/common"
 	"github.com/dapicom-ai/omnipus/pkg/providers/protocoltypes"
 )
@@ -363,7 +363,10 @@ func parseStreamResponse(
 		raw := acc.argsJSON.String()
 		if raw != "" {
 			if err := json.Unmarshal([]byte(raw), &args); err != nil {
-				log.Printf("openai_compat stream: failed to decode tool call arguments for %q: %v", acc.name, err)
+				logger.WarnCF("openai_compat", "failed to decode tool call arguments", map[string]any{
+					"tool":  acc.name,
+					"error": err.Error(),
+				})
 				args["raw"] = raw
 			}
 		}

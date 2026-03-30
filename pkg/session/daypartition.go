@@ -8,10 +8,10 @@ package session
 
 import (
 	"bytes"
+	crand "crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"slices"
@@ -130,8 +130,7 @@ type ToolCall struct {
 // NewSessionID generates a ULID-based session ID prefixed with "session_".
 // Returns an error instead of panicking if ULID generation fails.
 func NewSessionID() (string, error) {
-	entropy := rand.New(rand.NewSource(time.Now().UnixNano())) //nolint:gosec // non-security context
-	id, err := ulid.New(ulid.Timestamp(time.Now()), entropy)
+	id, err := ulid.New(ulid.Timestamp(time.Now()), crand.Reader)
 	if err != nil {
 		return "", fmt.Errorf("session: generate ULID: %w", err)
 	}

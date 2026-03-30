@@ -7,12 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/dapicom-ai/omnipus/pkg/logger"
 
 	"github.com/dapicom-ai/omnipus/pkg/fileutil"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
@@ -159,8 +160,11 @@ func readMessages(path string, skip int) ([]providers.Message, error) {
 			// Log so operators know data was skipped, but don't
 			// fail the entire read; this is the standard JSONL
 			// recovery pattern.
-			log.Printf("memory: skipping corrupt line %d in %s: %v",
-				lineNum, filepath.Base(path), err)
+			logger.WarnCF("memory", "skipping corrupt JSONL line", map[string]any{
+				"line": lineNum,
+				"file": filepath.Base(path),
+				"error": err.Error(),
+			})
 			continue
 		}
 		msgs = append(msgs, msg)

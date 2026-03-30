@@ -528,10 +528,27 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 }
 
 // drainBusToSteering consumes inbound messages and redirects messages from the
-// active scope into the steering queue. Messages from other scopes are requeued
-// so they can be processed normally after the active turn. It drains all
+// active scope into the steering queue. Messages from other scopes are buffered
+// locally and re-published to the inbound bus after the drain loop exits, so
+// they are processed normally once the active turn finishes. It drains all
 // immediately available messages, blocking for the first one until ctx is done.
 func (al *AgentLoop) drainBusToSteering(ctx context.Context, activeScope, activeAgentID string) {
+	var deferred []bus.InboundMessage
+
+	// After the loop exits, re-publish buffered out-of-scope messages so the
+	// main runAgentLoop can process them once the active turn has finished.
+	defer func() {
+		for _, m := range deferred {
+			if err := al.requeueInboundMessage(m); err != nil {
+				logger.WarnCF("agent", "Failed to requeue non-steering inbound message", map[string]any{
+					"error":     err.Error(),
+					"channel":   m.Channel,
+					"sender_id": m.SenderID,
+				})
+			}
+		}
+	}()
+
 	blocking := true
 	for {
 		var msg bus.InboundMessage
@@ -563,13 +580,9 @@ func (al *AgentLoop) drainBusToSteering(ctx context.Context, activeScope, active
 
 		msgScope, _, scopeOK := al.resolveSteeringTarget(msg)
 		if !scopeOK || msgScope != activeScope {
-			if err := al.requeueInboundMessage(msg); err != nil {
-				logger.WarnCF("agent", "Failed to requeue non-steering inbound message", map[string]any{
-					"error":     err.Error(),
-					"channel":   msg.Channel,
-					"sender_id": msg.SenderID,
-				})
-			}
+			// Buffer for re-publishing after the drain exits, so runAgentLoop
+			// picks them up without the drain goroutine looping on them.
+			deferred = append(deferred, msg)
 			continue
 		}
 
@@ -594,6 +607,17 @@ func (al *AgentLoop) drainBusToSteering(ctx context.Context, activeScope, active
 					"error":   err.Error(),
 					"channel": msg.Channel,
 				})
+			// Notify the user that their message could not be queued.
+			errCtx, errCancel := context.WithTimeout(ctx, 3*time.Second)
+			if pubErr := al.bus.PublishOutbound(errCtx, bus.OutboundMessage{
+				Channel: msg.Channel,
+				ChatID:  msg.ChatID,
+				Content: "Your message could not be queued because the agent is busy. Please try again.",
+			}); pubErr != nil {
+				logger.WarnCF("agent", "Failed to send steering-queue-full error to user",
+					map[string]any{"channel": msg.Channel, "error": pubErr.Error()})
+			}
+			errCancel()
 		}
 	}
 }
@@ -626,11 +650,15 @@ func (al *AgentLoop) publishResponseIfNeeded(ctx context.Context, channel, chatI
 		return
 	}
 
-	al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+	if err := al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 		Channel: channel,
 		ChatID:  chatID,
 		Content: response,
-	})
+	}); err != nil {
+		logger.ErrorCF("agent", "Failed to publish outbound response",
+			map[string]any{"channel": channel, "chat_id": chatID, "error": err.Error()})
+		return
+	}
 	logger.InfoCF("agent", "Published outbound response",
 		map[string]any{
 			"channel":     channel,
@@ -1397,11 +1425,7 @@ func (al *AgentLoop) requeueInboundMessage(msg bus.InboundMessage) error {
 	}
 	pubCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	return al.bus.PublishOutbound(pubCtx, bus.OutboundMessage{
-		Channel: msg.Channel,
-		ChatID:  msg.ChatID,
-		Content: msg.Content,
-	})
+	return al.bus.PublishInbound(pubCtx, msg)
 }
 
 func (al *AgentLoop) processSystemMessage(
@@ -1508,11 +1532,14 @@ func (al *AgentLoop) runAgentLoop(
 	}
 
 	if opts.SendResponse && result.finalContent != "" {
-		al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+		if err := al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 			Channel: opts.Channel,
 			ChatID:  opts.ChatID,
 			Content: result.finalContent,
-		})
+		}); err != nil {
+			logger.ErrorCF("agent", "Failed to publish outbound response after turn",
+				map[string]any{"channel": opts.Channel, "chat_id": opts.ChatID, "error": err.Error()})
+		}
 	}
 
 	if result.finalContent != "" {
@@ -1710,6 +1737,22 @@ turnLoop:
 
 		iteration := ts.currentIteration() + 1
 		ts.setIteration(iteration)
+
+		// Hard ceiling: never exceed 2x MaxIterations regardless of pending messages or
+		// graceful-interrupt state. This prevents an unbounded loop when the agent keeps
+		// producing follow-up messages or the interrupt flag is never cleared.
+		if hardCeiling := 2 * ts.agent.MaxIterations; iteration > hardCeiling {
+			logger.WarnCF("agent", "Turn exceeded hard iteration ceiling, breaking unconditionally",
+				map[string]any{
+					"agent_id":    ts.agentID,
+					"turn_id":     ts.turnID,
+					"iteration":   iteration,
+					"max_iter":    ts.agent.MaxIterations,
+					"hard_ceiling": hardCeiling,
+				})
+			break turnLoop
+		}
+
 		ts.setPhase(TurnPhaseRunning)
 
 		if iteration > 1 {
@@ -1882,6 +1925,10 @@ turnLoop:
 			},
 		)
 
+		systemPromptLen := 0
+		if len(callMessages) > 0 {
+			systemPromptLen = len(callMessages[0].Content)
+		}
 		logger.DebugCF("agent", "LLM request",
 			map[string]any{
 				"agent_id":          ts.agent.ID,
@@ -1891,7 +1938,7 @@ turnLoop:
 				"tools_count":       len(providerToolDefs),
 				"max_tokens":        ts.agent.MaxTokens,
 				"temperature":       ts.agent.Temperature,
-				"system_prompt_len": len(callMessages[0].Content),
+				"system_prompt_len": systemPromptLen,
 			})
 		logger.DebugCF("agent", "Full LLM request",
 			map[string]any{
@@ -2040,11 +2087,14 @@ turnLoop:
 				)
 
 				if retry == 0 && !constants.IsInternalChannel(ts.channel) {
-					al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+					if notifyErr := al.bus.PublishOutbound(turnCtx, bus.OutboundMessage{
 						Channel: ts.channel,
 						ChatID:  ts.chatID,
 						Content: "Context window exceeded. Compressing history and retrying...",
-					})
+					}); notifyErr != nil {
+						logger.WarnCF("agent", "Failed to notify user of context compression",
+							map[string]any{"channel": ts.channel, "error": notifyErr.Error()})
+					}
 				}
 
 				if compression, ok := al.forceCompression(ts.agent, ts.sessionKey); ok {
@@ -2213,7 +2263,11 @@ turnLoop:
 			ReasoningContent: response.ReasoningContent,
 		}
 		for _, tc := range normalizedToolCalls {
-			argumentsJSON, _ := json.Marshal(tc.Arguments)
+			argumentsJSON, marshalErr := json.Marshal(tc.Arguments)
+			if marshalErr != nil {
+				logger.WarnCF("agent", "failed to marshal tool call arguments", map[string]any{"tool": tc.Name, "error": marshalErr.Error()})
+				argumentsJSON = []byte("{}")
+			}
 			extraContent := tc.ExtraContent
 			thoughtSignature := ""
 			if tc.Function != nil {
@@ -2327,7 +2381,11 @@ turnLoop:
 				}
 			}
 
-			argsJSON, _ := json.Marshal(toolArgs)
+			argsJSON, marshalErr := json.Marshal(toolArgs)
+			if marshalErr != nil {
+				logger.WarnCF("agent", "failed to marshal tool args for preview", map[string]any{"tool": toolName, "error": marshalErr.Error()})
+				argsJSON = []byte("{}")
+			}
 			argsPreview := utils.Truncate(string(argsJSON), 200)
 			logger.InfoCF("agent", fmt.Sprintf("Tool call: %s(%s)", toolName, argsPreview),
 				map[string]any{
@@ -2354,11 +2412,14 @@ turnLoop:
 				)
 				feedbackMsg := fmt.Sprintf("\U0001f527 `%s`\n```\n%s\n```", tc.Name, feedbackPreview)
 				fbCtx, fbCancel := context.WithTimeout(turnCtx, 3*time.Second)
-				_ = al.bus.PublishOutbound(fbCtx, bus.OutboundMessage{
+				if fbErr := al.bus.PublishOutbound(fbCtx, bus.OutboundMessage{
 					Channel: ts.channel,
 					ChatID:  ts.chatID,
 					Content: feedbackMsg,
-				})
+				}); fbErr != nil {
+					logger.WarnCF("agent", "Failed to publish tool feedback",
+						map[string]any{"tool": tc.Name, "channel": ts.channel, "error": fbErr.Error()})
+				}
 				fbCancel()
 			}
 
@@ -2406,12 +2467,15 @@ turnLoop:
 
 				pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer pubCancel()
-				_ = al.bus.PublishInbound(pubCtx, bus.InboundMessage{
+				if pubErr := al.bus.PublishInbound(pubCtx, bus.InboundMessage{
 					Channel:  "system",
 					SenderID: fmt.Sprintf("async:%s", asyncToolName),
 					ChatID:   fmt.Sprintf("%s:%s", ts.channel, ts.chatID),
 					Content:  content,
-				})
+				}); pubErr != nil {
+					logger.ErrorCF("agent", "Failed to publish async tool result; result permanently lost",
+						map[string]any{"tool": asyncToolName, "channel": ts.channel, "error": pubErr.Error()})
+				}
 			}
 
 			toolStart := time.Now()
@@ -2608,7 +2672,9 @@ turnLoop:
 						content := al.cfg.FilterSensitiveData(result.ForLLM)
 						msg := providers.Message{Role: "user", Content: fmt.Sprintf("[SubTurn Result] %s", content)}
 						messages = append(messages, msg)
-						ts.agent.Sessions.AddFullMessage(ts.sessionKey, msg)
+						if !ts.opts.NoHistory {
+							ts.agent.Sessions.AddFullMessage(ts.sessionKey, msg)
+						}
 					}
 				default:
 					// No results available
@@ -2896,7 +2962,10 @@ func (al *AgentLoop) forceCompression(agent *AgentInstance, sessionKey string) (
 	agent.Sessions.SetSummary(sessionKey, compressionNote)
 
 	agent.Sessions.SetHistory(sessionKey, keptHistory)
-	agent.Sessions.Save(sessionKey)
+	if saveErr := agent.Sessions.Save(sessionKey); saveErr != nil {
+		logger.ErrorCF("agent", "forceCompression: failed to persist compressed session",
+			map[string]any{"session_key": sessionKey, "error": saveErr.Error()})
+	}
 
 	logger.WarnCF("agent", "Forced compression executed", map[string]any{
 		"session_key":  sessionKey,
@@ -3083,7 +3152,10 @@ func (al *AgentLoop) summarizeSession(agent *AgentInstance, sessionKey string, t
 	if finalSummary != "" {
 		agent.Sessions.SetSummary(sessionKey, finalSummary)
 		agent.Sessions.TruncateHistory(sessionKey, keepCount)
-		agent.Sessions.Save(sessionKey)
+		if saveErr := agent.Sessions.Save(sessionKey); saveErr != nil {
+			logger.ErrorCF("agent", "summarizeSession: failed to persist summarized session",
+				map[string]any{"session_key": sessionKey, "error": saveErr.Error()})
+		}
 		al.emitEvent(
 			EventKindSessionSummarize,
 			turnScope.meta(0, "summarizeSession", "turn.session.summarize"),

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { FloppyDisk } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
@@ -33,6 +33,9 @@ interface ChannelRoute {
 export function RoutingSection() {
   const { addToast } = useUiStore()
   const queryClient = useQueryClient()
+  const isDirtyRef = useRef(false)
+  const markDirty = () => { isDirtyRef.current = true }
+
   const [isSaving, setIsSaving] = useState(false)
   const [routes, setRoutes] = useState<ChannelRoute[]>([])
 
@@ -43,6 +46,7 @@ export function RoutingSection() {
 
   useEffect(() => {
     if (!channels) return
+    if (isDirtyRef.current) return
     setRoutes(
       channels.map((ch) => ({
         id: ch.id,
@@ -54,6 +58,7 @@ export function RoutingSection() {
   }, [channels])
 
   function updateRoute(id: string, field: keyof ChannelRoute, value: string) {
+    markDirty()
     setRoutes((prev) =>
       prev.map((r) => (r.id === id ? { ...r, [field]: value } : r))
     )
@@ -74,6 +79,7 @@ export function RoutingSection() {
         }
       }
       await updateConfig({ channels: channelConfig } as Parameters<typeof updateConfig>[0])
+      isDirtyRef.current = false
       queryClient.invalidateQueries({ queryKey: ['config'] })
       addToast({ message: 'Routing rules saved', variant: 'success' })
     } catch (err) {

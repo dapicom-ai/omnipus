@@ -1206,7 +1206,11 @@ func LoadConfig(path string) (*Config, error) {
 
 	// Ensure Workspace has a default if not set
 	if cfg.Agents.Defaults.Workspace == "" {
-		homePath, _ := os.UserHomeDir()
+		homePath, homeErr := os.UserHomeDir()
+		if homeErr != nil {
+			logger.WarnCF("config", "UserHomeDir failed; workspace path may be incomplete",
+				map[string]any{"error": homeErr.Error()})
+		}
 		if omnipusHome := os.Getenv(EnvHome); omnipusHome != "" {
 			homePath = omnipusHome
 		} else if homePath != "" {
@@ -1271,19 +1275,24 @@ func SaveConfig(path string, cfg *Config) error {
 	originalModelList := cfg.ModelList
 	cfg.ModelList = nonVirtualModels
 
-	if err := saveSecurityConfig(securityPath(path), cfg); err != nil {
-		logger.ErrorCF("config", "cannot save .security.yml", map[string]any{"error": err})
-		return err
-	}
-
 	data, err := json.MarshalIndent(cfg, "", "  ")
-	// Restore original ModelList after serialization
+	// Restore original ModelList after serialization regardless of outcome.
 	cfg.ModelList = originalModelList
 	if err != nil {
 		return err
 	}
 	logger.Infof("saving config to %s", path)
-	return fileutil.WriteFileAtomic(path, data, 0o600)
+	if err := fileutil.WriteFileAtomic(path, data, 0o600); err != nil {
+		return err
+	}
+
+	// Only persist security config after config.json succeeds, so we never
+	// have a state where security was saved but config.json was not.
+	if err := saveSecurityConfig(securityPath(path), cfg); err != nil {
+		logger.ErrorCF("config", "cannot save .security.yml", map[string]any{"error": err})
+		return err
+	}
+	return nil
 }
 
 func (c *Config) WorkspacePath() string {
@@ -1295,7 +1304,11 @@ func expandHome(path string) string {
 		return path
 	}
 	if path[0] == '~' {
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			logger.WarnCF("config", "UserHomeDir failed in expandHome; path expansion may be incorrect",
+				map[string]any{"path": path, "error": err.Error()})
+		}
 		if len(path) > 1 && path[1] == '/' {
 			return home + path[1:]
 		}
@@ -1497,6 +1510,10 @@ func (t *ToolsConfig) IsToolEnabled(name string) bool {
 	case "mcp":
 		return t.MCP.Enabled
 	default:
-		return true
+		// Deny-by-default for unrecognized tool names (CLAUDE.md constraint).
+		// Log at debug level so operators can detect typos in tool names.
+		logger.DebugCF("config", "IsToolEnabled: unrecognized tool name; returning false (deny-by-default)",
+			map[string]any{"tool": name})
+		return false
 	}
 }

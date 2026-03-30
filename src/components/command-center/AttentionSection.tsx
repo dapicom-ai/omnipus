@@ -7,9 +7,12 @@ import { cn } from '@/lib/utils'
 export function AttentionSection() {
   const allApprovals = useChatStore((s) => s.pendingApprovals)
   const pendingApprovals = allApprovals.filter((a) => a.status === 'pending')
-  const { data: providers = [] } = useQuery({ queryKey: ['providers'], queryFn: fetchProviders })
+  const { data: providers = [], isLoading: providersLoading, isError: providersError } = useQuery({ queryKey: ['providers'], queryFn: fetchProviders })
 
-  const noProviders = providers.length === 0 || providers.every((p) => p.status !== 'connected')
+  // Only show "no provider" warning when the query has settled without error
+  const noProviders = !providersLoading && !providersError && (
+    providers.length === 0 || providers.every((p) => p.status !== 'connected')
+  )
 
   const hasItems = pendingApprovals.length > 0 || noProviders
 

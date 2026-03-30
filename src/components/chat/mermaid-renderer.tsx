@@ -14,6 +14,11 @@ let initFailed = false
 
 async function getMermaid() {
   const m = (await import('mermaid')).default
+  // If a previous init failed, reset both flags to allow a retry on the next render
+  if (initFailed) {
+    initialized = false
+    initFailed = false
+  }
   if (!initialized) {
     try {
       m.initialize({

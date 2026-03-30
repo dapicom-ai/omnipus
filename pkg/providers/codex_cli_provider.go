@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"strings"
 )
@@ -18,6 +19,7 @@ type CodexCliProvider struct {
 
 // NewCodexCliProvider creates a new Codex CLI provider.
 func NewCodexCliProvider(workspace string) *CodexCliProvider {
+	slog.Warn("Using --dangerously-bypass-approvals-and-sandbox flag", "provider", "codex-cli")
 	return &CodexCliProvider{
 		command:   "codex",
 		workspace: workspace,

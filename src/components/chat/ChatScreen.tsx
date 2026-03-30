@@ -260,6 +260,8 @@ function OmnipusComposer() {
 
     if (cmd === '/clear') {
       setMessages([])
+      const { activeSessionId: sid } = useChatStore.getState()
+      if (sid) queryClient.removeQueries({ queryKey: ['messages', sid] })
       return
     }
 
@@ -442,6 +444,8 @@ export function ChatScreen() {
   const reconnect = useChatStore((s) => s.reconnect)
 
   // Load message history when session changes
+  const isConnected = useChatStore((s) => s.isConnected)
+
   const {
     data: historyData,
     isError: historyError,
@@ -451,6 +455,10 @@ export function ChatScreen() {
     queryFn: () => fetchSessionMessages(activeSessionId!),
     enabled: !!activeSessionId,
     gcTime: 0,
+    // Never re-fetch on window focus — the WebSocket delivers live updates
+    refetchOnWindowFocus: false,
+    // Skip re-fetch on mount when the WebSocket is already connected and delivering messages
+    refetchOnMount: !isConnected,
   })
 
   useEffect(() => {

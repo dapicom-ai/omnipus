@@ -26,7 +26,7 @@ export function CommandCenterScreen() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
 
-  const { data: tasks = [] } = useQuery({
+  const { data: tasks = [], isError: tasksError } = useQuery({
     queryKey: ['tasks'],
     queryFn: fetchTasks,
     refetchInterval: 10_000,
@@ -42,6 +42,13 @@ export function CommandCenterScreen() {
 
       {/* 2. Attention section */}
       <AttentionSection />
+
+      {/* Tasks error */}
+      {tasksError && (
+        <div className="px-4 py-2 text-xs text-red-400 border-b border-[var(--color-border)]">
+          Failed to load tasks. Please try again.
+        </div>
+      )}
 
       {/* 3. Filter tabs */}
       <div className="flex items-center gap-0.5 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] overflow-x-auto">

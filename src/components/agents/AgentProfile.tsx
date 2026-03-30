@@ -1,4 +1,4 @@
-import { useState, useEffect, KeyboardEvent } from 'react'
+import { useState, useEffect, useRef, KeyboardEvent } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowLeft,
@@ -111,6 +111,9 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
   const usingFallbackModels = connectedModels.length === 0
   const availableModels = usingFallbackModels ? FALLBACK_MODELS : connectedModels
 
+  const isDirtyRef = useRef(false)
+  const markDirty = () => { isDirtyRef.current = true }
+
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [model, setModel] = useState('')
@@ -130,6 +133,8 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
 
   useEffect(() => {
     if (!agent) return
+    // Do not overwrite unsaved user edits on background refetch
+    if (isDirtyRef.current) return
     setName(agent.name ?? '')
     setDescription(agent.description ?? '')
     setModel(agent.model ?? '')
@@ -149,6 +154,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
   const { mutate: doUpdate, isPending: isSaving } = useMutation({
     mutationFn: (data: Parameters<typeof updateAgent>[1]) => updateAgent(agentId, data),
     onSuccess: () => {
+      isDirtyRef.current = false
       queryClient.invalidateQueries({ queryKey: ['agent', agentId] })
       queryClient.invalidateQueries({ queryKey: ['agents'] })
       addToast({ message: 'Agent saved', variant: 'success' })
@@ -271,13 +277,13 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
             <div className="space-y-2">
               <Input
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => { markDirty(); setName(e.target.value) }}
                 placeholder="Agent name"
                 className="text-sm"
               />
               <Textarea
                 value={description}
-                onChange={(e) => setDescription(e.target.value)}
+                onChange={(e) => { markDirty(); setDescription(e.target.value) }}
                 placeholder="Short description of this agent's purpose"
                 rows={2}
                 className="text-sm resize-none"
@@ -292,7 +298,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
                   <button
                     key={color}
                     type="button"
-                    onClick={() => setSelectedColor(color)}
+                    onClick={() => { markDirty(); setSelectedColor(color) }}
                     className="w-7 h-7 rounded-full transition-transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:ring-offset-1 focus:ring-offset-[var(--color-primary)]"
                     style={{
                       backgroundColor: color,
@@ -309,7 +315,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
               <p className="text-xs text-[var(--color-muted)]">Avatar icon</p>
               <Select
                 value={selectedIcon}
-                onValueChange={(v) => setSelectedIcon(v as IconName)}
+                onValueChange={(v) => { markDirty(); setSelectedIcon(v as IconName) }}
               >
                 <SelectTrigger className="w-48">
                   <div className="flex items-center gap-2">
@@ -346,7 +352,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
         )}
         <Select
           value={model || '__default__'}
-          onValueChange={(v) => setModel(v === '__default__' ? '' : v)}
+          onValueChange={(v) => { markDirty(); setModel(v === '__default__' ? '' : v) }}
           disabled={!canEdit}
         >
           <SelectTrigger>
@@ -382,7 +388,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
               ))}
               <input
                 value={fallbackInput}
-                onChange={(e) => setFallbackInput(e.target.value)}
+                onChange={(e) => { markDirty(); setFallbackInput(e.target.value) }}
                 onKeyDown={handleFallbackKeyDown}
                 onBlur={addFallbackModel}
                 placeholder={fallbackModels.length === 0 ? 'Type a model name, press Enter' : ''}
@@ -411,7 +417,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
                   min={0}
                   max={2}
                   step={0.05}
-                  onChange={setTemperature}
+                  onChange={(v) => { markDirty(); setTemperature(v) }}
                   format={(v) => v.toFixed(2)}
                 />
                 <RangeField
@@ -420,7 +426,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
                   min={256}
                   max={32768}
                   step={256}
-                  onChange={setMaxTokens}
+                  onChange={(v) => { markDirty(); setMaxTokens(v) }}
                   format={(v) => v.toLocaleString()}
                 />
                 <RangeField
@@ -429,7 +435,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
                   min={0}
                   max={1}
                   step={0.01}
-                  onChange={setTopP}
+                  onChange={(v) => { markDirty(); setTopP(v) }}
                   format={(v) => v.toFixed(2)}
                 />
               </div>
@@ -451,7 +457,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
               </div>
               <Switch
                 checked={useGlobalRateLimits}
-                onCheckedChange={setUseGlobalRateLimits}
+                onCheckedChange={(v) => { markDirty(); setUseGlobalRateLimits(v) }}
                 disabled={!canEdit}
               />
             </div>
@@ -463,7 +469,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
                     type="number"
                     min={0}
                     value={maxLlmCallsPerHour}
-                    onChange={(e) => setMaxLlmCallsPerHour(e.target.value === '' ? '' : Number(e.target.value))}
+                    onChange={(e) => { markDirty(); setMaxLlmCallsPerHour(e.target.value === '' ? '' : Number(e.target.value)) }}
                     placeholder="Unlimited"
                     className="text-xs h-8"
                     disabled={!canEdit}
@@ -475,7 +481,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
                     type="number"
                     min={0}
                     value={maxToolCallsPerMinute}
-                    onChange={(e) => setMaxToolCallsPerMinute(e.target.value === '' ? '' : Number(e.target.value))}
+                    onChange={(e) => { markDirty(); setMaxToolCallsPerMinute(e.target.value === '' ? '' : Number(e.target.value)) }}
                     placeholder="Unlimited"
                     className="text-xs h-8"
                     disabled={!canEdit}
@@ -488,7 +494,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
                     min={0}
                     step={0.01}
                     value={maxCostPerDay}
-                    onChange={(e) => setMaxCostPerDay(e.target.value === '' ? '' : Number(e.target.value))}
+                    onChange={(e) => { markDirty(); setMaxCostPerDay(e.target.value === '' ? '' : Number(e.target.value)) }}
                     placeholder="Unlimited"
                     className="text-xs h-8"
                     disabled={!canEdit}
@@ -579,7 +585,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
             </p>
             <Textarea
               value={heartbeat}
-              onChange={(e) => setHeartbeat(e.target.value)}
+              onChange={(e) => { markDirty(); setHeartbeat(e.target.value) }}
               placeholder="# Heartbeat&#10;&#10;Write persistent context for this agent..."
               rows={6}
               className="text-xs font-mono resize-none"

@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -373,6 +374,11 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 	sniff := make([]byte, 512)
 	sniffN, _ := file.Read(sniff)
 
+	// Reject binary files: null bytes are a reliable binary indicator.
+	if bytes.Contains(sniff[:sniffN], []byte{0}) {
+		return ErrorResult("binary file detected: use a dedicated tool to handle binary files")
+	}
+
 	// Reset read position to beginning before applying the caller's offset.
 	if seeker, ok := file.(io.Seeker); ok {
 		_, err = seeker.Seek(0, io.SeekStart)
@@ -558,7 +564,8 @@ func (t *WriteFileTool) Execute(ctx context.Context, args map[string]any) *ToolR
 	overwrite, _ := args["overwrite"].(bool)
 
 	if !overwrite {
-		if _, err := t.fs.Open(path); err == nil {
+		if f, err := t.fs.Open(path); err == nil {
+			f.Close()
 			return ErrorResult(fmt.Sprintf("file: %s already exists. Set overwrite=true to replace.", path))
 		}
 	}

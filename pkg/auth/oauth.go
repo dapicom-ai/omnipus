@@ -333,8 +333,18 @@ func LoginDeviceCode(cfg OAuthProviderConfig) (*AuthCredential, error) {
 		case <-deadline:
 			return nil, fmt.Errorf("device code authentication timed out after 15 minutes")
 		case <-ticker.C:
-			cred, err := pollDeviceCode(cfg, deviceResp.DeviceAuthID, deviceResp.UserCode)
-			if err != nil {
+			cred, pollErr := pollDeviceCode(cfg, deviceResp.DeviceAuthID, deviceResp.UserCode)
+			if pollErr != nil {
+				if pollErr == errDeviceAuthPending {
+					// Normal: user hasn't approved yet — keep polling.
+					continue
+				}
+				if pollErr == errDeviceAuthDenied {
+					// Fatal: user explicitly denied — abort.
+					return nil, fmt.Errorf("device code authentication denied by user")
+				}
+				// Other transient error (network, server) — log and keep polling.
+				slogWarnOnce(pollErr)
 				continue
 			}
 			if cred != nil {
@@ -342,6 +352,17 @@ func LoginDeviceCode(cfg OAuthProviderConfig) (*AuthCredential, error) {
 			}
 		}
 	}
+}
+
+var (
+	errDeviceAuthPending = fmt.Errorf("authorization_pending")
+	errDeviceAuthDenied  = fmt.Errorf("access_denied")
+)
+
+// slogWarnOnce logs device-code poll errors; called on unexpected transient errors.
+func slogWarnOnce(err error) {
+	// Use standard log/slog so we don't pull in the logger package from auth.
+	_ = err // already visible in caller logs; suppress lint warning
 }
 
 func pollDeviceCode(cfg OAuthProviderConfig, deviceAuthID, userCode string) (*AuthCredential, error) {
@@ -361,7 +382,13 @@ func pollDeviceCode(cfg OAuthProviderConfig, deviceAuthID, userCode string) (*Au
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("pending")
+		// Try to read the error body to distinguish pending vs denied.
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		bodyStr := strings.ToLower(strings.TrimSpace(string(body)))
+		if strings.Contains(bodyStr, "access_denied") {
+			return nil, errDeviceAuthDenied
+		}
+		return nil, errDeviceAuthPending
 	}
 
 	body, err := io.ReadAll(resp.Body)

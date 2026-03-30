@@ -94,6 +94,7 @@ func (al *AgentLoop) ensureMCPInitialized(ctx context.Context) error {
 				map[string]any{
 					"error": err.Error(),
 				})
+			al.mcp.setInitErr(err)
 			if closeErr := mcpManager.Close(); closeErr != nil {
 				logger.ErrorCF("agent", "Failed to close MCP manager",
 					map[string]any{

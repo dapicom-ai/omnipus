@@ -10,7 +10,9 @@ import (
 var httpStatusPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`status[:\s]+(\d{3})`),
 	regexp.MustCompile(`http[/\s]+\d*\.?\d*\s+(\d{3})`),
-	regexp.MustCompile(`\b([3-5]\d{2})\b`),
+	// Third pattern requires a preceding error-context word (status, code, http, error, returned)
+	// to avoid false positives on numbers like "context length 512" or "512 tokens remaining".
+	regexp.MustCompile(`(?i)(?:status|code|http|error|returned)\s*:?\s*([3-5]\d{2})\b`),
 }
 
 // errorPattern defines a single pattern (string or regex) for error classification.

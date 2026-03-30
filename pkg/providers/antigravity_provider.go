@@ -97,11 +97,15 @@ func (p *AntigravityProvider) Chat(
 	}
 
 	// Headers matching the pi-ai SDK antigravity format
-	clientMetadata, _ := json.Marshal(map[string]string{
+	clientMetadata, err := json.Marshal(map[string]string{
 		"ideType":    "IDE_UNSPECIFIED",
 		"platform":   "PLATFORM_UNSPECIFIED",
 		"pluginType": "GEMINI",
 	})
+	if err != nil {
+		logger.WarnCF("antigravity", "failed to marshal client metadata", map[string]any{"error": err.Error()})
+		clientMetadata = []byte("{}")
+	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
@@ -115,7 +119,7 @@ func (p *AntigravityProvider) Chat(
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 50<<20))
 	if err != nil {
 		return nil, fmt.Errorf("reading response: %w", err)
 	}
@@ -436,7 +440,11 @@ func (p *AntigravityProvider) parseSSEResponse(body string) (*LLMResponse, error
 					contentParts = append(contentParts, part.Text)
 				}
 				if part.FunctionCall != nil {
-					argumentsJSON, _ := json.Marshal(part.FunctionCall.Args)
+					argumentsJSON, marshalErr := json.Marshal(part.FunctionCall.Args)
+					if marshalErr != nil {
+						logger.WarnCF("antigravity", "failed to marshal function call args", map[string]any{"tool": part.FunctionCall.Name, "error": marshalErr.Error()})
+						argumentsJSON = []byte("{}")
+					}
 					toolCalls = append(toolCalls, ToolCall{
 						ID:        fmt.Sprintf("call_%s_%d", part.FunctionCall.Name, time.Now().UnixNano()),
 						Name:      part.FunctionCall.Name,
@@ -599,14 +607,19 @@ func createAntigravityTokenSource() func() (string, string, error) {
 			// Try to fetch project ID from API
 			fetchedID, err := FetchAntigravityProjectID(cred.AccessToken)
 			if err != nil {
-				logger.WarnCF("provider.antigravity", "Could not fetch project ID, using fallback", map[string]any{
-					"error": err.Error(),
+				logger.ErrorCF("provider.antigravity", "Could not fetch project ID from API; falling back to hardcoded default — requests may fail if this project ID is incorrect", map[string]any{
+					"error":    err.Error(),
+					"fallback": "rising-fact-p41fc",
 				})
 				projectID = "rising-fact-p41fc" // Default fallback (same as OpenCode)
 			} else {
 				projectID = fetchedID
 				cred.ProjectID = projectID
-				_ = auth.SetCredential("google-antigravity", cred)
+				if credErr := auth.SetCredential("google-antigravity", cred); credErr != nil {
+					logger.WarnCF("provider.antigravity", "Failed to persist updated project ID to credential store", map[string]any{
+						"error": credErr.Error(),
+					})
+				}
 			}
 		}
 

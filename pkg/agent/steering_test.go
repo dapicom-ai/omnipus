@@ -420,10 +420,18 @@ func TestDrainBusToSteering_RequeuesDifferentScopeMessage(t *testing.T) {
 		t.Fatalf("expected no steering messages for active scope, got %v", msgs)
 	}
 
+	// After the drain goroutine exits, out-of-scope messages must have been
+	// re-published to the inbound bus (not the outbound bus) so that
+	// runAgentLoop can process them as new turns.
+	requeueCtx, requeueCancel := context.WithTimeout(context.Background(), time.Second)
+	defer requeueCancel()
 	select {
-	case <-ctx.Done():
-		t.Fatalf("timeout waiting for requeued message on outbound bus")
-	case requeued := <-msgBus.OutboundChan():
+	case <-requeueCtx.Done():
+		t.Fatal("timeout waiting for requeued message on inbound bus")
+	case requeued, ok := <-msgBus.InboundChan():
+		if !ok {
+			t.Fatal("inbound channel was closed unexpectedly")
+		}
 		if requeued.Channel != otherMsg.Channel || requeued.ChatID != otherMsg.ChatID ||
 			requeued.Content != otherMsg.Content {
 			t.Fatalf("requeued message mismatch: got %+v want %+v", requeued, otherMsg)

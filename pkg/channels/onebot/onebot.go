@@ -156,11 +156,13 @@ func (c *OneBotChannel) Start(ctx context.Context) error {
 
 	c.ctx, c.cancel = context.WithCancel(ctx)
 
+	connected := false
 	if err := c.connect(); err != nil {
 		logger.WarnCF("onebot", "Initial connection failed, will retry in background", map[string]any{
 			"error": err.Error(),
 		})
 	} else {
+		connected = true
 		go c.listen()
 		c.fetchSelfID()
 	}
@@ -173,8 +175,11 @@ func (c *OneBotChannel) Start(ctx context.Context) error {
 		}
 	}
 
-	c.SetRunning(true)
-	logger.InfoC("onebot", "OneBot channel started successfully")
+	// Only mark running after a successful connection (or reconnect loop is handling it).
+	if connected || c.config.ReconnectInterval > 0 {
+		c.SetRunning(true)
+		logger.InfoC("onebot", "OneBot channel started successfully")
+	}
 
 	return nil
 }

@@ -50,6 +50,9 @@ func (a *restAPI) HandleAuditLog(w http.ResponseWriter, r *http.Request) {
 
 	var entries []json.RawMessage
 	scanner := bufio.NewScanner(f)
+	// Limit scanner buffer to 1MiB per line and 64KiB initial buffer to prevent
+	// unbounded memory usage on large or malformed audit log files.
+	scanner.Buffer(make([]byte, 64*1024), 1<<20)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -400,6 +403,11 @@ func extractTarGz(archivePath, destDir string) error {
 			continue
 		}
 		destPath := filepath.Join(destDir, clean)
+		// Defense-in-depth: ensure the resolved path is still under destDir.
+		if !strings.HasPrefix(destPath, filepath.Clean(destDir)+string(os.PathSeparator)) {
+			slog.Warn("rest: restore: skipping tar entry escaping destination", "name", hdr.Name)
+			continue
+		}
 		if err := os.MkdirAll(filepath.Dir(destPath), 0o700); err != nil {
 			return fmt.Errorf("mkdir for %q: %w", clean, err)
 		}

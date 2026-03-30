@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Database, FloppyDisk, Archive, ArrowCounterClockwise, Trash } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
@@ -37,16 +37,20 @@ export function DataSection() {
     queryFn: fetchStorageStats,
   })
 
-  const { data: backups = [], isLoading: backupsLoading } = useQuery({
+  const { data: backups = [], isLoading: backupsLoading, isError: backupsError } = useQuery({
     queryKey: ['backups'],
     queryFn: fetchBackups,
     retry: false,
   })
 
+  const isDirtyRef = useRef(false)
+  const markDirty = () => { isDirtyRef.current = true }
+
   const [retentionDays, setRetentionDays] = useState('90')
 
   useEffect(() => {
     if (!config) return
+    if (isDirtyRef.current) return
     setRetentionDays(config.data.session_retention_days.toString())
   }, [config])
 
@@ -56,6 +60,7 @@ export function DataSection() {
         data: { session_retention_days: parseInt(retentionDays, 10) },
       }),
     onSuccess: () => {
+      isDirtyRef.current = false
       queryClient.invalidateQueries({ queryKey: ['config'] })
       addToast({ message: 'Data settings saved', variant: 'success' })
     },
@@ -149,7 +154,7 @@ export function DataSection() {
                 min="1"
                 max="365"
                 value={retentionDays}
-                onChange={(e) => setRetentionDays(e.target.value)}
+                onChange={(e) => { markDirty(); setRetentionDays(e.target.value) }}
                 className="w-20 h-8 text-xs font-mono"
               />
               <span className="text-xs text-[var(--color-muted)]">days</span>
@@ -180,7 +185,10 @@ export function DataSection() {
           {backupsLoading && (
             <div className="p-4 text-sm text-[var(--color-muted)]">Loading backups...</div>
           )}
-          {!backupsLoading && backups.length === 0 && (
+          {backupsError && (
+            <div className="p-4 text-sm text-red-400">Failed to load backups. Please try again.</div>
+          )}
+          {!backupsLoading && !backupsError && backups.length === 0 && (
             <div className="p-4 text-sm text-[var(--color-muted)]">No backups yet.</div>
           )}
           {backups.map((b) => (

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dapicom-ai/omnipus/pkg/fileutil"
+	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
 
 // MemoryStore manages persistent memory for the agent.
@@ -32,7 +33,12 @@ func NewMemoryStore(workspace string) *MemoryStore {
 	memoryFile := filepath.Join(memoryDir, "MEMORY.md")
 
 	// Ensure memory directory exists
-	os.MkdirAll(memoryDir, 0o755)
+	if mkErr := os.MkdirAll(memoryDir, 0o755); mkErr != nil {
+		// Non-fatal: the agent can still operate without the memory dir;
+		// reads will return empty and writes will fail with a clear error.
+		logger.WarnCF("agent", "Failed to create memory directory",
+			map[string]any{"memory_dir": memoryDir, "error": mkErr.Error()})
+	}
 
 	return &MemoryStore{
 		workspace:  workspace,

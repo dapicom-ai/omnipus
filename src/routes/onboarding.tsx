@@ -139,13 +139,13 @@ function OnboardingWizard() {
   const handleSkip = async () => {
     try {
       await completeOnboarding()
+      navigate({ to: '/' })
     } catch (err) {
       addToast({
         message: `Could not save onboarding state: ${err instanceof Error ? err.message : 'Unknown error'}`,
         variant: 'error',
       })
     }
-    navigate({ to: '/' })
   }
 
   return (

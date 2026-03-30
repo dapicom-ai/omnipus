@@ -149,18 +149,25 @@ func AppendJSONL(path string, record any) error {
 		return fmt.Errorf("fileutil: marshal jsonl record: %w", err)
 	}
 	// Append record + newline in one write to stay atomic on Linux.
-	line := append(data, '\n')
+	// Use explicit allocation to avoid mutating the backing array of data.
+	line := make([]byte, len(data)+1)
+	copy(line, data)
+	line[len(data)] = '\n'
 
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
 		return fmt.Errorf("fileutil: open jsonl file: %w", err)
 	}
-	defer f.Close()
 
 	if _, err := f.Write(line); err != nil {
+		f.Close()
 		return fmt.Errorf("fileutil: append jsonl record: %w", err)
 	}
-	return nil
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return fmt.Errorf("fileutil: sync jsonl file: %w", err)
+	}
+	return f.Close()
 }
 
 // WithFlock acquires an OS-level advisory write lock on path before calling fn,

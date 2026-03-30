@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Copy, ArrowsClockwise, FloppyDisk, CheckCircle, CaretDown, CaretRight } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
@@ -32,12 +32,16 @@ export function GatewaySection() {
     retry: false,
   })
 
+  const isDirtyRef = useRef(false)
+  const markDirty = () => { isDirtyRef.current = true }
+
   const [bindAddress, setBindAddress] = useState('127.0.0.1')
   const [port, setPort] = useState('8080')
   const [authMode, setAuthMode] = useState<'none' | 'token'>('none')
 
   useEffect(() => {
     if (!config) return
+    if (isDirtyRef.current) return
     setBindAddress(config.gateway.bind_address)
     setPort(config.gateway.port.toString())
     setAuthMode(config.gateway.auth_mode)
@@ -53,6 +57,7 @@ export function GatewaySection() {
         },
       }),
     onSuccess: () => {
+      isDirtyRef.current = false
       queryClient.invalidateQueries({ queryKey: ['config'] })
       addToast({ message: 'Gateway settings saved. Restart required to apply.', variant: 'default' })
     },
@@ -109,7 +114,7 @@ export function GatewaySection() {
             <p className="text-sm text-[var(--color-secondary)]">Bind address</p>
             <p className="text-xs text-[var(--color-muted)]">Where the gateway listens</p>
           </div>
-          <Select value={bindAddress} onValueChange={setBindAddress}>
+          <Select value={bindAddress} onValueChange={(v) => { markDirty(); setBindAddress(v) }}>
             <SelectTrigger className="w-[160px] h-8 text-xs font-mono">
               <SelectValue />
             </SelectTrigger>
@@ -130,7 +135,7 @@ export function GatewaySection() {
             min="1024"
             max="65535"
             value={port}
-            onChange={(e) => setPort(e.target.value)}
+            onChange={(e) => { markDirty(); setPort(e.target.value) }}
             className="w-24 h-8 text-xs font-mono"
           />
         </div>
@@ -141,7 +146,7 @@ export function GatewaySection() {
             <p className="text-sm text-[var(--color-secondary)]">Auth mode</p>
             <p className="text-xs text-[var(--color-muted)]">Require a bearer token for API access</p>
           </div>
-          <Select value={authMode} onValueChange={(v) => setAuthMode(v as 'none' | 'token')}>
+          <Select value={authMode} onValueChange={(v) => { markDirty(); setAuthMode(v as 'none' | 'token') }}>
             <SelectTrigger className="w-[120px] h-8 text-xs">
               <SelectValue />
             </SelectTrigger>

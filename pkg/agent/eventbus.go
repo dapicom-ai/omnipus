@@ -4,6 +4,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
 
 const defaultEventSubscriberBuffer = 16
@@ -92,6 +94,7 @@ func (b *EventBus) Emit(evt Event) {
 			if evt.Kind < eventKindCount {
 				b.dropped[evt.Kind].Add(1)
 			}
+			logger.DebugCF("eventbus", "event dropped, subscriber buffer full", map[string]any{"event_kind": evt.Kind})
 		}
 	}
 }

@@ -23,7 +23,7 @@ export function ProvidersSection() {
   const [showKey, setShowKey] = useState<Record<string, boolean>>({})
   const [testing, setTesting] = useState<Record<string, boolean>>({})
 
-  const { data: providers = [], isLoading } = useQuery({
+  const { data: providers = [], isLoading, isError: providersError } = useQuery({
     queryKey: ['providers'],
     queryFn: fetchProviders,
   })
@@ -65,6 +65,9 @@ export function ProvidersSection() {
         </p>
       </div>
 
+      {providersError && (
+        <p className="text-sm text-red-400">Failed to load providers. Please try again.</p>
+      )}
       {isLoading ? (
         <div className="space-y-2">
           {[1, 2, 3].map((i) => (

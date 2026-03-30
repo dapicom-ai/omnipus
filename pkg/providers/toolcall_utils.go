@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
 
 // buildCLIToolsPrompt creates the tool definitions section for a CLI provider system prompt.
@@ -34,8 +36,12 @@ func buildCLIToolsPrompt(tools []ToolDefinition) string {
 			sb.WriteString(fmt.Sprintf("Description: %s\n", tool.Function.Description))
 		}
 		if len(tool.Function.Parameters) > 0 {
-			paramsJSON, _ := json.Marshal(tool.Function.Parameters)
-			sb.WriteString(fmt.Sprintf("Parameters:\n```json\n%s\n```\n", string(paramsJSON)))
+			paramsJSON, err := json.Marshal(tool.Function.Parameters)
+			if err != nil {
+				logger.WarnCF("providers", "failed to marshal tool parameters", map[string]any{"tool": tool.Function.Name, "error": err.Error()})
+			} else {
+				sb.WriteString(fmt.Sprintf("Parameters:\n```json\n%s\n```\n", string(paramsJSON)))
+			}
 		}
 		sb.WriteString("\n")
 	}
@@ -68,7 +74,11 @@ func NormalizeToolCall(tc ToolCall) ToolCall {
 	}
 
 	// Ensure Function is populated with consistent values
-	argsJSON, _ := json.Marshal(normalized.Arguments)
+	argsJSON, err := json.Marshal(normalized.Arguments)
+	if err != nil {
+		logger.WarnCF("providers", "failed to marshal normalized tool arguments", map[string]any{"tool": normalized.Name, "error": err.Error()})
+		argsJSON = []byte("{}")
+	}
 	if normalized.Function == nil {
 		normalized.Function = &FunctionCall{
 			Name:      normalized.Name,

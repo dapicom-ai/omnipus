@@ -149,15 +149,15 @@ func (h *WSHandler) GetStreamer(_ context.Context, channel, chatID string) (bus.
 	if channel != "webchat" {
 		return nil, false
 	}
+	// Hold the lock for both map lookups to avoid a TOCTOU race where the
+	// session could be removed between the two separate lock/unlock pairs.
 	h.mu.Lock()
 	conn, ok := h.sessions[chatID]
+	sid := h.sessionIDs[chatID]
 	h.mu.Unlock()
 	if !ok {
 		return nil, false
 	}
-	h.mu.Lock()
-	sid := h.sessionIDs[chatID]
-	h.mu.Unlock()
 	return &wsStreamer{
 		conn:       conn,
 		chatID:     chatID,

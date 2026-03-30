@@ -21,8 +21,21 @@ func DoRequestWithRetry(client *http.Client, req *http.Request) (*http.Response,
 	var err error
 
 	for i := range maxRetries {
-		if i > 0 && resp != nil {
-			resp.Body.Close()
+		if i > 0 {
+			if resp != nil {
+				resp.Body.Close()
+			}
+			// Reset the request body for retries so the same body can be re-sent.
+			// req.GetBody is set automatically by http.NewRequest when the body is
+			// a bytes.Buffer, bytes.Reader, or strings.Reader. For nil bodies (GET,
+			// HEAD) this branch is a no-op.
+			if req.GetBody != nil {
+				newBody, bodyErr := req.GetBody()
+				if bodyErr != nil {
+					return nil, fmt.Errorf("failed to reset request body for retry: %w", bodyErr)
+				}
+				req.Body = newBody
+			}
 		}
 
 		resp, err = client.Do(req)

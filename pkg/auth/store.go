@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -44,7 +45,12 @@ func authFilePath() string {
 	if home := os.Getenv(config.EnvHome); home != "" {
 		return filepath.Join(home, "auth.json")
 	}
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		// Log at Warn but continue with empty home; the caller will get a bad path
+		// rather than a panic. This matches the graceful-degradation policy.
+		slog.Warn("auth: UserHomeDir failed; auth file path may be incorrect", "error", err)
+	}
 	return filepath.Join(home, pkg.DefaultOmnipusHome, "auth.json")
 }
 
@@ -56,6 +62,11 @@ func LoadStore() (*AuthStore, error) {
 			return &AuthStore{Credentials: make(map[string]*AuthCredential)}, nil
 		}
 		return nil, err
+	}
+
+	// Treat an empty file (e.g. newly created by WithFlock) as an empty store.
+	if len(data) == 0 {
+		return &AuthStore{Credentials: make(map[string]*AuthCredential)}, nil
 	}
 
 	var store AuthStore
@@ -92,12 +103,19 @@ func GetCredential(provider string) (*AuthCredential, error) {
 }
 
 func SetCredential(provider string, cred *AuthCredential) error {
-	store, err := LoadStore()
-	if err != nil {
+	path := authFilePath()
+	// Ensure the directory exists before trying to open the file for flock.
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	store.Credentials[provider] = cred
-	return SaveStore(store)
+	return fileutil.WithFlock(path, func() error {
+		store, err := LoadStore()
+		if err != nil {
+			return err
+		}
+		store.Credentials[provider] = cred
+		return SaveStore(store)
+	})
 }
 
 func DeleteCredential(provider string) error {

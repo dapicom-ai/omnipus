@@ -139,6 +139,7 @@ func (c *DiscordChannel) Send(ctx context.Context, msg bus.OutboundMessage) erro
 	}
 
 	if len([]rune(msg.Content)) == 0 {
+		logger.DebugCF("discord", "skipping send: empty message content", map[string]any{"chat_id": channelID})
 		return nil
 	}
 
@@ -202,7 +203,7 @@ func (c *DiscordChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMes
 	}
 
 	if len(files) == 0 {
-		return nil
+		return fmt.Errorf("discord: all %d media files failed to load", len(msg.Parts))
 	}
 
 	sendCtx, cancel := context.WithTimeout(ctx, sendTimeout)
@@ -226,7 +227,7 @@ func (c *DiscordChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMes
 			}
 		}
 		if err != nil {
-			return fmt.Errorf("discord send media: %w", channels.ErrTemporary)
+			return fmt.Errorf("discord send media: %w: %v", channels.ErrTemporary, err)
 		}
 		return nil
 	case <-sendCtx.Done():
@@ -293,7 +294,7 @@ func (c *DiscordChannel) sendChunk(ctx context.Context, channelID, content, repl
 	select {
 	case err := <-done:
 		if err != nil {
-			return fmt.Errorf("discord send: %w", channels.ErrTemporary)
+			return fmt.Errorf("discord send: %w: %v", channels.ErrTemporary, err)
 		}
 		return nil
 	case <-sendCtx.Done():

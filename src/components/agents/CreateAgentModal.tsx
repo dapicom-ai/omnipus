@@ -76,7 +76,7 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
   const isOpen = openProp !== undefined ? openProp : createAgentModalOpen
   const handleClose = onCloseProp ?? closeCreateAgentModal
 
-  const { data: providers = [] } = useQuery({
+  const { data: providers = [], isError: providersError } = useQuery({
     queryKey: ['providers'],
     queryFn: fetchProviders,
     enabled: isOpen,
@@ -250,13 +250,16 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
               <label className="text-xs font-medium text-[var(--color-muted)] mb-1.5 block">
                 Model
               </label>
+              {providersError && (
+                <p className="mb-1.5 text-xs text-red-400">Failed to load providers — showing default model list.</p>
+              )}
               <Select value={model || '__default__'} onValueChange={(v) => setModel(v === '__default__' ? '' : v)}>
                 <SelectTrigger>
                   <SelectValue placeholder="Use provider default" />
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__default__">Use provider default</SelectItem>
-                  {AVAILABLE_MODELS.map((m) => (
+                  {availableModels.map((m) => (
                     <SelectItem key={m} value={m}>{m}</SelectItem>
                   ))}
                 </SelectContent>

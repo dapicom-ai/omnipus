@@ -257,8 +257,19 @@ func callerFromYaml() bool {
 	return false
 }
 
-// IsZero returns true if the SecureString is empty
-// if caller not yaml, just return true for prevent marshal this field
+// IsZero implements the IsZero interface used by both encoding/json (omitzero)
+// and gopkg.in/yaml.v3 (omitempty) to decide whether to omit this field.
+//
+// Behaviour:
+//   - When called from the yaml.v3 library (YAML marshaling): returns false
+//     for non-empty values so secrets round-trip through YAML config files.
+//   - When called from any other caller (e.g. JSON marshaling via omitzero):
+//     always returns true, causing the field to be omitted from JSON output.
+//     JSON serialization uses MarshalJSON which returns "[NOT_HERE]" instead.
+//
+// The caller-detection approach is intentional: it is the only way to make a
+// single IsZero() method behave differently for two different encoding stacks
+// without changing the struct layout or tags.
 func (s SecureString) IsZero() bool {
 	if callerFromYaml() {
 		return true

@@ -180,15 +180,12 @@ func TestParseResponse_BasicContent(t *testing.T) {
 
 func TestParseResponse_EmptyChoices(t *testing.T) {
 	body := `{"choices":[]}`
-	out, err := ParseResponse(strings.NewReader(body))
-	if err != nil {
-		t.Fatalf("ParseResponse() error = %v", err)
+	_, err := ParseResponse(strings.NewReader(body))
+	if err == nil {
+		t.Fatal("ParseResponse() expected error for 0 choices, got nil")
 	}
-	if out.Content != "" {
-		t.Errorf("Content = %q, want empty", out.Content)
-	}
-	if out.FinishReason != "stop" {
-		t.Errorf("FinishReason = %q, want %q", out.FinishReason, "stop")
+	if !strings.Contains(err.Error(), "0 choices") {
+		t.Errorf("ParseResponse() error = %v, want error mentioning 0 choices", err)
 	}
 }
 

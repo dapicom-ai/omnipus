@@ -109,6 +109,9 @@ export class WsConnection {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null
   private intentionalClose = false
   private callbacks: WsConnectionCallbacks
+  /** Consecutive malformed/invalid frame counter — reset on every valid frame */
+  private droppedFrameCount = 0
+  private readonly droppedFrameThreshold = 5
 
   constructor(callbacks: WsConnectionCallbacks) {
     this.callbacks = callbacks
@@ -156,6 +159,8 @@ export class WsConnection {
       const token = localStorage.getItem('omnipus_auth_token')
       if (token) {
         this.send({ type: 'auth', token })
+      } else {
+        console.warn('[ws] No auth token found — connecting unauthenticated')
       }
       this._startHeartbeat()
       this.callbacks.onConnected()
@@ -168,12 +173,26 @@ export class WsConnection {
       } catch {
         // Malformed JSON — log and discard, don't swallow downstream errors
         console.warn('[ws] Malformed frame:', event.data)
+        this.droppedFrameCount++
+        if (this.droppedFrameCount >= this.droppedFrameThreshold) {
+          this.callbacks.onError(
+            `Received ${this.droppedFrameCount} malformed frames in a row — the connection may be unstable.`,
+          )
+        }
         return
       }
       if (typeof frame.type !== 'string') {
         console.warn('[ws] Invalid frame — missing type field:', frame)
+        this.droppedFrameCount++
+        if (this.droppedFrameCount >= this.droppedFrameThreshold) {
+          this.callbacks.onError(
+            `Received ${this.droppedFrameCount} invalid frames in a row — the connection may be unstable.`,
+          )
+        }
         return
       }
+      // Valid frame received — reset the consecutive drop counter
+      this.droppedFrameCount = 0
       this.callbacks.onFrame(frame)
     }
 

@@ -37,10 +37,11 @@ const EMOJI_MAP: Record<string, string> = {
 
 // Build a regex that matches any of the keys (order matters — longer first)
 const sortedKeys = Object.keys(EMOJI_MAP).sort((a, b) => b.length - a.length)
-const EMOJI_REGEX = new RegExp(
-  sortedKeys.map((e) => e.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'),
-  'g',
-)
+const EMOJI_PATTERN = sortedKeys.map((e) => e.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+// EMOJI_REGEX is used for exec/replace inside textToNodes (stateful, resets lastIndex before use)
+const EMOJI_REGEX = new RegExp(EMOJI_PATTERN, 'g')
+// EMOJI_TEST_REGEX is a separate instance used only for the .test() guard to avoid lastIndex contamination
+const EMOJI_TEST_REGEX = new RegExp(EMOJI_PATTERN)
 
 function textToNodes(value: string): (Text | Element)[] {
   const result: (Text | Element)[] = []
@@ -79,7 +80,7 @@ export const rehypePhosphorEmoji: Plugin<[], Root> = () => {
       if (typeof index !== 'number' || !parent) return
       // Skip emoji translation inside code/pre blocks — it breaks code literals
       if ('tagName' in parent && (parent.tagName === 'code' || parent.tagName === 'pre')) return
-      if (!EMOJI_REGEX.test(node.value)) return
+      if (!EMOJI_TEST_REGEX.test(node.value)) return
 
       const nodes = textToNodes(node.value)
       if (nodes.length <= 1) return

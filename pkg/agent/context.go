@@ -64,7 +64,12 @@ func getGlobalConfigDir() string {
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return ""
+		logger.WarnCF("agent", "UserHomeDir failed; global skills dir will be skipped",
+			map[string]any{"error": err.Error()})
+		// Return a path under /tmp so the skills loader gets a non-empty but
+		// non-existent directory rather than an empty string that might be
+		// interpreted as the current directory.
+		return filepath.Join("/tmp", pkg.DefaultOmnipusHome)
 	}
 	return filepath.Join(home, pkg.DefaultOmnipusHome)
 }
@@ -74,7 +79,11 @@ func NewContextBuilder(workspace string) *ContextBuilder {
 	// Use the skills/ directory under the current working directory
 	builtinSkillsDir := strings.TrimSpace(os.Getenv(config.EnvBuiltinSkills))
 	if builtinSkillsDir == "" {
-		wd, _ := os.Getwd()
+		wd, wdErr := os.Getwd()
+		if wdErr != nil {
+			logger.WarnCF("agent", "os.Getwd failed; builtin skills dir may be incorrect",
+				map[string]any{"error": wdErr.Error()})
+		}
 		builtinSkillsDir = filepath.Join(wd, "skills")
 	}
 	globalSkillsDir := filepath.Join(getGlobalConfigDir(), "skills")

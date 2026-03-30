@@ -3,7 +3,7 @@
 // renders the language label + copy button above each block.
 // Special case: language "mermaid" renders MermaidDiagram instead of Shiki.
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { ShikiHighlighter } from 'react-shiki'
 import { Copy, Check } from '@phosphor-icons/react'
 import type { SyntaxHighlighterProps, CodeHeaderProps } from '@assistant-ui/react-markdown'
@@ -41,6 +41,12 @@ export function SyntaxHighlighter({ language, code }: Omit<SyntaxHighlighterProp
 export function CopyCodeHeader({ language, code }: Omit<CodeHeaderProps, 'node'>) {
   const [copied, setCopied] = useState(false)
   const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (resetTimerRef.current) clearTimeout(resetTimerRef.current)
+    }
+  }, [])
 
   const handleCopy = async () => {
     try {

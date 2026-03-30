@@ -393,10 +393,11 @@ func setupAndStartServices(
 	api.registerAdditionalEndpoints(runningServices.ChannelManager)
 
 	// Catch-all for any /api/ path not registered — returns JSON 404 instead of SPA HTML.
+	// Do not echo r.URL.Path in the response; that leaks internal routing details.
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "endpoint not found", "path": r.URL.Path})
+		json.NewEncoder(w).Encode(map[string]string{"error": "endpoint not found"})
 	}))
 
 	// Serve the embedded SPA (Sovereign Deep UI) as the default handler.

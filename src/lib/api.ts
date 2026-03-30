@@ -150,7 +150,7 @@ export interface ToolCall {
 }
 
 export async function fetchSessions(agentId?: string): Promise<Session[]> {
-  const qs = agentId ? `?agent_id=${agentId}` : ''
+  const qs = agentId ? '?' + new URLSearchParams({ agent_id: agentId }).toString() : ''
   const raw = await request<RawSession[]>(`/sessions${qs}`)
   return raw.map(rawToSession)
 }
@@ -199,6 +199,8 @@ function rawToFrontendConfig(raw: Record<string, unknown>): Config {
   const gateway = (raw.gateway ?? {}) as Record<string, unknown>
   const storage = (raw.storage ?? {}) as Record<string, unknown>
   const retention = (storage.retention ?? {}) as Record<string, unknown>
+  const security = (raw.security ?? {}) as Record<string, unknown>
+  const rateLimits = (security.rate_limits ?? {}) as Record<string, unknown>
   return {
     gateway: {
       bind_address: (gateway.host as string) ?? '127.0.0.1',
@@ -206,10 +208,16 @@ function rawToFrontendConfig(raw: Record<string, unknown>): Config {
       auth_mode: 'none',
     },
     security: {
-      policy_mode: 'deny',
-      exec_approval: 'ask',
-      prompt_injection_level: 'medium',
-      rate_limits: {},
+      policy_mode: (security.policy_mode as Config['security']['policy_mode']) ?? 'deny',
+      exec_approval: (security.exec_approval as Config['security']['exec_approval']) ?? 'ask',
+      prompt_injection_level: (security.prompt_injection_level as Config['security']['prompt_injection_level']) ?? 'medium',
+      daily_cost_cap: security.daily_cost_cap as number | undefined,
+      rate_limits: {
+        max_tokens_per_day: rateLimits.max_tokens_per_day as number | undefined,
+        max_cost_per_day: rateLimits.max_cost_per_day as number | undefined,
+        max_agent_llm_calls_per_hour: rateLimits.max_agent_llm_calls_per_hour as number | undefined,
+        max_agent_tool_calls_per_minute: rateLimits.max_agent_tool_calls_per_minute as number | undefined,
+      },
     },
     data: {
       session_retention_days: (retention.session_days as number) ?? 90,

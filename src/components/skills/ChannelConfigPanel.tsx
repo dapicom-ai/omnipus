@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Eye,
@@ -90,6 +90,9 @@ export function ChannelConfigPanel({
   const queryClient = useQueryClient()
   const fields = getChannelFields(channelId)
 
+  const isDirtyRef = useRef(false)
+  const markDirty = () => { isDirtyRef.current = true }
+
   const [formValues, setFormValues] = useState<Record<string, unknown>>({})
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
 
@@ -99,16 +102,17 @@ export function ChannelConfigPanel({
     enabled: open,
   })
 
-  // Populate form when config loads
+  // Populate form when config loads — skip if user has unsaved edits
   useEffect(() => {
-    if (currentConfig) {
-      setFormValues(currentConfig)
-    }
+    if (!currentConfig) return
+    if (isDirtyRef.current) return
+    setFormValues(currentConfig)
   }, [currentConfig])
 
   const { mutate: doSave, isPending: saving } = useMutation({
     mutationFn: () => configureChannel(channelId, formValues),
     onSuccess: () => {
+      isDirtyRef.current = false
       queryClient.invalidateQueries({ queryKey: ['channels'] })
       queryClient.invalidateQueries({ queryKey: ['channel-config', channelId] })
       addToast({ message: 'Configuration saved', variant: 'success' })
@@ -122,6 +126,7 @@ export function ChannelConfigPanel({
       await enableChannel(channelId)
     },
     onSuccess: () => {
+      isDirtyRef.current = false
       queryClient.invalidateQueries({ queryKey: ['channels'] })
       queryClient.invalidateQueries({ queryKey: ['channel-config', channelId] })
       addToast({ message: 'Channel configured and enabled', variant: 'success' })
@@ -147,6 +152,7 @@ export function ChannelConfigPanel({
   })
 
   function setValue(key: string, value: unknown) {
+    markDirty()
     // Support nested keys like "group_trigger.mention_only"
     if (key.includes('.')) {
       const [parent, child] = key.split('.')

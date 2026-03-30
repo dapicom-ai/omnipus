@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { generateId } from '@/lib/constants'
+import { useUiStore } from '@/store/ui'
 import type { Message, ToolCall } from '@/lib/api'
 import type { WsConnection, WsReceiveFrame } from '@/lib/ws'
 import type {
@@ -198,7 +199,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   sendMessage: (content) => {
     const { connection, activeSessionId, activeAgentId, isStreaming } = get()
-    if (isStreaming) return // Already streaming — input is disabled in UI
+    if (isStreaming) {
+      set({ connectionError: 'Please wait — a response is still generating.' })
+      return
+    }
     if (!connection) {
       set({ connectionError: 'Cannot send message — not connected to the server. Check your connection and try again.' })
       return
@@ -243,6 +247,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       set((state) => ({
         messages: state.messages.filter((m) => m.id !== userMsg.id && m.id !== assistantMsg.id),
         isStreaming: false,
+        connectionError: 'Message could not be sent — connection dropped. Please try again.',
       }))
     }
   },
@@ -250,10 +255,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   cancelStream: () => {
     const { connection, activeSessionId, isStreaming } = get()
     if (!connection || !isStreaming) return
+    if (!activeSessionId) return
 
-    const sent = connection.send({ type: 'cancel', session_id: activeSessionId ?? '' })
+    const sent = connection.send({ type: 'cancel', session_id: activeSessionId })
     if (!sent) {
       console.warn('[chat] cancelStream: send failed — connection may be closed')
+      useUiStore.getState().addToast({
+        message: 'Could not send cancel — connection dropped. The response may continue briefly.',
+        variant: 'error',
+      })
     }
     get().markLastMessageInterrupted()
 
@@ -336,6 +346,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
       case 'exec_approval_request':
         store.addApprovalRequest(frame)
+        break
+
+      default:
+        console.warn('[chat] Unknown frame type:', (frame as { type: string }).type)
         break
     }
   },

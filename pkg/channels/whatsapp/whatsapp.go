@@ -137,7 +137,7 @@ func (c *WhatsAppChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 	_ = c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	if err := c.conn.WriteMessage(websocket.TextMessage, data); err != nil {
 		_ = c.conn.SetWriteDeadline(time.Time{})
-		return fmt.Errorf("whatsapp send: %w", channels.ErrTemporary)
+		return fmt.Errorf("whatsapp send: %w: %v", channels.ErrTemporary, err)
 	}
 	_ = c.conn.SetWriteDeadline(time.Time{})
 
@@ -145,6 +145,9 @@ func (c *WhatsAppChannel) Send(ctx context.Context, msg bus.OutboundMessage) err
 }
 
 func (c *WhatsAppChannel) listen() {
+	const maxReconnectAttempts = 10
+	reconnectAttempts := 0
+
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -161,12 +164,67 @@ func (c *WhatsAppChannel) listen() {
 
 			_, message, err := conn.ReadMessage()
 			if err != nil {
-				logger.ErrorCF("whatsapp", "WhatsApp read error", map[string]any{
-					"error": err.Error(),
+				if c.ctx.Err() != nil {
+					// Context cancelled — exit cleanly.
+					return
+				}
+				logger.ErrorCF("whatsapp", "WhatsApp read error — attempting reconnect", map[string]any{
+					"error":   err.Error(),
+					"attempt": reconnectAttempts + 1,
 				})
-				time.Sleep(2 * time.Second)
+
+				if reconnectAttempts >= maxReconnectAttempts {
+					logger.ErrorCF("whatsapp", "WhatsApp max reconnect attempts reached, giving up", map[string]any{
+						"max_attempts": maxReconnectAttempts,
+					})
+					return
+				}
+
+				// Close stale connection.
+				c.mu.Lock()
+				if c.conn != nil {
+					_ = c.conn.Close()
+					c.conn = nil
+					c.connected = false
+				}
+				c.mu.Unlock()
+
+				// Back off before reconnecting.
+				delay := time.Duration(reconnectAttempts+1) * 2 * time.Second
+				select {
+				case <-c.ctx.Done():
+					return
+				case <-time.After(delay):
+				}
+
+				// Attempt to reconnect.
+				dialer := websocket.DefaultDialer
+				dialer.HandshakeTimeout = 10 * time.Second
+				newConn, resp, dialErr := dialer.Dial(c.url, nil)
+				if resp != nil {
+					resp.Body.Close()
+				}
+				if dialErr != nil {
+					logger.ErrorCF("whatsapp", "WhatsApp reconnect failed", map[string]any{
+						"error":   dialErr.Error(),
+						"attempt": reconnectAttempts + 1,
+					})
+					reconnectAttempts++
+					continue
+				}
+
+				c.mu.Lock()
+				c.conn = newConn
+				c.connected = true
+				c.mu.Unlock()
+
+				logger.InfoCF("whatsapp", "WhatsApp reconnected", map[string]any{
+					"attempt": reconnectAttempts + 1,
+				})
+				reconnectAttempts = 0
 				continue
 			}
+			reconnectAttempts = 0
 
 			var msg map[string]any
 			if err := json.Unmarshal(message, &msg); err != nil {

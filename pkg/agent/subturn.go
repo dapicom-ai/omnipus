@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -326,6 +327,13 @@ func spawnSubTurn(
 	// 4. Create INDEPENDENT child context (not derived from parent ctx).
 	// This allows the child to continue running after parent finishes gracefully.
 	// The child has its own timeout for self-protection.
+	//
+	// Design note: the child context is intentionally not derived from ctx so
+	// that Critical sub-turns survive a graceful per-turn parent cancellation.
+	// Process-level shutdown is handled by AgentLoop.Stop() and the
+	// activeRequests WaitGroup rather than context propagation here; the child
+	// timeout (defaultSubTurnTimeout, typically 5 minutes) acts as a safety
+	// ceiling that prevents runaway sub-turns from blocking clean shutdown.
 	childCtx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -433,6 +441,7 @@ func spawnSubTurn(
 				"child_id":  childID,
 				"parent_id": parentTS.turnID,
 				"panic":     r,
+				"stack":     string(debug.Stack()),
 			})
 		}
 

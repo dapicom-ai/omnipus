@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,23 +9,23 @@ import (
 
 func TestSanitizeFilename(t *testing.T) {
 	tests := []struct {
-		input    string
-		expected string
+		input string
 	}{
-		{"simple", "simple"},
-		{"telegram:123456", "telegram_123456"},
-		{"discord:987654321", "discord_987654321"},
-		{"slack:C01234", "slack_C01234"},
-		{"no-colons-here", "no-colons-here"},
-		{"multiple:colons:here", "multiple_colons_here"},
-		{"agent:main:telegram:group:-1003822706455/12", "agent_main_telegram_group_-1003822706455_12"},
+		{"simple"},
+		{"telegram:123456"},
+		{"discord:987654321"},
+		{"slack:C01234"},
+		{"no-colons-here"},
+		{"multiple:colons:here"},
+		{"agent:main:telegram:group:-1003822706455/12"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
 			got := sanitizeFilename(tt.input)
-			if got != tt.expected {
-				t.Errorf("sanitizeFilename(%q) = %q, want %q", tt.input, got, tt.expected)
+			want := hex.EncodeToString([]byte(tt.input))
+			if got != want {
+				t.Errorf("sanitizeFilename(%q) = %q, want %q", tt.input, got, want)
 			}
 		})
 	}
@@ -39,13 +40,13 @@ func TestSave_WithColonInKey(t *testing.T) {
 	sm.GetOrCreate(key)
 	sm.AddMessage(key, "user", "hello")
 
-	// Save should succeed even though the key contains ':'
+	// Save should succeed even though the key contains ':'.
 	if err := sm.Save(key); err != nil {
 		t.Fatalf("Save(%q) failed: %v", key, err)
 	}
 
-	// The file on disk should use sanitized name.
-	expectedFile := filepath.Join(tmpDir, "telegram_123456.json")
+	// The file on disk should use hex-encoded name.
+	expectedFile := filepath.Join(tmpDir, hex.EncodeToString([]byte(key))+".json")
 	if _, err := os.Stat(expectedFile); os.IsNotExist(err) {
 		t.Fatalf("expected session file %s to exist", expectedFile)
 	}
@@ -65,7 +66,7 @@ func TestSave_RejectsPathTraversal(t *testing.T) {
 	tmpDir := t.TempDir()
 	sm := NewSessionManager(tmpDir)
 
-	// Invalid names that must still be rejected.
+	// Invalid raw keys that must be rejected before encoding.
 	badKeys := []string{"", ".", ".."}
 	for _, key := range badKeys {
 		sm.GetOrCreate(key)
@@ -74,12 +75,13 @@ func TestSave_RejectsPathTraversal(t *testing.T) {
 		}
 	}
 
-	// Keys containing path separators are sanitized (no subdirs created).
+	// Keys containing path separators are hex-encoded (no subdirs created).
 	sm.GetOrCreate("foo/bar")
 	if err := sm.Save("foo/bar"); err != nil {
 		t.Fatalf("Save(\"foo/bar\") after sanitize should succeed: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(tmpDir, "foo_bar.json")); os.IsNotExist(err) {
-		t.Errorf("expected foo_bar.json in storage (sanitized from foo/bar)")
+	expectedHex := hex.EncodeToString([]byte("foo/bar"))
+	if _, err := os.Stat(filepath.Join(tmpDir, expectedHex+".json")); os.IsNotExist(err) {
+		t.Errorf("expected %s.json in storage (hex-encoded from foo/bar)", expectedHex)
 	}
 }

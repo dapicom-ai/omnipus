@@ -393,6 +393,11 @@ func (ph *ProcessHook) send(ctx context.Context, msg processHookRPCMessage) erro
 	}
 }
 
+// readLoop reads JSON-RPC messages from the hook process stdout until EOF.
+// Context cancellation is handled indirectly: Close() kills the subprocess,
+// which closes the stdout pipe and causes Scanner.Scan() to return false.
+// There is no need to select on ctx.Done() because the pipe EOF guarantees
+// this goroutine will exit when the process is terminated.
 func (ph *ProcessHook) readLoop(stdout io.Reader) {
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), processHookReadBufferSize)

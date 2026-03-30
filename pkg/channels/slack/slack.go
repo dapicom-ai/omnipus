@@ -132,7 +132,7 @@ func (c *SlackChannel) Send(ctx context.Context, msg bus.OutboundMessage) error 
 
 	_, _, err := c.api.PostMessageContext(ctx, channelID, opts...)
 	if err != nil {
-		return fmt.Errorf("slack send: %w", channels.ErrTemporary)
+		return fmt.Errorf("slack send: %w: %v", channels.ErrTemporary, err)
 	}
 
 	if ref, ok := c.pendingAcks.LoadAndDelete(msg.ChatID); ok {

@@ -538,6 +538,8 @@ func (m *Manager) StartAll(ctx context.Context) error {
 	dispatchCtx, cancel := context.WithCancel(ctx)
 	m.dispatchTask = &asyncTask{cancel: cancel}
 
+	startedCount := 0
+	configuredCount := len(m.channels)
 	for name, channel := range m.channels {
 		logger.InfoCF("channels", "Starting channel", map[string]any{
 			"channel": name,
@@ -554,6 +556,12 @@ func (m *Manager) StartAll(ctx context.Context) error {
 		m.workers[name] = w
 		go m.runWorker(dispatchCtx, name, w)
 		go m.runMediaWorker(dispatchCtx, name, w)
+		startedCount++
+	}
+
+	if configuredCount > 0 && startedCount == 0 {
+		cancel()
+		return fmt.Errorf("channels: all %d configured channels failed to start", configuredCount)
 	}
 
 	// Start the dispatcher that reads from the bus and routes to workers
@@ -879,7 +887,25 @@ func (m *Manager) runMediaWorker(ctx context.Context, name string, w *channelWor
 			if !ok {
 				return
 			}
-			_ = m.sendMediaWithRetry(ctx, name, w, msg)
+			if err := m.sendMediaWithRetry(ctx, name, w, msg); err != nil {
+				logger.ErrorCF("channels", "Failed to send media message", map[string]any{
+					"channel": name,
+					"chat_id": msg.ChatID,
+					"error":   err.Error(),
+				})
+				// Publish a text fallback so the user knows delivery failed.
+				fallbackMsg := bus.OutboundMessage{
+					Channel: msg.Channel,
+					ChatID:  msg.ChatID,
+					Content: "[media delivery failed]",
+				}
+				if sendErr := m.bus.PublishOutbound(ctx, fallbackMsg); sendErr != nil {
+					logger.WarnCF("channels", "Failed to publish media fallback message", map[string]any{
+						"channel": name,
+						"error":   sendErr.Error(),
+					})
+				}
+			}
 		case <-ctx.Done():
 			return
 		}
@@ -1050,21 +1076,28 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 	list := toChannelHashes(cfg)
 	added, removed := compareChannels(m.channelHashes, list)
 
+	// Fix 16: cancel the existing dispatcher before creating a new one to prevent context leak.
+	if m.dispatchTask != nil {
+		m.dispatchTask.cancel()
+	}
+
+	// Fix 14 (removed loop): capture loop variable with a local copy to avoid Go closure capture bug.
 	deferFuncs := make([]func(), 0, len(removed)+len(added))
 	for _, name := range removed {
+		n := name // local copy — prevents closure from capturing the loop variable
 		// Stop all channels
-		channel := m.channels[name]
+		channel := m.channels[n]
 		logger.InfoCF("channels", "Stopping channel", map[string]any{
-			"channel": name,
+			"channel": n,
 		})
 		if err := channel.Stop(ctx); err != nil {
 			logger.ErrorCF("channels", "Error stopping channel", map[string]any{
-				"channel": name,
+				"channel": n,
 				"error":   err.Error(),
 			})
 		}
 		deferFuncs = append(deferFuncs, func() {
-			m.UnregisterChannel(name)
+			m.UnregisterChannel(n)
 		})
 	}
 	dispatchCtx, cancel := context.WithCancel(ctx)
@@ -1083,35 +1116,45 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 		cancel()
 		return err
 	}
+	// Fix 14 (added loop): capture loop variables with local copies.
 	for _, name := range added {
-		channel := m.channels[name]
+		n := name // local copy — prevents closure from capturing the loop variable
+		channel := m.channels[n]
 		logger.InfoCF("channels", "Starting channel", map[string]any{
-			"channel": name,
+			"channel": n,
 		})
 		if err := channel.Start(ctx); err != nil {
 			logger.ErrorCF("channels", "Failed to start channel", map[string]any{
-				"channel": name,
+				"channel": n,
 				"error":   err.Error(),
 			})
+			// Fix 35: don't commit the hash for channels that failed to start.
+			delete(list, n)
 			continue
 		}
 		// Lazily create worker only after channel starts successfully
-		w := newChannelWorker(name, channel)
-		m.workers[name] = w
-		go m.runWorker(dispatchCtx, name, w)
-		go m.runMediaWorker(dispatchCtx, name, w)
+		w := newChannelWorker(n, channel)
+		m.workers[n] = w
+		go m.runWorker(dispatchCtx, n, w)
+		go m.runMediaWorker(dispatchCtx, n, w)
 		deferFuncs = append(deferFuncs, func() {
-			m.RegisterChannel(name, channel)
+			m.RegisterChannel(n, channel)
 		})
 	}
 
-	// Commit hashes only on full success.
+	// Commit hashes only for successfully started channels.
 	m.channelHashes = list
-	go func() {
-		for _, f := range deferFuncs {
-			f()
-		}
-	}()
+
+	// Fix 15: execute deferFuncs synchronously after releasing the lock, not in a goroutine.
+	// Running them in a goroutine while the mutex is still held causes a deadlock;
+	// running them in a goroutine after unlock races with subsequent Reload calls.
+	// We must manually unlock here so that RegisterChannel/UnregisterChannel can acquire the lock.
+	m.mu.Unlock()
+	for _, f := range deferFuncs {
+		f()
+	}
+	// Re-acquire so that the deferred m.mu.Unlock() at the top of the function is balanced.
+	m.mu.Lock()
 	return nil
 }
 
@@ -1195,7 +1238,7 @@ func (m *Manager) SendMedia(ctx context.Context, msg bus.OutboundMediaMessage) e
 
 func (m *Manager) SendToChannel(ctx context.Context, channelName, chatID, content string) error {
 	m.mu.RLock()
-	_, exists := m.channels[channelName]
+	channel, exists := m.channels[channelName]
 	w, wExists := m.workers[channelName]
 	m.mu.RUnlock()
 
@@ -1218,7 +1261,7 @@ func (m *Manager) SendToChannel(ctx context.Context, channelName, chatID, conten
 		}
 	}
 
-	// Fallback: direct send (should not happen)
-	channel, _ := m.channels[channelName]
+	// Fallback: direct send (should not happen in normal operation).
+	// channel was captured under the lock above, so this access is safe.
 	return channel.Send(ctx, msg)
 }

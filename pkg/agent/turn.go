@@ -109,18 +109,19 @@ type turnState struct {
 
 func newTurnState(agent *AgentInstance, opts processOptions, scope turnEventScope) *turnState {
 	ts := &turnState{
-		agent:       agent,
-		opts:        opts,
-		scope:       scope,
-		turnID:      scope.turnID,
-		agentID:     agent.ID,
-		sessionKey:  opts.SessionKey,
-		channel:     opts.Channel,
-		chatID:      opts.ChatID,
-		userMessage: opts.UserMessage,
-		media:       append([]string(nil), opts.Media...),
-		phase:       TurnPhaseSetup,
-		startedAt:   time.Now(),
+		agent:        agent,
+		opts:         opts,
+		scope:        scope,
+		turnID:       scope.turnID,
+		agentID:      agent.ID,
+		sessionKey:   opts.SessionKey,
+		channel:      opts.Channel,
+		chatID:       opts.ChatID,
+		userMessage:  opts.UserMessage,
+		media:        append([]string(nil), opts.Media...),
+		phase:        TurnPhaseSetup,
+		startedAt:    time.Now(),
+		finishedChan: make(chan struct{}),
 	}
 
 	// Bind session store and capture initial history length for rollback logic
@@ -403,12 +404,17 @@ func (ts *turnState) Finish(isHardAbort bool) {
 		if ts.pendingResults != nil {
 			close(ts.pendingResults)
 		}
+		// Acquire mu to ensure we close the same channel instance that Finished() returns.
+		// finishedChan is always initialized by newTurnState for normal turns; ad-hoc
+		// turnState values (tests, adhoc-root fallback) may leave it nil, in which case
+		// Finished() lazily creates it under the same lock — so we must do the same here.
 		ts.mu.Lock()
 		if ts.finishedChan == nil {
 			ts.finishedChan = make(chan struct{})
 		}
-		close(ts.finishedChan)
+		ch := ts.finishedChan
 		ts.mu.Unlock()
+		close(ch)
 	})
 
 	// If this is a graceful finish (not hard abort), signal to children
@@ -435,7 +441,11 @@ func (ts *turnState) Finish(isHardAbort bool) {
 	}
 }
 
-// Finished returns whether the turn has finished
+// Finished returns a channel that is closed when the turn finishes.
+// The channel is always initialized by newTurnState. Ad-hoc turnState values
+// (used in tests or the adhoc-root fallback) may not have it set; in that
+// case a new channel is returned but it is stored so both Finish and Finished
+// always reference the same instance.
 func (ts *turnState) Finished() chan struct{} {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()

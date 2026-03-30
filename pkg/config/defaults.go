@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/dapicom-ai/omnipus/pkg"
+	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
 
 // DefaultConfig returns the default configuration for Omnipus.
@@ -20,7 +21,11 @@ func DefaultConfig() *Config {
 	if omnipusHome := os.Getenv(EnvHome); omnipusHome != "" {
 		homePath = omnipusHome
 	} else {
-		userHome, _ := os.UserHomeDir()
+		userHome, homeErr := os.UserHomeDir()
+		if homeErr != nil {
+			logger.WarnCF("config", "UserHomeDir failed in DefaultConfig; workspace path may be incorrect",
+				map[string]any{"error": homeErr.Error()})
+		}
 		homePath = filepath.Join(userHome, pkg.DefaultOmnipusHome)
 	}
 	workspacePath := filepath.Join(homePath, pkg.WorkspaceName)

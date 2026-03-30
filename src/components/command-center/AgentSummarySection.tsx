@@ -24,13 +24,13 @@ export function AgentSummarySection() {
     refetchInterval: 30_000,
   })
 
-  const { data: sessions = [] } = useQuery({
+  const { data: sessions = [], isError: sessionsError } = useQuery({
     queryKey: ['sessions'],
     queryFn: () => fetchSessions(),
     refetchInterval: 30_000,
   })
 
-  const { data: tasks = [] } = useQuery({
+  const { data: tasks = [], isError: tasksError } = useQuery({
     queryKey: ['tasks'],
     queryFn: fetchTasks,
     refetchInterval: 30_000,
@@ -80,6 +80,15 @@ export function AgentSummarySection() {
             <p className="px-4 pb-2 text-xs text-[var(--color-muted)]">No agents configured.</p>
           ) : (
             <div className="space-y-px px-2">
+              {(sessionsError || tasksError) && (
+                <p className="px-2 pb-1 text-[10px] text-[var(--color-muted)]">
+                  {sessionsError && tasksError
+                    ? 'Could not load session and task data.'
+                    : sessionsError
+                      ? 'Could not load session data.'
+                      : 'Could not load task data.'}
+                </p>
+              )}
               {agents.map((agent) => {
                 const lastActive = lastActiveByAgent[agent.id]
                 const taskCount = taskCountByAgent[agent.id] ?? 0

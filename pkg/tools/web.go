@@ -637,6 +637,7 @@ func (p *PerplexitySearchProvider) Search(
 
 type SearXNGSearchProvider struct {
 	baseURL string
+	client  *http.Client
 }
 
 func (p *SearXNGSearchProvider) Search(
@@ -657,8 +658,7 @@ func (p *SearXNGSearchProvider) Search(
 		return "", fmt.Errorf("failed to create request: %w", err)
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := p.client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
@@ -944,7 +944,10 @@ func NewWebSearchTool(opts WebSearchToolOptions) (*WebSearchTool, error) {
 			maxResults = min(opts.BraveMaxResults, 10)
 		}
 	} else if opts.SearXNGEnabled && opts.SearXNGBaseURL != "" {
-		provider = &SearXNGSearchProvider{baseURL: opts.SearXNGBaseURL}
+		provider = &SearXNGSearchProvider{
+			baseURL: opts.SearXNGBaseURL,
+			client:  &http.Client{Timeout: 10 * time.Second},
+		}
 		if opts.SearXNGMaxResults > 0 {
 			maxResults = min(opts.SearXNGMaxResults, 10)
 		}

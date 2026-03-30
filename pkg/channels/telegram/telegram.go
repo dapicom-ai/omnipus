@@ -325,8 +325,10 @@ func (c *TelegramChannel) StartTyping(ctx context.Context, chatID string) (func(
 	action := tu.ChatAction(tu.ID(cid), telego.ChatActionTyping)
 	action.MessageThreadID = threadID
 
-	// Send the first typing action immediately
-	_ = c.bot.SendChatAction(ctx, action)
+	// Send the first typing action immediately; failure is non-critical (chat still works).
+	if err := c.bot.SendChatAction(ctx, action); err != nil {
+		logger.DebugCF("telegram", "failed to send initial typing action", map[string]any{"error": err.Error()})
+	}
 
 	typingCtx, cancel := context.WithCancel(ctx)
 	// Cap lifetime so the goroutine cannot run indefinitely if cancel is never called

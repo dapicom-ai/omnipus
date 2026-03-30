@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 )
 
@@ -137,6 +138,8 @@ Task: %s`,
 			// Call callback if provided
 			if cb != nil {
 				cb(ctx, result)
+			} else if err != nil {
+				slog.Error("spawn: subturn failed with no callback", "error", err)
 			}
 		}()
 

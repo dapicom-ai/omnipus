@@ -1,12 +1,12 @@
 package session
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -151,16 +151,13 @@ func (sm *SessionManager) TruncateHistory(key string, keepLast int) {
 	session.Updated = time.Now()
 }
 
-// sanitizeFilename converts a session key into a cross-platform safe filename.
-// Replaces ':' with '_' (session key separator) and '/' and '\' with '_' so
-// composite IDs (e.g. Telegram forum "chatID/threadID") do not create
-// subdirectories or break on Windows. The original key is preserved inside
-// the JSON file, so loadSessions still maps back to the right in-memory key.
+// sanitizeFilename converts a session key into a cross-platform safe filename
+// using hex encoding to prevent collisions. For example, "a:b" and "a_b" would
+// both become "_" under the old character-replacement scheme but are distinct
+// under hex encoding. The original key is preserved inside the JSON file, so
+// loadSessions still maps back to the right in-memory key.
 func sanitizeFilename(key string) string {
-	s := strings.ReplaceAll(key, ":", "_")
-	s = strings.ReplaceAll(s, "/", "_")
-	s = strings.ReplaceAll(s, "\\", "_")
-	return s
+	return hex.EncodeToString([]byte(key))
 }
 
 func (sm *SessionManager) Save(key string) error {
@@ -168,12 +165,15 @@ func (sm *SessionManager) Save(key string) error {
 		return nil
 	}
 
+	// Reject clearly invalid raw keys before encoding.
+	if key == "" || key == "." || key == ".." {
+		return os.ErrInvalid
+	}
+
 	filename := sanitizeFilename(key)
 
-	// filepath.IsLocal rejects empty names, "..", absolute paths, and
-	// OS-reserved device names (NUL, COM1 … on Windows). sanitizeFilename
-	// already replaced '/' and '\' with '_', so no subdirs are created.
-	if filename == "." || !filepath.IsLocal(filename) {
+	// Sanity check: the hex-encoded filename must be non-empty and a local path.
+	if filename == "" || !filepath.IsLocal(filename) {
 		return os.ErrInvalid
 	}
 

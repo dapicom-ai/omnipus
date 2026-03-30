@@ -51,9 +51,6 @@ type restAPI struct {
 
 func (a *restAPI) setCORSHeaders(w http.ResponseWriter, r ...*http.Request) {
 	origin := a.allowedOrigin
-	if origin == "" {
-		origin = "*"
-	}
 	// Allow same-origin requests: if the request Origin matches the Host header,
 	// reflect it so the SPA works when accessed via public IP.
 	// Only reflect origins that are same-origin or localhost — never arbitrary origins.
@@ -62,6 +59,11 @@ func (a *restAPI) setCORSHeaders(w http.ResponseWriter, r ...*http.Request) {
 		if reqOrigin != "" && isAllowedOrigin(reqOrigin, r[0].Host, a.allowedOrigin) {
 			origin = reqOrigin
 		}
+	}
+	// Never fall back to "*" — if no origin is configured and the request origin
+	// is not localhost/same-origin, omit the header (browser will block the request).
+	if origin == "" {
+		return
 	}
 	w.Header().Set("Access-Control-Allow-Origin", origin)
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
@@ -105,7 +107,8 @@ func (a *restAPI) handlePreflight(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
-// withAuth wraps a handler with preflight, bearer auth, and CORS header boilerplate.
+// withAuth wraps a handler with preflight, bearer auth, CORS header boilerplate,
+// and a 1 MB request body size limit to prevent unbounded memory allocation.
 func (a *restAPI) withAuth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if a.handlePreflight(w, r) {
@@ -115,6 +118,7 @@ func (a *restAPI) withAuth(handler http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		a.setCORSHeaders(w, r)
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB limit
 		handler(w, r)
 	}
 }
@@ -503,10 +507,10 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
 		return
 	}
-	// Persistence succeeded — now safe to update the live config.
-	cfg := a.agentLoop.GetConfig()
-	cfg.Agents.List = append(cfg.Agents.List, ac)
-	model := cfg.Agents.Defaults.ModelName
+	// Persistence succeeded. Do NOT mutate the live config pointer — that is a data race.
+	// The in-memory config will pick up the new agent on the next hot-reload cycle.
+	// Build the response from local variables only.
+	model := a.agentLoop.GetConfig().Agents.Defaults.ModelName
 	if ac.Model != nil && ac.Model.Primary != "" {
 		model = ac.Model.Primary
 	}
@@ -586,22 +590,17 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
 		return
 	}
-	// Persistence succeeded — now safe to update the live config.
-	found := &cfg.Agents.List[foundIdx]
-	found.Name = newName
-	if newModel != "" {
-		if found.Model == nil {
-			found.Model = &config.AgentModelConfig{}
-		}
-		found.Model.Primary = newModel
-	}
+	// Persistence succeeded. Do NOT mutate the live config pointer — that is a data race.
+	// The in-memory config will pick up the changes on the next hot-reload cycle.
+	// Build the response entirely from local variables.
+	agentID := cfg.Agents.List[foundIdx].ID
 	model := cfg.Agents.Defaults.ModelName
-	if found.Model != nil && found.Model.Primary != "" {
-		model = found.Model.Primary
+	if newModel != "" {
+		model = newModel
 	}
 	jsonOK(w, agentResponse{
-		ID:     found.ID,
-		Name:   found.Name,
+		ID:     agentID,
+		Name:   newName,
 		Type:   "custom",
 		Model:  model,
 		Status: "idle",
@@ -1002,8 +1001,8 @@ func (a *restAPI) rotateGatewayToken(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
 		return
 	}
-	// Persistence succeeded — now safe to update the live config.
-	a.agentLoop.GetConfig().Gateway.Token = newToken
+	// Persistence succeeded. Do NOT mutate the live config pointer — that is a data race.
+	// The in-memory config will pick up the new token on the next hot-reload cycle.
 	jsonOK(w, map[string]string{"token": newToken})
 }
 

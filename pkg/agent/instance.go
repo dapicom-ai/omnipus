@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -61,7 +60,10 @@ func NewAgentInstance(
 	provider providers.LLMProvider,
 ) *AgentInstance {
 	workspace := resolveAgentWorkspace(agentCfg, defaults)
-	os.MkdirAll(workspace, 0o755)
+	if mkErr := os.MkdirAll(workspace, 0o755); mkErr != nil {
+		logger.WarnCF("agent", "Failed to create agent workspace directory",
+			map[string]any{"workspace": workspace, "error": mkErr.Error()})
+	}
 
 	model := resolveAgentModel(agentCfg, defaults)
 	fallbacks := resolveAgentFallbacks(agentCfg, defaults)
@@ -263,7 +265,7 @@ func compilePatterns(patterns []string) []*regexp.Regexp {
 	for _, p := range patterns {
 		re, err := regexp.Compile(p)
 		if err != nil {
-			fmt.Printf("Warning: invalid path pattern %q: %v\n", p, err)
+			logger.WarnCF("agent", "invalid path pattern, skipping", map[string]any{"pattern": p, "error": err.Error()})
 			continue
 		}
 		compiled = append(compiled, re)
@@ -333,7 +335,18 @@ func expandHome(path string) string {
 		return path
 	}
 	if path[0] == '~' {
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			logger.WarnCF("agent", "UserHomeDir failed in expandHome; using current directory as fallback",
+				map[string]any{"path": path, "error": err.Error()})
+			// Use the current working directory as a safe fallback so the
+			// caller gets a non-empty, usable path rather than a broken one.
+			if wd, wdErr := os.Getwd(); wdErr == nil {
+				home = wd
+			} else {
+				home = "."
+			}
+		}
 		if len(path) > 1 && path[1] == '/' {
 			return home + path[1:]
 		}

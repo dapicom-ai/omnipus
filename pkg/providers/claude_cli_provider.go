@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"strings"
 )
@@ -17,6 +18,7 @@ type ClaudeCliProvider struct {
 
 // NewClaudeCliProvider creates a new Claude CLI provider.
 func NewClaudeCliProvider(workspace string) *ClaudeCliProvider {
+	slog.Warn("Using --dangerously-skip-permissions flag", "provider", "claude-cli")
 	return &ClaudeCliProvider{
 		command:   "claude",
 		workspace: workspace,
