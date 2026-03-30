@@ -89,7 +89,7 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 		}
 		apiBase := cfg.APIBase
 		if apiBase == "" {
-			apiBase = getDefaultAPIBase(protocol)
+			apiBase = GetDefaultAPIBase(protocol)
 		}
 		return NewHTTPProviderWithMaxTokensFieldAndRequestTimeout(
 			cfg.APIKey(),
@@ -165,7 +165,7 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 		}
 		apiBase := cfg.APIBase
 		if apiBase == "" {
-			apiBase = getDefaultAPIBase(protocol)
+			apiBase = GetDefaultAPIBase(protocol)
 		}
 		return NewHTTPProviderWithMaxTokensFieldAndRequestTimeout(
 			cfg.APIKey(),
@@ -183,7 +183,7 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 		}
 		apiBase := cfg.APIBase
 		if apiBase == "" {
-			apiBase = getDefaultAPIBase(protocol)
+			apiBase = GetDefaultAPIBase(protocol)
 		}
 		extraBody := cfg.ExtraBody
 		if extraBody == nil {
@@ -246,7 +246,7 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 		// Alibaba Coding Plan with Anthropic-compatible API
 		apiBase := cfg.APIBase
 		if apiBase == "" {
-			apiBase = getDefaultAPIBase(protocol)
+			apiBase = GetDefaultAPIBase(protocol)
 		}
 		if cfg.APIKey() == "" {
 			return nil, "", fmt.Errorf("api_key is required for %q protocol (model: %s)", protocol, cfg.Model)
@@ -294,8 +294,8 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 	}
 }
 
-// getDefaultAPIBase returns the default API base URL for a given protocol.
-func getDefaultAPIBase(protocol string) string {
+// GetDefaultAPIBase returns the default API base URL for a given protocol.
+func GetDefaultAPIBase(protocol string) string {
 	switch protocol {
 	case "openai":
 		return "https://api.openai.com/v1"

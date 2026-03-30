@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -27,6 +29,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/fileutil"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
+	providers_pkg "github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/skills"
 )
@@ -363,6 +366,52 @@ type providerResponse struct {
 	Name   string   `json:"name"`
 	Status string   `json:"status"` // "connected" | "disconnected"
 	Models []string `json:"models"`
+}
+
+// fetchUpstreamModels fetches the list of available models from an OpenAI-compatible
+// provider's /models endpoint. Returns model IDs sorted alphabetically, or nil on error.
+// Used to populate the model dropdown with all models the provider supports, not just
+// the ones explicitly configured in config.json.
+func fetchUpstreamModels(baseURL, apiKey string) ([]string, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequest("GET", strings.TrimSuffix(baseURL, "/")+"/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("upstream models: status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20)) // 2MB limit
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	models := make([]string, 0, len(result.Data))
+	for _, m := range result.Data {
+		if m.ID != "" {
+			models = append(models, m.ID)
+		}
+	}
+	sort.Strings(models)
+	return models, nil
 }
 
 // agentResponse is the JSON shape returned for a single agent.
@@ -1422,9 +1471,11 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case r.Method == http.MethodGet && sub == "":
-		// Return provider list derived from config model_list, accumulating all models per provider.
+		// Return provider list derived from config model_list, enriched with
+		// upstream available models for OpenAI-compatible providers.
 		cfg := a.agentLoop.GetConfig()
 		providerModels := make(map[string][]string)
+		providerAPIKeys := make(map[string]string)
 		providerOrder := make([]string, 0)
 		for _, m := range cfg.ModelList {
 			providerName := "default"
@@ -1435,14 +1486,29 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 				providerOrder = append(providerOrder, providerName)
 			}
 			providerModels[providerName] = append(providerModels[providerName], m.ModelName)
+			// Store the first API key per provider for upstream model fetching.
+			if _, hasKey := providerAPIKeys[providerName]; !hasKey && len(m.APIKeys) > 0 {
+				if resolved := m.APIKeys[0].String(); resolved != "" {
+					providerAPIKeys[providerName] = resolved
+				}
+			}
 		}
 		providers := make([]providerResponse, 0, len(providerOrder))
 		for _, name := range providerOrder {
+			models := providerModels[name]
+			// For OpenAI-compatible providers, fetch the full model list from upstream.
+			if apiKey, ok := providerAPIKeys[name]; ok {
+				if baseURL := providers_pkg.GetDefaultAPIBase(name); baseURL != "" {
+					if upstream, err := fetchUpstreamModels(baseURL, apiKey); err == nil && len(upstream) > 0 {
+						models = upstream
+					}
+				}
+			}
 			providers = append(providers, providerResponse{
 				ID:     name,
 				Name:   name,
 				Status: "connected",
-				Models: providerModels[name],
+				Models: models,
 			})
 		}
 		if len(providers) == 0 {
