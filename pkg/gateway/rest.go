@@ -428,11 +428,13 @@ type agentResponse struct {
 }
 
 // agentWorkspacePath returns the expanded workspace directory for the named agent.
-// For the system agent ("omnipus-system") and any custom agent that does not
-// override its workspace, the default workspace from config is used.
+// Per FUNC-11 (BRD), each custom agent gets its own isolated workspace directory.
+// If the agent has an explicit workspace set, that is used (with ~ expansion).
+// Otherwise, a per-agent directory is derived: ~/.omnipus/agents/{agentID}/.
+// The system agent uses the default workspace from config.
 func agentWorkspacePath(cfg interface {
 	WorkspacePath() string
-}, agentWorkspace string) string {
+}, agentID, agentWorkspace string) string {
 	if agentWorkspace != "" {
 		// AgentConfig.Workspace may contain "~"; expand it the same way config does.
 		if len(agentWorkspace) > 0 && agentWorkspace[0] == '~' {
@@ -445,6 +447,15 @@ func agentWorkspacePath(cfg interface {
 			}
 		}
 		return agentWorkspace
+	}
+	// Per-agent isolated workspace (FUNC-11). System agent uses default workspace.
+	if agentID != "" && agentID != "omnipus-system" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			agentDir := filepath.Join(home, ".omnipus", "agents", agentID)
+			os.MkdirAll(agentDir, 0o755)
+			return agentDir
+		}
 	}
 	return cfg.WorkspacePath()
 }
@@ -525,7 +536,7 @@ func (a *restAPI) listAgents(w http.ResponseWriter) {
 		if ac.Model != nil && ac.Model.Primary != "" {
 			model = ac.Model.Primary
 		}
-		workspace := agentWorkspacePath(cfg, ac.Workspace)
+		workspace := agentWorkspacePath(cfg, ac.ID, ac.Workspace)
 		soul, _, _ := readAgentFiles(workspace)
 		status := "idle"
 		if activeIDs[ac.ID] {
@@ -554,7 +565,7 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 	// System agent is always present and always active — it is always available for
 	// interaction, unlike turn-based custom agents.
 	if id == "omnipus-system" {
-		workspace := agentWorkspacePath(cfg, "")
+		workspace := agentWorkspacePath(cfg, "omnipus-system", "")
 		soul, heartbeat, instructions := readAgentFiles(workspace)
 		jsonOK(w, agentResponse{
 			ID:           "omnipus-system",
@@ -577,7 +588,7 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 			if ac.Model != nil && ac.Model.Primary != "" {
 				model = ac.Model.Primary
 			}
-			workspace := agentWorkspacePath(cfg, ac.Workspace)
+			workspace := agentWorkspacePath(cfg, ac.ID, ac.Workspace)
 			soul, heartbeat, instructions := readAgentFiles(workspace)
 			status := "idle"
 			if activeIDs[ac.ID] {
@@ -741,7 +752,7 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		slog.Warn("config reload after agent update failed", "error", err)
 	}
 	// Write SOUL.md and HEARTBEAT.md to the agent's workspace if provided.
-	workspace := agentWorkspacePath(cfg, cfg.Agents.List[foundIdx].Workspace)
+	workspace := agentWorkspacePath(cfg, id, cfg.Agents.List[foundIdx].Workspace)
 	if req.Soul != nil {
 		soulPath := filepath.Join(workspace, "SOUL.md")
 		if err := os.WriteFile(soulPath, []byte(*req.Soul), 0o644); err != nil {
