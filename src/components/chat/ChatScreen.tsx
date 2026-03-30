@@ -475,7 +475,7 @@ export function ChatScreen() {
       ) : (
         <ThreadPrimitive.Root className="flex flex-col flex-1 min-h-0">
           {/* Message viewport */}
-          <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto py-4">
+          <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto pt-4 pb-8">
             <AuiIf condition={(s) => s.thread.isEmpty}>
               <WelcomeState hasAgent={!!activeAgentId} />
             </AuiIf>
@@ -500,8 +500,14 @@ export function ChatScreen() {
             </div>
           )}
 
-          {/* Composer */}
-          <OmnipusComposer />
+          {/* Composer — centered, ChatGPT-style floating layout */}
+          <div className="relative w-full">
+            {/* Gradient fade above composer */}
+            <div className="absolute -top-8 left-0 right-0 h-8 bg-gradient-to-t from-[var(--color-primary)] to-transparent pointer-events-none" />
+            <div className="w-full max-w-3xl mx-auto px-4 pb-6 pt-2">
+              <OmnipusComposer />
+            </div>
+          </div>
         </ThreadPrimitive.Root>
       )}
 

@@ -79,6 +79,56 @@ const markdownComponents = memoizeMarkdownComponents({
     </code>
   ),
 
+  // Lists — explicit styles since Tailwind v4 doesn't include @tailwindcss/typography prose by default
+  ul: ({ children, ...props }) => (
+    <ul {...props} style={{ listStyleType: 'disc' }} className="pl-6 my-2 space-y-1 text-[var(--color-secondary)]">{children}</ul>
+  ),
+  ol: ({ children, ...props }) => (
+    <ol {...props} style={{ listStyleType: 'decimal' }} className="pl-6 my-2 space-y-1 text-[var(--color-secondary)]">{children}</ol>
+  ),
+  li: ({ children, ...props }) => (
+    <li {...props} style={{ display: 'list-item' }} className="text-sm leading-relaxed">{children}</li>
+  ),
+
+  // Headings — sized distinctly from body text
+  h1: ({ children, ...props }) => (
+    <h1 {...props} className="text-xl font-bold text-[var(--color-secondary)] mt-5 mb-2 border-b border-[var(--color-border)] pb-1">{children}</h1>
+  ),
+  h2: ({ children, ...props }) => (
+    <h2 {...props} className="text-lg font-semibold text-[var(--color-secondary)] mt-4 mb-2">{children}</h2>
+  ),
+  h3: ({ children, ...props }) => (
+    <h3 {...props} className="text-base font-semibold text-[var(--color-secondary)] mt-3 mb-1">{children}</h3>
+  ),
+
+  // Paragraphs
+  p: ({ children, ...props }) => (
+    <p {...props} className="text-sm leading-relaxed my-1.5">{children}</p>
+  ),
+
+  // Blockquotes
+  blockquote: ({ children, ...props }) => (
+    <blockquote {...props} className="border-l-2 border-[var(--color-accent)]/50 pl-3 my-2 text-[var(--color-muted)] italic">{children}</blockquote>
+  ),
+
+  // Tables
+  table: ({ children, ...props }) => (
+    <div className="overflow-x-auto my-2">
+      <table {...props} className="min-w-full text-xs border-collapse">{children}</table>
+    </div>
+  ),
+  th: ({ children, ...props }) => (
+    <th {...props} className="border border-[var(--color-border)] px-3 py-1.5 text-left font-semibold bg-[var(--color-surface-2)] text-[var(--color-secondary)]">{children}</th>
+  ),
+  td: ({ children, ...props }) => (
+    <td {...props} className="border border-[var(--color-border)] px-3 py-1.5 text-[var(--color-secondary)]">{children}</td>
+  ),
+
+  // Horizontal rule
+  hr: (props) => (
+    <hr {...props} className="my-4 border-[var(--color-border)]" />
+  ),
+
   // Links open in new tab
   a: ({ href, children, ...props }) => (
     <a
