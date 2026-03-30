@@ -23,8 +23,9 @@ func DefaultConfig() *Config {
 	} else {
 		userHome, homeErr := os.UserHomeDir()
 		if homeErr != nil {
-			logger.WarnCF("config", "UserHomeDir failed in DefaultConfig; workspace path may be incorrect",
-				map[string]any{"error": homeErr.Error()})
+			userHome = os.TempDir()
+			logger.WarnCF("config", "UserHomeDir failed in DefaultConfig; falling back to temp directory",
+				map[string]any{"error": homeErr.Error(), "fallback": userHome})
 		}
 		homePath = filepath.Join(userHome, pkg.DefaultOmnipusHome)
 	}

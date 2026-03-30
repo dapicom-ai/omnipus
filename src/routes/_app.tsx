@@ -11,9 +11,12 @@ export const Route = createFileRoute('/_app')({
     try {
       state = await fetchAppState()
     } catch (err) {
-      // Only suppress genuine network errors (API unreachable). For other errors
-      // (4xx/5xx from the API) let them propagate so they are visible.
-      if (err instanceof TypeError && err.message.toLowerCase().includes('fetch')) {
+      // Suppress network-class errors (API unreachable, aborted requests, all
+      // TypeErrors from fetch). For application errors (4xx/5xx) let them
+      // propagate so they are visible.
+      // TypeError covers: failed to fetch, network error, CORS failure
+      // DOMException covers: AbortError from request cancellation
+      if (err instanceof TypeError || err instanceof DOMException) {
         // API unreachable — allow through to app (the chat screen will show
         // a connection error via the WebSocket state). Redirecting to onboarding
         // on every network failure would trap users in a loop.

@@ -1483,7 +1483,12 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, http.StatusNotFound, fmt.Sprintf("provider %q not found", providerID))
 			return
 		}
-		// Persist to config.json BEFORE updating the live config.
+		// TODO(security): API keys should be stored in credentials.json (AES-256-GCM)
+		// rather than plaintext in config.json. This is a known gap — migrating to the
+		// credentials store requires a reference scheme so config.json can point to the
+		// credential key by name rather than embedding the secret. Tracked for Phase 2.
+		// For now, keys are written to config.json to preserve backward compatibility
+		// with the existing model_list format used by all provider adapters.
 		if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
 			// Patch the API key directly in the raw model_list JSON
 			modelList, _ := m["model_list"].([]any)
@@ -1507,19 +1512,8 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
 			return
 		}
-		// Persistence succeeded — now safe to update the live config.
-		for _, m := range cfg.ModelList {
-			if m.IsVirtual() {
-				continue
-			}
-			pName := "default"
-			if parts := strings.SplitN(m.Model, "/", 2); len(parts) == 2 {
-				pName = parts[0]
-			}
-			if pName == providerID {
-				m.SetAPIKey(req.APIKey)
-			}
-		}
+		// Do NOT mutate the live config pointer — that is a data race.
+		// The in-memory config will pick up the new API key on the next hot-reload cycle.
 		jsonOK(w, providerResponse{
 			ID:     providerID,
 			Name:   providerID,

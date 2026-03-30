@@ -310,7 +310,7 @@ func (a *AgentInstance) Close() error {
 func initSessionStore(dir string) session.SessionStore {
 	store, err := memory.NewJSONLStore(dir)
 	if err != nil {
-		logger.WarnCF("agent", "Memory JSONL store init failed; falling back to json sessions",
+		logger.ErrorCF("agent", "Memory JSONL store init failed; falling back to json sessions — conversation history may not persist reliably",
 			map[string]any{"error": err.Error()})
 		return session.NewSessionManager(dir)
 	}
@@ -319,7 +319,7 @@ func initSessionStore(dir string) session.SessionStore {
 		// Migration failure means the store could not write data.
 		// Fall back to SessionManager to avoid a split state where
 		// some sessions are in JSONL and others remain in JSON.
-		logger.WarnCF("agent", "Memory migration failed; falling back to json sessions",
+		logger.ErrorCF("agent", "Memory migration failed; falling back to json sessions — conversation history may not persist reliably",
 			map[string]any{"error": merr.Error()})
 		store.Close()
 		return session.NewSessionManager(dir)

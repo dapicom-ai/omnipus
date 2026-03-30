@@ -305,6 +305,7 @@ func TestSpawnSubTurn_OrphanResultRouting(t *testing.T) {
 		turnID:         "parent-1",
 		depth:          0,
 		pendingResults: make(chan *tools.ToolResult, 1),
+		finishedChan:   make(chan struct{}),
 		session:        &ephemeralSessionStore{},
 	}
 

@@ -96,6 +96,8 @@ func buildArtifactTags(store media.MediaStore, refs []string) []string {
 	for _, ref := range refs {
 		localPath, meta, err := store.ResolveWithMeta(ref)
 		if err != nil {
+			logger.WarnCF("agent", "buildArtifactTags: resolve failed",
+				map[string]any{"ref": ref, "error": err.Error()})
 			continue
 		}
 		mime := detectMIME(localPath, meta)

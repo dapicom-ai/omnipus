@@ -100,6 +100,10 @@ export function MessageItem({ message }: MessageItemProps) {
                         )
                       },
                       a({ href, children }) {
+                        // Block javascript: URLs to prevent XSS via markdown links
+                        if (href?.toLowerCase().startsWith('javascript:')) {
+                          return <span>{children}</span>
+                        }
                         return (
                           <a
                             href={href}

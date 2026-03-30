@@ -34,6 +34,7 @@ func extractToolCallsFromText(text string) []ToolCall {
 	}
 
 	if err := json.Unmarshal([]byte(jsonStr), &wrapper); err != nil {
+		slog.Warn("tool_call_extract: failed to parse tool call JSON", "error", err)
 		return nil
 	}
 

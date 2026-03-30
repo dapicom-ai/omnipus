@@ -4,6 +4,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
@@ -12,10 +13,16 @@ import (
 func toChannelHashes(cfg *config.Config) map[string]string {
 	result := make(map[string]string)
 	ch := cfg.Channels
-	// should not be error
-	marshal, _ := json.Marshal(ch)
+	marshal, err := json.Marshal(ch)
+	if err != nil {
+		logger.ErrorCF("channels", "toChannelHashes: failed to marshal channel config", map[string]any{"error": err.Error()})
+		return result
+	}
 	var channelConfig map[string]map[string]any
-	_ = json.Unmarshal(marshal, &channelConfig)
+	if err := json.Unmarshal(marshal, &channelConfig); err != nil {
+		logger.ErrorCF("channels", "toChannelHashes: failed to unmarshal channel config", map[string]any{"error": err.Error()})
+		return result
+	}
 
 	for key, value := range channelConfig {
 		enabled, _ := value["enabled"].(bool)
@@ -88,10 +95,16 @@ func compareChannels(old, news map[string]string) (added, removed []string) {
 func toChannelConfig(cfg *config.Config, list []string) (*config.ChannelsConfig, error) {
 	result := &config.ChannelsConfig{}
 	ch := cfg.Channels
-	// should not be error
-	marshal, _ := json.Marshal(ch)
+	marshal, err := json.Marshal(ch)
+	if err != nil {
+		logger.ErrorCF("channels", "toChannelConfig: failed to marshal channel config", map[string]any{"error": err.Error()})
+		return nil, fmt.Errorf("toChannelConfig: marshal: %w", err)
+	}
 	var channelConfig map[string]map[string]any
-	_ = json.Unmarshal(marshal, &channelConfig)
+	if err := json.Unmarshal(marshal, &channelConfig); err != nil {
+		logger.ErrorCF("channels", "toChannelConfig: failed to unmarshal channel config", map[string]any{"error": err.Error()})
+		return nil, fmt.Errorf("toChannelConfig: unmarshal: %w", err)
+	}
 	temp := make(map[string]map[string]any, 0)
 
 	for key, value := range channelConfig {
@@ -109,7 +122,7 @@ func toChannelConfig(cfg *config.Config, list []string) (*config.ChannelsConfig,
 		temp[key] = value
 	}
 
-	marshal, err := json.Marshal(temp)
+	marshal, err = json.Marshal(temp)
 	if err != nil {
 		logger.Errorf("marshal error: %v", err)
 		return nil, err

@@ -281,9 +281,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   reconnect: () => {
     const { connection } = get()
-    if (connection) {
-      connection.connect()
+    if (!connection) {
+      set({ connectionError: 'Cannot reconnect — please refresh the page.' })
+      return
     }
+    connection.connect()
   },
 
   respondToApproval: (id, decision) => {

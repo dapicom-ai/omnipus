@@ -18,10 +18,15 @@ import (
 )
 
 type mcpRuntime struct {
-	initOnce sync.Once
-	mu       sync.Mutex
-	manager  *mcp.Manager
-	initErr  error
+	// initMu serialises concurrent calls to ensureMCPInitialized.
+	// Unlike sync.Once, this allows retrying after a transient failure.
+	initMu  sync.Mutex
+	mu      sync.Mutex
+	manager *mcp.Manager
+	initErr error
+	// initialized is set to true once a successful init has completed so
+	// that subsequent calls skip the work without holding initMu.
+	initialized bool
 }
 
 func (r *mcpRuntime) setManager(manager *mcp.Manager) {
@@ -80,7 +85,30 @@ func (al *AgentLoop) ensureMCPInitialized(ctx context.Context) error {
 		return nil
 	}
 
-	al.mcp.initOnce.Do(func() {
+	// Fast path: already successfully initialized.
+	al.mcp.mu.Lock()
+	alreadyDone := al.mcp.initialized
+	al.mcp.mu.Unlock()
+	if alreadyDone {
+		return al.mcp.getInitErr()
+	}
+
+	// Serialize concurrent init attempts; allows retry after transient failure.
+	al.mcp.initMu.Lock()
+	defer al.mcp.initMu.Unlock()
+
+	// Re-check under initMu in case another goroutine just succeeded.
+	al.mcp.mu.Lock()
+	alreadyDone = al.mcp.initialized
+	al.mcp.mu.Unlock()
+	if alreadyDone {
+		return al.mcp.getInitErr()
+	}
+
+	// Reset any previous error so this attempt starts clean.
+	al.mcp.setInitErr(nil)
+
+	func() {
 		mcpManager := mcp.NewManager()
 
 		defaultAgent := al.registry.GetDefaultAgent()
@@ -203,7 +231,12 @@ func (al *AgentLoop) ensureMCPInitialized(ctx context.Context) error {
 		}
 
 		al.mcp.setManager(mcpManager)
-	})
+
+		// Mark as successfully initialized so future calls skip the work.
+		al.mcp.mu.Lock()
+		al.mcp.initialized = true
+		al.mcp.mu.Unlock()
+	}()
 
 	return al.mcp.getInitErr()
 }

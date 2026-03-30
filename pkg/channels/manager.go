@@ -119,7 +119,13 @@ func (m *Manager) SendPlaceholder(ctx context.Context, channel, chatID string) b
 		return false
 	}
 	phID, err := pc.SendPlaceholder(ctx, chatID)
-	if err != nil || phID == "" {
+	if err != nil {
+		logger.DebugCF("channels", "SendPlaceholder failed", map[string]any{
+			"channel": channel, "chat_id": chatID, "error": err.Error(),
+		})
+		return false
+	}
+	if phID == "" {
 		return false
 	}
 	m.RecordPlaceholder(channel, chatID, phID)
@@ -198,6 +204,9 @@ func (m *Manager) preSend(ctx context.Context, name string, msg bus.OutboundMess
 			if editor, ok := ch.(MessageEditor); ok {
 				if err := editor.EditMessage(ctx, msg.ChatID, entry.id, msg.Content); err == nil {
 					return true // edited successfully, skip Send
+				} else {
+					logger.WarnCF("channels", "Placeholder edit failed, falling through to Send",
+						map[string]any{"channel": name, "chat_id": msg.ChatID, "placeholder_id": entry.id, "error": err.Error()})
 				}
 				// edit failed → fall through to normal Send
 			}
@@ -843,12 +852,14 @@ func (m *Manager) dispatchOutbound(ctx context.Context) {
 		ctx, m,
 		m.bus.OutboundChan(),
 		func(msg bus.OutboundMessage) string { return msg.Channel },
-		func(ctx context.Context, w *channelWorker, msg bus.OutboundMessage) bool {
+		func(_ context.Context, w *channelWorker, msg bus.OutboundMessage) bool {
 			select {
 			case w.queue <- msg:
 				return true
-			case <-ctx.Done():
-				return false
+			default:
+				logger.ErrorCF("channels", "Outbound queue full, message dropped",
+					map[string]any{"channel": msg.Channel, "chat_id": msg.ChatID})
+				return true
 			}
 		},
 		"Outbound dispatcher started",
@@ -863,12 +874,14 @@ func (m *Manager) dispatchOutboundMedia(ctx context.Context) {
 		ctx, m,
 		m.bus.OutboundMediaChan(),
 		func(msg bus.OutboundMediaMessage) string { return msg.Channel },
-		func(ctx context.Context, w *channelWorker, msg bus.OutboundMediaMessage) bool {
+		func(_ context.Context, w *channelWorker, msg bus.OutboundMediaMessage) bool {
 			select {
 			case w.mediaQueue <- msg:
 				return true
-			case <-ctx.Done():
-				return false
+			default:
+				logger.ErrorCF("channels", "Outbound media queue full, message dropped",
+					map[string]any{"channel": msg.Channel, "chat_id": msg.ChatID})
+				return true
 			}
 		},
 		"Outbound media dispatcher started",
@@ -1144,6 +1157,11 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 
 	// Commit hashes only for successfully started channels.
 	m.channelHashes = list
+
+	// Restart dispatch goroutines against the new dispatchCtx so outbound messages
+	// continue to be routed after the old context was cancelled above.
+	go m.dispatchOutbound(dispatchCtx)
+	go m.dispatchOutboundMedia(dispatchCtx)
 
 	// Fix 15: execute deferFuncs synchronously after releasing the lock, not in a goroutine.
 	// Running them in a goroutine while the mutex is still held causes a deadlock;

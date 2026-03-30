@@ -116,8 +116,8 @@ func (r *AgentRegistry) ForEachTool(name string, fn func(tools.Tool)) {
 
 // Close releases resources held by all registered agents.
 func (r *AgentRegistry) Close() {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, agent := range r.agents {
 		if err := agent.Close(); err != nil {
 			logger.WarnCF("agent", "Failed to close agent",

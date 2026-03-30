@@ -162,8 +162,16 @@ func (c *DiscordChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMes
 		return fmt.Errorf("no media store available: %w", channels.ErrSendFailed)
 	}
 
-	// Collect all files into a single ChannelMessageSendComplex call
+	// Collect all files into a single ChannelMessageSendComplex call.
+	// openedFiles tracks every successfully-opened *os.File so we can close
+	// them on any early-return error path before the send goroutine takes over.
 	files := make([]*discordgo.File, 0, len(msg.Parts))
+	openedFiles := make([]*os.File, 0, len(msg.Parts))
+	closeOpenedFiles := func() {
+		for _, f := range openedFiles {
+			f.Close()
+		}
+	}
 	var caption string
 
 	for _, part := range msg.Parts {
@@ -184,7 +192,8 @@ func (c *DiscordChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMes
 			})
 			continue
 		}
-		// Note: discordgo reads from the Reader and we can't close it before send
+		// Track the open file so it is closed on any early-return error path.
+		openedFiles = append(openedFiles, file)
 
 		filename := part.Filename
 		if filename == "" {
@@ -203,6 +212,8 @@ func (c *DiscordChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMes
 	}
 
 	if len(files) == 0 {
+		// openedFiles is also empty when len(files) == 0, but call for safety.
+		closeOpenedFiles()
 		return fmt.Errorf("discord: all %d media files failed to load", len(msg.Parts))
 	}
 

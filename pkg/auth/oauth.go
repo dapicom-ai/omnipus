@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -360,9 +361,9 @@ var (
 )
 
 // slogWarnOnce logs device-code poll errors; called on unexpected transient errors.
+// Uses standard log/slog to avoid importing the logger package from auth.
 func slogWarnOnce(err error) {
-	// Use standard log/slog so we don't pull in the logger package from auth.
-	_ = err // already visible in caller logs; suppress lint warning
+	slog.Warn("device code poll error", "error", err)
 }
 
 func pollDeviceCode(cfg OAuthProviderConfig, deviceAuthID, userCode string) (*AuthCredential, error) {

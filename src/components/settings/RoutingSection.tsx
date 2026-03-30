@@ -18,7 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { fetchChannels, updateConfig } from '@/lib/api'
+import { fetchChannels, configureChannel } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 
 type DmPolicy = 'allow' | 'deny' | 'known_only'
@@ -67,20 +67,20 @@ export function RoutingSection() {
   async function handleSave() {
     setIsSaving(true)
     try {
-      // Persist routing rules as channel config entries
-      const channelConfig: Record<string, { allow_from: string[]; dm_policy: string }> = {}
-      for (const r of routes) {
-        channelConfig[r.id] = {
-          allow_from: r.allow_from
-            .split(',')
-            .map((s) => s.trim())
-            .filter(Boolean),
-          dm_policy: r.dm_policy,
-        }
-      }
-      await updateConfig({ channels: channelConfig } as Parameters<typeof updateConfig>[0])
+      // Persist routing rules via the per-channel configure endpoint
+      await Promise.all(
+        routes.map((r) =>
+          configureChannel(r.id, {
+            allow_from: r.allow_from
+              .split(',')
+              .map((s) => s.trim())
+              .filter(Boolean),
+            dm_policy: r.dm_policy,
+          })
+        )
+      )
       isDirtyRef.current = false
-      queryClient.invalidateQueries({ queryKey: ['config'] })
+      queryClient.invalidateQueries({ queryKey: ['channels'] })
       addToast({ message: 'Routing rules saved', variant: 'success' })
     } catch (err) {
       addToast({

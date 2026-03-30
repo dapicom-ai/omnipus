@@ -2573,16 +2573,23 @@ turnLoop:
 			}
 
 			if !toolResult.Silent && toolResult.ForUser != "" && ts.opts.SendResponse {
-				al.bus.PublishOutbound(ctx, bus.OutboundMessage{
+				if pubErr := al.bus.PublishOutbound(ctx, bus.OutboundMessage{
 					Channel: ts.channel,
 					ChatID:  ts.chatID,
 					Content: toolResult.ForUser,
-				})
-				logger.DebugCF("agent", "Sent tool result to user",
-					map[string]any{
-						"tool":        toolName,
-						"content_len": len(toolResult.ForUser),
-					})
+				}); pubErr != nil {
+					logger.WarnCF("agent", "PublishOutbound failed for tool result",
+						map[string]any{
+							"tool":  toolName,
+							"error": pubErr.Error(),
+						})
+				} else {
+					logger.DebugCF("agent", "Sent tool result to user",
+						map[string]any{
+							"tool":        toolName,
+							"content_len": len(toolResult.ForUser),
+						})
+				}
 			}
 
 			contentForLLM := toolResult.ContentForLLM()

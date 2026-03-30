@@ -399,22 +399,21 @@ func (ts *turnState) interruptHintMessage() providers.Message {
 func (ts *turnState) Finish(isHardAbort bool) {
 	ts.isFinished.Store(true)
 
+	// Ensure finishedChan exists before entering closeOnce.Do.
+	// Finished() is the single point of lazy creation; calling it here
+	// guarantees that Finish() and all Finished() callers share the
+	// exact same channel instance, eliminating the race where closeOnce.Do
+	// used to create a second channel that Finished() would never return.
+	ch := ts.Finished()
+
 	// Close pendingResults channel exactly once
 	ts.closeOnce.Do(func() {
 		if ts.pendingResults != nil {
 			close(ts.pendingResults)
 		}
-		// Acquire mu to ensure we close the same channel instance that Finished() returns.
-		// finishedChan is always initialized by newTurnState for normal turns; ad-hoc
-		// turnState values (tests, adhoc-root fallback) may leave it nil, in which case
-		// Finished() lazily creates it under the same lock — so we must do the same here.
-		ts.mu.Lock()
-		if ts.finishedChan == nil {
-			ts.finishedChan = make(chan struct{})
+		if ch != nil {
+			close(ch)
 		}
-		ch := ts.finishedChan
-		ts.mu.Unlock()
-		close(ch)
 	})
 
 	// If this is a graceful finish (not hard abort), signal to children
@@ -442,10 +441,12 @@ func (ts *turnState) Finish(isHardAbort bool) {
 }
 
 // Finished returns a channel that is closed when the turn finishes.
-// The channel is always initialized by newTurnState. Ad-hoc turnState values
-// (used in tests or the adhoc-root fallback) may not have it set; in that
-// case a new channel is returned but it is stored so both Finish and Finished
-// always reference the same instance.
+// finishedChan is always initialized by newTurnState for production turns.
+// For ad-hoc test struct literals that skip newTurnState, we lazily create
+// the channel here under mu.Lock so that Finish() and all Finished() callers
+// always share the same channel instance. The lazy-creation path is the
+// single authoritative creator; Finish() calls Finished() before closing,
+// ensuring no second channel can be created after the close.
 func (ts *turnState) Finished() chan struct{} {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()

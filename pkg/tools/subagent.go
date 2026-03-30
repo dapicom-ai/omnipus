@@ -152,8 +152,8 @@ func (sm *SubagentManager) runTask(
 	task *SubagentTask,
 	callback AsyncCallback,
 ) {
-	task.Status = "running"
-	task.Created = time.Now().UnixMilli()
+	// Status and Created are already set in Spawn while holding sm.mu.Lock(),
+	// so we must not write them here without the lock (data race with GetTask/ListTaskCopies).
 	// TODO(eventbus): once subagents are modeled as child turns inside
 	// pkg/agent, emit SubTurnEnd and SubTurnResultDelivered from the parent
 	// AgentLoop instead of this legacy manager.

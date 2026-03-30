@@ -437,6 +437,7 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 		return fmt.Errorf("no media store available: %w", channels.ErrSendFailed)
 	}
 
+	sentCount := 0
 	for _, part := range msg.Parts {
 		localPath, err := store.Resolve(part.Ref)
 		if err != nil {
@@ -527,8 +528,12 @@ func (c *TelegramChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMe
 			})
 			return fmt.Errorf("telegram send media: %w", channels.ErrTemporary)
 		}
+		sentCount++
 	}
 
+	if sentCount == 0 {
+		return fmt.Errorf("telegram: all %d media parts failed", len(msg.Parts))
+	}
 	return nil
 }
 

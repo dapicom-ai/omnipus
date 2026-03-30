@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	runtimedebug "runtime/debug"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -183,7 +184,14 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go agentLoop.Run(ctx)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("agent loop panicked", "panic", r, "stack", string(runtimedebug.Stack()))
+			}
+		}()
+		agentLoop.Run(ctx)
+	}()
 
 	var configReloadChan <-chan *config.Config
 	stopWatch := func() {}
@@ -346,6 +354,7 @@ func setupAndStartServices(
 	}
 	if err := datamodel.InitAgentWorkspace(homePath, defaultAgentID); err != nil {
 		slog.Error("gateway: could not init agent workspace for partition store", "agent_id", defaultAgentID, "error", err)
+		fmt.Println("WARNING: Session persistence unavailable — conversations will not be saved")
 	} else {
 		agentWorkspace := datamodel.AgentWorkspacePath(homePath, defaultAgentID)
 		runningServices.PartitionStore = session.NewPartitionStore(agentWorkspace, defaultAgentID)

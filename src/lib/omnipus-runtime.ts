@@ -6,6 +6,7 @@ import type { ThreadMessageLike, AppendMessage } from "@assistant-ui/react";
 import { useChatStore } from "@/store/chat";
 import type { ChatMessage } from "@/store/chat";
 import type { ToolCall } from "@/lib/api";
+import { useUiStore } from "@/store/ui";
 
 type StoreToolCall = ToolCall & { call_id: string };
 
@@ -66,6 +67,7 @@ export function useOmnipusRuntime() {
   const isStreaming = useChatStore((s) => s.isStreaming);
   const sendMessage = useChatStore((s) => s.sendMessage);
   const cancelStream = useChatStore((s) => s.cancelStream);
+  const addToast = useUiStore((s) => s.addToast);
 
   return useExternalStoreRuntime<ChatMessage>({
     messages,
@@ -75,6 +77,7 @@ export function useOmnipusRuntime() {
       const textPart = message.content.find((p) => p.type === "text");
       if (!textPart || textPart.type !== "text") {
         console.warn("[omnipus-runtime] Message received without text content — skipping. Content types:", message.content.map((p) => p.type));
+        addToast({ message: "Could not send — message contained no text content.", variant: "error" });
         return;
       }
       sendMessage(textPart.text);

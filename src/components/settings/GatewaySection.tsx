@@ -21,7 +21,7 @@ export function GatewaySection() {
   const [copied, setCopied] = useState(false)
   const [remoteAccessOpen, setRemoteAccessOpen] = useState(false)
 
-  const { data: config, isLoading } = useQuery({
+  const { data: config, isLoading, isError: isConfigError, refetch: refetchConfig } = useQuery({
     queryKey: ['config'],
     queryFn: fetchConfig,
   })
@@ -91,6 +91,20 @@ export function GatewaySection() {
   }
 
   if (isLoading) return <div className="text-sm text-[var(--color-muted)]">Loading...</div>
+
+  if (isConfigError) {
+    return (
+      <div className="rounded-lg border border-[var(--color-error)]/40 bg-[var(--color-surface-1)] p-4 space-y-3">
+        <p className="text-sm text-[var(--color-error)]">Failed to load gateway configuration.</p>
+        <p className="text-xs text-[var(--color-muted)]">
+          Save is disabled until the configuration is loaded successfully to prevent overwriting real settings with defaults.
+        </p>
+        <Button size="sm" variant="outline" onClick={() => refetchConfig()}>
+          Retry
+        </Button>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-6">
