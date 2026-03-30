@@ -9,6 +9,7 @@ import {
   ActionBarPrimitive,
   AuiIf,
   useComposerRuntime,
+  useMessageRuntime,
 } from '@assistant-ui/react'
 import {
   ArrowCounterClockwise,
@@ -101,7 +102,7 @@ function ThinkingIndicator() {
   )
 }
 
-// Custom text renderer with streaming cursor (MessagePartPrimitive.InProgress)
+// Custom text renderer with streaming cursor
 function AssistantTextPart() {
   return (
     <div>
@@ -111,6 +112,19 @@ function AssistantTextPart() {
       </MessagePartPrimitive.InProgress>
     </div>
   )
+}
+
+// Shows thinking dots inside the assistant message when running with no content
+function InlineThinkingIndicator() {
+  const messageRuntime = useMessageRuntime()
+  const state = messageRuntime.getState()
+  const isRunning = state.status?.type === 'running'
+  const hasContent = state.content?.some(
+    (p: { type: string; text?: string }) => p.type === 'text' && p.text && p.text.length > 0
+  )
+
+  if (!isRunning || hasContent) return null
+  return <ThinkingIndicator />
 }
 
 function AssistantMessage() {
@@ -123,6 +137,7 @@ function AssistantMessage() {
       </div>
       <div className="flex flex-col gap-1 max-w-[85%] min-w-0 flex-1">
         <div className="text-sm leading-relaxed text-[var(--color-secondary)]">
+          <InlineThinkingIndicator />
           <MessagePrimitive.Parts>
             {({ part }) => {
               if (part.type === 'text') {
@@ -485,15 +500,7 @@ export function ChatScreen() {
                 }}
               </ThreadPrimitive.Messages>
 
-              {/* Thinking indicator — shown while thread is running (before first token) */}
-              <AuiIf condition={(s) => s.thread.isRunning}>
-                <div className="flex gap-3 px-4 py-3">
-                  <div className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center bg-[var(--color-surface-3)] text-[var(--color-secondary)]">
-                    <Robot size={14} weight="bold" />
-                  </div>
-                  <ThinkingIndicator />
-                </div>
-              </AuiIf>
+              {/* Thinking indicator is now inside AssistantTextPart — no separate element needed */}
             </div>
           </ThreadPrimitive.Viewport>
 
