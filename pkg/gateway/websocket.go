@@ -291,6 +291,14 @@ func (h *WSHandler) handleChatMessage(ctx context.Context, chatID string, sessio
 				// Continue without sessionID so the message is still delivered to the agent.
 			} else {
 				*sessionID = meta.ID
+				// Set session title from first message (truncate to 60 chars)
+				title := content
+				if len(title) > 60 {
+					title = title[:57] + "..."
+				}
+				if err := h.partitions.SetTitle(*sessionID, title); err != nil {
+					slog.Debug("ws: could not set session title", "error", err)
+				}
 			}
 		}
 

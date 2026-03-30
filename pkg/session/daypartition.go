@@ -261,6 +261,21 @@ func (ps *PartitionStore) SetStatus(sessionID string, status SessionStatus) erro
 	return writeMeta(sessionDir, meta)
 }
 
+// SetTitle updates the title of an existing session.
+func (ps *PartitionStore) SetTitle(sessionID string, title string) error {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	sessionDir := filepath.Join(ps.baseDir, sessionID)
+	meta, err := readMeta(sessionDir)
+	if err != nil {
+		return err
+	}
+	meta.Title = title
+	meta.UpdatedAt = time.Now().UTC()
+	return writeMeta(sessionDir, meta)
+}
+
 // GetMeta returns the metadata for sessionID.
 func (ps *PartitionStore) GetMeta(sessionID string) (*SessionMeta, error) {
 	ps.mu.Lock()

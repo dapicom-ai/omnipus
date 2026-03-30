@@ -40,10 +40,12 @@ export function SessionPanel() {
     }
   }
 
-  // Group sessions by agent
+  // Group sessions by agent. Map "default" agent_id to system agent for legacy sessions.
+  const systemAgentId = agents.find((a) => a.type === 'system')?.id ?? 'omnipus-system'
   const sessionsByAgent = sessions.reduce<Record<string, typeof sessions>>((acc, s) => {
-    if (!acc[s.agent_id]) acc[s.agent_id] = []
-    acc[s.agent_id].push(s)
+    const agentId = s.agent_id === 'default' ? systemAgentId : s.agent_id
+    if (!acc[agentId]) acc[agentId] = []
+    acc[agentId].push(s)
     return acc
   }, {})
 

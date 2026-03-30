@@ -340,7 +340,7 @@ func setupAndStartServices(
 
 	// Initialize PartitionStore for the default agent workspace (US-5).
 	// Uses "default" as the agent ID when no agents are configured.
-	defaultAgentID := "default"
+	defaultAgentID := "omnipus-system"
 	if len(cfg.Agents.List) > 0 {
 		defaultAgentID = cfg.Agents.List[0].ID
 	}
