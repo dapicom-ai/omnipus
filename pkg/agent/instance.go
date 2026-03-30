@@ -239,7 +239,13 @@ func resolveAgentWorkspace(agentCfg *config.AgentConfig, defaults *config.AgentD
 	if agentCfg == nil || agentCfg.Default || agentCfg.ID == "" || routing.NormalizeAgentID(agentCfg.ID) == "main" {
 		return expandHome(defaults.Workspace)
 	}
-	// For named agents without explicit workspace, use default workspace with agent ID suffix
+	// Per-agent isolated workspace (FUNC-11). Each custom agent gets its own
+	// directory under ~/.omnipus/agents/{id}/, matching the REST API convention.
+	home, err := os.UserHomeDir()
+	if err == nil {
+		return filepath.Join(home, ".omnipus", "agents", agentCfg.ID)
+	}
+	// Fallback: sibling directory of default workspace.
 	id := routing.NormalizeAgentID(agentCfg.ID)
 	return filepath.Join(expandHome(defaults.Workspace), "..", "workspace-"+id)
 }
