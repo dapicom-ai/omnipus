@@ -16,6 +16,7 @@ import {
   X,
   CaretDown,
   CaretUp,
+  Scroll,
 } from '@phosphor-icons/react'
 import { useNavigate } from '@tanstack/react-router'
 import { Badge } from '@/components/ui/badge'
@@ -129,6 +130,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
   const [maxLlmCallsPerHour, setMaxLlmCallsPerHour] = useState<number | ''>('')
   const [maxToolCallsPerMinute, setMaxToolCallsPerMinute] = useState<number | ''>('')
   const [maxCostPerDay, setMaxCostPerDay] = useState<number | ''>('')
+  const [soul, setSoul] = useState('')
   const [heartbeat, setHeartbeat] = useState('')
 
   useEffect(() => {
@@ -148,6 +150,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     setMaxLlmCallsPerHour(agent.rate_limits?.max_llm_calls_per_hour ?? '')
     setMaxToolCallsPerMinute(agent.rate_limits?.max_tool_calls_per_minute ?? '')
     setMaxCostPerDay(agent.rate_limits?.max_cost_per_day ?? '')
+    setSoul(agent.soul ?? '')
     setHeartbeat(agent.heartbeat ?? '')
   }, [agent])
 
@@ -182,6 +185,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
         max_tool_calls_per_minute: maxToolCallsPerMinute !== '' ? maxToolCallsPerMinute : undefined,
         max_cost_per_day: maxCostPerDay !== '' ? maxCostPerDay : undefined,
       },
+      soul,
     })
   }
 
@@ -570,6 +574,38 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
                 </Badge>
               ))}
             </div>
+          </section>
+        </>
+      )}
+
+      {/* SOUL.md editor */}
+      {canEdit && (
+        <>
+          <Separator />
+          <section className="space-y-3">
+            <div className="flex items-center gap-2">
+              <Scroll size={14} className="text-[var(--color-accent)]" />
+              <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)]">SOUL.md</h2>
+            </div>
+            <p className="text-xs text-[var(--color-muted)]">
+              The agent's personality and system prompt — defines who the agent is and how it behaves.
+            </p>
+            <Textarea
+              value={soul}
+              onChange={(e) => { markDirty(); setSoul(e.target.value) }}
+              placeholder={"# Soul\n\nDefine this agent's personality, expertise, and behavioral guidelines..."}
+              rows={8}
+              className="text-xs font-mono resize-none"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isSaving}
+              onClick={() => doUpdate({ soul })}
+            >
+              <FloppyDisk size={13} weight="bold" className="mr-1.5" />
+              Save SOUL.md
+            </Button>
           </section>
         </>
       )}

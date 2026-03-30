@@ -422,6 +422,43 @@ type agentResponse struct {
 	Model       string `json:"model,omitempty"`
 	Description string `json:"description,omitempty"`
 	Status      string `json:"status"` // "active" | "idle"
+	Soul        string `json:"soul"`
+	Heartbeat   string `json:"heartbeat"`
+}
+
+// agentWorkspacePath returns the expanded workspace directory for the named agent.
+// For the system agent ("omnipus-system") and any custom agent that does not
+// override its workspace, the default workspace from config is used.
+func agentWorkspacePath(cfg interface {
+	WorkspacePath() string
+}, agentWorkspace string) string {
+	if agentWorkspace != "" {
+		// AgentConfig.Workspace may contain "~"; expand it the same way config does.
+		if len(agentWorkspace) > 0 && agentWorkspace[0] == '~' {
+			home, err := os.UserHomeDir()
+			if err == nil {
+				if len(agentWorkspace) > 1 && agentWorkspace[1] == '/' {
+					return home + agentWorkspace[1:]
+				}
+				return home
+			}
+		}
+		return agentWorkspace
+	}
+	return cfg.WorkspacePath()
+}
+
+// readAgentFiles returns the contents of SOUL.md and HEARTBEAT.md from the
+// given workspace directory. Missing files return an empty string without
+// logging an error — their absence is expected for newly created agents.
+func readAgentFiles(workspace string) (soul, heartbeat string) {
+	if data, err := os.ReadFile(filepath.Join(workspace, "SOUL.md")); err == nil {
+		soul = string(data)
+	}
+	if data, err := os.ReadFile(filepath.Join(workspace, "HEARTBEAT.md")); err == nil {
+		heartbeat = string(data)
+	}
+	return soul, heartbeat
 }
 
 // activeAgentIDSet returns a set of agent IDs that currently have an active turn.
@@ -443,11 +480,13 @@ func (a *restAPI) listAgents(w http.ResponseWriter) {
 	// interaction, unlike turn-based custom agents.
 	defaultModel := cfg.Agents.Defaults.ModelName
 	agents = append(agents, agentResponse{
-		ID:     "omnipus-system",
-		Name:   "Omnipus",
-		Type:   "system",
-		Model:  defaultModel,
-		Status: "active",
+		ID:        "omnipus-system",
+		Name:      "Omnipus",
+		Type:      "system",
+		Model:     defaultModel,
+		Status:    "active",
+		Soul:      "",
+		Heartbeat: "",
 	})
 
 	for _, ac := range cfg.Agents.List {
@@ -460,11 +499,13 @@ func (a *restAPI) listAgents(w http.ResponseWriter) {
 			status = "active"
 		}
 		agents = append(agents, agentResponse{
-			ID:     ac.ID,
-			Name:   ac.Name,
-			Type:   "custom",
-			Model:  model,
-			Status: status,
+			ID:        ac.ID,
+			Name:      ac.Name,
+			Type:      "custom",
+			Model:     model,
+			Status:    status,
+			Soul:      "",
+			Heartbeat: "",
 		})
 	}
 
@@ -477,12 +518,16 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 	// System agent is always present and always active — it is always available for
 	// interaction, unlike turn-based custom agents.
 	if id == "omnipus-system" {
+		workspace := agentWorkspacePath(cfg, "")
+		soul, heartbeat := readAgentFiles(workspace)
 		jsonOK(w, agentResponse{
-			ID:     "omnipus-system",
-			Name:   "Omnipus",
-			Type:   "system",
-			Model:  cfg.Agents.Defaults.ModelName,
-			Status: "active",
+			ID:        "omnipus-system",
+			Name:      "Omnipus",
+			Type:      "system",
+			Model:     cfg.Agents.Defaults.ModelName,
+			Status:    "active",
+			Soul:      soul,
+			Heartbeat: heartbeat,
 		})
 		return
 	}
@@ -499,12 +544,16 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 			if activeIDs[ac.ID] {
 				status = "active"
 			}
+			workspace := agentWorkspacePath(cfg, ac.Workspace)
+			soul, heartbeat := readAgentFiles(workspace)
 			jsonOK(w, agentResponse{
-				ID:     ac.ID,
-				Name:   ac.Name,
-				Type:   "custom",
-				Model:  model,
-				Status: status,
+				ID:        ac.ID,
+				Name:      ac.Name,
+				Type:      "custom",
+				Model:     model,
+				Status:    status,
+				Soul:      soul,
+				Heartbeat: heartbeat,
 			})
 			return
 		}
@@ -589,8 +638,10 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 	var req struct {
-		Name  *string `json:"name"`
-		Model *string `json:"model"`
+		Name      *string `json:"name"`
+		Model     *string `json:"model"`
+		Soul      *string `json:"soul"`
+		Heartbeat *string `json:"heartbeat"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
@@ -645,6 +696,26 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 	if err := a.agentLoop.TriggerReload(); err != nil {
 		slog.Warn("config reload after agent update failed", "error", err)
 	}
+	// Write SOUL.md and HEARTBEAT.md to the agent's workspace if provided.
+	workspace := agentWorkspacePath(cfg, cfg.Agents.List[foundIdx].Workspace)
+	if req.Soul != nil {
+		soulPath := filepath.Join(workspace, "SOUL.md")
+		if err := os.WriteFile(soulPath, []byte(*req.Soul), 0o644); err != nil {
+			slog.Error("rest: write SOUL.md for agent", "agent_id", id, "error", err)
+			jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not write SOUL.md: %v", err))
+			return
+		}
+	}
+	if req.Heartbeat != nil {
+		heartbeatPath := filepath.Join(workspace, "HEARTBEAT.md")
+		if err := os.WriteFile(heartbeatPath, []byte(*req.Heartbeat), 0o644); err != nil {
+			slog.Error("rest: write HEARTBEAT.md for agent", "agent_id", id, "error", err)
+			jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not write HEARTBEAT.md: %v", err))
+			return
+		}
+	}
+	// Re-read the files so the response reflects what was just persisted.
+	soul, heartbeat := readAgentFiles(workspace)
 	// Build the response entirely from local variables (do NOT read from live config — race).
 	agentID := cfg.Agents.List[foundIdx].ID
 	model := cfg.Agents.Defaults.ModelName
@@ -652,11 +723,13 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		model = newModel
 	}
 	jsonOK(w, agentResponse{
-		ID:     agentID,
-		Name:   newName,
-		Type:   "custom",
-		Model:  model,
-		Status: "idle",
+		ID:        agentID,
+		Name:      newName,
+		Type:      "custom",
+		Model:     model,
+		Status:    "idle",
+		Soul:      soul,
+		Heartbeat: heartbeat,
 	})
 }
 
