@@ -19,8 +19,16 @@ import {
 import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
-import { fetchTasks, createTask, updateTask } from '@/lib/api'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { fetchTasks, fetchAgents, createTask, updateTask } from '@/lib/api'
 import type { Task } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { cn } from '@/lib/utils'
@@ -37,6 +45,7 @@ const STATUS_CONFIG = {
 
 function DraggableCard({ task, onSelect }: { task: Task; onSelect: (t: Task) => void }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: task.id })
+  const descFirstLine = task.description?.split('\n')[0]
   return (
     <div
       ref={setNodeRef}
@@ -50,6 +59,9 @@ function DraggableCard({ task, onSelect }: { task: Task; onSelect: (t: Task) => 
       )}
     >
       <p className="text-[var(--color-secondary)] font-medium line-clamp-2">{task.name}</p>
+      {descFirstLine && (
+        <p className="text-[var(--color-muted)] mt-0.5 line-clamp-1">{descFirstLine}</p>
+      )}
       {task.agent_name && (
         <p className="text-[var(--color-muted)] mt-1 flex items-center gap-1">
           <Robot size={10} /> {task.agent_name}
@@ -109,10 +121,10 @@ function TaskRow({ task, onSelect }: { task: Task; onSelect: (t: Task) => void }
         )}
       </div>
       {task.agent_name && (
-        <div className="flex items-center gap-1 text-xs text-[var(--color-muted)] shrink-0">
-          <Robot size={11} />
+        <Badge variant="outline" className="text-[10px] shrink-0 gap-1 text-[var(--color-muted)]">
+          <Robot size={10} weight="fill" />
           <span className="hidden sm:inline truncate max-w-[80px]">{task.agent_name}</span>
-        </div>
+        </Badge>
       )}
       <Badge
         className={cn('text-[10px] shrink-0', cfg.color, cfg.bg)}
@@ -143,6 +155,8 @@ export function TaskList({ statusFilter = 'all', onTaskSelect }: TaskListProps) 
   const [view, setView] = useState<'list' | 'board'>('list')
   const [showCreate, setShowCreate] = useState(false)
   const [newTaskName, setNewTaskName] = useState('')
+  const [newTaskDesc, setNewTaskDesc] = useState('')
+  const [newTaskAgentId, setNewTaskAgentId] = useState('__none__')
   const [draggingTask, setDraggingTask] = useState<Task | null>(null)
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
@@ -153,11 +167,22 @@ export function TaskList({ statusFilter = 'all', onTaskSelect }: TaskListProps) 
     refetchInterval: 10_000,
   })
 
+  const { data: agents = [] } = useQuery({
+    queryKey: ['agents'],
+    queryFn: fetchAgents,
+  })
+
   const { mutate: doCreate, isPending: isCreating } = useMutation({
-    mutationFn: () => createTask({ name: newTaskName }),
+    mutationFn: () => createTask({
+      name: newTaskName,
+      description: newTaskDesc.trim() || undefined,
+      agent_id: newTaskAgentId !== '__none__' ? newTaskAgentId : undefined,
+    }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
       setNewTaskName('')
+      setNewTaskDesc('')
+      setNewTaskAgentId('__none__')
       setShowCreate(false)
     },
     onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
@@ -199,7 +224,7 @@ export function TaskList({ statusFilter = 'all', onTaskSelect }: TaskListProps) 
   const handleSelect = (task: Task) => onTaskSelect?.(task)
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col">
+    <div className="flex flex-col">
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)]">
         <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)]">Tasks</h2>
@@ -247,39 +272,57 @@ export function TaskList({ statusFilter = 'all', onTaskSelect }: TaskListProps) 
 
       {/* Create task inline */}
       {showCreate && (
-        <div className="flex items-center gap-2 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
+        <div className="flex flex-col gap-2 px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
           <Input
             value={newTaskName}
             onChange={(e) => setNewTaskName(e.target.value)}
             placeholder="Task name..."
-            className="h-7 text-xs flex-1"
+            className="h-7 text-xs"
             autoFocus
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && newTaskName.trim()) doCreate()
               if (e.key === 'Escape') setShowCreate(false)
             }}
           />
-          <Button
-            size="sm"
-            className="h-7 px-3 text-xs"
-            onClick={() => doCreate()}
-            disabled={!newTaskName.trim() || isCreating}
-          >
-            Add
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2 text-xs"
-            onClick={() => setShowCreate(false)}
-          >
-            Cancel
-          </Button>
+          <Textarea
+            value={newTaskDesc}
+            onChange={(e) => setNewTaskDesc(e.target.value)}
+            placeholder="Description / instructions (optional)..."
+            className="text-xs min-h-[60px]"
+          />
+          <div className="flex items-center gap-2">
+            <Select value={newTaskAgentId} onValueChange={setNewTaskAgentId}>
+              <SelectTrigger className="h-7 text-xs flex-1">
+                <SelectValue placeholder="Assign agent..." />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__" className="text-xs">Unassigned</SelectItem>
+                {agents.map((a) => (
+                  <SelectItem key={a.id} value={a.id} className="text-xs">{a.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              size="sm"
+              className="h-7 px-3 text-xs"
+              onClick={() => doCreate()}
+              disabled={!newTaskName.trim() || isCreating}
+            >
+              Add
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => setShowCreate(false)}
+            >
+              Cancel
+            </Button>
+          </div>
         </div>
       )}
 
       {/* Content */}
-      <div className="flex-1 overflow-auto">
+      <div>
         {tasksError ? (
           <div className="flex flex-col items-center justify-center py-12 text-center gap-2">
             <p className="text-sm text-[var(--color-error)]">Could not load tasks.</p>

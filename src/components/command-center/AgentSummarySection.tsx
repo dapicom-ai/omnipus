@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Robot, CaretDown, CaretUp } from '@phosphor-icons/react'
+import { Robot, CaretDown, CaretUp, ArrowRight } from '@phosphor-icons/react'
 import { Badge } from '@/components/ui/badge'
-import { fetchAgents, fetchSessions } from '@/lib/api'
+import { fetchAgents, fetchSessions, fetchTasks } from '@/lib/api'
+import { useChatStore } from '@/store/chat'
+import { useNavigate } from '@tanstack/react-router'
 import { cn } from '@/lib/utils'
 
 const STATUS_STYLE: Record<string, string> = {
@@ -13,6 +15,8 @@ const STATUS_STYLE: Record<string, string> = {
 
 export function AgentSummarySection() {
   const [open, setOpen] = useState(true)
+  const navigate = useNavigate()
+  const setActiveSession = useChatStore((s) => s.setActiveSession)
 
   const { data: agents = [], isLoading, isError: agentsError } = useQuery({
     queryKey: ['agents'],
@@ -26,8 +30,20 @@ export function AgentSummarySection() {
     refetchInterval: 30_000,
   })
 
-  const sessionCountByAgent = sessions.reduce<Record<string, number>>((acc, s) => {
-    acc[s.agent_id] = (acc[s.agent_id] ?? 0) + 1
+  const { data: tasks = [] } = useQuery({
+    queryKey: ['tasks'],
+    queryFn: fetchTasks,
+    refetchInterval: 30_000,
+  })
+
+  const taskCountByAgent = tasks.reduce<Record<string, number>>((acc, t) => {
+    if (t.agent_id) acc[t.agent_id] = (acc[t.agent_id] ?? 0) + 1
+    return acc
+  }, {})
+
+  const lastActiveByAgent = sessions.reduce<Record<string, string>>((acc, s) => {
+    const prev = acc[s.agent_id]
+    if (!prev || s.updated_at > prev) acc[s.agent_id] = s.updated_at
     return acc
   }, {})
 
@@ -64,36 +80,59 @@ export function AgentSummarySection() {
             <p className="px-4 pb-2 text-xs text-[var(--color-muted)]">No agents configured.</p>
           ) : (
             <div className="space-y-px px-2">
-              {agents.map((agent) => (
-                <div
-                  key={agent.id}
-                  className="flex items-center gap-3 px-2 py-2 rounded-md hover:bg-[var(--color-surface-2)] transition-colors"
-                >
-                  {/* Avatar */}
-                  <div className="w-7 h-7 rounded-full bg-[var(--color-surface-2)] border border-[var(--color-border)] flex items-center justify-center shrink-0">
-                    <Robot size={13} className="text-[var(--color-muted)]" />
-                  </div>
-
-                  {/* Name + model */}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium text-[var(--color-secondary)] truncate">{agent.name}</p>
-                    <p className="text-[10px] text-[var(--color-muted)] truncate font-mono">{agent.model}</p>
-                  </div>
-
-                  {/* Sessions */}
-                  <span className="text-[10px] text-[var(--color-muted)] shrink-0">
-                    {sessionCountByAgent[agent.id] ?? 0} sessions
-                  </span>
-
-                  {/* Status */}
-                  <Badge
-                    variant="outline"
-                    className={cn('text-[10px] shrink-0 capitalize', STATUS_STYLE[agent.status] ?? STATUS_STYLE.idle)}
+              {agents.map((agent) => {
+                const lastActive = lastActiveByAgent[agent.id]
+                const taskCount = taskCountByAgent[agent.id] ?? 0
+                return (
+                  <div
+                    key={agent.id}
+                    className="flex items-center gap-3 px-2 py-2 rounded-md hover:bg-[var(--color-surface-2)] transition-colors group"
                   >
-                    {agent.status}
-                  </Badge>
-                </div>
-              ))}
+                    {/* Avatar */}
+                    <div className="w-7 h-7 rounded-full bg-[var(--color-surface-2)] border border-[var(--color-border)] flex items-center justify-center shrink-0">
+                      <Robot size={13} className="text-[var(--color-muted)]" />
+                    </div>
+
+                    {/* Name + model + last active */}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-[var(--color-secondary)] truncate">{agent.name}</p>
+                      <p className="text-[10px] text-[var(--color-muted)] truncate font-mono">
+                        {lastActive
+                          ? new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'short' }).format(new Date(lastActive))
+                          : agent.model}
+                      </p>
+                    </div>
+
+                    {/* Task count */}
+                    {taskCount > 0 && (
+                      <span className="text-[10px] text-[var(--color-muted)] shrink-0">
+                        {taskCount} task{taskCount !== 1 ? 's' : ''}
+                      </span>
+                    )}
+
+                    {/* Status */}
+                    <Badge
+                      variant="outline"
+                      className={cn('text-[10px] shrink-0 capitalize', STATUS_STYLE[agent.status] ?? STATUS_STYLE.idle)}
+                    >
+                      {agent.status}
+                    </Badge>
+
+                    {/* Chat button */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveSession(null, agent.id)
+                        void navigate({ to: '/' })
+                      }}
+                      className="shrink-0 flex items-center gap-0.5 text-[10px] text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors opacity-0 group-hover:opacity-100 font-medium"
+                      aria-label={`Chat with ${agent.name}`}
+                    >
+                      Chat <ArrowRight size={10} />
+                    </button>
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>

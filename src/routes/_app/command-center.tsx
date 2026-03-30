@@ -36,7 +36,7 @@ export function CommandCenterScreen() {
     filter === 'all' ? tasks.length : tasks.filter((t) => t.status === filter).length
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col">
       {/* 1. Status bar */}
       <StatusBar />
 
@@ -44,7 +44,7 @@ export function CommandCenterScreen() {
       <AttentionSection />
 
       {/* 3. Filter tabs */}
-      <div className="flex items-center gap-0.5 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] overflow-x-auto shrink-0">
+      <div className="flex items-center gap-0.5 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] overflow-x-auto">
         {FILTER_TABS.map((tab) => {
           const count = countFor(tab.value)
           const active = statusFilter === tab.value
@@ -78,18 +78,16 @@ export function CommandCenterScreen() {
         })}
       </div>
 
-      {/* 4. Task list (scrollable middle) */}
-      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-        <TaskList
-          statusFilter={statusFilter}
-          onTaskSelect={setSelectedTask}
-        />
+      {/* 4. Task list */}
+      <TaskList
+        statusFilter={statusFilter}
+        onTaskSelect={setSelectedTask}
+      />
 
-        {/* 5. Agent summary + 6. Activity feed (pinned below tasks) */}
-        <div className="shrink-0 border-t border-[var(--color-border)] overflow-y-auto max-h-72">
-          <AgentSummarySection />
-          <ActivityFeed />
-        </div>
+      {/* 5. Agent summary + 6. Activity feed */}
+      <div className="border-t border-[var(--color-border)]">
+        <AgentSummarySection />
+        <ActivityFeed />
       </div>
 
       {/* Task detail slide-over */}

@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchAgents, updateTask } from '@/lib/api'
 import type { Task } from '@/lib/api'
@@ -6,7 +7,6 @@ import {
   SheetContent,
   SheetHeader,
   SheetTitle,
-  SheetDescription,
 } from '@/components/ui/sheet'
 import {
   Select,
@@ -15,6 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
 import { useUiStore } from '@/store/ui'
 
 interface TaskDetailPanelProps {
@@ -33,6 +34,11 @@ const STATUS_OPTIONS: { value: Task['status']; label: string }[] = [
 export function TaskDetailPanel({ task, onClose }: TaskDetailPanelProps) {
   const { addToast } = useUiStore()
   const queryClient = useQueryClient()
+  const [descDraft, setDescDraft] = useState('')
+
+  useEffect(() => {
+    setDescDraft(task?.description ?? '')
+  }, [task?.id, task?.description])
 
   const { data: agents = [] } = useQuery({ queryKey: ['agents'], queryFn: fetchAgents })
 
@@ -58,13 +64,26 @@ export function TaskDetailPanel({ task, onClose }: TaskDetailPanelProps) {
       <SheetContent side="right" className="w-[360px] sm:w-[420px] overflow-y-auto">
         <SheetHeader className="mb-5">
           <SheetTitle className="pr-6 leading-snug">{task?.name ?? ''}</SheetTitle>
-          {task?.description && (
-            <SheetDescription>{task.description}</SheetDescription>
-          )}
         </SheetHeader>
 
         {task && (
           <div className="space-y-5">
+            {/* Description */}
+            <Field label="Description">
+              <Textarea
+                value={descDraft}
+                onChange={(e) => setDescDraft(e.target.value)}
+                onBlur={() => {
+                  const trimmed = descDraft.trim()
+                  if (trimmed !== (task.description ?? '').trim()) {
+                    doUpdate({ description: trimmed || undefined })
+                  }
+                }}
+                placeholder="Add instructions or context..."
+                className="text-xs min-h-[80px]"
+              />
+            </Field>
+
             {/* Status */}
             <Field label="Status">
               <Select
