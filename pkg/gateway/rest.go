@@ -507,9 +507,11 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
 		return
 	}
-	// Persistence succeeded. Do NOT mutate the live config pointer — that is a data race.
-	// The in-memory config will pick up the new agent on the next hot-reload cycle.
-	// Build the response from local variables only.
+	// Persistence succeeded. Trigger reload so the in-memory config picks up the new agent.
+	if err := a.agentLoop.TriggerReload(); err != nil {
+		slog.Warn("config reload after agent create failed", "error", err)
+	}
+	// Build the response from local variables only (do NOT read from live config — race).
 	model := a.agentLoop.GetConfig().Agents.Defaults.ModelName
 	if ac.Model != nil && ac.Model.Primary != "" {
 		model = ac.Model.Primary
@@ -590,9 +592,11 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
 		return
 	}
-	// Persistence succeeded. Do NOT mutate the live config pointer — that is a data race.
-	// The in-memory config will pick up the changes on the next hot-reload cycle.
-	// Build the response entirely from local variables.
+	// Persistence succeeded. Trigger reload so the in-memory config picks up the changes.
+	if err := a.agentLoop.TriggerReload(); err != nil {
+		slog.Warn("config reload after agent update failed", "error", err)
+	}
+	// Build the response entirely from local variables (do NOT read from live config — race).
 	agentID := cfg.Agents.List[foundIdx].ID
 	model := cfg.Agents.Defaults.ModelName
 	if newModel != "" {
@@ -1001,8 +1005,10 @@ func (a *restAPI) rotateGatewayToken(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
 		return
 	}
-	// Persistence succeeded. Do NOT mutate the live config pointer — that is a data race.
-	// The in-memory config will pick up the new token on the next hot-reload cycle.
+	// Persistence succeeded. Trigger reload so the in-memory config picks up the new token.
+	if err := a.agentLoop.TriggerReload(); err != nil {
+		slog.Warn("config reload after token rotation failed", "error", err)
+	}
 	jsonOK(w, map[string]string{"token": newToken})
 }
 
@@ -1512,8 +1518,10 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
 			return
 		}
-		// Do NOT mutate the live config pointer — that is a data race.
-		// The in-memory config will pick up the new API key on the next hot-reload cycle.
+		// Trigger reload so the in-memory config picks up the new API key.
+		if err := a.agentLoop.TriggerReload(); err != nil {
+			slog.Warn("config reload after provider update failed", "error", err)
+		}
 		jsonOK(w, providerResponse{
 			ID:     providerID,
 			Name:   providerID,

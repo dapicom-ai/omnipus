@@ -30,11 +30,19 @@ func newSPAHandler() http.Handler {
 		// Check if the file exists in the embedded FS
 		cleanPath := strings.TrimPrefix(path, "/")
 		if _, err := fs.Stat(sub, cleanPath); err == nil {
+			// index.html must never be cached — it references hashed JS/CSS bundles.
+			// After a rebuild, browsers must fetch the new index.html to get updated
+			// asset references. Static assets (JS/CSS with content hashes) can be
+			// cached indefinitely.
+			if cleanPath == "index.html" || cleanPath == "" {
+				w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			}
 			fileServer.ServeHTTP(w, r)
 			return
 		}
 
-		// File not found — serve index.html for SPA routing
+		// File not found — serve index.html for SPA routing (no-cache)
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		r.URL.Path = "/"
 		fileServer.ServeHTTP(w, r)
 	})

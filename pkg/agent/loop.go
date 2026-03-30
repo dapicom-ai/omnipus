@@ -1075,6 +1075,16 @@ func (al *AgentLoop) SetReloadFunc(fn func() error) {
 	al.reloadFunc = fn
 }
 
+// TriggerReload triggers a config reload so the in-memory config picks up
+// changes written to disk by safeUpdateConfigJSON. Called by REST handlers
+// after persisting config changes (agent create/update, token rotate, etc.).
+func (al *AgentLoop) TriggerReload() error {
+	if al.reloadFunc == nil {
+		return fmt.Errorf("reload not configured")
+	}
+	return al.reloadFunc()
+}
+
 var audioAnnotationRe = regexp.MustCompile(`\[(voice|audio)(?::[^\]]*)?\]`)
 
 // transcribeAudioInMessage resolves audio media refs, transcribes them, and
