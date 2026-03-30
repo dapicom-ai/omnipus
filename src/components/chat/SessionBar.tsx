@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { Robot, Timer, CurrencyDollar, ArrowsClockwise, CaretDown } from '@phosphor-icons/react'
+import { Robot, Timer, CurrencyDollar, ArrowsClockwise, CaretDown, PencilSimpleLine } from '@phosphor-icons/react'
 import { IconRenderer } from '@/components/shared/IconRenderer'
 import {
   DropdownMenu,
@@ -95,6 +95,18 @@ export function SessionBar() {
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {/* New Chat button */}
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-7 px-2 text-xs text-[var(--color-muted)] hover:text-[var(--color-secondary)] gap-1"
+        onClick={() => setActiveSession(null, effectiveAgentId ?? undefined)}
+        title="New chat"
+      >
+        <PencilSimpleLine size={13} />
+        <span className="hidden sm:inline">New</span>
+      </Button>
 
       {/* Model */}
       {activeAgent?.model && (

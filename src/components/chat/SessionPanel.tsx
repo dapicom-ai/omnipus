@@ -61,8 +61,7 @@ export function SessionPanel() {
             </div>
           )}
           <Accordion type="multiple" defaultValue={activeAgentId ? [activeAgentId] : []}>
-            {agents
-              .filter((a) => a.type !== 'system')
+            {(agents.length <= 1 ? agents : agents.filter((a) => a.type !== 'system'))
               .map((agent) => {
                 const agentSessions = sessionsByAgent[agent.id] ?? []
                 return (
@@ -116,7 +115,7 @@ export function SessionPanel() {
               })}
           </Accordion>
 
-          {agents.filter((a) => a.type !== 'system').length === 0 && (
+          {agents.length === 0 && (
             <div className="px-4 py-8 text-center text-sm text-[var(--color-muted)]">
               No agents configured yet.
             </div>
