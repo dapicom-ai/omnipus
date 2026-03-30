@@ -287,6 +287,11 @@ func (m *Manager) GetStreamer(ctx context.Context, channelName, chatID string) (
 
 	sc, ok := ch.(StreamingCapable)
 	if !ok {
+		// Channel exists but doesn't implement StreamingCapable —
+		// try the fallback (e.g., webchat channel delegates streaming to WSHandler)
+		if m.streamFallback != nil {
+			return m.streamFallback.GetStreamer(ctx, channelName, chatID)
+		}
 		return nil, false
 	}
 

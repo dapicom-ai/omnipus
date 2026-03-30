@@ -364,7 +364,10 @@ func setupAndStartServices(
 	// Register WebSocket handler as stream fallback so streaming tokens route back for webchat.
 	runningServices.ChannelManager.SetStreamFallback(wsHandler)
 	// Register webchat as a channel so outbound messages (non-streaming) also route back.
-	runningServices.ChannelManager.RegisterChannel("webchat", &webchatChannel{wsHandler: wsHandler})
+	// The webchatChannel and wsHandler share a reference so streaming can suppress duplicate Send().
+	wch := newWebchatChannel(wsHandler)
+	wsHandler.webchatCh = wch
+	runningServices.ChannelManager.RegisterChannel("webchat", wch)
 
 	// REST API endpoints for frontend data.
 	onboardingMgr := onboarding.NewManager(homePath)

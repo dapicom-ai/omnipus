@@ -1932,6 +1932,26 @@ turnLoop:
 				}
 				return fbResult.Response, nil
 			}
+			// Use streaming if the provider supports it and we have a streamer for this channel.
+			if sp, ok := activeProvider.(providers.StreamingProvider); ok && al.bus != nil {
+				logger.DebugCF("agent", "Provider supports streaming, checking for streamer", map[string]any{"channel": ts.channel, "chat_id": ts.chatID})
+				if streamer, hasStreamer := al.bus.GetStreamer(providerCtx, ts.channel, ts.chatID); hasStreamer {
+					logger.InfoCF("agent", "Using streaming for response", map[string]any{"channel": ts.channel, "chat_id": ts.chatID})
+					var lastChunk string
+					resp, streamErr := sp.ChatStream(providerCtx, messagesForCall, toolDefsForCall, llmModel, llmOpts, func(accumulated string) {
+						// Send only the new delta (accumulated minus what we already sent)
+						delta := accumulated[len(lastChunk):]
+						lastChunk = accumulated
+						if delta != "" {
+							_ = streamer.Update(providerCtx, delta)
+						}
+					})
+					if streamErr == nil {
+						_ = streamer.Finalize(providerCtx, lastChunk)
+					}
+					return resp, streamErr
+				}
+			}
 			return activeProvider.Chat(providerCtx, messagesForCall, toolDefsForCall, llmModel, llmOpts)
 		}
 

@@ -59,8 +59,9 @@ type WSHandler struct {
 	partitions    *session.PartitionStore // may be nil
 	allowedOrigin string
 
-	mu       sync.Mutex
-	sessions map[string]*wsConn // chatID → connection
+	mu        sync.Mutex
+	sessions  map[string]*wsConn // chatID → connection
+	webchatCh *webchatChannel     // reference to mark streaming complete
 
 	upgrader websocket.Upgrader
 }
@@ -145,7 +146,7 @@ func (h *WSHandler) GetStreamer(_ context.Context, channel, chatID string) (bus.
 	if !ok {
 		return nil, false
 	}
-	return &wsStreamer{conn: conn}, true
+	return &wsStreamer{conn: conn, chatID: chatID, channel: h.webchatCh}, true
 }
 
 // ServeHTTP handles the WebSocket upgrade and full connection lifecycle.
@@ -427,7 +428,9 @@ func sendWSFrame(conn *websocket.Conn, frame wsServerFrame) {
 
 // wsStreamer implements bus.Streamer, pushing token/done frames into a wsConn's send channel.
 type wsStreamer struct {
-	conn *wsConn
+	conn    *wsConn
+	chatID  string
+	channel *webchatChannel // to mark streaming complete and suppress duplicate Send()
 }
 
 func (s *wsStreamer) Update(_ context.Context, content string) error {
@@ -446,6 +449,10 @@ func (s *wsStreamer) Update(_ context.Context, content string) error {
 
 func (s *wsStreamer) Finalize(_ context.Context, _ string) error {
 	sendConnFrame(s.conn, wsServerFrame{Type: "done", Stats: map[string]any{}})
+	// Mark this chatID as streamed so webchatChannel.Send() skips the duplicate
+	if s.channel != nil {
+		s.channel.markStreamed(s.chatID)
+	}
 	return nil
 }
 
