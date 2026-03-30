@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { FloppyDisk } from '@phosphor-icons/react'
+import { FloppyDisk, Plus, Trash, Key } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
@@ -11,9 +11,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog'
 import { Progress } from '@/components/ui/progress'
 import { Separator } from '@/components/ui/separator'
-import { fetchConfig, updateConfig, fetchGatewayStatus } from '@/lib/api'
+import { fetchConfig, updateConfig, fetchGatewayStatus, fetchCredentials, addCredential, deleteCredential } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { DiagnosticsSection } from './DiagnosticsSection'
 
@@ -31,10 +38,24 @@ export function SecuritySection() {
     queryFn: fetchGatewayStatus,
   })
 
+  const { data: credentials = [] } = useQuery({
+    queryKey: ['credentials'],
+    queryFn: fetchCredentials,
+    retry: false,
+  })
+
   const [policyMode, setPolicyMode] = useState<'allow' | 'deny'>('deny')
   const [execApproval, setExecApproval] = useState<'auto' | 'ask' | 'deny'>('ask')
   const [injectionLevel, setInjectionLevel] = useState<'off' | 'low' | 'medium' | 'high'>('medium')
   const [dailyCostCap, setDailyCostCap] = useState('')
+  const [agentLlmCallsPerHour, setAgentLlmCallsPerHour] = useState('')
+  const [agentToolCallsPerMin, setAgentToolCallsPerMin] = useState('')
+
+  // Credential vault modal state
+  const [credModalOpen, setCredModalOpen] = useState(false)
+  const [credKey, setCredKey] = useState('')
+  const [credValue, setCredValue] = useState('')
+  const [deletingKey, setDeletingKey] = useState<string | null>(null)
 
   useEffect(() => {
     if (!config) return
@@ -42,6 +63,9 @@ export function SecuritySection() {
     setExecApproval(config.security.exec_approval)
     setInjectionLevel(config.security.prompt_injection_level)
     setDailyCostCap(config.security.daily_cost_cap?.toString() ?? '')
+    const rl = config.security.rate_limits as Record<string, unknown>
+    setAgentLlmCallsPerHour((rl?.max_agent_llm_calls_per_hour as number | undefined)?.toString() ?? '')
+    setAgentToolCallsPerMin((rl?.max_agent_tool_calls_per_minute as number | undefined)?.toString() ?? '')
   }, [config])
 
   const { mutate: doSave, isPending: isSaving } = useMutation({
@@ -52,7 +76,11 @@ export function SecuritySection() {
           exec_approval: execApproval,
           prompt_injection_level: injectionLevel,
           daily_cost_cap: dailyCostCap ? parseFloat(dailyCostCap) : undefined,
-          rate_limits: config?.security.rate_limits ?? {},
+          rate_limits: {
+            ...config?.security.rate_limits,
+            max_agent_llm_calls_per_hour: agentLlmCallsPerHour ? parseInt(agentLlmCallsPerHour, 10) : undefined,
+            max_agent_tool_calls_per_minute: agentToolCallsPerMin ? parseInt(agentToolCallsPerMin, 10) : undefined,
+          },
         },
       }),
     onSuccess: () => {
@@ -65,6 +93,28 @@ export function SecuritySection() {
         : err.message,
       variant: 'error',
     }),
+  })
+
+  const { mutate: doAddCred, isPending: isAddingCred } = useMutation({
+    mutationFn: () => addCredential(credKey.trim(), credValue),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['credentials'] })
+      addToast({ message: `Credential "${credKey}" saved`, variant: 'success' })
+      setCredModalOpen(false)
+      setCredKey('')
+      setCredValue('')
+    },
+    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+  })
+
+  const { mutate: doDeleteCred } = useMutation({
+    mutationFn: (key: string) => deleteCredential(key),
+    onSuccess: (_data, key) => {
+      queryClient.invalidateQueries({ queryKey: ['credentials'] })
+      addToast({ message: `Credential "${key}" removed`, variant: 'success' })
+      setDeletingKey(null)
+    },
+    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
   })
 
   if (isLoading) {
@@ -183,6 +233,76 @@ export function SecuritySection() {
               <Progress value={spendPercent} className="h-1.5" />
             </div>
           </div>
+
+          <Separator />
+
+          {/* Per-agent default rate limits */}
+          <div className="space-y-3">
+            <p className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-wider">Per-Agent Defaults</p>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-[var(--color-secondary)]">LLM calls / hour</p>
+                <p className="text-xs text-[var(--color-muted)]">Default limit per agent</p>
+              </div>
+              <Input
+                type="number"
+                min="0"
+                value={agentLlmCallsPerHour}
+                onChange={(e) => setAgentLlmCallsPerHour(e.target.value)}
+                className="w-24 h-7 text-xs font-mono"
+                placeholder="Unlimited"
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-[var(--color-secondary)]">Tool calls / minute</p>
+                <p className="text-xs text-[var(--color-muted)]">Default limit per agent</p>
+              </div>
+              <Input
+                type="number"
+                min="0"
+                value={agentToolCallsPerMin}
+                onChange={(e) => setAgentToolCallsPerMin(e.target.value)}
+                className="w-24 h-7 text-xs font-mono"
+                placeholder="Unlimited"
+              />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Credential Vault */}
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-wider">Credential Vault</h3>
+          <Button size="sm" variant="outline" className="h-7 px-2 gap-1 text-xs" onClick={() => setCredModalOpen(true)}>
+            <Plus size={11} weight="bold" />
+            Add key
+          </Button>
+        </div>
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] divide-y divide-[var(--color-border)]">
+          {credentials.length === 0 && (
+            <div className="p-4 text-sm text-[var(--color-muted)] flex items-center gap-2">
+              <Key size={14} />
+              No credentials stored. Add your first key above.
+            </div>
+          )}
+          {credentials.map((cred) => (
+            <div key={cred.key} className="flex items-center justify-between px-4 py-2.5">
+              <div>
+                <p className="text-sm font-mono text-[var(--color-secondary)]">{cred.key}</p>
+                <p className="text-[10px] text-[var(--color-muted)] font-mono">••••••••••••</p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0 text-[var(--color-muted)] hover:text-[var(--color-error)]"
+                onClick={() => setDeletingKey(cred.key)}
+              >
+                <Trash size={13} />
+              </Button>
+            </div>
+          ))}
         </div>
       </section>
 
@@ -190,6 +310,69 @@ export function SecuritySection() {
 
       {/* US-10: Doctor diagnostics panel */}
       <DiagnosticsSection />
+
+      {/* Add credential modal */}
+      <Dialog open={credModalOpen} onOpenChange={setCredModalOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="font-headline text-base">Add Credential</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1">
+              <p className="text-xs text-[var(--color-muted)]">Key name</p>
+              <Input
+                value={credKey}
+                onChange={(e) => setCredKey(e.target.value)}
+                placeholder="e.g. OPENAI_API_KEY"
+                className="h-8 text-xs font-mono"
+                autoFocus
+              />
+            </div>
+            <div className="space-y-1">
+              <p className="text-xs text-[var(--color-muted)]">Value</p>
+              <Input
+                type="password"
+                value={credValue}
+                onChange={(e) => setCredValue(e.target.value)}
+                placeholder="sk-..."
+                className="h-8 text-xs font-mono"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setCredModalOpen(false)}>Cancel</Button>
+            <Button
+              size="sm"
+              onClick={() => doAddCred()}
+              disabled={!credKey.trim() || !credValue || isAddingCred}
+            >
+              {isAddingCred ? 'Saving...' : 'Save'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete confirmation modal */}
+      <Dialog open={!!deletingKey} onOpenChange={() => setDeletingKey(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="font-headline text-base">Remove credential?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-[var(--color-muted)] py-2">
+            This will permanently remove <span className="font-mono text-[var(--color-secondary)]">{deletingKey}</span> from the vault. This cannot be undone.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setDeletingKey(null)}>Cancel</Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => deletingKey && doDeleteCred(deletingKey)}
+            >
+              Remove
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

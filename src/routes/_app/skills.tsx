@@ -54,9 +54,7 @@ function SkillsScreen() {
     queryFn: fetchSkills,
   })
 
-  const skills = rawSkills.filter(
-    (s) => Boolean(s.description?.trim()) && Boolean(s.author?.trim()),
-  )
+  const skills = rawSkills
 
   const { data: mcpServers = [], isLoading: mcpLoading, isError: mcpError } = useQuery({
     queryKey: ['mcp-servers'],

@@ -4,6 +4,9 @@ import { ProvidersSection } from '@/components/settings/ProvidersSection'
 import { SecuritySection } from '@/components/settings/SecuritySection'
 import { GatewaySection } from '@/components/settings/GatewaySection'
 import { DataSection } from '@/components/settings/DataSection'
+import { RoutingSection } from '@/components/settings/RoutingSection'
+import { ProfileSection } from '@/components/settings/ProfileSection'
+import { AboutSection } from '@/components/settings/AboutSection'
 
 function SettingsScreen() {
   return (
@@ -16,11 +19,14 @@ function SettingsScreen() {
       </div>
 
       <Tabs defaultValue="providers">
-        <TabsList className="mb-6">
+        <TabsList className="mb-6 flex-wrap h-auto gap-1">
           <TabsTrigger value="providers">Providers</TabsTrigger>
           <TabsTrigger value="security">Security</TabsTrigger>
           <TabsTrigger value="gateway">Gateway</TabsTrigger>
           <TabsTrigger value="data">Data</TabsTrigger>
+          <TabsTrigger value="routing">Routing</TabsTrigger>
+          <TabsTrigger value="profile">Profile</TabsTrigger>
+          <TabsTrigger value="about">About</TabsTrigger>
         </TabsList>
 
         <TabsContent value="providers">
@@ -37,6 +43,18 @@ function SettingsScreen() {
 
         <TabsContent value="data">
           <DataSection />
+        </TabsContent>
+
+        <TabsContent value="routing">
+          <RoutingSection />
+        </TabsContent>
+
+        <TabsContent value="profile">
+          <ProfileSection />
+        </TabsContent>
+
+        <TabsContent value="about">
+          <AboutSection />
         </TabsContent>
       </Tabs>
     </div>

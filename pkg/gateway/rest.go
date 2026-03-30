@@ -651,19 +651,6 @@ func (a *restAPI) safeUpdateConfigJSON(mutate func(m map[string]any) error) erro
 }
 
 func (a *restAPI) updateConfig(w http.ResponseWriter, r *http.Request) {
-	// Config updates via REST are done on the raw JSON file to preserve SecureStrings.
-	// SaveConfig with in-memory config would serialize API keys as "[NOT_HERE]" placeholders.
-	raw, err := os.ReadFile(a.configPath())
-	if err != nil {
-		jsonErr(w, http.StatusInternalServerError, "could not read config file")
-		return
-	}
-	var existing map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &existing); err != nil {
-		jsonErr(w, http.StatusInternalServerError, "could not parse config file")
-		return
-	}
-
 	var updates map[string]json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
@@ -679,15 +666,17 @@ func (a *restAPI) updateConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	for k, v := range updates {
-		existing[k] = v
-	}
-	merged, err := json.MarshalIndent(existing, "", "  ")
-	if err != nil {
-		jsonErr(w, http.StatusInternalServerError, "could not serialize config")
-		return
-	}
-	if err := fileutil.WriteFileAtomic(a.configPath(), merged, 0o600); err != nil {
+	// Use safeUpdateConfigJSON to hold configMu during the read-modify-write cycle
+	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
+		for k, v := range updates {
+			var parsed any
+			if err := json.Unmarshal(v, &parsed); err != nil {
+				return fmt.Errorf("invalid value for %q: %w", k, err)
+			}
+			m[k] = parsed
+		}
+		return nil
+	}); err != nil {
 		slog.Error("rest: save config", "error", err)
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
 		return
@@ -921,6 +910,17 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	cm.RegisterHTTPHandler("/api/v1/agents/", a.withAuth(a.HandleAgents))
 	cm.RegisterHTTPHandler("/api/v1/config/gateway/rotate-token", a.withAuth(a.rotateGatewayToken))
 	cm.RegisterHTTPHandler("/api/v1/activity", a.withAuth(a.HandleActivity))
+
+	// Settings endpoints (Wave 4).
+	cm.RegisterHTTPHandler("/api/v1/audit-log", a.withAuth(a.HandleAuditLog))
+	cm.RegisterHTTPHandler("/api/v1/credentials", a.withAuth(a.HandleCredentials))
+	cm.RegisterHTTPHandler("/api/v1/credentials/", a.withAuth(a.HandleCredentials))
+	cm.RegisterHTTPHandler("/api/v1/backup", a.withAuth(a.HandleCreateBackup))
+	cm.RegisterHTTPHandler("/api/v1/backups", a.withAuth(a.HandleListBackups))
+	cm.RegisterHTTPHandler("/api/v1/restore", a.withAuth(a.HandleRestore))
+	// Exact match takes precedence over the /sessions/ prefix handler for this specific path.
+	cm.RegisterHTTPHandler("/api/v1/sessions/all", a.withAuth(a.HandleClearSessions))
+	cm.RegisterHTTPHandler("/api/v1/about", a.withAuth(a.HandleAbout))
 }
 
 // rotateGatewayToken generates a new random bearer token, persists it to config, and returns it.

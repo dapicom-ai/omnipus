@@ -1,9 +1,17 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Database, FloppyDisk } from '@phosphor-icons/react'
+import { Database, FloppyDisk, Archive, ArrowCounterClockwise, Trash } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { fetchConfig, updateConfig, fetchStorageStats } from '@/lib/api'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import { Separator } from '@/components/ui/separator'
+import { fetchConfig, updateConfig, fetchStorageStats, createBackup, fetchBackups, restoreBackup, clearAllSessions } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 
 function formatBytes(bytes: number): string {
@@ -16,6 +24,8 @@ function formatBytes(bytes: number): string {
 export function DataSection() {
   const { addToast } = useUiStore()
   const queryClient = useQueryClient()
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
+  const [restoreTarget, setRestoreTarget] = useState<string | null>(null)
 
   const { data: config, isLoading: configLoading } = useQuery({
     queryKey: ['config'],
@@ -25,6 +35,12 @@ export function DataSection() {
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ['storage-stats'],
     queryFn: fetchStorageStats,
+  })
+
+  const { data: backups = [], isLoading: backupsLoading } = useQuery({
+    queryKey: ['backups'],
+    queryFn: fetchBackups,
+    retry: false,
   })
 
   const [retentionDays, setRetentionDays] = useState('90')
@@ -49,6 +65,34 @@ export function DataSection() {
         : err.message,
       variant: 'error',
     }),
+  })
+
+  const { mutate: doBackup, isPending: isCreatingBackup } = useMutation({
+    mutationFn: createBackup,
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ['backups'] })
+      addToast({ message: `Backup created: ${res.filename}`, variant: 'success' })
+    },
+    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+  })
+
+  const { mutate: doRestore, isPending: isRestoring } = useMutation({
+    mutationFn: (filename: string) => restoreBackup(filename),
+    onSuccess: () => {
+      addToast({ message: 'Restore complete. Restart gateway to apply.', variant: 'success' })
+      setRestoreTarget(null)
+    },
+    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+  })
+
+  const { mutate: doClearSessions, isPending: isClearing } = useMutation({
+    mutationFn: clearAllSessions,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['storage-stats'] })
+      addToast({ message: 'All sessions cleared', variant: 'success' })
+      setClearConfirmOpen(false)
+    },
+    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
   })
 
   const isLoading = configLoading || statsLoading
@@ -113,6 +157,119 @@ export function DataSection() {
           </div>
         </div>
       </section>
+
+      <Separator />
+
+      {/* Backup & Restore */}
+      <section className="space-y-3">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-wider">Backup & Restore</h3>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 px-2 gap-1 text-xs"
+            onClick={() => doBackup()}
+            disabled={isCreatingBackup}
+          >
+            <Archive size={11} />
+            {isCreatingBackup ? 'Creating...' : 'Create backup'}
+          </Button>
+        </div>
+
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] divide-y divide-[var(--color-border)]">
+          {backupsLoading && (
+            <div className="p-4 text-sm text-[var(--color-muted)]">Loading backups...</div>
+          )}
+          {!backupsLoading && backups.length === 0 && (
+            <div className="p-4 text-sm text-[var(--color-muted)]">No backups yet.</div>
+          )}
+          {backups.map((b) => (
+            <div key={b.filename} className="flex items-center justify-between px-4 py-2.5">
+              <div>
+                <p className="text-xs font-mono text-[var(--color-secondary)]">{b.filename}</p>
+                <p className="text-[10px] text-[var(--color-muted)]">
+                  {formatBytes(b.size_bytes)} &middot; {new Date(b.created_at).toLocaleString()}
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 gap-1 text-xs"
+                onClick={() => setRestoreTarget(b.filename)}
+              >
+                <ArrowCounterClockwise size={11} />
+                Restore
+              </Button>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Danger zone */}
+      <section className="space-y-3">
+        <h3 className="text-xs font-semibold text-[var(--color-error)] uppercase tracking-wider">Danger Zone</h3>
+        <div className="rounded-lg border border-[var(--color-error)]/30 bg-[var(--color-surface-1)] p-4 flex items-center justify-between">
+          <div>
+            <p className="text-sm text-[var(--color-secondary)]">Clear all sessions</p>
+            <p className="text-xs text-[var(--color-muted)]">Permanently delete all session transcripts. Cannot be undone.</p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1.5 text-xs text-[var(--color-error)] border-[var(--color-error)]/40 hover:bg-[var(--color-error)]/10"
+            onClick={() => setClearConfirmOpen(true)}
+          >
+            <Trash size={12} />
+            Clear sessions
+          </Button>
+        </div>
+      </section>
+
+      {/* Restore confirmation */}
+      <Dialog open={!!restoreTarget} onOpenChange={() => setRestoreTarget(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="font-headline text-base">Restore backup?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-[var(--color-muted)] py-2">
+            Restore from <span className="font-mono text-[var(--color-secondary)]">{restoreTarget}</span>?
+            Current data will be overwritten. Gateway restart required after restore.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setRestoreTarget(null)}>Cancel</Button>
+            <Button
+              size="sm"
+              onClick={() => restoreTarget && doRestore(restoreTarget)}
+              disabled={isRestoring}
+            >
+              {isRestoring ? 'Restoring...' : 'Restore'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Clear sessions confirmation */}
+      <Dialog open={clearConfirmOpen} onOpenChange={setClearConfirmOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="font-headline text-base">Clear all sessions?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-[var(--color-muted)] py-2">
+            This will permanently delete all session transcripts. This action cannot be undone.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => setClearConfirmOpen(false)}>Cancel</Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={() => doClearSessions()}
+              disabled={isClearing}
+            >
+              {isClearing ? 'Clearing...' : 'Clear all'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

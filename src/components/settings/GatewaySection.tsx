@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Copy, ArrowsClockwise, FloppyDisk, CheckCircle } from '@phosphor-icons/react'
+import { Copy, ArrowsClockwise, FloppyDisk, CheckCircle, CaretDown, CaretRight } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
+import { Separator } from '@/components/ui/separator'
 import { fetchConfig, updateConfig, rotateGatewayToken, fetchGatewayStatus } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 
@@ -18,6 +19,7 @@ export function GatewaySection() {
   const { addToast } = useUiStore()
   const queryClient = useQueryClient()
   const [copied, setCopied] = useState(false)
+  const [remoteAccessOpen, setRemoteAccessOpen] = useState(false)
 
   const { data: config, isLoading } = useQuery({
     queryKey: ['config'],
@@ -200,6 +202,56 @@ export function GatewaySection() {
         )}
         <span>Listening on {bindAddress}:{port}</span>
       </div>
+
+      <Separator />
+
+      {/* Remote Access */}
+      <section>
+        <button
+          className="flex items-center gap-2 w-full text-left py-1"
+          onClick={() => setRemoteAccessOpen((v) => !v)}
+          type="button"
+        >
+          {remoteAccessOpen ? (
+            <CaretDown size={12} className="text-[var(--color-muted)]" />
+          ) : (
+            <CaretRight size={12} className="text-[var(--color-muted)]" />
+          )}
+          <h3 className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-wider">Remote Access</h3>
+        </button>
+
+        {remoteAccessOpen && (
+          <div className="mt-3 space-y-4">
+            {/* Tailscale */}
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-2">
+              <p className="text-sm font-semibold text-[var(--color-secondary)]">Tailscale</p>
+              <p className="text-xs text-[var(--color-muted)]">
+                Install Tailscale on this machine and your client device. Once connected, access Omnipus via your Tailscale IP:
+              </p>
+              <code className="block text-xs font-mono bg-[var(--color-primary)] border border-[var(--color-border)] rounded px-3 py-2 text-[var(--color-accent)]">
+                http://&lt;tailscale-ip&gt;:{port}
+              </code>
+              <p className="text-[10px] text-[var(--color-muted)]">
+                Ensure the gateway bind address is set to <span className="font-mono">0.0.0.0</span> or your Tailscale IP to accept remote connections.
+              </p>
+            </div>
+
+            {/* SSH tunnel */}
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-2">
+              <p className="text-sm font-semibold text-[var(--color-secondary)]">SSH Tunnel</p>
+              <p className="text-xs text-[var(--color-muted)]">
+                Forward the gateway port to your local machine over SSH:
+              </p>
+              <code className="block text-xs font-mono bg-[var(--color-primary)] border border-[var(--color-border)] rounded px-3 py-2 text-[var(--color-accent)] break-all">
+                ssh -L {port}:localhost:{port} user@your-server
+              </code>
+              <p className="text-[10px] text-[var(--color-muted)]">
+                Then open <span className="font-mono">http://localhost:{port}</span> in your browser.
+              </p>
+            </div>
+          </div>
+        )}
+      </section>
     </div>
   )
 }

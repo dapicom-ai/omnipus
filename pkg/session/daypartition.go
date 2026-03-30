@@ -343,6 +343,35 @@ func (ps *PartitionStore) ListSessions() ([]*SessionMeta, error) {
 	return metas, nil
 }
 
+// ClearAll removes every session directory from the store.
+// Returns the number of sessions removed.
+func (ps *PartitionStore) ClearAll() (int, error) {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	entries, err := os.ReadDir(ps.baseDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("session: clear all: read dir: %w", err)
+	}
+
+	removed := 0
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		dir := filepath.Join(ps.baseDir, entry.Name())
+		if err := os.RemoveAll(dir); err != nil {
+			slog.Warn("session: clear all: remove session dir", "dir", dir, "error", err)
+			continue
+		}
+		removed++
+	}
+	return removed, nil
+}
+
 // ReadMessages returns all transcript entries for sessionID, merged across all
 // day partitions in chronological order. Missing partitions are skipped with a warning.
 func (ps *PartitionStore) ReadMessages(sessionID string) ([]TranscriptEntry, error) {

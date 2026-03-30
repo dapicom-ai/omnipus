@@ -21,11 +21,11 @@
         "enabled": false,
         "max_args_length": 0
       },
-      "workspace": "/tmp/TestHandleAgentsCreateWithExplicitID3551437216/001"
+      "workspace": "/tmp/TestHandleAgentsCreateWithExplicitID1128924132/001"
     },
     "list": [
       {
-        "id": "4a67bc32-a8e2-4dda-b722-69ebe8f480a6",
+        "id": "7b40cb7c-23fe-4ea1-9b51-80ef2ed2fa67",
         "name": "Scout"
       }
     ]

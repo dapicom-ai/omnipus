@@ -449,3 +449,76 @@ export interface ActivityEvent {
 export function fetchActivity(): Promise<ActivityEvent[]> {
   return request<ActivityEvent[]>('/activity')
 }
+
+// ── Credentials ───────────────────────────────────────────────────────────────
+
+export interface CredentialKey {
+  key: string
+  created_at?: string
+  updated_at?: string
+}
+
+export function fetchCredentials(): Promise<CredentialKey[]> {
+  return request<CredentialKey[]>('/credentials')
+}
+
+export function addCredential(key: string, value: string): Promise<void> {
+  return request<void>('/credentials', { method: 'POST', body: JSON.stringify({ key, value }) })
+}
+
+export function deleteCredential(key: string): Promise<void> {
+  return request<void>(`/credentials/${encodeURIComponent(key)}`, { method: 'DELETE' })
+}
+
+// ── Backup / Restore ──────────────────────────────────────────────────────────
+
+export interface BackupEntry {
+  filename: string
+  size_bytes: number
+  created_at: string
+}
+
+export function createBackup(): Promise<{ filename: string }> {
+  return request('/backup', { method: 'POST' })
+}
+
+export function fetchBackups(): Promise<BackupEntry[]> {
+  return request<BackupEntry[]>('/backups')
+}
+
+export function restoreBackup(filename: string): Promise<void> {
+  return request<void>('/restore', { method: 'POST', body: JSON.stringify({ filename }) })
+}
+
+export function clearAllSessions(): Promise<void> {
+  return request<void>('/sessions/all', { method: 'DELETE' })
+}
+
+// ── About ─────────────────────────────────────────────────────────────────────
+
+export interface AboutInfo {
+  version: string
+  go_version: string
+  os: string
+  arch: string
+  uptime_seconds: number
+}
+
+export function fetchAboutInfo(): Promise<AboutInfo> {
+  return request<AboutInfo>('/about')
+}
+
+// ── Audit Log ─────────────────────────────────────────────────────────────────
+
+export interface AuditEntry {
+  id: string
+  timestamp: string
+  action: string
+  actor?: string
+  target?: string
+  result: 'allow' | 'deny' | 'error'
+}
+
+export function fetchAuditLog(): Promise<AuditEntry[]> {
+  return request<AuditEntry[]>('/audit')
+}
