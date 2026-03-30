@@ -69,6 +69,37 @@ function SystemMessage() {
   )
 }
 
+// Animated thinking indicator with rotating status messages
+const THINKING_MESSAGES = [
+  'Thinking…',
+  'Composing response…',
+  'Processing your request…',
+  'Analyzing…',
+  'Generating…',
+]
+
+function ThinkingIndicator() {
+  const [msgIndex, setMsgIndex] = useState(0)
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setMsgIndex((i) => (i + 1) % THINKING_MESSAGES.length)
+    }, 2000)
+    return () => clearInterval(interval)
+  }, [])
+
+  return (
+    <span className="text-[var(--color-muted)] italic flex items-center gap-2.5 py-1">
+      <span className="flex gap-1">
+        <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-accent)] animate-bounce" style={{ animationDelay: '0ms' }} />
+        <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-accent)] animate-bounce" style={{ animationDelay: '150ms' }} />
+        <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-accent)] animate-bounce" style={{ animationDelay: '300ms' }} />
+      </span>
+      <span className="text-xs transition-opacity duration-300">{THINKING_MESSAGES[msgIndex]}</span>
+    </span>
+  )
+}
+
 function AssistantMessage() {
   const storeToolCalls = useChatStore((s) => s.toolCalls)
 
@@ -79,17 +110,21 @@ function AssistantMessage() {
       </div>
       <div className="flex flex-col gap-1 max-w-[85%] min-w-0 flex-1">
         <div className="text-sm leading-relaxed text-[var(--color-secondary)]">
+          {/* Show thinking indicator when message is running and has no content yet */}
+          <AuiIf condition={(s) => s.message.isRunning}>
+            <AuiIf condition={(s) => {
+              const parts = s.message.content
+              const hasText = parts?.some((p: { type: string; text?: string }) => p.type === 'text' && p.text && p.text.length > 0)
+              return !hasText
+            }}>
+              <ThinkingIndicator />
+            </AuiIf>
+          </AuiIf>
+
           <MessagePrimitive.Parts>
             {({ part }) => {
               if (part.type === 'text') {
-                if (part.text === '') {
-                  return (
-                    <span className="text-[var(--color-muted)] italic flex items-center gap-2">
-                      <span className="inline-block w-2 h-2 rounded-full bg-[var(--color-accent)] animate-pulse" />
-                      Thinking...
-                    </span>
-                  )
-                }
+                if (part.text === '') return null  // Handled by ThinkingIndicator above
                 return <MarkdownText />
               }
 
