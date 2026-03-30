@@ -28,6 +28,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/fileutil"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	"github.com/dapicom-ai/omnipus/pkg/session"
+	"github.com/dapicom-ai/omnipus/pkg/skills"
 )
 
 // Version is set at build time via -ldflags "-X github.com/dapicom-ai/omnipus/pkg/gateway.Version=x.y.z".
@@ -253,11 +254,28 @@ func (a *restAPI) createSessionHTTP(w http.ResponseWriter, r *http.Request) {
 
 // --- Agents ---
 
-// HandleAgents handles /api/v1/agents (list + create) and /api/v1/agents/{id} (detail).
+// HandleAgents handles /api/v1/agents (list + create), /api/v1/agents/{id} (detail),
+// and /api/v1/agents/{id}/sessions (sessions for agent).
 func (a *restAPI) HandleAgents(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimSuffix(r.URL.Path, "/")
-	agentID := strings.TrimPrefix(path, "/api/v1/agents")
-	agentID = strings.TrimPrefix(agentID, "/")
+	remainder := strings.TrimPrefix(path, "/api/v1/agents")
+	remainder = strings.TrimPrefix(remainder, "/")
+
+	// Split remainder into agentID and optional sub-path.
+	var agentID, subPath string
+	if remainder != "" {
+		parts := strings.SplitN(remainder, "/", 2)
+		agentID = parts[0]
+		if len(parts) > 1 {
+			subPath = parts[1]
+		}
+	}
+
+	// GET /api/v1/agents/{id}/sessions
+	if r.Method == http.MethodGet && agentID != "" && subPath == "sessions" {
+		a.listAgentSessions(w, agentID)
+		return
+	}
 
 	switch r.Method {
 	case http.MethodGet:
@@ -281,6 +299,30 @@ func (a *restAPI) HandleAgents(w http.ResponseWriter, r *http.Request) {
 	default:
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+func (a *restAPI) listAgentSessions(w http.ResponseWriter, agentID string) {
+	if err := validateEntityID(agentID); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid agent ID")
+		return
+	}
+	if a.partitions == nil {
+		jsonOK(w, []*session.SessionMeta{})
+		return
+	}
+	all, err := a.partitions.ListSessions()
+	if err != nil {
+		slog.Error("rest: list agent sessions", "agent_id", agentID, "error", err)
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not list sessions: %v", err))
+		return
+	}
+	filtered := make([]*session.SessionMeta, 0)
+	for _, m := range all {
+		if m.AgentID == agentID {
+			filtered = append(filtered, m)
+		}
+	}
+	jsonOK(w, filtered)
 }
 
 // skillResponse is the JSON shape returned for a single installed skill.
@@ -716,7 +758,26 @@ func (a *restAPI) installSkill(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *restAPI) deleteSkill(w http.ResponseWriter, name string) {
-	jsonErr(w, http.StatusNotImplemented, fmt.Sprintf("skill deletion not yet available for %q", name))
+	if err := validateEntityID(name); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid skill name")
+		return
+	}
+	installer, err := skills.NewSkillInstaller(a.homePath, "", "")
+	if err != nil {
+		slog.Error("rest: create skill installer for delete", "error", err)
+		jsonErr(w, http.StatusInternalServerError, "could not initialize skill installer")
+		return
+	}
+	if err := installer.Uninstall(name); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			jsonErr(w, http.StatusNotFound, fmt.Sprintf("skill %q not found", name))
+			return
+		}
+		slog.Error("rest: delete skill", "name", name, "error", err)
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not remove skill: %v", err))
+		return
+	}
+	jsonOK(w, map[string]string{"status": "removed", "name": name})
 }
 
 // --- Doctor / Diagnostics ---
@@ -852,9 +913,12 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	cm.RegisterHTTPHandler("/api/v1/providers", a.withAuth(a.HandleProviders))
 	cm.RegisterHTTPHandler("/api/v1/providers/", a.withAuth(a.HandleProviders))
 	cm.RegisterHTTPHandler("/api/v1/mcp-servers", a.withAuth(a.HandleMCPServers))
+	cm.RegisterHTTPHandler("/api/v1/mcp-servers/", a.withAuth(a.HandleMCPServers))
 	cm.RegisterHTTPHandler("/api/v1/storage/stats", a.withAuth(a.HandleStorageStats))
 	cm.RegisterHTTPHandler("/api/v1/tools", a.withAuth(a.HandleTools))
 	cm.RegisterHTTPHandler("/api/v1/channels", a.withAuth(a.HandleChannels))
+	cm.RegisterHTTPHandler("/api/v1/channels/", a.withAuth(a.HandleChannels))
+	cm.RegisterHTTPHandler("/api/v1/agents/", a.withAuth(a.HandleAgents))
 	cm.RegisterHTTPHandler("/api/v1/config/gateway/rotate-token", a.withAuth(a.rotateGatewayToken))
 	cm.RegisterHTTPHandler("/api/v1/activity", a.withAuth(a.HandleActivity))
 }
@@ -1197,6 +1261,7 @@ type activityEvent struct {
 	ID        string    `json:"id"`
 	Type      string    `json:"type"`              // "session_start" | "task_created" | "task_updated"
 	AgentID   string    `json:"agent_id,omitempty"`
+	AgentName string    `json:"agent_name,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 	Summary   string    `json:"summary,omitempty"`
 }
@@ -1211,6 +1276,13 @@ func (a *restAPI) HandleActivity(w http.ResponseWriter, r *http.Request) {
 
 	cutoff := time.Now().UTC().Add(-24 * time.Hour)
 	var events []activityEvent
+
+	// Build agent name lookup
+	cfg := a.agentLoop.GetConfig()
+	agentNames := map[string]string{"omnipus-system": "Omnipus"}
+	for _, ac := range cfg.Agents.List {
+		agentNames[ac.ID] = ac.Name
+	}
 
 	// Collect session_start events from PartitionStore (last 24h).
 	if a.partitions != nil {
@@ -1228,6 +1300,7 @@ func (a *restAPI) HandleActivity(w http.ResponseWriter, r *http.Request) {
 						ID:        "session-" + m.ID,
 						Type:      "session_start",
 						AgentID:   m.AgentID,
+						AgentName: agentNames[m.AgentID],
 						Timestamp: m.CreatedAt,
 						Summary:   summary,
 					})
@@ -1430,18 +1503,142 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 
 // --- MCP Servers ---
 
-// HandleMCPServers handles GET /api/v1/mcp-servers.
+// HandleMCPServers handles GET/POST /api/v1/mcp-servers and DELETE /api/v1/mcp-servers/{id}.
 func (a *restAPI) HandleMCPServers(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	path := strings.TrimSuffix(r.URL.Path, "/")
+	sub := strings.TrimPrefix(path, "/api/v1/mcp-servers")
+	sub = strings.TrimPrefix(sub, "/")
+
+	switch {
+	case r.Method == http.MethodGet && sub == "":
+		info := a.agentLoop.GetStartupInfo()
+		if mcpInfo, ok := info["mcp"]; ok {
+			jsonOK(w, mcpInfo)
+			return
+		}
+		jsonOK(w, []any{})
+
+	case r.Method == http.MethodPost && sub == "":
+		a.addMCPServer(w, r)
+
+	case r.Method == http.MethodDelete && sub != "":
+		a.deleteMCPServer(w, sub)
+
+	default:
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (a *restAPI) addMCPServer(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name      string            `json:"name"`
+		Command   string            `json:"command"`
+		Args      []string          `json:"args"`
+		Env       map[string]string `json:"env"`
+		Transport string            `json:"transport"` // "stdio" | "sse" | "http"
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	info := a.agentLoop.GetStartupInfo()
-	if mcpInfo, ok := info["mcp"]; ok {
-		jsonOK(w, mcpInfo)
+	if req.Name == "" {
+		jsonErr(w, http.StatusUnprocessableEntity, "name is required")
 		return
 	}
-	jsonOK(w, []any{})
+	if err := validateEntityID(req.Name); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid server name")
+		return
+	}
+	transport := req.Transport
+	if transport == "" {
+		transport = "stdio"
+	}
+	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
+		tools, _ := m["tools"].(map[string]any)
+		if tools == nil {
+			tools = map[string]any{}
+			m["tools"] = tools
+		}
+		mcp, _ := tools["mcp"].(map[string]any)
+		if mcp == nil {
+			mcp = map[string]any{}
+			tools["mcp"] = mcp
+		}
+		servers, _ := mcp["servers"].(map[string]any)
+		if servers == nil {
+			servers = map[string]any{}
+			mcp["servers"] = servers
+		}
+		if _, exists := servers[req.Name]; exists {
+			return fmt.Errorf("mcp server %q already exists", req.Name)
+		}
+		entry := map[string]any{
+			"enabled": true,
+			"command": req.Command,
+			"type":    transport,
+		}
+		if len(req.Args) > 0 {
+			entry["args"] = req.Args
+		}
+		if len(req.Env) > 0 {
+			entry["env"] = req.Env
+		}
+		servers[req.Name] = entry
+		return nil
+	}); err != nil {
+		if strings.Contains(err.Error(), "already exists") {
+			jsonErr(w, http.StatusConflict, err.Error())
+			return
+		}
+		slog.Error("rest: add mcp server", "error", err)
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	jsonOK(w, map[string]any{
+		"name":      req.Name,
+		"command":   req.Command,
+		"args":      req.Args,
+		"env":       req.Env,
+		"transport": transport,
+		"enabled":   true,
+	})
+}
+
+func (a *restAPI) deleteMCPServer(w http.ResponseWriter, id string) {
+	if err := validateEntityID(id); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid server id")
+		return
+	}
+	found := false
+	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
+		tools, _ := m["tools"].(map[string]any)
+		if tools == nil {
+			return nil
+		}
+		mcp, _ := tools["mcp"].(map[string]any)
+		if mcp == nil {
+			return nil
+		}
+		servers, _ := mcp["servers"].(map[string]any)
+		if servers == nil {
+			return nil
+		}
+		if _, exists := servers[id]; exists {
+			delete(servers, id)
+			found = true
+		}
+		return nil
+	}); err != nil {
+		slog.Error("rest: delete mcp server", "id", id, "error", err)
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
+		return
+	}
+	if !found {
+		jsonErr(w, http.StatusNotFound, fmt.Sprintf("mcp server %q not found", id))
+		return
+	}
+	jsonOK(w, map[string]string{"status": "removed", "id": id})
 }
 
 // --- Tools ---
@@ -1473,8 +1670,29 @@ func (a *restAPI) HandleTools(w http.ResponseWriter, r *http.Request) {
 
 // --- Channels ---
 
-// HandleChannels handles GET /api/v1/channels — returns configured channel status.
+// HandleChannels handles GET /api/v1/channels and PUT /api/v1/channels/{id}/enable|disable.
 func (a *restAPI) HandleChannels(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimSuffix(r.URL.Path, "/")
+	sub := strings.TrimPrefix(path, "/api/v1/channels")
+	sub = strings.TrimPrefix(sub, "/")
+
+	if sub != "" && r.Method == http.MethodPut {
+		parts := strings.SplitN(sub, "/", 2)
+		if len(parts) == 2 {
+			channelID := parts[0]
+			action := parts[1]
+			switch action {
+			case "enable":
+				a.setChannelEnabled(w, channelID, true)
+			case "disable":
+				a.setChannelEnabled(w, channelID, false)
+			default:
+				jsonErr(w, http.StatusNotFound, "unknown channel action")
+			}
+			return
+		}
+	}
+
 	if r.Method != http.MethodGet {
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -1507,6 +1725,41 @@ func (a *restAPI) HandleChannels(w http.ResponseWriter, r *http.Request) {
 		{ID: "maixcam", Name: "MaixCam", Transport: "serial", Enabled: ch.MaixCam.Enabled, Description: "MaixCam edge device"},
 	}
 	jsonOK(w, channels)
+}
+
+// validChannelIDs is the set of channel IDs that can be toggled via the API.
+// "webchat" is always enabled and intentionally excluded.
+var validChannelIDs = map[string]bool{
+	"telegram": true, "discord": true, "slack": true, "whatsapp": true,
+	"feishu": true, "dingtalk": true, "wecom": true, "weixin": true,
+	"line": true, "qq": true, "onebot": true, "irc": true,
+	"matrix": true, "pico": true, "maixcam": true,
+}
+
+func (a *restAPI) setChannelEnabled(w http.ResponseWriter, channelID string, enabled bool) {
+	if !validChannelIDs[channelID] {
+		jsonErr(w, http.StatusNotFound, fmt.Sprintf("channel %q not found", channelID))
+		return
+	}
+	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
+		channels, _ := m["channels"].(map[string]any)
+		if channels == nil {
+			channels = map[string]any{}
+			m["channels"] = channels
+		}
+		ch, _ := channels[channelID].(map[string]any)
+		if ch == nil {
+			ch = map[string]any{}
+			channels[channelID] = ch
+		}
+		ch["enabled"] = enabled
+		return nil
+	}); err != nil {
+		slog.Error("rest: set channel enabled", "channel", channelID, "enabled", enabled, "error", err)
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
+		return
+	}
+	jsonOK(w, map[string]any{"id": channelID, "enabled": enabled})
 }
 
 // countEnabledChannels returns the number of non-webchat channels currently enabled in cfg.

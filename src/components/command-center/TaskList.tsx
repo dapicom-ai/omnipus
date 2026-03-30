@@ -255,7 +255,7 @@ export function TaskList({ statusFilter = 'all', onTaskSelect }: TaskListProps) 
             className="h-7 text-xs flex-1"
             autoFocus
             onKeyDown={(e) => {
-              if (e.key === 'Enter') doCreate()
+              if (e.key === 'Enter' && newTaskName.trim()) doCreate()
               if (e.key === 'Escape') setShowCreate(false)
             }}
           />

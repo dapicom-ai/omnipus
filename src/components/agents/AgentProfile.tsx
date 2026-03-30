@@ -1,6 +1,22 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, KeyboardEvent } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, Robot, FloppyDisk } from '@phosphor-icons/react'
+import {
+  ArrowLeft,
+  Robot,
+  Brain,
+  Lightbulb,
+  MagnifyingGlass,
+  PencilSimple,
+  Code,
+  Chat,
+  Gear,
+  Shield,
+  Rocket,
+  FloppyDisk,
+  X,
+  CaretDown,
+  CaretUp,
+} from '@phosphor-icons/react'
 import { useNavigate } from '@tanstack/react-router'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -15,8 +31,15 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
-import { fetchAgent, updateAgent, fetchProviders } from '@/lib/api'
+import {
+  fetchAgent,
+  updateAgent,
+  fetchProviders,
+  fetchAgentSessions,
+  type AgentSession,
+} from '@/lib/api'
 import { useUiStore } from '@/store/ui'
+import { AVATAR_COLORS } from '@/lib/constants'
 
 // Fallback model list when no providers are connected
 const FALLBACK_MODELS = [
@@ -27,6 +50,26 @@ const FALLBACK_MODELS = [
   'gpt-4o-mini',
   'gemini-1.5-pro',
 ]
+
+const ICON_OPTIONS = [
+  { name: 'Robot', component: Robot },
+  { name: 'Brain', component: Brain },
+  { name: 'Lightbulb', component: Lightbulb },
+  { name: 'MagnifyingGlass', component: MagnifyingGlass },
+  { name: 'PencilSimple', component: PencilSimple },
+  { name: 'Code', component: Code },
+  { name: 'Chat', component: Chat },
+  { name: 'Gear', component: Gear },
+  { name: 'Shield', component: Shield },
+  { name: 'Rocket', component: Rocket },
+] as const
+
+type IconName = typeof ICON_OPTIONS[number]['name']
+
+function getIconComponent(name: string | undefined) {
+  const match = ICON_OPTIONS.find((o) => o.name === name)
+  return match?.component ?? Robot
+}
 
 interface AgentProfileProps {
   agentId: string
@@ -47,7 +90,11 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     queryFn: fetchProviders,
   })
 
-  // Collect models from connected providers; fall back to static list
+  const { data: agentSessions = [] } = useQuery({
+    queryKey: ['agent-sessions', agentId],
+    queryFn: () => fetchAgentSessions(agentId),
+  })
+
   const availableModels = (() => {
     const connected = providers.filter((p) => p.status === 'connected').flatMap((p) => p.models ?? [])
     return connected.length > 0 ? connected : FALLBACK_MODELS
@@ -56,15 +103,34 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [model, setModel] = useState('')
+  const [selectedColor, setSelectedColor] = useState<string | undefined>(undefined)
+  const [selectedIcon, setSelectedIcon] = useState<IconName>('Robot')
+  const [fallbackModels, setFallbackModels] = useState<string[]>([])
+  const [fallbackInput, setFallbackInput] = useState('')
+  const [temperature, setTemperature] = useState(1.0)
+  const [maxTokens, setMaxTokens] = useState(4096)
+  const [topP, setTopP] = useState(1.0)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const [useGlobalRateLimits, setUseGlobalRateLimits] = useState(true)
+  const [maxLlmCallsPerHour, setMaxLlmCallsPerHour] = useState<number | ''>('')
+  const [maxToolCallsPerMinute, setMaxToolCallsPerMinute] = useState<number | ''>('')
+  const [maxCostPerDay, setMaxCostPerDay] = useState<number | ''>('')
 
-  // Initialize local state when agent data loads
   useEffect(() => {
     if (!agent) return
     setName(agent.name ?? '')
     setDescription(agent.description ?? '')
     setModel(agent.model ?? '')
+    setSelectedColor(agent.color)
+    setSelectedIcon((agent.icon as IconName) ?? 'Robot')
+    setFallbackModels(agent.fallback_models ?? [])
+    setTemperature(agent.model_params?.temperature ?? 1.0)
+    setMaxTokens(agent.model_params?.max_tokens ?? 4096)
+    setTopP(agent.model_params?.top_p ?? 1.0)
     setUseGlobalRateLimits(agent.rate_limits?.use_global_defaults ?? true)
+    setMaxLlmCallsPerHour(agent.rate_limits?.max_llm_calls_per_hour ?? '')
+    setMaxToolCallsPerMinute(agent.rate_limits?.max_tool_calls_per_minute ?? '')
+    setMaxCostPerDay(agent.rate_limits?.max_cost_per_day ?? '')
   }, [agent])
 
   const { mutate: doUpdate, isPending: isSaving } = useMutation({
@@ -81,6 +147,43 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
       variant: 'error',
     }),
   })
+
+  function handleSave() {
+    doUpdate({
+      name,
+      description,
+      model,
+      color: selectedColor,
+      icon: selectedIcon,
+      fallback_models: fallbackModels.length > 0 ? fallbackModels : undefined,
+      model_params: { temperature, max_tokens: maxTokens, top_p: topP },
+      rate_limits: {
+        use_global_defaults: useGlobalRateLimits,
+        max_llm_calls_per_hour: maxLlmCallsPerHour !== '' ? maxLlmCallsPerHour : undefined,
+        max_tool_calls_per_minute: maxToolCallsPerMinute !== '' ? maxToolCallsPerMinute : undefined,
+        max_cost_per_day: maxCostPerDay !== '' ? maxCostPerDay : undefined,
+      },
+    })
+  }
+
+  function addFallbackModel() {
+    const trimmed = fallbackInput.trim()
+    if (!trimmed || fallbackModels.includes(trimmed)) return
+    setFallbackModels((prev) => [...prev, trimmed])
+    setFallbackInput('')
+  }
+
+  function handleFallbackKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter' || e.key === ',') {
+      e.preventDefault()
+      addFallbackModel()
+    } else if (e.key === 'Backspace' && fallbackInput === '' && fallbackModels.length > 0) {
+      setFallbackModels((prev) => prev.slice(0, -1))
+    }
+  }
+
+  const recentSessions = agentSessions.slice(0, 10)
+  const AvatarIcon = getIconComponent(selectedIcon)
 
   if (isLoading) {
     return (
@@ -119,10 +222,10 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
 
       <div className="flex items-center gap-4">
         <div
-          className="w-14 h-14 rounded-full flex items-center justify-center text-lg font-bold shrink-0"
-          style={{ backgroundColor: agent.color ?? 'var(--color-surface-3)' }}
+          className="w-14 h-14 rounded-full flex items-center justify-center shrink-0"
+          style={{ backgroundColor: selectedColor ?? 'var(--color-surface-3)' }}
         >
-          <Robot size={22} className="text-[var(--color-primary)]" />
+          <AvatarIcon size={22} className="text-[var(--color-primary)]" />
         </div>
         <div className="min-w-0">
           <h1 className="font-headline text-xl font-bold text-[var(--color-secondary)]">{agent.name}</h1>
@@ -136,7 +239,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
         {canEdit && (
           <Button
             className="ml-auto gap-2"
-            onClick={() => doUpdate({ name, description, model, rate_limits: { use_global_defaults: useGlobalRateLimits } })}
+            onClick={handleSave}
             disabled={isSaving}
           >
             <FloppyDisk size={14} weight="bold" />
@@ -147,7 +250,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
 
       <Separator />
 
-      {/* Identity section (custom/core agents only) */}
+      {/* Identity section */}
       {canEdit && (
         <>
           <section className="space-y-3">
@@ -167,14 +270,60 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
                 className="text-sm resize-none"
               />
             </div>
+
+            {/* Color picker */}
+            <div className="space-y-1.5">
+              <p className="text-xs text-[var(--color-muted)]">Avatar color</p>
+              <div className="flex gap-2">
+                {AVATAR_COLORS.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    onClick={() => setSelectedColor(color)}
+                    className="w-7 h-7 rounded-full transition-transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:ring-offset-1 focus:ring-offset-[var(--color-primary)]"
+                    style={{
+                      backgroundColor: color,
+                      boxShadow: selectedColor === color ? `0 0 0 2px var(--color-primary), 0 0 0 4px ${color}` : undefined,
+                    }}
+                    aria-label={color}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* Icon picker */}
+            <div className="space-y-1.5">
+              <p className="text-xs text-[var(--color-muted)]">Avatar icon</p>
+              <Select
+                value={selectedIcon}
+                onValueChange={(v) => setSelectedIcon(v as IconName)}
+              >
+                <SelectTrigger className="w-48">
+                  <div className="flex items-center gap-2">
+                    <AvatarIcon size={14} />
+                    <SelectValue />
+                  </div>
+                </SelectTrigger>
+                <SelectContent>
+                  {ICON_OPTIONS.map(({ name: iconName, component: IconComp }) => (
+                    <SelectItem key={iconName} value={iconName}>
+                      <div className="flex items-center gap-2">
+                        <IconComp size={14} />
+                        <span>{iconName}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </section>
           <Separator />
         </>
       )}
 
       {/* Model section */}
-      <section>
-        <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)] mb-3">Model</h2>
+      <section className="space-y-3">
+        <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)]">Model</h2>
         <Select
           value={model || '__default__'}
           onValueChange={(v) => setModel(v === '__default__' ? '' : v)}
@@ -190,15 +339,92 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
             ))}
           </SelectContent>
         </Select>
+
+        {/* Fallback models */}
+        {canEdit && (
+          <div className="space-y-1.5">
+            <p className="text-xs text-[var(--color-muted)]">Fallback models (tried in order if primary fails)</p>
+            <div className="flex flex-wrap gap-1.5 p-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] min-h-[36px]">
+              {fallbackModels.map((m) => (
+                <span
+                  key={m}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono bg-[var(--color-surface-2)] text-[var(--color-secondary)] border border-[var(--color-border)]"
+                >
+                  {m}
+                  <button
+                    type="button"
+                    onClick={() => setFallbackModels((prev) => prev.filter((x) => x !== m))}
+                    className="text-[var(--color-muted)] hover:text-[var(--color-error)] transition-colors"
+                  >
+                    <X size={10} />
+                  </button>
+                </span>
+              ))}
+              <input
+                value={fallbackInput}
+                onChange={(e) => setFallbackInput(e.target.value)}
+                onKeyDown={handleFallbackKeyDown}
+                onBlur={addFallbackModel}
+                placeholder={fallbackModels.length === 0 ? 'Type a model name, press Enter' : ''}
+                className="flex-1 min-w-[160px] bg-transparent text-xs text-[var(--color-secondary)] outline-none placeholder:text-[var(--color-muted)]"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Advanced model params */}
+        {canEdit && (
+          <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setAdvancedOpen((o) => !o)}
+              className="flex items-center justify-between w-full px-3 py-2.5 text-sm font-medium text-[var(--color-secondary)] hover:text-[var(--color-accent)] transition-colors"
+            >
+              <span>Advanced parameters</span>
+              {advancedOpen ? <CaretUp size={13} /> : <CaretDown size={13} />}
+            </button>
+            {advancedOpen && (
+              <div className="px-3 pb-3 space-y-4 border-t border-[var(--color-border)]">
+                <RangeField
+                  label="Temperature"
+                  value={temperature}
+                  min={0}
+                  max={2}
+                  step={0.05}
+                  onChange={setTemperature}
+                  format={(v) => v.toFixed(2)}
+                />
+                <RangeField
+                  label="Max tokens"
+                  value={maxTokens}
+                  min={256}
+                  max={32768}
+                  step={256}
+                  onChange={setMaxTokens}
+                  format={(v) => v.toLocaleString()}
+                />
+                <RangeField
+                  label="Top P"
+                  value={topP}
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  onChange={setTopP}
+                  format={(v) => v.toFixed(2)}
+                />
+              </div>
+            )}
+          </div>
+        )}
       </section>
 
-      {/* Rate limits section (core/custom only) */}
+      {/* Rate limits section */}
       {agent.type !== 'system' && (
         <>
           <Separator />
-          <section>
-            <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)] mb-3">Rate Limits</h2>
-            <div className="flex items-center justify-between py-2">
+          <section className="space-y-3">
+            <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)]">Rate Limits</h2>
+            <div className="flex items-center justify-between py-1">
               <div>
                 <p className="text-sm text-[var(--color-secondary)]">Use global defaults</p>
                 <p className="text-xs text-[var(--color-muted)]">Inherit rate limits from global settings</p>
@@ -206,13 +432,49 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
               <Switch
                 checked={useGlobalRateLimits}
                 onCheckedChange={setUseGlobalRateLimits}
+                disabled={!canEdit}
               />
             </div>
             {!useGlobalRateLimits && (
-              <p className="text-xs text-[var(--color-muted)] mt-2">
-                Per-agent overrides are configurable when global defaults are disabled.
-                {/* TODO: wire per-agent limit fields */}
-              </p>
+              <div className="space-y-2">
+                <div className="flex items-center gap-3">
+                  <label className="text-xs text-[var(--color-muted)] w-44 shrink-0">LLM calls / hour</label>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={maxLlmCallsPerHour}
+                    onChange={(e) => setMaxLlmCallsPerHour(e.target.value === '' ? '' : Number(e.target.value))}
+                    placeholder="Unlimited"
+                    className="text-xs h-8"
+                    disabled={!canEdit}
+                  />
+                </div>
+                <div className="flex items-center gap-3">
+                  <label className="text-xs text-[var(--color-muted)] w-44 shrink-0">Tool calls / minute</label>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={maxToolCallsPerMinute}
+                    onChange={(e) => setMaxToolCallsPerMinute(e.target.value === '' ? '' : Number(e.target.value))}
+                    placeholder="Unlimited"
+                    className="text-xs h-8"
+                    disabled={!canEdit}
+                  />
+                </div>
+                <div className="flex items-center gap-3">
+                  <label className="text-xs text-[var(--color-muted)] w-44 shrink-0">Max cost / day ($)</label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step={0.01}
+                    value={maxCostPerDay}
+                    onChange={(e) => setMaxCostPerDay(e.target.value === '' ? '' : Number(e.target.value))}
+                    placeholder="Unlimited"
+                    className="text-xs h-8"
+                    disabled={!canEdit}
+                  />
+                </div>
+              </div>
             )}
           </section>
         </>
@@ -224,20 +486,40 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
           <Separator />
           <section>
             <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)] mb-3">Stats</h2>
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <StatCard label="Sessions" value={agent.stats.total_sessions.toString()} />
               <StatCard
-                label="Total Tokens"
+                label="Tokens"
                 value={
                   agent.stats.total_tokens >= 1000
                     ? `${(agent.stats.total_tokens / 1000).toFixed(1)}k`
                     : agent.stats.total_tokens.toString()
                 }
               />
+              <StatCard label="Cost" value={`$${agent.stats.total_cost.toFixed(4)}`} />
               <StatCard
-                label="Total Cost"
-                value={`$${agent.stats.total_cost.toFixed(4)}`}
+                label="Last active"
+                value={
+                  agent.stats.last_active
+                    ? new Date(agent.stats.last_active).toLocaleDateString()
+                    : '—'
+                }
               />
+            </div>
+          </section>
+        </>
+      )}
+
+      {/* Recent sessions */}
+      {recentSessions.length > 0 && (
+        <>
+          <Separator />
+          <section>
+            <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)] mb-3">Recent Sessions</h2>
+            <div className="space-y-1">
+              {recentSessions.map((s) => (
+                <SessionRow key={s.id} session={s} />
+              ))}
             </div>
           </section>
         </>
@@ -268,8 +550,55 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3 text-center">
-      <div className="font-headline font-bold text-lg text-[var(--color-secondary)]">{value}</div>
+      <div className="font-headline font-bold text-base text-[var(--color-secondary)]">{value}</div>
       <div className="text-xs text-[var(--color-muted)] mt-0.5">{label}</div>
+    </div>
+  )
+}
+
+function SessionRow({ session }: { session: AgentSession }) {
+  const date = new Date(session.updated_at ?? session.created_at)
+  return (
+    <div className="flex items-center justify-between px-3 py-2 rounded-md hover:bg-[var(--color-surface-1)] transition-colors">
+      <span className="text-xs text-[var(--color-secondary)] truncate flex-1 min-w-0 mr-3">
+        {session.title || 'Untitled session'}
+      </span>
+      <span className="text-[10px] text-[var(--color-muted)] shrink-0">
+        {date.toLocaleDateString()}
+      </span>
+    </div>
+  )
+}
+
+interface RangeFieldProps {
+  label: string
+  value: number
+  min: number
+  max: number
+  step: number
+  onChange: (v: number) => void
+  format: (v: number) => string
+}
+
+function RangeField({ label, value, min, max, step, onChange, format }: RangeFieldProps) {
+  return (
+    <div className="space-y-1 pt-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-[var(--color-muted)]">{label}</span>
+        <span className="text-xs font-mono text-[var(--color-secondary)]">{format(value)}</span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
+        style={{
+          background: `linear-gradient(to right, var(--color-accent) 0%, var(--color-accent) ${((value - min) / (max - min)) * 100}%, var(--color-border) ${((value - min) / (max - min)) * 100}%, var(--color-border) 100%)`,
+        }}
+      />
     </div>
   )
 }

@@ -37,9 +37,16 @@ export interface Agent {
   color?: string
   tools?: string[]
   heartbeat_interval?: number
+  fallback_models?: string[]
+  model_params?: {
+    temperature?: number
+    max_tokens?: number
+    top_p?: number
+  }
   rate_limits?: {
     use_global_defaults: boolean
-    max_tokens_per_day?: number
+    max_llm_calls_per_hour?: number
+    max_tool_calls_per_minute?: number
     max_cost_per_day?: number
   }
   stats?: {
@@ -64,6 +71,17 @@ export function createAgent(data: Partial<Agent>): Promise<Agent> {
 
 export function updateAgent(id: string, data: Partial<Agent>): Promise<Agent> {
   return request<Agent>(`/agents/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) })
+}
+
+export interface AgentSession {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+}
+
+export function fetchAgentSessions(agentId: string): Promise<AgentSession[]> {
+  return request<AgentSession[]>(`/agents/${encodeURIComponent(agentId)}/sessions`)
 }
 
 // ── Sessions ──────────────────────────────────────────────────────────────────
@@ -298,6 +316,14 @@ export function fetchChannels(): Promise<Channel[]> {
   return request<Channel[]>('/channels')
 }
 
+export function enableChannel(id: string): Promise<Channel> {
+  return request<Channel>(`/channels/${encodeURIComponent(id)}/enable`, { method: 'PUT' })
+}
+
+export function disableChannel(id: string): Promise<Channel> {
+  return request<Channel>(`/channels/${encodeURIComponent(id)}/disable`, { method: 'PUT' })
+}
+
 // ── Skills ────────────────────────────────────────────────────────────────────
 
 export interface Skill {
@@ -317,14 +343,38 @@ export interface McpServer {
   transport: 'stdio' | 'sse' | 'websocket'
   status: 'connected' | 'disconnected' | 'error'
   tool_count: number
+  tools?: string[]
+}
+
+export interface McpServerCreate {
+  name: string
+  command: string
+  args?: string[]
+  transport: 'stdio' | 'sse' | 'websocket'
 }
 
 export function fetchSkills(): Promise<Skill[]> {
   return request<Skill[]>('/skills')
 }
 
+export function deleteSkill(name: string): Promise<void> {
+  return request<void>(`/skills/${encodeURIComponent(name)}`, { method: 'DELETE' })
+}
+
 export function fetchMcpServers(): Promise<McpServer[]> {
   return request<McpServer[]>('/mcp-servers')
+}
+
+export function addMcpServer(data: McpServerCreate): Promise<McpServer> {
+  return request<McpServer>('/mcp-servers', { method: 'POST', body: JSON.stringify(data) })
+}
+
+export function deleteMcpServer(id: string): Promise<void> {
+  return request<void>(`/mcp-servers/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
+export function fetchMcpServerTools(id: string): Promise<string[]> {
+  return request<string[]>(`/mcp-servers/${encodeURIComponent(id)}/tools`)
 }
 
 // ── Storage Stats ─────────────────────────────────────────────────────────────

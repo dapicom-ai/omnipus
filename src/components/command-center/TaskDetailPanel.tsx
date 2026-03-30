@@ -37,7 +37,10 @@ export function TaskDetailPanel({ task, onClose }: TaskDetailPanelProps) {
   const { data: agents = [] } = useQuery({ queryKey: ['agents'], queryFn: fetchAgents })
 
   const { mutate: doUpdate } = useMutation({
-    mutationFn: (data: Partial<Task>) => updateTask(task!.id, data),
+    mutationFn: (data: Partial<Task>) => {
+      if (!task) return Promise.reject(new Error('No task selected'))
+      return updateTask(task.id, data)
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tasks'] }),
     onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
   })
