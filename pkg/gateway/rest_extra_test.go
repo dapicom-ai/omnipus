@@ -396,10 +396,10 @@ func TestTaskPersistence(t *testing.T) {
 // --- E9: createAgent concurrency test ---
 
 // TestHandleAgentsCreateConcurrent verifies that concurrent POST /api/v1/agents
-// requests both receive 501 (agent creation is not implemented via API).
-// BDD: Given two concurrent POST requests to /agents,
-// When both are handled simultaneously,
-// Then both receive 501 Not Implemented.
+// requests all succeed (each creates a distinct agent).
+// BDD: Given concurrent POST requests to /agents,
+// When all are handled simultaneously,
+// Then each receives 201 Created.
 // Traces to: wave5a-wire-ui-spec.md — Scenario: createAgent concurrency safe (E9)
 func TestHandleAgentsCreateConcurrent(t *testing.T) {
 	api, cleanup := newTestRestAPI(t)
@@ -423,8 +423,8 @@ func TestHandleAgentsCreateConcurrent(t *testing.T) {
 	wg.Wait()
 
 	for i, code := range codes {
-		assert.Equal(t, http.StatusNotImplemented, code,
-			"concurrent POST /agents[%d] must return 501", i)
+		assert.Equal(t, http.StatusCreated, code,
+			"concurrent POST /agents[%d] must return 201", i)
 	}
 }
 

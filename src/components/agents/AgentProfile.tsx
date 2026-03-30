@@ -4,6 +4,8 @@ import { ArrowLeft, Robot, FloppyDisk } from '@phosphor-icons/react'
 import { useNavigate } from '@tanstack/react-router'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
   SelectContent,
@@ -51,12 +53,16 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     return connected.length > 0 ? connected : FALLBACK_MODELS
   })()
 
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
   const [model, setModel] = useState('')
   const [useGlobalRateLimits, setUseGlobalRateLimits] = useState(true)
 
   // Initialize local state when agent data loads
   useEffect(() => {
     if (!agent) return
+    setName(agent.name ?? '')
+    setDescription(agent.description ?? '')
     setModel(agent.model ?? '')
     setUseGlobalRateLimits(agent.rate_limits?.use_global_defaults ?? true)
   }, [agent])
@@ -130,7 +136,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
         {canEdit && (
           <Button
             className="ml-auto gap-2"
-            onClick={() => doUpdate({ model, rate_limits: { use_global_defaults: useGlobalRateLimits } })}
+            onClick={() => doUpdate({ name, description, model, rate_limits: { use_global_defaults: useGlobalRateLimits } })}
             disabled={isSaving}
           >
             <FloppyDisk size={14} weight="bold" />
@@ -140,6 +146,31 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
       </div>
 
       <Separator />
+
+      {/* Identity section (custom/core agents only) */}
+      {canEdit && (
+        <>
+          <section className="space-y-3">
+            <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)]">Identity</h2>
+            <div className="space-y-2">
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Agent name"
+                className="text-sm"
+              />
+              <Textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Short description of this agent's purpose"
+                rows={2}
+                className="text-sm resize-none"
+              />
+            </div>
+          </section>
+          <Separator />
+        </>
+      )}
 
       {/* Model section */}
       <section>

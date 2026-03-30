@@ -15,10 +15,16 @@ import { useUiStore } from '@/store/ui'
 function SkillsScreen() {
   const { addToast } = useUiStore()
 
-  const { data: skills = [], isLoading: skillsLoading, isError: skillsError } = useQuery({
+  const { data: rawSkills = [], isLoading: skillsLoading, isError: skillsError } = useQuery({
     queryKey: ['skills'],
     queryFn: fetchSkills,
   })
+
+  // Filter out aggregate metadata keys the backend may return (e.g. "total", "available", "names")
+  // A real skill has a non-empty description and author
+  const skills = rawSkills.filter(
+    (s) => Boolean(s.description?.trim()) && Boolean(s.author?.trim()),
+  )
 
   const { data: mcpServers = [], isLoading: mcpLoading, isError: mcpError } = useQuery({
     queryKey: ['mcp-servers'],

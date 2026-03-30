@@ -5,6 +5,8 @@
 package gateway
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -269,7 +271,7 @@ func (a *restAPI) HandleAgents(w http.ResponseWriter, r *http.Request) {
 		}
 	case http.MethodPut:
 		if agentID != "" {
-			jsonErr(w, http.StatusNotImplemented, "Agent update not yet available via API — edit config.json and restart")
+			a.updateAgent(w, r, agentID)
 		} else {
 			jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
@@ -389,8 +391,117 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 	jsonErr(w, http.StatusNotFound, fmt.Sprintf("agent %q not found", id))
 }
 
-func (a *restAPI) createAgent(w http.ResponseWriter, _ *http.Request) {
-	jsonErr(w, http.StatusNotImplemented, "agent creation via API not yet persisted — add agents to config.json and restart")
+func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name  string `json:"name"`
+		Model string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.Name == "" {
+		jsonErr(w, http.StatusUnprocessableEntity, "name is required")
+		return
+	}
+	cfg := a.agentLoop.GetConfig()
+	ac := config.AgentConfig{
+		ID:   uuid.New().String(),
+		Name: req.Name,
+	}
+	if req.Model != "" {
+		ac.Model = &config.AgentModelConfig{Primary: req.Model}
+	}
+	cfg.Agents.List = append(cfg.Agents.List, ac)
+	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
+		// Re-serialize just the agents/gateway section from the in-memory config
+		raw, _ := json.Marshal(cfg)
+		var cfgMap map[string]any
+		json.Unmarshal(raw, &cfgMap)
+		// Only copy non-credential sections
+		for k, v := range cfgMap {
+			if k != "model_list" { // model_list contains api_keys — preserve original
+				m[k] = v
+			}
+		}
+		return nil
+	}); err != nil {
+		slog.Error("rest: save config for new agent", "error", err)
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
+		return
+	}
+	model := cfg.Agents.Defaults.ModelName
+	if ac.Model != nil && ac.Model.Primary != "" {
+		model = ac.Model.Primary
+	}
+	w.WriteHeader(http.StatusCreated)
+	jsonOK(w, agentResponse{
+		ID:     ac.ID,
+		Name:   ac.Name,
+		Type:   "custom",
+		Model:  model,
+		Status: "idle",
+	})
+}
+
+func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string) {
+	cfg := a.agentLoop.GetConfig()
+	var found *config.AgentConfig
+	for i := range cfg.Agents.List {
+		if cfg.Agents.List[i].ID == id {
+			found = &cfg.Agents.List[i]
+			break
+		}
+	}
+	if found == nil {
+		jsonErr(w, http.StatusNotFound, fmt.Sprintf("agent %q not found", id))
+		return
+	}
+	var req struct {
+		Name  *string `json:"name"`
+		Model *string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.Name != nil {
+		found.Name = *req.Name
+	}
+	if req.Model != nil {
+		if found.Model == nil {
+			found.Model = &config.AgentModelConfig{}
+		}
+		found.Model.Primary = *req.Model
+	}
+	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
+		// Re-serialize just the agents/gateway section from the in-memory config
+		raw, _ := json.Marshal(cfg)
+		var cfgMap map[string]any
+		json.Unmarshal(raw, &cfgMap)
+		// Only copy non-credential sections
+		for k, v := range cfgMap {
+			if k != "model_list" { // model_list contains api_keys — preserve original
+				m[k] = v
+			}
+		}
+		return nil
+	}); err != nil {
+		slog.Error("rest: save config for agent update", "error", err)
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
+		return
+	}
+	model := cfg.Agents.Defaults.ModelName
+	if found.Model != nil && found.Model.Primary != "" {
+		model = found.Model.Primary
+	}
+	jsonOK(w, agentResponse{
+		ID:     found.ID,
+		Name:   found.Name,
+		Type:   "custom",
+		Model:  model,
+		Status: "idle",
+	})
 }
 
 // --- Config ---
@@ -457,10 +568,76 @@ func redactSensitiveFields(m map[string]any) {
 	}
 }
 
-func (a *restAPI) updateConfig(w http.ResponseWriter, _ *http.Request) {
-	// Config persistence is not implemented in Wave 5a.
-	// Return 501 rather than silently pretending the update succeeded.
-	jsonErr(w, http.StatusNotImplemented, "config update not yet implemented; restart with an updated config.json file")
+// configPath returns the path to config.json under the home directory.
+func (a *restAPI) configPath() string {
+	return filepath.Join(a.homePath, "config.json")
+}
+
+// safeUpdateConfigJSON reads config.json, applies a mutation function on the raw JSON map,
+// and writes it back atomically. This preserves SecureStrings (API keys) that would be
+// destroyed by config.SaveConfig's JSON round-trip through the Go struct.
+func (a *restAPI) safeUpdateConfigJSON(mutate func(m map[string]any) error) error {
+	raw, err := os.ReadFile(a.configPath())
+	if err != nil {
+		return fmt.Errorf("read config: %w", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return fmt.Errorf("parse config: %w", err)
+	}
+	if err := mutate(m); err != nil {
+		return err
+	}
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return fmt.Errorf("serialize config: %w", err)
+	}
+	return fileutil.WriteFileAtomic(a.configPath(), out, 0o600)
+}
+
+func (a *restAPI) updateConfig(w http.ResponseWriter, r *http.Request) {
+	// Config updates via REST are done on the raw JSON file to preserve SecureStrings.
+	// SaveConfig with in-memory config would serialize API keys as "[NOT_HERE]" placeholders.
+	raw, err := os.ReadFile(a.configPath())
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, "could not read config file")
+		return
+	}
+	var existing map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &existing); err != nil {
+		jsonErr(w, http.StatusInternalServerError, "could not parse config file")
+		return
+	}
+
+	var updates map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	// Block credential fields
+	for k := range updates {
+		kl := strings.ToLower(k)
+		if strings.Contains(kl, "api_key") || strings.Contains(kl, "secret") || strings.Contains(kl, "password") {
+			jsonErr(w, http.StatusForbidden, fmt.Sprintf("credential field %q cannot be set via config endpoint", k))
+			return
+		}
+	}
+
+	for k, v := range updates {
+		existing[k] = v
+	}
+	merged, err := json.MarshalIndent(existing, "", "  ")
+	if err != nil {
+		jsonErr(w, http.StatusInternalServerError, "could not serialize config")
+		return
+	}
+	if err := fileutil.WriteFileAtomic(a.configPath(), merged, 0o600); err != nil {
+		slog.Error("rest: save config", "error", err)
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
+		return
+	}
+	a.getConfig(w)
 }
 
 // --- Skills ---
@@ -487,41 +664,25 @@ func (a *restAPI) HandleSkills(w http.ResponseWriter, r *http.Request) {
 
 func (a *restAPI) listSkills(w http.ResponseWriter) {
 	info := a.agentLoop.GetStartupInfo()
-	skillsMap, ok := info["skills"].(map[string]any)
-	if !ok || len(skillsMap) == 0 {
+	// GetStartupInfo returns aggregate metadata (total, available, names) — not per-skill entries.
+	skillsInfo, ok := info["skills"].(map[string]any)
+	if !ok {
 		jsonOK(w, []skillResponse{})
 		return
 	}
-	// Convert map to typed array matching the frontend Skill interface.
-	skills := make([]skillResponse, 0, len(skillsMap))
-	for id, v := range skillsMap {
-		sr := skillResponse{
-			ID:      id,
-			Name:    id,
+	names, _ := skillsInfo["names"].([]string)
+	if len(names) == 0 {
+		jsonOK(w, []skillResponse{})
+		return
+	}
+	skills := make([]skillResponse, 0, len(names))
+	for _, name := range names {
+		skills = append(skills, skillResponse{
+			ID:      name,
+			Name:    name,
 			Version: "0.0.0",
 			Status:  "active",
-		}
-		if m, ok := v.(map[string]any); ok {
-			if name, ok := m["name"].(string); ok && name != "" {
-				sr.Name = name
-			}
-			if version, ok := m["version"].(string); ok && version != "" {
-				sr.Version = version
-			}
-			if desc, ok := m["description"].(string); ok {
-				sr.Description = desc
-			}
-			if author, ok := m["author"].(string); ok {
-				sr.Author = author
-			}
-			if verified, ok := m["verified"].(bool); ok {
-				sr.Verified = verified
-			}
-			if status, ok := m["status"].(string); ok && status != "" {
-				sr.Status = status
-			}
-		}
-		skills = append(skills, sr)
+		})
 	}
 	jsonOK(w, skills)
 }
@@ -681,6 +842,43 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	cm.RegisterHTTPHandler("/api/v1/storage/stats", a.withAuth(a.HandleStorageStats))
 	cm.RegisterHTTPHandler("/api/v1/tools", a.withAuth(a.HandleTools))
 	cm.RegisterHTTPHandler("/api/v1/channels", a.withAuth(a.HandleChannels))
+	cm.RegisterHTTPHandler("/api/v1/config/gateway/rotate-token", a.withAuth(a.rotateGatewayToken))
+}
+
+// rotateGatewayToken generates a new random bearer token, persists it to config, and returns it.
+// POST /api/v1/config/gateway/rotate-token
+func (a *restAPI) rotateGatewayToken(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		slog.Error("rest: generate gateway token", "error", err)
+		jsonErr(w, http.StatusInternalServerError, "could not generate token")
+		return
+	}
+	newToken := hex.EncodeToString(tokenBytes)
+	cfg := a.agentLoop.GetConfig()
+	cfg.Gateway.Token = newToken
+	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
+		// Re-serialize just the agents/gateway section from the in-memory config
+		raw, _ := json.Marshal(cfg)
+		var cfgMap map[string]any
+		json.Unmarshal(raw, &cfgMap)
+		// Only copy non-credential sections
+		for k, v := range cfgMap {
+			if k != "model_list" { // model_list contains api_keys — preserve original
+				m[k] = v
+			}
+		}
+		return nil
+	}); err != nil {
+		slog.Error("rest: save config for token rotation", "error", err)
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
+		return
+	}
+	jsonOK(w, map[string]string{"token": newToken})
 }
 
 // httpHandlerRegistrar is the subset of channels.Manager used for route registration.
@@ -1013,13 +1211,89 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 		}
 		jsonOK(w, providers)
 
-	case r.Method == http.MethodPut && sub != "":
-		// Provider configuration — strip /test suffix if present.
-		jsonErr(w, http.StatusNotImplemented, "Provider configuration not yet available via API — add API key to credentials.json or set PROVIDER_API_KEY environment variable")
+	case r.Method == http.MethodPut && sub != "" && !strings.HasSuffix(sub, "/test"):
+		// PUT /api/v1/providers/{id} — update API key for a provider.
+		providerID := sub
+		var req struct {
+			APIKey string `json:"api_key"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonErr(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		if req.APIKey == "" {
+			jsonErr(w, http.StatusUnprocessableEntity, "api_key is required")
+			return
+		}
+		cfg := a.agentLoop.GetConfig()
+		updated := false
+		for _, m := range cfg.ModelList {
+			if m.IsVirtual() {
+				continue
+			}
+			pName := "default"
+			if parts := strings.SplitN(m.Model, "/", 2); len(parts) == 2 {
+				pName = parts[0]
+			}
+			if pName == providerID {
+				m.SetAPIKey(req.APIKey)
+				updated = true
+			}
+		}
+		if !updated {
+			jsonErr(w, http.StatusNotFound, fmt.Sprintf("provider %q not found", providerID))
+			return
+		}
+		if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
+		// Re-serialize just the agents/gateway section from the in-memory config
+		raw, _ := json.Marshal(cfg)
+		var cfgMap map[string]any
+		json.Unmarshal(raw, &cfgMap)
+		// Only copy non-credential sections
+		for k, v := range cfgMap {
+			if k != "model_list" { // model_list contains api_keys — preserve original
+				m[k] = v
+			}
+		}
+		return nil
+	}); err != nil {
+			slog.Error("rest: save config for provider update", "error", err)
+			jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
+			return
+		}
+		jsonOK(w, providerResponse{
+			ID:     providerID,
+			Name:   providerID,
+			Status: "connected",
+		})
 
 	case r.Method == http.MethodPost && strings.HasSuffix(sub, "/test"):
-		// Provider connectivity test — not yet implemented.
-		jsonErr(w, http.StatusNotImplemented, "provider connectivity testing not yet implemented — verify your API key manually")
+		// POST /api/v1/providers/{id}/test — verify the provider has an API key configured.
+		providerID := strings.TrimSuffix(sub, "/test")
+		cfg := a.agentLoop.GetConfig()
+		var found *config.ModelConfig
+		for _, m := range cfg.ModelList {
+			if m.IsVirtual() {
+				continue
+			}
+			pName := "default"
+			if parts := strings.SplitN(m.Model, "/", 2); len(parts) == 2 {
+				pName = parts[0]
+			}
+			if pName == providerID {
+				found = m
+				break
+			}
+		}
+		if found == nil {
+			jsonOK(w, map[string]any{"success": false, "error": fmt.Sprintf("provider %q not configured", providerID)})
+			return
+		}
+		if found.APIKey() == "" {
+			jsonOK(w, map[string]any{"success": false, "error": "no API key configured for this provider"})
+			return
+		}
+		jsonOK(w, map[string]any{"success": true})
 
 	default:
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")

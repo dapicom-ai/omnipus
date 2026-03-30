@@ -190,9 +190,8 @@ func TestHandleAgentsGetByIDNotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-// TestHandleAgentsCreateValidation verifies POST /api/v1/agents returns 501.
-// Agent creation via API is not yet persisted — agents must be added to config.json.
-// Traces to: wave5a-wire-ui-spec.md — A3+A4: agent creation requires config.json restart
+// TestHandleAgentsCreateValidation verifies POST /api/v1/agents with empty name returns 422.
+// Traces to: wave5a-wire-ui-spec.md — A3+A4: agent creation via API
 func TestHandleAgentsCreateValidation(t *testing.T) {
 	api, cleanup := newTestRestAPI(t)
 	defer cleanup()
@@ -203,15 +202,15 @@ func TestHandleAgentsCreateValidation(t *testing.T) {
 	r.Header.Set("Content-Type", "application/json")
 	api.HandleAgents(w, r)
 
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
 
 	var resp map[string]string
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Contains(t, resp["error"], "config.json")
+	assert.Contains(t, resp["error"], "name is required")
 }
 
-// TestHandleAgentsCreate verifies POST /api/v1/agents returns 501 (not yet persisted).
-// Traces to: wave5a-wire-ui-spec.md — A3+A4: agent creation requires config.json restart
+// TestHandleAgentsCreate verifies POST /api/v1/agents creates an agent and returns 201.
+// Traces to: wave5a-wire-ui-spec.md — A3+A4: agent creation via API
 func TestHandleAgentsCreate(t *testing.T) {
 	api, cleanup := newTestRestAPI(t)
 	defer cleanup()
@@ -222,15 +221,17 @@ func TestHandleAgentsCreate(t *testing.T) {
 	r.Header.Set("Content-Type", "application/json")
 	api.HandleAgents(w, r)
 
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
+	assert.Equal(t, http.StatusCreated, w.Code)
 
-	var resp map[string]string
+	var resp agentResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Contains(t, resp["error"], "config.json")
+	assert.Equal(t, "Scout", resp.Name)
+	assert.Equal(t, "custom", resp.Type)
+	assert.NotEmpty(t, resp.ID)
 }
 
-// TestHandleAgentsCreateWithExplicitID verifies POST /api/v1/agents returns 501 regardless of id.
-// Traces to: wave5a-wire-ui-spec.md — A3+A4: agent creation requires config.json restart
+// TestHandleAgentsCreateWithExplicitID verifies POST /api/v1/agents creates agent and ignores provided id.
+// Traces to: wave5a-wire-ui-spec.md — A3+A4: agent creation via API
 func TestHandleAgentsCreateWithExplicitID(t *testing.T) {
 	api, cleanup := newTestRestAPI(t)
 	defer cleanup()
@@ -241,7 +242,12 @@ func TestHandleAgentsCreateWithExplicitID(t *testing.T) {
 	r.Header.Set("Content-Type", "application/json")
 	api.HandleAgents(w, r)
 
-	assert.Equal(t, http.StatusNotImplemented, w.Code)
+	assert.Equal(t, http.StatusCreated, w.Code)
+
+	var resp agentResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "Scout", resp.Name)
+	assert.NotEmpty(t, resp.ID)
 }
 
 // --- HandleSessions tests ---
