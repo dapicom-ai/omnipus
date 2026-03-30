@@ -28,12 +28,13 @@ import (
 
 // wsClientFrame is a message sent from the browser to the server over WebSocket.
 type wsClientFrame struct {
-	Type      string `json:"type"`               // "auth" | "message" | "cancel" | "exec_approval_response"
-	Token     string `json:"token,omitempty"`    // for "auth"
-	Content   string `json:"content,omitempty"` // for "message"
-	SessionID string `json:"session_id,omitempty"` // for "cancel"
-	ID        string `json:"id,omitempty"`       // for "exec_approval_response"
-	Decision  string `json:"decision,omitempty"` // "allow" | "deny" | "always"
+	Type      string `json:"type"`                  // "auth" | "message" | "cancel" | "exec_approval_response"
+	Token     string `json:"token,omitempty"`       // for "auth"
+	Content   string `json:"content,omitempty"`    // for "message"
+	SessionID string `json:"session_id,omitempty"` // for "message" / "cancel"
+	AgentID   string `json:"agent_id,omitempty"`   // for "message" — route to specific agent
+	ID        string `json:"id,omitempty"`          // for "exec_approval_response"
+	Decision  string `json:"decision,omitempty"`    // "allow" | "deny" | "always"
 }
 
 // wsServerFrame is a message sent from the server to the browser over WebSocket.
@@ -299,7 +300,7 @@ func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsCo
 			if frame.Content == "" {
 				continue
 			}
-			h.handleChatMessage(ctx, chatID, sessionID, frame.Content, wc)
+			h.handleChatMessage(ctx, chatID, sessionID, frame.Content, frame.AgentID, wc)
 		case "cancel":
 			h.handleCancel(sessionID)
 		case "exec_approval_response":
@@ -313,7 +314,7 @@ func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsCo
 // handleChatMessage creates a session on the first message, records every user message,
 // and publishes the message to the bus. If session creation fails, the client is warned
 // that the conversation will not be persisted (fix for silent persistence failure).
-func (h *WSHandler) handleChatMessage(ctx context.Context, chatID string, sessionID *string, content string, wc *wsConn) {
+func (h *WSHandler) handleChatMessage(ctx context.Context, chatID string, sessionID *string, content string, agentID string, wc *wsConn) {
 	if h.partitions != nil {
 		// Create the session on the first message of this WebSocket connection.
 		if *sessionID == "" {
@@ -361,6 +362,9 @@ func (h *WSHandler) handleChatMessage(ctx context.Context, chatID string, sessio
 		SenderID: "webchat_user",
 		ChatID:   chatID,
 		Content:  content,
+	}
+	if agentID != "" {
+		msg.Metadata = map[string]string{"agent_id": agentID}
 	}
 	pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

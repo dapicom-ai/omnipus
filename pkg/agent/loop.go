@@ -1381,6 +1381,18 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 
 func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.ResolvedRoute, *AgentInstance, error) {
 	registry := al.GetRegistry()
+
+	// If the message carries an explicit agent_id (e.g., webchat agent selector),
+	// use it directly instead of going through routing rules.
+	if explicitID := inboundMetadata(msg, "agent_id"); explicitID != "" {
+		agent, ok := registry.GetAgent(explicitID)
+		if ok {
+			return routing.ResolvedRoute{AgentID: explicitID}, agent, nil
+		}
+		// Explicit agent not found — fall through to normal routing.
+		logger.WarnCF("agent", "explicit agent_id not found, falling back to routing", map[string]any{"agent_id": explicitID})
+	}
+
 	route := registry.ResolveRoute(routing.RouteInput{
 		Channel:    msg.Channel,
 		AccountID:  inboundMetadata(msg, metadataKeyAccountID),
