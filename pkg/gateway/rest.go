@@ -1705,27 +1705,61 @@ func (a *restAPI) HandleTools(w http.ResponseWriter, r *http.Request) {
 
 // --- Channels ---
 
-// HandleChannels handles GET /api/v1/channels and PUT /api/v1/channels/{id}/enable|disable.
+// HandleChannels handles GET /api/v1/channels, GET /api/v1/channels/{id},
+// PUT /api/v1/channels/{id}/enable|disable|configure, and POST /api/v1/channels/{id}/test.
 func (a *restAPI) HandleChannels(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimSuffix(r.URL.Path, "/")
 	sub := strings.TrimPrefix(path, "/api/v1/channels")
 	sub = strings.TrimPrefix(sub, "/")
 
-	if sub != "" && r.Method == http.MethodPut {
+	if sub != "" {
 		parts := strings.SplitN(sub, "/", 2)
-		if len(parts) == 2 {
-			channelID := parts[0]
-			action := parts[1]
-			switch action {
-			case "enable":
-				a.setChannelEnabled(w, channelID, true)
-			case "disable":
-				a.setChannelEnabled(w, channelID, false)
-			default:
-				jsonErr(w, http.StatusNotFound, "unknown channel action")
-			}
+		channelID := parts[0]
+		if !validChannelIDs[channelID] {
+			jsonErr(w, http.StatusNotFound, fmt.Sprintf("channel %q not found", channelID))
 			return
 		}
+
+		if len(parts) == 1 {
+			// GET /api/v1/channels/{id}
+			if r.Method == http.MethodGet {
+				a.getChannelConfig(w, channelID)
+				return
+			}
+			jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+
+		action := parts[1]
+		switch action {
+		case "enable":
+			if r.Method != http.MethodPut {
+				jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+				return
+			}
+			a.setChannelEnabled(w, channelID, true)
+		case "disable":
+			if r.Method != http.MethodPut {
+				jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+				return
+			}
+			a.setChannelEnabled(w, channelID, false)
+		case "configure":
+			if r.Method != http.MethodPut {
+				jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+				return
+			}
+			a.configureChannel(w, r, channelID)
+		case "test":
+			if r.Method != http.MethodPost {
+				jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+				return
+			}
+			a.testChannel(w, channelID)
+		default:
+			jsonErr(w, http.StatusNotFound, "unknown channel action")
+		}
+		return
 	}
 
 	if r.Method != http.MethodGet {
@@ -1795,6 +1829,176 @@ func (a *restAPI) setChannelEnabled(w http.ResponseWriter, channelID string, ena
 		return
 	}
 	jsonOK(w, map[string]any{"id": channelID, "enabled": enabled})
+}
+
+// channelSensitiveFields maps channel IDs to their secret/credential field names.
+// These are redacted in GET responses (replaced with "[configured]" if set).
+var channelSensitiveFields = map[string][]string{
+	"telegram":   {"token"},
+	"discord":    {"token"},
+	"slack":      {"bot_token", "app_token"},
+	"feishu":     {"app_secret", "encrypt_key", "verification_token"},
+	"matrix":     {"access_token", "crypto_passphrase"},
+	"line":       {"channel_secret", "channel_access_token"},
+	"dingtalk":   {"client_secret"},
+	"qq":         {"app_secret"},
+	"wecom":      {"secret"},
+	"onebot":     {"access_token"},
+	"irc":        {"password", "nickserv_password", "sasl_password"},
+	"weixin":     {"token"},
+	"pico":       {"token"},
+	"maixcam":    {},
+	"whatsapp":   {},
+}
+
+// channelRequiredFields maps channel IDs to fields that must be non-empty for the channel to work.
+var channelRequiredFields = map[string][]string{
+	"telegram":  {"token"},
+	"discord":   {"token"},
+	"slack":     {"bot_token"},
+	"feishu":    {"app_id", "app_secret"},
+	"matrix":    {"homeserver", "user_id", "access_token"},
+	"line":      {"channel_secret", "channel_access_token"},
+	"dingtalk":  {"client_id", "client_secret"},
+	"qq":        {"app_id", "app_secret"},
+	"wecom":     {"bot_id", "secret"},
+	"onebot":    {"ws_url"},
+	"irc":       {"server", "nick"},
+	"weixin":    {"token"},
+	"pico":      {"token"},
+	"maixcam":   {},
+	"whatsapp":  {},
+}
+
+// redactChannelConfig returns a copy of cfg with sensitive fields replaced by "[configured]"
+// (if non-empty) or "" (if empty).
+func redactChannelConfig(channelID string, cfg map[string]any) map[string]any {
+	out := make(map[string]any, len(cfg))
+	for k, v := range cfg {
+		out[k] = v
+	}
+	for _, field := range channelSensitiveFields[channelID] {
+		if v, ok := out[field]; ok {
+			s, _ := v.(string)
+			if s != "" {
+				out[field] = "[configured]"
+			} else {
+				out[field] = ""
+			}
+		}
+	}
+	return out
+}
+
+// getChannelConfig handles GET /api/v1/channels/{id}.
+// Returns the channel's config with credential fields redacted.
+func (a *restAPI) getChannelConfig(w http.ResponseWriter, channelID string) {
+	a.configMu.Lock()
+	raw, err := os.ReadFile(a.configPath())
+	a.configMu.Unlock()
+	if err != nil {
+		slog.Error("rest: read config for channel get", "channel", channelID, "error", err)
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not read config: %v", err))
+		return
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		slog.Error("rest: parse config for channel get", "channel", channelID, "error", err)
+		jsonErr(w, http.StatusInternalServerError, "could not parse config")
+		return
+	}
+	channels, _ := m["channels"].(map[string]any)
+	var chCfg map[string]any
+	if channels != nil {
+		chCfg, _ = channels[channelID].(map[string]any)
+	}
+	if chCfg == nil {
+		chCfg = map[string]any{}
+	}
+	jsonOK(w, redactChannelConfig(channelID, chCfg))
+}
+
+// configureChannel handles PUT /api/v1/channels/{id}/configure.
+// Merges the request body fields into the channel's config section (does not overwrite absent fields).
+// Returns the updated channel config with credential fields redacted.
+func (a *restAPI) configureChannel(w http.ResponseWriter, r *http.Request, channelID string) {
+	var updates map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	// Remove reserved fields that must not be set here.
+	delete(updates, "enabled")
+
+	var updatedCh map[string]any
+	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
+		channels, _ := m["channels"].(map[string]any)
+		if channels == nil {
+			channels = map[string]any{}
+			m["channels"] = channels
+		}
+		ch, _ := channels[channelID].(map[string]any)
+		if ch == nil {
+			ch = map[string]any{}
+		}
+		for k, v := range updates {
+			ch[k] = v
+		}
+		channels[channelID] = ch
+		updatedCh = ch
+		return nil
+	}); err != nil {
+		slog.Error("rest: configure channel", "channel", channelID, "error", err)
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
+		return
+	}
+	jsonOK(w, redactChannelConfig(channelID, updatedCh))
+}
+
+// testChannel handles POST /api/v1/channels/{id}/test.
+// For v1.0: verifies required credential fields are configured without starting the channel.
+func (a *restAPI) testChannel(w http.ResponseWriter, channelID string) {
+	a.configMu.Lock()
+	raw, err := os.ReadFile(a.configPath())
+	a.configMu.Unlock()
+	if err != nil {
+		slog.Error("rest: read config for channel test", "channel", channelID, "error", err)
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not read config: %v", err))
+		return
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		slog.Error("rest: parse config for channel test", "channel", channelID, "error", err)
+		jsonErr(w, http.StatusInternalServerError, "could not parse config")
+		return
+	}
+	var chCfg map[string]any
+	if channels, _ := m["channels"].(map[string]any); channels != nil {
+		chCfg, _ = channels[channelID].(map[string]any)
+	}
+	if chCfg == nil {
+		chCfg = map[string]any{}
+	}
+
+	required := channelRequiredFields[channelID]
+	var missing []string
+	for _, field := range required {
+		v, _ := chCfg[field].(string)
+		if v == "" {
+			missing = append(missing, field)
+		}
+	}
+	if len(missing) > 0 {
+		jsonOK(w, map[string]any{
+			"success": false,
+			"message": fmt.Sprintf("missing required fields: %s", strings.Join(missing, ", ")),
+		})
+		return
+	}
+	jsonOK(w, map[string]any{
+		"success": true,
+		"message": fmt.Sprintf("channel %q is configured", channelID),
+	})
 }
 
 // countEnabledChannels returns the number of non-webchat channels currently enabled in cfg.

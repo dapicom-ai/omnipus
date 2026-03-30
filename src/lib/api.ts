@@ -312,6 +312,7 @@ export interface Channel {
   name: string
   transport: string
   enabled: boolean
+  configured?: boolean
 }
 
 export function fetchChannels(): Promise<Channel[]> {
@@ -324,6 +325,23 @@ export function enableChannel(id: string): Promise<Channel> {
 
 export function disableChannel(id: string): Promise<Channel> {
   return request<Channel>(`/channels/${encodeURIComponent(id)}/disable`, { method: 'PUT' })
+}
+
+export function fetchChannelConfig(id: string): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>(`/channels/${encodeURIComponent(id)}`)
+}
+
+export function configureChannel(id: string, config: Record<string, unknown>): Promise<void> {
+  return request<void>(`/channels/${encodeURIComponent(id)}/configure`, {
+    method: 'PUT',
+    body: JSON.stringify(config),
+  })
+}
+
+export function testChannel(id: string): Promise<{ success: boolean; message: string }> {
+  return request<{ success: boolean; message: string }>(`/channels/${encodeURIComponent(id)}/test`, {
+    method: 'POST',
+  })
 }
 
 // ── Skills ────────────────────────────────────────────────────────────────────

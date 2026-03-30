@@ -1,0 +1,323 @@
+import { useState, useEffect } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import {
+  Eye,
+  EyeSlash,
+  FloppyDisk,
+  Play,
+  Lightning,
+  Warning,
+  Info,
+} from '@phosphor-icons/react'
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
+import { Textarea } from '@/components/ui/textarea'
+import { fetchChannelConfig, configureChannel, enableChannel, testChannel } from '@/lib/api'
+import { getChannelFields, type ChannelField } from '@/lib/channel-fields'
+import { useUiStore } from '@/store/ui'
+
+interface ChannelConfigPanelProps {
+  channelId: string
+  channelName: string
+  open: boolean
+  onOpenChange: (open: boolean) => void
+}
+
+function PasswordField({
+  field,
+  value,
+  onChange,
+}: {
+  field: ChannelField
+  value: string
+  onChange: (val: string) => void
+}) {
+  const [visible, setVisible] = useState(false)
+  return (
+    <div className="relative">
+      <Input
+        id={`field-${field.key}`}
+        type={visible ? 'text' : 'password'}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={field.placeholder}
+        className="pr-9 font-mono text-xs"
+        autoComplete="off"
+      />
+      <button
+        type="button"
+        onClick={() => setVisible((v) => !v)}
+        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--color-muted)] hover:text-[var(--color-secondary)] transition-colors"
+        aria-label={visible ? 'Hide' : 'Show'}
+      >
+        {visible ? <EyeSlash size={13} /> : <Eye size={13} />}
+      </button>
+    </div>
+  )
+}
+
+function WhatsAppNativeNotice() {
+  return (
+    <div className="space-y-2 mt-1">
+      <div className="flex gap-2 p-3 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)]">
+        <Info size={14} className="text-[var(--color-accent)] shrink-0 mt-0.5" weight="fill" />
+        <p className="text-xs text-[var(--color-secondary)]">
+          After enabling, check the gateway terminal for a QR code. Scan it with{' '}
+          <span className="font-medium">WhatsApp → Linked Devices → Link a Device</span>.
+        </p>
+      </div>
+      <div className="flex gap-2 p-3 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-error)]/30">
+        <Warning size={14} className="text-[var(--color-error)] shrink-0 mt-0.5" weight="fill" />
+        <p className="text-xs text-[var(--color-muted)]">
+          WhatsApp native mode stores sessions locally. The gateway must keep running for the session
+          to stay active.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+export function ChannelConfigPanel({
+  channelId,
+  channelName,
+  open,
+  onOpenChange,
+}: ChannelConfigPanelProps) {
+  const { addToast } = useUiStore()
+  const queryClient = useQueryClient()
+  const fields = getChannelFields(channelId)
+
+  const [formValues, setFormValues] = useState<Record<string, unknown>>({})
+  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null)
+
+  const { data: currentConfig, isLoading } = useQuery({
+    queryKey: ['channel-config', channelId],
+    queryFn: () => fetchChannelConfig(channelId),
+    enabled: open,
+  })
+
+  // Populate form when config loads
+  useEffect(() => {
+    if (currentConfig) {
+      setFormValues(currentConfig)
+    }
+  }, [currentConfig])
+
+  const { mutate: doSave, isPending: saving } = useMutation({
+    mutationFn: () => configureChannel(channelId, formValues),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['channels'] })
+      queryClient.invalidateQueries({ queryKey: ['channel-config', channelId] })
+      addToast({ message: 'Configuration saved', variant: 'success' })
+    },
+    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+  })
+
+  const { mutate: doSaveAndEnable, isPending: savingAndEnabling } = useMutation({
+    mutationFn: async () => {
+      await configureChannel(channelId, formValues)
+      await enableChannel(channelId)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['channels'] })
+      queryClient.invalidateQueries({ queryKey: ['channel-config', channelId] })
+      addToast({ message: 'Channel configured and enabled', variant: 'success' })
+      onOpenChange(false)
+    },
+    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+  })
+
+  const { mutate: doTest, isPending: testing } = useMutation({
+    mutationFn: () => testChannel(channelId),
+    onSuccess: (result) => {
+      setTestResult(result)
+      if (result.success) {
+        addToast({ message: 'Connection test passed', variant: 'success' })
+      } else {
+        addToast({ message: result.message || 'Test failed', variant: 'error' })
+      }
+    },
+    onError: (err: Error) => {
+      setTestResult({ success: false, message: err.message })
+      addToast({ message: err.message, variant: 'error' })
+    },
+  })
+
+  function setValue(key: string, value: unknown) {
+    // Support nested keys like "group_trigger.mention_only"
+    if (key.includes('.')) {
+      const [parent, child] = key.split('.')
+      setFormValues((prev) => ({
+        ...prev,
+        [parent]: {
+          ...((prev[parent] as Record<string, unknown>) ?? {}),
+          [child]: value,
+        },
+      }))
+    } else {
+      setFormValues((prev) => ({ ...prev, [key]: value }))
+    }
+  }
+
+  function getValue(key: string): unknown {
+    if (key.includes('.')) {
+      const [parent, child] = key.split('.')
+      const parentObj = formValues[parent] as Record<string, unknown> | undefined
+      return parentObj?.[child]
+    }
+    return formValues[key]
+  }
+
+  const isWhatsAppNative =
+    channelId === 'whatsapp' && Boolean(getValue('use_native'))
+
+  const isBusy = saving || savingAndEnabling
+
+  if (fields.length === 0) return null
+
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange}>
+      <SheetContent
+        side="right"
+        className="sm:w-[480px] bg-[var(--color-surface-1)] border-[var(--color-border)] overflow-y-auto"
+      >
+        <SheetHeader className="pb-4 border-b border-[var(--color-border)]">
+          <SheetTitle className="font-headline text-base font-semibold text-[var(--color-secondary)]">
+            Configure {channelName}
+          </SheetTitle>
+        </SheetHeader>
+
+        {isLoading ? (
+          <div className="space-y-4 pt-6">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-10 rounded-md bg-[var(--color-surface-2)] animate-pulse" />
+            ))}
+          </div>
+        ) : (
+          <div className="pt-5 space-y-5">
+            {fields.map((field) => (
+              <div key={field.key} className="space-y-1.5">
+                <Label
+                  htmlFor={`field-${field.key}`}
+                  className="text-xs font-medium text-[var(--color-secondary)]"
+                >
+                  {field.label}
+                  {field.required && (
+                    <span className="text-[var(--color-error)] ml-0.5">*</span>
+                  )}
+                </Label>
+
+                {field.type === 'toggle' ? (
+                  <div className="flex items-center gap-2 py-1">
+                    <Switch
+                      id={`field-${field.key}`}
+                      checked={Boolean(getValue(field.key))}
+                      onCheckedChange={(checked) => setValue(field.key, checked)}
+                    />
+                  </div>
+                ) : field.type === 'password' ? (
+                  <PasswordField
+                    field={field}
+                    value={String(getValue(field.key) ?? '')}
+                    onChange={(val) => setValue(field.key, val)}
+                  />
+                ) : field.type === 'textarea' ? (
+                  <Textarea
+                    id={`field-${field.key}`}
+                    value={String(getValue(field.key) ?? '')}
+                    onChange={(e) => setValue(field.key, e.target.value)}
+                    placeholder={field.placeholder}
+                    className="font-mono text-xs resize-none h-20"
+                  />
+                ) : (
+                  <Input
+                    id={`field-${field.key}`}
+                    type={field.type === 'number' ? 'number' : 'text'}
+                    value={String(getValue(field.key) ?? '')}
+                    onChange={(e) =>
+                      setValue(
+                        field.key,
+                        field.type === 'number'
+                          ? e.target.value === '' ? '' : Number(e.target.value)
+                          : e.target.value,
+                      )
+                    }
+                    placeholder={field.placeholder}
+                    className="text-xs"
+                  />
+                )}
+
+                {field.helpText && (
+                  <p className="text-[10px] text-[var(--color-muted)] leading-relaxed">
+                    {field.helpText}
+                  </p>
+                )}
+
+                {/* WhatsApp native mode notices */}
+                {channelId === 'whatsapp' && field.key === 'use_native' && isWhatsAppNative && (
+                  <WhatsAppNativeNotice />
+                )}
+              </div>
+            ))}
+
+            {/* Test result */}
+            {testResult && (
+              <div
+                className={`flex gap-2 p-3 rounded-md border text-xs ${
+                  testResult.success
+                    ? 'bg-[var(--color-success)]/10 border-[var(--color-success)]/30 text-[var(--color-success)]'
+                    : 'bg-[var(--color-error)]/10 border-[var(--color-error)]/30 text-[var(--color-error)]'
+                }`}
+              >
+                {testResult.success ? (
+                  <Lightning size={13} weight="fill" className="shrink-0 mt-0.5" />
+                ) : (
+                  <Warning size={13} weight="fill" className="shrink-0 mt-0.5" />
+                )}
+                {testResult.message}
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex flex-col gap-2 pt-2 border-t border-[var(--color-border)]">
+              <Button
+                className="w-full gap-1.5"
+                onClick={() => doSaveAndEnable()}
+                disabled={isBusy}
+              >
+                <Lightning size={13} weight="fill" />
+                Save & Enable
+              </Button>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="flex-1 gap-1.5"
+                  onClick={() => doSave()}
+                  disabled={isBusy}
+                >
+                  <FloppyDisk size={13} />
+                  Save
+                </Button>
+                <Button
+                  variant="outline"
+                  className="flex-1 gap-1.5"
+                  onClick={() => {
+                    setTestResult(null)
+                    doTest()
+                  }}
+                  disabled={testing || saving || savingAndEnabling}
+                >
+                  <Play size={13} weight="fill" />
+                  {testing ? 'Testing…' : 'Test'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        )}
+      </SheetContent>
+    </Sheet>
+  )
+}

@@ -12,6 +12,7 @@ import {
   MagnifyingGlass,
   CaretDown,
   CaretUp,
+  Gear,
 } from '@phosphor-icons/react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
@@ -37,6 +38,7 @@ import {
 import { useUiStore } from '@/store/ui'
 import { SkillBrowser } from '@/components/skills/SkillBrowser'
 import { McpServerModal } from '@/components/skills/McpServerModal'
+import { ChannelConfigPanel } from '@/components/skills/ChannelConfigPanel'
 
 function SkillsScreen() {
   const { addToast } = useUiStore()
@@ -48,6 +50,7 @@ function SkillsScreen() {
   const [confirmDeleteMcp, setConfirmDeleteMcp] = useState<string | null>(null)
   const [expandedMcp, setExpandedMcp] = useState<string | null>(null)
   const [expandedTool, setExpandedTool] = useState<string | null>(null)
+  const [configuringChannel, setConfiguringChannel] = useState<{ id: string; name: string } | null>(null)
 
   const { data: rawSkills = [], isLoading: skillsLoading, isError: skillsError } = useQuery({
     queryKey: ['skills'],
@@ -280,29 +283,60 @@ function SkillsScreen() {
             <EmptyState icon={<Hash size={40} weight="thin" />} message="No channels configured." />
           ) : (
             <div className="space-y-2">
-              {channels.map((channel) => (
-                <div
-                  key={channel.id}
-                  className="flex items-center gap-3 p-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)]"
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-medium text-sm text-[var(--color-secondary)]">{channel.name}</span>
-                      <Badge variant="outline" className="text-[10px] font-mono">{channel.transport}</Badge>
-                      <Badge variant={channel.enabled ? 'success' : 'muted'} className="text-[10px]">
-                        {channel.enabled ? 'Enabled' : 'Available'}
-                      </Badge>
+              {channels.map((channel) => {
+                const connectionStatus = channel.enabled
+                  ? 'enabled'
+                  : channel.configured
+                    ? 'configured'
+                    : 'unconfigured'
+                return (
+                  <div
+                    key={channel.id}
+                    className="flex items-center gap-3 p-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)]"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium text-sm text-[var(--color-secondary)]">{channel.name}</span>
+                        <Badge variant="outline" className="text-[10px] font-mono">{channel.transport}</Badge>
+                        <Badge
+                          variant={
+                            connectionStatus === 'enabled'
+                              ? 'success'
+                              : connectionStatus === 'configured'
+                                ? 'warning'
+                                : 'muted'
+                          }
+                          className="text-[10px]"
+                        >
+                          {connectionStatus === 'enabled'
+                            ? 'Enabled'
+                            : connectionStatus === 'configured'
+                              ? 'Configured'
+                              : 'Not configured'}
+                        </Badge>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => setConfiguringChannel({ id: channel.id, name: channel.name })}
+                        className="flex items-center gap-1 text-xs text-[var(--color-muted)] hover:text-[var(--color-secondary)] transition-colors font-medium"
+                        aria-label={`Configure ${channel.name}`}
+                      >
+                        <Gear size={13} />
+                        Configure
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => doToggleChannel({ id: channel.id, enabled: channel.enabled })}
+                        className="text-xs text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors font-medium"
+                      >
+                        {channel.enabled ? 'Disable' : 'Enable'}
+                      </button>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => doToggleChannel({ id: channel.id, enabled: channel.enabled })}
-                    className="text-xs text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors shrink-0 font-medium"
-                  >
-                    {channel.enabled ? 'Disable' : 'Enable'}
-                  </button>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </TabsContent>
@@ -411,6 +445,18 @@ function SkillsScreen() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Channel config slide-over */}
+      {configuringChannel && (
+        <ChannelConfigPanel
+          channelId={configuringChannel.id}
+          channelName={configuringChannel.name}
+          open={configuringChannel !== null}
+          onOpenChange={(open) => {
+            if (!open) setConfiguringChannel(null)
+          }}
+        />
+      )}
     </div>
   )
 }
