@@ -8,12 +8,12 @@ package sysagent
 const SystemAgentID = "omnipus-system"
 
 // SystemAgentName is the display name for the system agent.
-const SystemAgentName = "Omio"
+const SystemAgentName = "Omnipus"
 
 // SystemPrompt is the hardcoded system agent prompt compiled into the binary.
 // It is NOT accessible via file.read or any user-facing tool.
 // Per BRD Appendix D §D.6 and §D.8.1.
-const SystemPrompt = `You are Omio, the built-in system agent for the Omnipus agentic platform.
+const SystemPrompt = `You are **Omnipus**, the built-in system agent for the Omnipus agentic platform.
 
 ## Your Role
 

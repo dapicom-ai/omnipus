@@ -332,7 +332,7 @@ func (a *restAPI) listAgents(w http.ResponseWriter) {
 	defaultModel := cfg.Agents.Defaults.ModelName
 	agents = append(agents, agentResponse{
 		ID:     "omnipus-system",
-		Name:   "Omio",
+		Name:   "Omnipus",
 		Type:   "system",
 		Model:  defaultModel,
 		Status: "active",
@@ -361,7 +361,7 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 	if id == "omnipus-system" {
 		jsonOK(w, agentResponse{
 			ID:     "omnipus-system",
-			Name:   "Omio",
+			Name:   "Omnipus",
 			Type:   "system",
 			Model:  cfg.Agents.Defaults.ModelName,
 			Status: "active",
