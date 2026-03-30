@@ -59,9 +59,10 @@ type WSHandler struct {
 	partitions    *session.PartitionStore // may be nil
 	allowedOrigin string
 
-	mu        sync.Mutex
-	sessions  map[string]*wsConn // chatID → connection
-	webchatCh *webchatChannel     // reference to mark streaming complete
+	mu         sync.Mutex
+	sessions   map[string]*wsConn  // chatID → connection
+	sessionIDs map[string]string   // chatID → sessionID (for transcript recording)
+	webchatCh  *webchatChannel     // reference to mark streaming complete
 
 	upgrader websocket.Upgrader
 }
@@ -91,6 +92,7 @@ func newWSHandler(
 		partitions:    ps,
 		allowedOrigin: allowedOrigin,
 		sessions:      make(map[string]*wsConn),
+		sessionIDs:    make(map[string]string),
 		upgrader: websocket.Upgrader{
 			// CheckOrigin: parses the Origin URL and compares hostname against the request
 			// Host to allow same-origin requests. Also allows localhost/127.0.0.1 for development.
@@ -146,7 +148,16 @@ func (h *WSHandler) GetStreamer(_ context.Context, channel, chatID string) (bus.
 	if !ok {
 		return nil, false
 	}
-	return &wsStreamer{conn: conn, chatID: chatID, channel: h.webchatCh}, true
+	h.mu.Lock()
+	sid := h.sessionIDs[chatID]
+	h.mu.Unlock()
+	return &wsStreamer{
+		conn:       conn,
+		chatID:     chatID,
+		sessionID:  sid,
+		partitions: h.partitions,
+		channel:    h.webchatCh,
+	}, true
 }
 
 // ServeHTTP handles the WebSocket upgrade and full connection lifecycle.
@@ -198,6 +209,7 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		h.mu.Lock()
 		delete(h.sessions, chatID)
+		delete(h.sessionIDs, chatID)
 		h.mu.Unlock()
 		wc.close()
 	}()
@@ -291,6 +303,10 @@ func (h *WSHandler) handleChatMessage(ctx context.Context, chatID string, sessio
 				// Continue without sessionID so the message is still delivered to the agent.
 			} else {
 				*sessionID = meta.ID
+				// Track sessionID for this chatID so the streamer can record responses
+				h.mu.Lock()
+				h.sessionIDs[chatID] = meta.ID
+				h.mu.Unlock()
 				// Set session title from first message (truncate to 60 chars)
 				title := content
 				if len(title) > 60 {
@@ -435,13 +451,18 @@ func sendWSFrame(conn *websocket.Conn, frame wsServerFrame) {
 }
 
 // wsStreamer implements bus.Streamer, pushing token/done frames into a wsConn's send channel.
+// It also accumulates the full response to persist it to the session transcript on Finalize.
 type wsStreamer struct {
-	conn    *wsConn
-	chatID  string
-	channel *webchatChannel // to mark streaming complete and suppress duplicate Send()
+	conn       *wsConn
+	chatID     string
+	sessionID  string                  // for recording assistant message
+	partitions *session.PartitionStore // for recording assistant message
+	channel    *webchatChannel         // to mark streaming complete and suppress duplicate Send()
+	accumulated strings.Builder        // accumulates full response text
 }
 
 func (s *wsStreamer) Update(_ context.Context, content string) error {
+	s.accumulated.WriteString(content)
 	data, err := json.Marshal(wsServerFrame{Type: "token", Content: content})
 	if err != nil {
 		return fmt.Errorf("ws: marshal token frame: %w", err)
@@ -460,6 +481,21 @@ func (s *wsStreamer) Finalize(_ context.Context, _ string) error {
 	// Mark this chatID as streamed so webchatChannel.Send() skips the duplicate
 	if s.channel != nil {
 		s.channel.markStreamed(s.chatID)
+	}
+	// Record the full assistant response to the session transcript
+	if s.partitions != nil && s.sessionID != "" {
+		content := s.accumulated.String()
+		if content != "" {
+			entry := session.TranscriptEntry{
+				ID:        uuid.New().String(),
+				Role:      "assistant",
+				Content:   content,
+				Timestamp: time.Now().UTC(),
+			}
+			if err := s.partitions.AppendMessage(s.sessionID, entry); err != nil {
+				slog.Warn("ws: could not record streamed assistant message", "session_id", s.sessionID, "error", err)
+			}
+		}
 	}
 	return nil
 }
