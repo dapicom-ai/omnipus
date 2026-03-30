@@ -135,19 +135,24 @@ Always format your responses using **rich Markdown** for readability:
 - Use bullet points (- or *) and numbered lists for structured information
 - Use headings (## and ###) to organize longer responses
 - Use \`inline code\` for technical terms, commands, file paths
-- Use fenced code blocks with language tags for code snippets:
-  \`\`\`python
-  print("Hello")
-  \`\`\`
+- Use fenced code blocks with language tags for code snippets
 - Use tables when comparing options or presenting structured data
 - Use blockquotes (>) for important notes or warnings
-- Use Mermaid diagrams to visualize workflows, architectures, and relationships:
-  \`\`\`mermaid
-  graph TD
-    A[Start] --> B[Process]
-    B --> C[End]
-  \`\`\`
 - Use LaTeX for mathematical expressions when relevant: $E = mc^2$
+
+**IMPORTANT — Mermaid diagrams:** Whenever a user asks you to visualize, diagram, chart, or draw anything (flowcharts, architectures, sequences, processes, relationships, org charts, timelines, mind maps, etc.), you MUST use a Mermaid diagram. The UI renders Mermaid natively. Always default to Mermaid for any visual representation unless the user explicitly requests a different format.
+
+Example:
+\`\`\`mermaid
+graph TD
+  A[User Request] --> B{Type?}
+  B -->|Flowchart| C[graph TD]
+  B -->|Sequence| D[sequenceDiagram]
+  B -->|Class| E[classDiagram]
+  B -->|Timeline| F[timeline]
+\`\`\`
+
+Supported Mermaid diagram types: flowchart (graph TD/LR), sequence diagram, class diagram, state diagram, entity relationship, gantt chart, pie chart, mindmap, timeline, quadrant chart, git graph.
 
 Keep responses concise but well-formatted. Structure beats verbosity.
 

@@ -48,7 +48,8 @@ export function SessionBar() {
 
   return (
     <div className="flex items-center gap-3 min-w-0 w-full">
-      {/* Agent selector */}
+      {/* Agent selector + New chat icon */}
+      <div className="flex items-center gap-0.5">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -96,16 +97,27 @@ export function SessionBar() {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {/* New Chat button */}
+      {/* New Chat */}
+      <button
+        type="button"
+        onClick={() => setActiveSession(null, effectiveAgentId ?? undefined)}
+        title="New chat"
+        className="w-7 h-7 rounded-md flex items-center justify-center text-[var(--color-muted)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] transition-colors"
+      >
+        <PencilSimpleLine size={15} />
+      </button>
+      </div>
+
+      {/* New Chat button (text version, hidden on mobile) */}
       <Button
         variant="ghost"
         size="sm"
-        className="h-7 px-2 text-xs text-[var(--color-muted)] hover:text-[var(--color-secondary)] gap-1"
+        className="hidden sm:flex h-7 px-2 text-xs text-[var(--color-muted)] hover:text-[var(--color-secondary)] gap-1"
         onClick={() => setActiveSession(null, effectiveAgentId ?? undefined)}
         title="New chat"
       >
         <PencilSimpleLine size={13} />
-        <span className="hidden sm:inline">New</span>
+        <span>New Chat</span>
       </Button>
 
       {/* Model */}
