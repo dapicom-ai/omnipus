@@ -106,13 +106,16 @@ func newWSHandler(
 					return false
 				}
 				hostname := parsed.Hostname()
-				// Allow same-origin: Origin hostname matches the request Host.
+				originPort := parsed.Port()
+				// Allow same-origin: Origin hostname+port matches the request Host.
 				if r.Host != "" {
 					hostOnly := r.Host
-					if h, _, err := net.SplitHostPort(r.Host); err == nil {
+					hostPort := ""
+					if h, p, err := net.SplitHostPort(r.Host); err == nil {
 						hostOnly = h
+						hostPort = p
 					}
-					if hostname == hostOnly {
+					if hostname == hostOnly && originPort == hostPort {
 						return true
 					}
 				}

@@ -80,7 +80,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     set({
       activeSessionId: sessionId,
       activeAgentId: agentId ?? get().activeAgentId,
-      // Clear session-scoped state on switch to prevent stale data bleeding across sessions
+      // Clear ALL session-scoped state on switch to prevent stale data bleeding across sessions
+      messages: [],
       toolCalls: {},
       pendingApprovals: [],
       sessionTokens: 0,

@@ -35,10 +35,10 @@ func NewSessionManager(storage string) *SessionManager {
 
 	if storage != "" {
 		if err := os.MkdirAll(storage, 0o700); err != nil {
-			slog.Warn("session: could not create storage directory", "path", storage, "error", err)
+			slog.Error("session: could not create storage directory — persistence will fail", "path", storage, "error", err)
 		}
 		if err := sm.loadSessions(); err != nil {
-			slog.Warn("session: could not load sessions from disk", "path", storage, "error", err)
+			slog.Error("session: could not load sessions from disk — starting with empty state", "path", storage, "error", err)
 		}
 	}
 

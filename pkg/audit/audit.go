@@ -239,12 +239,16 @@ func (l *Logger) recoverCorruption() {
 	path := l.auditPath()
 	f, err := os.Open(path)
 	if err != nil {
+		slog.Warn("audit: could not open file for corruption recovery", "path", path, "error", err)
 		return
 	}
 	defer f.Close()
 
 	info, err := f.Stat()
 	if err != nil || info.Size() == 0 {
+		if err != nil {
+			slog.Warn("audit: could not stat file for corruption recovery", "path", path, "error", err)
+		}
 		return
 	}
 

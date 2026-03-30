@@ -147,6 +147,13 @@ func (a *restAPI) HandleSessions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if sessionID != "" {
+		if err := validateEntityID(sessionID); err != nil {
+			jsonErr(w, http.StatusBadRequest, "invalid session ID")
+			return
+		}
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		if sessionID == "" {

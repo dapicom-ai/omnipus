@@ -171,6 +171,10 @@ func (si *SkillInstaller) getGithubDirAllFiles(ctx context.Context, apiURL, loca
 	}
 
 	for _, item := range items {
+		// Guard against path traversal via malicious filenames from GitHub API.
+		if !filepath.IsLocal(item.Name) {
+			return fmt.Errorf("unsafe filename in repository: %q", item.Name)
+		}
 		localPath := filepath.Join(localDir, item.Name)
 
 		switch item.Type {

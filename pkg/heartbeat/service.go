@@ -9,6 +9,7 @@ package heartbeat
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -387,6 +388,7 @@ func (hs *HeartbeatService) logf(level, format string, args ...any) {
 	logFile := filepath.Join(hs.workspace, "heartbeat.log")
 	f, err := os.OpenFile(logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
+		slog.Warn("heartbeat: could not open log file", "path", logFile, "error", err)
 		return
 	}
 	defer f.Close()
