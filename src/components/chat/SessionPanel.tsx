@@ -49,7 +49,7 @@ export function SessionPanel() {
 
   return (
     <Sheet open={sessionPanelOpen} onOpenChange={(open) => !open && closeSessionPanel()}>
-      <SheetContent side="left" className="w-72 p-0 flex flex-col">
+      <SheetContent side="right" className="w-72 p-0 flex flex-col" overlay={false}>
         <SheetHeader className="px-4 pt-5 pb-3 border-b border-[var(--color-border)]">
           <SheetTitle>Sessions</SheetTitle>
         </SheetHeader>
