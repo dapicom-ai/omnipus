@@ -26,8 +26,7 @@ func NewGitHubCopilotProvider(uri string, connectMode string, model string) (*Gi
 
 	switch connectMode {
 	case "stdio":
-		// TODO: Implement stdio mode for GitHub Copilot provider
-		// See https://github.com/github/copilot-sdk/blob/main/docs/getting-started.md for details
+		// TODO(copilot-stdio): stdio connection mode is not yet supported. Only OAuth mode is implemented.
 		return nil, fmt.Errorf("stdio mode not implemented for GitHub Copilot provider; please use 'grpc' mode instead")
 	case "grpc":
 		client := copilot.NewClient(&copilot.ClientOptions{

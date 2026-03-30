@@ -59,13 +59,8 @@ interface ChatStore {
   // Actions
   sendMessage: (content: string) => void
   cancelStream: () => void
+  reconnect: () => void
   respondToApproval: (id: string, decision: 'allow' | 'deny' | 'always') => void
-
-  // Compat aliases used by pre-written tests
-  addMessage: (message: ChatMessage) => void
-  startStreaming: (messageId: string) => void
-  cancelStreaming: () => void
-  streamingMessageId: string | null
 
   // Inbound frame handler
   handleFrame: (frame: WsReceiveFrame) => void
@@ -251,6 +246,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     })
   },
 
+  reconnect: () => {
+    const { connection } = get()
+    if (connection) {
+      connection.connect()
+    }
+  },
+
   respondToApproval: (id, decision) => {
     const { connection } = get()
     if (!connection) return
@@ -259,14 +261,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const statusMap = { allow: 'allowed', deny: 'denied', always: 'always_allowed' } as const
     get().resolveApproval(id, statusMap[decision])
   },
-
-  // Compat aliases
-  streamingMessageId: null,
-  addMessage: (message) => get().appendMessage(message),
-  startStreaming: (messageId) => {
-    set({ isStreaming: true, streamingMessageId: messageId })
-  },
-  cancelStreaming: () => get().cancelStream(),
 
   handleFrame: (frame) => {
     const store = get()

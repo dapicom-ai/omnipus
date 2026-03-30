@@ -46,7 +46,7 @@ func init() {
 
 		consoleWriter := zerolog.ConsoleWriter{
 			Out:        os.Stdout,
-			TimeFormat: "15:04:05", // TODO: make it configurable???
+			TimeFormat: "15:04:05",
 
 			// Custom formatter to handle multiline strings and JSON objects
 			FormatFieldValue: formatFieldValue,

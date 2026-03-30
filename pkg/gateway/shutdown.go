@@ -61,12 +61,12 @@ func omnipusGracefulShutdown(
 		slog.Warn("shutdown: timeout waiting for agent loop — saving partial state")
 	}
 
-	slog.Info("shutdown: step 3 — saving partial responses")
+	slog.Info("shutdown: step 3 — verifying partial state persistence")
 	// The session PartitionStore uses O_APPEND writes that are already durable.
 	// Any in-progress streaming response was saved with status "interrupted" by
 	// the agent loop's context cancellation path (handled in pkg/agent).
 
-	slog.Info("shutdown: step 4 — flushing buffered writes")
+	slog.Info("shutdown: step 4 — stopping background services")
 	// Stop remaining services (heartbeat, cron, media, devices).
 	if runningServices.HeartbeatService != nil {
 		runningServices.HeartbeatService.Stop()

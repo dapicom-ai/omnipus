@@ -12,8 +12,9 @@
 //   - pkg/audit/wave5b_system_tools_test.go (test 20)
 //
 // Test status:
-//   REAL:    TestProviderCredentialsWriteOnly, TestCoreAgentDefaults (partial)
-//   BLOCKED: all others — pending pkg/sysagent, pkg/coreagent, pkg/onboarding
+//   REAL:    TestProviderCredentialsWriteOnly, TestCoreAgentDefaults (partial),
+//            TestOnboardingStateDetection, TestOnboardingStateResume, TestOnboardingNeverReshow
+//   BLOCKED: all others — pending pkg/sysagent, pkg/coreagent
 
 package gateway
 
@@ -21,6 +22,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -29,6 +32,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 )
 
 // --------------------------------------------------------------------------
@@ -54,7 +58,6 @@ func newWave5bTestAPI(t *testing.T) *restAPI {
 	msgBus := bus.NewMessageBus()
 	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
 	return &restAPI{
-		cfg:           cfg,
 		agentLoop:     al,
 		allowedOrigin: "http://localhost:3000",
 	}
@@ -228,13 +231,52 @@ func TestSystemToolExclusivity(t *testing.T) {
 // Traces to: wave5b-system-agent-spec.md line 591 (Scenario: First launch shows provider setup screen)
 // Dataset: Onboarding State Transitions rows 1-5
 func TestOnboardingStateDetection(t *testing.T) {
-	t.Skip("Blocked: pkg/onboarding.OnboardingDetector not yet implemented — onboarding_complete field in state.json needed")
-	// Dataset rows:
-	//   Row 1: state.json missing             → provider setup screen
-	//   Row 2: onboarding_complete:false, no provider → provider setup screen
-	//   Row 3: onboarding_complete:false, provider saved → chat + welcome message
-	//   Row 4: onboarding_complete:true       → last used agent chat (normal)
-	//   Row 5: state.json corrupt             → treat as fresh install
+	// Row 1: state.json missing → onboarding_complete=false (fresh install default).
+	t.Run("missing state.json → fresh install", func(t *testing.T) {
+		home := t.TempDir()
+		// Do NOT create state.json — Manager must default to fresh install.
+		mgr := onboarding.NewManager(home)
+		assert.False(t, mgr.IsOnboardingComplete(),
+			"missing state.json must default to onboarding_complete=false")
+	})
+
+	// Row 2: state.json with onboarding_complete:false → false.
+	t.Run("state.json with onboarding_complete:false → false", func(t *testing.T) {
+		home := t.TempDir()
+		sysDir := filepath.Join(home, "system")
+		require.NoError(t, os.MkdirAll(sysDir, 0o755))
+		stateJSON := `{"version":1,"onboarding_complete":false}`
+		require.NoError(t, os.WriteFile(filepath.Join(sysDir, "state.json"), []byte(stateJSON), 0o600))
+
+		mgr := onboarding.NewManager(home)
+		assert.False(t, mgr.IsOnboardingComplete(),
+			"onboarding_complete:false in state.json must return false")
+	})
+
+	// Row 4: state.json with onboarding_complete:true → true.
+	t.Run("state.json with onboarding_complete:true → true", func(t *testing.T) {
+		home := t.TempDir()
+		sysDir := filepath.Join(home, "system")
+		require.NoError(t, os.MkdirAll(sysDir, 0o755))
+		stateJSON := `{"version":1,"onboarding_complete":true}`
+		require.NoError(t, os.WriteFile(filepath.Join(sysDir, "state.json"), []byte(stateJSON), 0o600))
+
+		mgr := onboarding.NewManager(home)
+		assert.True(t, mgr.IsOnboardingComplete(),
+			"onboarding_complete:true in state.json must return true")
+	})
+
+	// Row 5: corrupt state.json → treat as fresh install (false).
+	t.Run("corrupt state.json → fresh install", func(t *testing.T) {
+		home := t.TempDir()
+		sysDir := filepath.Join(home, "system")
+		require.NoError(t, os.MkdirAll(sysDir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(sysDir, "state.json"), []byte("{bad json{{"), 0o600))
+
+		mgr := onboarding.NewManager(home)
+		assert.False(t, mgr.IsOnboardingComplete(),
+			"corrupt state.json must default to onboarding_complete=false")
+	})
 }
 
 // --------------------------------------------------------------------------
@@ -245,7 +287,23 @@ func TestOnboardingStateDetection(t *testing.T) {
 //
 // Traces to: wave5b-system-agent-spec.md line 629 (Scenario: Onboarding interrupted after provider saved)
 func TestOnboardingStateResume(t *testing.T) {
-	t.Skip("Blocked: pkg/onboarding.OnboardingDetector not yet implemented")
+	// Simulate onboarding interrupted: state.json exists but onboarding_complete=false.
+	// The Manager must detect this as "not complete" so the wizard re-opens.
+	home := t.TempDir()
+	sysDir := filepath.Join(home, "system")
+	require.NoError(t, os.MkdirAll(sysDir, 0o755))
+	// Partial state: onboarding started but not completed.
+	partialState := `{"version":1,"onboarding_complete":false}`
+	require.NoError(t, os.WriteFile(filepath.Join(sysDir, "state.json"), []byte(partialState), 0o600))
+
+	mgr := onboarding.NewManager(home)
+	assert.False(t, mgr.IsOnboardingComplete(),
+		"interrupted onboarding (complete=false) must resume wizard, not skip it")
+
+	// After the user completes onboarding, it must be marked complete.
+	require.NoError(t, mgr.CompleteOnboarding())
+	assert.True(t, mgr.IsOnboardingComplete(),
+		"after CompleteOnboarding(), wizard must not show again")
 }
 
 // --------------------------------------------------------------------------
@@ -256,7 +314,21 @@ func TestOnboardingStateResume(t *testing.T) {
 //
 // Traces to: wave5b-system-agent-spec.md line 652 (Scenario: Onboarding never shown again)
 func TestOnboardingNeverReshow(t *testing.T) {
-	t.Skip("Blocked: pkg/onboarding.OnboardingDetector not yet implemented")
+	home := t.TempDir()
+
+	// Step 1: Fresh install → onboarding required.
+	mgr := onboarding.NewManager(home)
+	assert.False(t, mgr.IsOnboardingComplete(), "fresh install must require onboarding")
+
+	// Step 2: Complete onboarding.
+	require.NoError(t, mgr.CompleteOnboarding())
+	assert.True(t, mgr.IsOnboardingComplete(), "after completion, onboarding must be marked done")
+
+	// Step 3: Load a NEW Manager from the same home directory — simulates app restart.
+	// onboarding_complete must be persisted to state.json so the wizard never reshows.
+	mgr2 := onboarding.NewManager(home)
+	assert.True(t, mgr2.IsOnboardingComplete(),
+		"after app restart, onboarding_complete=true must be read from state.json — wizard must NOT reshow")
 }
 
 // --------------------------------------------------------------------------

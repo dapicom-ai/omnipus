@@ -6,12 +6,10 @@ package gateway
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -50,8 +48,9 @@ type SSEHandler struct {
 }
 
 type sseSession struct {
-	ch     chan string // token chunks
-	doneCh chan struct{}
+	ch        chan string // token chunks
+	doneCh    chan struct{}
+	closeOnce sync.Once
 }
 
 func newSSEHandler(msgBus *bus.MessageBus, ps *session.PartitionStore, allowedOrigin string) *SSEHandler {
@@ -63,9 +62,9 @@ func newSSEHandler(msgBus *bus.MessageBus, ps *session.PartitionStore, allowedOr
 	}
 	// NOTE: Do NOT call msgBus.SetStreamDelegate(h) here.
 	// The WebSocket handler (Wave 5a) is the primary stream delegate.
-	// SSE is kept for backward compatibility but does not receive streaming tokens.
-	// Calling SetStreamDelegate with both SSE and WS types causes an atomic.Value
-	// type mismatch panic.
+	// SSE is kept for backward compatibility. It is not registered as the bus stream
+	// delegate (the channel Manager handles that), so it won't receive streaming tokens
+	// via the bus. GetStreamer is retained for potential direct-call use or future fallback.
 	return h
 }
 
@@ -84,27 +83,6 @@ func (h *SSEHandler) GetStreamer(ctx context.Context, channel, chatID string) (b
 	return &sseStreamer{sess: sess}, true
 }
 
-// checkBearerAuth validates the Authorization header against OMNIPUS_BEARER_TOKEN.
-// If the env var is unset, all requests are allowed (development mode).
-// Returns false and writes a 401 if the token is set but invalid.
-func checkBearerAuth(w http.ResponseWriter, r *http.Request) bool {
-	required := os.Getenv("OMNIPUS_BEARER_TOKEN")
-	if required == "" {
-		return true // auth not configured
-	}
-	auth := r.Header.Get("Authorization")
-	prefix := "Bearer "
-	if !strings.HasPrefix(auth, prefix) {
-		http.Error(w, "unauthorized: missing Bearer token", http.StatusUnauthorized)
-		return false
-	}
-	if subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(auth, prefix)), []byte(required)) != 1 {
-		http.Error(w, "unauthorized: invalid Bearer token", http.StatusUnauthorized)
-		return false
-	}
-	return true
-}
-
 // ServeHTTP handles POST /api/v1/chat and OPTIONS preflight.
 func (h *SSEHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	origin := h.allowedOrigin
@@ -112,7 +90,7 @@ func (h *SSEHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		origin = "http://localhost:3000"
 	}
 
-	// Item 6: handle CORS preflight before any auth or body parsing.
+	// Handle CORS preflight before auth or body parsing.
 	if r.Method == http.MethodOptions {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
@@ -179,7 +157,7 @@ func (h *SSEHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Check flusher support before committing headers (item 3: must happen before WriteHeader).
+	// Check flusher support before committing headers — no error responses possible after WriteHeader.
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)
@@ -232,7 +210,7 @@ func (h *SSEHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if partial := responseBuilder.String(); partial != "" {
 				h.recordAssistantMessageStatus(sessionID, partial, "interrupted")
 			} else if sessionID != "" && h.partitions != nil {
-				if err := h.partitions.SetStatus(sessionID, "interrupted"); err != nil {
+				if err := h.partitions.SetStatus(sessionID, session.StatusInterrupted); err != nil {
 					slog.Warn("sse: could not set session status interrupted",
 						"session_id", sessionID, "error", err)
 				}
@@ -297,9 +275,5 @@ func (s *sseStreamer) Finalize(_ context.Context, _ string) error {
 }
 
 func (s *sseStreamer) Cancel(_ context.Context) {
-	select {
-	case <-s.sess.doneCh:
-	default:
-		close(s.sess.doneCh)
-	}
+	s.sess.closeOnce.Do(func() { close(s.sess.doneCh) })
 }

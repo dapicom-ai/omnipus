@@ -420,8 +420,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 						al.channelManager.InvokeTypingStop(msg.Channel, msg.ChatID)
 					}
 				}()
-				// TODO: Re-enable media cleanup after inbound media is properly consumed by the agent.
-				// Currently disabled because files are deleted before the LLM can access their content.
+				// TODO(media-cleanup): Media file cleanup is disabled. Uploaded media files are not automatically deleted after use. Track in issue backlog.
 				// defer func() {
 				// 	if al.mediaStore != nil && msg.MediaScope != "" {
 				// 		if releaseErr := al.mediaStore.ReleaseAll(msg.MediaScope); releaseErr != nil {
@@ -3537,7 +3536,7 @@ func extractPeer(msg bus.InboundMessage) *routing.RoutePeer {
 			peerID = msg.ChatID
 		}
 	}
-	return &routing.RoutePeer{Kind: msg.Peer.Kind, ID: peerID}
+	return &routing.RoutePeer{Kind: string(msg.Peer.Kind), ID: peerID}
 }
 
 func inboundMetadata(msg bus.InboundMessage, key string) string {

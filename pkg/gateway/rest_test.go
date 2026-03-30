@@ -61,7 +61,6 @@ func newTestRestAPI(t *testing.T) (*restAPI, func()) {
 	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
 
 	api := &restAPI{
-		cfg:           cfg,
 		agentLoop:     al,
 		partitions:    nil,
 		allowedOrigin: "http://localhost:3000",
@@ -127,7 +126,7 @@ func TestHandleAgentsListIncludesConfiguredAgents(t *testing.T) {
 	}
 	msgBus := bus.NewMessageBus()
 	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
-	api := &restAPI{cfg: cfg, agentLoop: al}
+	api := &restAPI{agentLoop: al}
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil)
@@ -191,11 +190,9 @@ func TestHandleAgentsGetByIDNotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-// TestHandleAgentsCreateValidation verifies POST /api/v1/agents with empty name returns 422.
-// BDD: Given a create-agent request with name="",
-// When POST /api/v1/agents is called,
-// Then the response has status 422 and an error about name being required.
-// Traces to: wave5a-wire-ui-spec.md — Dataset: Agent Configuration row 2 (empty name → validation error)
+// TestHandleAgentsCreateValidation verifies POST /api/v1/agents returns 501.
+// Agent creation via API is not yet persisted — agents must be added to config.json.
+// Traces to: wave5a-wire-ui-spec.md — A3+A4: agent creation requires config.json restart
 func TestHandleAgentsCreateValidation(t *testing.T) {
 	api, cleanup := newTestRestAPI(t)
 	defer cleanup()
@@ -206,18 +203,15 @@ func TestHandleAgentsCreateValidation(t *testing.T) {
 	r.Header.Set("Content-Type", "application/json")
 	api.HandleAgents(w, r)
 
-	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+	assert.Equal(t, http.StatusNotImplemented, w.Code)
 
 	var resp map[string]string
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Contains(t, resp["error"], "name")
+	assert.Contains(t, resp["error"], "config.json")
 }
 
-// TestHandleAgentsCreate verifies POST /api/v1/agents with a valid name returns 201.
-// BDD: Given a create-agent request with name="Scout",
-// When POST /api/v1/agents is called,
-// Then the response has status 201 and id derived from the name.
-// Traces to: wave5a-wire-ui-spec.md — Scenario: Create a new custom agent (US-8 AC1)
+// TestHandleAgentsCreate verifies POST /api/v1/agents returns 501 (not yet persisted).
+// Traces to: wave5a-wire-ui-spec.md — A3+A4: agent creation requires config.json restart
 func TestHandleAgentsCreate(t *testing.T) {
 	api, cleanup := newTestRestAPI(t)
 	defer cleanup()
@@ -228,21 +222,15 @@ func TestHandleAgentsCreate(t *testing.T) {
 	r.Header.Set("Content-Type", "application/json")
 	api.HandleAgents(w, r)
 
-	assert.Equal(t, http.StatusCreated, w.Code)
+	assert.Equal(t, http.StatusNotImplemented, w.Code)
 
-	var resp struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-		Type string `json:"type"`
-	}
+	var resp map[string]string
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "scout", resp.ID, "id must be lowercased name")
-	assert.Equal(t, "Scout", resp.Name)
-	assert.Equal(t, "custom", resp.Type)
+	assert.Contains(t, resp["error"], "config.json")
 }
 
-// TestHandleAgentsCreateWithExplicitID verifies POST uses the provided ID if given.
-// Traces to: wave5a-wire-ui-spec.md — Scenario: Create a new custom agent (US-8 AC2)
+// TestHandleAgentsCreateWithExplicitID verifies POST /api/v1/agents returns 501 regardless of id.
+// Traces to: wave5a-wire-ui-spec.md — A3+A4: agent creation requires config.json restart
 func TestHandleAgentsCreateWithExplicitID(t *testing.T) {
 	api, cleanup := newTestRestAPI(t)
 	defer cleanup()
@@ -253,23 +241,17 @@ func TestHandleAgentsCreateWithExplicitID(t *testing.T) {
 	r.Header.Set("Content-Type", "application/json")
 	api.HandleAgents(w, r)
 
-	require.Equal(t, http.StatusCreated, w.Code)
-
-	var resp struct {
-		ID string `json:"id"`
-	}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "my-scout", resp.ID)
+	assert.Equal(t, http.StatusNotImplemented, w.Code)
 }
 
 // --- HandleSessions tests ---
 
 // TestHandleSessionsListNilPartitions verifies that when partitions is nil,
-// GET /api/v1/sessions returns 200 with an empty sessions array.
+// GET /api/v1/sessions returns 503 Service Unavailable.
 // BDD: Given the session store is not configured (nil),
 // When GET /api/v1/sessions is called,
-// Then the response has status 200 and sessions:[].
-// Traces to: wave5a-wire-ui-spec.md — Scenario: Session list returns empty when no store (US-15 AC1)
+// Then the response has status 503 and an error message.
+// Traces to: wave5a-wire-ui-spec.md — A12: nil partition store returns 503
 func TestHandleSessionsListNilPartitions(t *testing.T) {
 	api, cleanup := newTestRestAPI(t)
 	defer cleanup()
@@ -279,11 +261,11 @@ func TestHandleSessionsListNilPartitions(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/sessions", nil)
 	api.HandleSessions(w, r)
 
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
 
-	var sessions []any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &sessions))
-	assert.Empty(t, sessions, "sessions must be empty when partition store is nil")
+	var resp map[string]string
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp["error"], "unavailable")
 }
 
 // TestHandleSessionsGetNotFoundNilPartitions verifies 503 when store is nil and ID given.
@@ -358,14 +340,15 @@ func TestHandleDoctorReturnsOK(t *testing.T) {
 	assert.Contains(t, resp.Checks, "go_runtime")
 }
 
-// TestHandleDoctorMethodNotAllowed verifies non-GET returns 405.
+// TestHandleDoctorMethodNotAllowed verifies that methods other than GET and POST return 405.
+// POST is allowed (returns diagnostic result without checks). GET returns full detail.
 // Traces to: wave5a-wire-ui-spec.md — Dataset: Doctor endpoint — method validation
 func TestHandleDoctorMethodNotAllowed(t *testing.T) {
 	api, cleanup := newTestRestAPI(t)
 	defer cleanup()
 
 	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/doctor", nil)
+	r := httptest.NewRequest(http.MethodDelete, "/api/v1/doctor", nil)
 	api.HandleDoctor(w, r)
 
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)

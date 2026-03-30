@@ -65,7 +65,7 @@ func TestOnChatBotMessageReceived_GroupMentionOnlyUsesIsInAtListAndStripsMention
 	if inbound.ChatID != "group-abc" {
 		t.Fatalf("chat_id=%q", inbound.ChatID)
 	}
-	if inbound.Peer.Kind != "group" || inbound.Peer.ID != "group-abc" {
+	if inbound.Peer.Kind != bus.PeerGroup || inbound.Peer.ID != "group-abc" {
 		t.Fatalf("peer=%+v", inbound.Peer)
 	}
 	if inbound.Content != "/help" {
@@ -93,7 +93,7 @@ func TestOnChatBotMessageReceived_DirectFallbackSenderIDUsesConversationID(t *te
 	if inbound.ChatID != "conv-direct-42" {
 		t.Fatalf("chat_id=%q", inbound.ChatID)
 	}
-	if inbound.Peer.Kind != "direct" || inbound.Peer.ID != "openid-user-42" {
+	if inbound.Peer.Kind != bus.PeerDirect || inbound.Peer.ID != "openid-user-42" {
 		t.Fatalf("peer=%+v", inbound.Peer)
 	}
 	if inbound.SenderID != "dingtalk:openid-user-42" {

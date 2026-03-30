@@ -355,10 +355,10 @@ func (c *SlackChannel) handleMessageEvent(ev *slackevents.MessageEvent) {
 		return
 	}
 
-	peerKind := "channel"
+	peerKind := bus.PeerChannel
 	peerID := channelID
 	if strings.HasPrefix(channelID, "D") {
-		peerKind = "direct"
+		peerKind = bus.PeerDirect
 		peerID = senderID
 	}
 
@@ -426,10 +426,10 @@ func (c *SlackChannel) handleAppMention(ev *slackevents.AppMentionEvent) {
 		return
 	}
 
-	mentionPeerKind := "channel"
+	mentionPeerKind := bus.PeerChannel
 	mentionPeerID := channelID
 	if strings.HasPrefix(channelID, "D") {
-		mentionPeerKind = "direct"
+		mentionPeerKind = bus.PeerDirect
 		mentionPeerID = senderID
 	}
 
@@ -494,7 +494,7 @@ func (c *SlackChannel) handleSlashCommand(event socketmode.Event) {
 
 	c.HandleMessage(
 		c.ctx,
-		bus.Peer{Kind: "channel", ID: channelID},
+		bus.Peer{Kind: bus.PeerChannel, ID: channelID},
 		"",
 		senderID,
 		chatID,

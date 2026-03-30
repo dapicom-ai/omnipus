@@ -334,7 +334,7 @@ func (c *WeixinChannel) handleInboundMessage(ctx context.Context, msg WeixinMess
 		return
 	}
 
-	peer := bus.Peer{Kind: "direct", ID: fromUserID}
+	peer := bus.Peer{Kind: bus.PeerDirect, ID: fromUserID}
 
 	metadata := map[string]string{
 		"from_user_id":  fromUserID,

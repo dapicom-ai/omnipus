@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -16,6 +17,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/datamodel"
+	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/dingtalk"
@@ -63,8 +65,8 @@ type services struct {
 	ChannelManager   *channels.Manager
 	DeviceService    *devices.Service
 	HealthServer     *health.Server
-	// PartitionStore is the primary Omnipus day-partitioned session backend (US-5).
-	// Initialized per default agent workspace during setupAndStartServices.
+	// PartitionStore is the day-partitioned session backend for the primary agent.
+	// Initialized for the first configured agent (or 'default' if none configured).
 	PartitionStore   *session.PartitionStore
 	manualReloadChan chan struct{}
 	reloading        atomic.Bool
@@ -346,32 +348,47 @@ func setupAndStartServices(
 
 	allowedOrigin := fmt.Sprintf("http://%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
 
-	// Keep the Wave 1 SSE handler at /api/v1/chat for backward compatibility.
-	// The SSE endpoint no longer receives streaming tokens — those are now routed
-	// through the WebSocket handler registered below (Wave 5a).
+	// SSE chat endpoint — kept for backward compatibility; streaming tokens now route through WebSocket.
 	sseHandler := newSSEHandler(msgBus, runningServices.PartitionStore, allowedOrigin)
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/chat", sseHandler)
 
-	// Register WebSocket chat endpoint (Wave 5a: replaces SSE for streaming).
-	// Also overwrites the bus stream delegate so tokens route to WebSocket connections.
+	// WebSocket chat endpoint — primary transport for bi-directional chat streaming.
 	wsHandler := newWSHandler(msgBus, agentLoop, runningServices.PartitionStore, allowedOrigin)
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/chat/ws", wsHandler)
+	// Register WebSocket handler as stream fallback so streaming tokens route back for webchat.
+	runningServices.ChannelManager.SetStreamFallback(wsHandler)
+	// Register webchat as a channel so outbound messages (non-streaming) also route back.
+	runningServices.ChannelManager.RegisterChannel("webchat", &webchatChannel{wsHandler: wsHandler})
 
-	// Register REST API endpoints (Wave 5a: replaces 501 stubs from Wave 1).
+	// REST API endpoints for frontend data.
+	onboardingMgr := onboarding.NewManager(homePath)
 	api := &restAPI{
-		cfg:           cfg,
 		agentLoop:     agentLoop,
 		partitions:    runningServices.PartitionStore,
 		allowedOrigin: allowedOrigin,
+		onboardingMgr: onboardingMgr,
+		homePath:      homePath,
 	}
-	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions", http.HandlerFunc(api.HandleSessions))
-	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions/", http.HandlerFunc(api.HandleSessions))
-	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/agents", http.HandlerFunc(api.HandleAgents))
-	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/agents/", http.HandlerFunc(api.HandleAgents))
-	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/config", http.HandlerFunc(api.HandleConfig))
-	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/skills", http.HandlerFunc(api.HandleSkills))
-	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/skills/", http.HandlerFunc(api.HandleSkills))
-	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/doctor", http.HandlerFunc(api.HandleDoctor))
+	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions", api.withAuth(api.HandleSessions))
+	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions/", api.withAuth(api.HandleSessions))
+	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/agents", api.withAuth(api.HandleAgents))
+	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/agents/", api.withAuth(api.HandleAgents))
+	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/config", api.withAuth(api.HandleConfig))
+	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/skills", api.withAuth(api.HandleSkills))
+	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/skills/", api.withAuth(api.HandleSkills))
+	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/doctor", api.withAuth(api.HandleDoctor))
+
+	// Register additional endpoints for frontend features.
+	// These return proper JSON responses instead of letting the SPA catch-all
+	// serve HTML (which causes "Unexpected token '<'" JSON parse errors).
+	api.registerAdditionalEndpoints(runningServices.ChannelManager)
+
+	// Catch-all for any /api/ path not registered — returns JSON 404 instead of SPA HTML.
+	runningServices.ChannelManager.RegisterHTTPHandler("/api/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "endpoint not found", "path": r.URL.Path})
+	}))
 
 	// Serve the embedded SPA (Sovereign Deep UI) as the default handler.
 	// API routes registered above take priority; anything else serves the SPA.

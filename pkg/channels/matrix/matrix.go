@@ -731,10 +731,10 @@ func (c *MatrixChannel) handleMessageEvent(ctx context.Context, evt *event.Event
 		return
 	}
 
-	peerKind := "direct"
+	peerKind := bus.PeerDirect
 	peerID := senderID
 	if isGroup {
-		peerKind = "group"
+		peerKind = bus.PeerGroup
 		peerID = roomID
 	}
 

@@ -119,7 +119,7 @@ func TestSessionWriteIntegration(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, meta.ID, "session ID must be non-empty")
 	assert.True(t, len(meta.ID) > 0, "session must have a ULID-based ID")
-	assert.Equal(t, "active", meta.Status)
+	assert.Equal(t, StatusActive, meta.Status)
 	assert.Equal(t, "telegram", meta.Channel)
 
 	// Verify meta.json exists.

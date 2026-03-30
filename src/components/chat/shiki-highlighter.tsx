@@ -1,0 +1,78 @@
+// Shiki syntax highlighter adapter for @assistant-ui/react-markdown.
+// AssistantUI calls SyntaxHighlighter for every code block; CopyCodeHeader
+// renders the language label + copy button above each block.
+// Special case: language "mermaid" renders MermaidDiagram instead of Shiki.
+
+import { useState } from 'react'
+import { ShikiHighlighter } from 'react-shiki'
+import { Copy, Check } from '@phosphor-icons/react'
+import type { SyntaxHighlighterProps, CodeHeaderProps } from '@assistant-ui/react-markdown'
+import { MermaidDiagram } from './mermaid-renderer'
+
+// ── Syntax highlighter ────────────────────────────────────────────────────────
+
+export function SyntaxHighlighter({ language, code }: Omit<SyntaxHighlighterProps, 'node'>) {
+  if (language === 'mermaid') {
+    return <MermaidDiagram code={code} />
+  }
+
+  return (
+    <ShikiHighlighter
+      language={language || 'text'}
+      theme="vitesse-dark"
+      addDefaultStyles={false}
+      className="!bg-[var(--color-surface-2)] !rounded-b-md overflow-x-auto block w-full"
+      style={{
+        padding: '0.75rem 1rem',
+        fontSize: '11px',
+        lineHeight: '1.65',
+        fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+        margin: 0,
+      }}
+    >
+      {code}
+    </ShikiHighlighter>
+  )
+}
+
+// ── Copy button header ────────────────────────────────────────────────────────
+
+export function CopyCodeHeader({ language, code }: Omit<CodeHeaderProps, 'node'>) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(code)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Clipboard access denied — silently ignore
+    }
+  }
+
+  return (
+    <div className="flex items-center justify-between px-3 py-1.5 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] rounded-t-md">
+      <span className="text-[10px] text-[var(--color-muted)] font-mono uppercase tracking-wide">
+        {language || 'code'}
+      </span>
+      <button
+        type="button"
+        onClick={handleCopy}
+        className="flex items-center gap-1 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-secondary)] transition-colors"
+        aria-label="Copy code to clipboard"
+      >
+        {copied ? (
+          <>
+            <Check size={11} weight="bold" className="text-[var(--color-success)]" />
+            <span className="text-[var(--color-success)]">Copied!</span>
+          </>
+        ) : (
+          <>
+            <Copy size={11} />
+            <span>Copy</span>
+          </>
+        )}
+      </button>
+    </div>
+  )
+}

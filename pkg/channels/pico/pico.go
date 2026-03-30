@@ -539,7 +539,7 @@ func (c *PicoChannel) handleMessageSend(pc *picoConn, msg PicoMessage) {
 	chatID := "pico:" + sessionID
 	senderID := "pico-user"
 
-	peer := bus.Peer{Kind: "direct", ID: "pico:" + sessionID}
+	peer := bus.Peer{Kind: bus.PeerDirect, ID: "pico:" + sessionID}
 
 	metadata := map[string]string{
 		"platform":   "pico",

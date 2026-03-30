@@ -7,7 +7,10 @@ import { fetchAppState } from '@/lib/api'
 // /onboarding is also a sibling — no AppShell, no beforeLoad
 export const Route = createFileRoute('/_app')({
   beforeLoad: async () => {
-    const state = await fetchAppState().catch(() => null)
+    const state = await fetchAppState().catch((err: unknown) => {
+      console.warn('Could not fetch app state:', err)
+      return { onboarding_complete: true }
+    })
     if (state && !state.onboarding_complete) {
       throw redirect({ to: '/onboarding' })
     }

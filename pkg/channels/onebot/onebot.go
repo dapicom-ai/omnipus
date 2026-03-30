@@ -1003,12 +1003,12 @@ func (c *OneBotChannel) handleMessage(raw *oneBotRawEvent) {
 	switch raw.MessageType {
 	case "private":
 		chatID = "private:" + senderID
-		peer = bus.Peer{Kind: "direct", ID: senderID}
+		peer = bus.Peer{Kind: bus.PeerDirect, ID: senderID}
 
 	case "group":
 		groupIDStr := strconv.FormatInt(groupID, 10)
 		chatID = "group:" + groupIDStr
-		peer = bus.Peer{Kind: "group", ID: groupIDStr}
+		peer = bus.Peer{Kind: bus.PeerGroup, ID: groupIDStr}
 		metadata["group_id"] = groupIDStr
 
 		senderUserID, _ := parseJSONInt64(sender.UserID)

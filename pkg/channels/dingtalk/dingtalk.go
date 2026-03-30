@@ -187,9 +187,9 @@ func (c *DingTalkChannel) onChatBotMessageReceived(
 		if peerID == "" {
 			peerID = chatID
 		}
-		peer = bus.Peer{Kind: "direct", ID: peerID}
+		peer = bus.Peer{Kind: bus.PeerDirect, ID: peerID}
 	} else {
-		peer = bus.Peer{Kind: "group", ID: data.ConversationId}
+		peer = bus.Peer{Kind: bus.PeerGroup, ID: data.ConversationId}
 		isMentioned := data.IsInAtList
 		if isMentioned {
 			content = stripLeadingAtMentions(content)

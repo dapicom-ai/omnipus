@@ -454,9 +454,9 @@ func (c *FeishuChannel) handleMessageReceive(ctx context.Context, event *larkim.
 
 	var peer bus.Peer
 	if chatType == "p2p" {
-		peer = bus.Peer{Kind: "direct", ID: senderID}
+		peer = bus.Peer{Kind: bus.PeerDirect, ID: senderID}
 	} else {
-		peer = bus.Peer{Kind: "group", ID: chatID}
+		peer = bus.Peer{Kind: bus.PeerGroup, ID: chatID}
 
 		// Check if bot was mentioned
 		isMentioned := c.isBotMentioned(message)

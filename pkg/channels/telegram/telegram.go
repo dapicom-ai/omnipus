@@ -677,10 +677,10 @@ func (c *TelegramChannel) handleMessage(ctx context.Context, message *telego.Mes
 		"preview":   utils.Truncate(content, 50),
 	})
 
-	peerKind := "direct"
+	peerKind := bus.PeerDirect
 	peerID := fmt.Sprintf("%d", user.ID)
 	if message.Chat.Type != "private" {
-		peerKind = "group"
+		peerKind = bus.PeerGroup
 		peerID = compositeChatID
 	}
 

@@ -9,34 +9,12 @@ import {
 } from '@phosphor-icons/react'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Badge } from '@/components/ui/badge'
-import { fetchSkills, fetchMcpServers } from '@/lib/api'
-
-// Built-in tools list — static, derived from BRD Appendix D
-const BUILTIN_TOOLS = [
-  { name: 'exec', category: 'system', description: 'Execute shell commands' },
-  { name: 'file.read', category: 'system', description: 'Read file contents' },
-  { name: 'file.write', category: 'system', description: 'Write file contents' },
-  { name: 'file.list', category: 'system', description: 'List directory contents' },
-  { name: 'web_search', category: 'web', description: 'Search the web' },
-  { name: 'browser.navigate', category: 'web', description: 'Navigate to a URL' },
-  { name: 'browser.screenshot', category: 'web', description: 'Capture browser screenshot' },
-  { name: 'memory.read', category: 'memory', description: 'Read from agent memory' },
-  { name: 'memory.write', category: 'memory', description: 'Write to agent memory' },
-  { name: 'task.create', category: 'task', description: 'Create a new task' },
-  { name: 'task.update', category: 'task', description: 'Update task status' },
-]
-
-// Available channels (BRD Appendix B)
-const CHANNEL_DEFS = [
-  { id: 'whatsapp', name: 'WhatsApp', transport: 'Go (compiled in)', description: 'WhatsApp messaging via whatsmeow' },
-  { id: 'discord', name: 'Discord', transport: 'Go (compiled in)', description: 'Discord bot integration' },
-  { id: 'telegram', name: 'Telegram', transport: 'Go (compiled in)', description: 'Telegram bot integration' },
-  { id: 'slack', name: 'Slack', transport: 'Go (compiled in)', description: 'Slack app integration' },
-  { id: 'nostr', name: 'Nostr', transport: 'Go (compiled in)', description: 'Nostr protocol integration' },
-  { id: 'browser', name: 'Browser', transport: 'Go (compiled in)', description: 'Chromedp browser automation' },
-]
+import { fetchSkills, fetchMcpServers, fetchTools, fetchChannels } from '@/lib/api'
+import { useUiStore } from '@/store/ui'
 
 function SkillsScreen() {
+  const { addToast } = useUiStore()
+
   const { data: skills = [], isLoading: skillsLoading } = useQuery({
     queryKey: ['skills'],
     queryFn: fetchSkills,
@@ -45,6 +23,16 @@ function SkillsScreen() {
   const { data: mcpServers = [], isLoading: mcpLoading } = useQuery({
     queryKey: ['mcp-servers'],
     queryFn: fetchMcpServers,
+  })
+
+  const { data: tools = [], isLoading: toolsLoading } = useQuery({
+    queryKey: ['tools'],
+    queryFn: fetchTools,
+  })
+
+  const { data: channels = [], isLoading: channelsLoading } = useQuery({
+    queryKey: ['channels'],
+    queryFn: fetchChannels,
   })
 
   return (
@@ -149,49 +137,65 @@ function SkillsScreen() {
 
         {/* Channels */}
         <TabsContent value="channels">
-          <div className="space-y-2">
-            {CHANNEL_DEFS.map((channel) => (
-              <div
-                key={channel.id}
-                className="flex items-center gap-3 p-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)]"
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium text-sm text-[var(--color-secondary)]">{channel.name}</span>
-                    <Badge variant="outline" className="text-[10px] font-mono">{channel.transport}</Badge>
-                    <Badge variant="muted" className="text-[10px]">Available</Badge>
-                  </div>
-                  <p className="text-xs text-[var(--color-muted)] mt-1">{channel.description}</p>
-                </div>
-                <button
-                  type="button"
-                  className="text-xs text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors shrink-0"
+          {channelsLoading ? (
+            <SkeletonList />
+          ) : channels.length === 0 ? (
+            <EmptyState icon={<Hash size={40} weight="thin" />} message="No channels configured." />
+          ) : (
+            <div className="space-y-2">
+              {channels.map((channel) => (
+                <div
+                  key={channel.id}
+                  className="flex items-center gap-3 p-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)]"
                 >
-                  Enable
-                </button>
-              </div>
-            ))}
-          </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium text-sm text-[var(--color-secondary)]">{channel.name}</span>
+                      <Badge variant="outline" className="text-[10px] font-mono">{channel.transport}</Badge>
+                      <Badge variant={channel.enabled ? 'success' : 'muted'} className="text-[10px]">
+                        {channel.enabled ? 'Enabled' : 'Available'}
+                      </Badge>
+                    </div>
+                  </div>
+                  {!channel.enabled && (
+                    <button
+                      type="button"
+                      onClick={() => addToast({ message: 'Configure in config.json and restart the gateway', variant: 'default' })}
+                      className="text-xs text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors shrink-0"
+                    >
+                      Enable
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </TabsContent>
 
         {/* Built-in tools */}
         <TabsContent value="builtins">
-          <div className="space-y-1.5">
-            {BUILTIN_TOOLS.map((tool) => (
-              <div
-                key={tool.name}
-                className="flex items-center gap-3 px-4 py-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)]"
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-xs text-[var(--color-secondary)]">{tool.name}</span>
-                    <Badge variant="muted" className="text-[10px]">{tool.category}</Badge>
+          {toolsLoading ? (
+            <SkeletonList />
+          ) : tools.length === 0 ? (
+            <EmptyState icon={<Wrench size={40} weight="thin" />} message="No tools available." />
+          ) : (
+            <div className="space-y-1.5">
+              {tools.map((tool) => (
+                <div
+                  key={tool.name}
+                  className="flex items-center gap-3 px-4 py-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)]"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-xs text-[var(--color-secondary)]">{tool.name}</span>
+                      <Badge variant="muted" className="text-[10px]">{tool.category}</Badge>
+                    </div>
+                    <p className="text-[10px] text-[var(--color-muted)] mt-0.5">{tool.description}</p>
                   </div>
-                  <p className="text-[10px] text-[var(--color-muted)] mt-0.5">{tool.description}</p>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </TabsContent>
       </Tabs>
     </div>

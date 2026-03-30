@@ -76,9 +76,9 @@ func skillsInstallCmd(installer *skills.SkillInstaller, repo string) error {
 // skillTrustFromConfig returns the effective SkillTrustPolicy from the sandbox config.
 func skillTrustFromConfig(cfg *config.Config) policy.SkillTrustPolicy {
 	switch cfg.Sandbox.SkillTrust {
-	case string(policy.SkillTrustBlockUnverified):
+	case config.SkillTrustBlockUnverified:
 		return policy.SkillTrustBlockUnverified
-	case string(policy.SkillTrustAllowAll):
+	case config.SkillTrustAllowAll:
 		return policy.SkillTrustAllowAll
 	default:
 		return policy.SkillTrustWarnUnverified

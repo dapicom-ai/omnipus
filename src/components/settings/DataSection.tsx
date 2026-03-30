@@ -44,7 +44,12 @@ export function DataSection() {
       queryClient.invalidateQueries({ queryKey: ['config'] })
       addToast({ message: 'Data settings saved', variant: 'success' })
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: Error) => addToast({
+      message: err.message.includes('501')
+        ? 'Settings changes require editing config.json and restarting the gateway'
+        : err.message,
+      variant: 'error',
+    }),
   })
 
   const isLoading = configLoading || statsLoading

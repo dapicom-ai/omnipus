@@ -41,7 +41,7 @@ func (t *DoctorRunTool) Execute(_ context.Context, _ map[string]any) *tools.Tool
 	// Check exec egress via the existing security.CheckExecEgress function.
 	execCfg := security.DiagnosticConfig{
 		ExecToolEnabled:     t.deps.Cfg.Tools.IsToolEnabled("exec"),
-		ExecProxyEnabled:    false, // TODO: query gateway for exec proxy status
+		ExecProxyEnabled:    false, // TODO(exec-proxy): Wire when exec proxy is implemented. Currently returns stub data.
 		ExecAllowedBinaries: t.deps.Cfg.Tools.Exec.AllowedBinaries,
 	}
 	for _, w := range security.CheckExecEgress(execCfg) {
@@ -137,7 +137,7 @@ func (t *BackupCreateTool) Execute(_ context.Context, args map[string]any) *tool
 		suffix = ".tar.enc"
 	}
 	backupPath := filepath.Join(backupsDir, fmt.Sprintf("omnipus-backup-%s%s", timestamp, suffix))
-	// Actual tar creation is a future implementation. Return path for UI.
+	// Stub: returns the planned backup path but does not create the archive yet.
 	return tools.NewToolResult(successJSON(map[string]any{
 		"path":       backupPath,
 		"size_bytes": 0,

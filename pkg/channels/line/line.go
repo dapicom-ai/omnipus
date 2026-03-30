@@ -369,9 +369,9 @@ func (c *LINEChannel) processEvent(event lineEvent) {
 
 	var peer bus.Peer
 	if isGroup {
-		peer = bus.Peer{Kind: "group", ID: chatID}
+		peer = bus.Peer{Kind: bus.PeerGroup, ID: chatID}
 	} else {
-		peer = bus.Peer{Kind: "direct", ID: senderID}
+		peer = bus.Peer{Kind: bus.PeerDirect, ID: senderID}
 	}
 
 	logger.DebugCF("line", "Received message", map[string]any{

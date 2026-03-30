@@ -415,9 +415,9 @@ func (c *WhatsAppNativeChannel) handleIncoming(evt *events.Message) {
 		metadata["peer_id"] = senderID
 	}
 
-	peerKind := "direct"
+	peerKind := bus.PeerDirect
 	if evt.Info.Chat.Server == types.GroupServer {
-		peerKind = "group"
+		peerKind = bus.PeerGroup
 	}
 	peer := bus.Peer{Kind: peerKind, ID: chatID}
 	messageID := evt.Info.ID

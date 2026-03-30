@@ -23,6 +23,30 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/fileutil"
 )
 
+// EntryType classifies a transcript entry.
+type EntryType string
+
+const (
+	// EntryTypeMessage is the default entry type for a user or assistant chat turn.
+	EntryTypeMessage EntryType = "message"
+	// EntryTypeCompaction marks a context-compaction summary entry.
+	EntryTypeCompaction EntryType = "compaction"
+	// EntryTypeSystem marks a system-level event entry.
+	EntryTypeSystem EntryType = "system"
+)
+
+// SessionStatus classifies the lifecycle state of a session.
+type SessionStatus string
+
+const (
+	// StatusActive is a session that is currently in use.
+	StatusActive SessionStatus = "active"
+	// StatusArchived is a session that has been intentionally closed.
+	StatusArchived SessionStatus = "archived"
+	// StatusInterrupted is a session that was terminated unexpectedly or cancelled.
+	StatusInterrupted SessionStatus = "interrupted"
+)
+
 // PartitionStore manages day-partitioned JSONL session transcripts per Appendix E §E.5.
 type PartitionStore struct {
 	mu      sync.Mutex
@@ -43,7 +67,7 @@ type SessionMeta struct {
 	ID         string       `json:"id"`
 	AgentID    string       `json:"agent_id"`
 	Title      string       `json:"title,omitempty"`
-	Status     string       `json:"status"` // "active" | "archived"
+	Status     SessionStatus `json:"status"` // StatusActive | StatusArchived | StatusInterrupted
 	CreatedAt  time.Time    `json:"created_at"`
 	UpdatedAt  time.Time    `json:"updated_at"`
 	Model      string       `json:"model,omitempty"`
@@ -70,7 +94,7 @@ type SessionStats struct {
 // TranscriptEntry represents one line in a partition JSONL file.
 type TranscriptEntry struct {
 	ID          string        `json:"id"`
-	Type        string        `json:"type,omitempty"` // "message" | "compaction" | "system"; empty = message
+	Type        EntryType     `json:"type,omitempty"` // EntryTypeMessage | EntryTypeCompaction | EntryTypeSystem; empty = message
 	Role        string        `json:"role,omitempty"` // "user" | "assistant" | "system"
 	Content     string        `json:"content,omitempty"`
 	Summary     string        `json:"summary,omitempty"` // for compaction entries
@@ -128,7 +152,7 @@ func (ps *PartitionStore) NewSession(channel, model, provider string) (*SessionM
 	meta := &SessionMeta{
 		ID:        sessionID,
 		AgentID:   ps.agentID,
-		Status:    "active",
+		Status:    StatusActive,
 		CreatedAt: now,
 		UpdatedAt: now,
 		Model:     model,
@@ -191,7 +215,7 @@ func (ps *PartitionStore) AppendMessage(sessionID string, entry TranscriptEntry)
 	meta.Stats.TokensTotal += entry.Tokens
 	meta.Stats.Cost += entry.Cost
 	meta.Stats.ToolCalls += len(entry.ToolCalls)
-	if entry.Type == "" || entry.Type == "message" {
+	if entry.Type == "" || entry.Type == EntryTypeMessage {
 		meta.Stats.MessageCount++
 	}
 	meta.UpdatedAt = ts
@@ -222,8 +246,8 @@ func (ps *PartitionStore) UpdateStats(sessionID string, delta SessionStats) erro
 	return writeMeta(sessionDir, meta)
 }
 
-// SetStatus updates the session status (e.g., "archived", "interrupted").
-func (ps *PartitionStore) SetStatus(sessionID, status string) error {
+// SetStatus updates the session status.
+func (ps *PartitionStore) SetStatus(sessionID string, status SessionStatus) error {
 	ps.mu.Lock()
 	defer ps.mu.Unlock()
 

@@ -32,8 +32,10 @@ export function SessionBar() {
     queryFn: fetchAgents,
   })
 
-  const activeAgent = agents.find((a) => a.id === activeAgentId)
-  const chatAgents = agents.filter((a) => a.type !== 'system')
+  // Auto-select first agent if none is active
+  const effectiveAgentId = activeAgentId || agents[0]?.id
+  const activeAgent = agents.find((a) => a.id === effectiveAgentId)
+  const chatAgents = agents.length <= 1 ? agents : agents.filter((a) => a.type !== 'system')
 
   const handleAgentSelect = (agentId: string) => {
     // Switch agent — start new session
@@ -82,7 +84,7 @@ export function SessionBar() {
                   : agent.name.charAt(0).toUpperCase()}
               </div>
               <span className="truncate">{agent.name}</span>
-              {agent.id === activeAgentId && (
+              {agent.id === effectiveAgentId && (
                 <span className="ml-auto text-[var(--color-success)] text-[10px]">active</span>
               )}
             </DropdownMenuItem>

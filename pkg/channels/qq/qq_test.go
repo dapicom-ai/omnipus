@@ -165,7 +165,7 @@ func TestHandleGroupATMessage_AttachmentOnlyPublishesMedia(t *testing.T) {
 	if !strings.HasPrefix(inbound.Media[0], "media://") {
 		t.Fatalf("inbound.Media[0] = %q, want media:// ref", inbound.Media[0])
 	}
-	if inbound.Peer.Kind != "group" || inbound.Peer.ID != "group-1" {
+	if inbound.Peer.Kind != bus.PeerGroup || inbound.Peer.ID != "group-1" {
 		t.Fatalf("inbound.Peer = %+v, want group/group-1", inbound.Peer)
 	}
 }

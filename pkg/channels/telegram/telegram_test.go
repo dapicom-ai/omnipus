@@ -552,7 +552,7 @@ func TestHandleMessage_ForumTopic_SetsMetadata(t *testing.T) {
 	assert.Equal(t, "-1001234567890/42", inbound.ChatID)
 
 	// Peer ID should include thread ID for session key isolation
-	assert.Equal(t, "group", inbound.Peer.Kind)
+	assert.Equal(t, bus.PeerGroup, inbound.Peer.Kind)
 	assert.Equal(t, "-1001234567890/42", inbound.Peer.ID)
 
 	// Parent peer metadata should be set for agent binding
@@ -591,7 +591,7 @@ func TestHandleMessage_NoForum_NoThreadMetadata(t *testing.T) {
 	assert.Equal(t, "-100999", inbound.ChatID)
 
 	// Peer ID should be raw chat ID (no thread suffix)
-	assert.Equal(t, "group", inbound.Peer.Kind)
+	assert.Equal(t, bus.PeerGroup, inbound.Peer.Kind)
 	assert.Equal(t, "-100999", inbound.Peer.ID)
 
 	// No parent peer metadata
@@ -634,7 +634,7 @@ func TestHandleMessage_ReplyThread_NonForum_NoIsolation(t *testing.T) {
 	assert.Equal(t, "-100999", inbound.ChatID)
 
 	// Peer ID should be raw chat ID (shared session for whole group)
-	assert.Equal(t, "group", inbound.Peer.Kind)
+	assert.Equal(t, bus.PeerGroup, inbound.Peer.Kind)
 	assert.Equal(t, "-100999", inbound.Peer.ID)
 
 	// No parent peer metadata

@@ -134,7 +134,12 @@ function LandingPage() {
               <GithubLogo size={16} />
               GitHub
             </a>
-            <a href="#docs" className="hover:text-[var(--color-secondary)] transition-colors">
+            <a
+              href="https://github.com/dapicom-ai/omnipus"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hover:text-[var(--color-secondary)] transition-colors"
+            >
               Documentation
             </a>
           </div>

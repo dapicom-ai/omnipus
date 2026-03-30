@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -89,6 +91,8 @@ func newWSHandler(
 		allowedOrigin: allowedOrigin,
 		sessions:      make(map[string]*wsConn),
 		upgrader: websocket.Upgrader{
+			// CheckOrigin: parses the Origin URL and compares hostname against the request
+			// Host to allow same-origin requests. Also allows localhost/127.0.0.1 for development.
 			CheckOrigin: func(r *http.Request) bool {
 				origin := r.Header.Get("Origin")
 				if origin == "" {
@@ -97,14 +101,23 @@ func newWSHandler(
 				if allowedOrigin != "" && origin == allowedOrigin {
 					return true
 				}
-				// Allow same-origin requests (SPA embedded in gateway).
-				// The origin host should match the request Host header.
-				if r.Host != "" && strings.Contains(origin, r.Host) {
-					return true
+				parsed, err := url.Parse(origin)
+				if err != nil {
+					return false
 				}
-				// Always allow localhost origins for development.
-				return strings.HasPrefix(origin, "http://localhost") ||
-					strings.HasPrefix(origin, "http://127.0.0.1")
+				hostname := parsed.Hostname()
+				// Allow same-origin: Origin hostname matches the request Host.
+				if r.Host != "" {
+					hostOnly := r.Host
+					if h, _, err := net.SplitHostPort(r.Host); err == nil {
+						hostOnly = h
+					}
+					if hostname == hostOnly {
+						return true
+					}
+				}
+				// Allow localhost and loopback for development.
+				return hostname == "localhost" || hostname == "127.0.0.1"
 			},
 		},
 	}
@@ -311,7 +324,7 @@ func (h *WSHandler) handleCancel(sessionID *string) {
 		slog.Debug("ws: cancel — no active turn", "error", err)
 	}
 	if h.partitions != nil && sessionID != nil && *sessionID != "" {
-		if err := h.partitions.SetStatus(*sessionID, "interrupted"); err != nil {
+		if err := h.partitions.SetStatus(*sessionID, session.StatusInterrupted); err != nil {
 			slog.Warn("ws: could not mark session interrupted", "session_id", *sessionID, "error", err)
 		}
 	}
@@ -320,6 +333,7 @@ func (h *WSHandler) handleCancel(sessionID *string) {
 // wsPingMsg is a nil sentinel enqueued by pingPump to signal writePump to send a WebSocket ping.
 // Using a sentinel through sendCh ensures all writes go through the single writer goroutine,
 // satisfying gorilla/websocket's single-writer requirement (fix for gorilla write race).
+// Important: do not pass nil []byte through sendCh for any other purpose — nil is reserved as the ping sentinel.
 var wsPingMsg []byte = nil
 
 // writePump is the single goroutine that writes all frames to the WebSocket connection.

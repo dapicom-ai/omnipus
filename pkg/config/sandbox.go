@@ -4,6 +4,18 @@
 
 package config
 
+// SkillTrustLevel controls how skills without a verifiable SHA-256 hash are handled (SEC-09).
+type SkillTrustLevel string
+
+const (
+	// SkillTrustBlockUnverified blocks installation when hash cannot be verified.
+	SkillTrustBlockUnverified SkillTrustLevel = "block_unverified"
+	// SkillTrustWarnUnverified warns but allows unverified installs (default).
+	SkillTrustWarnUnverified SkillTrustLevel = "warn_unverified"
+	// SkillTrustAllowAll skips all hash verification. omnipus doctor warns when set.
+	SkillTrustAllowAll SkillTrustLevel = "allow_all"
+)
+
 // OmnipusSandboxConfig holds Wave 2 kernel-level sandboxing configuration per
 // BRD SEC-01 through SEC-20 (Landlock, seccomp, Job Objects, RBAC, audit log).
 //
@@ -32,7 +44,7 @@ type OmnipusSandboxConfig struct {
 	AuditLog bool `json:"audit_log,omitempty"`
 
 	// SkillTrust controls how skills without a verifiable SHA-256 hash are handled (SEC-09).
-	// Valid values: "block_unverified", "warn_unverified" (default), "allow_all".
-	// "allow_all" disables hash verification and triggers an omnipus doctor warning.
-	SkillTrust string `json:"skill_trust,omitempty"`
+	// Valid values: SkillTrustBlockUnverified, SkillTrustWarnUnverified (default), SkillTrustAllowAll.
+	// SkillTrustAllowAll disables hash verification and triggers an omnipus doctor warning.
+	SkillTrust SkillTrustLevel `json:"skill_trust,omitempty"`
 }

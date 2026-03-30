@@ -1,0 +1,90 @@
+// rehype-phosphor-emoji — rehype plugin that replaces common emoji in text nodes
+// with <span data-phosphor-icon="IconName"> elements for Phosphor icon rendering.
+// Wire into MarkdownText's rehypePlugins and add a custom span component renderer.
+
+import type { Plugin } from 'unified'
+import type { Root, Element, Text, RootContent } from 'hast'
+import { visit } from 'unist-util-visit'
+
+// Emoji → Phosphor icon name map
+const EMOJI_MAP: Record<string, string> = {
+  '✅': 'CheckCircle',
+  '✓': 'CheckCircle',
+  '☑': 'CheckCircle',
+  '⚠️': 'Warning',
+  '⚠': 'Warning',
+  'ℹ️': 'Info',
+  'ℹ': 'Info',
+  '❌': 'XCircle',
+  '✗': 'XCircle',
+  '✘': 'XCircle',
+  '📁': 'Folder',
+  '📂': 'FolderOpen',
+  '📄': 'File',
+  '📃': 'FileText',
+  '💻': 'Terminal',
+  '🖥️': 'Desktop',
+  '🌐': 'Globe',
+  '🔒': 'Lock',
+  '🔓': 'LockOpen',
+  '⭐': 'Star',
+  '🌟': 'Star',
+  '🚀': 'Rocket',
+  '⚙️': 'Gear',
+  '⚙': 'Gear',
+  '🔧': 'Wrench',
+}
+
+// Build a regex that matches any of the keys (order matters — longer first)
+const sortedKeys = Object.keys(EMOJI_MAP).sort((a, b) => b.length - a.length)
+const EMOJI_REGEX = new RegExp(
+  sortedKeys.map((e) => e.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'),
+  'g',
+)
+
+function textToNodes(value: string): (Text | Element)[] {
+  const result: (Text | Element)[] = []
+  let cursor = 0
+  let match: RegExpExecArray | null
+
+  EMOJI_REGEX.lastIndex = 0
+  while ((match = EMOJI_REGEX.exec(value)) !== null) {
+    const iconName = EMOJI_MAP[match[0]]
+    if (!iconName) continue
+
+    if (match.index > cursor) {
+      result.push({ type: 'text', value: value.slice(cursor, match.index) })
+    }
+
+    result.push({
+      type: 'element',
+      tagName: 'span',
+      properties: { 'data-phosphor-icon': iconName },
+      children: [],
+    } as Element)
+
+    cursor = match.index + match[0].length
+  }
+
+  if (cursor < value.length) {
+    result.push({ type: 'text', value: value.slice(cursor) })
+  }
+
+  return result
+}
+
+export const rehypePhosphorEmoji: Plugin<[], Root> = () => {
+  return (tree) => {
+    visit(tree, 'text', (node: Text, index, parent) => {
+      if (typeof index !== 'number' || !parent) return
+      if (!EMOJI_REGEX.test(node.value)) return
+
+      const nodes = textToNodes(node.value)
+      if (nodes.length <= 1) return
+
+      parent.children.splice(index, 1, ...(nodes as RootContent[]))
+      // Return the new index to avoid revisiting replaced nodes
+      return index + nodes.length
+    })
+  }
+}

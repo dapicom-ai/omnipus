@@ -1,9 +1,21 @@
 package bus
 
+// PeerKind classifies the routing peer type for a message.
+type PeerKind string
+
+const (
+	// PeerDirect is a one-on-one direct message conversation.
+	PeerDirect PeerKind = "direct"
+	// PeerGroup is a multi-user group chat.
+	PeerGroup PeerKind = "group"
+	// PeerChannel is a broadcast channel (e.g. Slack channel, IRC channel).
+	PeerChannel PeerKind = "channel"
+)
+
 // Peer identifies the routing peer for a message (direct, group, channel, etc.)
 type Peer struct {
-	Kind string `json:"kind"` // "direct" | "group" | "channel" | ""
-	ID   string `json:"id"`
+	Kind PeerKind `json:"kind"` // PeerDirect | PeerGroup | PeerChannel | ""
+	ID   string   `json:"id"`
 }
 
 // SenderInfo provides structured sender identity information.
@@ -16,8 +28,9 @@ type SenderInfo struct {
 }
 
 type InboundMessage struct {
-	Channel    string            `json:"channel"`
-	SenderID   string            `json:"sender_id"`
+	Channel  string `json:"channel"`
+	// Deprecated: use Sender.CanonicalID instead. Retained for backward compatibility.
+	SenderID string `json:"sender_id"`
 	Sender     SenderInfo        `json:"sender"`
 	ChatID     string            `json:"chat_id"`
 	Content    string            `json:"content"`

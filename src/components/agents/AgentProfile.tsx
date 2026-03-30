@@ -57,7 +57,12 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
       queryClient.invalidateQueries({ queryKey: ['agents'] })
       addToast({ message: 'Agent saved', variant: 'success' })
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: Error) => addToast({
+      message: err.message.includes('501')
+        ? 'Agent changes require editing config.json and restarting the gateway'
+        : err.message,
+      variant: 'error',
+    }),
   })
 
   if (isLoading) {

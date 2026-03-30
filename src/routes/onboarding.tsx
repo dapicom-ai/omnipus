@@ -17,6 +17,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { configureProvider, testProvider, completeOnboarding } from '@/lib/api'
 import OmnipusAvatar from '@/assets/logo/omnipus-avatar.svg?url'
+import { PROVIDER_HINTS } from '@/lib/constants'
+import { useUiStore } from '@/store/ui'
 
 // US-7: First-launch onboarding flow — full-screen, outside AppShell
 // US-8: Provider setup with API key input + test connection
@@ -25,11 +27,11 @@ type Step = 1 | 2 | 3
 type TestStatus = 'idle' | 'testing' | 'success' | 'error'
 
 const PROVIDERS = [
-  { id: 'anthropic', label: 'Anthropic', hint: 'sk-ant-api03-...' },
-  { id: 'openrouter', label: 'OpenRouter', hint: 'sk-or-v1-...' },
-  { id: 'openai', label: 'OpenAI', hint: 'sk-proj-...' },
-  { id: 'google', label: 'Google Gemini', hint: 'AIza...' },
-  { id: 'groq', label: 'Groq', hint: 'gsk_...' },
+  { id: 'anthropic', display_name: 'Anthropic' },
+  { id: 'openrouter', display_name: 'OpenRouter' },
+  { id: 'openai', display_name: 'OpenAI' },
+  { id: 'google', display_name: 'Google Gemini' },
+  { id: 'groq', display_name: 'Groq' },
 ]
 
 const WELCOME_FEATURES = [
@@ -52,6 +54,7 @@ const stepVariants = {
 
 function OnboardingWizard() {
   const navigate = useNavigate()
+  const { addToast } = useUiStore()
 
   const [step, setStep] = useState<Step>(1)
   const [direction, setDirection] = useState(1)
@@ -63,6 +66,7 @@ function OnboardingWizard() {
   const [isSaving, setIsSaving] = useState(false)
 
   const providerDef = PROVIDERS.find((p) => p.id === selectedProvider)
+  const providerHintText = selectedProvider ? PROVIDER_HINTS[selectedProvider] : undefined
 
   const goTo = (next: Step) => {
     setDirection(next > step ? 1 : -1)
@@ -108,7 +112,7 @@ function OnboardingWizard() {
     try {
       await completeOnboarding()
     } catch {
-      // Don't block navigation if state update fails
+      addToast({ message: 'Could not save onboarding state', variant: 'error' })
     } finally {
       setIsSaving(false)
     }
@@ -117,7 +121,11 @@ function OnboardingWizard() {
 
   // US-7: Skip option for advanced users
   const handleSkip = async () => {
-    await completeOnboarding().catch(() => undefined)
+    try {
+      await completeOnboarding()
+    } catch {
+      addToast({ message: 'Could not save onboarding state', variant: 'error' })
+    }
     navigate({ to: '/' })
   }
 
@@ -203,7 +211,7 @@ function OnboardingWizard() {
                 onTest={handleTest}
                 onBack={() => goTo(1)}
                 onContinue={() => goTo(3)}
-                providerHint={providerDef?.hint}
+                providerHint={providerHintText}
               />
             </motion.div>
           )}
@@ -218,7 +226,7 @@ function OnboardingWizard() {
               transition={{ duration: 0.22, ease: 'easeInOut' }}
             >
               <DoneStep
-                providerName={providerDef?.label ?? selectedProvider}
+                providerName={providerDef?.display_name ?? selectedProvider}
                 isSaving={isSaving}
                 onFinish={handleFinish}
               />
@@ -393,7 +401,7 @@ function ProviderStep({
                   }
             }
           >
-            {p.label}
+            {p.display_name}
           </button>
         ))}
       </div>

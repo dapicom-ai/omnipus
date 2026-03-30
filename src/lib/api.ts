@@ -79,6 +79,35 @@ export interface Session {
   total_cost?: number
 }
 
+interface RawSession {
+  id: string
+  agent_id: string
+  title: string
+  created_at: string
+  updated_at: string
+  stats?: {
+    tokens_in: number
+    tokens_out: number
+    tokens_total: number
+    cost: number
+    tool_calls: number
+    message_count: number
+  }
+}
+
+function rawToSession(raw: RawSession): Session {
+  return {
+    id: raw.id,
+    agent_id: raw.agent_id,
+    title: raw.title,
+    created_at: raw.created_at,
+    updated_at: raw.updated_at,
+    message_count: raw.stats?.message_count ?? 0,
+    total_tokens: raw.stats?.tokens_total,
+    total_cost: raw.stats?.cost,
+  }
+}
+
 export interface Message {
   id: string
   session_id?: string
@@ -101,9 +130,10 @@ export interface ToolCall {
   error?: string
 }
 
-export function fetchSessions(agentId?: string): Promise<Session[]> {
+export async function fetchSessions(agentId?: string): Promise<Session[]> {
   const qs = agentId ? `?agent_id=${agentId}` : ''
-  return request<Session[]>(`/sessions${qs}`)
+  const raw = await request<RawSession[]>(`/sessions${qs}`)
+  return raw.map(rawToSession)
 }
 
 export function fetchSessionMessages(sessionId: string): Promise<Message[]> {
@@ -119,6 +149,9 @@ export function createSession(agentId: string): Promise<Session> {
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
+// Note: this interface matches the transformed config, not the raw backend response.
+// The raw backend Config has gateway.host/port with no auth_mode or security section.
+// fetchConfig() maps the raw response to this shape via rawToFrontendConfig().
 export interface Config {
   gateway: {
     bind_address: string
@@ -141,8 +174,31 @@ export interface Config {
   }
 }
 
-export function fetchConfig(): Promise<Config> {
-  return request<Config>('/config')
+function rawToFrontendConfig(raw: Record<string, unknown>): Config {
+  const gateway = (raw.gateway ?? {}) as Record<string, unknown>
+  const storage = (raw.storage ?? {}) as Record<string, unknown>
+  const retention = (storage.retention ?? {}) as Record<string, unknown>
+  return {
+    gateway: {
+      bind_address: (gateway.host as string) ?? '127.0.0.1',
+      port: (gateway.port as number) ?? 8080,
+      auth_mode: 'none',
+    },
+    security: {
+      policy_mode: 'deny',
+      exec_approval: 'ask',
+      prompt_injection_level: 'medium',
+      rate_limits: {},
+    },
+    data: {
+      session_retention_days: (retention.session_days as number) ?? 90,
+    },
+  }
+}
+
+export async function fetchConfig(): Promise<Config> {
+  const raw = await request<Record<string, unknown>>('/config')
+  return rawToFrontendConfig(raw)
 }
 
 export function updateConfig(data: Partial<Config>): Promise<Config> {
@@ -217,6 +273,29 @@ export interface GatewayStatus {
 
 export function fetchGatewayStatus(): Promise<GatewayStatus> {
   return request<GatewayStatus>('/status')
+}
+
+// ── Tools & Channels ──────────────────────────────────────────────────────────
+
+export interface Tool {
+  name: string
+  category: string
+  description: string
+}
+
+export function fetchTools(): Promise<Tool[]> {
+  return request<Tool[]>('/tools')
+}
+
+export interface Channel {
+  id: string
+  name: string
+  transport: string
+  enabled: boolean
+}
+
+export function fetchChannels(): Promise<Channel[]> {
+  return request<Channel[]>('/channels')
 }
 
 // ── Skills ────────────────────────────────────────────────────────────────────
@@ -299,7 +378,7 @@ export interface DoctorResult {
 }
 
 export function fetchDoctorResults(): Promise<DoctorResult | null> {
-  return request<DoctorResult | null>('/doctor').catch(() => null)
+  return request<DoctorResult | null>('/doctor')
 }
 
 export function runDoctor(): Promise<DoctorResult> {

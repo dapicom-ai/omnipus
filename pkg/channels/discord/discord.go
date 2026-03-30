@@ -440,10 +440,10 @@ func (c *DiscordChannel) handleMessage(s *discordgo.Session, m *discordgo.Messag
 		"preview":     utils.Truncate(content, 50),
 	})
 
-	peerKind := "channel"
+	peerKind := bus.PeerChannel
 	peerID := m.ChannelID
 	if m.GuildID == "" {
-		peerKind = "direct"
+		peerKind = bus.PeerDirect
 		peerID = senderID
 	}
 

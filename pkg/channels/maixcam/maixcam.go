@@ -198,7 +198,7 @@ func (c *MaixCamChannel) handlePersonDetection(msg MaixCamMessage) {
 
 	c.HandleMessage(
 		c.ctx,
-		bus.Peer{Kind: "channel", ID: "default"},
+		bus.Peer{Kind: bus.PeerChannel, ID: "default"},
 		"",
 		senderID,
 		chatID,

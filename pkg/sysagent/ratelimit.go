@@ -120,6 +120,7 @@ func (w *slidingWindow) allow() error {
 	cutoff := now.Add(-w.limit.window)
 
 	// Drop expired events.
+	// Reuses the backing array of w.events (avoids allocation). Safe because all access is serialized under w.mu.
 	kept := w.events[:0]
 	for _, t := range w.events {
 		if t.After(cutoff) {

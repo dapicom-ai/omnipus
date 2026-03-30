@@ -138,8 +138,8 @@ export class WsConnection {
   private _createSocket(): void {
     try {
       this.ws = new WebSocket(getWsUrl())
-    } catch {
-      this.callbacks.onError('Failed to create WebSocket connection')
+    } catch (err) {
+      this.callbacks.onError(`Failed to create WebSocket: ${err instanceof Error ? err.message : String(err)}`)
       return
     }
 
@@ -159,6 +159,10 @@ export class WsConnection {
       } catch {
         // Malformed JSON — log and discard, don't swallow downstream errors
         console.warn('[ws] Malformed frame:', event.data)
+        return
+      }
+      if (typeof frame.type !== 'string') {
+        console.warn('[ws] Invalid frame — missing type field:', frame)
         return
       }
       this.callbacks.onFrame(frame)

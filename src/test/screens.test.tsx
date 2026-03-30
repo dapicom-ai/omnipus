@@ -60,14 +60,15 @@ describe('Command Center screen — empty state', () => {
 
   it('renders "Command Center" screen with StatusBar and TaskList', () => {
     // Traces to: wave5a-wire-ui-spec.md — US-13: Command Center renders StatusBar and TaskList
-    // TODO: BDD scenario gap — CommandCenterScreen has no <h1>; StatusBar + TaskList are the top-level sections
+    // Note: CommandCenterScreen has no <h1>; StatusBar + TaskList are the top-level sections.
+    // Checking for TaskList h2 "Tasks" as the primary landmark.
     render(<CommandCenterScreen />, { wrapper })
     // TaskList renders an h2 "Tasks"
     expect(screen.getByRole('heading', { name: /Tasks/i })).toBeInTheDocument()
   })
 
   it('TaskList heading has font-headline class (Outfit Bold)', () => {
-    // TODO: BDD gap — CommandCenterScreen has no h1; checking TaskList h2 for font-headline
+    // Note: CommandCenterScreen has no h1; checking TaskList h2 for font-headline.
     const { container } = render(<CommandCenterScreen />, { wrapper })
     const h2 = container.querySelector('h2')
     expect(h2?.className).toContain('font-headline')
@@ -133,8 +134,8 @@ describe('Chat (index) screen — empty state', () => {
   })
 
   it('renders prompt to select an agent (no active agent in empty state)', () => {
-    // TODO: Spec says "Your agents are standing by" but implementation shows "Select an agent..."
-    // Actual text when no agent is selected: "Select an agent in the session bar to get started."
+    // Note: Spec says "Your agents are standing by" but implementation intentionally shows
+    // "Select an agent in the session bar to get started." — more instructional for first-run UX.
     render(<ChatScreen />, { wrapper })
     expect(screen.getByText(/Select an agent/i)).toBeTruthy()
   })

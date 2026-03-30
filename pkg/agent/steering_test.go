@@ -370,7 +370,7 @@ func TestDrainBusToSteering_RequeuesDifferentScopeMessage(t *testing.T) {
 		ChatID:   "chat1",
 		Content:  "active turn",
 		Peer: bus.Peer{
-			Kind: "direct",
+			Kind: bus.PeerDirect,
 			ID:   "user1",
 		},
 	}
@@ -385,7 +385,7 @@ func TestDrainBusToSteering_RequeuesDifferentScopeMessage(t *testing.T) {
 		ChatID:   "chat2",
 		Content:  "other session",
 		Peer: bus.Peer{
-			Kind: "direct",
+			Kind: bus.PeerDirect,
 			ID:   "user2",
 		},
 	}
@@ -846,7 +846,7 @@ func TestAgentLoop_Run_AutoContinuesLateSteeringMessage(t *testing.T) {
 		ChatID:   "chat1",
 		Content:  "first message",
 		Peer: bus.Peer{
-			Kind: "direct",
+			Kind: bus.PeerDirect,
 			ID:   "user1",
 		},
 	}
@@ -856,7 +856,7 @@ func TestAgentLoop_Run_AutoContinuesLateSteeringMessage(t *testing.T) {
 		ChatID:   "chat1",
 		Content:  "late append",
 		Peer: bus.Peer{
-			Kind: "direct",
+			Kind: bus.PeerDirect,
 			ID:   "user1",
 		},
 	}

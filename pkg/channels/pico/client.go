@@ -254,7 +254,7 @@ func (c *PicoClientChannel) handleServerMessage(pc *picoConn, msg PicoMessage) {
 
 	chatID := "pico_client:" + sessionID
 	senderID := "pico-remote"
-	peer := bus.Peer{Kind: "direct", ID: chatID}
+	peer := bus.Peer{Kind: bus.PeerDirect, ID: chatID}
 
 	sender := bus.SenderInfo{
 		Platform:    "pico_client",

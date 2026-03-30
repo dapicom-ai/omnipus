@@ -13,14 +13,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { fetchProviders, configureProvider, testProvider } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
-
-const AVAILABLE_PROVIDERS = [
-  { id: 'anthropic', display_name: 'Anthropic', hint: 'Starts with sk-ant-...' },
-  { id: 'openai', display_name: 'OpenAI', hint: 'Starts with sk-...' },
-  { id: 'google', display_name: 'Google Gemini', hint: 'API key from Google AI Studio' },
-  { id: 'groq', display_name: 'Groq', hint: 'Starts with gsk_...' },
-  { id: 'openrouter', display_name: 'OpenRouter', hint: 'Starts with sk-or-v1-...' },
-]
+import { PROVIDER_HINTS } from '@/lib/constants'
 
 export function ProvidersSection() {
   const { addToast } = useUiStore()
@@ -63,9 +56,6 @@ export function ProvidersSection() {
     }
   }
 
-  // Merge configured providers with available ones
-  const providerMap = new Map(providers.map((p) => [p.id, p]))
-
   return (
     <div className="space-y-4">
       <div>
@@ -83,14 +73,15 @@ export function ProvidersSection() {
         </div>
       ) : (
         <div className="space-y-2">
-          {AVAILABLE_PROVIDERS.map((providerDef) => {
-            const configured = providerMap.get(providerDef.id)
-            const isExpanded = expandedProvider === providerDef.id
-            const connected = configured?.status === 'connected'
+          {providers.map((provider) => {
+            const hint = PROVIDER_HINTS[provider.id]
+            const displayName = provider.display_name ?? provider.name ?? provider.id
+            const isExpanded = expandedProvider === provider.id
+            const connected = provider.status === 'connected'
 
             return (
               <div
-                key={providerDef.id}
+                key={provider.id}
                 className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] overflow-hidden"
               >
                 {/* Provider row */}
@@ -98,42 +89,40 @@ export function ProvidersSection() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-medium text-[var(--color-secondary)]">
-                        {providerDef.display_name}
+                        {displayName}
                       </span>
-                      {configured ? (
-                        connected ? (
-                          <Badge variant="success" className="gap-1">
-                            <CheckCircle size={10} weight="fill" /> Connected
-                          </Badge>
-                        ) : (
-                          <Badge variant="error" className="gap-1">
-                            <XCircle size={10} weight="fill" /> Error
-                          </Badge>
-                        )
+                      {connected ? (
+                        <Badge variant="success" className="gap-1">
+                          <CheckCircle size={10} weight="fill" /> Connected
+                        </Badge>
+                      ) : provider.status === 'error' ? (
+                        <Badge variant="error" className="gap-1">
+                          <XCircle size={10} weight="fill" /> Error
+                        </Badge>
                       ) : (
                         <Badge variant="muted">Not configured</Badge>
                       )}
                     </div>
-                    {configured?.models && configured.models.length > 0 && (
+                    {provider.models && provider.models.length > 0 && (
                       <p className="text-[10px] text-[var(--color-muted)] mt-0.5 font-mono">
-                        {configured.models.slice(0, 3).join(', ')}{configured.models.length > 3 ? ` +${configured.models.length - 3}` : ''}
+                        {provider.models.slice(0, 3).join(', ')}{provider.models.length > 3 ? ` +${provider.models.length - 3}` : ''}
                       </p>
                     )}
-                    {configured?.error && (
-                      <p className="text-[10px] text-[var(--color-error)] mt-0.5">{configured.error}</p>
+                    {provider.error && (
+                      <p className="text-[10px] text-[var(--color-error)] mt-0.5">{provider.error}</p>
                     )}
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
-                    {configured && (
+                    {connected && (
                       <Button
                         variant="ghost"
                         size="sm"
-                        onClick={() => handleTest(providerDef.id)}
-                        disabled={testing[providerDef.id]}
+                        onClick={() => handleTest(provider.id)}
+                        disabled={testing[provider.id]}
                         className="h-7 px-2 text-xs"
                       >
-                        {testing[providerDef.id] ? (
+                        {testing[provider.id] ? (
                           <ArrowCounterClockwise size={12} className="animate-spin" />
                         ) : 'Test'}
                       </Button>
@@ -142,11 +131,11 @@ export function ProvidersSection() {
                       variant="outline"
                       size="sm"
                       onClick={() =>
-                        setExpandedProvider(isExpanded ? null : providerDef.id)
+                        setExpandedProvider(isExpanded ? null : provider.id)
                       }
                       className="h-7 px-3 text-xs"
                     >
-                      {configured ? 'Edit' : (
+                      {connected ? 'Edit' : (
                         <><Plus size={11} /> Configure</>
                       )}
                     </Button>
@@ -162,24 +151,24 @@ export function ProvidersSection() {
                       </label>
                       <div className="relative">
                         <Input
-                          type={showKey[providerDef.id] ? 'text' : 'password'}
-                          value={apiKeys[providerDef.id] ?? ''}
+                          type={showKey[provider.id] ? 'text' : 'password'}
+                          value={apiKeys[provider.id] ?? ''}
                           onChange={(e) =>
-                            setApiKeys((prev) => ({ ...prev, [providerDef.id]: e.target.value }))
+                            setApiKeys((prev) => ({ ...prev, [provider.id]: e.target.value }))
                           }
-                          placeholder={providerDef.hint}
+                          placeholder={hint}
                           className="pr-9 font-mono text-xs"
                           autoComplete="off"
                         />
                         <button
                           type="button"
                           onClick={() =>
-                            setShowKey((prev) => ({ ...prev, [providerDef.id]: !prev[providerDef.id] }))
+                            setShowKey((prev) => ({ ...prev, [provider.id]: !prev[provider.id] }))
                           }
                           className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--color-muted)] hover:text-[var(--color-secondary)]"
-                          aria-label={showKey[providerDef.id] ? 'Hide API key' : 'Show API key'}
+                          aria-label={showKey[provider.id] ? 'Hide API key' : 'Show API key'}
                         >
-                          {showKey[providerDef.id] ? <EyeSlash size={14} /> : <Eye size={14} />}
+                          {showKey[provider.id] ? <EyeSlash size={14} /> : <Eye size={14} />}
                         </button>
                       </div>
                     </div>
@@ -194,9 +183,9 @@ export function ProvidersSection() {
                       <Button
                         size="sm"
                         onClick={() =>
-                          doConfigure({ id: providerDef.id, key: apiKeys[providerDef.id] ?? '' })
+                          doConfigure({ id: provider.id, key: apiKeys[provider.id] ?? '' })
                         }
-                        disabled={!apiKeys[providerDef.id]?.trim()}
+                        disabled={!apiKeys[provider.id]?.trim()}
                       >
                         Save & Connect
                       </Button>

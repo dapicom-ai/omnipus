@@ -61,9 +61,10 @@ export function DiagnosticsSection() {
   const queryClient = useQueryClient()
   const [expandedIssue, setExpandedIssue] = useState<string | null>(null)
 
-  const { data: lastResult, isLoading } = useQuery({
+  const { data: lastResult, isLoading, isError } = useQuery({
     queryKey: ['doctor'],
     queryFn: fetchDoctorResults,
+    retry: false,
   })
 
   const { mutate: doRun, isPending: isRunning } = useMutation({
@@ -139,6 +140,19 @@ export function DiagnosticsSection() {
             backgroundColor: 'var(--color-surface-1)',
           }}
         />
+      ) : isError ? (
+        <div
+          className="flex items-center gap-2.5 p-4 rounded-lg border"
+          style={{
+            borderColor: 'rgba(239,68,68,0.25)',
+            backgroundColor: 'rgba(239,68,68,0.06)',
+          }}
+        >
+          <XCircle size={16} weight="fill" style={{ color: 'var(--color-error)' }} />
+          <p className="text-sm" style={{ color: 'var(--color-error)' }}>
+            Could not load diagnostics. Run diagnostics to check your security posture.
+          </p>
+        </div>
       ) : result ? (
         <div className="space-y-4">
           {/* Risk score card */}

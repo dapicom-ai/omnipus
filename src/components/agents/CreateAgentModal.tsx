@@ -15,6 +15,7 @@ import {
 import { useUiStore } from '@/store/ui'
 import { createAgent } from '@/lib/api'
 import type { Agent } from '@/lib/api'
+import { AVATAR_COLORS } from '@/lib/constants'
 
 const AVAILABLE_MODELS = [
   'claude-opus-4-6',
@@ -23,11 +24,6 @@ const AVAILABLE_MODELS = [
   'gpt-4o',
   'gpt-4o-mini',
   'gemini-1.5-pro',
-]
-
-const AVATAR_COLORS = [
-  '#D4AF37', '#10B981', '#3B82F6', '#8B5CF6',
-  '#EF4444', '#F97316', '#EC4899', '#06B6D4',
 ]
 
 interface CreateAgentModalProps {

@@ -39,7 +39,7 @@ type MessageBus struct {
 	done           chan struct{}
 	closed         atomic.Bool
 	wg             sync.WaitGroup
-	streamDelegate atomic.Value // stores StreamDelegate
+	streamDelegate atomic.Pointer[StreamDelegate] // type-safe; avoids atomic.Value mixed-type panic
 }
 
 func NewMessageBus() *MessageBus {
@@ -105,13 +105,13 @@ func (mb *MessageBus) OutboundMediaChan() <-chan OutboundMediaMessage {
 
 // SetStreamDelegate registers a StreamDelegate (typically the channel Manager).
 func (mb *MessageBus) SetStreamDelegate(d StreamDelegate) {
-	mb.streamDelegate.Store(d)
+	mb.streamDelegate.Store(&d)
 }
 
 // GetStreamer returns a Streamer for the given channel+chatID via the delegate.
 func (mb *MessageBus) GetStreamer(ctx context.Context, channel, chatID string) (Streamer, bool) {
-	if d, ok := mb.streamDelegate.Load().(StreamDelegate); ok && d != nil {
-		return d.GetStreamer(ctx, channel, chatID)
+	if dp := mb.streamDelegate.Load(); dp != nil && *dp != nil {
+		return (*dp).GetStreamer(ctx, channel, chatID)
 	}
 	return nil, false
 }

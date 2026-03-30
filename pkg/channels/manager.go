@@ -90,7 +90,8 @@ type Manager struct {
 	typingStops   sync.Map          // "channel:chatID" → func()
 	reactionUndos sync.Map          // "channel:chatID" → reactionEntry
 	streamActive  sync.Map          // "channel:chatID" → true (set when streamer.Finalize sent the message)
-	channelHashes map[string]string // channel name → config hash
+	channelHashes  map[string]string // channel name → config hash
+	streamFallback bus.StreamDelegate // optional fallback for channels not in m.channels (e.g., webchat WebSocket)
 }
 
 type asyncTask struct {
@@ -263,14 +264,24 @@ func NewManager(cfg *config.Config, messageBus *bus.MessageBus, store media.Medi
 	return m, nil
 }
 
+// SetStreamFallback registers a fallback StreamDelegate for channels not managed
+// by the Manager (e.g., the webchat WebSocket handler).
+func (m *Manager) SetStreamFallback(d bus.StreamDelegate) {
+	m.streamFallback = d
+}
+
 // GetStreamer implements bus.StreamDelegate.
 // It checks if the named channel supports streaming and returns a Streamer.
+// Falls back to streamFallback for channels not in the Manager (e.g., webchat).
 func (m *Manager) GetStreamer(ctx context.Context, channelName, chatID string) (bus.Streamer, bool) {
 	m.mu.RLock()
 	ch, exists := m.channels[channelName]
 	m.mu.RUnlock()
 
 	if !exists {
+		if m.streamFallback != nil {
+			return m.streamFallback.GetStreamer(ctx, channelName, chatID)
+		}
 		return nil, false
 	}
 

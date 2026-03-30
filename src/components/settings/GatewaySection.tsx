@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
-import { fetchConfig, updateConfig, rotateGatewayToken } from '@/lib/api'
+import { fetchConfig, updateConfig, rotateGatewayToken, fetchGatewayStatus } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 
 export function GatewaySection() {
@@ -22,6 +22,12 @@ export function GatewaySection() {
   const { data: config, isLoading } = useQuery({
     queryKey: ['config'],
     queryFn: fetchConfig,
+  })
+
+  const { isSuccess: isOnline } = useQuery({
+    queryKey: ['gateway-status'],
+    queryFn: fetchGatewayStatus,
+    retry: false,
   })
 
   const [bindAddress, setBindAddress] = useState('127.0.0.1')
@@ -49,7 +55,12 @@ export function GatewaySection() {
       queryClient.invalidateQueries({ queryKey: ['config'] })
       addToast({ message: 'Gateway settings saved. Restart required to apply.', variant: 'default' })
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: Error) => addToast({
+      message: err.message.includes('501')
+        ? 'Settings changes require editing config.json and restarting the gateway'
+        : err.message,
+      variant: 'error',
+    }),
   })
 
   const { mutate: doRotate, isPending: isRotating } = useMutation({
@@ -175,9 +186,15 @@ export function GatewaySection() {
 
       {/* Status */}
       <div className="flex items-center gap-2 text-xs text-[var(--color-muted)]">
-        <Badge variant="success" className="gap-1 text-[10px]">
-          <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)]" /> Online
-        </Badge>
+        {isOnline ? (
+          <Badge variant="success" className="gap-1 text-[10px]">
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-success)]" /> Online
+          </Badge>
+        ) : (
+          <Badge variant="error" className="gap-1 text-[10px]">
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-error)]" /> Offline
+          </Badge>
+        )}
         <span>Listening on {bindAddress}:{port}</span>
       </div>
     </div>

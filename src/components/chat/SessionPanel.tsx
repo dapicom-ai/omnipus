@@ -8,7 +8,7 @@ import { fetchAgents, fetchSessions, createSession } from '@/lib/api'
 import { useQueryClient } from '@tanstack/react-query'
 
 export function SessionPanel() {
-  const { sessionPanelOpen, closeSessionPanel } = useUiStore()
+  const { sessionPanelOpen, closeSessionPanel, addToast } = useUiStore()
   const { activeSessionId, activeAgentId, setActiveSession } = useChatStore()
   const queryClient = useQueryClient()
 
@@ -36,7 +36,7 @@ export function SessionPanel() {
       setActiveSession(session.id, agentId)
       closeSessionPanel()
     } catch {
-      // ignore — TODO wire to toast
+      addToast({ message: 'Could not create session', variant: 'error' })
     }
   }
 

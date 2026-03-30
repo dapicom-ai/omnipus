@@ -1378,7 +1378,7 @@ func TestProcessMessage_UsesRouteSessionKey(t *testing.T) {
 		ChatID:   "chat1",
 		Content:  "hello",
 		Peer: bus.Peer{
-			Kind: "direct",
+			Kind: bus.PeerDirect,
 			ID:   "user1",
 		},
 	}
@@ -1437,7 +1437,7 @@ func TestProcessMessage_CommandOutcomes(t *testing.T) {
 		SenderID: "user1",
 		ChatID:   "chat1",
 		Peer: bus.Peer{
-			Kind: "direct",
+			Kind: bus.PeerDirect,
 			ID:   "user1",
 		},
 	}
@@ -1529,7 +1529,7 @@ func TestProcessMessage_SwitchModelShowModelConsistency(t *testing.T) {
 		ChatID:   "chat1",
 		Content:  "/switch model to deepseek",
 		Peer: bus.Peer{
-			Kind: "direct",
+			Kind: bus.PeerDirect,
 			ID:   "user1",
 		},
 	})
@@ -1543,7 +1543,7 @@ func TestProcessMessage_SwitchModelShowModelConsistency(t *testing.T) {
 		ChatID:   "chat1",
 		Content:  "/show model",
 		Peer: bus.Peer{
-			Kind: "direct",
+			Kind: bus.PeerDirect,
 			ID:   "user1",
 		},
 	})
@@ -1594,7 +1594,7 @@ func TestProcessMessage_SwitchModelRejectsUnknownAlias(t *testing.T) {
 		ChatID:   "chat1",
 		Content:  "/switch model to missing",
 		Peer: bus.Peer{
-			Kind: "direct",
+			Kind: bus.PeerDirect,
 			ID:   "user1",
 		},
 	})
@@ -1608,7 +1608,7 @@ func TestProcessMessage_SwitchModelRejectsUnknownAlias(t *testing.T) {
 		ChatID:   "chat1",
 		Content:  "/show model",
 		Peer: bus.Peer{
-			Kind: "direct",
+			Kind: bus.PeerDirect,
 			ID:   "user1",
 		},
 	})
@@ -1678,7 +1678,7 @@ func TestProcessMessage_SwitchModelRoutesSubsequentRequestsToSelectedProvider(t 
 		ChatID:   "chat1",
 		Content:  "hello before switch",
 		Peer: bus.Peer{
-			Kind: "direct",
+			Kind: bus.PeerDirect,
 			ID:   "user1",
 		},
 	})
@@ -1701,7 +1701,7 @@ func TestProcessMessage_SwitchModelRoutesSubsequentRequestsToSelectedProvider(t 
 		ChatID:   "chat1",
 		Content:  "/switch model to deepseek",
 		Peer: bus.Peer{
-			Kind: "direct",
+			Kind: bus.PeerDirect,
 			ID:   "user1",
 		},
 	})
@@ -1715,7 +1715,7 @@ func TestProcessMessage_SwitchModelRoutesSubsequentRequestsToSelectedProvider(t 
 		ChatID:   "chat1",
 		Content:  "hello after switch",
 		Peer: bus.Peer{
-			Kind: "direct",
+			Kind: bus.PeerDirect,
 			ID:   "user1",
 		},
 	})
@@ -1808,7 +1808,7 @@ func TestProcessMessage_ModelRoutingUsesLightProvider(t *testing.T) {
 		ChatID:   "chat1",
 		Content:  "hi",
 		Peer: bus.Peer{
-			Kind: "direct",
+			Kind: bus.PeerDirect,
 			ID:   "user1",
 		},
 	})
@@ -2086,7 +2086,7 @@ func TestAgentLoop_ToolLimitUsesDedicatedFallback(t *testing.T) {
 	route := al.registry.ResolveRoute(routing.RouteInput{
 		Channel: "test",
 		Peer: &routing.RoutePeer{
-			Kind: "direct",
+			Kind: string(bus.PeerDirect),
 			ID:   "cron",
 		},
 	})

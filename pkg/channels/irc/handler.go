@@ -55,10 +55,10 @@ func (c *IRCChannel) onPrivmsg(conn *ircevent.Connection, e ircmsg.Message) {
 
 	if isDM {
 		chatID = nick
-		peer = bus.Peer{Kind: "direct", ID: nick}
+		peer = bus.Peer{Kind: bus.PeerDirect, ID: nick}
 	} else {
 		chatID = target
-		peer = bus.Peer{Kind: "group", ID: target}
+		peer = bus.Peer{Kind: bus.PeerGroup, ID: target}
 	}
 
 	sender := bus.SenderInfo{

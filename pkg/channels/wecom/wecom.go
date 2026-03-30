@@ -482,9 +482,9 @@ func (c *WeComChannel) dispatchIncoming(reqID string, msg wecomIncomingMessage) 
 	}
 	actualChatID := incomingChatID(msg)
 	chatType := incomingChatTypeCode(msg.ChatType)
-	peerKind := "direct"
+	peerKind := bus.PeerDirect
 	if msg.ChatType == "group" {
-		peerKind = "group"
+		peerKind = bus.PeerGroup
 	}
 
 	sender := bus.SenderInfo{

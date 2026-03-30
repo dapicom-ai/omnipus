@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/select'
 import { Progress } from '@/components/ui/progress'
 import { Separator } from '@/components/ui/separator'
-import { fetchConfig, updateConfig } from '@/lib/api'
+import { fetchConfig, updateConfig, fetchGatewayStatus } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { DiagnosticsSection } from './DiagnosticsSection'
 
@@ -24,6 +24,11 @@ export function SecuritySection() {
   const { data: config, isLoading } = useQuery({
     queryKey: ['config'],
     queryFn: fetchConfig,
+  })
+
+  const { data: gatewayStatus } = useQuery({
+    queryKey: ['gateway-status'],
+    queryFn: fetchGatewayStatus,
   })
 
   const [policyMode, setPolicyMode] = useState<'allow' | 'deny'>('deny')
@@ -55,15 +60,19 @@ export function SecuritySection() {
       queryClient.invalidateQueries({ queryKey: ['config'] })
       addToast({ message: 'Security settings saved', variant: 'success' })
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: Error) => addToast({
+      message: err.message.includes('501')
+        ? 'Settings changes require editing config.json and restarting the gateway'
+        : err.message,
+      variant: 'error',
+    }),
   })
 
   if (isLoading) {
     return <div className="text-sm text-[var(--color-muted)]">Loading...</div>
   }
 
-  // Mock today's spend for progress bar (TODO: wire from real spend endpoint)
-  const todaySpend = 0.42
+  const todaySpend = gatewayStatus?.daily_cost ?? 0
   const capValue = parseFloat(dailyCostCap) || 10
   const spendPercent = Math.min((todaySpend / capValue) * 100, 100)
 

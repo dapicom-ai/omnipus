@@ -638,7 +638,7 @@ func (c *QQChannel) handleC2CMessage() event.C2CMessageEventHandler {
 		}
 
 		c.HandleMessage(c.ctx,
-			bus.Peer{Kind: "direct", ID: senderID},
+			bus.Peer{Kind: bus.PeerDirect, ID: senderID},
 			data.ID,
 			senderID,
 			senderID,
@@ -716,7 +716,7 @@ func (c *QQChannel) handleGroupATMessage() event.GroupATMessageEventHandler {
 		}
 
 		c.HandleMessage(c.ctx,
-			bus.Peer{Kind: "group", ID: data.GroupID},
+			bus.Peer{Kind: bus.PeerGroup, ID: data.GroupID},
 			data.ID,
 			senderID,
 			data.GroupID,
