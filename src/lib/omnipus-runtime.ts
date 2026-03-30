@@ -46,12 +46,16 @@ function convertMessage(
   msg: ChatMessage,
   toolCalls: Record<string, StoreToolCall>
 ): ThreadMessageLike {
-  return {
+  const base: ThreadMessageLike = {
     id: msg.id,
     role: msg.role,
     content: buildContentParts(msg, toolCalls),
-    status: buildMessageStatus(msg),
   };
+  // status is only supported on assistant messages
+  if (msg.role === "assistant") {
+    base.status = buildMessageStatus(msg);
+  }
+  return base;
 }
 
 // ── Runtime hook ──────────────────────────────────────────────────────────────

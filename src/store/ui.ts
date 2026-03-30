@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { generateId } from '@/lib/constants'
 
 export interface Toast {
   id: string
@@ -38,7 +39,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
 
   toasts: [],
   addToast: (toast) => {
-    const id = crypto.randomUUID()
+    const id = generateId()
     set((state) => ({ toasts: [...state.toasts, { ...toast, id }] }))
     const duration = toast.duration ?? 4000
     const timer = setTimeout(() => {

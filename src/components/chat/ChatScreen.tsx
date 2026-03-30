@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { generateId } from '@/lib/constants'
 import { useQuery } from '@tanstack/react-query'
 import {
   ThreadPrimitive,
@@ -238,7 +239,7 @@ function OmnipusComposer() {
 
     if (cmd === '/help') {
       appendMessage({
-        id: crypto.randomUUID(),
+        id: generateId(),
         role: 'system',
         content: HELP_TEXT,
         timestamp: new Date().toISOString(),

@@ -1,4 +1,14 @@
-// Shared constants used across multiple components
+// Shared constants and utilities used across multiple components
+
+/** Generate a unique ID. Uses crypto.randomUUID() in secure contexts (HTTPS),
+ *  falls back to a timestamp+random string for HTTP contexts. */
+export function generateId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  // Fallback for non-secure contexts (HTTP)
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+}
 
 /** Avatar color palette for agent creation and display. */
 export const AVATAR_COLORS = [

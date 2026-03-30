@@ -6,8 +6,6 @@ package gateway
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"log/slog"
 
 	"github.com/dapicom-ai/omnipus/pkg/bus"
@@ -34,7 +32,8 @@ func (c *webchatChannel) IsAllowedSender(_ bus.SenderInfo) bool { return true }
 func (c *webchatChannel) ReasoningChannelID() string     { return "" }
 
 // Send delivers an outbound message to the WebSocket client identified by ChatID.
-// The message is sent as a "message" frame (complete response, not streaming token).
+// Sends a "token" frame with the full content followed by a "done" frame, matching
+// the streaming protocol the frontend expects (token → done).
 func (c *webchatChannel) Send(_ context.Context, msg bus.OutboundMessage) error {
 	c.wsHandler.mu.Lock()
 	conn, ok := c.wsHandler.sessions[msg.ChatID]
@@ -45,22 +44,9 @@ func (c *webchatChannel) Send(_ context.Context, msg bus.OutboundMessage) error 
 		return nil // client disconnected — not an error
 	}
 
-	frame := wsServerFrame{
-		Type:    "message",
-		Content: msg.Content,
+	if msg.Content != "" {
+		sendConnFrame(conn, wsServerFrame{Type: "token", Content: msg.Content})
 	}
-	data, err := json.Marshal(frame)
-	if err != nil {
-		return err
-	}
-
-	select {
-	case conn.sendCh <- data:
-	default:
-		slog.Warn("webchat: send channel full, outbound message dropped", "chat_id", msg.ChatID)
-		// TODO(webchat-media): add support for media/attachment messages once the
-		// OutboundMessage type includes media fields.
-		return fmt.Errorf("webchat: send channel full for chat %s", msg.ChatID)
-	}
+	sendConnFrame(conn, wsServerFrame{Type: "done", Stats: map[string]any{}})
 	return nil
 }

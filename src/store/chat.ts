@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { generateId } from '@/lib/constants'
 import type { Message, ToolCall } from '@/lib/api'
 import type { WsConnection, WsReceiveFrame } from '@/lib/ws'
 import type {
@@ -103,7 +104,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       if (lastIdx === -1) {
         // Token arrived before placeholder — create it now
         const placeholder: ChatMessage = {
-          id: crypto.randomUUID(),
+          id: generateId(),
           role: 'assistant',
           content: '',
           timestamp: new Date().toISOString(),
@@ -200,7 +201,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     if (!connection || isStreaming) return
 
     const userMsg: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: generateId(),
       session_id: activeSessionId ?? '',
       role: 'user',
       content,
@@ -210,7 +211,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
     // Streaming assistant placeholder — created alongside user message
     const assistantMsg: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: generateId(),
       session_id: activeSessionId ?? '',
       role: 'assistant',
       content: '',
