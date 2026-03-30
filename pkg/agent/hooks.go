@@ -42,9 +42,36 @@ func (d HookDecision) normalizedAction() HookAction {
 	return d.Action
 }
 
+// ApprovalVerdict is a typed string enum for the outcome of a tool approval request.
+type ApprovalVerdict string
+
+const (
+	// VerdictAllow approves the tool call for this invocation only.
+	VerdictAllow ApprovalVerdict = "allow"
+	// VerdictDeny denies the tool call.
+	VerdictDeny ApprovalVerdict = "deny"
+	// VerdictAlways approves the tool call and remembers the preference for this session.
+	VerdictAlways ApprovalVerdict = "always"
+)
+
+// ApprovalDecision is the result of a ToolApprover.ApproveTool call.
+// Use IsApproved() to check whether execution is permitted.
 type ApprovalDecision struct {
-	Approved bool   `json:"approved"`
-	Reason   string `json:"reason,omitempty"`
+	Verdict ApprovalVerdict `json:"verdict"`
+	Reason  string          `json:"reason,omitempty"`
+}
+
+// IsApproved returns true when the verdict permits tool execution.
+func (d ApprovalDecision) IsApproved() bool {
+	return d.Verdict == VerdictAllow || d.Verdict == VerdictAlways
+}
+
+// Deny constructs a denial ApprovalDecision with a guaranteed non-empty reason.
+func Deny(reason string) ApprovalDecision {
+	if reason == "" {
+		reason = "denied (no reason given)"
+	}
+	return ApprovalDecision{Verdict: VerdictDeny, Reason: reason}
 }
 
 type HookSource uint8
@@ -427,7 +454,7 @@ func (hm *HookManager) AfterTool(
 
 func (hm *HookManager) ApproveTool(ctx context.Context, req *ToolApprovalRequest) ApprovalDecision {
 	if hm == nil || req == nil {
-		return ApprovalDecision{Approved: true}
+		return ApprovalDecision{Verdict: VerdictAllow}
 	}
 
 	for _, reg := range hm.snapshotHooks() {
@@ -438,17 +465,14 @@ func (hm *HookManager) ApproveTool(ctx context.Context, req *ToolApprovalRequest
 
 		decision, ok := hm.callApproveTool(ctx, reg.Name, approver, req.Clone())
 		if !ok {
-			return ApprovalDecision{
-				Approved: false,
-				Reason:   fmt.Sprintf("tool approval hook %q failed", reg.Name),
-			}
+			return Deny(fmt.Sprintf("tool approval hook %q failed", reg.Name))
 		}
-		if !decision.Approved {
+		if !decision.IsApproved() {
 			return decision
 		}
 	}
 
-	return ApprovalDecision{Approved: true}
+	return ApprovalDecision{Verdict: VerdictAllow}
 }
 
 func (hm *HookManager) rebuildOrdered() {
@@ -680,10 +704,7 @@ func runApprovalHook(
 			"stage":      stage,
 			"timeout_ms": timeout.Milliseconds(),
 		})
-		return ApprovalDecision{
-			Approved: false,
-			Reason:   fmt.Sprintf("tool approval hook %q timed out", name),
-		}, true
+		return Deny(fmt.Sprintf("tool approval hook %q timed out", name)), true
 	}
 }
 

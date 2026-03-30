@@ -70,75 +70,43 @@ Use this sequence when implementing features:
 5. Implement in Plan Mode first, then switch to normal mode
 6. Use `/grill-code` to verify spec compliance after implementation
 
-## MANDATORY: Team-Based Implementation
+## Subagent Workflow
 
-**CRITICAL INSTRUCTION — READ THIS BEFORE WRITING ANY CODE:**
+The lead (you) orchestrates all work by spawning specialized subagents via the Agent tool. There are no agent teams — you spawn subagents directly, give them focused tasks, and review their output.
 
-When the user requests implementation work for a wave or feature (e.g., "implement wave 0", "build the security layer", "start on the UI", "work on WhatsApp channel", or any task involving code changes across multiple files), you MUST:
+### Implementing subagents (spawn via Agent tool with `subagent_type`)
+- `frontend-lead` (sonnet) — React/TypeScript UI work. Scope: `src/`, `packages/ui/`
+- `backend-lead` (sonnet) — Go backend work. Scope: `pkg/`, `cmd/`, `internal/` (except security packages)
+- `security-lead` (opus) — Security implementation. Scope: `pkg/security/`, `pkg/sandbox/`, `pkg/audit/`, `pkg/policy/`
+- `qa-lead` (sonnet) — Tests only. Scope: `*_test.go`, `*.test.ts`, `*.test.tsx`
 
-1. **Create the `omnipus-dev` team** using TeamCreate before writing any code
-2. **Decompose the work into tasks** using `/taskify` against the relevant wave spec
-3. **Spawn all 4 teammates** with their assigned file ownership
-4. **Coordinate via task list** — assign tasks, monitor progress, run reviews
-5. **Run the full review pipeline** (Steps 1-3 below) after each task completion
+### Review subagents (spawn via Agent tool with `subagent_type`)
+- `architect` (opus) — cross-cutting design review, ADRs
+- pr-review-toolkit agents (6 total, always run all after implementation work)
 
-**DO NOT implement wave/feature work as a solo agent.** Solo work is acceptable ONLY for:
-- Single-file bug fixes
-- Documentation updates
-- Config changes
-- Quick additions to one existing file
+### How to use subagents
 
-**If in doubt, use the team.** The cost of coordination is less than the cost of unreviewed, uncoordinated changes across the codebase.
+1. **Decompose the work** — break the task into focused units scoped to one subagent each
+2. **Spawn subagents with clear, complete prompts** — include the spec reference, the exact files to modify, and what "done" looks like. Each subagent starts fresh with no prior context.
+3. **Run subagents in parallel** when their work is independent (e.g., frontend + backend for the same feature)
+4. **Review every subagent's output** — check their functional proof, verify their claims, run the review pipeline
+5. **Run QA after implementation** — spawn qa-lead to write tests against the code the other subagents just wrote
 
-### How to spawn the team
+### Which subagents to spawn per task type
+- **Frontend-only work:** frontend-lead → qa-lead
+- **Backend-only work:** backend-lead → qa-lead
+- **Security work:** security-lead + backend-lead → qa-lead
+- **Full-stack features:** frontend-lead + backend-lead (parallel) → qa-lead
+- **Design questions:** architect
 
-```
-TeamCreate: omnipus-dev
-Then spawn 4 teammates:
-- frontend-lead (sonnet) → "Implement [frontend tasks]. You own src/, app/, packages/ui/. Read docs/plan/wave[N] spec."
-- backend-lead (sonnet) → "Implement [backend tasks]. You own pkg/, cmd/, internal/. Read docs/plan/wave[N] spec."
-- security-lead (opus) → "Implement [security tasks]. You own pkg/security/, pkg/sandbox/, pkg/audit/, pkg/policy/. Read docs/plan/wave[N] spec."
-- qa-lead (sonnet) → "Write tests for [scope]. You own *_test.go, *.test.ts. Read docs/plan/wave[N] spec BDD scenarios."
-```
+### Review pipeline (run after implementation subagents complete)
 
-Not all 4 teammates are needed for every wave — only spawn those relevant to the work:
-- **Wave 0 (brand/UI):** frontend-lead + qa-lead
-- **Wave 1 (core):** backend-lead + qa-lead
-- **Wave 2 (security):** security-lead + backend-lead + qa-lead
-- **Wave 3+ (skills, channels, UI):** all 4
+**Step 1 — Project-specific reviews (in parallel):**
+- Go files changed → `architect` for cross-cutting concerns
+- Frontend files changed → `architect` for integration coherence
+- Security files changed → `architect` for threat model review
 
-## Agent Team Structure
-
-**Team: `omnipus-dev`** — 4 implementing teammates + lead orchestrates reviews.
-
-**Teammates (implement features, own files):**
-- `frontend-lead` (sonnet) — owns `src/`, `app/`, `packages/ui/`
-- `backend-lead` (sonnet) — owns `pkg/`, `cmd/`, `internal/` (except security)
-- `security-lead` (opus) — owns `pkg/security/`, `pkg/sandbox/`, `pkg/audit/`, `pkg/policy/`
-- `qa-lead` (sonnet) — owns `*_test.go`, `*.test.ts`, `*.test.tsx`
-
-**Review subagents (spawned by lead after teammate completes work):**
-- `frontend-enforcer` (haiku) — brand/design compliance
-- `go-patterns` (haiku) — Go idiom enforcement
-- `spec-compliance` (sonnet) — spec traceability
-- `omnipus-ui-reviewer` (haiku) — UI spec compliance
-- `architect` (opus) — cross-cutting design review
-
-**Teammates cannot spawn subagents.** Only the lead spawns review agents.
-
-## Lead Review Protocol
-
-**MANDATORY: After any teammate completes a task, the lead runs this review pipeline before merging or moving on.**
-
-### Step 1 — Project-specific reviews (run in parallel)
-Based on what changed, spawn the relevant custom review agents:
-- **Go files changed** → `go-patterns` + `spec-compliance`
-- **Frontend files changed** → `frontend-enforcer` + `omnipus-ui-reviewer` + `spec-compliance`
-- **Security files changed** → `spec-compliance` + `architect`
-- **New types/interfaces added** → `architect`
-
-### Step 2 — PR-review-toolkit (run ALL 6 in parallel, always)
-After project-specific reviews pass, **always** run all 6 pr-review-toolkit agents:
+**Step 2 — PR-review-toolkit (run ALL 6 in parallel, always):**
 1. `pr-review-toolkit:code-reviewer` — CLAUDE.md compliance, bugs, quality
 2. `pr-review-toolkit:code-simplifier` — simplify for clarity and maintainability
 3. `pr-review-toolkit:comment-analyzer` — verify comment accuracy
@@ -146,10 +114,7 @@ After project-specific reviews pass, **always** run all 6 pr-review-toolkit agen
 5. `pr-review-toolkit:silent-failure-hunter` — find silent failures, bad error handling
 6. `pr-review-toolkit:type-design-analyzer` — type/interface design quality
 
-### Step 3 — Resolve findings
-- Fix issues found by reviews (or have the teammate fix them)
+**Step 3 — Resolve findings:**
+- Fix issues found by reviews (spawn the relevant implementing subagent to fix)
 - Re-run failed reviews after fixes
 - Only create PR when all reviews pass
-
-### Why both custom + pr-toolkit?
-Custom agents know our project (brand rules, BRD specs, Go patterns). PR-toolkit agents are generic but deep (error handling, type design, test quality, comment rot). No redundancy — they complement each other.

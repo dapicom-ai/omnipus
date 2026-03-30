@@ -64,6 +64,12 @@ type WSHandler struct {
 	sessionIDs map[string]string   // chatID → sessionID (for transcript recording)
 	webchatCh  *webchatChannel     // reference to mark streaming complete
 
+	// approvalRegistry tracks in-flight exec approval requests sent to the browser.
+	// Shared across all connections on this handler; keyed by request UUID.
+	// Although the registry is shared, each approval request is associated with the
+	// connection that sent it — only that connection's browser tab can respond.
+	approvalRegistry *wsApprovalRegistry
+
 	upgrader websocket.Upgrader
 }
 
@@ -87,12 +93,13 @@ func newWSHandler(
 	allowedOrigin string,
 ) *WSHandler {
 	h := &WSHandler{
-		msgBus:        msgBus,
-		agentLoop:     agentLoop,
-		partitions:    ps,
-		allowedOrigin: allowedOrigin,
-		sessions:      make(map[string]*wsConn),
-		sessionIDs:    make(map[string]string),
+		msgBus:           msgBus,
+		agentLoop:        agentLoop,
+		partitions:       ps,
+		allowedOrigin:    allowedOrigin,
+		sessions:         make(map[string]*wsConn),
+		sessionIDs:       make(map[string]string),
+		approvalRegistry: newWSApprovalRegistry(),
 		upgrader: websocket.Upgrader{
 			// CheckOrigin: parses the Origin URL and compares hostname against the request
 			// Host to allow same-origin requests. Also allows localhost/127.0.0.1 for development.
@@ -206,7 +213,21 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	h.sessions[chatID] = wc
 	h.mu.Unlock()
+
+	// Mount a per-connection approval hook so the agent loop can request interactive
+	// approval from this browser tab when a tool call requires user consent. The hook
+	// sends an exec_approval_request frame and blocks until the browser responds or
+	// the request times out.
+	hookName := "ws-approval-" + chatID
+	approvalHook := &wsApprovalHook{conn: wc, registry: h.approvalRegistry, timeout: wsApprovalTimeout}
+	if err := h.agentLoop.MountHook(agent.NamedHook(hookName, approvalHook)); err != nil {
+		slog.Error("ws: could not mount approval hook — closing connection", "chat_id", chatID, "error", err)
+		sendConnFrame(wc, wsServerFrame{Type: "error", Message: "failed to initialize tool approval — please reconnect"})
+		return
+	}
+
 	defer func() {
+		h.agentLoop.UnmountHook(hookName)
 		h.mu.Lock()
 		delete(h.sessions, chatID)
 		delete(h.sessionIDs, chatID)
@@ -263,6 +284,7 @@ func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsCo
 		}
 
 		if err := conn.SetReadDeadline(time.Now().Add(60 * time.Second)); err != nil {
+			slog.Warn("ws: SetReadDeadline failed, closing connection", "chat_id", chatID, "error", err)
 			return
 		}
 
@@ -281,7 +303,9 @@ func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsCo
 		case "cancel":
 			h.handleCancel(sessionID)
 		case "exec_approval_response":
-			slog.Debug("ws: exec_approval_response received (not yet wired)", "id", frame.ID, "decision", frame.Decision)
+			h.handleApprovalResponse(frame.ID, frame.Decision)
+		default:
+			slog.Debug("ws: unknown frame type ignored", "type", frame.Type, "chat_id", chatID)
 		}
 	}
 }
@@ -358,6 +382,35 @@ func (h *WSHandler) handleCancel(sessionID *string) {
 	}
 }
 
+// handleApprovalResponse resolves a pending exec approval request.
+// Called from readLoop when the browser sends an "exec_approval_response" frame.
+// "allow" maps to VerdictAllow, "always" maps to VerdictAlways, everything else maps to VerdictDeny.
+func (h *WSHandler) handleApprovalResponse(id, decision string) {
+	if id == "" {
+		slog.Warn("ws: exec_approval_response missing id")
+		return
+	}
+	var verdict agent.ApprovalVerdict
+	switch decision {
+	case "allow":
+		verdict = agent.VerdictAllow
+	case "always":
+		verdict = agent.VerdictAlways
+	default:
+		verdict = agent.VerdictDeny
+	}
+	d := agent.ApprovalDecision{Verdict: verdict}
+	if verdict == agent.VerdictDeny {
+		d.Reason = "user denied via WebSocket"
+	}
+	if !h.approvalRegistry.resolve(id, d) {
+		// The request may have already timed out — this is informational, not an error.
+		slog.Debug("ws: exec_approval_response for unknown or expired request", "id", id, "decision", decision)
+	} else {
+		slog.Info("ws: exec_approval resolved", "id", id, "decision", decision, "verdict", verdict)
+	}
+}
+
 // wsPingMsg is a nil sentinel enqueued by pingPump to signal writePump to send a WebSocket ping.
 // Using a sentinel through sendCh ensures all writes go through the single writer goroutine,
 // satisfying gorilla/websocket's single-writer requirement (fix for gorilla write race).
@@ -421,8 +474,10 @@ func sendConnFrame(wc *wsConn, frame wsServerFrame) {
 		return
 	}
 	switch frame.Type {
-	case "done", "error":
+	case "done", "error", "exec_approval_request", "exec_approval_expired":
 		// Critical frames must not be dropped. Block briefly; force-close on timeout.
+		// Approval frames are critical: dropping them leaves the agent turn blocked for
+		// the full approval timeout (90 s) and then results in a mysterious denial.
 		select {
 		case wc.sendCh <- data:
 		case <-time.After(5 * time.Second):

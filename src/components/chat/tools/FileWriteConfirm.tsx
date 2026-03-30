@@ -94,19 +94,26 @@ function FileOpBlock({
   )
 }
 
-export const FileWriteConfirmUI = makeAssistantToolUI<WriteFileArgs, unknown>({
-  toolName: 'write_file',
-  render: ({ args, status }) => (
-    <FileOpBlock
-      icon={FloppyDisk}
-      label="write_file"
-      path={args?.path ?? '(unknown)'}
-      detail={byteCount(args?.content)}
-      isRunning={status.type === 'running'}
-      isError={status.type === 'incomplete'}
-    />
-  ),
-})
+function makeWriteFileUI(toolName: string) {
+  return makeAssistantToolUI<WriteFileArgs, unknown>({
+    toolName,
+    render: ({ args, status }) => (
+      <FileOpBlock
+        icon={FloppyDisk}
+        label={toolName}
+        path={args?.path ?? '(unknown)'}
+        detail={byteCount(args?.content)}
+        isRunning={status.type === 'running'}
+        isError={status.type === 'incomplete'}
+      />
+    ),
+  })
+}
+
+export const FileWriteConfirmUI = makeWriteFileUI('write_file')
+
+// BRD C.6.1.4 tool name (dot-notation). Backend uses PicoClaw convention (write_file); both registered.
+export const FileWriteAliasDotUI = makeWriteFileUI('file.write')
 
 export const EditFileConfirmUI = makeAssistantToolUI<EditFileArgs, unknown>({
   toolName: 'edit_file',

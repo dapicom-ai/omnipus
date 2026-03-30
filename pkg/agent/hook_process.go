@@ -264,7 +264,7 @@ func (ph *ProcessHook) AfterTool(
 
 func (ph *ProcessHook) ApproveTool(ctx context.Context, req *ToolApprovalRequest) (ApprovalDecision, error) {
 	if ph == nil || !ph.opts.ApproveTool {
-		return ApprovalDecision{Approved: true}, nil
+		return ApprovalDecision{Verdict: VerdictAllow}, nil
 	}
 
 	var resp ApprovalDecision

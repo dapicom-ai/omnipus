@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -24,7 +25,8 @@ import (
 )
 
 // newTestRestAPIWithHome creates a restAPI with homePath and onboardingMgr wired.
-// This is used for tests that exercise tasks, state, and onboarding endpoints.
+// This is used for tests that exercise tasks, state, onboarding, and config mutation endpoints.
+// It writes a minimal config.json into the temp dir so safeUpdateConfigJSON can read and mutate it.
 func newTestRestAPIWithHome(t *testing.T) *restAPI {
 	t.Helper()
 	t.Setenv("OMNIPUS_BEARER_TOKEN", "")
@@ -39,6 +41,11 @@ func newTestRestAPIWithHome(t *testing.T) *restAPI {
 			},
 		},
 	}
+	// Write a minimal config.json so safeUpdateConfigJSON can read and atomically update it
+	// without writing to the committed pkg/gateway/config.json fixture.
+	minimalCfg := []byte(`{"agents":{"defaults":{},"list":[]},"model_list":[]}`)
+	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
+
 	msgBus := bus.NewMessageBus()
 	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
 	return &restAPI{
@@ -402,8 +409,9 @@ func TestTaskPersistence(t *testing.T) {
 // Then each receives 201 Created.
 // Traces to: wave5a-wire-ui-spec.md — Scenario: createAgent concurrency safe (E9)
 func TestHandleAgentsCreateConcurrent(t *testing.T) {
-	api, cleanup := newTestRestAPI(t)
-	defer cleanup()
+	// Use newTestRestAPIWithHome so safeUpdateConfigJSON writes to a temp dir,
+	// not the committed pkg/gateway/config.json test fixture.
+	api := newTestRestAPIWithHome(t)
 
 	const n = 5
 	codes := make([]int, n)

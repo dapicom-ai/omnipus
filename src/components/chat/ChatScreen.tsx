@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { generateId } from '@/lib/constants'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   ThreadPrimitive,
   MessagePrimitive,
@@ -19,7 +19,6 @@ import {
   Stop,
   Copy,
   Check,
-  Paperclip,
 } from '@phosphor-icons/react'
 import OmnipusAvatar from '@/assets/logo/omnipus-avatar.svg?url'
 import { SessionPanel } from './SessionPanel'
@@ -29,7 +28,7 @@ import { MarkdownText } from './markdown-text'
 import { Button } from '@/components/ui/button'
 import { useChatStore } from '@/store/chat'
 import { useUiStore } from '@/store/ui'
-import { fetchSessionMessages } from '@/lib/api'
+import { fetchSessionMessages, createSession } from '@/lib/api'
 import type { ToolCall } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
@@ -223,8 +222,24 @@ function OmnipusComposer() {
   const cancelStream = useChatStore((s) => s.cancelStream)
   const setMessages = useChatStore((s) => s.setMessages)
   const appendMessage = useChatStore((s) => s.appendMessage)
+  const setActiveSession = useChatStore((s) => s.setActiveSession)
+  const activeAgentId = useChatStore((s) => s.activeAgentId)
   const addToast = useUiStore((s) => s.addToast)
   const composerRuntime = useComposerRuntime()
+  const queryClient = useQueryClient()
+
+  const { mutate: doCreateSession, isPending: isCreatingSession } = useMutation({
+    mutationFn: () => {
+      if (!activeAgentId) throw new Error('No agent selected')
+      return createSession(activeAgentId)
+    },
+    onSuccess: (session) => {
+      setActiveSession(session.id, session.agent_id)
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
+      addToast({ message: 'New session started', variant: 'success' })
+    },
+    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+  })
 
   const [inputValue, setInputValue] = useState('')
   const [slashOpen, setSlashOpen] = useState(false)
@@ -260,7 +275,7 @@ function OmnipusComposer() {
     }
 
     if (cmd === '/session new') {
-      addToast({ message: 'Session management coming soon', variant: 'default' })
+      if (!isCreatingSession) doCreateSession()
       return
     }
   }
@@ -324,17 +339,6 @@ function OmnipusComposer() {
           'flex items-end gap-2 px-2 py-2',
         )}
       >
-        {/* File attachment */}
-        <button
-          type="button"
-          onClick={() => addToast({ message: 'File attachments coming soon', variant: 'default' })}
-          className="shrink-0 w-8 h-8 flex items-center justify-center rounded-full text-[var(--color-muted)] hover:text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors"
-          aria-label="Attach file"
-          title="Attach file"
-        >
-          <Paperclip size={16} />
-        </button>
-
         <ComposerPrimitive.Input
           placeholder={
             !isConnected

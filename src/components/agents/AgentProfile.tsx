@@ -92,12 +92,12 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     queryFn: fetchProviders,
   })
 
-  const { data: agentSessions = [] } = useQuery({
+  const { data: agentSessions = [], isError: sessionsError } = useQuery({
     queryKey: ['agent-sessions', agentId],
     queryFn: () => fetchAgentSessions(agentId),
   })
 
-  const { data: allActivity = [] } = useQuery({
+  const { data: allActivity = [], isError: activityError } = useQuery({
     queryKey: ['activity'],
     queryFn: fetchActivity,
     staleTime: 30_000,
@@ -143,6 +143,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     setMaxLlmCallsPerHour(agent.rate_limits?.max_llm_calls_per_hour ?? '')
     setMaxToolCallsPerMinute(agent.rate_limits?.max_tool_calls_per_minute ?? '')
     setMaxCostPerDay(agent.rate_limits?.max_cost_per_day ?? '')
+    setHeartbeat(agent.heartbeat ?? '')
   }, [agent])
 
   const { mutate: doUpdate, isPending: isSaving } = useMutation({
@@ -530,19 +531,23 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
       )}
 
       {/* Recent sessions */}
-      {recentSessions.length > 0 && (
-        <>
-          <Separator />
-          <section>
-            <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)] mb-3">Recent Sessions</h2>
+      <>
+        <Separator />
+        <section>
+          <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)] mb-3">Recent Sessions</h2>
+          {sessionsError ? (
+            <p className="text-sm text-red-400">Failed to load sessions</p>
+          ) : recentSessions.length > 0 ? (
             <div className="space-y-1">
               {recentSessions.map((s) => (
                 <SessionRow key={s.id} session={s} />
               ))}
             </div>
-          </section>
-        </>
-      )}
+          ) : (
+            <p className="text-xs text-[var(--color-muted)]">No sessions yet.</p>
+          )}
+        </section>
+      </>
 
       {/* Tools */}
       {agent.tools && agent.tools.length > 0 && (
@@ -582,37 +587,23 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
             <Button
               size="sm"
               variant="outline"
-              onClick={() => addToast({ message: 'Saving HEARTBEAT.md requires file system access (coming soon)', variant: 'default' })}
+              disabled={isSaving}
+              onClick={() => doUpdate({ heartbeat })}
             >
+              <FloppyDisk size={13} weight="bold" className="mr-1.5" />
               Save HEARTBEAT.md
             </Button>
           </section>
         </>
       )}
 
-      {/* Workspace files */}
-      <Separator />
-      <section>
-        <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)] mb-2">Workspace Files</h2>
-        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-center">
-          <p className="text-xs text-[var(--color-muted)]">Workspace files browser coming soon</p>
-        </div>
-      </section>
-
-      {/* Memory viewer */}
-      <Separator />
-      <section>
-        <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)] mb-2">Memory</h2>
-        <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 text-center">
-          <p className="text-xs text-[var(--color-muted)]">Memory viewer coming soon</p>
-        </div>
-      </section>
-
       {/* Recent activity */}
       <Separator />
       <section>
         <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)] mb-3">Recent Activity</h2>
-        {recentActivity.length === 0 ? (
+        {activityError ? (
+          <p className="text-sm text-red-400">Failed to load activity</p>
+        ) : recentActivity.length === 0 ? (
           <p className="text-xs text-[var(--color-muted)]">No recent activity for this agent.</p>
         ) : (
           <div className="space-y-1">

@@ -371,11 +371,23 @@ type agentResponse struct {
 	Status      string `json:"status"` // "active" | "idle"
 }
 
+// activeAgentIDSet returns a set of agent IDs that currently have an active turn.
+func (a *restAPI) activeAgentIDSet() map[string]bool {
+	ids := a.agentLoop.GetActiveAgentIDs()
+	m := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		m[id] = true
+	}
+	return m
+}
+
 func (a *restAPI) listAgents(w http.ResponseWriter) {
 	cfg := a.agentLoop.GetConfig()
 	agents := make([]agentResponse, 0, len(cfg.Agents.List)+1)
+	activeIDs := a.activeAgentIDSet()
 
-	// System agent is always present.
+	// System agent is always present and always active — it is always available for
+	// interaction, unlike turn-based custom agents.
 	defaultModel := cfg.Agents.Defaults.ModelName
 	agents = append(agents, agentResponse{
 		ID:     "omnipus-system",
@@ -390,12 +402,16 @@ func (a *restAPI) listAgents(w http.ResponseWriter) {
 		if ac.Model != nil && ac.Model.Primary != "" {
 			model = ac.Model.Primary
 		}
+		status := "idle"
+		if activeIDs[ac.ID] {
+			status = "active"
+		}
 		agents = append(agents, agentResponse{
 			ID:     ac.ID,
 			Name:   ac.Name,
 			Type:   "custom",
 			Model:  model,
-			Status: "idle",
+			Status: status,
 		})
 	}
 
@@ -405,6 +421,8 @@ func (a *restAPI) listAgents(w http.ResponseWriter) {
 func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 	cfg := a.agentLoop.GetConfig()
 
+	// System agent is always present and always active — it is always available for
+	// interaction, unlike turn-based custom agents.
 	if id == "omnipus-system" {
 		jsonOK(w, agentResponse{
 			ID:     "omnipus-system",
@@ -416,18 +434,24 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 		return
 	}
 
+	activeIDs := a.activeAgentIDSet()
+
 	for _, ac := range cfg.Agents.List {
 		if ac.ID == id {
 			model := cfg.Agents.Defaults.ModelName
 			if ac.Model != nil && ac.Model.Primary != "" {
 				model = ac.Model.Primary
 			}
+			status := "idle"
+			if activeIDs[ac.ID] {
+				status = "active"
+			}
 			jsonOK(w, agentResponse{
 				ID:     ac.ID,
 				Name:   ac.Name,
 				Type:   "custom",
 				Model:  model,
-				Status: "idle",
+				Status: status,
 			})
 			return
 		}

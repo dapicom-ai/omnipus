@@ -324,12 +324,9 @@ func handleProcessHookRequest(mode string, msg processHookRPCMessage) (any, *pro
 		}, nil
 	case "hook.approve_tool":
 		if mode == "deny" {
-			return ApprovalDecision{
-				Approved: false,
-				Reason:   "blocked by ipc hook",
-			}, nil
+			return Deny("blocked by ipc hook"), nil
 		}
-		return ApprovalDecision{Approved: true}, nil
+		return ApprovalDecision{Verdict: VerdictAllow}, nil
 	default:
 		return nil, &processHookRPCError{
 			Code:    -32601,

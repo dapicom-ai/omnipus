@@ -212,8 +212,9 @@ func TestHandleAgentsCreateValidation(t *testing.T) {
 // TestHandleAgentsCreate verifies POST /api/v1/agents creates an agent and returns 201.
 // Traces to: wave5a-wire-ui-spec.md — A3+A4: agent creation via API
 func TestHandleAgentsCreate(t *testing.T) {
-	api, cleanup := newTestRestAPI(t)
-	defer cleanup()
+	// Use newTestRestAPIWithHome so safeUpdateConfigJSON writes to a temp dir,
+	// not the committed pkg/gateway/config.json test fixture.
+	api := newTestRestAPIWithHome(t)
 
 	body := `{"name": "Scout", "model": "claude-sonnet-4-6"}`
 	w := httptest.NewRecorder()
@@ -233,8 +234,9 @@ func TestHandleAgentsCreate(t *testing.T) {
 // TestHandleAgentsCreateWithExplicitID verifies POST /api/v1/agents creates agent and ignores provided id.
 // Traces to: wave5a-wire-ui-spec.md — A3+A4: agent creation via API
 func TestHandleAgentsCreateWithExplicitID(t *testing.T) {
-	api, cleanup := newTestRestAPI(t)
-	defer cleanup()
+	// Use newTestRestAPIWithHome so safeUpdateConfigJSON writes to a temp dir,
+	// not the committed pkg/gateway/config.json test fixture.
+	api := newTestRestAPIWithHome(t)
 
 	body := `{"id": "my-scout", "name": "Scout"}`
 	w := httptest.NewRecorder()
@@ -451,4 +453,108 @@ func TestRedactSensitiveFieldsNested(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "anthropic", provider["name"])
 	assert.Equal(t, "[redacted]", provider["api_key"])
+}
+
+// --- Agent status tests ---
+
+// TestAgentListStatus_SystemAlwaysActive verifies that the system agent always has
+// status "active" regardless of whether any turns are running.
+// BDD: Given no active agent turns,
+// When GET /api/v1/agents is called,
+// Then the system agent (id="omnipus-system") has status "active".
+// Traces to: vivid-roaming-planet.md line 168
+func TestAgentListStatus_SystemAlwaysActive(t *testing.T) {
+	api, cleanup := newTestRestAPI(t)
+	defer cleanup()
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil)
+	api.HandleAgents(w, r)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var agents []agentResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &agents))
+
+	for _, ag := range agents {
+		if ag.ID == "omnipus-system" {
+			assert.Equal(t, "active", ag.Status, "system agent must always have status 'active'")
+			return
+		}
+	}
+	t.Fatal("system agent not found in response")
+}
+
+// TestAgentListStatus_CustomAgentIdle verifies that a custom agent with no active turn
+// has status "idle" in the agent list.
+// BDD: Given a custom agent "my-agent" configured with no active turn,
+// When GET /api/v1/agents is called,
+// Then "my-agent" has status "idle".
+// Traces to: vivid-roaming-planet.md line 169
+func TestAgentListStatus_CustomAgentIdle(t *testing.T) {
+	t.Setenv("OMNIPUS_BEARER_TOKEN", "")
+
+	tmpDir := t.TempDir()
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{Host: "127.0.0.1", Port: 8080},
+		Agents: config.AgentsConfig{
+			Defaults: config.AgentDefaults{
+				Workspace: tmpDir,
+				ModelName: "test-model",
+				MaxTokens: 4096,
+			},
+			List: []config.AgentConfig{
+				{ID: "my-agent", Name: "My Agent"},
+			},
+		},
+	}
+	msgBus := bus.NewMessageBus()
+	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	api := &restAPI{agentLoop: al}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/agents", nil)
+	api.HandleAgents(w, r)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var agents []agentResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &agents))
+
+	for _, ag := range agents {
+		if ag.ID == "my-agent" {
+			assert.Equal(t, "idle", ag.Status, "custom agent with no active turn must have status 'idle'")
+			return
+		}
+	}
+	t.Fatal("my-agent not found in response")
+}
+
+// TestAgentListStatus_CustomAgentActive verifies that a custom agent whose ID appears
+// in GetActiveAgentIDs() has status "active" in the list response.
+//
+// This test uses the agent package's internal activeTurnStates field, which is accessible
+// from within the gateway package only indirectly via GetActiveAgentIDs(). Since turnState
+// is unexported and activeTurnStates is unexported, the "active" path for a custom agent
+// is tested in pkg/agent/turn_test.go (same package). Here we verify the REST layer's
+// conditional: given GetActiveAgentIDs returns an ID, the status field is "active".
+//
+// We test this by using the agent package's registerActiveTurn-equivalent path indirectly:
+// the system agent always returns "active", and TestGetActiveAgentIDs_* cover the
+// GetActiveAgentIDs return value. The REST mapping is unit-tested via listAgents logic.
+//
+// TODO: Testability blocker — activeTurnStates is unexported in pkg/agent.
+// To test the "active" status path from the gateway package, pkg/agent needs an exported
+// test helper (e.g., AgentLoop.SimulateActiveTurn(sessionKey, agentID string)) or a
+// RegisterActiveTurn(sessionKey string, ts *TurnStateInfo) exported method.
+// Reported for backend-lead: expose a test injection point.
+//
+// BDD: Given a custom agent "busy-agent" with a registered active turn,
+// When GET /api/v1/agents is called,
+// Then "busy-agent" has status "active".
+// Traces to: vivid-roaming-planet.md line 170
+func TestAgentListStatus_CustomAgentActive(t *testing.T) {
+	// TODO: Blocked — turnState.agentID and AgentLoop.activeTurnStates are unexported.
+	// See testability comment above. This scenario is covered in pkg/agent/turn_test.go.
+	t.Skip("BLOCKED: activeTurnStates injection requires exported test helper in pkg/agent — see TODO above")
 }

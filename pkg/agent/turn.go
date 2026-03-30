@@ -172,6 +172,27 @@ func (al *AgentLoop) GetActiveTurn() *ActiveTurnInfo {
 	return &info
 }
 
+// GetActiveAgentIDs returns the IDs of all agents that currently have an active turn.
+// Used by the REST API to report real-time agent status.
+func (al *AgentLoop) GetActiveAgentIDs() []string {
+	seen := make(map[string]struct{})
+	al.activeTurnStates.Range(func(_, value any) bool {
+		ts := value.(*turnState)
+		ts.mu.RLock()
+		id := ts.agentID
+		ts.mu.RUnlock()
+		if id != "" {
+			seen[id] = struct{}{}
+		}
+		return true
+	})
+	ids := make([]string, 0, len(seen))
+	for id := range seen {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 func (al *AgentLoop) GetActiveTurnBySession(sessionKey string) *ActiveTurnInfo {
 	ts := al.getActiveTurnState(sessionKey)
 	if ts == nil {

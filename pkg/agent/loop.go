@@ -2302,7 +2302,7 @@ turnLoop:
 					Channel:   ts.channel,
 					ChatID:    ts.chatID,
 				})
-				if !approval.Approved {
+				if !approval.IsApproved() {
 					allResponsesHandled = false
 					denyContent := hookDeniedToolContent("Tool execution denied by approval hook", approval.Reason)
 					al.emitEvent(

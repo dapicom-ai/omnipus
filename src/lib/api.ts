@@ -37,6 +37,7 @@ export interface Agent {
   color?: string
   tools?: string[]
   heartbeat_interval?: number
+  heartbeat?: string
   fallback_models?: string[]
   model_params?: {
     temperature?: number

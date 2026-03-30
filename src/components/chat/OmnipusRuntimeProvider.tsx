@@ -7,11 +7,12 @@ import { useOmnipusRuntime } from "@/lib/omnipus-runtime";
 import { useChatStore } from "@/store/chat";
 import { WsConnection } from "@/lib/ws";
 import { TerminalOutputUI } from "./tools/TerminalOutput";
-import { FileReadPreviewUI } from "./tools/FileReadPreview";
-import { FileWriteConfirmUI, EditFileConfirmUI, AppendFileConfirmUI } from "./tools/FileWriteConfirm";
-import { FileTreeViewUI } from "./tools/FileTreeView";
+import { FileReadPreviewUI, FileReadAliasDotUI } from "./tools/FileReadPreview";
+import { FileWriteConfirmUI, FileWriteAliasDotUI, EditFileConfirmUI, AppendFileConfirmUI } from "./tools/FileWriteConfirm";
+import { FileTreeViewUI, FileListAliasDotUI } from "./tools/FileTreeView";
 import { WebSearchResultUI } from "./tools/WebSearchResult";
 import { WebFetchPreviewUI } from "./tools/WebFetchPreview";
+import { BrowserNavigateUI, BrowserNavigateUnderscoreUI } from "./tools/BrowserNavigate";
 
 // Manages WebSocket connection lifecycle — renders nothing, only side effects.
 function WsLifecycle() {
@@ -54,24 +55,36 @@ export function OmnipusRuntimeProvider({ children }: { children: React.ReactNode
     <AssistantRuntimeProvider runtime={runtime}>
       {/*
        * Tool UI registrations — each component calls useAssistantToolUI on mount.
-       * Tool name → UI component mapping (names match pkg/sysagent/tools/ exports):
-       *   exec         → TerminalOutputUI     (shell command execution)
-       *   read_file    → FileReadPreviewUI    (read file content)
-       *   write_file   → FileWriteConfirmUI   (create/overwrite file)
-       *   edit_file    → EditFileConfirmUI    (targeted string replacement)
-       *   append_file  → AppendFileConfirmUI  (append to file)
-       *   list_dir     → FileTreeViewUI       (directory listing)
-       *   web_search   → WebSearchResultUI    (search the web)
-       *   web_fetch    → WebFetchPreviewUI    (fetch a URL)
+       * Tool name → UI component mapping. Underscore names match pkg/sysagent/tools/ exports
+       * (PicoClaw convention); dot-notation names match BRD C.6.1.4 spec. Both registered
+       * to handle either naming convention from the agent.
+       *   exec              → TerminalOutputUI          (shell command execution)
+       *   read_file         → FileReadPreviewUI         (read file content)
+       *   file.read         → FileReadAliasDotUI        (BRD alias)
+       *   write_file        → FileWriteConfirmUI        (create/overwrite file)
+       *   file.write        → FileWriteAliasDotUI       (BRD alias)
+       *   edit_file         → EditFileConfirmUI         (targeted string replacement)
+       *   append_file       → AppendFileConfirmUI       (append to file)
+       *   list_dir          → FileTreeViewUI            (directory listing)
+       *   file.list         → FileListAliasDotUI        (BRD alias)
+       *   web_search        → WebSearchResultUI         (search the web)
+       *   web_fetch         → WebFetchPreviewUI         (fetch a URL)
+       *   browser.navigate  → BrowserNavigateUI         (browser navigation + screenshot)
+       *   browser_navigate  → BrowserNavigateUnderscoreUI (underscore variant)
        */}
       <TerminalOutputUI />
       <FileReadPreviewUI />
+      <FileReadAliasDotUI />
       <FileWriteConfirmUI />
+      <FileWriteAliasDotUI />
       <EditFileConfirmUI />
       <AppendFileConfirmUI />
       <FileTreeViewUI />
+      <FileListAliasDotUI />
       <WebSearchResultUI />
       <WebFetchPreviewUI />
+      <BrowserNavigateUI />
+      <BrowserNavigateUnderscoreUI />
       <WsLifecycle />
       {children}
     </AssistantRuntimeProvider>

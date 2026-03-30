@@ -45,8 +45,6 @@ const LANGUAGES = [
   { value: 'ja', label: 'Japanese' },
 ]
 
-type Theme = 'dark' | 'light' | 'system'
-
 const LS_PREFIX = 'omnipus_pref_'
 
 function loadPref<T>(key: string, fallback: T): T {
@@ -68,7 +66,6 @@ export function ProfileSection() {
   const [name, setName] = useState(() => loadPref<string>('name', ''))
   const [timezone, setTimezone] = useState(() => loadPref<string>('timezone', 'UTC'))
   const [language, setLanguage] = useState(() => loadPref<string>('language', 'en'))
-  const [theme, setTheme] = useState<Theme>(() => loadPref<Theme>('theme', 'dark'))
   const [fontSize, setFontSize] = useState(() => loadPref<number>('font_size', 14))
 
   // Keep document font-size in sync for preview
@@ -76,19 +73,10 @@ export function ProfileSection() {
     document.documentElement.style.setProperty('--user-font-size', `${fontSize}px`)
   }, [fontSize])
 
-  function handleThemeChange(value: Theme) {
-    if (value !== 'dark') {
-      addToast({ message: `${value === 'light' ? 'Light' : 'System'} theme — coming soon`, variant: 'default' })
-      return
-    }
-    setTheme(value)
-  }
-
   function handleSave() {
     savePref('name', name)
     savePref('timezone', timezone)
     savePref('language', language)
-    savePref('theme', theme)
     savePref('font_size', fontSize)
     addToast({ message: 'Preferences saved', variant: 'success' })
   }
@@ -178,18 +166,11 @@ export function ProfileSection() {
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-[var(--color-secondary)]">Theme</p>
-              <p className="text-xs text-[var(--color-muted)]">Dark is the default. Light and System are coming soon.</p>
+              <p className="text-xs text-[var(--color-muted)]">Omnipus uses the Sovereign Deep dark theme.</p>
             </div>
-            <Select value={theme} onValueChange={(v) => handleThemeChange(v as Theme)}>
-              <SelectTrigger className="w-[120px] h-8 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="dark">Dark</SelectItem>
-                <SelectItem value="light">Light</SelectItem>
-                <SelectItem value="system">System</SelectItem>
-              </SelectContent>
-            </Select>
+            <span className="text-sm text-[var(--color-secondary)]">
+              Dark <span className="text-xs text-[var(--color-muted)]">(only dark theme is supported)</span>
+            </span>
           </div>
 
           <Separator />
