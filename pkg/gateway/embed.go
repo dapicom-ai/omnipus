@@ -30,12 +30,17 @@ func newSPAHandler() http.Handler {
 		// Check if the file exists in the embedded FS
 		cleanPath := strings.TrimPrefix(path, "/")
 		if _, err := fs.Stat(sub, cleanPath); err == nil {
-			// index.html must never be cached — it references hashed JS/CSS bundles.
-			// After a rebuild, browsers must fetch the new index.html to get updated
-			// asset references. Static assets (JS/CSS with content hashes) can be
-			// cached indefinitely.
-			if cleanPath == "index.html" || cleanPath == "" {
+			switch {
+			case cleanPath == "index.html" || cleanPath == "":
+				// index.html must never be cached — it references hashed JS/CSS bundles.
 				w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			case cleanPath == "sw.js" || cleanPath == "manifest.json":
+				// M14: service worker and manifest must always be fresh.
+				w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			case strings.HasPrefix(cleanPath, "assets/"):
+				// M4: Vite hashes asset filenames (e.g. index-Abc123.js).
+				// These can be cached indefinitely by the browser.
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			}
 			fileServer.ServeHTTP(w, r)
 			return

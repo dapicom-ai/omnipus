@@ -47,7 +47,7 @@ export interface WsTokenFrame {
 
 export interface WsDoneFrame {
   type: 'done'
-  stats: {
+  stats?: {
     tokens?: number
     cost?: number
     duration_ms?: number

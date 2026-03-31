@@ -24,7 +24,7 @@ function formatTokens(tokens: number): string {
 }
 
 export function SessionBar() {
-  const { activeAgentId, setActiveSession, sessionTokens, sessionCost, isStreaming } = useChatStore()
+  const { activeAgentId, setActiveSession, setActiveAgentDraft, sessionTokens, sessionCost, isStreaming } = useChatStore()
   const { openSessionPanel } = useUiStore()
 
   const { data: agents = [], isError: agentsError } = useQuery({
@@ -49,11 +49,21 @@ export function SessionBar() {
     )
   }
 
-  const effectiveAgentId = activeAgentId || agents[0]?.id
-  const activeAgent = agents.find((a) => a.id === effectiveAgentId)
-  const chatAgents = agents
+  // Only show agents that are ready to chat (active or idle)
+  const chatAgents = agents.filter((a) => a.status === 'active' || a.status === 'idle')
+
+  const effectiveAgentId = activeAgentId || chatAgents[0]?.id
+  const activeAgent = chatAgents.find((a) => a.id === effectiveAgentId)
+
+  // Persist auto-selection so the store knows which agent is active
+  if (!activeAgentId && chatAgents[0]?.id) {
+    setActiveAgentDraft(chatAgents[0].status === 'draft')
+    setActiveSession(null, chatAgents[0].id)
+  }
 
   const handleAgentSelect = (agentId: string) => {
+    const selected = agents.find((a) => a.id === agentId)
+    setActiveAgentDraft(selected?.status === 'draft')
     // Switch agent — start new session
     setActiveSession(null, agentId)
   }

@@ -332,10 +332,13 @@ func (h *WSHandler) handleChatMessage(ctx context.Context, chatID string, sessio
 				h.mu.Lock()
 				h.sessionIDs[chatID] = meta.ID
 				h.mu.Unlock()
-				// Set session title from first message (truncate to 60 chars)
-				title := content
-				if len(title) > 60 {
-					title = title[:57] + "..."
+				// M3: truncate using []rune so multi-byte UTF-8 characters aren't split.
+				titleRunes := []rune(content)
+				var title string
+				if len(titleRunes) > 60 {
+					title = string(titleRunes[:57]) + "..."
+				} else {
+					title = content
 				}
 				if err := h.partitions.SetTitle(*sessionID, title); err != nil {
 					slog.Debug("ws: could not set session title", "error", err)
@@ -363,8 +366,14 @@ func (h *WSHandler) handleChatMessage(ctx context.Context, chatID string, sessio
 		ChatID:   chatID,
 		Content:  content,
 	}
+	// M13: validate agent_id before embedding in metadata to prevent path traversal
+	// if the value is used in a filesystem context downstream.
 	if agentID != "" {
-		msg.Metadata = map[string]string{"agent_id": agentID}
+		if err := validateEntityID(agentID); err != nil {
+			slog.Warn("ws: invalid agent_id in message frame; ignoring", "agent_id", agentID, "error", err)
+		} else {
+			msg.Metadata = map[string]string{"agent_id": agentID}
+		}
 	}
 	pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

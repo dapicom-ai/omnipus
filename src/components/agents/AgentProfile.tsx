@@ -72,6 +72,9 @@ type IconName = typeof ICON_OPTIONS[number]['name']
 
 function getIconComponent(name: string | undefined) {
   const match = ICON_OPTIONS.find((o) => o.name === name)
+  if (!match && name) {
+    console.warn('[AgentProfile] Unknown icon:', name)
+  }
   return match?.component ?? Robot
 }
 
@@ -116,6 +119,11 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
   const isDirtyRef = useRef(false)
   const markDirty = () => { isDirtyRef.current = true }
 
+  // Reset dirty flag when navigating to a different agent
+  useEffect(() => {
+    isDirtyRef.current = false
+  }, [agentId])
+
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [model, setModel] = useState('')
@@ -155,7 +163,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     setSoul(agent.soul ?? '')
     setInstructions(agent.instructions ?? '')
     setHeartbeat(agent.heartbeat ?? '')
-  }, [agent])
+  }, [agent?.id])
 
   const { mutate: doUpdate, isPending: isSaving } = useMutation({
     mutationFn: (data: Parameters<typeof updateAgent>[1]) => updateAgent(agentId, data),
@@ -173,8 +181,8 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     }),
   })
 
-  function handleSave() {
-    doUpdate({
+  function buildFullPayload() {
+    return {
       name,
       description,
       model,
@@ -190,7 +198,12 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
       },
       soul,
       instructions,
-    })
+      heartbeat,
+    }
+  }
+
+  function handleSave() {
+    doUpdate(buildFullPayload())
   }
 
   function addFallbackModel() {
@@ -475,7 +488,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
               size="sm"
               variant="outline"
               disabled={isSaving}
-              onClick={() => doUpdate({ soul })}
+              onClick={() => doUpdate(buildFullPayload())}
             >
               <FloppyDisk size={13} weight="bold" className="mr-1.5" />
               Save SOUL.md
@@ -507,7 +520,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
               size="sm"
               variant="outline"
               disabled={isSaving}
-              onClick={() => doUpdate({ instructions })}
+              onClick={() => doUpdate(buildFullPayload())}
             >
               <FloppyDisk size={13} weight="bold" className="mr-1.5" />
               Save Instructions
@@ -536,7 +549,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
               size="sm"
               variant="outline"
               disabled={isSaving}
-              onClick={() => doUpdate({ heartbeat })}
+              onClick={() => doUpdate(buildFullPayload())}
             >
               <FloppyDisk size={13} weight="bold" className="mr-1.5" />
               Save HEARTBEAT.md
@@ -643,7 +656,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
         <section>
           <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)] mb-3">Recent Sessions</h2>
           {sessionsError ? (
-            <p className="text-sm text-red-400">Failed to load sessions</p>
+            <p className="text-sm text-[var(--color-error)]">Failed to load sessions</p>
           ) : recentSessions.length > 0 ? (
             <div className="space-y-1">
               {recentSessions.map((s) => (
@@ -680,7 +693,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
       <section>
         <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)] mb-3">Recent Activity</h2>
         {activityError ? (
-          <p className="text-sm text-red-400">Failed to load activity</p>
+          <p className="text-sm text-[var(--color-error)]">Failed to load activity</p>
         ) : recentActivity.length === 0 ? (
           <p className="text-xs text-[var(--color-muted)]">No recent activity for this agent.</p>
         ) : (

@@ -85,7 +85,13 @@ func loadAgentDefinition(workspace string) AgentContextDefinition {
 		definition.Source = AgentDefinitionSourceAgent
 		definition.Agent = &prompt
 		soulPath := filepath.Join(workspace, "SOUL.md")
-		if content, err := os.ReadFile(soulPath); err == nil {
+		if content, err := os.ReadFile(soulPath); err != nil {
+			// M8: distinguish permission/IO errors from expected absence.
+			if !os.IsNotExist(err) {
+				logger.WarnCF("agent", "Could not read SOUL.md",
+					map[string]any{"path": soulPath, "error": err.Error()})
+			}
+		} else {
 			definition.Soul = &SoulDefinition{
 				Path:    soulPath,
 				Content: string(content),
@@ -106,7 +112,13 @@ func loadAgentDefinition(workspace string) AgentContextDefinition {
 
 	defaultSoulPath := filepath.Join(workspace, "SOUL.md")
 	if definition.Source != "" || fileExists(defaultSoulPath) {
-		if content, err := os.ReadFile(defaultSoulPath); err == nil {
+		if content, err := os.ReadFile(defaultSoulPath); err != nil {
+			// M8: distinguish permission/IO errors from expected absence.
+			if !os.IsNotExist(err) {
+				logger.WarnCF("agent", "Could not read SOUL.md",
+					map[string]any{"path": defaultSoulPath, "error": err.Error()})
+			}
+		} else {
 			definition.Soul = &SoulDefinition{
 				Path:    defaultSoulPath,
 				Content: string(content),

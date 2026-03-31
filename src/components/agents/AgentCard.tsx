@@ -59,7 +59,9 @@ export function AgentCard({ agent }: AgentCardProps) {
           </p>
           <div className="flex items-center gap-2 flex-wrap">
             {agent.status === 'draft' ? (
-              <Badge variant="warning" className="text-amber-400 border-amber-400/30 bg-amber-400/10">draft</Badge>
+              <Badge variant="warning" className="text-[var(--color-warning)] border-[var(--color-warning)]/30 bg-[var(--color-warning)]/10">draft</Badge>
+            ) : agent.status === 'error' ? (
+              <Badge variant="destructive" className="text-[var(--color-error)] border-[var(--color-error)]/30 bg-[var(--color-error)]/10">error</Badge>
             ) : (
               <Badge variant={typeBadgeVariant[agent.type]}>{agent.type}</Badge>
             )}
@@ -70,8 +72,13 @@ export function AgentCard({ agent }: AgentCardProps) {
             )}
           </div>
           {agent.status === 'draft' && (
-            <p className="text-[10px] text-amber-400/70 mt-1">
+            <p className="text-[10px] text-[var(--color-warning)]/70 mt-1">
               Set up SOUL.md to activate this agent
+            </p>
+          )}
+          {agent.status === 'error' && (
+            <p className="text-[10px] text-[var(--color-error)]/70 mt-1">
+              Agent encountered an error — check the activity log
             </p>
           )}
         </div>

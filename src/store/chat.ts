@@ -32,7 +32,10 @@ interface ChatStore {
   // Session & agent selection
   activeSessionId: string | null
   activeAgentId: string | null
+  /** Whether the currently active agent is in draft status — prevents sending */
+  activeAgentIsDraft: boolean
   setActiveSession: (sessionId: string | null, agentId?: string | null) => void
+  setActiveAgentDraft: (isDraft: boolean) => void
 
   // Messages
   messages: ChatMessage[]
@@ -78,6 +81,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   activeSessionId: null,
   activeAgentId: null,
+  activeAgentIsDraft: false,
   setActiveSession: (sessionId, agentId) =>
     set({
       activeSessionId: sessionId,
@@ -90,6 +94,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       sessionCost: 0,
       isStreaming: false,
     }),
+  setActiveAgentDraft: (isDraft) => set({ activeAgentIsDraft: isDraft }),
 
   messages: [],
   isStreaming: false,
@@ -198,9 +203,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   updateSessionStats: (tokens, cost) => set({ sessionTokens: tokens, sessionCost: cost }),
 
   sendMessage: (content) => {
-    const { connection, activeSessionId, activeAgentId, isStreaming } = get()
+    const { connection, activeSessionId, activeAgentId, isStreaming, activeAgentIsDraft } = get()
     if (isStreaming) {
       set({ connectionError: 'Please wait — a response is still generating.' })
+      return
+    }
+    if (activeAgentIsDraft) {
+      useUiStore.getState().addToast({
+        message: 'This agent is in draft status. Set up its SOUL.md first.',
+        variant: 'error',
+      })
       return
     }
     if (!connection) {
@@ -255,7 +267,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   cancelStream: () => {
     const { connection, activeSessionId, isStreaming } = get()
     if (!connection || !isStreaming) return
-    if (!activeSessionId) return
+    if (!activeSessionId) {
+      // No session to cancel — still unblock the UI
+      set({ isStreaming: false })
+      get().markLastMessageInterrupted()
+      return
+    }
 
     const sent = connection.send({ type: 'cancel', session_id: activeSessionId })
     if (!sent) {
@@ -265,6 +282,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         variant: 'error',
       })
     }
+
+    // Only mark interrupted when cancel was at least attempted (connection existed)
     get().markLastMessageInterrupted()
 
     // Cancel any running tool calls
@@ -285,6 +304,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       set({ connectionError: 'Cannot reconnect — please refresh the page.' })
       return
     }
+    set({ connectionError: null })
     connection.connect()
   },
 
@@ -333,6 +353,17 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               streamCursor: false,
               status: 'error',
             }
+          } else {
+            // No assistant message exists yet — append an error message so the user sees feedback
+            msgs.push({
+              id: generateId(),
+              role: 'assistant',
+              content: frame.message,
+              timestamp: new Date().toISOString(),
+              status: 'error',
+              isStreaming: false,
+              streamCursor: false,
+            })
           }
           return { messages: msgs, isStreaming: false, connectionError: frame.message }
         })

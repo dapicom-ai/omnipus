@@ -6,6 +6,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -23,9 +24,18 @@ func DefaultConfig() *Config {
 	} else {
 		userHome, homeErr := os.UserHomeDir()
 		if homeErr != nil {
-			userHome = os.TempDir()
-			logger.WarnCF("config", "UserHomeDir failed in DefaultConfig; falling back to temp directory",
-				map[string]any{"error": homeErr.Error(), "fallback": userHome})
+			// H14: create a user-specific subdirectory under TempDir with 0700 permissions
+			// to prevent other local users from accessing the omnipus data directory.
+			userTempDir := filepath.Join(os.TempDir(), fmt.Sprintf("omnipus-%d", os.Getpid()))
+			if mkErr := os.MkdirAll(userTempDir, 0o700); mkErr != nil {
+				logger.ErrorCF("config", "UserHomeDir failed and could not create secure temp dir; data isolation not guaranteed",
+					map[string]any{"error": homeErr.Error(), "mkdir_error": mkErr.Error()})
+				userTempDir = os.TempDir()
+			} else {
+				logger.WarnCF("config", "UserHomeDir failed in DefaultConfig; using user-specific temp directory",
+					map[string]any{"error": homeErr.Error(), "fallback": userTempDir})
+			}
+			userHome = userTempDir
 		}
 		homePath = filepath.Join(userHome, pkg.DefaultOmnipusHome)
 	}

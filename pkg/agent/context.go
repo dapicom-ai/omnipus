@@ -127,7 +127,12 @@ func (cb *ContextBuilder) getWorkspaceInfo() string {
 // getWorkspaceAndRules returns the workspace paths, rules, and tool discovery
 // instructions shared by both getIdentity and getWorkspaceInfo.
 func (cb *ContextBuilder) getWorkspaceAndRules() string {
-	workspacePath, _ := filepath.Abs(cb.workspace)
+	workspacePath, absErr := filepath.Abs(cb.workspace)
+	if absErr != nil {
+		logger.WarnCF("agent", "filepath.Abs failed for workspace; using raw path",
+			map[string]any{"workspace": cb.workspace, "error": absErr.Error()})
+		workspacePath = cb.workspace
+	}
 	toolDiscovery := cb.getDiscoveryRule()
 	version := config.FormatVersion()
 
@@ -325,9 +330,12 @@ type cacheBaseline struct {
 // Called under write lock when the cache is built.
 func (cb *ContextBuilder) buildCacheBaseline() cacheBaseline {
 	skillRoots := cb.skillRoots()
+	srcPaths := cb.sourcePaths()
 
-	// All paths whose existence we track: source files + all skill roots.
-	allPaths := append(cb.sourcePaths(), skillRoots...)
+	// C3: Use explicit allocation to avoid mutating the underlying array of sourcePaths.
+	allPaths := make([]string, 0, len(srcPaths)+len(skillRoots))
+	allPaths = append(allPaths, srcPaths...)
+	allPaths = append(allPaths, skillRoots...)
 
 	existed := make(map[string]bool, len(allPaths))
 	skillFiles := make(map[string]time.Time)
@@ -344,8 +352,16 @@ func (cb *ContextBuilder) buildCacheBaseline() cacheBaseline {
 	// Walk all skill roots recursively to snapshot skill files and mtimes.
 	// Use os.Stat (not d.Info) for consistency with sourceFilesChanged checks.
 	for _, root := range skillRoots {
-		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
-			if walkErr == nil && !d.IsDir() {
+		if err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				// M15: log non-IsNotExist walk errors.
+				if !os.IsNotExist(walkErr) {
+					logger.WarnCF("agent", "cache baseline: WalkDir error",
+						map[string]any{"root": root, "path": path, "error": walkErr.Error()})
+				}
+				return nil
+			}
+			if !d.IsDir() {
 				if info, err := os.Stat(path); err == nil {
 					skillFiles[path] = info.ModTime()
 					if info.ModTime().After(maxMtime) {
@@ -354,7 +370,10 @@ func (cb *ContextBuilder) buildCacheBaseline() cacheBaseline {
 				}
 			}
 			return nil
-		})
+		}); err != nil && !os.IsNotExist(err) {
+			logger.WarnCF("agent", "cache baseline: WalkDir returned error",
+				map[string]any{"root": root, "error": err.Error()})
+		}
 	}
 
 	// If no tracked files exist yet (empty workspace), maxMtime is zero.
@@ -509,7 +528,8 @@ func (cb *ContextBuilder) LoadBootstrapFiles() string {
 		}
 		fmt.Fprintf(&sb, "## %s\n\n%s\n\n", label, agentDefinition.Agent.Body)
 	}
-	if agentDefinition.Soul != nil {
+	// M6: only emit the Soul section when content is non-whitespace.
+	if agentDefinition.Soul != nil && strings.TrimSpace(agentDefinition.Soul.Content) != "" {
 		fmt.Fprintf(
 			&sb,
 			"## %s\n\n%s\n\n",
@@ -823,10 +843,11 @@ func (cb *ContextBuilder) AddToolResult(
 	return messages
 }
 
+// AddAssistantMessage appends an assistant message to the message slice.
+// The toolCalls parameter was previously unused and has been removed (M5).
 func (cb *ContextBuilder) AddAssistantMessage(
 	messages []providers.Message,
 	content string,
-	toolCalls []map[string]any,
 ) []providers.Message {
 	msg := providers.Message{
 		Role:    "assistant",

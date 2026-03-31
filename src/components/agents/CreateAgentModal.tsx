@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Robot,
@@ -69,7 +69,7 @@ interface CreateAgentModalProps {
   onCreate?: (data: Partial<Agent>) => Promise<void>
 }
 
-export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreate: onCreateProp }: CreateAgentModalProps = {}) {
+export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreate: onCreateProp }: CreateAgentModalProps) {
   const { createAgentModalOpen, closeCreateAgentModal } = useUiStore()
   const queryClient = useQueryClient()
 
@@ -93,6 +93,26 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [nameError, setNameError] = useState('')
 
+  const resetForm = () => {
+    setName('')
+    setDescription('')
+    setModel('')
+    setColor(AVATAR_COLORS[0])
+    setIcon('Robot')
+    setTemperature(1.0)
+    setAdvancedOpen(false)
+    setNameError('')
+  }
+
+  // Reset form state whenever the modal opens so stale values are not shown
+  useEffect(() => {
+    if (isOpen) {
+      resetForm()
+    }
+    // resetForm references stable setState callbacks — isOpen is the only meaningful dep
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen])
+
   const AvatarIcon = getIconComponent(icon)
 
   const { mutate: doCreate, isPending } = useMutation({
@@ -112,17 +132,6 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
       useUiStore.getState().addToast({ message: err.message, variant: 'error' })
     },
   })
-
-  const resetForm = () => {
-    setName('')
-    setDescription('')
-    setModel('')
-    setColor(AVATAR_COLORS[0])
-    setIcon('Robot')
-    setTemperature(1.0)
-    setAdvancedOpen(false)
-    setNameError('')
-  }
 
   const handleCreate = () => {
     if (!name.trim()) {
@@ -251,7 +260,13 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
                 Model
               </label>
               {providersError && (
-                <p className="mb-1.5 text-xs text-red-400">Failed to load providers — showing default model list.</p>
+                <div className="mb-2 rounded-md border border-[var(--color-error)]/40 bg-[var(--color-error)]/10 px-3 py-2">
+                  <p className="text-xs text-[var(--color-error)] font-medium">Provider list unavailable</p>
+                  <p className="text-xs text-[var(--color-error)]/80 mt-0.5">
+                    Could not load connected providers. The model list below may not reflect what is actually configured.
+                    Verify your provider settings before creating this agent.
+                  </p>
+                </div>
               )}
               <Select value={model || '__default__'} onValueChange={(v) => setModel(v === '__default__' ? '' : v)}>
                 <SelectTrigger>

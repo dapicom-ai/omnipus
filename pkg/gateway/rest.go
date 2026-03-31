@@ -278,6 +278,14 @@ func (a *restAPI) HandleAgents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Validate agentID before any filesystem operations (path traversal guard, C1).
+	if agentID != "" {
+		if err := validateEntityID(agentID); err != nil {
+			jsonErr(w, http.StatusBadRequest, "invalid agent ID")
+			return
+		}
+	}
+
 	// GET /api/v1/agents/{id}/sessions
 	if r.Method == http.MethodGet && agentID != "" && subPath == "sessions" {
 		a.listAgentSessions(w, agentID)
@@ -390,6 +398,12 @@ func fetchUpstreamModels(baseURL, apiKey string) ([]string, error) {
 		return nil, fmt.Errorf("upstream models: status %d", resp.StatusCode)
 	}
 
+	// Validate Content-Type before attempting JSON parse (M12).
+	ct := resp.Header.Get("Content-Type")
+	if ct != "" && !strings.Contains(ct, "application/json") {
+		return nil, fmt.Errorf("upstream models: unexpected Content-Type %q", ct)
+	}
+
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20)) // 2MB limit
 	if err != nil {
 		return nil, err
@@ -425,6 +439,7 @@ type agentResponse struct {
 	Soul         string `json:"soul"`
 	Heartbeat    string `json:"heartbeat"`
 	Instructions string `json:"instructions"`
+	Warning      string `json:"warning,omitempty"` // non-fatal warning (e.g., reload failed)
 }
 
 // agentWorkspacePath returns the expanded workspace directory for the named agent.
@@ -432,47 +447,94 @@ type agentResponse struct {
 // If the agent has an explicit workspace set, that is used (with ~ expansion).
 // Otherwise, a per-agent directory is derived: ~/.omnipus/agents/{agentID}/.
 // The system agent uses the default workspace from config.
+//
+// Returns (path, error). Callers must handle the error; a non-nil error means the
+// workspace could not be created and the returned path may be unusable.
 func agentWorkspacePath(cfg interface {
 	WorkspacePath() string
-}, agentID, agentWorkspace string) string {
+}, agentID, agentWorkspace string) (string, error) {
 	if agentWorkspace != "" {
 		// AgentConfig.Workspace may contain "~"; expand it the same way config does.
 		if len(agentWorkspace) > 0 && agentWorkspace[0] == '~' {
 			home, err := os.UserHomeDir()
-			if err == nil {
-				if len(agentWorkspace) > 1 && agentWorkspace[1] == '/' {
-					return home + agentWorkspace[1:]
-				}
-				return home
+			if err != nil {
+				slog.Error("rest: agentWorkspacePath: UserHomeDir failed", "error", err)
+				return agentWorkspace, fmt.Errorf("UserHomeDir: %w", err)
 			}
+			if len(agentWorkspace) > 1 && agentWorkspace[1] == '/' {
+				return home + agentWorkspace[1:], nil
+			}
+			return home, nil
 		}
-		return agentWorkspace
+		return agentWorkspace, nil
 	}
 	// Per-agent isolated workspace (FUNC-11). System agent uses default workspace.
 	if agentID != "" && agentID != "omnipus-system" {
 		home, err := os.UserHomeDir()
-		if err == nil {
-			agentDir := filepath.Join(home, ".omnipus", "agents", agentID)
-			os.MkdirAll(agentDir, 0o755)
-			return agentDir
+		if err != nil {
+			slog.Error("rest: agentWorkspacePath: UserHomeDir failed", "error", err)
+			return cfg.WorkspacePath(), fmt.Errorf("UserHomeDir: %w", err)
 		}
+		// Path traversal guard: agentID has already been validated by validateEntityID
+		// at call sites, but we do a final check here as defense-in-depth.
+		agentDir := filepath.Join(home, ".omnipus", "agents", agentID)
+		cleaned := filepath.Clean(agentDir)
+		safePrefix := filepath.Join(home, ".omnipus")
+		if !strings.HasPrefix(cleaned, safePrefix) {
+			return "", fmt.Errorf("agent workspace path escapes omnipus home: %s", cleaned)
+		}
+		if err := os.MkdirAll(cleaned, 0o755); err != nil {
+			slog.Error("rest: agentWorkspacePath: MkdirAll failed", "path", cleaned, "error", err)
+			return cleaned, fmt.Errorf("MkdirAll %s: %w", cleaned, err)
+		}
+		return cleaned, nil
 	}
-	return cfg.WorkspacePath()
+	return cfg.WorkspacePath(), nil
+}
+
+// readSoulMD returns the contents of SOUL.md for the given workspace.
+// Used by listAgents to determine draft status without reading all three agent files.
+func readSoulMD(workspace string) string {
+	data, err := os.ReadFile(filepath.Join(workspace, "SOUL.md"))
+	if err != nil {
+		if !os.IsNotExist(err) {
+			slog.Warn("rest: readSoulMD: cannot read SOUL.md", "workspace", workspace, "error", err)
+		}
+		return ""
+	}
+	return string(data)
 }
 
 // readAgentFiles returns the contents of SOUL.md, HEARTBEAT.md, and the body
 // of AGENT.md (everything after the closing frontmatter delimiter) from the
 // given workspace directory. Missing files return an empty string without
 // logging an error — their absence is expected for newly created agents.
+// Permission and other I/O errors (not IsNotExist) are logged at Warn level (M11).
 func readAgentFiles(workspace string) (soul, heartbeat, instructions string) {
-	if data, err := os.ReadFile(filepath.Join(workspace, "SOUL.md")); err == nil {
+	if data, err := os.ReadFile(filepath.Join(workspace, "SOUL.md")); err != nil {
+		if !os.IsNotExist(err) {
+			slog.Warn("rest: readAgentFiles: cannot read SOUL.md", "workspace", workspace, "error", err)
+		}
+	} else {
 		soul = string(data)
 	}
-	if data, err := os.ReadFile(filepath.Join(workspace, "HEARTBEAT.md")); err == nil {
+	if data, err := os.ReadFile(filepath.Join(workspace, "HEARTBEAT.md")); err != nil {
+		if !os.IsNotExist(err) {
+			slog.Warn("rest: readAgentFiles: cannot read HEARTBEAT.md", "workspace", workspace, "error", err)
+		}
+	} else {
 		heartbeat = string(data)
 	}
-	if data, err := os.ReadFile(filepath.Join(workspace, "AGENT.md")); err == nil {
-		_, body := splitAgentMDFrontmatter(string(data))
+	if data, err := os.ReadFile(filepath.Join(workspace, "AGENT.md")); err != nil {
+		if !os.IsNotExist(err) {
+			slog.Warn("rest: readAgentFiles: cannot read AGENT.md", "workspace", workspace, "error", err)
+		}
+	} else {
+		fm, body := splitAgentMDFrontmatter(string(data))
+		if fm == "" && strings.HasPrefix(strings.TrimSpace(string(data)), "---") {
+			// M17: AGENT.md starts with --- but has no closing delimiter.
+			slog.Debug("rest: AGENT.md has opening --- delimiter but no closing ---", "workspace", workspace)
+		}
 		instructions = body
 	}
 	return soul, heartbeat, instructions
@@ -536,8 +598,10 @@ func (a *restAPI) listAgents(w http.ResponseWriter) {
 		if ac.Model != nil && ac.Model.Primary != "" {
 			model = ac.Model.Primary
 		}
-		workspace := agentWorkspacePath(cfg, ac.ID, ac.Workspace)
-		soul, _, _ := readAgentFiles(workspace)
+		workspace, _ := agentWorkspacePath(cfg, ac.ID, ac.Workspace)
+		// M2: listAgents only needs SOUL.md to determine draft status — avoid reading
+		// HEARTBEAT.md and AGENT.md unnecessarily in the list endpoint.
+		soul := readSoulMD(workspace)
 		status := "idle"
 		if activeIDs[ac.ID] {
 			status = "active"
@@ -565,7 +629,7 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 	// System agent is always present and always active — it is always available for
 	// interaction, unlike turn-based custom agents.
 	if id == "omnipus-system" {
-		workspace := agentWorkspacePath(cfg, "omnipus-system", "")
+		workspace, _ := agentWorkspacePath(cfg, "omnipus-system", "")
 		soul, heartbeat, instructions := readAgentFiles(workspace)
 		jsonOK(w, agentResponse{
 			ID:           "omnipus-system",
@@ -588,7 +652,7 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 			if ac.Model != nil && ac.Model.Primary != "" {
 				model = ac.Model.Primary
 			}
-			workspace := agentWorkspacePath(cfg, ac.ID, ac.Workspace)
+			workspace, _ := agentWorkspacePath(cfg, ac.ID, ac.Workspace)
 			soul, heartbeat, instructions := readAgentFiles(workspace)
 			status := "idle"
 			if activeIDs[ac.ID] {
@@ -657,8 +721,10 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Persistence succeeded. Trigger reload so the in-memory config picks up the new agent.
+	var createReloadWarning string
 	if err := a.agentLoop.TriggerReload(); err != nil {
-		slog.Warn("config reload after agent create failed", "error", err)
+		slog.Error("config reload after agent create failed", "error", err)
+		createReloadWarning = fmt.Sprintf("config reload failed: %v", err)
 	}
 	// Build the response from local variables only (do NOT read from live config — race).
 	model := a.agentLoop.GetConfig().Agents.Defaults.ModelName
@@ -675,6 +741,7 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 		Soul:         "",
 		Heartbeat:    "",
 		Instructions: "",
+		Warning:      createReloadWarning,
 	})
 }
 
@@ -749,10 +816,18 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 	}
 	// Write SOUL.md, HEARTBEAT.md, and AGENT.md BEFORE triggering reload,
 	// so the new AgentInstance reads the updated files.
-	workspace := agentWorkspacePath(cfg, id, cfg.Agents.List[foundIdx].Workspace)
+	// Capture agentWorkspace into a local to avoid TOCTOU on cfg.Agents.List (M1).
+	capturedWorkspace := cfg.Agents.List[foundIdx].Workspace
+	capturedName := cfg.Agents.List[foundIdx].Name
+	workspace, wsErr := agentWorkspacePath(cfg, id, capturedWorkspace)
+	if wsErr != nil {
+		slog.Error("rest: agentWorkspacePath for update", "agent_id", id, "error", wsErr)
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not resolve workspace: %v", wsErr))
+		return
+	}
 	if req.Soul != nil {
 		soulPath := filepath.Join(workspace, "SOUL.md")
-		if err := os.WriteFile(soulPath, []byte(*req.Soul), 0o644); err != nil {
+		if err := fileutil.WriteFileAtomic(soulPath, []byte(*req.Soul), 0o600); err != nil {
 			slog.Error("rest: write SOUL.md for agent", "agent_id", id, "error", err)
 			jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not write SOUL.md: %v", err))
 			return
@@ -760,7 +835,7 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 	}
 	if req.Heartbeat != nil {
 		heartbeatPath := filepath.Join(workspace, "HEARTBEAT.md")
-		if err := os.WriteFile(heartbeatPath, []byte(*req.Heartbeat), 0o644); err != nil {
+		if err := fileutil.WriteFileAtomic(heartbeatPath, []byte(*req.Heartbeat), 0o600); err != nil {
 			slog.Error("rest: write HEARTBEAT.md for agent", "agent_id", id, "error", err)
 			jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not write HEARTBEAT.md: %v", err))
 			return
@@ -772,23 +847,27 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		existingFrontmatter := ""
 		if data, err := os.ReadFile(agentMDPath); err == nil {
 			existingFrontmatter, _ = splitAgentMDFrontmatter(string(data))
+		} else if !os.IsNotExist(err) {
+			slog.Warn("rest: could not read existing AGENT.md for frontmatter preservation", "agent_id", id, "error", err)
 		}
 		if existingFrontmatter == "" {
-			existingFrontmatter = "name: " + cfg.Agents.List[foundIdx].Name
+			existingFrontmatter = "name: " + capturedName
 		}
 		agentMDContent := "---\n" + existingFrontmatter + "\n---\n"
 		if *req.Instructions != "" {
 			agentMDContent += "\n" + *req.Instructions
 		}
-		if err := os.WriteFile(agentMDPath, []byte(agentMDContent), 0o644); err != nil {
+		if err := fileutil.WriteFileAtomic(agentMDPath, []byte(agentMDContent), 0o600); err != nil {
 			slog.Error("rest: write AGENT.md for agent", "agent_id", id, "error", err)
 			jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not write AGENT.md: %v", err))
 			return
 		}
 	}
 	// Now trigger reload so the new AgentInstance picks up the updated files.
+	var reloadWarning string
 	if err := a.agentLoop.TriggerReload(); err != nil {
-		slog.Warn("config reload after agent update failed", "error", err)
+		slog.Error("config reload after agent update failed", "error", err)
+		reloadWarning = fmt.Sprintf("config reload failed: %v", err)
 	}
 	// Re-read the files so the response reflects what was just persisted.
 	soul, heartbeat, instructions := readAgentFiles(workspace)
@@ -815,6 +894,7 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		Soul:         soul,
 		Heartbeat:    heartbeat,
 		Instructions: instructions,
+		Warning:      reloadWarning,
 	})
 }
 
@@ -1170,7 +1250,14 @@ func (a *restAPI) getUserContext(w http.ResponseWriter) {
 	cfg := a.agentLoop.GetConfig()
 	userMDPath := filepath.Join(cfg.WorkspacePath(), "USER.md")
 	content := ""
-	if data, err := os.ReadFile(userMDPath); err == nil {
+	if data, err := os.ReadFile(userMDPath); err != nil {
+		if !os.IsNotExist(err) {
+			// Distinguish missing file (normal, return empty) from unreadable file (error).
+			slog.Error("rest: read USER.md", "error", err)
+			jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not read USER.md: %v", err))
+			return
+		}
+	} else {
 		content = string(data)
 	}
 	jsonOK(w, map[string]string{"content": content})
@@ -1186,7 +1273,7 @@ func (a *restAPI) putUserContext(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := a.agentLoop.GetConfig()
 	userMDPath := filepath.Join(cfg.WorkspacePath(), "USER.md")
-	if err := os.WriteFile(userMDPath, []byte(req.Content), 0o644); err != nil {
+	if err := fileutil.WriteFileAtomic(userMDPath, []byte(req.Content), 0o600); err != nil {
 		slog.Error("rest: write USER.md", "error", err)
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not write USER.md: %v", err))
 		return
@@ -1256,8 +1343,12 @@ func (a *restAPI) rotateGatewayToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Persistence succeeded. Trigger reload so the in-memory config picks up the new token.
+	// If reload fails, the new token is on disk but not yet active — return 500 so the
+	// caller knows the token is not yet in effect and can retry.
 	if err := a.agentLoop.TriggerReload(); err != nil {
-		slog.Warn("config reload after token rotation failed", "error", err)
+		slog.Error("config reload after token rotation failed", "error", err)
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("token saved but reload failed: %v", err))
+		return
 	}
 	jsonOK(w, map[string]string{"token": newToken})
 }
@@ -1787,7 +1878,14 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 		}
 		// Trigger reload so the in-memory config picks up the new API key.
 		if err := a.agentLoop.TriggerReload(); err != nil {
-			slog.Warn("config reload after provider update failed", "error", err)
+			slog.Error("config reload after provider update failed", "error", err)
+			jsonOK(w, map[string]any{
+				"id":      providerID,
+				"name":    providerID,
+				"status":  "connected",
+				"warning": fmt.Sprintf("config reload failed: %v", err),
+			})
+			return
 		}
 		jsonOK(w, providerResponse{
 			ID:     providerID,
@@ -2331,24 +2429,41 @@ func (a *restAPI) HandleStorageStats(w http.ResponseWriter, r *http.Request) {
 	}
 	var sessionCount int
 	var workspaceSize int64
+	var warnings []string
 	if a.partitions != nil {
-		if metas, err := a.partitions.ListSessions(); err == nil {
+		if metas, err := a.partitions.ListSessions(); err != nil {
+			slog.Warn("rest: storage stats: list sessions failed", "error", err)
+			warnings = append(warnings, fmt.Sprintf("session count unavailable: %v", err))
+		} else {
 			sessionCount = len(metas)
 		}
 	}
 	// Walk the home directory for workspace size.
 	homeDir := a.homePath
-	_ = filepath.Walk(homeDir, func(_ string, info os.FileInfo, err error) error {
-		if err != nil || info.IsDir() {
+	if err := filepath.Walk(homeDir, func(_ string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			if !os.IsNotExist(walkErr) {
+				slog.Warn("rest: storage stats: walk error", "error", walkErr)
+			}
+			return nil
+		}
+		if info.IsDir() {
 			return nil
 		}
 		workspaceSize += info.Size()
 		return nil
-	})
+	}); err != nil {
+		slog.Warn("rest: storage stats: walk failed", "error", err)
+		warnings = append(warnings, fmt.Sprintf("workspace size unavailable: %v", err))
+	}
 
-	jsonOK(w, map[string]any{
+	resp := map[string]any{
 		"workspace_size_bytes": workspaceSize,
 		"session_count":        sessionCount,
 		"memory_entry_count":   0,
-	})
+	}
+	if len(warnings) > 0 {
+		resp["warnings"] = warnings
+	}
+	jsonOK(w, resp)
 }

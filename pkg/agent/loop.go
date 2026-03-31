@@ -247,10 +247,10 @@ func registerSharedTools(
 		}
 
 		// Skill discovery and installation tools
-		skills_enabled := cfg.Tools.IsToolEnabled("skills")
-		find_skills_enable := cfg.Tools.IsToolEnabled("find_skills")
-		install_skills_enable := cfg.Tools.IsToolEnabled("install_skill")
-		if skills_enabled && (find_skills_enable || install_skills_enable) {
+		skillsEnabled := cfg.Tools.IsToolEnabled("skills")
+		findSkillsEnabled := cfg.Tools.IsToolEnabled("find_skills")
+		installSkillsEnabled := cfg.Tools.IsToolEnabled("install_skill")
+		if skillsEnabled && (findSkillsEnabled || installSkillsEnabled) {
 			clawHubConfig := cfg.Tools.Skills.Registries.ClawHub
 			registryMgr := skills.NewRegistryManagerFromConfig(skills.RegistryConfig{
 				MaxConcurrentSearches: cfg.Tools.Skills.MaxConcurrentSearches,
@@ -267,7 +267,7 @@ func registerSharedTools(
 				},
 			})
 
-			if find_skills_enable {
+			if findSkillsEnabled {
 				searchCache := skills.NewSearchCache(
 					cfg.Tools.Skills.SearchCache.MaxSize,
 					time.Duration(cfg.Tools.Skills.SearchCache.TTLSeconds)*time.Second,
@@ -275,7 +275,7 @@ func registerSharedTools(
 				agent.Tools.Register(tools.NewFindSkillsTool(registryMgr, searchCache))
 			}
 
-			if install_skills_enable {
+			if installSkillsEnabled {
 				agent.Tools.Register(tools.NewInstallSkillTool(registryMgr, agent.Workspace))
 			}
 		}
@@ -1030,6 +1030,11 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 		}
 	}
 
+	// H3: Close the old registry after provider cleanup so sessions and tools are released.
+	if oldRegistry != nil {
+		oldRegistry.Close()
+	}
+
 	logger.InfoCF("agent", "Provider and config reloaded successfully",
 		map[string]any{
 			"model": cfg.Agents.Defaults.GetModelName(),
@@ -1393,11 +1398,14 @@ func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.Resolv
 			})
 			return routing.ResolvedRoute{AgentID: explicitID}, agent, nil
 		}
-		// Explicit agent not found — fall through to normal routing.
-		logger.WarnCF("agent", "explicit agent_id not found, falling back to routing", map[string]any{
-			"agent_id":        explicitID,
-			"registered_ids":  registry.ListAgentIDs(),
+		// H12: An explicit agent_id was provided but no matching agent is registered.
+		// Return a hard error rather than silently falling through to default routing,
+		// which would confuse the caller about which agent is actually handling the message.
+		logger.ErrorCF("agent", "explicit agent_id not found in registry", map[string]any{
+			"agent_id":       explicitID,
+			"registered_ids": registry.ListAgentIDs(),
 		})
+		return routing.ResolvedRoute{}, nil, fmt.Errorf("agent %q not found (registered: %v)", explicitID, registry.ListAgentIDs())
 	}
 
 	route := registry.ResolveRoute(routing.RouteInput{
@@ -2198,8 +2206,10 @@ turnLoop:
 			}
 		}
 
-		// Save finishReason to turnState for SubTurn truncation detection
-		if innerTS := turnStateFromContext(ctx); innerTS != nil {
+		// Save finishReason to turnState for SubTurn truncation detection.
+		// H5: use turnCtx (the per-turn context that carries the turnState value),
+		// not the outer ctx which may not have the turnState attached.
+		if innerTS := turnStateFromContext(turnCtx); innerTS != nil {
 			innerTS.SetLastFinishReason(response.FinishReason)
 			// Save usage for token budget tracking
 			if response.Usage != nil {

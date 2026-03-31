@@ -148,8 +148,8 @@ func TestCreateProviderFromConfig_DefaultAPIBase(t *testing.T) {
 }
 
 func TestGetDefaultAPIBase_LiteLLM(t *testing.T) {
-	if got := getDefaultAPIBase("litellm"); got != "http://localhost:4000/v1" {
-		t.Fatalf("getDefaultAPIBase(%q) = %q, want %q", "litellm", got, "http://localhost:4000/v1")
+	if got := GetDefaultAPIBase("litellm"); got != "http://localhost:4000/v1" {
+		t.Fatalf("GetDefaultAPIBase(%q) = %q, want %q", "litellm", got, "http://localhost:4000/v1")
 	}
 }
 
@@ -220,8 +220,8 @@ func TestCreateProviderFromConfig_ModelScope(t *testing.T) {
 }
 
 func TestGetDefaultAPIBase_ModelScope(t *testing.T) {
-	if got := getDefaultAPIBase("modelscope"); got != "https://api-inference.modelscope.cn/v1" {
-		t.Fatalf("getDefaultAPIBase(%q) = %q, want %q", "modelscope", got, "https://api-inference.modelscope.cn/v1")
+	if got := GetDefaultAPIBase("modelscope"); got != "https://api-inference.modelscope.cn/v1" {
+		t.Fatalf("GetDefaultAPIBase(%q) = %q, want %q", "modelscope", got, "https://api-inference.modelscope.cn/v1")
 	}
 }
 
@@ -248,8 +248,8 @@ func TestCreateProviderFromConfig_Novita(t *testing.T) {
 }
 
 func TestGetDefaultAPIBase_Novita(t *testing.T) {
-	if got := getDefaultAPIBase("novita"); got != "https://api.novita.ai/openai" {
-		t.Fatalf("getDefaultAPIBase(%q) = %q, want %q", "novita", got, "https://api.novita.ai/openai")
+	if got := GetDefaultAPIBase("novita"); got != "https://api.novita.ai/openai" {
+		t.Fatalf("GetDefaultAPIBase(%q) = %q, want %q", "novita", got, "https://api.novita.ai/openai")
 	}
 }
 
@@ -277,8 +277,8 @@ func TestCreateProviderFromConfig_Mimo(t *testing.T) {
 }
 
 func TestGetDefaultAPIBase_Mimo(t *testing.T) {
-	if got := getDefaultAPIBase("mimo"); got != "https://api.xiaomimimo.com/v1" {
-		t.Fatalf("getDefaultAPIBase(%q) = %q, want %q", "mimo", got, "https://api.xiaomimimo.com/v1")
+	if got := GetDefaultAPIBase("mimo"); got != "https://api.xiaomimimo.com/v1" {
+		t.Fatalf("GetDefaultAPIBase(%q) = %q, want %q", "mimo", got, "https://api.xiaomimimo.com/v1")
 	}
 }
 
@@ -610,19 +610,19 @@ func TestCreateProviderFromConfig_CodingPlanAnthropic(t *testing.T) {
 
 func TestGetDefaultAPIBase_CodingPlanAnthropic(t *testing.T) {
 	expectedURL := "https://coding-intl.dashscope.aliyuncs.com/apps/anthropic"
-	if got := getDefaultAPIBase("coding-plan-anthropic"); got != expectedURL {
-		t.Fatalf("getDefaultAPIBase(%q) = %q, want %q", "coding-plan-anthropic", got, expectedURL)
+	if got := GetDefaultAPIBase("coding-plan-anthropic"); got != expectedURL {
+		t.Fatalf("GetDefaultAPIBase(%q) = %q, want %q", "coding-plan-anthropic", got, expectedURL)
 	}
-	if got := getDefaultAPIBase("alibaba-coding-anthropic"); got != expectedURL {
-		t.Fatalf("getDefaultAPIBase(%q) = %q, want %q", "alibaba-coding-anthropic", got, expectedURL)
+	if got := GetDefaultAPIBase("alibaba-coding-anthropic"); got != expectedURL {
+		t.Fatalf("GetDefaultAPIBase(%q) = %q, want %q", "alibaba-coding-anthropic", got, expectedURL)
 	}
 }
 
 func TestGetDefaultAPIBase_QwenIntlAliases(t *testing.T) {
 	expectedURL := "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 	for _, protocol := range []string{"qwen-intl", "qwen-international", "dashscope-intl"} {
-		if got := getDefaultAPIBase(protocol); got != expectedURL {
-			t.Fatalf("getDefaultAPIBase(%q) = %q, want %q", protocol, got, expectedURL)
+		if got := GetDefaultAPIBase(protocol); got != expectedURL {
+			t.Fatalf("GetDefaultAPIBase(%q) = %q, want %q", protocol, got, expectedURL)
 		}
 	}
 }
@@ -630,8 +630,8 @@ func TestGetDefaultAPIBase_QwenIntlAliases(t *testing.T) {
 func TestGetDefaultAPIBase_QwenUSAliases(t *testing.T) {
 	expectedURL := "https://dashscope-us.aliyuncs.com/compatible-mode/v1"
 	for _, protocol := range []string{"qwen-us", "dashscope-us"} {
-		if got := getDefaultAPIBase(protocol); got != expectedURL {
-			t.Fatalf("getDefaultAPIBase(%q) = %q, want %q", protocol, got, expectedURL)
+		if got := GetDefaultAPIBase(protocol); got != expectedURL {
+			t.Fatalf("GetDefaultAPIBase(%q) = %q, want %q", protocol, got, expectedURL)
 		}
 	}
 }

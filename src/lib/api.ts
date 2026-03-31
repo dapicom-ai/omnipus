@@ -197,6 +197,15 @@ export interface Config {
   }
 }
 
+const VALID_AUTH_MODES = ['none', 'token'] as const
+const VALID_POLICY_MODES = ['allow', 'deny'] as const
+const VALID_EXEC_APPROVALS = ['auto', 'ask', 'deny'] as const
+const VALID_INJECTION_LEVELS = ['off', 'low', 'medium', 'high'] as const
+
+function validEnum<T extends string>(value: unknown, valid: readonly T[], fallback: T): T {
+  return (valid as readonly string[]).includes(value as string) ? (value as T) : fallback
+}
+
 function rawToFrontendConfig(raw: Record<string, unknown>): Config {
   const gateway = (raw.gateway ?? {}) as Record<string, unknown>
   const storage = (raw.storage ?? {}) as Record<string, unknown>
@@ -207,12 +216,13 @@ function rawToFrontendConfig(raw: Record<string, unknown>): Config {
     gateway: {
       bind_address: (gateway.host as string) ?? '127.0.0.1',
       port: (gateway.port as number) ?? 8080,
-      auth_mode: 'none',
+      auth_mode: validEnum(gateway.auth_mode, VALID_AUTH_MODES, 'none'),
+      token: gateway.token as string | undefined,
     },
     security: {
-      policy_mode: (security.policy_mode as Config['security']['policy_mode']) ?? 'deny',
-      exec_approval: (security.exec_approval as Config['security']['exec_approval']) ?? 'ask',
-      prompt_injection_level: (security.prompt_injection_level as Config['security']['prompt_injection_level']) ?? 'medium',
+      policy_mode: validEnum(security.policy_mode, VALID_POLICY_MODES, 'deny'),
+      exec_approval: validEnum(security.exec_approval, VALID_EXEC_APPROVALS, 'ask'),
+      prompt_injection_level: validEnum(security.prompt_injection_level, VALID_INJECTION_LEVELS, 'medium'),
       daily_cost_cap: security.daily_cost_cap as number | undefined,
       rate_limits: {
         max_tokens_per_day: rateLimits.max_tokens_per_day as number | undefined,
@@ -564,6 +574,5 @@ export function updateUserContext(content: string): Promise<void> {
   return request<void>('/user-context', {
     method: 'PUT',
     body: JSON.stringify({ content }),
-    headers: { 'Content-Type': 'application/json' },
   })
 }

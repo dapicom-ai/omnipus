@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"sort"
 	"sync"
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
@@ -114,7 +115,7 @@ func (r *AgentRegistry) ForEachTool(name string, fn func(tools.Tool)) {
 	}
 }
 
-// Close releases resources held by all registered agents.
+// Close releases resources held by all registered agents and clears the map (M9).
 func (r *AgentRegistry) Close() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -124,17 +125,27 @@ func (r *AgentRegistry) Close() {
 				map[string]any{"agent_id": agent.ID, "error": err.Error()})
 		}
 	}
+	// Clear the map so any post-Close access gets nil rather than stale data.
+	r.agents = nil
 }
 
 // GetDefaultAgent returns the default agent instance.
+// "main" is preferred; otherwise the agent with the lexicographically first ID is
+// returned to give deterministic selection regardless of map iteration order (M10).
 func (r *AgentRegistry) GetDefaultAgent() *AgentInstance {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if agent, ok := r.agents["main"]; ok {
 		return agent
 	}
-	for _, agent := range r.agents {
-		return agent
+	// Collect and sort IDs so we always pick the same agent.
+	ids := make([]string, 0, len(r.agents))
+	for id := range r.agents {
+		ids = append(ids, id)
 	}
-	return nil
+	if len(ids) == 0 {
+		return nil
+	}
+	sort.Strings(ids)
+	return r.agents[ids[0]]
 }

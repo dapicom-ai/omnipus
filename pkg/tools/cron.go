@@ -232,8 +232,11 @@ func (t *CronTool) addJob(ctx context.Context, args map[string]any) *ToolResult 
 
 	if command != "" {
 		job.Payload.Command = command
-		// Need to save the updated payload
-		t.cronService.UpdateJob(job)
+		// Need to save the updated payload. H7: check error and remove job on failure.
+		if err := t.cronService.UpdateJob(job); err != nil {
+			t.cronService.RemoveJob(job.ID)
+			return ErrorResult(fmt.Sprintf("Error saving cron job command: %v", err))
+		}
 	}
 
 	return SilentResult(fmt.Sprintf("Cron job added: %s (id: %s)", job.Name, job.ID))

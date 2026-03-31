@@ -558,6 +558,8 @@ func (m *Manager) StartAll(ctx context.Context) error {
 				"channel": name,
 				"error":   err.Error(),
 			})
+			// H8: remove the failed channel so it doesn't linger in the map.
+			delete(m.channels, name)
 			continue
 		}
 		// Lazily create worker only after channel starts successfully
@@ -1089,16 +1091,22 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 	list := toChannelHashes(cfg)
 	added, removed := compareChannels(m.channelHashes, list)
 
-	// Fix 16: cancel the existing dispatcher before creating a new one to prevent context leak.
-	if m.dispatchTask != nil {
-		m.dispatchTask.cancel()
+	// Collect the set of channels being removed so we know which survivors need their
+	// workers restarted against the new dispatchCtx (C4).
+	removedSet := make(map[string]bool, len(removed))
+	for _, n := range removed {
+		removedSet[n] = true
+	}
+	addedSet := make(map[string]bool, len(added))
+	for _, n := range added {
+		addedSet[n] = true
 	}
 
+	// Stop channels that are being removed.
 	// Fix 14 (removed loop): capture loop variable with a local copy to avoid Go closure capture bug.
 	deferFuncs := make([]func(), 0, len(removed)+len(added))
 	for _, name := range removed {
 		n := name // local copy — prevents closure from capturing the loop variable
-		// Stop all channels
 		channel := m.channels[n]
 		logger.InfoCF("channels", "Stopping channel", map[string]any{
 			"channel": n,
@@ -1113,8 +1121,22 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 			m.UnregisterChannel(n)
 		})
 	}
+
+	// H13: capture the old dispatcher cancel before overwriting it, then create the
+	// new dispatchCtx BEFORE cancelling the old one to eliminate the window where
+	// outbound messages have nowhere to go.
+	var oldDispatchCancel context.CancelFunc
+	if m.dispatchTask != nil {
+		oldDispatchCancel = m.dispatchTask.cancel
+	}
 	dispatchCtx, cancel := context.WithCancel(ctx)
 	m.dispatchTask = &asyncTask{cancel: cancel}
+
+	// Fix 16: cancel the old dispatcher now that the new one is ready.
+	if oldDispatchCancel != nil {
+		oldDispatchCancel()
+	}
+
 	cc, err := toChannelConfig(cfg, added)
 	if err != nil {
 		logger.ErrorC("channels", fmt.Sprintf("toChannelConfig error: %v", err))
@@ -1143,6 +1165,8 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 			})
 			// Fix 35: don't commit the hash for channels that failed to start.
 			delete(list, n)
+			// H8: remove the failed channel from the map so it doesn't linger.
+			delete(m.channels, n)
 			continue
 		}
 		// Lazily create worker only after channel starts successfully
@@ -1155,22 +1179,40 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 		})
 	}
 
+	// C4: restart workers for channels that survived this reload (neither added nor removed)
+	// against the new dispatchCtx. Their previous workers were running against the old context
+	// which was cancelled at the top of this function.
+	for name, w := range m.workers {
+		if !removedSet[name] && !addedSet[name] && w != nil {
+			n := name
+			go m.runWorker(dispatchCtx, n, w)
+			go m.runMediaWorker(dispatchCtx, n, w)
+		}
+	}
+
 	// Commit hashes only for successfully started channels.
 	m.channelHashes = list
 
 	// Restart dispatch goroutines against the new dispatchCtx so outbound messages
-	// continue to be routed after the old context was cancelled above.
+	// continue to be routed.
 	go m.dispatchOutbound(dispatchCtx)
 	go m.dispatchOutboundMedia(dispatchCtx)
 
-	// Fix 15: execute deferFuncs synchronously after releasing the lock, not in a goroutine.
-	// Running them in a goroutine while the mutex is still held causes a deadlock;
-	// running them in a goroutine after unlock races with subsequent Reload calls.
-	// We must manually unlock here so that RegisterChannel/UnregisterChannel can acquire the lock.
+	// C5/Fix 15: execute deferFuncs synchronously after releasing the lock, not in a goroutine.
+	// Wrap in recover to prevent a panic inside a deferFunc from leaving the mutex in an
+	// inconsistent (double-unlocked) state.
 	m.mu.Unlock()
-	for _, f := range deferFuncs {
-		f()
-	}
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.ErrorCF("channels", "Reload: panic in deferFuncs; skipping remaining",
+					map[string]any{"panic": fmt.Sprintf("%v", r)})
+			}
+		}()
+		for _, f := range deferFuncs {
+			f()
+		}
+	}()
 	// Re-acquire so that the deferred m.mu.Unlock() at the top of the function is balanced.
 	m.mu.Lock()
 	return nil

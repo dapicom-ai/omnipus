@@ -60,8 +60,9 @@ func NewAgentInstance(
 	provider providers.LLMProvider,
 ) *AgentInstance {
 	workspace := resolveAgentWorkspace(agentCfg, defaults)
+	// H11: escalate MkdirAll failure to Error — a missing workspace is serious.
 	if mkErr := os.MkdirAll(workspace, 0o755); mkErr != nil {
-		logger.WarnCF("agent", "Failed to create agent workspace directory",
+		logger.ErrorCF("agent", "Failed to create agent workspace directory",
 			map[string]any{"workspace": workspace, "error": mkErr.Error()})
 	}
 
@@ -244,7 +245,23 @@ func resolveAgentWorkspace(agentCfg *config.AgentConfig, defaults *config.AgentD
 	// directory under ~/.omnipus/agents/{id}/, matching the REST API convention.
 	home, err := os.UserHomeDir()
 	if err == nil {
-		return filepath.Join(home, ".omnipus", "agents", agentCfg.ID)
+		// H4: validate that the resolved path is actually under ~/.omnipus/agents/
+		// after cleaning, to guard against path traversal via crafted agent IDs.
+		safeBase := filepath.Join(home, ".omnipus", "agents")
+		// Strip any path separators or ".." from the agent ID.
+		sanitizedID := filepath.Base(filepath.Clean(agentCfg.ID))
+		if sanitizedID == "." || sanitizedID == ".." || sanitizedID == "" {
+			logger.WarnCF("agent", "Suspicious agent ID after sanitization; using fallback workspace",
+				map[string]any{"original_id": agentCfg.ID, "sanitized": sanitizedID})
+			return filepath.Join(expandHome(defaults.Workspace), "..", "workspace-"+routing.NormalizeAgentID(agentCfg.ID))
+		}
+		resolved := filepath.Join(safeBase, sanitizedID)
+		if !strings.HasPrefix(filepath.Clean(resolved), safeBase) {
+			logger.WarnCF("agent", "Agent workspace path escapes base directory; using fallback",
+				map[string]any{"agent_id": agentCfg.ID, "resolved": resolved})
+			return filepath.Join(expandHome(defaults.Workspace), "..", "workspace-"+routing.NormalizeAgentID(agentCfg.ID))
+		}
+		return resolved
 	}
 	// Fallback: sibling directory of default workspace.
 	id := routing.NormalizeAgentID(agentCfg.ID)
@@ -344,14 +361,16 @@ func expandHome(path string) string {
 	if path[0] == '~' {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			logger.WarnCF("agent", "UserHomeDir failed in expandHome; using current directory as fallback",
+			logger.WarnCF("agent", "UserHomeDir failed in expandHome; attempting Getwd fallback",
 				map[string]any{"path": path, "error": err.Error()})
-			// Use the current working directory as a safe fallback so the
-			// caller gets a non-empty, usable path rather than a broken one.
+			// M20: prefer an absolute path fallback — "." is relative and ambiguous.
 			if wd, wdErr := os.Getwd(); wdErr == nil {
 				home = wd
 			} else {
-				home = "."
+				// Both UserHomeDir and Getwd failed; use /tmp as a last resort.
+				logger.WarnCF("agent", "Getwd also failed in expandHome; using /tmp fallback",
+					map[string]any{"path": path, "error": wdErr.Error()})
+				home = os.TempDir()
 			}
 		}
 		if len(path) > 1 && path[1] == '/' {

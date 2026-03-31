@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
-import { FloppyDisk } from '@phosphor-icons/react'
-import { useQuery, useMutation } from '@tanstack/react-query'
+import { FloppyDisk, ArrowsClockwise } from '@phosphor-icons/react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -54,17 +54,25 @@ function loadPref<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(`${LS_PREFIX}${key}`)
     return raw !== null ? (JSON.parse(raw) as T) : fallback
-  } catch {
+  } catch (err) {
+    console.warn('[profile] localStorage read failed:', key, err)
     return fallback
   }
 }
 
-function savePref(key: string, value: unknown) {
-  localStorage.setItem(`${LS_PREFIX}${key}`, JSON.stringify(value))
+function savePref(key: string, value: unknown): boolean {
+  try {
+    localStorage.setItem(`${LS_PREFIX}${key}`, JSON.stringify(value))
+    return true
+  } catch (err) {
+    console.warn('[profile] localStorage write failed:', key, err)
+    return false
+  }
 }
 
 export function ProfileSection() {
   const { addToast } = useUiStore()
+  const queryClient = useQueryClient()
 
   const [name, setName] = useState(() => loadPref<string>('name', ''))
   const [timezone, setTimezone] = useState(() => loadPref<string>('timezone', 'UTC'))
@@ -72,7 +80,7 @@ export function ProfileSection() {
   const [fontSize, setFontSize] = useState(() => loadPref<number>('font_size', 14))
   const [userContent, setUserContent] = useState('')
 
-  const { data: userContextData } = useQuery({
+  const { data: userContextData, isError: userContextError, refetch: refetchUserContext } = useQuery({
     queryKey: ['user-context'],
     queryFn: fetchUserContext,
   })
@@ -85,7 +93,10 @@ export function ProfileSection() {
 
   const { mutate: saveUserContext, isPending: isSavingContext } = useMutation({
     mutationFn: () => updateUserContext(userContent),
-    onSuccess: () => addToast({ message: 'Workspace context saved', variant: 'success' }),
+    onSuccess: () => {
+      addToast({ message: 'Workspace context saved', variant: 'success' })
+      queryClient.invalidateQueries({ queryKey: ['user-context'] })
+    },
     onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
   })
 
@@ -95,11 +106,15 @@ export function ProfileSection() {
   }, [fontSize])
 
   function handleSave() {
-    savePref('name', name)
-    savePref('timezone', timezone)
-    savePref('language', language)
-    savePref('font_size', fontSize)
-    addToast({ message: 'Preferences saved', variant: 'success' })
+    try {
+      savePref('name', name)
+      savePref('timezone', timezone)
+      savePref('language', language)
+      savePref('font_size', fontSize)
+      addToast({ message: 'Preferences saved', variant: 'success' })
+    } catch (err) {
+      addToast({ message: err instanceof Error ? err.message : 'Failed to save preferences', variant: 'error' })
+    }
   }
 
   return (
@@ -223,28 +238,45 @@ export function ProfileSection() {
           <h3 className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-wider">
             Workspace Context
           </h3>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => saveUserContext()}
-            disabled={isSavingContext}
-            className="gap-1.5"
-          >
-            <FloppyDisk size={13} weight="bold" />
-            {isSavingContext ? 'Saving...' : 'Save'}
-          </Button>
+          {!userContextError && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => saveUserContext()}
+              disabled={isSavingContext}
+              className="gap-1.5"
+            >
+              <FloppyDisk size={13} weight="bold" />
+              {isSavingContext ? 'Saving...' : 'Save'}
+            </Button>
+          )}
         </div>
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-3">
           <p className="text-xs text-[var(--color-muted)]">
             Shared context available to all agents — your role, preferences, and project information.
           </p>
-          <Textarea
-            value={userContent}
-            onChange={(e) => setUserContent(e.target.value)}
-            placeholder={"# About Me\n\nDescribe your role, expertise, and preferences..."}
-            rows={8}
-            className="text-xs font-mono resize-none"
-          />
+          {userContextError ? (
+            <div className="flex flex-col items-center gap-3 py-4 text-center">
+              <p className="text-sm text-[var(--color-error)]">Could not load workspace context.</p>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => refetchUserContext()}
+                className="gap-1.5"
+              >
+                <ArrowsClockwise size={13} />
+                Retry
+              </Button>
+            </div>
+          ) : (
+            <Textarea
+              value={userContent}
+              onChange={(e) => setUserContent(e.target.value)}
+              placeholder={"# About Me\n\nDescribe your role, expertise, and preferences..."}
+              rows={8}
+              className="text-xs font-mono resize-none"
+            />
+          )}
         </div>
       </section>
     </div>

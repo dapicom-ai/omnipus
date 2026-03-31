@@ -272,12 +272,7 @@ After completing the task, provide a clear summary of what was done.`
 	}
 }
 
-func (sm *SubagentManager) GetTask(taskID string) (*SubagentTask, bool) {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	task, ok := sm.tasks[taskID]
-	return task, ok
-}
+// GetTask has been removed (H6). Use GetTaskCopy to avoid exposing mutable pointers.
 
 // GetTaskCopy returns a copy of the task with the given ID, taken under the
 // read lock, so the caller receives a consistent snapshot with no data race.
@@ -291,16 +286,7 @@ func (sm *SubagentManager) GetTaskCopy(taskID string) (SubagentTask, bool) {
 	return *task, true
 }
 
-func (sm *SubagentManager) ListTasks() []*SubagentTask {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-
-	tasks := make([]*SubagentTask, 0, len(sm.tasks))
-	for _, task := range sm.tasks {
-		tasks = append(tasks, task)
-	}
-	return tasks
-}
+// ListTasks has been removed (H6). Use ListTaskCopies to avoid exposing mutable pointers.
 
 // ListTaskCopies returns value copies of all tasks, taken under the read lock,
 // so callers receive consistent snapshots with no data race.
