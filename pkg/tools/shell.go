@@ -35,15 +35,16 @@ func getSessionManager() *SessionManager {
 }
 
 type ExecTool struct {
-	workingDir          string
-	timeout             time.Duration
-	denyPatterns        []*regexp.Regexp
-	allowPatterns       []*regexp.Regexp
-	customAllowPatterns []*regexp.Regexp
-	allowedPathPatterns []*regexp.Regexp
-	restrictToWorkspace bool
-	allowRemote         bool
-	sessionManager      *SessionManager
+	workingDir           string
+	timeout              time.Duration
+	maxBackgroundSeconds int // hard-kill timeout for background sessions; 0 = disabled
+	denyPatterns         []*regexp.Regexp
+	allowPatterns        []*regexp.Regexp
+	customAllowPatterns  []*regexp.Regexp
+	allowedPathPatterns  []*regexp.Regexp
+	restrictToWorkspace  bool
+	allowRemote          bool
+	sessionManager       *SessionManager
 }
 
 var (
@@ -139,7 +140,7 @@ func NewExecToolWithConfig(
 		if enableDenyPatterns {
 			denyPatterns = append(denyPatterns, defaultDenyPatterns...)
 			if len(execConfig.CustomDenyPatterns) > 0 {
-				fmt.Printf("Using custom deny patterns: %v\n", execConfig.CustomDenyPatterns)
+				logger.InfoCF("shell", "Using custom deny patterns", map[string]any{"patterns": execConfig.CustomDenyPatterns})
 				for _, pattern := range execConfig.CustomDenyPatterns {
 					re, err := regexp.Compile(pattern)
 					if err != nil {
@@ -150,7 +151,7 @@ func NewExecToolWithConfig(
 			}
 		} else {
 			// If deny patterns are disabled, we won't add any patterns, allowing all commands.
-			fmt.Println("Warning: deny patterns are disabled. All commands will be allowed.")
+			logger.WarnCF("shell", "deny patterns are disabled — all commands will be allowed", nil)
 		}
 		for _, pattern := range execConfig.CustomAllowPatterns {
 			re, err := regexp.Compile(pattern)
@@ -168,16 +169,22 @@ func NewExecToolWithConfig(
 		timeout = time.Duration(config.Tools.Exec.TimeoutSeconds) * time.Second
 	}
 
+	var maxBgSecs int
+	if config != nil {
+		maxBgSecs = config.Tools.Exec.MaxBackgroundSeconds
+	}
+
 	return &ExecTool{
-		workingDir:          workingDir,
-		timeout:             timeout,
-		denyPatterns:        denyPatterns,
-		allowPatterns:       nil,
-		customAllowPatterns: customAllowPatterns,
-		allowedPathPatterns: allowedPathPatterns,
-		restrictToWorkspace: restrict,
-		allowRemote:         allowRemote,
-		sessionManager:      getSessionManager(),
+		workingDir:           workingDir,
+		timeout:              timeout,
+		maxBackgroundSeconds: maxBgSecs,
+		denyPatterns:         denyPatterns,
+		allowPatterns:        nil,
+		customAllowPatterns:  customAllowPatterns,
+		allowedPathPatterns:  allowedPathPatterns,
+		restrictToWorkspace:  restrict,
+		allowRemote:          allowRemote,
+		sessionManager:       getSessionManager(),
 	}, nil
 }
 
@@ -392,7 +399,9 @@ func (t *ExecTool) runSync(ctx context.Context, command, cwd string) *ToolResult
 	select {
 	case err = <-done:
 	case <-cmdCtx.Done():
-		_ = terminateProcessTree(cmd)
+		if termErr := terminateProcessTree(cmd); termErr != nil {
+			logger.WarnCF("shell", "terminateProcessTree error", map[string]any{"error": termErr.Error()})
+		}
 		select {
 		case err = <-done:
 		case <-time.After(2 * time.Second):
@@ -539,10 +548,17 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 	// so we need cmd.Wait() in a separate goroutine to detect process exit.
 	if session.PTY && session.ptyMaster != nil {
 		go func() {
-			cmd.Wait() // Wait for process to exit
+			waitErr := cmd.Wait() // Wait for process to exit
 			session.mu.Lock()
 			if cmd.ProcessState != nil {
 				session.ExitCode = cmd.ProcessState.ExitCode()
+			} else {
+				// ProcessState is nil: process did not exit normally.
+				if waitErr != nil {
+					logger.WarnCF("shell", "PTY cmd.Wait returned error with nil ProcessState",
+						map[string]any{"session_id": sessionID, "error": waitErr.Error()})
+				}
+				session.ExitCode = -1
 			}
 			session.Status = "done"
 			session.mu.Unlock()
@@ -610,13 +626,73 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 			if stdinWriter != nil {
 				stdinWriter.Close()
 			}
-			cmd.Wait()
+			waitErr := cmd.Wait()
 			session.mu.Lock()
 			if cmd.ProcessState != nil {
 				session.ExitCode = cmd.ProcessState.ExitCode()
+			} else {
+				// ProcessState is nil: process did not exit normally.
+				if waitErr != nil {
+					logger.WarnCF("shell", "non-PTY cmd.Wait returned error with nil ProcessState",
+						map[string]any{"session_id": sessionID, "error": waitErr.Error()})
+				}
+				session.ExitCode = -1
 			}
 			session.Status = "done"
 			session.mu.Unlock()
+		}()
+	}
+
+	// Background process hard-kill timeout (FR-007).
+	// If maxBackgroundSeconds > 0, send SIGTERM after the timeout, then SIGKILL after 5s.
+	if t.maxBackgroundSeconds > 0 {
+		sid := sessionID
+		maxBgDuration := time.Duration(t.maxBackgroundSeconds) * time.Second
+		// Capture cmd.Process so we use the OS handle rather than the PID integer,
+		// eliminating the PID-reuse race (SC1/SH2): the handle stays valid until
+		// cmd.Wait() returns, even if the PID is recycled by the OS.
+		proc := cmd.Process
+		go func() {
+			timer := time.NewTimer(maxBgDuration)
+			defer timer.Stop()
+			<-timer.C
+
+			// Atomically: check status, kill via OS handle, update status.
+			// Using the OS process handle (cmd.Process) instead of the raw PID prevents
+			// the PID-reuse race where a newly spawned unrelated process inherits the PID.
+			session.mu.Lock()
+			if session.Status != "running" {
+				session.mu.Unlock()
+				return
+			}
+			pid := session.PID
+			session.mu.Unlock()
+
+			logger.WarnCF("shell", "Background session exceeded max_background_seconds; sending SIGTERM",
+				map[string]any{
+					"session_id":             sid,
+					"pid":                    pid,
+					"max_background_seconds": t.maxBackgroundSeconds,
+				})
+
+			// Use gracefulKillProcessGroup with the captured process handle for SIGTERM,
+			// then fall back to SIGKILL via the OS handle.
+			gracefulKillProcessGroup(pid, 5*time.Second)
+			// Ensure the process is gone via the safe OS handle (no PID reuse risk).
+			if proc != nil {
+				_ = proc.Kill()
+			}
+
+			// Mark session done under lock only if still running (the wait goroutine
+			// may have already transitioned it).
+			session.mu.Lock()
+			if session.Status == "running" {
+				session.Status = "done"
+				session.ExitCode = -1
+			}
+			session.mu.Unlock()
+			logger.WarnCF("shell", "Background session hard-killed",
+				map[string]any{"session_id": sid, "pid": pid})
 		}()
 	}
 
@@ -624,15 +700,15 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 		SessionID: sessionID,
 		Status:    "running",
 	}
-	data, err := json.Marshal(resp)
-	if err != nil {
-		logger.WarnCF("shell", "failed to marshal exec start response", map[string]any{"error": err.Error()})
+	data, marshalErr := json.Marshal(resp)
+	if marshalErr != nil {
+		logger.WarnCF("shell", "failed to marshal exec start response", map[string]any{"error": marshalErr.Error()})
 		data = []byte("{}")
 	}
 	return &ToolResult{
 		ForLLM:  string(data),
 		ForUser: fmt.Sprintf("Session %s started", sessionID),
-		IsError: false,
+		IsError: marshalErr != nil,
 	}
 }
 
@@ -641,15 +717,15 @@ func (t *ExecTool) executeList() *ToolResult {
 	resp := ExecResponse{
 		Sessions: sessions,
 	}
-	data, err := json.Marshal(resp)
-	if err != nil {
-		logger.WarnCF("shell", "failed to marshal exec list response", map[string]any{"error": err.Error()})
+	data, marshalErr := json.Marshal(resp)
+	if marshalErr != nil {
+		logger.WarnCF("shell", "failed to marshal exec list response", map[string]any{"error": marshalErr.Error()})
 		data = []byte("{}")
 	}
 	return &ToolResult{
 		ForLLM:  string(data),
 		ForUser: fmt.Sprintf("%d active sessions", len(sessions)),
-		IsError: false,
+		IsError: marshalErr != nil,
 	}
 }
 
@@ -672,14 +748,14 @@ func (t *ExecTool) executePoll(args map[string]any) *ToolResult {
 		Status:    session.GetStatus(),
 		ExitCode:  session.GetExitCode(),
 	}
-	data, err := json.Marshal(resp)
-	if err != nil {
-		logger.WarnCF("shell", "failed to marshal exec poll response", map[string]any{"error": err.Error()})
+	data, marshalErr := json.Marshal(resp)
+	if marshalErr != nil {
+		logger.WarnCF("shell", "failed to marshal exec poll response", map[string]any{"error": marshalErr.Error()})
 		data = []byte("{}")
 	}
 	return &ToolResult{
 		ForLLM:  string(data),
-		IsError: false,
+		IsError: marshalErr != nil,
 	}
 }
 
@@ -704,14 +780,14 @@ func (t *ExecTool) executeRead(args map[string]any) *ToolResult {
 		Output:    output,
 		Status:    session.GetStatus(),
 	}
-	data, err := json.Marshal(resp)
-	if err != nil {
-		logger.WarnCF("shell", "failed to marshal exec read response", map[string]any{"error": err.Error()})
+	data, marshalErr := json.Marshal(resp)
+	if marshalErr != nil {
+		logger.WarnCF("shell", "failed to marshal exec read response", map[string]any{"error": marshalErr.Error()})
 		data = []byte("{}")
 	}
 	return &ToolResult{
 		ForLLM:  string(data),
-		IsError: false,
+		IsError: marshalErr != nil,
 	}
 }
 
@@ -749,14 +825,14 @@ func (t *ExecTool) executeWrite(args map[string]any) *ToolResult {
 		SessionID: sessionID,
 		Status:    session.GetStatus(),
 	}
-	respData, err := json.Marshal(resp)
-	if err != nil {
-		logger.WarnCF("shell", "failed to marshal exec write response", map[string]any{"error": err.Error()})
+	respData, marshalErr := json.Marshal(resp)
+	if marshalErr != nil {
+		logger.WarnCF("shell", "failed to marshal exec write response", map[string]any{"error": marshalErr.Error()})
 		respData = []byte("{}")
 	}
 	return &ToolResult{
 		ForLLM:  string(respData),
-		IsError: false,
+		IsError: marshalErr != nil,
 	}
 }
 
@@ -788,15 +864,15 @@ func (t *ExecTool) executeKill(args map[string]any) *ToolResult {
 		SessionID: sessionID,
 		Status:    "done",
 	}
-	data, err := json.Marshal(resp)
-	if err != nil {
-		logger.WarnCF("shell", "failed to marshal exec kill response", map[string]any{"error": err.Error()})
+	data, marshalErr := json.Marshal(resp)
+	if marshalErr != nil {
+		logger.WarnCF("shell", "failed to marshal exec kill response", map[string]any{"error": marshalErr.Error()})
 		data = []byte("{}")
 	}
 	return &ToolResult{
 		ForLLM:  string(data),
 		ForUser: fmt.Sprintf("Session %s killed", sessionID),
-		IsError: false,
+		IsError: marshalErr != nil,
 	}
 }
 
@@ -1016,14 +1092,14 @@ func (t *ExecTool) executeSendKeys(args map[string]any) *ToolResult {
 		Status:    "running",
 		Output:    fmt.Sprintf("Sent keys: %v", keys),
 	}
-	respData, err := json.Marshal(resp)
-	if err != nil {
-		logger.WarnCF("shell", "failed to marshal exec sendkeys response", map[string]any{"error": err.Error()})
+	respData, marshalErr := json.Marshal(resp)
+	if marshalErr != nil {
+		logger.WarnCF("shell", "failed to marshal exec sendkeys response", map[string]any{"error": marshalErr.Error()})
 		respData = []byte("{}")
 	}
 	return &ToolResult{
 		ForLLM:  string(respData),
-		IsError: false,
+		IsError: marshalErr != nil,
 	}
 }
 

@@ -64,7 +64,8 @@ func DefaultConfig() *Config {
 					Enabled:       false,
 					MaxArgsLength: 300,
 				},
-				SplitOnMarker: false,
+				SplitOnMarker:  false,
+				TimeoutSeconds: 300, // 5 minutes; 0 = disabled
 			},
 		},
 		Bindings: []AgentBinding{},
@@ -443,9 +444,10 @@ func DefaultConfig() *Config {
 				ToolConfig: ToolConfig{
 					Enabled: true,
 				},
-				EnableDenyPatterns: true,
-				AllowRemote:        true,
-				TimeoutSeconds:     60,
+				EnableDenyPatterns:   true,
+				AllowRemote:          true,
+				TimeoutSeconds:       60,
+				MaxBackgroundSeconds: 300, // 5 minutes; 0 = disabled
 			},
 			Skills: SkillsToolsConfig{
 				ToolConfig: ToolConfig{

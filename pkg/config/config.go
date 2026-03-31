@@ -426,6 +426,7 @@ type AgentDefaults struct {
 	SubTurn                   SubTurnConfig      `json:"subturn"                                                                                     envPrefix:"PICOCLAW_AGENTS_DEFAULTS_SUBTURN_"`
 	ToolFeedback              ToolFeedbackConfig `json:"tool_feedback,omitempty"`
 	SplitOnMarker             bool               `json:"split_on_marker"                 env:"PICOCLAW_AGENTS_DEFAULTS_SPLIT_ON_MARKER"` // split messages on <|[SPLIT]|> marker
+	TimeoutSeconds            int                `json:"timeout_seconds"                 env:"PICOCLAW_AGENTS_DEFAULTS_TIMEOUT_SECONDS"`  // per-turn timeout in seconds; 0 = disabled
 }
 
 const DefaultMaxMediaSize = 20 * 1024 * 1024 // 20 MB
@@ -987,6 +988,11 @@ type ExecConfig struct {
 	// US-14: Route exec child process HTTP traffic through the local SSRF proxy.
 	// When true (default), HTTP_PROXY and HTTPS_PROXY are set on child processes.
 	EnableProxy bool `json:"enable_proxy,omitempty" env:"PICOCLAW_TOOLS_EXEC_ENABLE_PROXY"`
+
+	// MaxBackgroundSeconds is the hard-kill timeout for background sessions.
+	// After this duration, the process receives SIGTERM, then SIGKILL 5s later.
+	// 0 = disabled (no timeout enforced).
+	MaxBackgroundSeconds int `json:"max_background_seconds" env:"PICOCLAW_TOOLS_EXEC_MAX_BACKGROUND_SECONDS"`
 }
 
 type SkillsToolsConfig struct {

@@ -10,44 +10,81 @@ import (
 	"time"
 
 	"github.com/dapicom-ai/omnipus/pkg/agent"
+	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 )
 
 // omnipusShutdownTimeout is the maximum time to wait for in-flight operations
 // to complete before force-flushing partial state. Per FUNC-36 / US-9.
-const omnipusShutdownTimeout = 10 * time.Second
+//
+// This must be larger than the maximum active-turn wait (60 s) plus a margin (5 s).
+// Previously 10 s, which was impossible to satisfy when active turns run up to 60 s.
+const omnipusShutdownTimeout = 70 * time.Second
 
 // omnipusGracefulShutdown executes the 5-step graceful shutdown per FUNC-36:
 //
 //  1. Stop channel manager — no new inbound messages accepted
-//  2. Drain agent loop — cancel running agent contexts, wait for in-flight work
+//  2. Drain agent loop — wait for active turns (US-7, FR-008), then close
 //  3. Flush partial state — interrupted responses already saved by agent loop cancellation
 //  4. Stop background services — heartbeat, cron, device, health
 //  5. Close provider connections — release HTTP/WebSocket sessions
 //
-// Implements US-9 acceptance criteria.
+// Implements US-9 and US-7 acceptance criteria.
 func omnipusGracefulShutdown(
 	runningServices *services,
 	agentLoop *agent.AgentLoop,
 	provider providers.LLMProvider,
+	cfg *config.Config,
 ) {
 	ctx, cancel := context.WithTimeout(context.Background(), omnipusShutdownTimeout)
 	defer cancel()
 
 	slog.Info("shutdown: step 1 — stopping new requests")
 	// Stop channel manager first so no new inbound messages are accepted.
-	stopCtx, stopCancel := context.WithTimeout(ctx, 2*time.Second)
+	// Use context.Background() with its own 2 s budget so that a tight overall
+	// ctx deadline (SI2) does not steal from the channel-manager stop budget.
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer stopCancel()
 	if runningServices.ChannelManager != nil {
 		runningServices.ChannelManager.StopAll(stopCtx)
 	}
 
-	slog.Info("shutdown: step 2 — waiting for in-flight operations",
-		"timeout", omnipusShutdownTimeout)
-	// Signal the agent loop to stop accepting new work and drain.
+	// US-7 / FR-008: Wait for active turns to complete before force-closing.
+	// Cap the wait to omnipusShutdownTimeout - 5 s so it always fits in the budget.
+	maxActiveTurnWait := int((omnipusShutdownTimeout - 5*time.Second).Seconds()) // 65 s
+	activeTurnTimeout := maxActiveTurnWait
+	if cfg != nil {
+		ts := cfg.Agents.Defaults.TimeoutSeconds
+		if ts > 0 && ts < activeTurnTimeout {
+			activeTurnTimeout = ts
+		}
+	}
+
+	slog.Info("shutdown: step 2 — waiting for active turns to complete",
+		"active_turn_wait_seconds", activeTurnTimeout)
+
+	// Stop() prevents new turns from starting.
 	agentLoop.Stop()
 
-	// Wait for the agent loop to drain, honouring the shutdown context.
+	activeTurnsDone := make(chan struct{})
+	go func() {
+		defer close(activeTurnsDone)
+		agentLoop.WaitForActiveRequests()
+	}()
+
+	select {
+	case <-activeTurnsDone:
+		slog.Info("shutdown: all active turns completed before shutdown")
+	case <-time.After(time.Duration(activeTurnTimeout) * time.Second):
+		slog.Warn("shutdown: timeout waiting for active turns — force-cancelling",
+			"timeout_seconds", activeTurnTimeout)
+	}
+
+	// Now close the agent loop resources.
+	// SH5: After the active-turn wait (or timeout), Close() is called. If any turns
+	// are still in-flight at this point, their context will have been cancelled by the
+	// overall ctx timeout propagation. Session stores use atomic writes so partial-write
+	// corruption is not possible. This is documented behaviour per FUNC-36.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -58,7 +95,7 @@ func omnipusGracefulShutdown(
 	case <-done:
 		slog.Info("shutdown: agent loop drained cleanly")
 	case <-ctx.Done():
-		slog.Warn("shutdown: timeout waiting for agent loop — saving partial state")
+		slog.Warn("shutdown: timeout waiting for agent loop drain — saving partial state")
 	}
 
 	slog.Info("shutdown: step 3 — verifying partial state persistence")

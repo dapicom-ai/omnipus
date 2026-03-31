@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strings"
 )
@@ -94,6 +95,9 @@ var (
 		substr("too many tokens"),
 		substr("prompt is too long"),
 		substr("request too large"),
+		// Vendor-specific patterns matching OpenClaw production classification.
+		substr("invalidparameter"),            // Azure/Qwen: total tokens exceed max
+		substr("total tokens of image and text exceed"), // Azure multi-modal context limit
 	}
 
 	imageDimensionPatterns = []errorPattern{
@@ -120,12 +124,12 @@ func ClassifyError(err error, provider, model string) *FailoverError {
 	}
 
 	// Context cancellation: user abort, never fallback.
-	if err == context.Canceled {
+	if errors.Is(err, context.Canceled) {
 		return nil
 	}
 
 	// Context deadline exceeded: treat as timeout, always fallback.
-	if err == context.DeadlineExceeded {
+	if errors.Is(err, context.DeadlineExceeded) {
 		return &FailoverError{
 			Reason:   FailoverTimeout,
 			Provider: provider,
@@ -147,7 +151,21 @@ func ClassifyError(err error, provider, model string) *FailoverError {
 	}
 
 	// Try HTTP status code extraction first.
+	// For status 400, message patterns take priority because 400 can represent
+	// both "bad request format" and "context overflow" depending on the provider.
 	if status := extractHTTPStatus(msg); status > 0 {
+		if status == 400 {
+			// Check message patterns before defaulting to FailoverFormat for 400.
+			if reason := classifyByMessage(msg); reason != "" {
+				return &FailoverError{
+					Reason:   reason,
+					Provider: provider,
+					Model:    model,
+					Status:   status,
+					Wrapped:  err,
+				}
+			}
+		}
 		if reason := classifyByStatus(status); reason != "" {
 			return &FailoverError{
 				Reason:   reason,

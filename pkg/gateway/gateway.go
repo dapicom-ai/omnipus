@@ -208,7 +208,7 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 		select {
 		case <-sigChan:
 			logger.Info("Shutting down...")
-			omnipusGracefulShutdown(runningServices, agentLoop, provider)
+			omnipusGracefulShutdown(runningServices, agentLoop, provider, cfg)
 			return nil
 		case newCfg := <-configReloadChan:
 			if !runningServices.reloading.CompareAndSwap(false, true) {
@@ -460,24 +460,6 @@ func stopAndCleanupServices(runningServices *services, shutdownTimeout time.Dura
 			fms.Stop()
 		}
 	}
-}
-
-func shutdownGateway(
-	runningServices *services,
-	agentLoop *agent.AgentLoop,
-	provider providers.LLMProvider,
-	fullShutdown bool,
-) {
-	if cp, ok := provider.(providers.StatefulProvider); ok && fullShutdown {
-		cp.Close()
-	}
-
-	stopAndCleanupServices(runningServices, gracefulShutdownTimeout, false)
-
-	agentLoop.Stop()
-	agentLoop.Close()
-
-	logger.Info("✓ Gateway stopped")
 }
 
 func handleConfigReload(

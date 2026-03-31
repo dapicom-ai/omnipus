@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -302,6 +303,10 @@ func registerSharedTools(
 				if parentTS == nil {
 					// Fallback: If no turnState exists in context, create an isolated ad-hoc root turn state
 					// so that the tool can still function outside of an agent loop (e.g. tests, raw invocations).
+					// M2: log a warning when no real turnState is in context — this usually
+				// means spawn was called outside of an agent loop (e.g. tests or raw
+				// invocations). The ad-hoc state is functional but has no session.
+				logger.WarnCF("agent", "Spawn callback using ad-hoc turnState: no parent turnState in context", nil)
 					parentTS = &turnState{
 						ctx:            ctx,
 						turnID:         "adhoc-root",
@@ -442,11 +447,34 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 				}
 				defer cancelDrain()
 
+				// FR-004: Deferred response guard — guarantees finalResponse is
+				// published even when post-turn steering code returns early.
+				// published is set to true at each existing publishResponseIfNeeded
+				// call site so the defer does not double-publish.
+				// publishResponseIfNeeded already checks HasSentInRound() internally,
+				// so we do not need to duplicate that check here.
+				var finalResponse string
+				published := false
+				publishChannel := msg.Channel
+				publishChatID := msg.ChatID
+				defer func() {
+					// H2: recover from any panic in the deferred response guard so a
+					// programming error here doesn't silently kill the Run goroutine.
+					defer func() {
+						if r := recover(); r != nil {
+							logger.ErrorCF("agent", "panic in deferred response guard", map[string]any{"panic": r})
+						}
+					}()
+					if finalResponse != "" && !published {
+						al.publishResponseIfNeeded(ctx, publishChannel, publishChatID, finalResponse)
+					}
+				}()
+
 				response, err := al.processMessage(ctx, msg)
 				if err != nil {
 					response = fmt.Sprintf("Error processing message: %v", err)
 				}
-				finalResponse := response
+				finalResponse = response
 
 				target, targetErr := al.buildContinuationTarget(msg)
 				if targetErr != nil {
@@ -455,15 +483,21 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 							"channel": msg.Channel,
 							"error":   targetErr.Error(),
 						})
+					// defer will publish finalResponse if non-empty
 					return
 				}
 				if target == nil {
 					cancelDrain()
 					if finalResponse != "" {
+						published = true
 						al.publishResponseIfNeeded(ctx, msg.Channel, msg.ChatID, finalResponse)
 					}
 					return
 				}
+
+				// Update the defer's publish target to use the resolved continuation target.
+				publishChannel = target.Channel
+				publishChatID = target.ChatID
 
 				for al.pendingSteeringCountForScope(target.SessionKey) > 0 {
 					logger.InfoCF("agent", "Continuing queued steering after turn end",
@@ -482,9 +516,11 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 								"chat_id": target.ChatID,
 								"error":   continueErr.Error(),
 							})
+						// defer will publish the last known finalResponse
 						return
 					}
 					if continued == "" {
+						// defer will publish the last known finalResponse
 						return
 					}
 
@@ -510,6 +546,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 								"chat_id": target.ChatID,
 								"error":   continueErr.Error(),
 							})
+						// defer will publish the last known finalResponse
 						return
 					}
 					if continued == "" {
@@ -520,6 +557,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 				}
 
 				if finalResponse != "" {
+					published = true
 					al.publishResponseIfNeeded(ctx, target.Channel, target.ChatID, finalResponse)
 				}
 			}()
@@ -682,6 +720,13 @@ func (al *AgentLoop) buildContinuationTarget(msg bus.InboundMessage) (*continuat
 		Channel:    msg.Channel,
 		ChatID:     msg.ChatID,
 	}, nil
+}
+
+// WaitForActiveRequests blocks until all in-flight LLM calls tracked by
+// activeRequests have completed. Used by the graceful shutdown sequence to
+// ensure active turns finish before the process exits.
+func (al *AgentLoop) WaitForActiveRequests() {
+	al.activeRequests.Wait()
 }
 
 // Close releases resources held by agent session stores. Call after Stop.
@@ -1658,7 +1703,19 @@ func (al *AgentLoop) handleReasoning(
 }
 
 func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, error) {
-	turnCtx, turnCancel := context.WithCancel(ctx)
+	// H1: guard against an already-cancelled or timed-out context before doing any work.
+	if ctx.Err() != nil {
+		return turnResult{}, fmt.Errorf("turn not started: %w", ctx.Err())
+	}
+
+	var turnCtx context.Context
+	var turnCancel context.CancelFunc
+	turnTimeout := time.Duration(ts.agent.TimeoutSeconds) * time.Second
+	if turnTimeout > 0 {
+		turnCtx, turnCancel = context.WithTimeout(ctx, turnTimeout)
+	} else {
+		turnCtx, turnCancel = context.WithCancel(ctx)
+	}
 	defer turnCancel()
 	ts.setTurnCancel(turnCancel)
 
@@ -1769,6 +1826,8 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 	}
 	pendingMessages := append([]providers.Message(nil), ts.opts.InitialSteeringMessages...)
 	var finalContent string
+	emptyResponseRetries := 0
+	const maxEmptyResponseRetries = 1
 
 turnLoop:
 	for ts.currentIteration() < ts.agent.MaxIterations || len(pendingMessages) > 0 || func() bool {
@@ -2054,6 +2113,8 @@ turnLoop:
 		var response *providers.LLMResponse
 		var err error
 		maxRetries := 2
+		compactionAttemptedOnTimeout := false
+		contextCompressionFailed := false // C3: tracks that compression was tried but returned ok=false
 		for retry := 0; retry <= maxRetries; retry++ {
 			response, err = callLLM(callMessages, providerToolDefs)
 			if err == nil {
@@ -2064,26 +2125,119 @@ turnLoop:
 				return al.abortTurn(ts)
 			}
 
-			errMsg := strings.ToLower(err.Error())
-			isTimeoutError := errors.Is(err, context.DeadlineExceeded) ||
-				strings.Contains(errMsg, "deadline exceeded") ||
-				strings.Contains(errMsg, "client.timeout") ||
-				strings.Contains(errMsg, "timed out") ||
-				strings.Contains(errMsg, "timeout exceeded")
+			// I3: if the FallbackChain already exhausted all candidates, don't retry
+			// in the outer loop — the chain already tried everything. Break immediately
+			// so the error surfaces to the caller without redundant delay.
+			var exhaustedErr *providers.FallbackExhaustedError
+			if errors.As(err, &exhaustedErr) {
+				break
+			}
 
-			isContextError := !isTimeoutError && (strings.Contains(errMsg, "context_length_exceeded") ||
-				strings.Contains(errMsg, "context window") ||
-				strings.Contains(errMsg, "context_window") ||
-				strings.Contains(errMsg, "maximum context length") ||
-				strings.Contains(errMsg, "token limit") ||
-				strings.Contains(errMsg, "too many tokens") ||
-				strings.Contains(errMsg, "max_tokens") ||
-				strings.Contains(errMsg, "invalidparameter") ||
-				strings.Contains(errMsg, "prompt is too long") ||
-				strings.Contains(errMsg, "request too large"))
+			// Use ClassifyError to distinguish turn-level errors from provider errors.
+			// Provider-transient errors (429, 5xx, auth) are handled by the FallbackChain;
+			// break here and let the error propagate to the caller.
+			//
+			// C1: pass the provider name (not the model name) as the second argument.
+			// The provider name comes from the first active candidate; fall back to the
+			// agent's configured provider field when no candidates are resolved.
+			activeProviderName := ""
+			if len(activeCandidates) > 0 {
+				activeProviderName = activeCandidates[0].Provider
+			}
+			failErr := providers.ClassifyError(err, activeProviderName, llmModel)
+
+			var isTimeoutError bool
+			var isContextError bool
+			if failErr != nil {
+				isTimeoutError = failErr.Reason == providers.FailoverTimeout
+				isContextError = failErr.Reason == providers.FailoverContextOverflow
+				// Retriable provider errors (rate limit, auth, overloaded) are handled
+				// by the FallbackChain. Don't retry inline — break so the error surfaces.
+				if failErr.IsRetriable() && !isTimeoutError {
+					break
+				}
+				// Non-retriable, non-timeout, non-context errors: break immediately.
+				if !isTimeoutError && !isContextError {
+					break
+				}
+			} else {
+				// ClassifyError returned nil: unknown error. Don't retry.
+				break
+			}
 
 			if isTimeoutError && retry < maxRetries {
-				backoff := time.Duration(retry+1) * 5 * time.Second
+				// I1: emit EventKindTurnTimeout when a timeout error is detected.
+				al.emitEvent(
+					EventKindTurnTimeout,
+					ts.eventMeta("runTurn", "turn.timeout"),
+					TurnTimeoutPayload{
+						TimeoutSeconds: ts.agent.TimeoutSeconds,
+						Compacted:      compactionAttemptedOnTimeout,
+						Retried:        retry > 0,
+					},
+				)
+				// Timeout recovery: compact context if it's heavily loaded, then retry once.
+				if !compactionAttemptedOnTimeout && ts.agent.SummarizeTokenPercent > 0 && !ts.opts.NoHistory {
+					toolDefs := ts.agent.Tools.ToProviderDefs()
+					if isOverContextBudget(
+						ts.agent.ContextWindow*ts.agent.SummarizeTokenPercent/100,
+						callMessages, toolDefs, ts.agent.MaxTokens,
+					) {
+						compactionAttemptedOnTimeout = true
+						if compression, ok := al.forceCompression(ts.agent, ts.sessionKey); ok {
+							al.emitEvent(
+								EventKindContextCompress,
+								ts.eventMeta("runTurn", "turn.context.compress"),
+								ContextCompressPayload{
+									Reason:            ContextCompressReasonRetry,
+									DroppedMessages:   compression.DroppedMessages,
+									RemainingMessages: compression.RemainingMessages,
+								},
+							)
+							// I1: emit EventKindCompactionRetry when compaction is triggered
+							// during timeout recovery (separate from the general compress event).
+							al.emitEvent(
+								EventKindCompactionRetry,
+								ts.eventMeta("runTurn", "turn.compaction_retry"),
+								CompactionRetryPayload{
+									DroppedMessages:   compression.DroppedMessages,
+									RemainingMessages: compression.RemainingMessages,
+								},
+							)
+							ts.refreshRestorePointFromSession(ts.agent)
+							newHistory := ts.agent.Sessions.GetHistory(ts.sessionKey)
+							newSummary := ts.agent.Sessions.GetSummary(ts.sessionKey)
+							messages = ts.agent.ContextBuilder.BuildMessages(
+								newHistory, newSummary, "",
+								nil, ts.channel, ts.chatID, ts.opts.SenderID, ts.opts.SenderDisplayName,
+								activeSkillNames(ts.agent, ts.opts)...,
+							)
+							callMessages = messages
+							if gracefulTerminal {
+								callMessages = append(append([]providers.Message(nil), messages...), ts.interruptHintMessage())
+							}
+						} else {
+							// Compaction failed: return partial content + timeout message.
+							logger.WarnCF("agent", "Compaction failed during timeout recovery; returning partial response",
+								map[string]any{"agent_id": ts.agent.ID, "iteration": iteration})
+							break
+						}
+					}
+				}
+
+				// Exponential backoff with full jitter (base 2s, max 30s).
+				base := 2 * time.Second
+				calculated := base * (1 << uint(retry)) // 2^retry * base
+				if calculated > 30*time.Second {
+					calculated = 30 * time.Second
+				}
+				jitter := time.Duration(rand.Int63n(int64(calculated) + 1))
+				// M3: enforce a minimum backoff floor of 500ms so jitter can never produce
+				// a zero or near-zero delay (rand.Int63n(1) == 0 when calculated == 0).
+				backoff := jitter
+				if backoff < 500*time.Millisecond {
+					backoff = 500 * time.Millisecond
+				}
 				al.emitEvent(
 					EventKindLLMRetry,
 					ts.eventMeta("runTurn", "turn.llm.retry"),
@@ -2095,6 +2249,16 @@ turnLoop:
 						Backoff:    backoff,
 					},
 				)
+				if retry == 0 && !constants.IsInternalChannel(ts.channel) {
+					if notifyErr := al.bus.PublishOutbound(turnCtx, bus.OutboundMessage{
+						Channel: ts.channel,
+						ChatID:  ts.chatID,
+						Content: "Retrying — please wait...",
+					}); notifyErr != nil {
+						logger.WarnCF("agent", "Failed to send retry indicator",
+							map[string]any{"channel": ts.channel, "error": notifyErr.Error()})
+					}
+				}
 				logger.WarnCF("agent", "Timeout error, retrying after backoff", map[string]any{
 					"error":   err.Error(),
 					"retry":   retry,
@@ -2112,6 +2276,14 @@ turnLoop:
 			}
 
 			if isContextError && retry < maxRetries && !ts.opts.NoHistory {
+				// C3: if a previous compression attempt returned ok=false and we're
+				// still getting context errors, retrying with identical data won't help.
+				// Break to surface the error rather than burning the remaining budget.
+				if contextCompressionFailed {
+					logger.WarnCF("agent", "Context overflow persists after failed compression; aborting retry",
+						map[string]any{"agent_id": ts.agent.ID, "iteration": iteration, "retry": retry})
+					break
+				}
 				al.emitEvent(
 					EventKindLLMRetry,
 					ts.eventMeta("runTurn", "turn.llm.retry"),
@@ -2153,6 +2325,14 @@ turnLoop:
 						},
 					)
 					ts.refreshRestorePointFromSession(ts.agent)
+				} else {
+					// C3: compaction returned ok=false (nothing to compress). Mark the
+					// flag so the NEXT retry attempt will break rather than burning more
+					// budget on identical data. We still allow this single retry through
+					// because the provider might succeed without context reduction.
+					contextCompressionFailed = true
+					logger.WarnCF("agent", "Compaction failed during context overflow recovery; will not retry further",
+						map[string]any{"agent_id": ts.agent.ID, "iteration": iteration})
 				}
 
 				newHistory := ts.agent.Sessions.GetHistory(ts.sessionKey)
@@ -2172,6 +2352,14 @@ turnLoop:
 		}
 
 		if err != nil {
+			// C2: check for context cancellation/timeout before reporting a generic
+			// "LLM call failed" error — these are user/system actions, not LLM failures.
+			if errors.Is(err, context.Canceled) {
+				return turnResult{}, fmt.Errorf("turn cancelled")
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				return turnResult{}, fmt.Errorf("turn timed out")
+			}
 			turnStatus = TurnEndStatusError
 			al.emitEvent(
 				EventKindError,
@@ -2275,6 +2463,74 @@ turnLoop:
 					})
 				pendingMessages = append(pendingMessages, steerMsgs...)
 				continue
+			}
+			// Empty response recovery (FR-006): if LLM returned empty content with no
+			// reasoning and no tool calls, retry once before surfacing a fallback message.
+			//
+			// H3: perform the retry in an inner loop that calls callLLM directly, so we
+			// do NOT increment the outer iteration counter (which would consume the agent's
+			// MaxIterations budget for what is purely a provider-level retry).
+			for strings.TrimSpace(responseContent) == "" && emptyResponseRetries < maxEmptyResponseRetries {
+				emptyResponseRetries++
+				logger.WarnCF("agent", "Empty response from LLM, retrying", map[string]any{
+					"agent_id":  ts.agent.ID,
+					"iteration": iteration,
+					"attempt":   emptyResponseRetries,
+				})
+				al.emitEvent(
+					EventKindLLMRetry,
+					ts.eventMeta("runTurn", "turn.llm.retry"),
+					LLMRetryPayload{
+						Attempt:    emptyResponseRetries,
+						MaxRetries: maxEmptyResponseRetries,
+						Reason:     "empty_response",
+					},
+				)
+				// I1: also emit the dedicated EventKindEmptyResponseRetry for subscribers
+				// that specifically track empty-response retry behaviour.
+				al.emitEvent(
+					EventKindEmptyResponseRetry,
+					ts.eventMeta("runTurn", "turn.empty_response_retry"),
+					EmptyResponseRetryPayload{
+						Attempt:    emptyResponseRetries,
+						MaxRetries: maxEmptyResponseRetries,
+					},
+				)
+				// Re-call the LLM directly without advancing the outer turn iteration.
+				retryResp, retryErr := callLLM(callMessages, providerToolDefs)
+				if retryErr != nil {
+					// Propagate the error back to the outer error-handling block by
+					// overwriting response/err and breaking out of both loops.
+					response = nil
+					err = retryErr
+					break
+				}
+				response = retryResp
+				responseContent = response.Content
+				if responseContent == "" && response.ReasoningContent != "" {
+					responseContent = response.ReasoningContent
+				}
+			}
+			// If the inner retry loop set an error, surface it via the outer error path.
+			if err != nil {
+				if errors.Is(err, context.Canceled) {
+					return turnResult{}, fmt.Errorf("turn cancelled")
+				}
+				if errors.Is(err, context.DeadlineExceeded) {
+					return turnResult{}, fmt.Errorf("turn timed out")
+				}
+				turnStatus = TurnEndStatusError
+				al.emitEvent(
+					EventKindError,
+					ts.eventMeta("runTurn", "turn.error"),
+					ErrorPayload{Stage: "llm_empty_retry", Message: err.Error()},
+				)
+				return turnResult{}, fmt.Errorf("LLM call failed during empty-response retry: %w", err)
+			}
+			if strings.TrimSpace(responseContent) == "" {
+				responseContent = defaultResponse
+				logger.WarnCF("agent", "LLM returned empty response after retry; using fallback message",
+					map[string]any{"agent_id": ts.agent.ID, "iteration": iteration})
 			}
 			finalContent = responseContent
 			logger.InfoCF("agent", "LLM response without tool calls (direct answer)",
@@ -2479,11 +2735,19 @@ turnLoop:
 				if !result.Silent && result.ForUser != "" {
 					outCtx, outCancel := context.WithTimeout(context.Background(), 5*time.Second)
 					defer outCancel()
-					_ = al.bus.PublishOutbound(outCtx, bus.OutboundMessage{
+					// M1: capture and log publish errors instead of silently discarding them.
+					if pubErr := al.bus.PublishOutbound(outCtx, bus.OutboundMessage{
 						Channel: ts.channel,
 						ChatID:  ts.chatID,
 						Content: result.ForUser,
-					})
+					}); pubErr != nil {
+						logger.WarnCF("agent", "Async tool ForUser content failed to publish",
+							map[string]any{
+								"tool":    asyncToolName,
+								"channel": ts.channel,
+								"error":   pubErr.Error(),
+							})
+					}
 				}
 
 				// Determine content for the agent loop (ForLLM or error).
@@ -2745,6 +3009,10 @@ turnLoop:
 						"session_key":    ts.sessionKey,
 					})
 				finalContent = ""
+				// I2: guard against bypassing the hard iteration ceiling via goto.
+				if ts.currentIteration() >= 2*ts.agent.MaxIterations {
+					break
+				}
 				goto turnLoop
 			}
 
@@ -2757,6 +3025,10 @@ turnLoop:
 					})
 				pendingMessages = append(pendingMessages, steerMsgs...)
 				finalContent = ""
+				// I2: guard against bypassing the hard iteration ceiling via goto.
+				if ts.currentIteration() >= 2*ts.agent.MaxIterations {
+					break
+				}
 				goto turnLoop
 			}
 
@@ -2815,7 +3087,12 @@ turnLoop:
 			})
 		pendingMessages = append(pendingMessages, steerMsgs...)
 		finalContent = ""
-		goto turnLoop
+		// I2: guard against bypassing the hard iteration ceiling via goto.
+		// If the ceiling is exceeded, fall through to finalization rather than
+		// re-entering turnLoop, which would be invalid at this point anyway.
+		if ts.currentIteration() < 2*ts.agent.MaxIterations {
+			goto turnLoop
+		}
 	}
 
 	if ts.hardAbortRequested() {

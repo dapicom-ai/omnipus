@@ -42,6 +42,10 @@ type AgentInstance struct {
 	SkillsFilter              []string
 	Candidates                []providers.FallbackCandidate
 
+	// TimeoutSeconds is the per-turn hard timeout. 0 = disabled.
+	// Populated from AgentDefaults.TimeoutSeconds; per-agent override if available.
+	TimeoutSeconds int
+
 	// Router is non-nil when model routing is configured and the light model
 	// was successfully resolved. It scores each incoming message and decides
 	// whether to route to LightCandidates or stay with Candidates.
@@ -208,6 +212,14 @@ func NewAgentInstance(
 		}
 	}
 
+	// Per-turn timeout from agent defaults (0 = disabled).
+	// Clamp negative values to 0 (disabled) — a negative timeout is meaningless
+	// and would cause context.WithTimeout to fire immediately.
+	timeoutSeconds := defaults.TimeoutSeconds
+	if timeoutSeconds < 0 {
+		timeoutSeconds = 0
+	}
+
 	return &AgentInstance{
 		ID:                        agentID,
 		Name:                      agentName,
@@ -231,6 +243,7 @@ func NewAgentInstance(
 		Router:                    router,
 		LightCandidates:           lightCandidates,
 		LightProvider:             lightProvider,
+		TimeoutSeconds:            timeoutSeconds,
 	}
 }
 

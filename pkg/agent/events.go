@@ -47,6 +47,14 @@ const (
 	EventKindSubTurnOrphan
 	// EventKindError is emitted when a turn encounters an execution error.
 	EventKindError
+	// EventKindTurnTimeout is emitted when a turn exceeds its configured timeout.
+	EventKindTurnTimeout
+	// EventKindEmptyResponseRetry is emitted when the LLM returns an empty response and a retry is attempted.
+	EventKindEmptyResponseRetry
+	// EventKindCompactionRetry is emitted when context compaction is triggered due to a timeout.
+	EventKindCompactionRetry
+	// EventKindBackgroundProcessKill is emitted when a background process is force-killed after exceeding its timeout.
+	EventKindBackgroundProcessKill
 
 	eventKindCount
 )
@@ -71,6 +79,10 @@ var eventKindNames = [...]string{
 	"subturn_result_delivered",
 	"subturn_orphan",
 	"error",
+	"turn_timeout",
+	"empty_response_retry",
+	"compaction_retry",
+	"background_process_kill",
 }
 
 // String returns the stable string form of an EventKind.
@@ -268,4 +280,30 @@ type SubTurnOrphanPayload struct {
 type ErrorPayload struct {
 	Stage   string
 	Message string
+}
+
+// TurnTimeoutPayload describes a turn that exceeded its configured timeout.
+type TurnTimeoutPayload struct {
+	TimeoutSeconds int
+	Compacted      bool
+	Retried        bool
+}
+
+// EmptyResponseRetryPayload describes a retry triggered by an empty LLM response.
+type EmptyResponseRetryPayload struct {
+	Attempt    int
+	MaxRetries int
+}
+
+// CompactionRetryPayload describes context compaction triggered during a timeout recovery.
+type CompactionRetryPayload struct {
+	DroppedMessages   int
+	RemainingMessages int
+}
+
+// BackgroundProcessKillPayload describes a background process that was force-killed.
+type BackgroundProcessKillPayload struct {
+	PID              int
+	MaxSeconds       int
+	TerminatedClean  bool
 }

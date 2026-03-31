@@ -190,16 +190,41 @@ func NewSessionManager() *SessionManager {
 	return sm
 }
 
-// cleanupOldSessions removes sessions that are done and older than 30 minutes
+// cleanupOldSessions removes sessions that are done and older than 30 minutes.
+// It avoids holding sm.mu while calling session.IsDone() (which acquires session.mu)
+// to prevent lock-order inversions: collect candidate IDs under sm.mu, release sm.mu,
+// check each session independently, then re-acquire sm.mu to delete.
 func (sm *SessionManager) cleanupOldSessions() {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
 	cutoff := time.Now().Add(-30 * time.Minute)
+
+	// Phase 1: collect candidate session IDs under the read lock.
+	sm.mu.RLock()
+	var candidates []string
 	for id, session := range sm.sessions {
-		if session.IsDone() && session.StartTime < cutoff.Unix() {
+		if session.StartTime < cutoff.Unix() {
+			candidates = append(candidates, id)
+		}
+	}
+	sm.mu.RUnlock()
+
+	// Phase 2: check each candidate (acquires session.mu) without holding sm.mu.
+	var toDelete []string
+	for _, id := range candidates {
+		sm.mu.RLock()
+		session, ok := sm.sessions[id]
+		sm.mu.RUnlock()
+		if ok && session.IsDone() {
+			toDelete = append(toDelete, id)
+		}
+	}
+
+	// Phase 3: delete under the write lock.
+	if len(toDelete) > 0 {
+		sm.mu.Lock()
+		for _, id := range toDelete {
 			delete(sm.sessions, id)
 		}
+		sm.mu.Unlock()
 	}
 }
 

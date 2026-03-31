@@ -3,6 +3,7 @@
 package tools
 
 import (
+	"log/slog"
 	"os/exec"
 	"strconv"
 )
@@ -21,7 +22,11 @@ func terminateProcessTree(cmd *exec.Cmd) error {
 		return nil
 	}
 
-	_ = exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(pid)).Run()
-	_ = cmd.Process.Kill()
+	if err := exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(pid)).Run(); err != nil {
+		slog.Warn("terminateProcessTree: taskkill failed", "pid", pid, "error", err)
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		slog.Warn("terminateProcessTree: Process.Kill failed", "pid", pid, "error", err)
+	}
 	return nil
 }
