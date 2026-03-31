@@ -1030,10 +1030,11 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 		}
 	}
 
-	// H3: Close the old registry after provider cleanup so sessions and tools are released.
-	if oldRegistry != nil {
-		oldRegistry.Close()
-	}
+	// Note: oldRegistry is intentionally NOT closed here. Closing it would
+	// terminate session stores that may still be in use by in-flight turns.
+	// The old registry's resources (session file handles) will be GC'd when
+	// no more references exist. This trades a brief fd leak during reload
+	// for crash safety.
 
 	logger.InfoCF("agent", "Provider and config reloaded successfully",
 		map[string]any{
