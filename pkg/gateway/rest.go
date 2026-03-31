@@ -747,11 +747,8 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
 		return
 	}
-	// Persistence succeeded. Trigger reload so the in-memory config picks up the changes.
-	if err := a.agentLoop.TriggerReload(); err != nil {
-		slog.Warn("config reload after agent update failed", "error", err)
-	}
-	// Write SOUL.md and HEARTBEAT.md to the agent's workspace if provided.
+	// Write SOUL.md, HEARTBEAT.md, and AGENT.md BEFORE triggering reload,
+	// so the new AgentInstance reads the updated files.
 	workspace := agentWorkspacePath(cfg, id, cfg.Agents.List[foundIdx].Workspace)
 	if req.Soul != nil {
 		soulPath := filepath.Join(workspace, "SOUL.md")
@@ -788,6 +785,10 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 			jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not write AGENT.md: %v", err))
 			return
 		}
+	}
+	// Now trigger reload so the new AgentInstance picks up the updated files.
+	if err := a.agentLoop.TriggerReload(); err != nil {
+		slog.Warn("config reload after agent update failed", "error", err)
 	}
 	// Re-read the files so the response reflects what was just persisted.
 	soul, heartbeat, instructions := readAgentFiles(workspace)
