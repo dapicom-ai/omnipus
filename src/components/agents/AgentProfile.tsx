@@ -357,10 +357,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
                 onValueChange={(v) => { markDirty(); setSelectedIcon(v as IconName) }}
               >
                 <SelectTrigger className="w-48">
-                  <div className="flex items-center gap-2">
-                    <AvatarIcon size={14} />
-                    <SelectValue />
-                  </div>
+                  <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
                   {ICON_OPTIONS.map(({ name: iconName, component: IconComp }) => (

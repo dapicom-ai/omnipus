@@ -133,18 +133,17 @@ export function SessionBar() {
         </DropdownMenuContent>
       </DropdownMenu>
 
-      {/* New Chat */}
+      {/* New Chat — icon-only on mobile, icon+text on desktop */}
       <button
         type="button"
         onClick={() => setActiveSession(null, effectiveAgentId ?? undefined)}
         title="New chat"
-        className="w-7 h-7 rounded-md flex items-center justify-center text-[var(--color-muted)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] transition-colors"
+        className="sm:hidden w-7 h-7 rounded-md flex items-center justify-center text-[var(--color-muted)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] transition-colors"
       >
         <PencilSimpleLine size={15} />
       </button>
       </div>
 
-      {/* New Chat button (text version, hidden on mobile) */}
       <Button
         variant="ghost"
         size="sm"
