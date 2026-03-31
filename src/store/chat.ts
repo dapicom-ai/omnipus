@@ -313,10 +313,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
       case 'done':
         store.updateLastAssistantMessage('', true)
-        if (frame.stats.tokens != null || frame.stats.cost != null) {
+        if (frame.stats?.tokens != null || frame.stats?.cost != null) {
           set((state) => ({
-            sessionTokens: state.sessionTokens + (frame.stats.tokens ?? 0),
-            sessionCost: state.sessionCost + (frame.stats.cost ?? 0),
+            sessionTokens: state.sessionTokens + (frame.stats?.tokens ?? 0),
+            sessionCost: state.sessionCost + (frame.stats?.cost ?? 0),
           }))
         }
         break
