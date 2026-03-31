@@ -123,6 +123,7 @@ func NewAgentInstance(
 	if agentCfg != nil {
 		agentID = routing.NormalizeAgentID(agentCfg.ID)
 		agentName = agentCfg.Name
+		contextBuilder.WithAgentInfo(agentID, agentName)
 		subagents = agentCfg.Subagents
 		skillsFilter = agentCfg.Skills
 	}

@@ -22,6 +22,8 @@ import (
 
 type ContextBuilder struct {
 	workspace          string
+	agentID            string // agent ID for multi-agent context
+	agentName          string // agent display name for multi-agent context
 	skillsLoader       *skills.SkillsLoader
 	memory             *MemoryStore
 	toolDiscoveryBM25  bool
@@ -55,6 +57,12 @@ func (cb *ContextBuilder) WithToolDiscovery(useBM25, useRegex bool) *ContextBuil
 
 func (cb *ContextBuilder) WithSplitOnMarker(enabled bool) *ContextBuilder {
 	cb.splitOnMarker = enabled
+	return cb
+}
+
+func (cb *ContextBuilder) WithAgentInfo(id, name string) *ContextBuilder {
+	cb.agentID = id
+	cb.agentName = name
 	return cb
 }
 
@@ -95,65 +103,64 @@ func NewContextBuilder(workspace string) *ContextBuilder {
 	}
 }
 
+// getIdentity returns the default system identity for agents WITHOUT a SOUL.md.
+// This is used by the Omnipus system agent and any unconfigured custom agents.
 func (cb *ContextBuilder) getIdentity() string {
-	workspacePath, _ := filepath.Abs(filepath.Join(cb.workspace))
-	toolDiscovery := cb.getDiscoveryRule()
-	version := config.FormatVersion()
-
-	return fmt.Sprintf(
-		`# omnipus 🦞 (%s)
-
-You are omnipus, a helpful AI assistant.
-
-## Workspace
-Your workspace is at: %s
-- Memory: %s/memory/MEMORY.md
-- Daily Notes: %s/memory/YYYYMM/YYYYMMDD.md
-- Skills: %s/skills/{skill-name}/SKILL.md
-
-## Important Rules
-
-1. **ALWAYS use tools** - When you need to perform an action (schedule reminders, send messages, execute commands, etc.), you MUST call the appropriate tool. Do NOT just say you'll do it or pretend to do it.
-
-2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
-
-3. **Memory** - When interacting with me if something seems memorable, update %s/memory/MEMORY.md
-
-4. **Context summaries** - Conversation summaries provided as context are approximate references only. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.
-
-%s`,
-		version, workspacePath, workspacePath, workspacePath, workspacePath, workspacePath, toolDiscovery)
+	name := "Omnipus"
+	if cb.agentName != "" {
+		name = cb.agentName
+	}
+	return fmt.Sprintf("# %s\n\nYou are %s, a helpful AI assistant powered by Omnipus.\n\n%s",
+		name, name, cb.getWorkspaceAndRules())
 }
 
-// getWorkspaceInfo returns workspace and rules context WITHOUT the hardcoded
-// "You are omnipus" identity. Used when the agent has a SOUL.md that defines
-// its own personality.
+// getWorkspaceInfo returns workspace and rules context WITHOUT the default
+// identity. Used when the agent has a SOUL.md that defines its own personality.
 func (cb *ContextBuilder) getWorkspaceInfo() string {
-	workspacePath, _ := filepath.Abs(filepath.Join(cb.workspace))
+	header := "# Agent"
+	if cb.agentName != "" {
+		header = "# " + cb.agentName
+	}
+	return fmt.Sprintf("%s\n\n%s", header, cb.getWorkspaceAndRules())
+}
+
+// getWorkspaceAndRules returns the workspace paths, rules, and tool discovery
+// instructions shared by both getIdentity and getWorkspaceInfo.
+func (cb *ContextBuilder) getWorkspaceAndRules() string {
+	workspacePath, _ := filepath.Abs(cb.workspace)
 	toolDiscovery := cb.getDiscoveryRule()
 	version := config.FormatVersion()
 
-	return fmt.Sprintf(
-		`# Agent (%s)
+	agentContext := ""
+	if cb.agentID != "" {
+		agentContext = fmt.Sprintf("Agent ID: %s\n", cb.agentID)
+	}
 
+	return fmt.Sprintf(
+		`Omnipus %s
+%s
 ## Workspace
 Your workspace is at: %s
 - Memory: %s/memory/MEMORY.md
 - Daily Notes: %s/memory/YYYYMM/YYYYMMDD.md
 - Skills: %s/skills/{skill-name}/SKILL.md
 
-## Important Rules
+## Rules
 
 1. **ALWAYS use tools** - When you need to perform an action (schedule reminders, send messages, execute commands, etc.), you MUST call the appropriate tool. Do NOT just say you'll do it or pretend to do it.
 
 2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
 
-3. **Memory** - When interacting with me if something seems memorable, update %s/memory/MEMORY.md
+3. **Memory** - Use %s/memory/MEMORY.md to persist important information across conversations. Write facts, preferences, and context you want to remember.
 
-4. **Context summaries** - Conversation summaries provided as context are approximate references only. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.
+4. **Daily notes** - Use %s/memory/YYYYMM/YYYYMMDD.md for day-specific observations and scratch notes.
+
+5. **Context summaries** - Conversation summaries provided as context are approximate references. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.
 
 %s`,
-		version, workspacePath, workspacePath, workspacePath, workspacePath, workspacePath, toolDiscovery)
+		version, agentContext,
+		workspacePath, workspacePath, workspacePath, workspacePath,
+		workspacePath, workspacePath, toolDiscovery)
 }
 
 func (cb *ContextBuilder) getDiscoveryRule() string {
