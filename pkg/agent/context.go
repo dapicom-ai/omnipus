@@ -125,6 +125,37 @@ Your workspace is at: %s
 		version, workspacePath, workspacePath, workspacePath, workspacePath, workspacePath, toolDiscovery)
 }
 
+// getWorkspaceInfo returns workspace and rules context WITHOUT the hardcoded
+// "You are omnipus" identity. Used when the agent has a SOUL.md that defines
+// its own personality.
+func (cb *ContextBuilder) getWorkspaceInfo() string {
+	workspacePath, _ := filepath.Abs(filepath.Join(cb.workspace))
+	toolDiscovery := cb.getDiscoveryRule()
+	version := config.FormatVersion()
+
+	return fmt.Sprintf(
+		`# Agent (%s)
+
+## Workspace
+Your workspace is at: %s
+- Memory: %s/memory/MEMORY.md
+- Daily Notes: %s/memory/YYYYMM/YYYYMMDD.md
+- Skills: %s/skills/{skill-name}/SKILL.md
+
+## Important Rules
+
+1. **ALWAYS use tools** - When you need to perform an action (schedule reminders, send messages, execute commands, etc.), you MUST call the appropriate tool. Do NOT just say you'll do it or pretend to do it.
+
+2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
+
+3. **Memory** - When interacting with me if something seems memorable, update %s/memory/MEMORY.md
+
+4. **Context summaries** - Conversation summaries provided as context are approximate references only. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.
+
+%s`,
+		version, workspacePath, workspacePath, workspacePath, workspacePath, workspacePath, toolDiscovery)
+}
+
 func (cb *ContextBuilder) getDiscoveryRule() string {
 	if !cb.toolDiscoveryBM25 && !cb.toolDiscoveryRegex {
 		return ""
@@ -147,11 +178,19 @@ func (cb *ContextBuilder) getDiscoveryRule() string {
 func (cb *ContextBuilder) BuildSystemPrompt() string {
 	parts := []string{}
 
-	// Core identity section
-	parts = append(parts, cb.getIdentity())
-
-	// Bootstrap files
+	// Bootstrap files (SOUL.md, AGENT.md, USER.md)
 	bootstrapContent := cb.LoadBootstrapFiles()
+
+	// Core identity: if the agent has a SOUL.md, it defines the personality —
+	// skip the hardcoded "You are omnipus" identity and only inject workspace info.
+	// If no SOUL.md exists, use the full default identity.
+	agentDef := cb.LoadAgentDefinition()
+	if agentDef.Soul != nil && strings.TrimSpace(agentDef.Soul.Content) != "" {
+		parts = append(parts, cb.getWorkspaceInfo())
+	} else {
+		parts = append(parts, cb.getIdentity())
+	}
+
 	if bootstrapContent != "" {
 		parts = append(parts, bootstrapContent)
 	}
