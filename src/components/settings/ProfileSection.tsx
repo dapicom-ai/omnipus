@@ -106,15 +106,16 @@ export function ProfileSection() {
   }, [fontSize])
 
   function handleSave() {
-    try {
-      savePref('name', name)
-      savePref('timezone', timezone)
-      savePref('language', language)
+    const ok =
+      savePref('name', name) &&
+      savePref('timezone', timezone) &&
+      savePref('language', language) &&
       savePref('font_size', fontSize)
-      addToast({ message: 'Preferences saved', variant: 'success' })
-    } catch (err) {
-      addToast({ message: err instanceof Error ? err.message : 'Failed to save preferences', variant: 'error' })
+    if (!ok) {
+      addToast({ message: 'Some preferences could not be saved — storage may be full or restricted.', variant: 'error' })
+      return
     }
+    addToast({ message: 'Preferences saved', variant: 'success' })
   }
 
   return (

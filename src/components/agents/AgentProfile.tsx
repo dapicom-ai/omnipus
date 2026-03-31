@@ -119,9 +119,15 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
   const isDirtyRef = useRef(false)
   const markDirty = () => { isDirtyRef.current = true }
 
-  // Reset dirty flag when navigating to a different agent
+  // Tracks whether the initial hydration from the server has completed.
+  // Guards handleSave / section saves from firing with default (empty) state
+  // before the first fetch resolves.
+  const hasHydrated = useRef(false)
+
+  // Reset flags when navigating to a different agent
   useEffect(() => {
     isDirtyRef.current = false
+    hasHydrated.current = false
   }, [agentId])
 
   const [name, setName] = useState('')
@@ -145,7 +151,9 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
 
   useEffect(() => {
     if (!agent) return
-    // Do not overwrite unsaved user edits on background refetch
+    // isDirtyRef prevents background refetch from overwriting unsaved user edits.
+    // We depend on the stable agentId prop (not agent?.id which can be undefined
+    // during loading) so the effect re-runs reliably on agent navigation.
     if (isDirtyRef.current) return
     setName(agent.name ?? '')
     setDescription(agent.description ?? '')
@@ -163,7 +171,8 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     setSoul(agent.soul ?? '')
     setInstructions(agent.instructions ?? '')
     setHeartbeat(agent.heartbeat ?? '')
-  }, [agent?.id])
+    hasHydrated.current = true
+  }, [agentId, agent])
 
   const { mutate: doUpdate, isPending: isSaving } = useMutation({
     mutationFn: (data: Parameters<typeof updateAgent>[1]) => updateAgent(agentId, data),
@@ -173,12 +182,18 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
       queryClient.invalidateQueries({ queryKey: ['agents'] })
       addToast({ message: 'Agent saved', variant: 'success' })
     },
-    onError: (err: Error) => addToast({
-      message: err.message.includes('501')
-        ? 'Agent changes require editing config.json and restarting the gateway'
-        : err.message,
-      variant: 'error',
-    }),
+    onError: (err: Error) => {
+      // Check HTTP status via response status embedded in error, or fall back to message text.
+      // Using a status code check is more robust than string-matching localised error messages.
+      const isNotImplemented =
+        (err as Error & { status?: number }).status === 501 || err.message.includes('501')
+      addToast({
+        message: isNotImplemented
+          ? 'Agent changes require editing config.json and restarting the gateway'
+          : err.message,
+        variant: 'error',
+      })
+    },
   })
 
   function buildFullPayload() {
@@ -203,6 +218,9 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
   }
 
   function handleSave() {
+    // Guard: do not save before the server data has been hydrated into state.
+    // Saving before hydration would overwrite real data with empty defaults.
+    if (!hasHydrated.current) return
     doUpdate(buildFullPayload())
   }
 
@@ -484,15 +502,18 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
               rows={8}
               className="text-xs font-mono resize-none"
             />
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={isSaving}
-              onClick={() => doUpdate(buildFullPayload())}
-            >
-              <FloppyDisk size={13} weight="bold" className="mr-1.5" />
-              Save SOUL.md
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={isSaving || !hasHydrated.current}
+                onClick={() => { if (hasHydrated.current) doUpdate(buildFullPayload()) }}
+              >
+                <FloppyDisk size={13} weight="bold" className="mr-1.5" />
+                Save All
+              </Button>
+              <span className="text-[10px] text-[var(--color-muted)]">Saves all agent fields</span>
+            </div>
           </section>
         </>
       )}
@@ -516,15 +537,18 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
               rows={6}
               className="text-xs font-mono resize-none"
             />
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={isSaving}
-              onClick={() => doUpdate(buildFullPayload())}
-            >
-              <FloppyDisk size={13} weight="bold" className="mr-1.5" />
-              Save Instructions
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={isSaving || !hasHydrated.current}
+                onClick={() => { if (hasHydrated.current) doUpdate(buildFullPayload()) }}
+              >
+                <FloppyDisk size={13} weight="bold" className="mr-1.5" />
+                Save All
+              </Button>
+              <span className="text-[10px] text-[var(--color-muted)]">Saves all agent fields</span>
+            </div>
           </section>
         </>
       )}
@@ -545,15 +569,18 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
               rows={6}
               className="text-xs font-mono resize-none"
             />
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={isSaving}
-              onClick={() => doUpdate(buildFullPayload())}
-            >
-              <FloppyDisk size={13} weight="bold" className="mr-1.5" />
-              Save HEARTBEAT.md
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={isSaving || !hasHydrated.current}
+                onClick={() => { if (hasHydrated.current) doUpdate(buildFullPayload()) }}
+              >
+                <FloppyDisk size={13} weight="bold" className="mr-1.5" />
+                Save All
+              </Button>
+              <span className="text-[10px] text-[var(--color-muted)]">Saves all agent fields</span>
+            </div>
           </section>
         </>
       )}

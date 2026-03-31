@@ -366,14 +366,16 @@ func (h *WSHandler) handleChatMessage(ctx context.Context, chatID string, sessio
 		ChatID:   chatID,
 		Content:  content,
 	}
-	// M13: validate agent_id before embedding in metadata to prevent path traversal
-	// if the value is used in a filesystem context downstream.
+	// Validate agent_id before embedding in metadata. An invalid ID is rejected
+	// with an error frame — do NOT silently reroute to the default agent, which
+	// would confuse the client about which agent is actually handling the message.
 	if agentID != "" {
 		if err := validateEntityID(agentID); err != nil {
-			slog.Warn("ws: invalid agent_id in message frame; ignoring", "agent_id", agentID, "error", err)
-		} else {
-			msg.Metadata = map[string]string{"agent_id": agentID}
+			slog.Warn("ws: invalid agent_id in message frame; rejecting", "agent_id", agentID, "error", err)
+			sendConnFrame(wc, wsServerFrame{Type: "error", Message: "invalid agent_id"})
+			return
 		}
+		msg.Metadata = map[string]string{"agent_id": agentID}
 	}
 	pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

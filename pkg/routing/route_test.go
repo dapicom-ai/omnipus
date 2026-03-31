@@ -279,7 +279,11 @@ func TestResolveRoute_DefaultAgentSelection(t *testing.T) {
 	}
 }
 
-func TestResolveRoute_NoDefaultUsesFirst(t *testing.T) {
+func TestResolveRoute_NoDefaultFallsBackToMain(t *testing.T) {
+	// When custom agents exist but none is marked default, routing must fall
+	// back to the "main" agent rather than picking an arbitrary custom agent.
+	// (Previously the first agent was returned, but that caused unpredictable
+	// routing — now "main" is always the authoritative fallback.)
 	agents := []config.AgentConfig{
 		{ID: "alpha"},
 		{ID: "beta"},
@@ -291,7 +295,7 @@ func TestResolveRoute_NoDefaultUsesFirst(t *testing.T) {
 		Channel: "cli",
 	})
 
-	if route.AgentID != "alpha" {
-		t.Errorf("AgentID = %q, want 'alpha' (first in list)", route.AgentID)
+	if route.AgentID != DefaultAgentID {
+		t.Errorf("AgentID = %q, want %q (main fallback when no default set)", route.AgentID, DefaultAgentID)
 	}
 }

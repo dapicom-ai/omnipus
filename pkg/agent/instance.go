@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/media"
@@ -251,9 +253,13 @@ func resolveAgentWorkspace(agentCfg *config.AgentConfig, defaults *config.AgentD
 		// Strip any path separators or ".." from the agent ID.
 		sanitizedID := filepath.Base(filepath.Clean(agentCfg.ID))
 		if sanitizedID == "." || sanitizedID == ".." || sanitizedID == "" {
-			logger.WarnCF("agent", "Suspicious agent ID after sanitization; using fallback workspace",
-				map[string]any{"original_id": agentCfg.ID, "sanitized": sanitizedID})
-			return filepath.Join(expandHome(defaults.Workspace), "..", "workspace-"+routing.NormalizeAgentID(agentCfg.ID))
+			// The agent ID sanitized to an unusable value. Use a UUID-based directory
+			// name to avoid colliding with the reserved "main" workspace that
+			// routing.NormalizeAgentID would return for empty/dot inputs.
+			fallbackID := "agent-" + uuid.New().String()
+			logger.WarnCF("agent", "Suspicious agent ID after sanitization; using UUID fallback workspace",
+				map[string]any{"original_id": agentCfg.ID, "sanitized": sanitizedID, "fallback_id": fallbackID})
+			return filepath.Join(safeBase, fallbackID)
 		}
 		resolved := filepath.Join(safeBase, sanitizedID)
 		if !strings.HasPrefix(filepath.Clean(resolved), safeBase) {
@@ -373,7 +379,7 @@ func expandHome(path string) string {
 				home = os.TempDir()
 			}
 		}
-		if len(path) > 1 && path[1] == '/' {
+		if len(path) > 1 && (path[1] == '/' || path[1] == filepath.Separator) {
 			return home + path[1:]
 		}
 		return home

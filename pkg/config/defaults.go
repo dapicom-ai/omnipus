@@ -6,7 +6,6 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -26,12 +25,19 @@ func DefaultConfig() *Config {
 		if homeErr != nil {
 			// H14: create a user-specific subdirectory under TempDir with 0700 permissions
 			// to prevent other local users from accessing the omnipus data directory.
-			userTempDir := filepath.Join(os.TempDir(), fmt.Sprintf("omnipus-%d", os.Getpid()))
-			if mkErr := os.MkdirAll(userTempDir, 0o700); mkErr != nil {
+			// Use os.MkdirTemp for a randomly-suffixed name to avoid the predictability
+			// and non-uniqueness problems of a PID-based name.
+			userTempDir, mkErr := os.MkdirTemp(os.TempDir(), "omnipus-")
+			if mkErr != nil {
 				logger.ErrorCF("config", "UserHomeDir failed and could not create secure temp dir; data isolation not guaranteed",
 					map[string]any{"error": homeErr.Error(), "mkdir_error": mkErr.Error()})
 				userTempDir = os.TempDir()
 			} else {
+				// MkdirTemp creates with 0700 on Unix; ensure correct permissions.
+				if chErr := os.Chmod(userTempDir, 0o700); chErr != nil {
+					logger.WarnCF("config", "Could not set 0700 on temp dir",
+						map[string]any{"path": userTempDir, "error": chErr.Error()})
+				}
 				logger.WarnCF("config", "UserHomeDir failed in DefaultConfig; using user-specific temp directory",
 					map[string]any{"error": homeErr.Error(), "fallback": userTempDir})
 			}

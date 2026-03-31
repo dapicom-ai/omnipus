@@ -64,8 +64,15 @@ func TestNewAgentRegistry_ExplicitAgents(t *testing.T) {
 	registry := NewAgentRegistry(cfg, &mockRegistryProvider{})
 
 	ids := registry.ListAgentIDs()
-	if len(ids) != 2 {
-		t.Fatalf("expected 2 agents, got %d: %v", len(ids), ids)
+	// The registry always registers "main" plus all valid custom agents,
+	// so we expect 3: "main", "sales", "support".
+	if len(ids) != 3 {
+		t.Fatalf("expected 3 agents (main + 2 custom), got %d: %v", len(ids), ids)
+	}
+
+	_, hasMain := registry.GetAgent("main")
+	if !hasMain {
+		t.Error("expected 'main' agent to be present")
 	}
 
 	sales, ok := registry.GetAgent("sales")

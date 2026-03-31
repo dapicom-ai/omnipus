@@ -80,8 +80,9 @@ func loadAgentDefinition(workspace string) AgentContextDefinition {
 	definition := AgentContextDefinition{}
 	definition.User = loadUserDefinition(workspace)
 	agentPath := filepath.Join(workspace, string(AgentDefinitionSourceAgent))
-	if content, err := os.ReadFile(agentPath); err == nil {
-		prompt := parseAgentPromptDefinition(agentPath, string(content))
+	agentContent, agentErr := os.ReadFile(agentPath)
+	if agentErr == nil {
+		prompt := parseAgentPromptDefinition(agentPath, string(agentContent))
 		definition.Source = AgentDefinitionSourceAgent
 		definition.Agent = &prompt
 		soulPath := filepath.Join(workspace, "SOUL.md")
@@ -98,6 +99,12 @@ func loadAgentDefinition(workspace string) AgentContextDefinition {
 			}
 		}
 		return definition
+	} else if !os.IsNotExist(agentErr) {
+		// A permission error or other I/O failure reading AGENT.md. Log a warning
+		// and fall through to the legacy AGENTS.md path rather than silently
+		// treating a readable AGENT.md as absent.
+		logger.WarnCF("agent", "Could not read AGENT.md; falling through to legacy path",
+			map[string]any{"path": agentPath, "error": agentErr.Error()})
 	}
 
 	legacyPath := filepath.Join(workspace, string(AgentDefinitionSourceAgents))
@@ -146,13 +153,17 @@ func (definition AgentContextDefinition) trackedPaths(workspace string) []string
 
 func loadUserDefinition(workspace string) *UserDefinition {
 	userPath := filepath.Join(workspace, "USER.md")
-	if content, err := os.ReadFile(userPath); err == nil {
+	content, err := os.ReadFile(userPath)
+	if err == nil {
 		return &UserDefinition{
 			Path:    userPath,
 			Content: string(content),
 		}
 	}
-
+	if !os.IsNotExist(err) {
+		logger.WarnCF("agent", "Could not read USER.md",
+			map[string]any{"path": userPath, "error": err.Error()})
+	}
 	return nil
 }
 

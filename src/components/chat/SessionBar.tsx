@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Robot, Timer, CurrencyDollar, ArrowsClockwise, CaretDown, PencilSimpleLine } from '@phosphor-icons/react'
 import { IconRenderer } from '@/components/shared/IconRenderer'
@@ -24,7 +25,7 @@ function formatTokens(tokens: number): string {
 }
 
 export function SessionBar() {
-  const { activeAgentId, setActiveSession, setActiveAgentDraft, sessionTokens, sessionCost, isStreaming } = useChatStore()
+  const { activeAgentId, setActiveSession, sessionTokens, sessionCost, isStreaming } = useChatStore()
   const { openSessionPanel } = useUiStore()
 
   const { data: agents = [], isError: agentsError } = useQuery({
@@ -32,7 +33,19 @@ export function SessionBar() {
     queryFn: fetchAgents,
   })
 
-  // Auto-select first agent if none is active
+  // Only show agents that are ready to chat (active or idle — not draft)
+  const chatAgents = agents.filter((a) => a.status === 'active' || a.status === 'idle')
+
+  // Auto-select the first ready agent if none is active yet.
+  // Done in useEffect (not during render) to avoid calling setState mid-render,
+  // which causes infinite loops in React 18+ strict mode.
+  useEffect(() => {
+    if (!activeAgentId && chatAgents.length > 0) {
+      const first = chatAgents[0]
+      setActiveSession(null, first.id, first.type)
+    }
+  }, [activeAgentId, chatAgents, setActiveSession])
+
   if (agentsError) {
     return (
       <div className="flex items-center gap-2 px-2">
@@ -49,23 +62,24 @@ export function SessionBar() {
     )
   }
 
-  // Only show agents that are ready to chat (active or idle)
-  const chatAgents = agents.filter((a) => a.status === 'active' || a.status === 'idle')
+  // When all agents exist but are still drafts, guide the user instead of showing an empty dropdown
+  if (chatAgents.length === 0 && agents.length > 0) {
+    return (
+      <div className="flex items-center gap-2 px-2 min-w-0">
+        <span className="text-xs text-[var(--color-muted)] truncate">
+          All agents are in draft status. Configure an agent to start chatting.
+        </span>
+      </div>
+    )
+  }
 
   const effectiveAgentId = activeAgentId || chatAgents[0]?.id
   const activeAgent = chatAgents.find((a) => a.id === effectiveAgentId)
 
-  // Persist auto-selection so the store knows which agent is active
-  if (!activeAgentId && chatAgents[0]?.id) {
-    setActiveAgentDraft(chatAgents[0].status === 'draft')
-    setActiveSession(null, chatAgents[0].id)
-  }
-
   const handleAgentSelect = (agentId: string) => {
     const selected = agents.find((a) => a.id === agentId)
-    setActiveAgentDraft(selected?.status === 'draft')
-    // Switch agent — start new session
-    setActiveSession(null, agentId)
+    // Pass agent type so sendMessage can route system agent correctly without ID matching
+    setActiveSession(null, agentId, selected?.type ?? null)
   }
 
   return (

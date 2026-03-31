@@ -32,10 +32,10 @@ interface ChatStore {
   // Session & agent selection
   activeSessionId: string | null
   activeAgentId: string | null
-  /** Whether the currently active agent is in draft status — prevents sending */
-  activeAgentIsDraft: boolean
-  setActiveSession: (sessionId: string | null, agentId?: string | null) => void
-  setActiveAgentDraft: (isDraft: boolean) => void
+  /** The type of the currently active agent ('system' | 'core' | 'custom' | null).
+   *  Set by setActiveSession so all callers stay in sync without manual tracking. */
+  activeAgentType: string | null
+  setActiveSession: (sessionId: string | null, agentId?: string | null, agentType?: string | null) => void
 
   // Messages
   messages: ChatMessage[]
@@ -81,11 +81,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   activeSessionId: null,
   activeAgentId: null,
-  activeAgentIsDraft: false,
-  setActiveSession: (sessionId, agentId) =>
+  activeAgentType: null,
+  setActiveSession: (sessionId, agentId, agentType) =>
     set({
       activeSessionId: sessionId,
       activeAgentId: agentId ?? get().activeAgentId,
+      activeAgentType: agentType ?? get().activeAgentType,
       // Clear ALL session-scoped state on switch to prevent stale data bleeding across sessions
       messages: [],
       toolCalls: {},
@@ -94,7 +95,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       sessionCost: 0,
       isStreaming: false,
     }),
-  setActiveAgentDraft: (isDraft) => set({ activeAgentIsDraft: isDraft }),
 
   messages: [],
   isStreaming: false,
@@ -203,16 +203,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   updateSessionStats: (tokens, cost) => set({ sessionTokens: tokens, sessionCost: cost }),
 
   sendMessage: (content) => {
-    const { connection, activeSessionId, activeAgentId, isStreaming, activeAgentIsDraft } = get()
+    const { connection, activeSessionId, activeAgentId, activeAgentType, isStreaming } = get()
     if (isStreaming) {
       set({ connectionError: 'Please wait — a response is still generating.' })
-      return
-    }
-    if (activeAgentIsDraft) {
-      useUiStore.getState().addToast({
-        message: 'This agent is in draft status. Set up its SOUL.md first.',
-        variant: 'error',
-      })
       return
     }
     if (!connection) {
@@ -251,9 +244,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       type: 'message',
       content,
       session_id: activeSessionId ?? undefined,
-      // Don't send agent_id for the system agent — it's not in the agent registry
-      // and will be handled by default routing. Only custom agents need explicit routing.
-      agent_id: activeAgentId && activeAgentId !== 'omnipus-system' ? activeAgentId : undefined,
+      // Don't send agent_id for the system agent — it handles routing itself.
+      // Use activeAgentType (set by setActiveSession) rather than matching a hardcoded ID string,
+      // so this stays correct even if the system agent's ID ever changes.
+      agent_id: activeAgentId && activeAgentType !== 'system' ? activeAgentId : undefined,
     })
 
     if (!sent) {
@@ -348,6 +342,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           const msgs = [...state.messages]
           const lastIdx = msgs.map((m) => m.role).lastIndexOf('assistant')
           if (lastIdx !== -1) {
+            // Message-level error: update the assistant bubble inline.
+            // Do NOT set connectionError — the inline status is sufficient and avoids
+            // conflating a per-message failure with a connection-level outage.
             msgs[lastIdx] = {
               ...msgs[lastIdx],
               content: msgs[lastIdx].content || frame.message,
@@ -355,18 +352,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               streamCursor: false,
               status: 'error',
             }
-          } else {
-            // No assistant message exists yet — append an error message so the user sees feedback
-            msgs.push({
-              id: generateId(),
-              role: 'assistant',
-              content: frame.message,
-              timestamp: new Date().toISOString(),
-              status: 'error',
-              isStreaming: false,
-              streamCursor: false,
-            })
+            return { messages: msgs, isStreaming: false }
           }
+          // No assistant message exists yet — this is a connection-level error.
+          // Append an error message AND set connectionError so the banner shows.
+          msgs.push({
+            id: generateId(),
+            role: 'assistant',
+            content: frame.message,
+            timestamp: new Date().toISOString(),
+            status: 'error',
+            isStreaming: false,
+            streamCursor: false,
+          })
           return { messages: msgs, isStreaming: false, connectionError: frame.message }
         })
         break

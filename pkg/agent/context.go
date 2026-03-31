@@ -89,8 +89,11 @@ func NewContextBuilder(workspace string) *ContextBuilder {
 	if builtinSkillsDir == "" {
 		wd, wdErr := os.Getwd()
 		if wdErr != nil {
-			logger.WarnCF("agent", "os.Getwd failed; builtin skills dir may be incorrect",
+			logger.WarnCF("agent", "os.Getwd failed; builtin skills dir unavailable",
 				map[string]any{"error": wdErr.Error()})
+			// Fall back to a non-existent path under TempDir so the skills loader
+			// receives a non-empty, non-CWD path (consistent with getGlobalConfigDir).
+			wd = filepath.Join(os.TempDir(), pkg.DefaultOmnipusHome)
 		}
 		builtinSkillsDir = filepath.Join(wd, "skills")
 	}
@@ -190,13 +193,18 @@ func (cb *ContextBuilder) getDiscoveryRule() string {
 func (cb *ContextBuilder) BuildSystemPrompt() string {
 	parts := []string{}
 
-	// Bootstrap files (SOUL.md, AGENT.md, USER.md)
-	bootstrapContent := cb.LoadBootstrapFiles()
+	// Load agent definition once to avoid a TOCTOU race: previously this was
+	// called once here and again inside LoadBootstrapFiles, which could observe
+	// different on-disk state between the two reads.
+	agentDef := cb.LoadAgentDefinition()
+
+	// Bootstrap files (SOUL.md, AGENT.md, USER.md) — pass the already-loaded
+	// definition to avoid a second LoadAgentDefinition call inside.
+	bootstrapContent := cb.loadBootstrapFilesWithDef(agentDef)
 
 	// Core identity: if the agent has a SOUL.md, it defines the personality —
 	// skip the hardcoded "You are omnipus" identity and only inject workspace info.
 	// If no SOUL.md exists, use the full default identity.
-	agentDef := cb.LoadAgentDefinition()
 	if agentDef.Soul != nil && strings.TrimSpace(agentDef.Soul.Content) != "" {
 		parts = append(parts, cb.getWorkspaceInfo())
 	} else {
@@ -517,10 +525,16 @@ func skillFilesChangedSince(skillRoots []string, filesAtCache map[string]time.Ti
 	return false
 }
 
+// LoadBootstrapFiles loads the bootstrap files using a fresh LoadAgentDefinition call.
+// Callers that already hold an AgentContextDefinition should use loadBootstrapFilesWithDef
+// to avoid a redundant disk read.
 func (cb *ContextBuilder) LoadBootstrapFiles() string {
+	return cb.loadBootstrapFilesWithDef(cb.LoadAgentDefinition())
+}
+
+func (cb *ContextBuilder) loadBootstrapFilesWithDef(agentDefinition AgentContextDefinition) string {
 	var sb strings.Builder
 
-	agentDefinition := cb.LoadAgentDefinition()
 	if agentDefinition.Agent != nil {
 		label := string(agentDefinition.Source)
 		if label == "" {
@@ -545,6 +559,9 @@ func (cb *ContextBuilder) LoadBootstrapFiles() string {
 		filePath := filepath.Join(cb.workspace, "IDENTITY.md")
 		if data, err := os.ReadFile(filePath); err == nil {
 			fmt.Fprintf(&sb, "## %s\n\n%s\n\n", "IDENTITY.md", data)
+		} else if !os.IsNotExist(err) {
+			logger.WarnCF("agent", "Could not read IDENTITY.md",
+				map[string]any{"path": filePath, "error": err.Error()})
 		}
 	}
 

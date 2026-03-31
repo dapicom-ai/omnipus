@@ -43,9 +43,21 @@ func NewAgentRegistry(
 	})
 
 	// Register custom agents from config.
+	// Protect reserved IDs: "main" is the default agent; "omnipus-system" is the
+	// hardcoded system agent. A custom agent using either ID would silently overwrite
+	// a critical entry, so we reject those names at registration time.
+	reservedIDs := map[string]bool{
+		"main":           true,
+		"omnipus-system": true,
+	}
 	for i := range cfg.Agents.List {
 		ac := &cfg.Agents.List[i]
 		id := routing.NormalizeAgentID(ac.ID)
+		if reservedIDs[id] {
+			logger.ErrorCF("agent", "Custom agent uses reserved ID; skipping registration",
+				map[string]any{"agent_id": id, "name": ac.Name})
+			continue
+		}
 		instance := NewAgentInstance(ac, &cfg.Agents.Defaults, cfg, provider)
 		registry.agents[id] = instance
 		logger.InfoCF("agent", "Registered agent",
@@ -129,8 +141,10 @@ func (r *AgentRegistry) Close() {
 				map[string]any{"agent_id": agent.ID, "error": err.Error()})
 		}
 	}
-	// Clear the map so any post-Close access gets nil rather than stale data.
-	r.agents = nil
+	// Replace with an empty map rather than nil so post-Close reads on GetAgent,
+	// ListAgentIDs, etc. behave safely (empty result) rather than panicking on
+	// a nil map lookup.
+	r.agents = make(map[string]*AgentInstance)
 }
 
 // GetDefaultAgent returns the default agent instance.

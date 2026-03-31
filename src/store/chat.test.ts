@@ -14,6 +14,7 @@ function resetStore() {
       connectionError: null,
       activeSessionId: null,
       activeAgentId: null,
+      activeAgentType: null,
       messages: [],
       isStreaming: false,
       toolCalls: {},
@@ -145,8 +146,11 @@ describe('chat store — streaming via handleFrame', () => {
     expect(state.sessionCost).toBeCloseTo(0.02)
   })
 
-  it('handleFrame(error) sets message to error status and records connectionError', () => {
+  it('handleFrame(error) sets message to error status — message-level error does NOT set connectionError', () => {
     // Traces to: wave5a-wire-ui-spec.md — Scenario: WebSocket connection error during streaming
+    // When an assistant message already exists, the error is message-level (e.g. LLM rejected
+    // the request). The inline bubble is updated; connectionError is NOT set to avoid falsely
+    // showing a connection-down banner when the connection is fine.
     act(() => {
       useChatStore.getState().appendMessage({
         id: 'asst_3',
@@ -158,11 +162,29 @@ describe('chat store — streaming via handleFrame', () => {
         isStreaming: true,
       })
       useChatStore.setState({ isStreaming: true })
+      useChatStore.getState().handleFrame({ type: 'error', message: 'LLM quota exceeded' })
+    })
+    const state = useChatStore.getState()
+    expect(state.isStreaming).toBe(false)
+    const asst = state.messages.find((m) => m.id === 'asst_3')
+    expect(asst?.status).toBe('error')
+    // Message-level error must NOT propagate to the connection error banner
+    expect(state.connectionError).toBeNull()
+  })
+
+  it('handleFrame(error) with no assistant message sets connectionError banner', () => {
+    // When no assistant message exists, the error is connection-level (e.g. the WS frame
+    // arrived before the server could even start a reply). Both the error message AND
+    // connectionError are set so the banner shows.
+    act(() => {
+      useChatStore.setState({ isStreaming: true })
       useChatStore.getState().handleFrame({ type: 'error', message: 'Connection lost' })
     })
     const state = useChatStore.getState()
     expect(state.isStreaming).toBe(false)
     expect(state.connectionError).toBe('Connection lost')
+    const errMsg = state.messages.find((m) => m.status === 'error')
+    expect(errMsg).toBeDefined()
   })
 })
 

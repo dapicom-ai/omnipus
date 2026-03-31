@@ -203,7 +203,9 @@ const VALID_EXEC_APPROVALS = ['auto', 'ask', 'deny'] as const
 const VALID_INJECTION_LEVELS = ['off', 'low', 'medium', 'high'] as const
 
 function validEnum<T extends string>(value: unknown, valid: readonly T[], fallback: T): T {
-  return (valid as readonly string[]).includes(value as string) ? (value as T) : fallback
+  if ((valid as readonly string[]).includes(value as string)) return value as T
+  console.warn('[api] validEnum: unexpected value', value, '— falling back to', fallback)
+  return fallback
 }
 
 function rawToFrontendConfig(raw: Record<string, unknown>): Config {

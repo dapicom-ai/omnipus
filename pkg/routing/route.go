@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
 
 // RouteInput contains the routing context from an inbound message.
@@ -229,7 +230,12 @@ func (r *RouteResolver) pickAgentID(agentID string) string {
 			return normalized
 		}
 	}
-	return NormalizeAgentID(r.resolveDefaultAgentID())
+	// Binding references an agent ID that is not in the agent list. Log a warning
+	// so operators can detect misconfigured bindings at runtime.
+	defaultID := NormalizeAgentID(r.resolveDefaultAgentID())
+	logger.WarnCF("routing", "Binding references non-existent agent; falling back to default",
+		map[string]any{"requested_agent_id": normalized, "default_agent_id": defaultID})
+	return defaultID
 }
 
 func (r *RouteResolver) resolveDefaultAgentID() string {
@@ -245,8 +251,9 @@ func (r *RouteResolver) resolveDefaultAgentID() string {
 			}
 		}
 	}
-	// No agent marked as default — return "main" (the system/default agent
-	// always registered by the agent registry) rather than picking an
-	// arbitrary custom agent from the list.
+	// No agent is marked as default even though custom agents exist. Log once so
+	// operators can detect misconfigured setups; unrouted messages will go to "main".
+	logger.WarnCF("routing", "Custom agents configured but none marked as default; routing falls back to main",
+		map[string]any{"custom_agent_count": len(agents)})
 	return DefaultAgentID
 }

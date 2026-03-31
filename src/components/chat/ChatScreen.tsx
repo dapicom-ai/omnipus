@@ -234,7 +234,9 @@ function OmnipusComposer() {
       return createSession(activeAgentId)
     },
     onSuccess: (session) => {
-      setActiveSession(session.id, session.agent_id)
+      // agentType is already set in the store from the agent selection in SessionBar.
+      // Passing null here preserves the existing activeAgentType via setActiveSession's fallback.
+      setActiveSession(session.id, session.agent_id, null)
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
       addToast({ message: 'New session started', variant: 'success' })
     },

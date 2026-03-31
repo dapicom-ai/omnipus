@@ -131,7 +131,7 @@ export function AgentSummarySection() {
                     <button
                       type="button"
                       onClick={() => {
-                        setActiveSession(null, agent.id)
+                        setActiveSession(null, agent.id, agent.type)
                         void navigate({ to: '/' })
                       }}
                       className="shrink-0 flex items-center gap-0.5 text-[10px] text-[var(--color-accent)] hover:text-[var(--color-accent-hover)] transition-colors opacity-0 group-hover:opacity-100 font-medium"

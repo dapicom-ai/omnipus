@@ -461,7 +461,7 @@ func agentWorkspacePath(cfg interface {
 				slog.Error("rest: agentWorkspacePath: UserHomeDir failed", "error", err)
 				return agentWorkspace, fmt.Errorf("UserHomeDir: %w", err)
 			}
-			if len(agentWorkspace) > 1 && agentWorkspace[1] == '/' {
+			if len(agentWorkspace) > 1 && (agentWorkspace[1] == '/' || agentWorkspace[1] == filepath.Separator) {
 				return home + agentWorkspace[1:], nil
 			}
 			return home, nil
@@ -598,7 +598,10 @@ func (a *restAPI) listAgents(w http.ResponseWriter) {
 		if ac.Model != nil && ac.Model.Primary != "" {
 			model = ac.Model.Primary
 		}
-		workspace, _ := agentWorkspacePath(cfg, ac.ID, ac.Workspace)
+		workspace, wsErr := agentWorkspacePath(cfg, ac.ID, ac.Workspace)
+		if wsErr != nil {
+			slog.Warn("rest: listAgents: could not resolve workspace", "agent_id", ac.ID, "error", wsErr)
+		}
 		// M2: listAgents only needs SOUL.md to determine draft status — avoid reading
 		// HEARTBEAT.md and AGENT.md unnecessarily in the list endpoint.
 		soul := readSoulMD(workspace)
@@ -629,7 +632,10 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 	// System agent is always present and always active — it is always available for
 	// interaction, unlike turn-based custom agents.
 	if id == "omnipus-system" {
-		workspace, _ := agentWorkspacePath(cfg, "omnipus-system", "")
+		workspace, wsErr := agentWorkspacePath(cfg, "omnipus-system", "")
+		if wsErr != nil {
+			slog.Warn("rest: getAgent: could not resolve system agent workspace", "error", wsErr)
+		}
 		soul, heartbeat, instructions := readAgentFiles(workspace)
 		jsonOK(w, agentResponse{
 			ID:           "omnipus-system",
@@ -652,7 +658,10 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 			if ac.Model != nil && ac.Model.Primary != "" {
 				model = ac.Model.Primary
 			}
-			workspace, _ := agentWorkspacePath(cfg, ac.ID, ac.Workspace)
+			workspace, wsErr := agentWorkspacePath(cfg, ac.ID, ac.Workspace)
+			if wsErr != nil {
+				slog.Warn("rest: getAgent: could not resolve workspace", "agent_id", ac.ID, "error", wsErr)
+			}
 			soul, heartbeat, instructions := readAgentFiles(workspace)
 			status := "idle"
 			if activeIDs[ac.ID] {
@@ -720,6 +729,10 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
 		return
 	}
+	// Capture the default model name BEFORE triggering a reload to avoid a race
+	// between TriggerReload (which may swap the live config) and the read below.
+	defaultModelName := a.agentLoop.GetConfig().Agents.Defaults.ModelName
+
 	// Persistence succeeded. Trigger reload so the in-memory config picks up the new agent.
 	var createReloadWarning string
 	if err := a.agentLoop.TriggerReload(); err != nil {
@@ -727,7 +740,7 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 		createReloadWarning = fmt.Sprintf("config reload failed: %v", err)
 	}
 	// Build the response from local variables only (do NOT read from live config — race).
-	model := a.agentLoop.GetConfig().Agents.Defaults.ModelName
+	model := defaultModelName
 	if ac.Model != nil && ac.Model.Primary != "" {
 		model = ac.Model.Primary
 	}

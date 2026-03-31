@@ -25,7 +25,8 @@ export function SessionPanel() {
   })
 
   const handleSelectSession = (sessionId: string, agentId: string) => {
-    setActiveSession(sessionId, agentId)
+    const agent = agents.find((a) => a.id === agentId)
+    setActiveSession(sessionId, agentId, agent?.type ?? null)
     closeSessionPanel()
   }
 
@@ -33,7 +34,8 @@ export function SessionPanel() {
     try {
       const session = await createSession(agentId)
       await queryClient.invalidateQueries({ queryKey: ['sessions'] })
-      setActiveSession(session.id, agentId)
+      const agent = agents.find((a) => a.id === agentId)
+      setActiveSession(session.id, agentId, agent?.type ?? null)
       closeSessionPanel()
     } catch (err) {
       addToast({

@@ -1084,6 +1084,11 @@ func (al *AgentLoop) SetReloadFunc(fn func() error) {
 // TriggerReload triggers a config reload so the in-memory config picks up
 // changes written to disk by safeUpdateConfigJSON. Called by REST handlers
 // after persisting config changes (agent create/update, token rotate, etc.).
+//
+// Concurrency: the underlying reloadFunc (set in gateway.go) is guarded by
+// an atomic CompareAndSwap that serialises concurrent calls — only one reload
+// can be in flight at a time. A second concurrent call returns an error
+// ("reload already in progress") rather than queuing a second reload.
 func (al *AgentLoop) TriggerReload() error {
 	if al.reloadFunc == nil {
 		return fmt.Errorf("reload not configured")
@@ -1402,11 +1407,13 @@ func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.Resolv
 		// H12: An explicit agent_id was provided but no matching agent is registered.
 		// Return a hard error rather than silently falling through to default routing,
 		// which would confuse the caller about which agent is actually handling the message.
+		// Log internal details (including registered IDs) at Error level for operators,
+		// but return a sanitized error to the caller to avoid leaking registry state.
 		logger.ErrorCF("agent", "explicit agent_id not found in registry", map[string]any{
 			"agent_id":       explicitID,
 			"registered_ids": registry.ListAgentIDs(),
 		})
-		return routing.ResolvedRoute{}, nil, fmt.Errorf("agent %q not found (registered: %v)", explicitID, registry.ListAgentIDs())
+		return routing.ResolvedRoute{}, nil, fmt.Errorf("the requested agent is not available")
 	}
 
 	route := registry.ResolveRoute(routing.RouteInput{
