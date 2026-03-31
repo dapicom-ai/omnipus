@@ -251,7 +251,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       type: 'message',
       content,
       session_id: activeSessionId ?? undefined,
-      agent_id: activeAgentId ?? undefined,
+      // Don't send agent_id for the system agent — it's not in the agent registry
+      // and will be handled by default routing. Only custom agents need explicit routing.
+      agent_id: activeAgentId && activeAgentId !== 'omnipus-system' ? activeAgentId : undefined,
     })
 
     if (!sent) {

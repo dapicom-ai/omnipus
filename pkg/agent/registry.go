@@ -28,29 +28,33 @@ func NewAgentRegistry(
 		resolver: routing.NewRouteResolver(cfg),
 	}
 
-	agentConfigs := cfg.Agents.List
-	if len(agentConfigs) == 0 {
-		implicitAgent := &config.AgentConfig{
-			ID:      "main",
-			Default: true,
-		}
-		instance := NewAgentInstance(implicitAgent, &cfg.Agents.Defaults, cfg, provider)
-		registry.agents["main"] = instance
-		logger.InfoCF("agent", "Created implicit main agent (no agents.list configured)", nil)
-	} else {
-		for i := range agentConfigs {
-			ac := &agentConfigs[i]
-			id := routing.NormalizeAgentID(ac.ID)
-			instance := NewAgentInstance(ac, &cfg.Agents.Defaults, cfg, provider)
-			registry.agents[id] = instance
-			logger.InfoCF("agent", "Registered agent",
-				map[string]any{
-					"agent_id":  id,
-					"name":      ac.Name,
-					"workspace": instance.Workspace,
-					"model":     instance.Model,
-				})
-		}
+	// Always register the default/system agent. This handles messages that
+	// don't target a specific custom agent (e.g., system agent in webchat,
+	// unrouted channel messages). Uses the default workspace.
+	defaultAgent := &config.AgentConfig{
+		ID:      "main",
+		Default: true,
+	}
+	defaultInstance := NewAgentInstance(defaultAgent, &cfg.Agents.Defaults, cfg, provider)
+	registry.agents["main"] = defaultInstance
+	logger.InfoCF("agent", "Registered default agent (main)", map[string]any{
+		"workspace": defaultInstance.Workspace,
+		"model":     defaultInstance.Model,
+	})
+
+	// Register custom agents from config.
+	for i := range cfg.Agents.List {
+		ac := &cfg.Agents.List[i]
+		id := routing.NormalizeAgentID(ac.ID)
+		instance := NewAgentInstance(ac, &cfg.Agents.Defaults, cfg, provider)
+		registry.agents[id] = instance
+		logger.InfoCF("agent", "Registered agent",
+			map[string]any{
+				"agent_id":  id,
+				"name":      ac.Name,
+				"workspace": instance.Workspace,
+				"model":     instance.Model,
+			})
 	}
 
 	return registry

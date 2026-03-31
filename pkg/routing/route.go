@@ -245,8 +245,8 @@ func (r *RouteResolver) resolveDefaultAgentID() string {
 			}
 		}
 	}
-	if id := strings.TrimSpace(agents[0].ID); id != "" {
-		return NormalizeAgentID(id)
-	}
+	// No agent marked as default — return "main" (the system/default agent
+	// always registered by the agent registry) rather than picking an
+	// arbitrary custom agent from the list.
 	return DefaultAgentID
 }
