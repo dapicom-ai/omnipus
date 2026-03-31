@@ -148,6 +148,12 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
   const [soul, setSoul] = useState('')
   const [instructions, setInstructions] = useState('')
   const [heartbeat, setHeartbeat] = useState('')
+  const [timeoutSeconds, setTimeoutSeconds] = useState(0)
+  const [maxToolIterations, setMaxToolIterations] = useState(50)
+  const [steeringMode, setSteeringMode] = useState('one-at-a-time')
+  const [toolFeedback, setToolFeedback] = useState(false)
+  const [heartbeatEnabled, setHeartbeatEnabled] = useState(false)
+  const [heartbeatInterval, setHeartbeatInterval] = useState(30)
 
   useEffect(() => {
     if (!agent) return
@@ -171,6 +177,12 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     setSoul(agent.soul ?? '')
     setInstructions(agent.instructions ?? '')
     setHeartbeat(agent.heartbeat ?? '')
+    setTimeoutSeconds(agent.timeout_seconds ?? 0)
+    setMaxToolIterations(agent.max_tool_iterations ?? 50)
+    setSteeringMode(agent.steering_mode ?? 'one-at-a-time')
+    setToolFeedback(agent.tool_feedback ?? false)
+    setHeartbeatEnabled(agent.heartbeat_enabled ?? false)
+    setHeartbeatInterval(agent.heartbeat_interval ?? 30)
     hasHydrated.current = true
   }, [agentId, agent])
 
@@ -214,6 +226,12 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
       soul,
       instructions,
       heartbeat,
+      timeout_seconds: timeoutSeconds > 0 ? timeoutSeconds : undefined,
+      max_tool_iterations: maxToolIterations,
+      steering_mode: steeringMode,
+      tool_feedback: toolFeedback,
+      heartbeat_enabled: heartbeatEnabled,
+      heartbeat_interval: heartbeatInterval,
     }
   }
 
@@ -559,6 +577,32 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
             <p className="text-xs text-[var(--color-muted)]">
               The agent's persistent context — goals, preferences, and working memory.
             </p>
+            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-[var(--color-secondary)]">Enable heartbeat</p>
+                  <p className="text-xs text-[var(--color-muted)]">Run this agent on a recurring schedule</p>
+                </div>
+                <Switch
+                  checked={heartbeatEnabled}
+                  onCheckedChange={(v) => { markDirty(); setHeartbeatEnabled(v) }}
+                  disabled={!canEdit}
+                />
+              </div>
+              {heartbeatEnabled && (
+                <div className="flex items-center gap-3 pt-1 border-t border-[var(--color-border)]">
+                  <label className="text-xs text-[var(--color-muted)] w-44 shrink-0">Interval (seconds)</label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={heartbeatInterval}
+                    onChange={(e) => { markDirty(); setHeartbeatInterval(Number(e.target.value)) }}
+                    className="text-xs h-8"
+                    disabled={!canEdit}
+                  />
+                </div>
+              )}
+            </div>
             <Textarea
               value={heartbeat}
               onChange={(e) => { markDirty(); setHeartbeat(e.target.value) }}
@@ -640,6 +684,71 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
                 </div>
               </div>
             )}
+          </section>
+        </>
+      )}
+
+      {/* Execution section */}
+      {agent.type !== 'system' && (
+        <>
+          <Separator />
+          <section className="space-y-3">
+            <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)]">Execution</h2>
+            <div className="space-y-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4">
+              <div className="flex items-center gap-3">
+                <label className="text-xs text-[var(--color-muted)] w-44 shrink-0">
+                  Turn timeout (seconds)
+                  <span className="block text-[10px] text-[var(--color-muted)]/70">0 = no limit</span>
+                </label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={timeoutSeconds}
+                  onChange={(e) => { markDirty(); setTimeoutSeconds(Number(e.target.value)) }}
+                  className="text-xs h-8"
+                  disabled={!canEdit}
+                />
+              </div>
+              <div className="flex items-center gap-3">
+                <label className="text-xs text-[var(--color-muted)] w-44 shrink-0">Max tool iterations</label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={maxToolIterations}
+                  onChange={(e) => { markDirty(); setMaxToolIterations(Number(e.target.value)) }}
+                  className="text-xs h-8"
+                  disabled={!canEdit}
+                />
+              </div>
+              <div className="flex items-center gap-3">
+                <label className="text-xs text-[var(--color-muted)] w-44 shrink-0">Message handling</label>
+                <Select
+                  value={steeringMode}
+                  onValueChange={(v) => { markDirty(); setSteeringMode(v) }}
+                  disabled={!canEdit}
+                >
+                  <SelectTrigger className="text-xs h-8">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="one-at-a-time">One at a time</SelectItem>
+                    <SelectItem value="parallel">Parallel</SelectItem>
+                    <SelectItem value="queue">Queue</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center justify-between py-1">
+                <div>
+                  <p className="text-sm text-[var(--color-secondary)]">Tool progress feedback</p>
+                  <p className="text-xs text-[var(--color-muted)]">Show tool call status while running</p>
+                </div>
+                <Switch
+                  checked={toolFeedback}
+                  onCheckedChange={(v) => { markDirty(); setToolFeedback(v) }}
+                  disabled={!canEdit}
+                />
+              </div>
+            </div>
           </section>
         </>
       )}

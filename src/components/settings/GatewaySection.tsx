@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Copy, ArrowsClockwise, FloppyDisk, CheckCircle, CaretDown, CaretRight } from '@phosphor-icons/react'
+import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -38,6 +39,8 @@ export function GatewaySection() {
   const [bindAddress, setBindAddress] = useState('127.0.0.1')
   const [port, setPort] = useState('8080')
   const [authMode, setAuthMode] = useState<'none' | 'token'>('none')
+  const [hotReload, setHotReload] = useState(false)
+  const [logLevel, setLogLevel] = useState('info')
 
   useEffect(() => {
     if (!config) return
@@ -45,6 +48,8 @@ export function GatewaySection() {
     setBindAddress(config.gateway.bind_address)
     setPort(config.gateway.port.toString())
     setAuthMode(config.gateway.auth_mode)
+    setHotReload(config.gateway.hot_reload ?? false)
+    setLogLevel(config.gateway.log_level ?? 'info')
   }, [config])
 
   const { mutate: doSave, isPending: isSaving } = useMutation({
@@ -54,6 +59,8 @@ export function GatewaySection() {
           bind_address: bindAddress,
           port: parseInt(port, 10),
           auth_mode: authMode,
+          hot_reload: hotReload,
+          log_level: logLevel,
         },
       }),
     onSuccess: () => {
@@ -206,6 +213,37 @@ export function GatewaySection() {
             )}
           </div>
         )}
+
+        {/* Hot reload */}
+        <div className="flex items-center justify-between pt-2 border-t border-[var(--color-border)]">
+          <div>
+            <p className="text-sm text-[var(--color-secondary)]">Hot reload</p>
+            <p className="text-xs text-[var(--color-muted)]">Reload config without restarting the gateway</p>
+          </div>
+          <Switch
+            checked={hotReload}
+            onCheckedChange={(v) => { markDirty(); setHotReload(v) }}
+          />
+        </div>
+
+        {/* Log level */}
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-[var(--color-secondary)]">Log level</p>
+            <p className="text-xs text-[var(--color-muted)]">Verbosity of gateway logs</p>
+          </div>
+          <Select value={logLevel} onValueChange={(v) => { markDirty(); setLogLevel(v) }}>
+            <SelectTrigger className="w-[120px] h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="debug">Debug</SelectItem>
+              <SelectItem value="info">Info</SelectItem>
+              <SelectItem value="warn">Warn</SelectItem>
+              <SelectItem value="error">Error</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {/* Status */}

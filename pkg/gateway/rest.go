@@ -430,16 +430,22 @@ func fetchUpstreamModels(baseURL, apiKey string) ([]string, error) {
 
 // agentResponse is the JSON shape returned for a single agent.
 type agentResponse struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	Type         string `json:"type"` // "system" | "core" | "custom"
-	Model        string `json:"model,omitempty"`
-	Description  string `json:"description,omitempty"`
-	Status       string `json:"status"` // "active" | "idle" | "draft"
-	Soul         string `json:"soul"`
-	Heartbeat    string `json:"heartbeat"`
-	Instructions string `json:"instructions"`
-	Warning      string `json:"warning,omitempty"` // non-fatal warning (e.g., reload failed)
+	ID                 string `json:"id"`
+	Name               string `json:"name"`
+	Type               string `json:"type"` // "system" | "core" | "custom"
+	Model              string `json:"model,omitempty"`
+	Description        string `json:"description,omitempty"`
+	Status             string `json:"status"` // "active" | "idle" | "draft"
+	Soul               string `json:"soul"`
+	Heartbeat          string `json:"heartbeat"`
+	Instructions       string `json:"instructions"`
+	Warning            string `json:"warning,omitempty"` // non-fatal warning (e.g., reload failed)
+	TimeoutSeconds     int    `json:"timeout_seconds"`
+	MaxToolIterations  int    `json:"max_tool_iterations"`
+	SteeringMode       string `json:"steering_mode"`
+	ToolFeedback       bool   `json:"tool_feedback"`
+	HeartbeatEnabled   bool   `json:"heartbeat_enabled"`
+	HeartbeatInterval  int    `json:"heartbeat_interval"`
 }
 
 // agentWorkspacePath returns the expanded workspace directory for the named agent.
@@ -564,6 +570,15 @@ func splitAgentMDFrontmatter(content string) (frontmatter, body string) {
 	return frontmatter, body
 }
 
+// steeringModeOrDefault returns the steering mode string, defaulting to "one-at-a-time"
+// when the configured value is empty.
+func steeringModeOrDefault(mode string) string {
+	if mode == "" {
+		return "one-at-a-time"
+	}
+	return mode
+}
+
 // activeAgentIDSet returns a set of agent IDs that currently have an active turn.
 func (a *restAPI) activeAgentIDSet() map[string]bool {
 	ids := a.agentLoop.GetActiveAgentIDs()
@@ -583,14 +598,20 @@ func (a *restAPI) listAgents(w http.ResponseWriter) {
 	// interaction, unlike turn-based custom agents.
 	defaultModel := cfg.Agents.Defaults.ModelName
 	agents = append(agents, agentResponse{
-		ID:           "omnipus-system",
-		Name:         "Omnipus",
-		Type:         "system",
-		Model:        defaultModel,
-		Status:       "active",
-		Soul:         "",
-		Heartbeat:    "",
-		Instructions: "",
+		ID:                "omnipus-system",
+		Name:              "Omnipus",
+		Type:              "system",
+		Model:             defaultModel,
+		Status:            "active",
+		Soul:              "",
+		Heartbeat:         "",
+		Instructions:      "",
+		TimeoutSeconds:    cfg.Agents.Defaults.TimeoutSeconds,
+		MaxToolIterations: cfg.Agents.Defaults.MaxToolIterations,
+		SteeringMode:      steeringModeOrDefault(cfg.Agents.Defaults.SteeringMode),
+		ToolFeedback:      cfg.Agents.Defaults.ToolFeedback.Enabled,
+		HeartbeatEnabled:  cfg.Heartbeat.Enabled,
+		HeartbeatInterval: cfg.Heartbeat.Interval,
 	})
 
 	for _, ac := range cfg.Agents.List {
@@ -612,14 +633,20 @@ func (a *restAPI) listAgents(w http.ResponseWriter) {
 			status = "draft"
 		}
 		agents = append(agents, agentResponse{
-			ID:           ac.ID,
-			Name:         ac.Name,
-			Type:         "custom",
-			Model:        model,
-			Status:       status,
-			Soul:         soul,
-			Heartbeat:    "",
-			Instructions: "",
+			ID:                ac.ID,
+			Name:              ac.Name,
+			Type:              "custom",
+			Model:             model,
+			Status:            status,
+			Soul:              soul,
+			Heartbeat:         "",
+			Instructions:      "",
+			TimeoutSeconds:    cfg.Agents.Defaults.TimeoutSeconds,
+			MaxToolIterations: cfg.Agents.Defaults.MaxToolIterations,
+			SteeringMode:      steeringModeOrDefault(cfg.Agents.Defaults.SteeringMode),
+			ToolFeedback:      cfg.Agents.Defaults.ToolFeedback.Enabled,
+			HeartbeatEnabled:  cfg.Heartbeat.Enabled,
+			HeartbeatInterval: cfg.Heartbeat.Interval,
 		})
 	}
 
@@ -638,14 +665,20 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 		}
 		soul, heartbeat, instructions := readAgentFiles(workspace)
 		jsonOK(w, agentResponse{
-			ID:           "omnipus-system",
-			Name:         "Omnipus",
-			Type:         "system",
-			Model:        cfg.Agents.Defaults.ModelName,
-			Status:       "active",
-			Soul:         soul,
-			Heartbeat:    heartbeat,
-			Instructions: instructions,
+			ID:                "omnipus-system",
+			Name:              "Omnipus",
+			Type:              "system",
+			Model:             cfg.Agents.Defaults.ModelName,
+			Status:            "active",
+			Soul:              soul,
+			Heartbeat:         heartbeat,
+			Instructions:      instructions,
+			TimeoutSeconds:    cfg.Agents.Defaults.TimeoutSeconds,
+			MaxToolIterations: cfg.Agents.Defaults.MaxToolIterations,
+			SteeringMode:      steeringModeOrDefault(cfg.Agents.Defaults.SteeringMode),
+			ToolFeedback:      cfg.Agents.Defaults.ToolFeedback.Enabled,
+			HeartbeatEnabled:  cfg.Heartbeat.Enabled,
+			HeartbeatInterval: cfg.Heartbeat.Interval,
 		})
 		return
 	}
@@ -670,14 +703,20 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 				status = "draft"
 			}
 			jsonOK(w, agentResponse{
-				ID:           ac.ID,
-				Name:         ac.Name,
-				Type:         "custom",
-				Model:        model,
-				Status:       status,
-				Soul:         soul,
-				Heartbeat:    heartbeat,
-				Instructions: instructions,
+				ID:                ac.ID,
+				Name:              ac.Name,
+				Type:              "custom",
+				Model:             model,
+				Status:            status,
+				Soul:              soul,
+				Heartbeat:         heartbeat,
+				Instructions:      instructions,
+				TimeoutSeconds:    cfg.Agents.Defaults.TimeoutSeconds,
+				MaxToolIterations: cfg.Agents.Defaults.MaxToolIterations,
+				SteeringMode:      steeringModeOrDefault(cfg.Agents.Defaults.SteeringMode),
+				ToolFeedback:      cfg.Agents.Defaults.ToolFeedback.Enabled,
+				HeartbeatEnabled:  cfg.Heartbeat.Enabled,
+				HeartbeatInterval: cfg.Heartbeat.Interval,
 			})
 			return
 		}
@@ -744,17 +783,25 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 	if ac.Model != nil && ac.Model.Primary != "" {
 		model = ac.Model.Primary
 	}
+	// Capture execution config AFTER reload (TriggerReload may have swapped the live config).
+	cfgAfterCreate := a.agentLoop.GetConfig()
 	w.WriteHeader(http.StatusCreated)
 	jsonOK(w, agentResponse{
-		ID:           ac.ID,
-		Name:         ac.Name,
-		Type:         "custom",
-		Model:        model,
-		Status:       "draft",
-		Soul:         "",
-		Heartbeat:    "",
-		Instructions: "",
-		Warning:      createReloadWarning,
+		ID:                ac.ID,
+		Name:              ac.Name,
+		Type:              "custom",
+		Model:             model,
+		Status:            "draft",
+		Soul:              "",
+		Heartbeat:         "",
+		Instructions:      "",
+		Warning:           createReloadWarning,
+		TimeoutSeconds:    cfgAfterCreate.Agents.Defaults.TimeoutSeconds,
+		MaxToolIterations: cfgAfterCreate.Agents.Defaults.MaxToolIterations,
+		SteeringMode:      steeringModeOrDefault(cfgAfterCreate.Agents.Defaults.SteeringMode),
+		ToolFeedback:      cfgAfterCreate.Agents.Defaults.ToolFeedback.Enabled,
+		HeartbeatEnabled:  cfgAfterCreate.Heartbeat.Enabled,
+		HeartbeatInterval: cfgAfterCreate.Heartbeat.Interval,
 	})
 }
 
@@ -772,11 +819,17 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 	var req struct {
-		Name         *string `json:"name"`
-		Model        *string `json:"model"`
-		Soul         *string `json:"soul"`
-		Heartbeat    *string `json:"heartbeat"`
-		Instructions *string `json:"instructions"`
+		Name               *string `json:"name"`
+		Model              *string `json:"model"`
+		Soul               *string `json:"soul"`
+		Heartbeat          *string `json:"heartbeat"`
+		Instructions       *string `json:"instructions"`
+		TimeoutSeconds     *int    `json:"timeout_seconds"`
+		MaxToolIterations  *int    `json:"max_tool_iterations"`
+		SteeringMode       *string `json:"steering_mode"`
+		ToolFeedback       *bool   `json:"tool_feedback"`
+		HeartbeatEnabled   *bool   `json:"heartbeat_enabled"`
+		HeartbeatInterval  *int    `json:"heartbeat_interval"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
@@ -800,6 +853,8 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		if agents == nil {
 			return fmt.Errorf("agents section not found in config")
 		}
+		// Per-agent fields: name, model, timeout_seconds, max_tool_iterations,
+		// steering_mode, tool_feedback — stored under agents.list[*].
 		list, _ := agents["list"].([]any)
 		for _, entry := range list {
 			agentMap, ok := entry.(map[string]any)
@@ -818,7 +873,38 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 					}
 					modelMap["primary"] = newModel
 				}
+				if req.TimeoutSeconds != nil {
+					agentMap["timeout_seconds"] = *req.TimeoutSeconds
+				}
+				if req.MaxToolIterations != nil {
+					agentMap["max_tool_iterations"] = *req.MaxToolIterations
+				}
+				if req.SteeringMode != nil {
+					agentMap["steering_mode"] = *req.SteeringMode
+				}
+				if req.ToolFeedback != nil {
+					tfMap, _ := agentMap["tool_feedback"].(map[string]any)
+					if tfMap == nil {
+						tfMap = map[string]any{}
+						agentMap["tool_feedback"] = tfMap
+					}
+					tfMap["enabled"] = *req.ToolFeedback
+				}
 				break
+			}
+		}
+		// Heartbeat fields are top-level in config.json.
+		if req.HeartbeatEnabled != nil || req.HeartbeatInterval != nil {
+			hbMap, _ := m["heartbeat"].(map[string]any)
+			if hbMap == nil {
+				hbMap = map[string]any{}
+				m["heartbeat"] = hbMap
+			}
+			if req.HeartbeatEnabled != nil {
+				hbMap["enabled"] = *req.HeartbeatEnabled
+			}
+			if req.HeartbeatInterval != nil {
+				hbMap["interval"] = *req.HeartbeatInterval
 			}
 		}
 		return nil
@@ -890,6 +976,31 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 	if newModel != "" {
 		model = newModel
 	}
+	// Compute execution config fields: use request value when provided, else existing default.
+	respTimeoutSeconds := cfg.Agents.Defaults.TimeoutSeconds
+	if req.TimeoutSeconds != nil {
+		respTimeoutSeconds = *req.TimeoutSeconds
+	}
+	respMaxToolIterations := cfg.Agents.Defaults.MaxToolIterations
+	if req.MaxToolIterations != nil {
+		respMaxToolIterations = *req.MaxToolIterations
+	}
+	respSteeringMode := steeringModeOrDefault(cfg.Agents.Defaults.SteeringMode)
+	if req.SteeringMode != nil {
+		respSteeringMode = steeringModeOrDefault(*req.SteeringMode)
+	}
+	respToolFeedback := cfg.Agents.Defaults.ToolFeedback.Enabled
+	if req.ToolFeedback != nil {
+		respToolFeedback = *req.ToolFeedback
+	}
+	respHeartbeatEnabled := cfg.Heartbeat.Enabled
+	if req.HeartbeatEnabled != nil {
+		respHeartbeatEnabled = *req.HeartbeatEnabled
+	}
+	respHeartbeatInterval := cfg.Heartbeat.Interval
+	if req.HeartbeatInterval != nil {
+		respHeartbeatInterval = *req.HeartbeatInterval
+	}
 	// Compute status: draft when soul is empty and agent is not active.
 	activeIDs := a.activeAgentIDSet()
 	status := "idle"
@@ -899,15 +1010,21 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		status = "draft"
 	}
 	jsonOK(w, agentResponse{
-		ID:           agentID,
-		Name:         newName,
-		Type:         "custom",
-		Model:        model,
-		Status:       status,
-		Soul:         soul,
-		Heartbeat:    heartbeat,
-		Instructions: instructions,
-		Warning:      reloadWarning,
+		ID:                agentID,
+		Name:              newName,
+		Type:              "custom",
+		Model:             model,
+		Status:            status,
+		Soul:              soul,
+		Heartbeat:         heartbeat,
+		Instructions:      instructions,
+		Warning:           reloadWarning,
+		TimeoutSeconds:    respTimeoutSeconds,
+		MaxToolIterations: respMaxToolIterations,
+		SteeringMode:      respSteeringMode,
+		ToolFeedback:      respToolFeedback,
+		HeartbeatEnabled:  respHeartbeatEnabled,
+		HeartbeatInterval: respHeartbeatInterval,
 	})
 }
 

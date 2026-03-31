@@ -46,6 +46,12 @@ export interface Agent {
     max_tokens?: number
     top_p?: number
   }
+  timeout_seconds?: number
+  max_tool_iterations?: number
+  steering_mode?: string
+  tool_feedback?: boolean
+  heartbeat_enabled?: boolean
+  heartbeat_interval?: number
   rate_limits?: {
     use_global_defaults: boolean
     max_llm_calls_per_hour?: number
@@ -179,12 +185,17 @@ export interface Config {
     port: number
     auth_mode: 'none' | 'token'
     token?: string
+    hot_reload?: boolean
+    log_level?: string
   }
   security: {
     policy_mode: 'allow' | 'deny'
     exec_approval: 'auto' | 'ask' | 'deny'
     prompt_injection_level: 'off' | 'low' | 'medium' | 'high'
     daily_cost_cap?: number
+    exec_timeout_seconds?: number
+    max_background_seconds?: number
+    enable_deny_patterns?: boolean
     rate_limits: {
       max_tokens_per_day?: number
       max_cost_per_day?: number
@@ -220,12 +231,17 @@ function rawToFrontendConfig(raw: Record<string, unknown>): Config {
       port: (gateway.port as number) ?? 8080,
       auth_mode: validEnum(gateway.auth_mode, VALID_AUTH_MODES, 'none'),
       token: gateway.token as string | undefined,
+      hot_reload: gateway.hot_reload as boolean | undefined,
+      log_level: gateway.log_level as string | undefined,
     },
     security: {
       policy_mode: validEnum(security.policy_mode, VALID_POLICY_MODES, 'deny'),
       exec_approval: validEnum(security.exec_approval, VALID_EXEC_APPROVALS, 'ask'),
       prompt_injection_level: validEnum(security.prompt_injection_level, VALID_INJECTION_LEVELS, 'medium'),
       daily_cost_cap: security.daily_cost_cap as number | undefined,
+      exec_timeout_seconds: security.exec_timeout_seconds as number | undefined,
+      max_background_seconds: security.max_background_seconds as number | undefined,
+      enable_deny_patterns: security.enable_deny_patterns as boolean | undefined,
       rate_limits: {
         max_tokens_per_day: rateLimits.max_tokens_per_day as number | undefined,
         max_cost_per_day: rateLimits.max_cost_per_day as number | undefined,

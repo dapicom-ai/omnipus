@@ -53,6 +53,9 @@ export function SecuritySection() {
   const [dailyCostCap, setDailyCostCap] = useState('')
   const [agentLlmCallsPerHour, setAgentLlmCallsPerHour] = useState('')
   const [agentToolCallsPerMin, setAgentToolCallsPerMin] = useState('')
+  const [execTimeoutSecs, setExecTimeoutSecs] = useState('')
+  const [maxBackgroundSecs, setMaxBackgroundSecs] = useState('')
+  const [enableDenyPatterns, setEnableDenyPatterns] = useState(false)
 
   // Credential vault modal state
   const [credModalOpen, setCredModalOpen] = useState(false)
@@ -69,6 +72,9 @@ export function SecuritySection() {
     setDailyCostCap(config.security.daily_cost_cap?.toString() ?? '')
     setAgentLlmCallsPerHour(config.security.rate_limits.max_agent_llm_calls_per_hour?.toString() ?? '')
     setAgentToolCallsPerMin(config.security.rate_limits.max_agent_tool_calls_per_minute?.toString() ?? '')
+    setExecTimeoutSecs(config.security.exec_timeout_seconds?.toString() ?? '')
+    setMaxBackgroundSecs(config.security.max_background_seconds?.toString() ?? '')
+    setEnableDenyPatterns(config.security.enable_deny_patterns ?? false)
   }, [config])
 
   const { mutate: doSave, isPending: isSaving } = useMutation({
@@ -79,6 +85,9 @@ export function SecuritySection() {
           exec_approval: execApproval,
           prompt_injection_level: injectionLevel,
           daily_cost_cap: dailyCostCap ? parseFloat(dailyCostCap) : undefined,
+          exec_timeout_seconds: execTimeoutSecs ? parseInt(execTimeoutSecs, 10) : undefined,
+          max_background_seconds: maxBackgroundSecs ? parseInt(maxBackgroundSecs, 10) : undefined,
+          enable_deny_patterns: enableDenyPatterns,
           rate_limits: {
             ...config?.security.rate_limits,
             max_agent_llm_calls_per_hour: agentLlmCallsPerHour ? parseInt(agentLlmCallsPerHour, 10) : undefined,
@@ -279,6 +288,57 @@ export function SecuritySection() {
                 placeholder="Unlimited"
               />
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Command Execution */}
+      <section className="space-y-3">
+        <h3 className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-wider">Command Execution</h3>
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-[var(--color-secondary)]">Exec timeout (seconds)</p>
+              <p className="text-xs text-[var(--color-muted)]">Max time for a single command, 0 = no limit</p>
+            </div>
+            <Input
+              type="number"
+              min="0"
+              value={execTimeoutSecs}
+              onChange={(e) => { markDirty(); setExecTimeoutSecs(e.target.value) }}
+              className="w-24 h-7 text-xs font-mono"
+              placeholder="0"
+            />
+          </div>
+
+          <Separator />
+
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-[var(--color-secondary)]">Background timeout (seconds)</p>
+              <p className="text-xs text-[var(--color-muted)]">Max time for background processes, 0 = no limit</p>
+            </div>
+            <Input
+              type="number"
+              min="0"
+              value={maxBackgroundSecs}
+              onChange={(e) => { markDirty(); setMaxBackgroundSecs(e.target.value) }}
+              className="w-24 h-7 text-xs font-mono"
+              placeholder="0"
+            />
+          </div>
+
+          <Separator />
+
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-[var(--color-secondary)]">Enable deny patterns</p>
+              <p className="text-xs text-[var(--color-muted)]">Block commands matching configured deny patterns</p>
+            </div>
+            <Switch
+              checked={enableDenyPatterns}
+              onCheckedChange={(v) => { markDirty(); setEnableDenyPatterns(v) }}
+            />
           </div>
         </div>
       </section>
