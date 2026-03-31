@@ -1387,10 +1387,17 @@ func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.Resolv
 	if explicitID := inboundMetadata(msg, "agent_id"); explicitID != "" {
 		agent, ok := registry.GetAgent(explicitID)
 		if ok {
+			logger.InfoCF("agent", "Routed to explicit agent", map[string]any{
+				"agent_id":  explicitID,
+				"workspace": agent.Workspace,
+			})
 			return routing.ResolvedRoute{AgentID: explicitID}, agent, nil
 		}
 		// Explicit agent not found — fall through to normal routing.
-		logger.WarnCF("agent", "explicit agent_id not found, falling back to routing", map[string]any{"agent_id": explicitID})
+		logger.WarnCF("agent", "explicit agent_id not found, falling back to routing", map[string]any{
+			"agent_id":        explicitID,
+			"registered_ids":  registry.ListAgentIDs(),
+		})
 	}
 
 	route := registry.ResolveRoute(routing.RouteInput{

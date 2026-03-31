@@ -51,7 +51,7 @@ export function SessionBar() {
 
   const effectiveAgentId = activeAgentId || agents[0]?.id
   const activeAgent = agents.find((a) => a.id === effectiveAgentId)
-  const chatAgents = agents.length <= 1 ? agents : agents.filter((a) => a.type !== 'system')
+  const chatAgents = agents
 
   const handleAgentSelect = (agentId: string) => {
     // Switch agent — start new session
