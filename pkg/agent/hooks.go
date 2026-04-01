@@ -16,7 +16,10 @@ import (
 const (
 	defaultHookObserverTimeout    = 500 * time.Millisecond
 	defaultHookInterceptorTimeout = 5 * time.Second
-	defaultHookApprovalTimeout    = 60 * time.Second
+	// Approval timeout must be longer than wsApprovalTimeout (90s) in ws_approval.go
+	// so the WebSocket approval hook has time to send the request, wait for user input,
+	// and receive the response before the HookManager kills it.
+	defaultHookApprovalTimeout    = 120 * time.Second
 	hookObserverBufferSize        = 64
 )
 
