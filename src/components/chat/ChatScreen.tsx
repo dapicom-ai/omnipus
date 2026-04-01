@@ -125,9 +125,24 @@ function InlineThinkingIndicator() {
   return <ThinkingIndicator />
 }
 
-function AssistantMessage() {
+// Fallback tool UI for tools without a registered makeAssistantToolUI component.
+// Renders the generic JSON badge with live status from the store.
+function FallbackToolUI({ part }: { part: { toolCallId: string; toolName: string; args: unknown; result: unknown; status: import('@assistant-ui/react').MessagePartStatus } }) {
   const storeToolCalls = useChatStore((s) => s.toolCalls)
+  const liveCall = storeToolCalls[part.toolCallId]
+  return (
+    <GenericToolCall
+      toolName={part.toolName}
+      args={part.args}
+      result={liveCall?.result ?? part.result}
+      status={part.status}
+      error={liveCall?.error}
+      durationMs={liveCall?.duration_ms}
+    />
+  )
+}
 
+function AssistantMessage() {
   return (
     <MessagePrimitive.Root className="group flex gap-3 px-4 py-3">
       <div className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center bg-[var(--color-surface-3)] text-[var(--color-secondary)]">
@@ -136,33 +151,17 @@ function AssistantMessage() {
       <div className="flex flex-col gap-1 max-w-[85%] min-w-0 flex-1">
         <div className="text-sm leading-relaxed text-[var(--color-secondary)]">
           <InlineThinkingIndicator />
-          <MessagePrimitive.Parts>
-            {({ part }) => {
-              if (part.type === 'text') {
-                return <AssistantTextPart />
-              }
-
-              if (part.type === 'tool-call') {
-                const enriched = part as typeof part & { toolUI?: React.ReactNode }
-                if (enriched.toolUI) return <>{enriched.toolUI}</>
-
-                const liveCall = storeToolCalls[part.toolCallId]
-                const resolved: ToolCall | undefined = liveCall
-                return (
-                  <GenericToolCall
-                    toolName={part.toolName}
-                    args={part.args}
-                    result={resolved?.result ?? part.result}
-                    status={part.status}
-                    error={resolved?.error}
-                    durationMs={resolved?.duration_ms}
-                  />
-                )
-              }
-
-              return null
+          {/* Use components prop so AssistantUI can inject registered tool UIs
+              (from makeAssistantToolUI) automatically by tool name. Unregistered
+              tools fall through to FallbackToolUI (generic JSON badge). */}
+          <MessagePrimitive.Parts
+            components={{
+              Text: AssistantTextPart,
+              tools: {
+                Fallback: FallbackToolUI,
+              },
             }}
-          </MessagePrimitive.Parts>
+          />
         </div>
 
         {/* Action bar — Copy button, visible on hover */}
