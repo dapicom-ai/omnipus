@@ -1008,7 +1008,7 @@ func NewWebSearchTool(opts WebSearchToolOptions) (*WebSearchTool, error) {
 			maxResults = min(opts.GLMSearchMaxResults, 10)
 		}
 	} else {
-		return nil, nil
+		return nil, fmt.Errorf("no web search provider configured")
 	}
 
 	return &WebSearchTool{
@@ -1270,6 +1270,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 	if resp.StatusCode == http.StatusForbidden && resp.Header.Get("Cf-Mitigated") == "challenge" {
 		logger.DebugCF("tool", "Cloudflare challenge detected, retrying with honest User-Agent",
 			map[string]any{"url": urlStr})
+		resp.Body.Close()
 		honestUA := fmt.Sprintf(userAgentHonest, config.Version)
 		resp2, body2, err2 := doFetch(honestUA)
 		if resp2 != nil && resp2.Body != nil {
@@ -1304,6 +1305,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 		mediaType = "application/octet-stream"
 	}
 
+	var nonUTF8Charset bool
 	charset, hasCharset := params["charset"]
 	if hasCharset {
 		// If the charset is not utf-8, we might have to convert the bodyStr
@@ -1314,6 +1316,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 				"Note: the content is not in UTF-8",
 				map[string]any{"charset": charset},
 			)
+			nonUTF8Charset = true
 		}
 	}
 
@@ -1363,6 +1366,10 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 		text = text[:maxChars] + "\n[Content truncated due to size limit]"
 	}
 
+	if nonUTF8Charset {
+		text += "\n\n[Warning: Content charset is not UTF-8; text may contain encoding artifacts]"
+	}
+
 	result := map[string]any{
 		"url":       urlStr,
 		"status":    resp.StatusCode,
@@ -1372,7 +1379,10 @@ func (t *WebFetchTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 		"text":      text,
 	}
 
-	resultJSON, _ := json.MarshalIndent(result, "", "  ")
+	resultJSON, marshalErr := json.MarshalIndent(result, "", "  ")
+	if marshalErr != nil {
+		return ErrorResult(fmt.Sprintf("failed to format fetch result: %v", marshalErr))
+	}
 
 	return &ToolResult{
 		ForLLM: string(resultJSON),

@@ -1,5 +1,5 @@
 // REST API client — all calls go through the backend gateway
-// Auth: Authorization: Bearer <token> header when OMNIPUS_BEARER_TOKEN is set
+// Auth: Authorization: Bearer <token> header when a token is stored in localStorage ('omnipus_auth_token'). The backend validates against OMNIPUS_BEARER_TOKEN.
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? ''
 
@@ -36,7 +36,6 @@ export interface Agent {
   icon?: string
   color?: string
   tools?: string[]
-  heartbeat_interval?: number
   soul?: string
   heartbeat?: string
   instructions?: string
@@ -176,9 +175,7 @@ export function createSession(agentId: string): Promise<Session> {
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-// Note: this interface matches the transformed config, not the raw backend response.
-// The raw backend Config has gateway.host/port with no auth_mode or security section.
-// fetchConfig() maps the raw response to this shape via rawToFrontendConfig().
+// Frontend-shaped config. Mapped from raw backend response via rawToFrontendConfig().
 export interface Config {
   gateway: {
     bind_address: string
@@ -498,7 +495,7 @@ export function runDoctor(): Promise<DoctorResult> {
 
 export interface ActivityEvent {
   id: string
-  type: 'task_created' | 'task_updated' | 'session_started' | 'session_ended' | 'agent_error' | 'tool_called' | 'approval_requested' | string
+  type: 'task_created' | 'task_updated' | 'session_started' | 'session_ended' | 'agent_error' | 'tool_called' | 'approval_requested' | (string & {})
   summary: string
   timestamp: string
   agent_id?: string

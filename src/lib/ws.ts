@@ -47,11 +47,7 @@ export interface WsTokenFrame {
 
 export interface WsDoneFrame {
   type: 'done'
-  stats?: {
-    tokens?: number
-    cost?: number
-    duration_ms?: number
-  }
+  stats?: { tokens: number; cost: number; duration_ms: number; tokens_dropped?: number }
 }
 
 export interface WsErrorFrame {
@@ -91,6 +87,12 @@ export type WsReceiveFrame =
   | WsToolCallStartFrame
   | WsToolCallResultFrame
   | WsExecApprovalRequestFrame
+
+function isValidFrame(frame: unknown): frame is WsReceiveFrame {
+  if (typeof frame !== 'object' || frame === null) return false
+  const f = frame as Record<string, unknown>
+  return typeof f.type === 'string'
+}
 
 // ── Connection ────────────────────────────────────────────────────────────────
 
@@ -167,9 +169,9 @@ export class WsConnection {
     }
 
     this.ws.onmessage = (event: MessageEvent) => {
-      let frame: WsReceiveFrame
+      let parsed: unknown
       try {
-        frame = JSON.parse(event.data as string) as WsReceiveFrame
+        parsed = JSON.parse(event.data as string)
       } catch {
         // Malformed JSON — log and discard, don't swallow downstream errors
         console.warn('[ws] Malformed frame:', event.data)
@@ -181,8 +183,8 @@ export class WsConnection {
         }
         return
       }
-      if (typeof frame.type !== 'string') {
-        console.warn('[ws] Invalid frame — missing type field:', frame)
+      if (!isValidFrame(parsed)) {
+        console.warn('[ws] Invalid frame — missing type field:', parsed)
         this.droppedFrameCount++
         if (this.droppedFrameCount >= this.droppedFrameThreshold) {
           this.callbacks.onError(
@@ -193,7 +195,7 @@ export class WsConnection {
       }
       // Valid frame received — reset the consecutive drop counter
       this.droppedFrameCount = 0
-      this.callbacks.onFrame(frame)
+      this.callbacks.onFrame(parsed)
     }
 
     this.ws.onerror = () => {

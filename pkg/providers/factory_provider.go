@@ -91,14 +91,18 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 		if apiBase == "" {
 			apiBase = GetDefaultAPIBase(protocol)
 		}
-		return NewHTTPProviderWithMaxTokensFieldAndRequestTimeout(
+		p, err := NewHTTPProviderWithMaxTokensFieldAndRequestTimeout(
 			cfg.APIKey(),
 			apiBase,
 			cfg.Proxy,
 			cfg.MaxTokensField,
 			cfg.RequestTimeout,
 			cfg.ExtraBody,
-		), modelID, nil
+		)
+		if err != nil {
+			return nil, "", err
+		}
+		return p, modelID, nil
 
 	case "azure", "azure-openai":
 		// Azure OpenAI uses deployment-based URLs, api-key header auth,
@@ -111,12 +115,16 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 				"api_base is required for azure protocol (e.g., https://your-resource.openai.azure.com)",
 			)
 		}
-		return azure.NewProviderWithTimeout(
+		p, err := azure.NewProviderWithTimeout(
 			cfg.APIKey(),
 			cfg.APIBase,
 			cfg.Proxy,
 			cfg.RequestTimeout,
-		), modelID, nil
+		)
+		if err != nil {
+			return nil, "", err
+		}
+		return p, modelID, nil
 
 	case "bedrock":
 		// AWS Bedrock uses AWS SDK credentials (env vars, profiles, IAM roles, etc.)
@@ -167,14 +175,18 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 		if apiBase == "" {
 			apiBase = GetDefaultAPIBase(protocol)
 		}
-		return NewHTTPProviderWithMaxTokensFieldAndRequestTimeout(
+		p, err := NewHTTPProviderWithMaxTokensFieldAndRequestTimeout(
 			cfg.APIKey(),
 			apiBase,
 			cfg.Proxy,
 			cfg.MaxTokensField,
 			cfg.RequestTimeout,
 			cfg.ExtraBody,
-		), modelID, nil
+		)
+		if err != nil {
+			return nil, "", err
+		}
+		return p, modelID, nil
 
 	case "minimax":
 		// Minimax requires reasoning_split: true in the request body
@@ -192,14 +204,18 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 		if _, ok := extraBody["reasoning_split"]; !ok {
 			extraBody["reasoning_split"] = true
 		}
-		return NewHTTPProviderWithMaxTokensFieldAndRequestTimeout(
+		p, err := NewHTTPProviderWithMaxTokensFieldAndRequestTimeout(
 			cfg.APIKey(),
 			apiBase,
 			cfg.Proxy,
 			cfg.MaxTokensField,
 			cfg.RequestTimeout,
 			extraBody,
-		), modelID, nil
+		)
+		if err != nil {
+			return nil, "", err
+		}
+		return p, modelID, nil
 
 	case "anthropic":
 		if cfg.AuthMethod == "oauth" || cfg.AuthMethod == "token" {
@@ -218,14 +234,18 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 		if cfg.APIKey() == "" {
 			return nil, "", fmt.Errorf("api_key is required for anthropic protocol (model: %s)", cfg.Model)
 		}
-		return NewHTTPProviderWithMaxTokensFieldAndRequestTimeout(
+		p, err := NewHTTPProviderWithMaxTokensFieldAndRequestTimeout(
 			cfg.APIKey(),
 			apiBase,
 			cfg.Proxy,
 			cfg.MaxTokensField,
 			cfg.RequestTimeout,
 			cfg.ExtraBody,
-		), modelID, nil
+		)
+		if err != nil {
+			return nil, "", err
+		}
+		return p, modelID, nil
 
 	case "anthropic-messages":
 		// Anthropic Messages API with native format (HTTP-based, no SDK)

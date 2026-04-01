@@ -50,11 +50,15 @@ func WithRequestTimeout(timeout time.Duration) Option {
 }
 
 // NewProvider creates a new Azure OpenAI provider.
-func NewProvider(apiKey, apiBase, proxy string, opts ...Option) *Provider {
+func NewProvider(apiKey, apiBase, proxy string, opts ...Option) (*Provider, error) {
+	httpClient, err := common.NewHTTPClient(proxy)
+	if err != nil {
+		return nil, fmt.Errorf("azure: %w", err)
+	}
 	p := &Provider{
 		apiKey:     apiKey,
 		apiBase:    strings.TrimRight(apiBase, "/"),
-		httpClient: common.NewHTTPClient(proxy),
+		httpClient: httpClient,
 	}
 
 	for _, opt := range opts {
@@ -63,11 +67,11 @@ func NewProvider(apiKey, apiBase, proxy string, opts ...Option) *Provider {
 		}
 	}
 
-	return p
+	return p, nil
 }
 
 // NewProviderWithTimeout creates a new Azure OpenAI provider with a custom request timeout in seconds.
-func NewProviderWithTimeout(apiKey, apiBase, proxy string, requestTimeoutSeconds int) *Provider {
+func NewProviderWithTimeout(apiKey, apiBase, proxy string, requestTimeoutSeconds int) (*Provider, error) {
 	return NewProvider(
 		apiKey, apiBase, proxy,
 		WithRequestTimeout(time.Duration(requestTimeoutSeconds)*time.Second),

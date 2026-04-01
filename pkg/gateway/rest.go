@@ -370,10 +370,11 @@ type gatewayStatusResponse struct {
 
 // providerResponse is the JSON shape returned for a single LLM provider.
 type providerResponse struct {
-	ID     string   `json:"id"`
-	Name   string   `json:"name"`
-	Status string   `json:"status"` // "connected" | "disconnected"
-	Models []string `json:"models"`
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Status  string   `json:"status"` // "connected" | "disconnected"
+	Models  []string `json:"models"`
+	Warning string   `json:"warning,omitempty"`
 }
 
 // fetchUpstreamModels fetches the list of available models from an OpenAI-compatible
@@ -773,6 +774,7 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 	defaultModelName := a.agentLoop.GetConfig().Agents.Defaults.ModelName
 
 	// Persistence succeeded. Trigger reload so the in-memory config picks up the new agent.
+	// The "warning" field signals a partial success — frontend must check this field.
 	var createReloadWarning string
 	if err := a.agentLoop.TriggerReload(); err != nil {
 		slog.Error("config reload after agent create failed", "error", err)
@@ -963,6 +965,7 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		}
 	}
 	// Now trigger reload so the new AgentInstance picks up the updated files.
+	// The "warning" field signals a partial success — frontend must check this field.
 	var reloadWarning string
 	if err := a.agentLoop.TriggerReload(); err != nil {
 		slog.Error("config reload after agent update failed", "error", err)
@@ -1620,6 +1623,7 @@ func (a *restAPI) listTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tasks := make([]taskEntity, 0, len(entries))
+	var warnings []string
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
@@ -1627,17 +1631,23 @@ func (a *restAPI) listTasks(w http.ResponseWriter, r *http.Request) {
 		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
 		if err != nil {
 			slog.Warn("rest: read task file", "file", e.Name(), "error", err)
+			warnings = append(warnings, fmt.Sprintf("could not read %s: %v", e.Name(), err))
 			continue
 		}
 		var t taskEntity
 		if err := json.Unmarshal(data, &t); err != nil {
 			slog.Warn("rest: parse task file", "file", e.Name(), "error", err)
+			warnings = append(warnings, fmt.Sprintf("could not parse %s: %v", e.Name(), err))
 			continue
 		}
 		if statusFilter != "" && t.Status != statusFilter {
 			continue
 		}
 		tasks = append(tasks, t)
+	}
+	if len(warnings) > 0 {
+		jsonOK(w, map[string]any{"tasks": tasks, "warnings": warnings})
+		return
 	}
 	jsonOK(w, tasks)
 }
@@ -1796,6 +1806,7 @@ func (a *restAPI) HandleActivity(w http.ResponseWriter, r *http.Request) {
 
 	cutoff := time.Now().UTC().Add(-24 * time.Hour)
 	var events []activityEvent
+	var sessionWarning string
 
 	// Build agent name lookup
 	cfg := a.agentLoop.GetConfig()
@@ -1809,6 +1820,7 @@ func (a *restAPI) HandleActivity(w http.ResponseWriter, r *http.Request) {
 		metas, err := a.partitions.ListSessions()
 		if err != nil {
 			slog.Error("rest: activity: list sessions", "error", err)
+			sessionWarning = fmt.Sprintf("could not load session history: %v", err)
 		} else {
 			for _, m := range metas {
 				if m.CreatedAt.After(cutoff) {
@@ -1880,6 +1892,10 @@ func (a *restAPI) HandleActivity(w http.ResponseWriter, r *http.Request) {
 	if events == nil {
 		events = []activityEvent{}
 	}
+	if sessionWarning != "" {
+		jsonOK(w, map[string]any{"events": events, "warning": sessionWarning})
+		return
+	}
 	jsonOK(w, events)
 }
 
@@ -1918,19 +1934,24 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 		providers := make([]providerResponse, 0, len(providerOrder))
 		for _, name := range providerOrder {
 			models := providerModels[name]
+			var modelFetchWarning string
 			// For OpenAI-compatible providers, fetch the full model list from upstream.
 			if apiKey, ok := providerAPIKeys[name]; ok {
 				if baseURL := providers_pkg.GetDefaultAPIBase(name); baseURL != "" {
-					if upstream, err := fetchUpstreamModels(baseURL, apiKey); err == nil && len(upstream) > 0 {
+					if upstream, err := fetchUpstreamModels(baseURL, apiKey); err != nil {
+						slog.Warn("rest: failed to fetch upstream models", "provider", name, "error", err)
+						modelFetchWarning = fmt.Sprintf("could not fetch upstream model list: %v", err)
+					} else if len(upstream) > 0 {
 						models = upstream
 					}
 				}
 			}
 			providers = append(providers, providerResponse{
-				ID:     name,
-				Name:   name,
-				Status: "connected",
-				Models: models,
+				ID:      name,
+				Name:    name,
+				Status:  "connected",
+				Models:  models,
+				Warning: modelFetchWarning,
 			})
 		}
 		if len(providers) == 0 {
@@ -2009,12 +2030,7 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 		// Trigger reload so the in-memory config picks up the new API key.
 		if err := a.agentLoop.TriggerReload(); err != nil {
 			slog.Error("config reload after provider update failed", "error", err)
-			jsonOK(w, map[string]any{
-				"id":      providerID,
-				"name":    providerID,
-				"status":  "connected",
-				"warning": fmt.Sprintf("config reload failed: %v", err),
-			})
+			jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("provider updated but config reload failed: %v", err))
 			return
 		}
 		jsonOK(w, providerResponse{

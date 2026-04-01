@@ -185,6 +185,7 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	defer cancel()
 
 	go func() {
+		defer cancel()
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("agent loop panicked", "panic", r, "stack", string(runtimedebug.Stack()))

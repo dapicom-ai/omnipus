@@ -482,12 +482,12 @@ type GroupTriggerConfig struct {
 	Prefixes    []string `json:"prefixes,omitempty"`
 }
 
-// TypingConfig controls typing indicator behavior (Phase 10).
+// TypingConfig controls typing indicator behavior.
 type TypingConfig struct {
 	Enabled bool `json:"enabled,omitempty"`
 }
 
-// PlaceholderConfig controls placeholder message behavior (Phase 10).
+// PlaceholderConfig controls placeholder message behavior.
 type PlaceholderConfig struct {
 	Enabled bool                `json:"enabled"`
 	Text    FlexibleStringSlice `json:"text,omitempty"`
@@ -618,7 +618,7 @@ type MatrixConfig struct {
 	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"          yaml:"-"`
 	ReasoningChannelID string              `json:"reasoning_channel_id"           yaml:"-"`
 	CryptoDatabasePath string              `json:"crypto_database_path,omitempty" yaml:"-"`
-	CryptoPassphrase   string              `json:"crypto_passphrase,omitempty"    yaml:"-"`
+	CryptoPassphrase   SecureString        `json:"crypto_passphrase,omitzero"     yaml:"-"`
 }
 
 type LINEConfig struct {
@@ -742,7 +742,7 @@ type DevicesConfig struct {
 type VoiceConfig struct {
 	ModelName         string `json:"model_name,omitempty"         env:"PICOCLAW_VOICE_MODEL_NAME"`
 	EchoTranscription bool   `json:"echo_transcription"           env:"PICOCLAW_VOICE_ECHO_TRANSCRIPTION"`
-	ElevenLabsAPIKey  string `json:"elevenlabs_api_key,omitempty" env:"PICOCLAW_VOICE_ELEVENLABS_API_KEY"`
+	ElevenLabsAPIKey  SecureString `json:"elevenlabs_api_key,omitzero" env:"PICOCLAW_VOICE_ELEVENLABS_API_KEY"`
 }
 
 // ModelConfig represents a model-centric provider configuration.
@@ -1416,6 +1416,7 @@ func expandMultiKeyModels(models []*ModelConfig) []*ModelConfig {
 
 		// Create entries for additional keys (key_1, key_2, ...)
 		var fallbackNames []string
+		var additionalEntries []*ModelConfig
 		for i := 1; i < len(keys); i++ {
 			suffix := fmt.Sprintf("__key_%d", i)
 			expandedName := originalName + suffix
@@ -1437,7 +1438,7 @@ func expandMultiKeyModels(models []*ModelConfig) []*ModelConfig {
 				ExtraBody:      m.ExtraBody,
 				isVirtual:      true,
 			}
-			expanded = append(expanded, additionalEntry)
+			additionalEntries = append(additionalEntries, additionalEntry)
 			fallbackNames = append(fallbackNames, expandedName)
 		}
 
@@ -1465,7 +1466,9 @@ func expandMultiKeyModels(models []*ModelConfig) []*ModelConfig {
 			primaryEntry.Fallbacks = m.Fallbacks
 		}
 
+		// Primary entry first, then virtual fallback entries.
 		expanded = append(expanded, primaryEntry)
+		expanded = append(expanded, additionalEntries...)
 	}
 
 	return expanded

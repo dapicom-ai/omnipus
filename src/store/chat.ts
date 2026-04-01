@@ -17,7 +17,7 @@ export interface ExecApprovalRequest {
   command: string
   working_dir?: string
   matched_policy?: string
-  status?: 'pending' | 'allowed' | 'denied' | 'always_allowed'
+  status: 'pending' | 'allowed' | 'denied' | 'always_allowed'
 }
 
 interface ChatStore {
@@ -34,8 +34,8 @@ interface ChatStore {
   activeAgentId: string | null
   /** The type of the currently active agent ('system' | 'core' | 'custom' | null).
    *  Set by setActiveSession so all callers stay in sync without manual tracking. */
-  activeAgentType: string | null
-  setActiveSession: (sessionId: string | null, agentId?: string | null, agentType?: string | null) => void
+  activeAgentType: 'system' | 'core' | 'custom' | null
+  setActiveSession: (sessionId: string | null, agentId?: string | null, agentType?: 'system' | 'core' | 'custom' | null) => void
 
   // Messages
   messages: ChatMessage[]
@@ -46,6 +46,7 @@ interface ChatStore {
   markLastMessageInterrupted: () => void
 
   // Tool calls (keyed by call_id)
+  // TODO: standardize call_id/id naming at deserialization boundary
   toolCalls: Record<string, ToolCall & { call_id: string }>
   startToolCall: (callId: string, tool: string, params: Record<string, unknown>) => void
   resolveToolCall: (callId: string, result: unknown, status: 'success' | 'error', durationMs?: number, error?: string) => void

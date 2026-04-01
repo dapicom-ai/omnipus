@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
@@ -263,6 +264,8 @@ func (hm *HookManager) ConfigureTimeouts(observer, interceptor, approval time.Du
 	if hm == nil {
 		return
 	}
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
 	if observer > 0 {
 		hm.observerTimeout = observer
 	}
@@ -283,6 +286,13 @@ func (hm *HookManager) Mount(reg HookRegistration) error {
 	}
 	if reg.Hook == nil {
 		return fmt.Errorf("hook %q is nil", reg.Name)
+	}
+	_, isObserver := reg.Hook.(EventObserver)
+	_, isLLMInterceptor := reg.Hook.(LLMInterceptor)
+	_, isToolInterceptor := reg.Hook.(ToolInterceptor)
+	_, isToolApprover := reg.Hook.(ToolApprover)
+	if !isObserver && !isLLMInterceptor && !isToolInterceptor && !isToolApprover {
+		return fmt.Errorf("hook %q does not implement any hook interface", reg.Name)
 	}
 
 	hm.mu.Lock()
@@ -479,7 +489,7 @@ func (hm *HookManager) ApproveTool(ctx context.Context, req *ToolApprovalRequest
 }
 
 func (hm *HookManager) rebuildOrdered() {
-	hm.ordered = hm.ordered[:0]
+	hm.ordered = make([]HookRegistration, 0, len(hm.hooks))
 	for _, reg := range hm.hooks {
 		hm.ordered = append(hm.ordered, reg)
 	}
@@ -507,15 +517,18 @@ func (hm *HookManager) closeAllHooks() {
 	hm.mu.Lock()
 	defer hm.mu.Unlock()
 
-	for name, reg := range hm.hooks {
+	for _, reg := range hm.hooks {
 		closeHookIfPossible(reg.Hook)
-		delete(hm.hooks, name)
 	}
+	hm.hooks = make(map[string]HookRegistration)
 	hm.ordered = nil
 }
 
 func (hm *HookManager) runObserver(name string, observer EventObserver, evt Event) {
-	ctx, cancel := context.WithTimeout(context.Background(), hm.observerTimeout)
+	hm.mu.RLock()
+	timeout := hm.observerTimeout
+	hm.mu.RUnlock()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	done := make(chan error, 1)
@@ -536,7 +549,7 @@ func (hm *HookManager) runObserver(name string, observer EventObserver, evt Even
 		logger.WarnCF("hooks", "Event observer timed out", map[string]any{
 			"hook":       name,
 			"event":      evt.Kind.String(),
-			"timeout_ms": hm.observerTimeout.Milliseconds(),
+			"timeout_ms": timeout.Milliseconds(),
 		})
 	}
 }
@@ -547,9 +560,12 @@ func (hm *HookManager) callBeforeLLM(
 	interceptor LLMInterceptor,
 	req *LLMHookRequest,
 ) (*LLMHookRequest, HookDecision, bool) {
+	hm.mu.RLock()
+	timeout := hm.interceptorTimeout
+	hm.mu.RUnlock()
 	return runInterceptorHook(
 		parent,
-		hm.interceptorTimeout,
+		timeout,
 		name,
 		"before_llm",
 		func(ctx context.Context) (*LLMHookRequest, HookDecision, error) {
@@ -564,9 +580,12 @@ func (hm *HookManager) callAfterLLM(
 	interceptor LLMInterceptor,
 	resp *LLMHookResponse,
 ) (*LLMHookResponse, HookDecision, bool) {
+	hm.mu.RLock()
+	timeout := hm.interceptorTimeout
+	hm.mu.RUnlock()
 	return runInterceptorHook(
 		parent,
-		hm.interceptorTimeout,
+		timeout,
 		name,
 		"after_llm",
 		func(ctx context.Context) (*LLMHookResponse, HookDecision, error) {
@@ -581,9 +600,12 @@ func (hm *HookManager) callBeforeTool(
 	interceptor ToolInterceptor,
 	call *ToolCallHookRequest,
 ) (*ToolCallHookRequest, HookDecision, bool) {
+	hm.mu.RLock()
+	timeout := hm.interceptorTimeout
+	hm.mu.RUnlock()
 	return runInterceptorHook(
 		parent,
-		hm.interceptorTimeout,
+		timeout,
 		name,
 		"before_tool",
 		func(ctx context.Context) (*ToolCallHookRequest, HookDecision, error) {
@@ -598,9 +620,12 @@ func (hm *HookManager) callAfterTool(
 	interceptor ToolInterceptor,
 	resultView *ToolResultHookResponse,
 ) (*ToolResultHookResponse, HookDecision, bool) {
+	hm.mu.RLock()
+	timeout := hm.interceptorTimeout
+	hm.mu.RUnlock()
 	return runInterceptorHook(
 		parent,
-		hm.interceptorTimeout,
+		timeout,
 		name,
 		"after_tool",
 		func(ctx context.Context) (*ToolResultHookResponse, HookDecision, error) {
@@ -615,9 +640,12 @@ func (hm *HookManager) callApproveTool(
 	approver ToolApprover,
 	req *ToolApprovalRequest,
 ) (ApprovalDecision, bool) {
+	hm.mu.RLock()
+	timeout := hm.approvalTimeout
+	hm.mu.RUnlock()
 	return runApprovalHook(
 		parent,
-		hm.approvalTimeout,
+		timeout,
 		name,
 		"approve_tool",
 		func(ctx context.Context) (ApprovalDecision, error) {
@@ -801,9 +829,13 @@ func cloneStringAnyMap(src map[string]any) map[string]any {
 		return nil
 	}
 
-	cloned := make(map[string]any, len(src))
-	for k, v := range src {
-		cloned[k] = v
+	b, err := json.Marshal(src)
+	if err != nil {
+		return nil
+	}
+	var cloned map[string]any
+	if err := json.Unmarshal(b, &cloned); err != nil {
+		return nil
 	}
 	return cloned
 }

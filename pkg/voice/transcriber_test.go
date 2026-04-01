@@ -127,14 +127,14 @@ func TestDetectTranscriber(t *testing.T) {
 		{
 			name: "elevenlabs voice config key",
 			cfg: &config.Config{
-				Voice: config.VoiceConfig{ElevenLabsAPIKey: "sk_elevenlabs_test"},
+				Voice: config.VoiceConfig{ElevenLabsAPIKey: *config.NewSecureString("sk_elevenlabs_test")},
 			},
 			wantName: "elevenlabs",
 		},
 		{
 			name: "elevenlabs takes priority over groq model list",
 			cfg: &config.Config{
-				Voice: config.VoiceConfig{ElevenLabsAPIKey: "sk_elevenlabs_test"},
+				Voice: config.VoiceConfig{ElevenLabsAPIKey: *config.NewSecureString("sk_elevenlabs_test")},
 				ModelList: []*config.ModelConfig{
 					{
 						ModelName: "groq",
@@ -150,7 +150,7 @@ func TestDetectTranscriber(t *testing.T) {
 			cfg: &config.Config{
 				Voice: config.VoiceConfig{
 					ModelName:        "voice-gemini",
-					ElevenLabsAPIKey: "sk_elevenlabs_test",
+					ElevenLabsAPIKey: *config.NewSecureString("sk_elevenlabs_test"),
 				},
 				ModelList: []*config.ModelConfig{
 					{

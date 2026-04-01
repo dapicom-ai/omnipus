@@ -39,15 +39,19 @@ type wsClientFrame struct {
 
 // wsServerFrame is a message sent from the server to the browser over WebSocket.
 type wsServerFrame struct {
-	Type    string         `json:"type"`
-	Content string         `json:"content,omitempty"`
-	Tool    string         `json:"tool,omitempty"`
-	Params  map[string]any `json:"params,omitempty"`
-	Result  map[string]any `json:"result,omitempty"`
-	Command string         `json:"command,omitempty"`
-	ID      string         `json:"id,omitempty"`
-	Stats   map[string]any `json:"stats,omitempty"`
-	Message string         `json:"message,omitempty"`
+	Type       string         `json:"type"`
+	Content    string         `json:"content,omitempty"`
+	Tool       string         `json:"tool,omitempty"`
+	Params     map[string]any `json:"params,omitempty"`
+	Result     any            `json:"result,omitempty"`
+	Command    string         `json:"command,omitempty"`
+	ID         string         `json:"id,omitempty"`
+	CallID     string         `json:"call_id,omitempty"`
+	Stats      map[string]any `json:"stats,omitempty"`
+	Message    string         `json:"message,omitempty"`
+	Status     string         `json:"status,omitempty"`
+	DurationMs int64          `json:"duration_ms,omitempty"`
+	Error      string         `json:"error,omitempty"`
 }
 
 // WSHandler handles the /api/v1/chat/ws WebSocket endpoint for bi-directional
@@ -75,10 +79,11 @@ type WSHandler struct {
 }
 
 type wsConn struct {
-	conn      *websocket.Conn
-	sendCh    chan []byte
-	doneCh    chan struct{}
-	closeOnce sync.Once
+	conn          *websocket.Conn
+	sendCh        chan []byte
+	doneCh        chan struct{}
+	closeOnce     sync.Once
+	droppedTokens int
 }
 
 func (c *wsConn) close() {
@@ -220,15 +225,23 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// sends an exec_approval_request frame and blocks until the browser responds or
 	// the request times out.
 	hookName := "ws-approval-" + chatID
-	approvalHook := &wsApprovalHook{conn: wc, registry: h.approvalRegistry, timeout: wsApprovalTimeout}
+	approvalHook := &wsApprovalHook{conn: wc, chatID: chatID, registry: h.approvalRegistry, timeout: wsApprovalTimeout}
 	if err := h.agentLoop.MountHook(agent.NamedHook(hookName, approvalHook)); err != nil {
 		slog.Error("ws: could not mount approval hook — closing connection", "chat_id", chatID, "error", err)
 		sendConnFrame(wc, wsServerFrame{Type: "error", Message: "failed to initialize tool approval — please reconnect"})
 		return
 	}
 
+	// Subscribe to agent-loop events so we can forward tool_call_start/result
+	// frames to the browser in real time.
+	eventSub := h.agentLoop.SubscribeEvents(32)
+	eventDone := make(chan struct{})
+	go h.eventForwarder(wc, chatID, eventSub, eventDone)
+
 	defer func() {
 		h.agentLoop.UnmountHook(hookName)
+		h.agentLoop.UnsubscribeEvents(eventSub.ID)
+		<-eventDone // wait for forwarder goroutine to exit
 		h.mu.Lock()
 		delete(h.sessions, chatID)
 		delete(h.sessionIDs, chatID)
@@ -266,6 +279,7 @@ func (h *WSHandler) authenticateWS(conn *websocket.Conn) bool {
 
 	if subtle.ConstantTimeCompare([]byte(frame.Token), []byte(required)) != 1 {
 		sendWSFrame(conn, wsServerFrame{Type: "error", Message: "unauthorized: invalid token"})
+		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "authentication failed"))
 		return false
 	}
 
@@ -292,6 +306,7 @@ func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsCo
 		var frame wsClientFrame
 		if err := json.Unmarshal(data, &frame); err != nil {
 			slog.Warn("ws: malformed frame", "error", err)
+			sendConnFrame(wc, wsServerFrame{Type: "error", Message: "malformed message frame"})
 			continue
 		}
 
@@ -307,6 +322,7 @@ func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsCo
 			h.handleApprovalResponse(frame.ID, frame.Decision)
 		default:
 			slog.Debug("ws: unknown frame type ignored", "type", frame.Type, "chat_id", chatID)
+			sendConnFrame(wc, wsServerFrame{Type: "error", Message: fmt.Sprintf("unknown frame type: %s", frame.Type)})
 		}
 	}
 }
@@ -341,7 +357,7 @@ func (h *WSHandler) handleChatMessage(ctx context.Context, chatID string, sessio
 					title = content
 				}
 				if err := h.partitions.SetTitle(*sessionID, title); err != nil {
-					slog.Debug("ws: could not set session title", "error", err)
+					slog.Warn("ws: could not set session title", "session_id", *sessionID, "error", err)
 				}
 			}
 		}
@@ -504,6 +520,7 @@ func sendConnFrame(wc *wsConn, frame wsServerFrame) {
 		case wc.sendCh <- data:
 		default:
 			slog.Warn("ws: send channel full, frame dropped", "type", frame.Type)
+			wc.droppedTokens++
 		}
 	}
 }
@@ -520,6 +537,43 @@ func sendWSFrame(conn *websocket.Conn, frame wsServerFrame) {
 	}
 }
 
+// eventForwarder listens on the agent EventBus and forwards tool_call_start/result
+// frames to the browser so tool call UIs render in real time.
+func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSubscription, done chan<- struct{}) {
+	defer close(done)
+	for evt := range sub.C {
+		switch evt.Kind {
+		case agent.EventKindToolExecStart:
+			p, ok := evt.Payload.(agent.ToolExecStartPayload)
+			if !ok || p.ChatID != chatID {
+				continue
+			}
+			sendConnFrame(wc, wsServerFrame{
+				Type:   "tool_call_start",
+				CallID: p.ToolCallID,
+				Tool:   p.Tool,
+				Params: p.Arguments,
+			})
+		case agent.EventKindToolExecEnd:
+			p, ok := evt.Payload.(agent.ToolExecEndPayload)
+			if !ok || p.ChatID != chatID {
+				continue
+			}
+			status := "success"
+			if p.IsError {
+				status = "error"
+			}
+			sendConnFrame(wc, wsServerFrame{
+				Type:       "tool_call_result",
+				CallID:     p.ToolCallID,
+				Tool:       p.Tool,
+				Status:     status,
+				DurationMs: p.Duration.Milliseconds(),
+			})
+		}
+	}
+}
+
 // wsStreamer implements bus.Streamer, pushing token/done frames into a wsConn's send channel.
 // It also accumulates the full response to persist it to the session transcript on Finalize.
 type wsStreamer struct {
@@ -532,13 +586,13 @@ type wsStreamer struct {
 }
 
 func (s *wsStreamer) Update(_ context.Context, content string) error {
-	s.accumulated.WriteString(content)
 	data, err := json.Marshal(wsServerFrame{Type: "token", Content: content})
 	if err != nil {
 		return fmt.Errorf("ws: marshal token frame: %w", err)
 	}
 	select {
 	case s.conn.sendCh <- data:
+		s.accumulated.WriteString(content)
 		return nil
 	default:
 		slog.Warn("ws: token dropped — client send buffer full")
@@ -547,7 +601,11 @@ func (s *wsStreamer) Update(_ context.Context, content string) error {
 }
 
 func (s *wsStreamer) Finalize(_ context.Context, _ string) error {
-	sendConnFrame(s.conn, wsServerFrame{Type: "done", Stats: map[string]any{}})
+	stats := map[string]any{}
+	if s.conn.droppedTokens > 0 {
+		stats["tokens_dropped"] = s.conn.droppedTokens
+	}
+	sendConnFrame(s.conn, wsServerFrame{Type: "done", Stats: stats})
 	// Mark this chatID as streamed so webchatChannel.Send() skips the duplicate
 	if s.channel != nil {
 		s.channel.markStreamed(s.chatID)

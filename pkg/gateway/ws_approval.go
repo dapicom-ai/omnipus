@@ -85,9 +85,15 @@ func (r *wsApprovalRegistry) resolve(id string, decision agent.ApprovalDecision)
 // "exec_approval_response" frame from the browser.
 type wsApprovalHook struct {
 	conn     *wsConn
+	chatID   string // the chatID this connection owns — only handle requests for this chatID
 	registry *wsApprovalRegistry
 	// timeout is the per-request approval deadline. Defaults to wsApprovalTimeout.
 	timeout time.Duration
+
+	// alwaysAllowed tracks tool names the user has approved with "Always Allow".
+	// Protected by mu. Persists for the lifetime of the WebSocket connection.
+	mu            sync.Mutex
+	alwaysAllowed map[string]bool
 }
 
 const wsApprovalTimeout = 90 * time.Second
@@ -100,22 +106,40 @@ func (h *wsApprovalHook) ApproveTool(ctx context.Context, req *agent.ToolApprova
 		return agent.Deny("no active WebSocket connection for interactive approval"), nil
 	}
 
+	// Only handle requests for this connection's chatID. Other connections' hooks
+	// will handle their own requests. Returning Allow here means "I have no opinion"
+	// so the HookManager continues to the next hook (the one that owns the chatID).
+	if h.chatID != "" && req.ChatID != "" && h.chatID != req.ChatID {
+		slog.Debug("ws: approval hook skipped — chatID mismatch", "hook_chat_id", h.chatID, "request_chat_id", req.ChatID)
+		return agent.ApprovalDecision{Verdict: agent.VerdictAllow}, nil
+	}
+
+	// Auto-approve safe tools that don't need interactive confirmation.
+	// These are read-only operations or workspace-scoped file writes that
+	// the sandbox already restricts to the agent's workspace directory.
+	if autoApproveSafeTool(req.Tool) {
+		return agent.ApprovalDecision{Verdict: agent.VerdictAllow}, nil
+	}
+
+	// Check if this tool was previously "Always Allowed" by the user.
+	h.mu.Lock()
+	allowed := h.alwaysAllowed[req.Tool]
+	h.mu.Unlock()
+	if allowed {
+		slog.Debug("ws: tool auto-approved (always allowed)", "tool", req.Tool)
+		return agent.ApprovalDecision{Verdict: agent.VerdictAlways}, nil
+	}
+
 	id := uuid.New().String()
 	ch := h.registry.register(id)
 	defer h.registry.unregister(id)
-
-	// Build the params map for the frame. ToolApprovalRequest.Arguments is map[string]any.
-	frameParams := make(map[string]any, len(req.Arguments))
-	for k, v := range req.Arguments {
-		frameParams[k] = v
-	}
 
 	// Send the approval-request frame to the browser.
 	sendConnFrame(h.conn, wsServerFrame{
 		Type:    "exec_approval_request",
 		ID:      id,
 		Tool:    req.Tool,
-		Params:  frameParams,
+		Params:  req.Arguments,
 		Message: fmt.Sprintf("Agent wants to call tool %q. Allow?", req.Tool),
 	})
 
@@ -131,6 +155,15 @@ func (h *wsApprovalHook) ApproveTool(ctx context.Context, req *agent.ToolApprova
 	select {
 	case decision := <-ch:
 		slog.Info("ws: exec_approval_response received", "id", id, "verdict", decision.Verdict)
+		if decision.Verdict == agent.VerdictAlways {
+			h.mu.Lock()
+			if h.alwaysAllowed == nil {
+				h.alwaysAllowed = make(map[string]bool)
+			}
+			h.alwaysAllowed[req.Tool] = true
+			h.mu.Unlock()
+			slog.Info("ws: tool added to always-allowed list", "tool", req.Tool)
+		}
 		return decision, nil
 	case <-timer.C:
 		slog.Warn("ws: exec_approval_request timed out — denying tool execution", "id", id, "tool", req.Tool)
@@ -147,5 +180,20 @@ func (h *wsApprovalHook) ApproveTool(ctx context.Context, req *agent.ToolApprova
 	case <-ctx.Done():
 		slog.Warn("ws: context cancelled while waiting for approval — denying tool execution", "id", id, "tool", req.Tool)
 		return agent.Deny("context cancelled"), ctx.Err()
+	}
+}
+
+// autoApproveSafeTool returns true for tools that are pre-approved without interactive confirmation.
+// These are low-risk tools: read-only operations, workspace-scoped writes, web research,
+// agent orchestration (spawn/subagent), and scheduling (cron).
+// Only exec (shell commands) requires explicit user approval.
+func autoApproveSafeTool(tool string) bool {
+	switch tool {
+	case "read_file", "list_dir", "write_file", "edit_file", "append_file",
+		"web_search", "web_fetch", "send_file", "message",
+		"find_skills", "spawn", "subagent", "spawn_status", "cron":
+		return true
+	default:
+		return false
 	}
 }

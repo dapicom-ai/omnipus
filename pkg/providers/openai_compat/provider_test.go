@@ -2,7 +2,9 @@ package openai_compat
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +17,24 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/providers/common"
 	"github.com/dapicom-ai/omnipus/pkg/providers/protocoltypes"
 )
+
+func mustNewProvider(t *testing.T, apiKey, apiBase, proxy string, opts ...Option) *Provider {
+	t.Helper()
+	p, err := NewProvider(apiKey, apiBase, proxy, opts...)
+	if err != nil {
+		t.Fatalf("NewProvider() error = %v", err)
+	}
+	return p
+}
+
+func mustNewProviderWithMaxTokensFieldAndTimeout(t *testing.T, apiKey, apiBase, proxy, maxTokensField string, requestTimeoutSeconds int) *Provider {
+	t.Helper()
+	p, err := NewProviderWithMaxTokensFieldAndTimeout(apiKey, apiBase, proxy, maxTokensField, requestTimeoutSeconds)
+	if err != nil {
+		t.Fatalf("NewProviderWithMaxTokensFieldAndTimeout() error = %v", err)
+	}
+	return p
+}
 
 func TestProviderChat_UsesMaxCompletionTokensForGLM(t *testing.T) {
 	var requestBody map[string]any
@@ -41,7 +61,7 @@ func TestProviderChat_UsesMaxCompletionTokensForGLM(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := NewProvider("key", server.URL, "")
+	p := mustNewProvider(t, "key", server.URL, "")
 	_, err := p.Chat(
 		t.Context(),
 		[]Message{{Role: "user", Content: "hi"}},
@@ -93,7 +113,7 @@ func TestProviderChat_ParsesToolCalls(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := NewProvider("key", server.URL, "")
+	p := mustNewProvider(t, "key", server.URL, "")
 	out, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
@@ -139,7 +159,7 @@ func TestProviderChat_ParsesToolCallsWithObjectArguments(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := NewProvider("key", server.URL, "")
+	p := mustNewProvider(t, "key", server.URL, "")
 	out, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
@@ -186,7 +206,7 @@ func TestProviderChat_ParsesReasoningContent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := NewProvider("key", server.URL, "")
+	p := mustNewProvider(t, "key", server.URL, "")
 	out, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "1+1=?"}}, nil, "kimi-k2.5", nil)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
@@ -223,7 +243,7 @@ func TestProviderChat_PreservesReasoningContentInHistory(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := NewProvider("key", server.URL, "")
+	p := mustNewProvider(t, "key", server.URL, "")
 
 	// Simulate a multi-turn conversation where the assistant's previous
 	// reply included reasoning_content (e.g. from kimi-k2.5).
@@ -258,7 +278,7 @@ func TestProviderChat_HTTPError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := NewProvider("key", server.URL, "")
+	p := mustNewProvider(t, "key", server.URL, "")
 	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -273,7 +293,7 @@ func TestProviderChat_JSONHTTPErrorDoesNotReportHTML(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := NewProvider("key", server.URL, "")
+	p := mustNewProvider(t, "key", server.URL, "")
 	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -322,7 +342,7 @@ func TestProviderChat_HTMLResponsesReturnHelpfulError(t *testing.T) {
 			}))
 			defer server.Close()
 
-			p := NewProvider("key", server.URL, "")
+			p := mustNewProvider(t, "key", server.URL, "")
 			_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
 			if err == nil {
 				t.Fatal("expected error, got nil")
@@ -344,7 +364,7 @@ func TestProviderChat_SuccessResponseUsesStreamingDecoder(t *testing.T) {
 	content := strings.Repeat("a", 1024)
 	body := `{"choices":[{"message":{"content":"` + content + `"},"finish_reason":"stop"}]}`
 
-	p := NewProvider("key", "https://example.com/v1", "")
+	p := mustNewProvider(t, "key", "https://example.com/v1", "")
 	p.httpClient = &http.Client{
 		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 			return &http.Response{
@@ -378,7 +398,7 @@ func TestProviderChat_LargeHTMLResponsePreviewIsTruncated(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := NewProvider("key", server.URL, "")
+	p := mustNewProvider(t, "key", server.URL, "")
 	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -412,7 +432,7 @@ func TestProviderChat_StripsMoonshotPrefixAndNormalizesKimiTemperature(t *testin
 	}))
 	defer server.Close()
 
-	p := NewProvider("key", server.URL, "")
+	p := mustNewProvider(t, "key", server.URL, "")
 	_, err := p.Chat(
 		t.Context(),
 		[]Message{{Role: "user", Content: "hi"}},
@@ -453,7 +473,7 @@ func TestProviderChat_StripsGroqOllamaDeepseekVivgridNovitaPrefixes(t *testing.T
 	}))
 	defer server.Close()
 
-	p := NewProvider("key", server.URL, "")
+	p := mustNewProvider(t, "key", server.URL, "")
 	tests := []struct {
 		name      string
 		input     string
@@ -517,7 +537,7 @@ func TestProviderChat_StripsGroqOllamaDeepseekVivgridNovitaPrefixes(t *testing.T
 
 func TestProvider_ProxyConfigured(t *testing.T) {
 	proxyURL := "http://127.0.0.1:8080"
-	p := NewProvider("key", "https://example.com", proxyURL)
+	p := mustNewProvider(t, "key", "https://example.com", proxyURL)
 
 	transport, ok := p.httpClient.Transport.(*http.Transport)
 	if !ok || transport == nil {
@@ -555,7 +575,7 @@ func TestProviderChat_AcceptsNumericOptionTypes(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := NewProvider("key", server.URL, "")
+	p := mustNewProvider(t, "key", server.URL, "")
 	_, err := p.Chat(
 		t.Context(),
 		[]Message{{Role: "user", Content: "hi"}},
@@ -597,14 +617,14 @@ func TestNormalizeModel_UsesAPIBase(t *testing.T) {
 }
 
 func TestProvider_RequestTimeoutDefault(t *testing.T) {
-	p := NewProviderWithMaxTokensFieldAndTimeout("key", "https://example.com/v1", "", "", 0)
+	p := mustNewProviderWithMaxTokensFieldAndTimeout(t, "key", "https://example.com/v1", "", "", 0)
 	if p.httpClient.Timeout != defaultRequestTimeout {
 		t.Fatalf("http timeout = %v, want %v", p.httpClient.Timeout, defaultRequestTimeout)
 	}
 }
 
 func TestProvider_RequestTimeoutOverride(t *testing.T) {
-	p := NewProviderWithMaxTokensFieldAndTimeout("key", "https://example.com/v1", "", "", 300)
+	p := mustNewProviderWithMaxTokensFieldAndTimeout(t, "key", "https://example.com/v1", "", "", 300)
 	if p.httpClient.Timeout != 300*time.Second {
 		t.Fatalf("http timeout = %v, want %v", p.httpClient.Timeout, 300*time.Second)
 	}
@@ -632,7 +652,7 @@ func TestProviderChat_ExtraBodyInjected(t *testing.T) {
 	defer server.Close()
 
 	extraBody := map[string]any{"reasoning_split": true, "custom_field": "test"}
-	p := NewProvider("key", server.URL, "", WithExtraBody(extraBody))
+	p := mustNewProvider(t, "key", server.URL, "", WithExtraBody(extraBody))
 
 	_, err := p.Chat(
 		t.Context(),
@@ -675,7 +695,7 @@ func TestProviderChat_ExtraBodyOverridesOptions(t *testing.T) {
 	defer server.Close()
 
 	extraBody := map[string]any{"temperature": 0.9}
-	p := NewProvider("key", server.URL, "", WithExtraBody(extraBody))
+	p := mustNewProvider(t, "key", server.URL, "", WithExtraBody(extraBody))
 
 	_, err := p.Chat(
 		t.Context(),
@@ -729,21 +749,21 @@ func (r *errAfterDataReadCloser) Close() error {
 }
 
 func TestProvider_FunctionalOptionMaxTokensField(t *testing.T) {
-	p := NewProvider("key", "https://example.com/v1", "", WithMaxTokensField("max_completion_tokens"))
+	p := mustNewProvider(t, "key", "https://example.com/v1", "", WithMaxTokensField("max_completion_tokens"))
 	if p.maxTokensField != "max_completion_tokens" {
 		t.Fatalf("maxTokensField = %q, want %q", p.maxTokensField, "max_completion_tokens")
 	}
 }
 
 func TestProvider_FunctionalOptionRequestTimeout(t *testing.T) {
-	p := NewProvider("key", "https://example.com/v1", "", WithRequestTimeout(45*time.Second))
+	p := mustNewProvider(t, "key", "https://example.com/v1", "", WithRequestTimeout(45*time.Second))
 	if p.httpClient.Timeout != 45*time.Second {
 		t.Fatalf("http timeout = %v, want %v", p.httpClient.Timeout, 45*time.Second)
 	}
 }
 
 func TestProvider_FunctionalOptionRequestTimeoutNonPositive(t *testing.T) {
-	p := NewProvider("key", "https://example.com/v1", "", WithRequestTimeout(-1*time.Second))
+	p := mustNewProvider(t, "key", "https://example.com/v1", "", WithRequestTimeout(-1*time.Second))
 	if p.httpClient.Timeout != defaultRequestTimeout {
 		t.Fatalf("http timeout = %v, want %v", p.httpClient.Timeout, defaultRequestTimeout)
 	}
@@ -848,7 +868,7 @@ func chatWithCacheKey(t *testing.T, apiBase string) map[string]any {
 	}))
 	defer server.Close()
 
-	p := NewProvider("key", server.URL, "")
+	p := mustNewProvider(t, "key", server.URL, "")
 	p.apiBase = apiBase
 	p.httpClient = &http.Client{
 		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
@@ -994,14 +1014,14 @@ func TestIsNativeSearchHost(t *testing.T) {
 }
 
 func TestSupportsNativeSearch_OpenAI(t *testing.T) {
-	p := NewProvider("key", "https://api.openai.com/v1", "")
+	p := mustNewProvider(t, "key", "https://api.openai.com/v1", "")
 	if !p.SupportsNativeSearch() {
 		t.Fatal("OpenAI provider should support native search")
 	}
 }
 
 func TestSupportsNativeSearch_NonOpenAI(t *testing.T) {
-	p := NewProvider("key", "https://api.deepseek.com/v1", "")
+	p := mustNewProvider(t, "key", "https://api.deepseek.com/v1", "")
 	if p.SupportsNativeSearch() {
 		t.Fatal("DeepSeek provider should not support native search")
 	}
@@ -1028,7 +1048,7 @@ func TestProviderChat_NativeSearchToolInjected(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := NewProvider("key", server.URL, "")
+	p := mustNewProvider(t, "key", server.URL, "")
 	p.apiBase = "https://api.openai.com/v1"
 	p.httpClient = &http.Client{
 		Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
@@ -1088,7 +1108,7 @@ func TestProviderChat_NativeSearchNotInjectedWithoutOption(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := NewProvider("key", server.URL, "")
+	p := mustNewProvider(t, "key", server.URL, "")
 	tools := []ToolDefinition{
 		{Type: "function", Function: ToolFunctionDefinition{Name: "web_search", Description: "search"}},
 	}
@@ -1137,7 +1157,7 @@ func TestProviderChat_NativeSearchIgnoredOnNonOpenAI(t *testing.T) {
 	defer server.Close()
 
 	// Use server.URL so host is not api.openai.com — simulates DeepSeek/other provider
-	p := NewProvider("key", server.URL, "")
+	p := mustNewProvider(t, "key", server.URL, "")
 	_, err := p.Chat(
 		t.Context(),
 		[]Message{{Role: "user", Content: "hi"}},
@@ -1152,6 +1172,378 @@ func TestProviderChat_NativeSearchIgnoredOnNonOpenAI(t *testing.T) {
 	// Should not have tools at all (no tools passed, and we must not add web_search_preview)
 	if toolsRaw, ok := requestBody["tools"]; ok {
 		t.Fatalf("tools should be omitted for non-OpenAI when only native_search was requested, got %v", toolsRaw)
+	}
+}
+
+// --- parseStreamResponse tests ---
+
+// buildSSEStream constructs a minimal SSE-format body from a slice of data payloads.
+// Each payload is rendered as "data: <payload>\n\n". A trailing "data: [DONE]\n\n"
+// is appended when done is true.
+func buildSSEStream(payloads []string, addDone bool) io.Reader {
+	var sb strings.Builder
+	for _, p := range payloads {
+		sb.WriteString("data: ")
+		sb.WriteString(p)
+		sb.WriteString("\n\n")
+	}
+	if addDone {
+		sb.WriteString("data: [DONE]\n\n")
+	}
+	return strings.NewReader(sb.String())
+}
+
+// sseChunk constructs a minimal OpenAI-compatible SSE chunk JSON for a text delta.
+func sseTextChunk(content string, finishReason *string) string {
+	type delta struct {
+		Content string `json:"content,omitempty"`
+	}
+	type choice struct {
+		Delta        delta   `json:"delta"`
+		FinishReason *string `json:"finish_reason"`
+	}
+	type chunk struct {
+		Choices []choice `json:"choices"`
+	}
+	c := chunk{Choices: []choice{{Delta: delta{Content: content}, FinishReason: finishReason}}}
+	b, _ := json.Marshal(c)
+	return string(b)
+}
+
+// strPtr returns a pointer to the given string. Used for FinishReason fields.
+func strPtr(s string) *string { return &s }
+
+// TestParseStreamResponse_TextOnly verifies that three text delta chunks plus [DONE]
+// produce the correct accumulated text, call onChunk progressively, and set finish_reason "stop".
+// Traces to: inferred from parseStreamResponse implementation in provider.go
+func TestParseStreamResponse_TextOnly(t *testing.T) {
+	// BDD: Given a stream with 3 text delta chunks and [DONE]
+	// When parseStreamResponse is called
+	// Then accumulated text matches, onChunk called progressively, finish_reason is "stop"
+	payloads := []string{
+		sseTextChunk("Hello", nil),
+		sseTextChunk(", ", nil),
+		sseTextChunk("world", strPtr("stop")),
+	}
+	reader := buildSSEStream(payloads, true)
+
+	var chunks []string
+	resp, err := parseStreamResponse(t.Context(), reader, func(acc string) {
+		chunks = append(chunks, acc)
+	})
+	if err != nil {
+		t.Fatalf("parseStreamResponse() error = %v", err)
+	}
+	if resp.Content != "Hello, world" {
+		t.Fatalf("Content = %q, want %q", resp.Content, "Hello, world")
+	}
+	if resp.FinishReason != "stop" {
+		t.Fatalf("FinishReason = %q, want %q", resp.FinishReason, "stop")
+	}
+	if len(chunks) != 3 {
+		t.Fatalf("onChunk called %d times, want 3", len(chunks))
+	}
+	if chunks[0] != "Hello" {
+		t.Fatalf("chunks[0] = %q, want %q", chunks[0], "Hello")
+	}
+	if chunks[1] != "Hello, " {
+		t.Fatalf("chunks[1] = %q, want %q", chunks[1], "Hello, ")
+	}
+	if chunks[2] != "Hello, world" {
+		t.Fatalf("chunks[2] = %q, want %q", chunks[2], "Hello, world")
+	}
+}
+
+// TestParseStreamResponse_ToolCallDeltas verifies that incremental tool call chunks
+// (index, id, name, argument fragments) are reassembled into a single tool call with
+// the correct name and parsed arguments.
+// Traces to: inferred from parseStreamResponse implementation in provider.go
+func TestParseStreamResponse_ToolCallDeltas(t *testing.T) {
+	// BDD: Given a stream with tool call chunks for index 0
+	// When parseStreamResponse is called
+	// Then the tool call has correct name and parsed arguments
+	type tcDelta struct {
+		Index    int     `json:"index"`
+		ID       string  `json:"id,omitempty"`
+		Function *struct {
+			Name      string `json:"name,omitempty"`
+			Arguments string `json:"arguments,omitempty"`
+		} `json:"function,omitempty"`
+	}
+	type delta struct {
+		ToolCalls []tcDelta `json:"tool_calls,omitempty"`
+	}
+	type choice struct {
+		Delta        delta   `json:"delta"`
+		FinishReason *string `json:"finish_reason"`
+	}
+	type chunk struct {
+		Choices []choice `json:"choices"`
+	}
+
+	marshalChunk := func(tc tcDelta, fr *string) string {
+		c := chunk{Choices: []choice{{Delta: delta{ToolCalls: []tcDelta{tc}}, FinishReason: fr}}}
+		b, _ := json.Marshal(c)
+		return string(b)
+	}
+
+	fnPtr := func(name, args string) *struct {
+		Name      string `json:"name,omitempty"`
+		Arguments string `json:"arguments,omitempty"`
+	} {
+		return &struct {
+			Name      string `json:"name,omitempty"`
+			Arguments string `json:"arguments,omitempty"`
+		}{Name: name, Arguments: args}
+	}
+
+	payloads := []string{
+		marshalChunk(tcDelta{Index: 0, ID: "call_abc", Function: fnPtr("get_weather", "")}, nil),
+		marshalChunk(tcDelta{Index: 0, Function: fnPtr("", `{"city":`)}, nil),
+		marshalChunk(tcDelta{Index: 0, Function: fnPtr("", `"SF"}`)}, strPtr("tool_calls")),
+	}
+	reader := buildSSEStream(payloads, true)
+
+	resp, err := parseStreamResponse(t.Context(), reader, nil)
+	if err != nil {
+		t.Fatalf("parseStreamResponse() error = %v", err)
+	}
+	if len(resp.ToolCalls) != 1 {
+		t.Fatalf("len(ToolCalls) = %d, want 1", len(resp.ToolCalls))
+	}
+	tc := resp.ToolCalls[0]
+	if tc.ID != "call_abc" {
+		t.Fatalf("ToolCall.ID = %q, want %q", tc.ID, "call_abc")
+	}
+	if tc.Name != "get_weather" {
+		t.Fatalf("ToolCall.Name = %q, want %q", tc.Name, "get_weather")
+	}
+	if tc.Arguments["city"] != "SF" {
+		t.Fatalf("ToolCall.Arguments[city] = %v, want %q", tc.Arguments["city"], "SF")
+	}
+}
+
+// TestParseStreamResponse_MultipleToolCalls verifies that two tool calls at index 0 and 1
+// are both returned in the response.
+// Traces to: inferred from parseStreamResponse implementation in provider.go
+func TestParseStreamResponse_MultipleToolCalls(t *testing.T) {
+	// BDD: Given a stream with tool call chunks for index 0 and 1
+	// When parseStreamResponse is called
+	// Then both tool calls are returned
+	type tcDelta struct {
+		Index    int    `json:"index"`
+		ID       string `json:"id,omitempty"`
+		Function *struct {
+			Name      string `json:"name,omitempty"`
+			Arguments string `json:"arguments,omitempty"`
+		} `json:"function,omitempty"`
+	}
+	type delta struct {
+		ToolCalls []tcDelta `json:"tool_calls,omitempty"`
+	}
+	type choice struct {
+		Delta        delta   `json:"delta"`
+		FinishReason *string `json:"finish_reason"`
+	}
+	type chunkT struct {
+		Choices []choice `json:"choices"`
+	}
+
+	fnPtr := func(name, args string) *struct {
+		Name      string `json:"name,omitempty"`
+		Arguments string `json:"arguments,omitempty"`
+	} {
+		return &struct {
+			Name      string `json:"name,omitempty"`
+			Arguments string `json:"arguments,omitempty"`
+		}{Name: name, Arguments: args}
+	}
+
+	marshalChunks := func(tcs []tcDelta, fr *string) string {
+		c := chunkT{Choices: []choice{{Delta: delta{ToolCalls: tcs}, FinishReason: fr}}}
+		b, _ := json.Marshal(c)
+		return string(b)
+	}
+
+	payloads := []string{
+		marshalChunks([]tcDelta{
+			{Index: 0, ID: "call_0", Function: fnPtr("tool_alpha", `{"x":1}`)},
+			{Index: 1, ID: "call_1", Function: fnPtr("tool_beta", `{"y":2}`)},
+		}, strPtr("tool_calls")),
+	}
+	reader := buildSSEStream(payloads, true)
+
+	resp, err := parseStreamResponse(t.Context(), reader, nil)
+	if err != nil {
+		t.Fatalf("parseStreamResponse() error = %v", err)
+	}
+	if len(resp.ToolCalls) != 2 {
+		t.Fatalf("len(ToolCalls) = %d, want 2", len(resp.ToolCalls))
+	}
+	if resp.ToolCalls[0].Name != "tool_alpha" {
+		t.Fatalf("ToolCalls[0].Name = %q, want %q", resp.ToolCalls[0].Name, "tool_alpha")
+	}
+	if resp.ToolCalls[1].Name != "tool_beta" {
+		t.Fatalf("ToolCalls[1].Name = %q, want %q", resp.ToolCalls[1].Name, "tool_beta")
+	}
+}
+
+// TestParseStreamResponse_MalformedChunkSkipped verifies that an invalid JSON line between
+// valid chunks is skipped and text still accumulates correctly with no error returned.
+// Traces to: inferred from parseStreamResponse implementation in provider.go
+func TestParseStreamResponse_MalformedChunkSkipped(t *testing.T) {
+	// BDD: Given a stream with one invalid JSON line between valid chunks
+	// When parseStreamResponse is called
+	// Then text accumulates correctly and no error is returned
+	payloads := []string{
+		sseTextChunk("good", nil),
+		`{bad json :::`,
+		sseTextChunk(" chunk", strPtr("stop")),
+	}
+	reader := buildSSEStream(payloads, true)
+
+	resp, err := parseStreamResponse(t.Context(), reader, nil)
+	if err != nil {
+		t.Fatalf("parseStreamResponse() error = %v", err)
+	}
+	if resp.Content != "good chunk" {
+		t.Fatalf("Content = %q, want %q", resp.Content, "good chunk")
+	}
+}
+
+// TestParseStreamResponse_ContextCancellation verifies that cancelling the context after
+// the first chunk returns context.Canceled.
+// Traces to: inferred from parseStreamResponse implementation in provider.go
+func TestParseStreamResponse_ContextCancellation(t *testing.T) {
+	// BDD: Given a context that gets cancelled after the first chunk
+	// When parseStreamResponse processes the stream
+	// Then context.Canceled error is returned
+	// Build a stream that will block after the first chunk using a pipe.
+	pr, pw := io.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Write first chunk, delay, cancel context, then close pipe.
+	go func() {
+		firstChunk := sseTextChunk("first", nil)
+		fmt.Fprintf(pw, "data: %s\n\n", firstChunk)
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+		time.Sleep(20 * time.Millisecond)
+		pw.Close()
+	}()
+
+	resp, err := parseStreamResponse(ctx, pr, nil)
+	// Race between context cancel and pipe EOF — both outcomes are valid:
+	// - context.Canceled if ctx check fires before EOF
+	// - nil error with partial content if EOF arrives first
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("error = %v, want context.Canceled or nil", err)
+		}
+		return
+	}
+	if resp.Content != "first" {
+		t.Fatalf("Content = %q, want %q", resp.Content, "first")
+	}
+}
+
+// TestParseStreamResponse_EmptyStream verifies that a stream containing only [DONE]
+// produces empty content, no error, and finish_reason "stop".
+// Traces to: inferred from parseStreamResponse implementation in provider.go
+func TestParseStreamResponse_EmptyStream(t *testing.T) {
+	// BDD: Given a stream with only [DONE]
+	// When parseStreamResponse is called
+	// Then empty content, no error, finish_reason "stop"
+	reader := buildSSEStream(nil, true)
+
+	resp, err := parseStreamResponse(t.Context(), reader, nil)
+	if err != nil {
+		t.Fatalf("parseStreamResponse() error = %v", err)
+	}
+	if resp.Content != "" {
+		t.Fatalf("Content = %q, want empty", resp.Content)
+	}
+	if resp.FinishReason != "stop" {
+		t.Fatalf("FinishReason = %q, want %q", resp.FinishReason, "stop")
+	}
+}
+
+// TestParseStreamResponse_FinishReasonUnknown verifies that a stream with text content but
+// no finish_reason in any chunk and no [DONE] returns finish_reason "unknown".
+// Traces to: inferred from parseStreamResponse implementation in provider.go (fix 14)
+func TestParseStreamResponse_FinishReasonUnknown(t *testing.T) {
+	// BDD: Given a stream with text but NO finish_reason and no [DONE]
+	// When parseStreamResponse is called
+	// Then finish_reason is "unknown"
+	payloads := []string{
+		sseTextChunk("partial", nil),
+	}
+	// Do NOT add [DONE] and do NOT provide a finish_reason.
+	reader := buildSSEStream(payloads, false)
+
+	resp, err := parseStreamResponse(t.Context(), reader, nil)
+	if err != nil {
+		t.Fatalf("parseStreamResponse() error = %v", err)
+	}
+	if resp.FinishReason != "unknown" {
+		t.Fatalf("FinishReason = %q, want %q", resp.FinishReason, "unknown")
+	}
+}
+
+// TestParseStreamResponse_UsageInFinalChunk verifies that a usage object in the last
+// chunk is captured in the response.
+// Traces to: inferred from parseStreamResponse implementation in provider.go
+func TestParseStreamResponse_UsageInFinalChunk(t *testing.T) {
+	// BDD: Given a stream with a "usage" object in the last chunk
+	// When parseStreamResponse is called
+	// Then usage is captured in the response
+	type choice struct {
+		Delta        struct{}    `json:"delta"`
+		FinishReason *string     `json:"finish_reason"`
+	}
+	type usageT struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	}
+	type chunkWithUsage struct {
+		Choices []choice `json:"choices"`
+		Usage   *usageT  `json:"usage,omitempty"`
+	}
+
+	textChunk := sseTextChunk("hello", strPtr("stop"))
+
+	finalChunk := chunkWithUsage{
+		Choices: []choice{{Delta: struct{}{}, FinishReason: nil}},
+		Usage: &usageT{
+			PromptTokens:     10,
+			CompletionTokens: 5,
+			TotalTokens:      15,
+		},
+	}
+	finalChunkJSON, _ := json.Marshal(finalChunk)
+
+	payloads := []string{
+		textChunk,
+		string(finalChunkJSON),
+	}
+	reader := buildSSEStream(payloads, true)
+
+	resp, err := parseStreamResponse(t.Context(), reader, nil)
+	if err != nil {
+		t.Fatalf("parseStreamResponse() error = %v", err)
+	}
+	if resp.Usage == nil {
+		t.Fatal("Usage is nil, expected usage to be captured")
+	}
+	if resp.Usage.PromptTokens != 10 {
+		t.Fatalf("Usage.PromptTokens = %d, want 10", resp.Usage.PromptTokens)
+	}
+	if resp.Usage.CompletionTokens != 5 {
+		t.Fatalf("Usage.CompletionTokens = %d, want 5", resp.Usage.CompletionTokens)
+	}
+	if resp.Usage.TotalTokens != 15 {
+		t.Fatalf("Usage.TotalTokens = %d, want 15", resp.Usage.TotalTokens)
 	}
 }
 

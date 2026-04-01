@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dapicom-ai/omnipus/pkg/bus"
+	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
@@ -79,7 +80,7 @@ type turnState struct {
 	restorePointSummary string
 	persistedMessages   []providers.Message
 
-	// SubTurn support (from HEAD)
+	// SubTurn support
 	depth                int                    // SubTurn depth (0 for root turn)
 	parentTurnID         string                 // Parent turn ID (empty for root turn)
 	childTurnIDs         []string               // Child turn IDs
@@ -105,6 +106,10 @@ type turnState struct {
 
 	// Back-reference to the owning AgentLoop (set for SubTurns only, used for hard abort cascade)
 	al *AgentLoop
+
+	// Last streamer used during this turn. Finalized once at turn end
+	// to send the "done" frame, preventing premature done signals mid-turn.
+	lastStreamer bus.Streamer
 }
 
 func newTurnState(agent *AgentInstance, opts processOptions, scope turnEventScope) *turnState {
@@ -263,6 +268,24 @@ func (ts *turnState) setProviderCancel(cancel context.CancelFunc) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 	ts.providerCancel = cancel
+}
+
+func (ts *turnState) setLastStreamer(s bus.Streamer) {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	ts.lastStreamer = s
+}
+
+func (ts *turnState) finalizeStreamer(ctx context.Context) {
+	ts.mu.Lock()
+	s := ts.lastStreamer
+	ts.lastStreamer = nil
+	ts.mu.Unlock()
+	if s != nil {
+		if err := s.Finalize(ctx, ""); err != nil {
+			logger.WarnCF("agent", "Turn-end streaming finalize error", map[string]any{"error": err.Error()})
+		}
+	}
 }
 
 func (ts *turnState) clearProviderCancel(_ context.CancelFunc) {
@@ -461,7 +484,7 @@ func (ts *turnState) IsParentEnded() bool {
 	if ts.parentTurnState == nil {
 		return false
 	}
-	return ts.parentTurnState.parentEnded.Load()
+	return ts.parentTurnState.isFinished.Load()
 }
 
 // GetLastFinishReason returns the last LLM finish_reason

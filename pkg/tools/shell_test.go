@@ -22,7 +22,7 @@ func TestShellTool_Success(t *testing.T) {
 		t.Errorf("unable to configure exec tool: %s", err)
 	}
 
-	ctx := context.Background()
+	ctx := WithToolContext(context.Background(), "cli", "")
 	args := map[string]any{
 		"action":  "run",
 		"command": "echo 'hello world'",
@@ -53,7 +53,7 @@ func TestShellTool_Failure(t *testing.T) {
 		t.Errorf("unable to configure exec tool: %s", err)
 	}
 
-	ctx := context.Background()
+	ctx := WithToolContext(context.Background(), "cli", "")
 	args := map[string]any{
 		"action":  "run",
 		"command": "ls /nonexistent_directory_12345",
@@ -86,7 +86,7 @@ func TestShellTool_Timeout(t *testing.T) {
 
 	tool.SetTimeout(100 * time.Millisecond)
 
-	ctx := context.Background()
+	ctx := WithToolContext(context.Background(), "cli", "")
 	args := map[string]any{
 		"action":  "run",
 		"command": "sleep 10",
@@ -117,7 +117,7 @@ func TestShellTool_WorkingDir(t *testing.T) {
 		t.Errorf("unable to configure exec tool: %s", err)
 	}
 
-	ctx := context.Background()
+	ctx := WithToolContext(context.Background(), "cli", "")
 	args := map[string]any{
 		"action":  "run",
 		"command": "cat test.txt",
@@ -142,7 +142,7 @@ func TestShellTool_DangerousCommand(t *testing.T) {
 		t.Errorf("unable to configure exec tool: %s", err)
 	}
 
-	ctx := context.Background()
+	ctx := WithToolContext(context.Background(), "cli", "")
 	args := map[string]any{
 		"action":  "run",
 		"command": "rm -rf /",
@@ -166,7 +166,7 @@ func TestShellTool_DangerousCommand_KillBlocked(t *testing.T) {
 		t.Errorf("unable to configure exec tool: %s", err)
 	}
 
-	ctx := context.Background()
+	ctx := WithToolContext(context.Background(), "cli", "")
 	args := map[string]any{
 		"action":  "run",
 		"command": "kill 12345",
@@ -188,7 +188,7 @@ func TestShellTool_MissingCommand(t *testing.T) {
 		t.Errorf("unable to configure exec tool: %s", err)
 	}
 
-	ctx := context.Background()
+	ctx := WithToolContext(context.Background(), "cli", "")
 	args := map[string]any{}
 
 	result := tool.Execute(ctx, args)
@@ -206,7 +206,7 @@ func TestShellTool_StderrCapture(t *testing.T) {
 		t.Errorf("unable to configure exec tool: %s", err)
 	}
 
-	ctx := context.Background()
+	ctx := WithToolContext(context.Background(), "cli", "")
 	args := map[string]any{
 		"action":  "run",
 		"command": "sh -c 'echo stdout; echo stderr >&2'",
@@ -230,7 +230,7 @@ func TestShellTool_OutputTruncation(t *testing.T) {
 		t.Errorf("unable to configure exec tool: %s", err)
 	}
 
-	ctx := context.Background()
+	ctx := WithToolContext(context.Background(), "cli", "")
 	// Generate long output (>10000 chars)
 	args := map[string]any{
 		"action":  "run",
@@ -262,7 +262,7 @@ func TestShellTool_WorkingDir_OutsideWorkspace(t *testing.T) {
 		t.Errorf("unable to configure exec tool: %s", err)
 	}
 
-	result := tool.Execute(context.Background(), map[string]any{
+	result := tool.Execute(WithToolContext(context.Background(), "cli", ""), map[string]any{
 		"action":  "run",
 		"command": "pwd",
 		"cwd":     outsideDir,
@@ -301,7 +301,7 @@ func TestShellTool_WorkingDir_SymlinkEscape(t *testing.T) {
 		t.Errorf("unable to configure exec tool: %s", err)
 	}
 
-	result := tool.Execute(context.Background(), map[string]any{
+	result := tool.Execute(WithToolContext(context.Background(), "cli", ""), map[string]any{
 		"action":  "run",
 		"command": "cat secret.txt",
 		"cwd":     link,
@@ -404,7 +404,7 @@ func TestShellTool_RestrictToWorkspace(t *testing.T) {
 
 	tool.SetRestrictToWorkspace(true)
 
-	ctx := context.Background()
+	ctx := WithToolContext(context.Background(), "cli", "")
 	args := map[string]any{
 		"action":  "run",
 		"command": "cat ../../etc/passwd",
@@ -443,8 +443,9 @@ func TestShellTool_DevNullAllowed(t *testing.T) {
 		"find " + tmpDir + " -name '*.go' 2>/dev/null",
 	}
 
+	cliCtx := WithToolContext(context.Background(), "cli", "")
 	for _, cmd := range commands {
-		result := tool.Execute(context.Background(), map[string]any{"action": "run", "command": cmd})
+		result := tool.Execute(cliCtx, map[string]any{"action": "run", "command": cmd})
 		if result.IsError && strings.Contains(result.ForLLM, "blocked") {
 			t.Errorf("command should not be blocked: %s\n  error: %s", cmd, result.ForLLM)
 		}
@@ -496,8 +497,9 @@ func TestShellTool_SafePathsInWorkspaceRestriction(t *testing.T) {
 		"dd if=/dev/zero bs=1 count=1",
 	}
 
+	cliCtx := WithToolContext(context.Background(), "cli", "")
 	for _, cmd := range commands {
-		result := tool.Execute(context.Background(), map[string]any{"action": "run", "command": cmd})
+		result := tool.Execute(cliCtx, map[string]any{"action": "run", "command": cmd})
 		if result.IsError && strings.Contains(result.ForLLM, "path outside working dir") {
 			t.Errorf("safe path should not be blocked by workspace check: %s\n  error: %s", cmd, result.ForLLM)
 		}
@@ -511,7 +513,7 @@ func TestShellTool_ExitCodeDetails(t *testing.T) {
 		t.Fatalf("unable to configure exec tool: %s", err)
 	}
 
-	ctx := context.Background()
+	ctx := WithToolContext(context.Background(), "cli", "")
 	args := map[string]any{
 		"action":  "run",
 		"command": "sh -c 'exit 42'",
@@ -547,7 +549,7 @@ func TestShellTool_TimeoutWithPartialOutput(t *testing.T) {
 
 	tool.SetTimeout(1 * time.Second) // Give more time for echo to complete
 
-	ctx := context.Background()
+	ctx := WithToolContext(context.Background(), "cli", "")
 	// Use a command that outputs immediately then sleeps
 	args := map[string]any{
 		"action":  "run",
@@ -625,7 +627,7 @@ func TestShellTool_URLsNotBlocked(t *testing.T) {
 	}
 
 	for _, cmd := range commands {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(WithToolContext(context.Background(), "cli", ""), 2*time.Second)
 		result := tool.Execute(ctx, map[string]any{"action": "run", "command": cmd})
 		cancel()
 		if result.IsError && strings.Contains(result.ForLLM, "path outside working dir") {
@@ -651,8 +653,9 @@ func TestShellTool_FileURISandboxing(t *testing.T) {
 		"cat file:///root/.ssh/id_rsa",
 	}
 
+	cliCtx := WithToolContext(context.Background(), "cli", "")
 	for _, cmd := range blockedCommands {
-		result := tool.Execute(context.Background(), map[string]any{"action": "run", "command": cmd})
+		result := tool.Execute(cliCtx, map[string]any{"action": "run", "command": cmd})
 		if !result.IsError || !strings.Contains(result.ForLLM, "path outside working dir") {
 			t.Errorf("file:// URI outside workspace should be blocked: %s", cmd)
 		}
@@ -670,7 +673,7 @@ func TestShellTool_FileURISandboxing(t *testing.T) {
 	}
 
 	for _, cmd := range allowedCommands {
-		result := tool.Execute(context.Background(), map[string]any{"action": "run", "command": cmd})
+		result := tool.Execute(cliCtx, map[string]any{"action": "run", "command": cmd})
 		if result.IsError && strings.Contains(result.ForLLM, "path outside working dir") {
 			t.Errorf("file:// URI inside workspace should be allowed: %s\n  error: %s", cmd, result.ForLLM)
 		}
@@ -695,8 +698,9 @@ func TestShellTool_URLBypassPrevented(t *testing.T) {
 		"curl https://host/file && ls //etc",
 	}
 
+	cliCtx := WithToolContext(context.Background(), "cli", "")
 	for _, cmd := range blockedCommands {
-		result := tool.Execute(context.Background(), map[string]any{"action": "run", "command": cmd})
+		result := tool.Execute(cliCtx, map[string]any{"action": "run", "command": cmd})
 		if !result.IsError || !strings.Contains(result.ForLLM, "path outside working dir") {
 			t.Errorf("bypass attempt should be blocked: %q\n  got: %s", cmd, result.ForLLM)
 		}
@@ -707,7 +711,7 @@ func TestShellTool_Background_ReturnsImmediately(t *testing.T) {
 	tool, err := NewExecTool("", false)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := WithToolContext(context.Background(), "cli", "")
 	args := map[string]any{
 		"action":     "run",
 		"command":    "sleep 5",
@@ -730,7 +734,7 @@ func TestShellTool_List_Empty(t *testing.T) {
 	sm := NewSessionManager()
 	tool.sessionManager = sm
 
-	ctx := context.Background()
+	ctx := WithToolContext(context.Background(), "cli", "")
 	args := map[string]any{"action": "list"}
 
 	result := tool.Execute(ctx, args)
@@ -1407,7 +1411,7 @@ func TestShellTool_Action_Run_Sync(t *testing.T) {
 	tool, err := NewExecTool("", false)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := WithToolContext(context.Background(), "cli", "")
 
 	result := tool.Execute(ctx, map[string]any{
 		"action":  "run",
@@ -1424,7 +1428,7 @@ func TestShellTool_Background_ReadAfterExit(t *testing.T) {
 	tool, err := NewExecTool("", false)
 	require.NoError(t, err)
 
-	ctx := context.Background()
+	ctx := WithToolContext(context.Background(), "cli", "")
 
 	// Start a background command that produces output and exits quickly
 	runResult := tool.Execute(ctx, map[string]any{

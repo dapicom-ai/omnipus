@@ -50,7 +50,9 @@ export function GenericToolCall({
 
   const isRunning = status.type === 'running'
   const isError = status.type === 'incomplete' || !!error
-  const isCancelled = status.type === 'incomplete' && (status as { reason?: string }).reason === 'cancelled'
+  // AssistantUI's MessagePartStatus does not expose `reason` on the `incomplete` variant in its
+  // public types, so we narrow with `'reason' in status` before casting to access it safely.
+  const isCancelled = status.type === 'incomplete' && 'reason' in status && (status as { reason?: string }).reason === 'cancelled'
 
   const statusConfig = isRunning
     ? { icon: <ArrowsClockwise size={12} className="animate-spin text-[var(--color-accent)]" />, label: 'Running...', border: 'border-[var(--color-border)]' }

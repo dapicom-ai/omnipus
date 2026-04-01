@@ -299,3 +299,101 @@ func TestWSHandlerAuthRequired_InvalidTokenRejected(t *testing.T) {
 	require.NoError(t, json.Unmarshal(resp, &frame))
 	assert.Equal(t, "error", frame.Type, "must receive error frame for bad token")
 }
+
+// --- Suite 5: eventForwarder unit tests ---
+
+// TestEventForwarder_ForwardsToolExecStart verifies that a ToolExecStartPayload event
+// with a matching chatID is forwarded to the wsConn's sendCh as a "tool_call_start" frame.
+// BDD: Given an eventForwarder goroutine subscribed to an EventBus with chatID "chat-1",
+// When a ToolExecStartPayload event for chatID "chat-1" is emitted,
+// Then a wsServerFrame with type "tool_call_start" appears on sendCh.
+// Traces to: pkg/gateway/websocket.go — WSHandler.eventForwarder
+func TestEventForwarder_ForwardsToolExecStart(t *testing.T) {
+	handler, _, _ := newTestWSHandler(t)
+
+	wc := makeTestConn()
+	chatID := "chat-1"
+
+	eb := agent.NewEventBus()
+	t.Cleanup(eb.Close)
+
+	sub := eb.Subscribe(16)
+	eventDone := make(chan struct{})
+
+	go handler.eventForwarder(wc, chatID, sub, eventDone)
+
+	eb.Emit(agent.Event{
+		Kind: agent.EventKindToolExecStart,
+		Payload: agent.ToolExecStartPayload{
+			ToolCallID: "call-xyz",
+			ChatID:     chatID,
+			Tool:       "read_file",
+			Arguments:  map[string]any{"path": "/tmp/test.txt"},
+		},
+	})
+
+	select {
+	case raw := <-wc.sendCh:
+		var f wsServerFrame
+		require.NoError(t, json.Unmarshal(raw, &f), "sendCh frame must be valid JSON")
+		assert.Equal(t, "tool_call_start", f.Type, "frame type must be tool_call_start")
+		assert.Equal(t, "call-xyz", f.CallID, "CallID must match ToolCallID")
+		assert.Equal(t, "read_file", f.Tool, "Tool must match payload Tool")
+	case <-time.After(2 * time.Second):
+		t.Fatal("no frame received on sendCh within 2s — eventForwarder did not forward the event")
+	}
+
+	// Unsubscribe to drain the goroutine cleanly.
+	eb.Unsubscribe(sub.ID)
+	select {
+	case <-eventDone:
+	case <-time.After(1 * time.Second):
+		t.Fatal("eventForwarder goroutine did not exit after subscription closed")
+	}
+}
+
+// TestEventForwarder_FiltersByChatID verifies that a ToolExecStartPayload event for a
+// different chatID is NOT forwarded to the wsConn's sendCh.
+// BDD: Given an eventForwarder subscribed with chatID "chat-1",
+// When a ToolExecStartPayload event for chatID "chat-other" is emitted,
+// Then no frame arrives on sendCh within the timeout.
+// Traces to: pkg/gateway/websocket.go — WSHandler.eventForwarder chatID filter
+func TestEventForwarder_FiltersByChatID(t *testing.T) {
+	handler, _, _ := newTestWSHandler(t)
+
+	wc := makeTestConn()
+	chatID := "chat-1"
+
+	eb := agent.NewEventBus()
+	t.Cleanup(eb.Close)
+
+	sub := eb.Subscribe(16)
+	eventDone := make(chan struct{})
+
+	go handler.eventForwarder(wc, chatID, sub, eventDone)
+
+	// Emit an event for a different chatID — must NOT be forwarded.
+	eb.Emit(agent.Event{
+		Kind: agent.EventKindToolExecStart,
+		Payload: agent.ToolExecStartPayload{
+			ToolCallID: "call-other",
+			ChatID:     "chat-other", // non-matching
+			Tool:       "exec",
+			Arguments:  map[string]any{"command": "ls"},
+		},
+	})
+
+	select {
+	case raw := <-wc.sendCh:
+		t.Fatalf("unexpected frame on sendCh — eventForwarder must filter by chatID, got: %s", string(raw))
+	case <-time.After(150 * time.Millisecond):
+		// Correct — no frame should arrive for a non-matching chatID.
+	}
+
+	eb.Unsubscribe(sub.ID)
+	select {
+	case <-eventDone:
+	case <-time.After(1 * time.Second):
+		t.Fatal("eventForwarder goroutine did not exit after subscription closed")
+	}
+}

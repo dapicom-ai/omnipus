@@ -1,9 +1,13 @@
 package agent
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/dapicom-ai/omnipus/pkg/bus"
 )
 
 // TestGetActiveAgentIDs_Empty verifies that GetActiveAgentIDs returns an empty (or nil)
@@ -89,4 +93,57 @@ func TestGetActiveAgentIDs_MultipleDifferentAgents(t *testing.T) {
 	assert.Contains(t, ids, "agent-a", "agent-a must be in the result")
 	assert.Contains(t, ids, "agent-b", "agent-b must be in the result")
 	assert.Len(t, ids, 2, "must return exactly two distinct agent IDs")
+}
+
+// --- Suite 4: finalizeStreamer unit tests ---
+
+// mockStreamer is a bus.Streamer used in turn finalize tests.
+// It counts Finalize calls so tests can assert idempotency.
+type mockStreamer struct {
+	finalizeCalled int
+}
+
+func (m *mockStreamer) Update(_ context.Context, _ string) error { return nil }
+func (m *mockStreamer) Finalize(_ context.Context, _ string) error {
+	m.finalizeCalled++
+	return nil
+}
+func (m *mockStreamer) Cancel(_ context.Context) {}
+
+// Compile-time assertion that mockStreamer satisfies bus.Streamer.
+var _ bus.Streamer = (*mockStreamer)(nil)
+
+// TestTurnState_FinalizeStreamer verifies that finalizeStreamer calls Finalize exactly once
+// on the active streamer and clears it so a second call is a no-op.
+// BDD: Given a turnState with an active streamer,
+// When finalizeStreamer is called twice,
+// Then Finalize is invoked exactly once (second call is a no-op because lastStreamer is nil).
+// Traces to: pkg/agent/turn.go — turnState.finalizeStreamer
+func TestTurnState_FinalizeStreamer(t *testing.T) {
+	ts := &turnState{}
+	ms := &mockStreamer{}
+
+	ts.setLastStreamer(ms)
+	ts.finalizeStreamer(context.Background())
+
+	require.Equal(t, 1, ms.finalizeCalled, "Finalize must be called exactly once after setLastStreamer")
+
+	// Second call must be a no-op — lastStreamer was cleared on first finalize.
+	ts.finalizeStreamer(context.Background())
+	assert.Equal(t, 1, ms.finalizeCalled, "second finalizeStreamer call must not invoke Finalize again")
+}
+
+// TestTurnState_FinalizeStreamer_Nil verifies that finalizeStreamer is safe to call
+// when no streamer has been set (lastStreamer is nil).
+// BDD: Given a turnState with no active streamer,
+// When finalizeStreamer is called,
+// Then no panic occurs.
+// Traces to: pkg/agent/turn.go — turnState.finalizeStreamer nil guard
+func TestTurnState_FinalizeStreamer_Nil(t *testing.T) {
+	ts := &turnState{}
+
+	// Must not panic when lastStreamer is nil.
+	require.NotPanics(t, func() {
+		ts.finalizeStreamer(context.Background())
+	}, "finalizeStreamer must not panic when no streamer is set")
 }

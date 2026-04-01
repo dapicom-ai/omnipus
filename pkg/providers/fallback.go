@@ -39,6 +39,9 @@ type FallbackAttempt struct {
 
 // NewFallbackChain creates a new fallback chain with the given cooldown tracker.
 func NewFallbackChain(cooldown *CooldownTracker) *FallbackChain {
+	if cooldown == nil {
+		panic("cooldown must not be nil")
+	}
 	return &FallbackChain{cooldown: cooldown}
 }
 

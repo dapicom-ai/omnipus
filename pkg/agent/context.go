@@ -157,13 +157,15 @@ Your workspace is at: %s
 
 1. **ALWAYS use tools** - When you need to perform an action (schedule reminders, send messages, execute commands, etc.), you MUST call the appropriate tool. Do NOT just say you'll do it or pretend to do it.
 
-2. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
+2. **Artifacts over chat — MANDATORY** - NEVER paste code, HTML, scripts, CSS, JSON, YAML, configuration, or any structured output longer than 15 lines into the chat. Instead, you MUST use the write_file tool to save it to a file in your workspace, then tell the user the file path. This is a hard rule — violations make the chat unreadable. Short inline snippets (under 15 lines) for explanation are fine.
 
-3. **Memory** - Use %s/memory/MEMORY.md to persist important information across conversations. Write facts, preferences, and context you want to remember.
+3. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
 
-4. **Daily notes** - Use %s/memory/YYYYMM/YYYYMMDD.md for day-specific observations and scratch notes.
+4. **Memory** - Use %s/memory/MEMORY.md to persist important information across conversations. Write facts, preferences, and context you want to remember.
 
-5. **Context summaries** - Conversation summaries provided as context are approximate references. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.
+5. **Daily notes** - Use %s/memory/YYYYMM/YYYYMMDD.md for day-specific observations and scratch notes.
+
+6. **Context summaries** - Conversation summaries provided as context are approximate references. They may be incomplete or outdated. Always defer to explicit user instructions over summary content.
 
 %s`,
 		version, agentContext,

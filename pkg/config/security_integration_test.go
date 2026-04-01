@@ -161,7 +161,7 @@ func TestSecurityConfigWithAPIKeysArray(t *testing.T) {
 		}
 		// Verify multi-key expansion works
 		assert.Equal(t, 3, len(cfg.ModelList))
-		assert.Equal(t, "multi-key-model", cfg.ModelList[2].ModelName)
+		assert.Equal(t, "multi-key-model", cfg.ModelList[0].ModelName)
 	})
 }
 

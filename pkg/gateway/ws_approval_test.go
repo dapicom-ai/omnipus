@@ -464,6 +464,103 @@ func TestHandleApprovalResponse_Always(t *testing.T) {
 	}
 }
 
+// --- autoApproveSafeTool unit tests (Test Suite 2) ---
+
+// TestAutoApproveSafeTool_AllSafeTools verifies that every tool in the allow-list
+// returns true from autoApproveSafeTool.
+// BDD: Given each tool in the pre-approved list,
+// When autoApproveSafeTool is called,
+// Then it returns true.
+// Traces to: ws_approval.go — autoApproveSafeTool allow-list
+func TestAutoApproveSafeTool_AllSafeTools(t *testing.T) {
+	safeTools := []string{
+		"read_file",
+		"list_dir",
+		"write_file",
+		"edit_file",
+		"append_file",
+		"web_search",
+		"web_fetch",
+		"send_file",
+		"message",
+		"find_skills",
+		"spawn",
+		"subagent",
+		"spawn_status",
+		"cron",
+	}
+
+	for _, tool := range safeTools {
+		tool := tool // capture loop variable
+		t.Run(tool, func(t *testing.T) {
+			if !autoApproveSafeTool(tool) {
+				t.Errorf("autoApproveSafeTool(%q) = false, want true", tool)
+			}
+		})
+	}
+}
+
+// TestAutoApproveSafeTool_ExecRequiresApproval verifies that "exec" (shell commands)
+// requires explicit user approval and is not auto-approved.
+// BDD: Given tool name "exec",
+// When autoApproveSafeTool is called,
+// Then it returns false.
+// Traces to: ws_approval.go — autoApproveSafeTool default case
+func TestAutoApproveSafeTool_ExecRequiresApproval(t *testing.T) {
+	if autoApproveSafeTool("exec") {
+		t.Error("autoApproveSafeTool(\"exec\") = true, want false — exec requires user approval")
+	}
+}
+
+// TestAutoApproveSafeTool_UnknownToolRequiresApproval verifies that an unrecognized
+// tool name is not auto-approved.
+// BDD: Given an unknown tool name,
+// When autoApproveSafeTool is called,
+// Then it returns false.
+// Traces to: ws_approval.go — autoApproveSafeTool default case
+func TestAutoApproveSafeTool_UnknownToolRequiresApproval(t *testing.T) {
+	if autoApproveSafeTool("unknown_tool") {
+		t.Error("autoApproveSafeTool(\"unknown_tool\") = true, want false")
+	}
+}
+
+// --- Fix: TestApprovalHook_HappyPath must exercise the registry/resolution round-trip ---
+
+// TestApprovalHook_HappyPath_ExecTool verifies that ApproveTool exercises the actual
+// approval registry/resolution round-trip for a tool that requires interactive approval.
+// Using "exec" (not "read_file") ensures the auto-approve path is bypassed and the
+// approval flow is actually tested.
+// BDD: Given a connected wsApprovalHook with timeout=5s,
+// When ApproveTool is called with tool="exec" and the browser resolves with VerdictAllow,
+// Then IsApproved() is true and error is nil.
+// Traces to: vivid-roaming-planet.md line 145 (corrected tool name to exercise approval flow)
+func TestApprovalHook_HappyPath_ExecTool(t *testing.T) {
+	conn := makeTestConn()
+	hook, reg := makeTestHook(conn, 5*time.Second)
+
+	req := &agent.ToolApprovalRequest{Tool: "exec", Arguments: map[string]any{"command": "ls -la"}}
+
+	// Resolve asynchronously: read the approval-request frame from sendCh to extract the ID,
+	// then call registry.resolve.
+	go func() {
+		select {
+		case frameBytes := <-conn.sendCh:
+			var frame wsServerFrame
+			if err := unmarshalWSServerFrame(frameBytes, &frame); err != nil {
+				return
+			}
+			if frame.Type == "exec_approval_request" {
+				reg.resolve(frame.ID, agent.ApprovalDecision{Verdict: agent.VerdictAllow})
+			}
+		case <-time.After(2 * time.Second):
+		}
+	}()
+
+	decision, err := hook.ApproveTool(context.Background(), req)
+	require.NoError(t, err)
+	assert.True(t, decision.IsApproved(), "VerdictAllow must be approved")
+}
+
 // TestHandleApprovalResponse_EmptyID verifies that an exec_approval_response with an
 // empty ID does not crash the server and the connection remains open.
 // BDD: Given an active WebSocket connection,

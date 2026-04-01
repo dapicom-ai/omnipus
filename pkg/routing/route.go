@@ -123,7 +123,13 @@ func (r *RouteResolver) filterBindings(channel, accountID string) []config.Agent
 	var filtered []config.AgentBinding
 	for _, b := range r.cfg.Bindings {
 		matchChannel := strings.ToLower(strings.TrimSpace(b.Match.Channel))
-		if matchChannel == "" || matchChannel != channel {
+		if matchChannel == "" {
+			logger.WarnCF("routing", "Binding skipped: match.channel is empty", map[string]any{
+				"agent_id": b.AgentID,
+			})
+			continue
+		}
+		if matchChannel != channel {
 			continue
 		}
 		if !matchesAccountID(b.Match.AccountID, accountID) {
@@ -156,6 +162,7 @@ func (r *RouteResolver) findPeerMatch(bindings []config.AgentBinding, peer *Rout
 		if peerKind == "" || peerID == "" {
 			continue
 		}
+		// Peer ID comparison is case-sensitive by design; channels must normalize IDs before routing.
 		if peerKind == strings.ToLower(peer.Kind) && peerID == peer.ID {
 			return b
 		}

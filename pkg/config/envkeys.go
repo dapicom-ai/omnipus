@@ -15,6 +15,7 @@ const (
 	// EnvHome overrides the base directory for all omnipus data
 	// (config, workspace, skills, auth store, …).
 	// Default: ~/.omnipus
+	// EnvHome uses PICOCLAW_HOME for backward compatibility with PicoClaw ecosystem. Omnipus inherits this convention per CLAUDE.md ecosystem compatibility constraint.
 	EnvHome = "PICOCLAW_HOME"
 
 	// EnvConfig overrides the full path to the JSON config file.

@@ -35,7 +35,7 @@ func TestShellTool_TimeoutKillsChildProcess(t *testing.T) {
 		"command": "sleep 60 & echo $! > child.pid; wait",
 	}
 
-	result := tool.Execute(context.Background(), args)
+	result := tool.Execute(WithToolContext(context.Background(), "cli", ""), args)
 	if !result.IsError {
 		t.Fatalf("expected timeout error, got success: %s", result.ForLLM)
 	}

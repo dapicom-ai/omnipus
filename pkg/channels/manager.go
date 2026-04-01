@@ -1110,7 +1110,7 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 			})
 		}
 		deferFuncs = append(deferFuncs, func() {
-			m.UnregisterChannel(n)
+			m.unregisterChannelLocked(n)
 		})
 	}
 	dispatchCtx, cancel := context.WithCancel(ctx)
@@ -1151,7 +1151,7 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 		go m.runWorker(dispatchCtx, n, w)
 		go m.runMediaWorker(dispatchCtx, n, w)
 		deferFuncs = append(deferFuncs, func() {
-			m.RegisterChannel(n, channel)
+			m.registerChannelLocked(n, channel)
 		})
 	}
 
@@ -1162,6 +1162,21 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 	// continue to be routed after the old context was cancelled above.
 	go m.dispatchOutbound(dispatchCtx)
 	go m.dispatchOutboundMedia(dispatchCtx)
+
+	// Restart workers for existing (unchanged) channels on the new dispatch context.
+	// Without this, unchanged channel workers retain the old (cancelled) context
+	// and stop routing messages after a Reload.
+	addedSet := make(map[string]struct{}, len(added))
+	for _, n := range added {
+		addedSet[n] = struct{}{}
+	}
+	for name, w := range m.workers {
+		if _, isNew := addedSet[name]; isNew {
+			continue // already started above
+		}
+		go m.runWorker(dispatchCtx, name, w)
+		go m.runMediaWorker(dispatchCtx, name, w)
+	}
 
 	// Fix 15: execute deferFuncs synchronously after releasing the lock, not in a goroutine.
 	// Running them in a goroutine while the mutex is still held causes a deadlock;
@@ -1179,6 +1194,11 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 func (m *Manager) RegisterChannel(name string, channel Channel) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.registerChannelLocked(name, channel)
+}
+
+// registerChannelLocked registers a channel. Caller must hold m.mu.
+func (m *Manager) registerChannelLocked(name string, channel Channel) {
 	m.channels[name] = channel
 	if m.mux != nil {
 		m.registerChannelHTTPHandler(name, channel)
@@ -1188,6 +1208,11 @@ func (m *Manager) RegisterChannel(name string, channel Channel) {
 func (m *Manager) UnregisterChannel(name string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.unregisterChannelLocked(name)
+}
+
+// unregisterChannelLocked unregisters a channel. Caller must hold m.mu.
+func (m *Manager) unregisterChannelLocked(name string) {
 	if ch, ok := m.channels[name]; ok && m.mux != nil {
 		m.unregisterChannelHTTPHandler(name, ch)
 	}

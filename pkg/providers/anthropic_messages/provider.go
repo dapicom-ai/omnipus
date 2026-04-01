@@ -148,6 +148,24 @@ func (p *Provider) GetDefaultModel() string {
 	return "claude-sonnet-4.6"
 }
 
+// mergeToolResultIntoLastUser appends toolResultBlock to the last user message's content
+// if it already holds tool_result blocks. Returns the updated slice and true if merged,
+// or the original slice and false if a new message must be appended instead.
+func mergeToolResultIntoLastUser(apiMessages []any, toolResultBlock map[string]any) ([]any, bool) {
+	if len(apiMessages) > 0 {
+		if prev, ok := apiMessages[len(apiMessages)-1].(map[string]any); ok && prev["role"] == "user" {
+			if content, ok := prev["content"].([]map[string]any); ok {
+				prev["content"] = append(content, toolResultBlock)
+				return apiMessages, true
+			}
+		}
+	}
+	return append(apiMessages, map[string]any{
+		"role":    "user",
+		"content": []map[string]any{toolResultBlock},
+	}), false
+}
+
 // buildRequestBody converts internal message format to Anthropic Messages API format.
 func buildRequestBody(
 	messages []Message,
@@ -194,18 +212,11 @@ func buildRequestBody(
 					"tool_use_id": msg.ToolCallID,
 					"content":     msg.Content,
 				}
-				if len(apiMessages) > 0 {
-					if prev, ok := apiMessages[len(apiMessages)-1].(map[string]any); ok && prev["role"] == "user" {
-						if content, ok := prev["content"].([]map[string]any); ok {
-							prev["content"] = append(content, toolResultBlock)
-							continue
-						}
-					}
+				var merged bool
+				apiMessages, merged = mergeToolResultIntoLastUser(apiMessages, toolResultBlock)
+				if merged {
+					continue
 				}
-				apiMessages = append(apiMessages, map[string]any{
-					"role":    "user",
-					"content": []map[string]any{toolResultBlock},
-				})
 			} else {
 				// Regular user message
 				apiMessages = append(apiMessages, map[string]any{
@@ -258,18 +269,11 @@ func buildRequestBody(
 				"tool_use_id": msg.ToolCallID,
 				"content":     msg.Content,
 			}
-			if len(apiMessages) > 0 {
-				if prev, ok := apiMessages[len(apiMessages)-1].(map[string]any); ok && prev["role"] == "user" {
-					if content, ok := prev["content"].([]map[string]any); ok {
-						prev["content"] = append(content, toolResultBlock)
-						continue
-					}
-				}
+			var merged bool
+			apiMessages, merged = mergeToolResultIntoLastUser(apiMessages, toolResultBlock)
+			if merged {
+				continue
 			}
-			apiMessages = append(apiMessages, map[string]any{
-				"role":    "user",
-				"content": []map[string]any{toolResultBlock},
-			})
 		}
 	}
 
@@ -318,7 +322,10 @@ func parseResponseBody(body []byte) (*LLMResponse, error) {
 		case "text":
 			content.WriteString(block.Text)
 		case "tool_use":
-			argsJSON, _ := json.Marshal(block.Input)
+			argsJSON, marshalErr := json.Marshal(block.Input)
+			if marshalErr != nil {
+				return nil, fmt.Errorf("failed to marshal tool call arguments for %q: %w", block.Name, marshalErr)
+			}
 			toolCalls = append(toolCalls, ToolCall{
 				ID:        block.ID,
 				Name:      block.Name,

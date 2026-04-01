@@ -148,6 +148,10 @@ func (a *restAPI) setCredential(w http.ResponseWriter, r *http.Request) {
 
 // deleteCredential removes a credential by key.
 func (a *restAPI) deleteCredential(w http.ResponseWriter, key string) {
+	if err := validateEntityID(key); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid credential key")
+		return
+	}
 	store := credentials.NewStore(a.credentialsStorePath())
 	if err := credentials.Unlock(store); err != nil {
 		slog.Warn("rest: credential store locked for delete", "error", err)

@@ -345,6 +345,7 @@ func (r *ToolRegistry) ToProviderDefs() []providers.ToolDefinition {
 		// Safely extract nested values with type checks
 		fn, ok := schema["function"].(map[string]any)
 		if !ok {
+			logger.WarnCF("tools", "skipping malformed tool schema — missing or invalid \"function\" key", map[string]any{"tool": name})
 			continue
 		}
 

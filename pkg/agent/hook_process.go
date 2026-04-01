@@ -389,6 +389,9 @@ func (ph *ProcessHook) send(ctx context.Context, msg processHookRPCMessage) erro
 		}
 		return nil
 	case <-ctx.Done():
+		// Wait for the write goroutine to finish before returning to prevent
+		// protocol stream corruption from concurrent writes.
+		<-done
 		return ctx.Err()
 	}
 }

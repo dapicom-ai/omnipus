@@ -17,13 +17,15 @@ type HTTPProvider struct {
 	delegate *openai_compat.Provider
 }
 
-func NewHTTPProvider(apiKey, apiBase, proxy string) *HTTPProvider {
-	return &HTTPProvider{
-		delegate: openai_compat.NewProvider(apiKey, apiBase, proxy),
+func NewHTTPProvider(apiKey, apiBase, proxy string) (*HTTPProvider, error) {
+	p, err := openai_compat.NewProvider(apiKey, apiBase, proxy)
+	if err != nil {
+		return nil, err
 	}
+	return &HTTPProvider{delegate: p}, nil
 }
 
-func NewHTTPProviderWithMaxTokensField(apiKey, apiBase, proxy, maxTokensField string) *HTTPProvider {
+func NewHTTPProviderWithMaxTokensField(apiKey, apiBase, proxy, maxTokensField string) (*HTTPProvider, error) {
 	return NewHTTPProviderWithMaxTokensFieldAndRequestTimeout(apiKey, apiBase, proxy, maxTokensField, 0, nil)
 }
 
@@ -31,17 +33,19 @@ func NewHTTPProviderWithMaxTokensFieldAndRequestTimeout(
 	apiKey, apiBase, proxy, maxTokensField string,
 	requestTimeoutSeconds int,
 	extraBody map[string]any,
-) *HTTPProvider {
-	return &HTTPProvider{
-		delegate: openai_compat.NewProvider(
-			apiKey,
-			apiBase,
-			proxy,
-			openai_compat.WithMaxTokensField(maxTokensField),
-			openai_compat.WithRequestTimeout(time.Duration(requestTimeoutSeconds)*time.Second),
-			openai_compat.WithExtraBody(extraBody),
-		),
+) (*HTTPProvider, error) {
+	p, err := openai_compat.NewProvider(
+		apiKey,
+		apiBase,
+		proxy,
+		openai_compat.WithMaxTokensField(maxTokensField),
+		openai_compat.WithRequestTimeout(time.Duration(requestTimeoutSeconds)*time.Second),
+		openai_compat.WithExtraBody(extraBody),
+	)
+	if err != nil {
+		return nil, err
 	}
+	return &HTTPProvider{delegate: p}, nil
 }
 
 func (p *HTTPProvider) Chat(

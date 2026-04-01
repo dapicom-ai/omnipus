@@ -50,7 +50,7 @@ func TestExpandMultiKeyModels_APIKeysOnly(t *testing.T) {
 	}
 
 	// First entry should be the primary with key1 and fallbacks
-	primary := result[2] // Primary is added last
+	primary := result[0] // Primary is added first
 	if primary.ModelName != "glm-4.7" {
 		t.Errorf("expected primary model_name 'glm-4.7', got %q", primary.ModelName)
 	}
@@ -68,7 +68,7 @@ func TestExpandMultiKeyModels_APIKeysOnly(t *testing.T) {
 	}
 
 	// Second entry should be key2
-	second := result[0]
+	second := result[1]
 	if second.ModelName != "glm-4.7__key_1" {
 		t.Errorf("expected second model_name 'glm-4.7__key_1', got %q", second.ModelName)
 	}
@@ -77,7 +77,7 @@ func TestExpandMultiKeyModels_APIKeysOnly(t *testing.T) {
 	}
 
 	// Third entry should be key3
-	third := result[1]
+	third := result[2]
 	if third.ModelName != "glm-4.7__key_2" {
 		t.Errorf("expected third model_name 'glm-4.7__key_2', got %q", third.ModelName)
 	}
@@ -103,7 +103,7 @@ func TestExpandMultiKeyModels_APIKeyAndAPIKeys(t *testing.T) {
 	}
 
 	// Primary should use key0
-	primary := result[2]
+	primary := result[0]
 	if primary.APIKey() != "key0" {
 		t.Errorf("expected primary api_key 'key0', got %q", primary.APIKey())
 	}
@@ -123,7 +123,7 @@ func TestExpandMultiKeyModels_WithExistingFallbacks(t *testing.T) {
 
 	result := expandMultiKeyModels(models)
 
-	primary := result[1]
+	primary := result[0]
 	// With 2 keys, we get 1 key fallback + 1 existing fallback = 2 total
 	if len(primary.Fallbacks) != 2 {
 		t.Fatalf("expected 2 fallbacks, got %d: %v", len(primary.Fallbacks), primary.Fallbacks)
@@ -176,7 +176,7 @@ func TestExpandMultiKeyModels_Deduplication(t *testing.T) {
 		t.Fatalf("expected 2 models (deduplicated), got %d", len(result))
 	}
 
-	primary := result[1]
+	primary := result[0]
 	if primary.APIKey() != "key1" {
 		t.Errorf("expected primary api_key 'key1', got %q", primary.APIKey())
 	}
@@ -202,7 +202,7 @@ func TestExpandMultiKeyModels_PreservesOtherFields(t *testing.T) {
 	result := expandMultiKeyModels(models)
 
 	// Check primary entry preserves all fields
-	primary := result[1]
+	primary := result[0]
 	if primary.APIBase != "https://api.example.com" {
 		t.Errorf("expected api_base preserved, got %q", primary.APIBase)
 	}
@@ -223,7 +223,7 @@ func TestExpandMultiKeyModels_PreservesOtherFields(t *testing.T) {
 	}
 
 	// Check additional entry also preserves fields
-	additional := result[0]
+	additional := result[1]
 	if additional.APIBase != "https://api.example.com" {
 		t.Errorf("expected additional api_base preserved, got %q", additional.APIBase)
 	}
@@ -249,7 +249,7 @@ func TestExpandMultiKeyModels_IsVirtualFlag(t *testing.T) {
 	}
 
 	// Primary model should NOT be virtual
-	primary := result[2]
+	primary := result[0]
 	if primary.isVirtual {
 		t.Errorf("primary model should not be virtual")
 	}
@@ -258,7 +258,7 @@ func TestExpandMultiKeyModels_IsVirtualFlag(t *testing.T) {
 	}
 
 	// Virtual models should have isVirtual = true
-	virtual1 := result[0]
+	virtual1 := result[1]
 	if !virtual1.isVirtual {
 		t.Errorf("gpt-4__key_1 should be virtual")
 	}
@@ -266,7 +266,7 @@ func TestExpandMultiKeyModels_IsVirtualFlag(t *testing.T) {
 		t.Errorf("expected virtual model_name 'gpt-4__key_1', got %q", virtual1.ModelName)
 	}
 
-	virtual2 := result[1]
+	virtual2 := result[2]
 	if !virtual2.isVirtual {
 		t.Errorf("gpt-4__key_2 should be virtual")
 	}

@@ -126,7 +126,7 @@ function InlineThinkingIndicator() {
 }
 
 // Fallback tool UI for tools without a registered makeAssistantToolUI component.
-// ToolCallMessagePartProps passes: toolCallId, toolName, args, result, status, addResult, resume
+// ToolCallMessagePartProps passes: toolCallId, toolName, args, result, status
 function FallbackToolUI(props: { toolCallId: string; toolName: string; args: unknown; result: unknown; status: import('@assistant-ui/react').MessagePartStatus }) {
   const storeToolCalls = useChatStore((s) => s.toolCalls)
   const liveCall = storeToolCalls[props.toolCallId]
@@ -195,8 +195,8 @@ interface SlashCommand {
   description: string
 }
 
-// Built-in slash commands. Extensibility: agents can register custom commands
-// by sending a "commands" frame over the WebSocket, keyed by agent_id.
+// Built-in slash commands.
+// TODO: agents will be able to register custom commands via a 'commands' WebSocket frame.
 const SLASH_COMMANDS: SlashCommand[] = [
   { label: '/session new', description: 'Start a new session' },
   { label: '/clear', description: 'Clear all messages' },

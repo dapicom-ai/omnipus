@@ -385,23 +385,24 @@ func TestWebFetchTool_PayloadTooLarge(t *testing.T) {
 	}
 }
 
-// TestWebTool_WebSearch_NoApiKey verifies that no tool is created when API key is missing
+// TestWebTool_WebSearch_NoApiKey verifies that an error is returned when no search provider is configured.
 func TestWebTool_WebSearch_NoApiKey(t *testing.T) {
+	// BraveEnabled but no keys: falls through to "no provider configured"
 	tool, err := NewWebSearchTool(WebSearchToolOptions{BraveEnabled: true, BraveAPIKeys: nil})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("Expected error when Brave API key is empty, got nil")
 	}
 	if tool != nil {
-		t.Errorf("Expected nil tool when Brave API key is empty")
+		t.Errorf("Expected nil tool on error")
 	}
 
-	// Also nil when nothing is enabled
+	// Nothing enabled: should also error
 	tool, err = NewWebSearchTool(WebSearchToolOptions{})
-	if err != nil {
-		t.Fatalf("Unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("Expected error when no provider is enabled, got nil")
 	}
 	if tool != nil {
-		t.Errorf("Expected nil tool when no provider is enabled")
+		t.Errorf("Expected nil tool on error")
 	}
 }
 

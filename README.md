@@ -19,34 +19,29 @@
 
 ---
 
-> **Status: Active Development.** Built on [PicoClaw](https://github.com/sipeed/picoclaw)'s proven Go runtime, adding enterprise security, a polished UI, and the "Sovereign Deep" design system. Star and watch to follow progress.
+> **Status: Active Development.** Inspired by the open-source agent ecosystem — [OpenClaw](https://github.com/openclaw/openclaw), [NemoClaw](https://github.com/nemoclaw/nemoclaw), and [PicoClaw](https://github.com/sipeed/picoclaw) — Omnipus is a ground-up reimplementation with enterprise security, a polished UI, and the "Sovereign Deep" design system. Star and watch to follow progress.
 
 ## What is Omnipus?
 
-Omnipus is an agentic core built on [PicoClaw](https://github.com/sipeed/picoclaw)'s foundation — the lightest-weight open-source AI agent runtime available. Omnipus adds kernel-level sandboxing (Landlock, seccomp), RBAC, audit logging, credential management, a polished React UI with the "Sovereign Deep" design system, browser automation, and expanded channel/skill coverage.
+Omnipus is a sovereign AI agent runtime — a single Go binary that ships with kernel-level sandboxing, 20+ communication channels, a polished React UI, and runs on $10 hardware. Originally inspired by the open-source agent ecosystem (OpenClaw, NemoClaw, PicoClaw), Omnipus has been substantially rewritten to deliver enterprise-grade security, reliability, and developer experience.
 
 ### Key Differentiators
 
-- **vs PicoClaw**: Real security (kernel sandboxing, encrypted credentials, audit logs), polished web UI, browser automation, ClawHub skill ecosystem
 - **vs OpenClaw**: 10x lighter (34MB vs 180MB+), single Go binary vs Node.js, runs on $10 hardware, same feature depth
 - **vs NemoClaw**: 100x lighter (no Docker, no K3s, no 8GB RAM requirement), comparable security model
+- **vs PicoClaw**: Real security (kernel sandboxing, encrypted credentials, audit logs), polished web UI, rewritten agent loop with streaming, tool call visualization, and response reliability
 
-### Inherited from PicoClaw
+### Features
 
-Omnipus inherits PicoClaw's battle-tested features out of the box:
-
-- 10+ channels: Telegram, Discord, Slack, WhatsApp, WeChat, DingTalk, LINE, Matrix, IRC, QQ
+- 20+ channels: Telegram, Discord, Slack, WhatsApp, WeChat, DingTalk, LINE, Matrix, IRC, QQ, and more
 - MCP protocol support (Model Context Protocol)
-- Smart model routing (simple queries → lightweight models)
+- Smart model routing with FallbackChain and multi-key rotation
 - Vision/multimodal input
 - Heartbeat / proactive agent (HEARTBEAT.md)
 - Cron / scheduled tasks
 - Sub-agent spawning with status tracking
-- JSONL memory store
+- JSONL memory store with day-partitioned sessions
 - Hardware I/O (I2C/SPI) for IoT
-
-### Omnipus Adds
-
 - Kernel-level sandboxing (Landlock filesystem, seccomp syscall filtering)
 - Policy engine (deny-by-default, per-agent tool allow/deny)
 - Structured audit logging with redaction and explainable decisions
@@ -56,8 +51,9 @@ Omnipus inherits PicoClaw's battle-tested features out of the box:
 - Browser automation (chromedp)
 - ClawHub skill ecosystem compatibility (13K+ skills)
 - Polished React 19 web UI ("The Sovereign Deep" design system)
+- Real-time tool call visualization with WebSocket streaming
+- Interactive exec approval with "Always Allow" persistence
 - System agent for conversational configuration
-- Day-partitioned session storage with context compression
 - Graceful shutdown with partial response preservation
 
 ## Architecture
@@ -113,7 +109,12 @@ Omnipus inherits PicoClaw's battle-tested features out of the box:
 
 ## Credits
 
-Built on the foundation of [PicoClaw](https://github.com/sipeed/picoclaw) by [Sipeed](https://sipeed.com). PicoClaw's ultra-lightweight Go runtime, channel integrations, and agent architecture provide the core that Omnipus extends with enterprise security and a polished UI.
+Inspired by the open-source AI agent ecosystem:
+- [OpenClaw](https://github.com/openclaw/openclaw) — agent loop architecture and streaming patterns
+- [NemoClaw](https://github.com/nemoclaw/nemoclaw) — security model and container isolation concepts
+- [PicoClaw](https://github.com/sipeed/picoclaw) by [Sipeed](https://sipeed.com) — original lightweight Go runtime and channel integrations
+
+Omnipus has been substantially rewritten from these foundations with a new agent loop, streaming pipeline, security layer, and UI.
 
 ## License
 

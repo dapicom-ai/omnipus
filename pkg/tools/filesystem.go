@@ -367,6 +367,8 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 	totalSize := int64(-1) // -1 means unknown
 	if info, statErr := file.Stat(); statErr == nil {
 		totalSize = info.Size()
+	} else {
+		logger.WarnCF("filesystem", "could not stat file for size", map[string]any{"path": path, "error": statErr.Error()})
 	}
 
 	// sniff the first 512 bytes to detect binary content before loading
@@ -390,6 +392,8 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 		// discarding to reach the requested offset below.
 		// If offset < sniffN the data we already read covers it, which we
 		// cannot replay on a non-seekable stream — return a clear error.
+		// Limitation: for non-seekable streams with offset=0, the first sniffN
+		// bytes are consumed by content-type detection and will be missing from the output.
 		if offset < int64(sniffN) && offset > 0 {
 			return ErrorResult(
 				"non-seekable file: cannot seek to an offset within the first 512 bytes after binary detection",
@@ -775,7 +779,9 @@ func (r *sandboxFs) WriteFile(path string, data []byte) error {
 
 		// Sync directory to ensure rename is durable
 		if dirFile, err := root.Open("."); err == nil {
-			_ = dirFile.Sync()
+			if syncErr := dirFile.Sync(); syncErr != nil {
+				logger.WarnCF("filesystem", "directory sync failed after atomic write", map[string]any{"error": syncErr.Error()})
+			}
 			dirFile.Close()
 		}
 

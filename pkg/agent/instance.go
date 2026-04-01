@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 
@@ -22,6 +23,10 @@ import (
 // AgentInstance represents a fully configured agent with its own workspace,
 // session manager, context builder, and tool registry.
 type AgentInstance struct {
+	// mu protects Model, Provider, Candidates, and ThinkingLevel which may be
+	// written by SwitchModel while runTurn reads them concurrently.
+	mu sync.RWMutex
+
 	ID                        string
 	Name                      string
 	Model                     string

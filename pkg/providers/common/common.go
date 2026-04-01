@@ -40,29 +40,29 @@ type (
 const DefaultRequestTimeout = 120 * time.Second
 
 // NewHTTPClient creates an *http.Client with an optional proxy and the default timeout.
-func NewHTTPClient(proxy string) *http.Client {
+// Returns an error if proxy is non-empty and cannot be parsed as a URL.
+func NewHTTPClient(proxy string) (*http.Client, error) {
 	client := &http.Client{
 		Timeout: DefaultRequestTimeout,
 	}
 	if proxy != "" {
 		parsed, err := url.Parse(proxy)
-		if err == nil {
-			// Preserve http.DefaultTransport settings (TLS, HTTP/2, timeouts, etc.)
-			if base, ok := http.DefaultTransport.(*http.Transport); ok {
-				tr := base.Clone()
-				tr.Proxy = http.ProxyURL(parsed)
-				client.Transport = tr
-			} else {
-				// Fallback: minimal transport if DefaultTransport is not *http.Transport.
-				client.Transport = &http.Transport{
-					Proxy: http.ProxyURL(parsed),
-				}
-			}
+		if err != nil {
+			return nil, fmt.Errorf("invalid proxy URL %q: %w", proxy, err)
+		}
+		// Preserve http.DefaultTransport settings (TLS, HTTP/2, timeouts, etc.)
+		if base, ok := http.DefaultTransport.(*http.Transport); ok {
+			tr := base.Clone()
+			tr.Proxy = http.ProxyURL(parsed)
+			client.Transport = tr
 		} else {
-			logger.WarnCF("common", "invalid proxy URL", map[string]any{"url": proxy, "error": err.Error()})
+			// Fallback: minimal transport if DefaultTransport is not *http.Transport.
+			client.Transport = &http.Transport{
+				Proxy: http.ProxyURL(parsed),
+			}
 		}
 	}
-	return client
+	return client, nil
 }
 
 // --- Message serialization ---
@@ -296,7 +296,7 @@ func DecodeToolCallArguments(raw json.RawMessage, name string) map[string]any {
 // HandleErrorResponse reads a non-200 response body and returns an appropriate error.
 func HandleErrorResponse(resp *http.Response, apiBase string) error {
 	contentType := resp.Header.Get("Content-Type")
-	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 256))
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 2048))
 	if readErr != nil {
 		return fmt.Errorf("failed to read response: %w", readErr)
 	}
@@ -306,7 +306,7 @@ func HandleErrorResponse(resp *http.Response, apiBase string) error {
 	return fmt.Errorf(
 		"API request failed:\n  Status: %d\n  Body:   %s",
 		resp.StatusCode,
-		ResponsePreview(body, 128),
+		ResponsePreview(body, 512),
 	)
 }
 

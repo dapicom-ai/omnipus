@@ -350,8 +350,32 @@ func spawnSubTurn(
 		return nil, errors.New("parent turnState has no agent instance")
 	}
 	ephemeralStore := newEphemeralSession(nil)
-	agent := *baseAgent // shallow copy
-	agent.Sessions = ephemeralStore
+	// Build a new AgentInstance from baseAgent fields to avoid copying the mutex.
+	agent := AgentInstance{
+		ID:                        baseAgent.ID,
+		Name:                      baseAgent.Name,
+		Model:                     baseAgent.Model,
+		Fallbacks:                 baseAgent.Fallbacks,
+		Workspace:                 baseAgent.Workspace,
+		MaxIterations:             baseAgent.MaxIterations,
+		MaxTokens:                 baseAgent.MaxTokens,
+		Temperature:               baseAgent.Temperature,
+		ThinkingLevel:             baseAgent.ThinkingLevel,
+		ContextWindow:             baseAgent.ContextWindow,
+		SummarizeMessageThreshold: baseAgent.SummarizeMessageThreshold,
+		SummarizeTokenPercent:     baseAgent.SummarizeTokenPercent,
+		Provider:                  baseAgent.Provider,
+		Sessions:                  ephemeralStore,
+		ContextBuilder:            baseAgent.ContextBuilder,
+		Tools:                     baseAgent.Tools,
+		Subagents:                 baseAgent.Subagents,
+		SkillsFilter:              baseAgent.SkillsFilter,
+		Candidates:                baseAgent.Candidates,
+		TimeoutSeconds:            baseAgent.TimeoutSeconds,
+		Router:                    baseAgent.Router,
+		LightCandidates:           baseAgent.LightCandidates,
+		LightProvider:             baseAgent.LightProvider,
+	}
 	// Clone the tool registry so child turn's tool registrations
 	// don't pollute the parent's registry.
 	if baseAgent.Tools != nil {

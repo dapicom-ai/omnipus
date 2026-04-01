@@ -1,5 +1,5 @@
 // Omnipus - Ultra-lightweight personal AI agent
-// Inspired by and based on nanobot: https://github.com/HKUDS/nanobot
+// Built on PicoClaw's foundation. See CLAUDE.md for project lineage.
 // License: MIT
 //
 // Copyright (c) 2026 Omnipus contributors
@@ -11,7 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -42,7 +42,7 @@ type AgentLoop struct {
 	registry *AgentRegistry
 	state    *state.Manager
 
-	// Event system (from Incoming)
+	// Event system
 	eventBus *EventBus
 	hooks    *HookManager
 
@@ -60,11 +60,11 @@ type AgentLoop struct {
 	pendingSkills  sync.Map
 	mu             sync.RWMutex
 
-	// Concurrent turn management (from HEAD)
+	// Concurrent turn management
 	activeTurnStates sync.Map     // key: sessionKey (string), value: *turnState
 	subTurnCounter   atomic.Int64 // Counter for generating unique SubTurn IDs
 
-	// Turn tracking (from Incoming)
+	// Turn tracking
 	turnSeq        atomic.Uint64
 	activeRequests sync.WaitGroup
 
@@ -148,7 +148,7 @@ func NewAgentLoop(
 	return al
 }
 
-// registerSharedTools registers tools that are shared across all agents (web, message, spawn).
+// registerSharedTools registers tools that are shared across all agents.
 func registerSharedTools(
 	al *AgentLoop,
 	cfg *config.Config,
@@ -425,17 +425,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 						al.channelManager.InvokeTypingStop(msg.Channel, msg.ChatID)
 					}
 				}()
-				// TODO(media-cleanup): Media file cleanup is disabled. Uploaded media files are not automatically deleted after use. Track in issue backlog.
-				// defer func() {
-				// 	if al.mediaStore != nil && msg.MediaScope != "" {
-				// 		if releaseErr := al.mediaStore.ReleaseAll(msg.MediaScope); releaseErr != nil {
-				// 			logger.WarnCF("agent", "Failed to release media", map[string]any{
-				// 				"scope": msg.MediaScope,
-				// 				"error": releaseErr.Error(),
-				// 			})
-				// 		}
-				// 	}
-				// }()
+				// TODO(media-cleanup): Media file cleanup is disabled. Track in issue backlog.
 
 				drainCanceled := false
 				cancelDrain := func() {
@@ -454,6 +444,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 				// publishResponseIfNeeded already checks HasSentInRound() internally,
 				// so we do not need to duplicate that check here.
 				var finalResponse string
+				var activeAgent *AgentInstance
 				published := false
 				publishChannel := msg.Channel
 				publishChatID := msg.ChatID
@@ -466,11 +457,11 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 						}
 					}()
 					if finalResponse != "" && !published {
-						al.publishResponseIfNeeded(ctx, publishChannel, publishChatID, finalResponse)
+						al.publishResponseIfNeeded(ctx, activeAgent, publishChannel, publishChatID, finalResponse)
 					}
 				}()
 
-				response, err := al.processMessage(ctx, msg)
+				response, activeAgent, err := al.processMessage(ctx, msg)
 				if err != nil {
 					response = fmt.Sprintf("Error processing message: %v", err)
 				}
@@ -490,7 +481,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 					cancelDrain()
 					if finalResponse != "" {
 						published = true
-						al.publishResponseIfNeeded(ctx, msg.Channel, msg.ChatID, finalResponse)
+						al.publishResponseIfNeeded(ctx, activeAgent, msg.Channel, msg.ChatID, finalResponse)
 					}
 					return
 				}
@@ -558,7 +549,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 
 				if finalResponse != "" {
 					published = true
-					al.publishResponseIfNeeded(ctx, target.Channel, target.ChatID, finalResponse)
+					al.publishResponseIfNeeded(ctx, activeAgent, target.Channel, target.ChatID, finalResponse)
 				}
 			}()
 		}
@@ -578,6 +569,8 @@ func (al *AgentLoop) drainBusToSteering(ctx context.Context, activeScope, active
 	defer func() {
 		for _, m := range deferred {
 			if err := al.requeueInboundMessage(m); err != nil {
+				// Message loss during shutdown is acceptable: the bus is closing and
+				// the message cannot be delivered. The error is logged for observability.
 				logger.WarnCF("agent", "Failed to requeue non-steering inbound message", map[string]any{
 					"error":     err.Error(),
 					"channel":   m.Channel,
@@ -664,15 +657,17 @@ func (al *AgentLoop) Stop() {
 	al.running.Store(false)
 }
 
-func (al *AgentLoop) publishResponseIfNeeded(ctx context.Context, channel, chatID, response string) {
+func (al *AgentLoop) publishResponseIfNeeded(ctx context.Context, ag *AgentInstance, channel, chatID, response string) {
 	if response == "" {
 		return
 	}
 
 	alreadySent := false
-	defaultAgent := al.GetRegistry().GetDefaultAgent()
-	if defaultAgent != nil {
-		if tool, ok := defaultAgent.Tools.Get("message"); ok {
+	if ag == nil {
+		ag = al.GetRegistry().GetDefaultAgent()
+	}
+	if ag != nil {
+		if tool, ok := ag.Tools.Get("message"); ok {
 			if mt, ok := tool.(*tools.MessageTool); ok {
 				alreadySent = mt.HasSentInRound()
 			}
@@ -1312,7 +1307,8 @@ func (al *AgentLoop) ProcessDirectWithChannel(
 		SessionKey: sessionKey,
 	}
 
-	return al.processMessage(ctx, msg)
+	resp, _, err := al.processMessage(ctx, msg)
+	return resp, err
 }
 
 // ProcessHeartbeat processes a heartbeat request without session history.
@@ -1345,7 +1341,7 @@ func (al *AgentLoop) ProcessHeartbeat(
 	})
 }
 
-func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage) (string, error) {
+func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage) (string, *AgentInstance, error) {
 	// Add message preview to log (show full content for error messages)
 	var logContent string
 	if strings.Contains(msg.Content, "Error:") || strings.Contains(msg.Content, "error") {
@@ -1375,12 +1371,13 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 
 	// Route system messages to processSystemMessage
 	if msg.Channel == "system" {
-		return al.processSystemMessage(ctx, msg)
+		resp, err := al.processSystemMessage(ctx, msg)
+		return resp, nil, err
 	}
 
 	route, agent, routeErr := al.resolveMessageRoute(msg)
 	if routeErr != nil {
-		return "", routeErr
+		return "", nil, routeErr
 	}
 
 	// Reset message-tool state for this round so we don't skip publishing due to a previous round.
@@ -1420,7 +1417,7 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 	// context-dependent commands check their own Runtime fields and report
 	// "unavailable" when the required capability is nil.
 	if response, handled := al.handleCommand(ctx, msg, agent, &opts); handled {
-		return response, nil
+		return response, agent, nil
 	}
 
 	if pending := al.takePendingSkills(opts.SessionKey); len(pending) > 0 {
@@ -1432,7 +1429,8 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 			})
 	}
 
-	return al.runAgentLoop(ctx, agent, opts)
+	resp, err := al.runAgentLoop(ctx, agent, opts)
+	return resp, agent, err
 }
 
 func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.ResolvedRoute, *AgentInstance, error) {
@@ -1719,6 +1717,11 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 	defer turnCancel()
 	ts.setTurnCancel(turnCancel)
 
+	// Finalize the streamer when the turn ends (regardless of how it exits).
+	// This sends the "done" frame exactly once, at turn completion, rather than
+	// after each intermediate LLM call that may be followed by tool execution.
+	defer ts.finalizeStreamer(ctx)
+
 	// Inject turnState and AgentLoop into context so tools (e.g. spawn) can retrieve them.
 	turnCtx = withTurnState(turnCtx, ts)
 	turnCtx = WithAgentLoop(turnCtx, al)
@@ -1804,7 +1807,7 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 		}
 	}
 
-	// Save user message to session (from Incoming)
+	// Save user message to session
 	if !ts.opts.NoHistory && (strings.TrimSpace(ts.userMessage) != "" || len(ts.media) > 0) {
 		rootMsg := providers.Message{
 			Role:    "user",
@@ -1819,11 +1822,13 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 		ts.recordPersistedMessage(rootMsg)
 	}
 
+	ts.agent.mu.RLock()
 	activeCandidates, activeModel, usedLight := al.selectCandidates(ts.agent, ts.userMessage, messages)
 	activeProvider := ts.agent.Provider
 	if usedLight && ts.agent.LightProvider != nil {
 		activeProvider = ts.agent.LightProvider
 	}
+	ts.agent.mu.RUnlock()
 	pendingMessages := append([]providers.Message(nil), ts.opts.InitialSteeringMessages...)
 	var finalContent string
 	emptyResponseRetries := 0
@@ -1869,7 +1874,7 @@ turnLoop:
 			}
 		}
 
-		// Check if parent turn has ended (SubTurn support from HEAD)
+		// Check if parent turn has ended (SubTurn support)
 		if ts.parentTurnState != nil && ts.IsParentEnded() {
 			if !ts.critical {
 				logger.InfoCF("agent", "Parent turn ended, non-critical SubTurn exiting gracefully", map[string]any{
@@ -1886,7 +1891,7 @@ turnLoop:
 			})
 		}
 
-		// Poll for pending SubTurn results (from HEAD)
+		// Poll for pending SubTurn results
 		if ts.pendingResults != nil {
 			select {
 			case result, ok := <-ts.pendingResults:
@@ -1908,6 +1913,8 @@ turnLoop:
 				messages = append(messages, resolvedPending[i])
 				totalContentLen += len(pm.Content)
 				if !ts.opts.NoHistory {
+					// Persist the original (unresolved) message to session history to preserve
+					// compact media refs; resolved (base64) form is only used for the LLM request.
 					ts.agent.Sessions.AddFullMessage(ts.sessionKey, pm)
 					ts.recordPersistedMessage(pm)
 				}
@@ -1940,13 +1947,13 @@ turnLoop:
 		gracefulTerminal, _ := ts.gracefulInterruptRequested()
 		providerToolDefs := ts.agent.Tools.ToProviderDefs()
 
-		// Native web search support (from HEAD)
+		// Native web search support
 		_, hasWebSearch := ts.agent.Tools.Get("web_search")
 		useNativeSearch := al.cfg.Tools.Web.PreferNative &&
 			hasWebSearch &&
 			func() bool {
 				// Check if provider supports native search
-				if ns, ok := ts.agent.Provider.(interface{ SupportsNativeSearch() bool }); ok {
+				if ns, ok := activeProvider.(interface{ SupportsNativeSearch() bool }); ok {
 					return ns.SupportsNativeSearch()
 				}
 				return false
@@ -1978,12 +1985,15 @@ turnLoop:
 		if useNativeSearch {
 			llmOpts["native_search"] = true
 		}
-		if ts.agent.ThinkingLevel != ThinkingOff {
-			if tc, ok := ts.agent.Provider.(providers.ThinkingCapable); ok && tc.SupportsThinking() {
-				llmOpts["thinking_level"] = string(ts.agent.ThinkingLevel)
+		ts.agent.mu.RLock()
+		agentThinkingLevel := ts.agent.ThinkingLevel
+		ts.agent.mu.RUnlock()
+		if agentThinkingLevel != ThinkingOff {
+			if tc, ok := activeProvider.(providers.ThinkingCapable); ok && tc.SupportsThinking() {
+				llmOpts["thinking_level"] = string(agentThinkingLevel)
 			} else {
 				logger.WarnCF("agent", "thinking_level is set but current provider does not support it, ignoring",
-					map[string]any{"agent_id": ts.agent.ID, "thinking_level": string(ts.agent.ThinkingLevel)})
+					map[string]any{"agent_id": ts.agent.ID, "thinking_level": string(agentThinkingLevel)})
 			}
 		}
 
@@ -2099,11 +2109,11 @@ turnLoop:
 							}
 						}
 					})
-					if streamErr == nil {
-						if err := streamer.Finalize(providerCtx, lastChunk); err != nil {
-							logger.WarnCF("agent", "Streaming finalize error", map[string]any{"error": err.Error()})
-						}
-					}
+					// Do NOT finalize here — the turn may continue with tool calls.
+					// Store the streamer so the turn-level code can finalize once,
+					// after the last LLM call, preventing premature "done" frames
+					// that tell the frontend the response is complete mid-turn.
+					ts.setLastStreamer(streamer)
 					return resp, streamErr
 				}
 			}
@@ -2231,9 +2241,9 @@ turnLoop:
 				if calculated > 30*time.Second {
 					calculated = 30 * time.Second
 				}
-				jitter := time.Duration(rand.Int63n(int64(calculated) + 1))
+				jitter := time.Duration(rand.Int64N(int64(calculated) + 1))
 				// M3: enforce a minimum backoff floor of 500ms so jitter can never produce
-				// a zero or near-zero delay (rand.Int63n(1) == 0 when calculated == 0).
+				// a zero or near-zero delay (rand.Int64N(1) == 0 when calculated == 0).
 				backoff := jitter
 				if backoff < 500*time.Millisecond {
 					backoff = 500 * time.Millisecond
@@ -2700,12 +2710,14 @@ turnLoop:
 				EventKindToolExecStart,
 				ts.eventMeta("runTurn", "turn.tool.start"),
 				ToolExecStartPayload{
-					Tool:      toolName,
-					Arguments: cloneEventArguments(toolArgs),
+					ToolCallID: tc.ID,
+					ChatID:     ts.chatID,
+					Tool:       toolName,
+					Arguments:  cloneEventArguments(toolArgs),
 				},
 			)
 
-			// Send tool feedback to chat channel if enabled (from HEAD)
+			// Send tool feedback to chat channel if enabled
 			if al.cfg.Agents.Defaults.IsToolFeedbackEnabled() &&
 				ts.channel != "" &&
 				!ts.opts.SuppressToolFeedback {
@@ -2919,6 +2931,8 @@ turnLoop:
 				EventKindToolExecEnd,
 				ts.eventMeta("runTurn", "turn.tool.end"),
 				ToolExecEndPayload{
+					ToolCallID: toolCallID,
+					ChatID:     ts.chatID,
 					Tool:       toolName,
 					Duration:   toolDuration,
 					ForLLMLen:  len(contentForLLM),
@@ -3560,7 +3574,9 @@ func (al *AgentLoop) retryLLMCall(
 			return resp, nil
 		}
 		if attempt < maxRetries-1 {
-			time.Sleep(time.Duration(attempt+1) * 100 * time.Millisecond)
+			if sleepErr := sleepWithContext(ctx, time.Duration(attempt+1)*100*time.Millisecond); sleepErr != nil {
+				return resp, sleepErr
+			}
 		}
 	}
 
@@ -3825,7 +3841,10 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			rt.ListSkillNames = agent.ContextBuilder.ListSkillNames
 		}
 		rt.GetModelInfo = func() (string, string) {
-			return agent.Model, resolvedCandidateProvider(agent.Candidates, cfg.Agents.Defaults.Provider)
+			agent.mu.RLock()
+			m, c := agent.Model, agent.Candidates
+			agent.mu.RUnlock()
+			return m, resolvedCandidateProvider(c, cfg.Agents.Defaults.Provider)
 		}
 		rt.SwitchModel = func(value string) (string, error) {
 			value = strings.TrimSpace(value)
@@ -3844,12 +3863,14 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 				return "", fmt.Errorf("model %q did not resolve to any provider candidates", value)
 			}
 
+			agent.mu.Lock()
 			oldModel := agent.Model
 			oldProvider := agent.Provider
 			agent.Model = value
 			agent.Provider = nextProvider
 			agent.Candidates = nextCandidates
 			agent.ThinkingLevel = parseThinkingLevel(modelCfg.ThinkingLevel)
+			agent.mu.Unlock()
 
 			if oldProvider != nil && oldProvider != nextProvider {
 				if stateful, ok := oldProvider.(providers.StatefulProvider); ok {
@@ -3869,8 +3890,7 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 
 			agent.Sessions.SetHistory(opts.SessionKey, make([]providers.Message, 0))
 			agent.Sessions.SetSummary(opts.SessionKey, "")
-			agent.Sessions.Save(opts.SessionKey)
-			return nil
+			return agent.Sessions.Save(opts.SessionKey)
 		}
 	}
 	return rt

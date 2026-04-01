@@ -62,11 +62,15 @@ func WithExtraBody(extraBody map[string]any) Option {
 	}
 }
 
-func NewProvider(apiKey, apiBase, proxy string, opts ...Option) *Provider {
+func NewProvider(apiKey, apiBase, proxy string, opts ...Option) (*Provider, error) {
+	httpClient, err := common.NewHTTPClient(proxy)
+	if err != nil {
+		return nil, fmt.Errorf("openai_compat: %w", err)
+	}
 	p := &Provider{
 		apiKey:     apiKey,
 		apiBase:    strings.TrimRight(apiBase, "/"),
-		httpClient: common.NewHTTPClient(proxy),
+		httpClient: httpClient,
 	}
 
 	for _, opt := range opts {
@@ -75,17 +79,17 @@ func NewProvider(apiKey, apiBase, proxy string, opts ...Option) *Provider {
 		}
 	}
 
-	return p
+	return p, nil
 }
 
-func NewProviderWithMaxTokensField(apiKey, apiBase, proxy, maxTokensField string) *Provider {
+func NewProviderWithMaxTokensField(apiKey, apiBase, proxy, maxTokensField string) (*Provider, error) {
 	return NewProvider(apiKey, apiBase, proxy, WithMaxTokensField(maxTokensField))
 }
 
 func NewProviderWithMaxTokensFieldAndTimeout(
 	apiKey, apiBase, proxy, maxTokensField string,
 	requestTimeoutSeconds int,
-) *Provider {
+) (*Provider, error) {
 	return NewProvider(
 		apiKey,
 		apiBase,
@@ -230,9 +234,9 @@ func (p *Provider) ChatStream(
 		req.Header.Set("Authorization", "Bearer "+p.apiKey)
 	}
 
-	// Use a client without Timeout for streaming — the http.Client.Timeout covers
+	// Use a client without http.Client.Timeout for streaming — that timeout covers
 	// the entire request lifecycle including body reads, which would kill long streams.
-	// Context cancellation still provides the safety net.
+	// Context cancellation from the caller (turn timeout) provides the safety net.
 	streamClient := &http.Client{Transport: p.httpClient.Transport}
 	resp, err := streamClient.Do(req)
 	if err != nil {
@@ -243,6 +247,12 @@ func (p *Provider) ChatStream(
 	if resp.StatusCode != http.StatusOK {
 		return nil, common.HandleErrorResponse(resp, p.apiBase)
 	}
+
+	// Intentional concurrent close: net/http response bodies are safe to Close() concurrently with reads, unblocking any blocked scanner.Scan().
+	go func() {
+		<-ctx.Done()
+		resp.Body.Close()
+	}()
 
 	return parseStreamResponse(ctx, resp.Body, onChunk)
 }
@@ -265,6 +275,7 @@ func parseStreamResponse(
 	}
 	activeTools := map[int]*toolAccum{}
 
+	var malformedChunks int
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024) // 1MB initial, 10MB max
 	for scanner.Scan() {
@@ -302,7 +313,8 @@ func parseStreamResponse(
 		}
 
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			continue // skip malformed chunks
+			malformedChunks++
+			continue
 		}
 
 		if chunk.Usage != nil {
@@ -351,6 +363,9 @@ func parseStreamResponse(
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("streaming read error: %w", err)
 	}
+	if malformedChunks > 0 {
+		logger.WarnCF("openai_compat", "skipped malformed SSE chunks", map[string]any{"count": malformedChunks})
+	}
 
 	// Assemble tool calls from accumulated deltas
 	var toolCalls []ToolCall
@@ -378,7 +393,12 @@ func parseStreamResponse(
 	}
 
 	if finishReason == "" {
-		finishReason = "stop"
+		if textContent.Len() > 0 || len(activeTools) > 0 {
+			logger.WarnCF("openai_compat", "stream ended without finish_reason; defaulting to \"unknown\"", nil)
+			finishReason = "unknown"
+		} else {
+			finishReason = "stop"
+		}
 	}
 
 	return &LLMResponse{

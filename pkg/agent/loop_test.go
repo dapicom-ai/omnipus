@@ -137,7 +137,7 @@ func TestProcessMessage_IncludesCurrentSenderInDynamicContext(t *testing.T) {
 	provider := &recordingProvider{}
 	al := NewAgentLoop(cfg, msgBus, provider)
 
-	response, err := al.processMessage(context.Background(), bus.InboundMessage{
+	response, _, err := al.processMessage(context.Background(), bus.InboundMessage{
 		Channel:  "discord",
 		SenderID: "discord:123",
 		Sender: bus.SenderInfo{
@@ -196,7 +196,7 @@ func TestProcessMessage_UseCommandLoadsRequestedSkill(t *testing.T) {
 	provider := &recordingProvider{}
 	al := NewAgentLoop(cfg, msgBus, provider)
 
-	response, err := al.processMessage(context.Background(), bus.InboundMessage{
+	response, _, err := al.processMessage(context.Background(), bus.InboundMessage{
 		Channel:  "telegram",
 		SenderID: "telegram:123",
 		ChatID:   "chat-1",
@@ -286,7 +286,7 @@ func TestProcessMessage_UseCommandArmsSkillForNextMessage(t *testing.T) {
 	provider := &recordingProvider{}
 	al := NewAgentLoop(cfg, msgBus, provider)
 
-	response, err := al.processMessage(context.Background(), bus.InboundMessage{
+	response, _, err := al.processMessage(context.Background(), bus.InboundMessage{
 		Channel:  "telegram",
 		SenderID: "telegram:123",
 		ChatID:   "chat-1",
@@ -299,7 +299,7 @@ func TestProcessMessage_UseCommandArmsSkillForNextMessage(t *testing.T) {
 		t.Fatalf("arm response = %q, want armed confirmation", response)
 	}
 
-	response, err = al.processMessage(context.Background(), bus.InboundMessage{
+	response, _, err = al.processMessage(context.Background(), bus.InboundMessage{
 		Channel:  "telegram",
 		SenderID: "telegram:123",
 		ChatID:   "chat-1",
@@ -603,7 +603,7 @@ func TestProcessMessage_MediaToolHandledSkipsFollowUpLLMAndFinalText(t *testing.
 		path:  imagePath,
 	})
 
-	response, err := al.processMessage(context.Background(), bus.InboundMessage{
+	response, _, err := al.processMessage(context.Background(), bus.InboundMessage{
 		Channel:  "telegram",
 		ChatID:   "chat1",
 		SenderID: "user1",
@@ -698,7 +698,7 @@ func TestProcessMessage_HandledToolProcessesQueuedSteeringBeforeReturning(t *tes
 		loop:  al,
 	})
 
-	response, err := al.processMessage(context.Background(), bus.InboundMessage{
+	response, _, err := al.processMessage(context.Background(), bus.InboundMessage{
 		Channel:  "telegram",
 		ChatID:   "chat1",
 		SenderID: "user1",
@@ -749,7 +749,7 @@ func TestProcessMessage_MediaArtifactCanBeForwardedBySendFile(t *testing.T) {
 		path:  imagePath,
 	})
 
-	response, err := al.processMessage(context.Background(), bus.InboundMessage{
+	response, _, err := al.processMessage(context.Background(), bus.InboundMessage{
 		Channel:  "telegram",
 		ChatID:   "chat1",
 		SenderID: "user1",
@@ -1341,7 +1341,7 @@ func (h testHelper) executeAndGetResponse(tb testing.TB, ctx context.Context, ms
 	timeoutCtx, cancel := context.WithTimeout(ctx, responseTimeout)
 	defer cancel()
 
-	response, err := h.al.processMessage(timeoutCtx, msg)
+	response, _, err := h.al.processMessage(timeoutCtx, msg)
 	if err != nil {
 		tb.Fatalf("processMessage failed: %v", err)
 	}
@@ -2423,7 +2423,7 @@ func TestProcessMessage_PublishesReasoningContentToReasoningChannel(t *testing.T
 	chManager.RegisterChannel("telegram", &fakeChannel{id: "reason-chat"})
 	al.SetChannelManager(chManager)
 
-	response, err := al.processMessage(context.Background(), bus.InboundMessage{
+	response, _, err := al.processMessage(context.Background(), bus.InboundMessage{
 		Channel:  "telegram",
 		SenderID: "user1",
 		ChatID:   "chat1",
@@ -2529,7 +2529,7 @@ func TestProcessMessage_PublishesToolFeedbackWhenEnabled(t *testing.T) {
 	provider := &toolFeedbackProvider{filePath: heartbeatFile}
 	al := NewAgentLoop(cfg, msgBus, provider)
 
-	response, err := al.processMessage(context.Background(), bus.InboundMessage{
+	response, _, err := al.processMessage(context.Background(), bus.InboundMessage{
 		Channel:  "telegram",
 		SenderID: "user-1",
 		ChatID:   "chat-1",
@@ -2972,7 +2972,7 @@ func TestProcessMessage_ContextOverflowRecovery(t *testing.T) {
 		agent.Sessions.AddFullMessage(sessionKey, providers.Message{Role: "assistant", Content: "response"})
 	}
 
-	response, err := al.processMessage(context.Background(), bus.InboundMessage{
+	response, _, err := al.processMessage(context.Background(), bus.InboundMessage{
 		Channel:    "test",
 		ChatID:     "chat1",
 		SenderID:   "user1",
@@ -3014,7 +3014,7 @@ func TestProcessMessage_ContextOverflow_AnthropicStyle(t *testing.T) {
 		return &providers.LLMResponse{Content: "Anthropic recovery success"}, nil
 	}
 
-	response, err := al.processMessage(context.Background(), bus.InboundMessage{
+	response, _, err := al.processMessage(context.Background(), bus.InboundMessage{
 		Channel:  "test",
 		ChatID:   "chat1",
 		SenderID: "user1",

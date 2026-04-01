@@ -10,6 +10,24 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/providers/protocoltypes"
 )
 
+func mustNewProvider(t *testing.T, apiKey, apiBase, proxy string, opts ...Option) *Provider {
+	t.Helper()
+	p, err := NewProvider(apiKey, apiBase, proxy, opts...)
+	if err != nil {
+		t.Fatalf("NewProvider() error = %v", err)
+	}
+	return p
+}
+
+func mustNewProviderWithTimeout(t *testing.T, apiKey, apiBase, proxy string, requestTimeoutSeconds int) *Provider {
+	t.Helper()
+	p, err := NewProviderWithTimeout(apiKey, apiBase, proxy, requestTimeoutSeconds)
+	if err != nil {
+		t.Fatalf("NewProviderWithTimeout() error = %v", err)
+	}
+	return p
+}
+
 // writeValidResponse writes a minimal valid Responses API response.
 func writeValidResponse(w http.ResponseWriter) {
 	resp := map[string]any{
@@ -45,8 +63,11 @@ func TestProviderChat_AzureURLConstruction(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := NewProvider("test-key", server.URL, "")
-	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "my-gpt5-deployment", nil)
+	p, err := NewProvider("test-key", server.URL, "")
+	if err != nil {
+		t.Fatalf("NewProvider() error = %v", err)
+	}
+	_, err = p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "my-gpt5-deployment", nil)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
@@ -68,7 +89,7 @@ func TestProviderChat_AzureAuthHeader(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := NewProvider("test-azure-key", server.URL, "")
+	p := mustNewProvider(t, "test-azure-key", server.URL, "")
 	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "deployment", nil)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
@@ -91,7 +112,7 @@ func TestProviderChat_AzureRequestBodyContainsModel(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := NewProvider("test-key", server.URL, "")
+	p := mustNewProvider(t, "test-key", server.URL, "")
 	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "my-deployment", nil)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
@@ -111,7 +132,7 @@ func TestProviderChat_AzureUsesMaxOutputTokens(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := NewProvider("test-key", server.URL, "")
+	p := mustNewProvider(t, "test-key", server.URL, "")
 	_, err := p.Chat(
 		t.Context(),
 		[]Message{{Role: "user", Content: "hi"}},
@@ -143,7 +164,7 @@ func TestProviderChat_AzureStoreIsFalse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := NewProvider("test-key", server.URL, "")
+	p := mustNewProvider(t, "test-key", server.URL, "")
 	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "deployment", nil)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
@@ -160,7 +181,7 @@ func TestProviderChat_AzureHTTPError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := NewProvider("bad-key", server.URL, "")
+	p := mustNewProvider(t, "bad-key", server.URL, "")
 	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "deployment", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -192,7 +213,7 @@ func TestProviderChat_AzureParseTextOutput(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := NewProvider("test-key", server.URL, "")
+	p := mustNewProvider(t, "test-key", server.URL, "")
 	out, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "deployment", nil)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
@@ -233,7 +254,7 @@ func TestProviderChat_AzureParseToolCalls(t *testing.T) {
 	}))
 	defer server.Close()
 
-	p := NewProvider("test-key", server.URL, "")
+	p := mustNewProvider(t, "test-key", server.URL, "")
 	out, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "weather?"}}, nil, "deployment", nil)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
@@ -250,7 +271,7 @@ func TestProviderChat_AzureParseToolCalls(t *testing.T) {
 }
 
 func TestProvider_AzureEmptyAPIBase(t *testing.T) {
-	p := NewProvider("test-key", "", "")
+	p := mustNewProvider(t, "test-key", "", "")
 	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "deployment", nil)
 	if err == nil {
 		t.Fatal("expected error for empty API base")
@@ -258,21 +279,21 @@ func TestProvider_AzureEmptyAPIBase(t *testing.T) {
 }
 
 func TestProvider_AzureRequestTimeoutDefault(t *testing.T) {
-	p := NewProvider("test-key", "https://example.com", "")
+	p := mustNewProvider(t, "test-key", "https://example.com", "")
 	if p.httpClient.Timeout != defaultRequestTimeout {
 		t.Errorf("timeout = %v, want %v", p.httpClient.Timeout, defaultRequestTimeout)
 	}
 }
 
 func TestProvider_AzureRequestTimeoutOverride(t *testing.T) {
-	p := NewProvider("test-key", "https://example.com", "", WithRequestTimeout(300*time.Second))
+	p := mustNewProvider(t, "test-key", "https://example.com", "", WithRequestTimeout(300*time.Second))
 	if p.httpClient.Timeout != 300*time.Second {
 		t.Errorf("timeout = %v, want %v", p.httpClient.Timeout, 300*time.Second)
 	}
 }
 
 func TestProvider_AzureNewProviderWithTimeout(t *testing.T) {
-	p := NewProviderWithTimeout("test-key", "https://example.com", "", 180)
+	p := mustNewProviderWithTimeout(t, "test-key", "https://example.com", "", 180)
 	if p.httpClient.Timeout != 180*time.Second {
 		t.Errorf("timeout = %v, want %v", p.httpClient.Timeout, 180*time.Second)
 	}
@@ -306,7 +327,7 @@ func TestProviderChat_AzureNativeWebSearchInjection(t *testing.T) {
 		},
 	}
 
-	p := NewProvider("test-key", server.URL, "")
+	p := mustNewProvider(t, "test-key", server.URL, "")
 
 	// With native_search=true: user-defined web_search should be replaced by built-in
 	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, tools, "deployment",
@@ -356,7 +377,7 @@ func TestProviderChat_AzureNoNativeWebSearch(t *testing.T) {
 		},
 	}
 
-	p := NewProvider("test-key", server.URL, "")
+	p := mustNewProvider(t, "test-key", server.URL, "")
 
 	// Without native_search: user-defined web_search should be kept as-is
 	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, tools, "deployment", nil)

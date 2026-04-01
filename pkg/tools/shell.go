@@ -96,6 +96,8 @@ var (
 		regexp.MustCompile(`\bssh\b.*@`),
 		regexp.MustCompile(`\beval\b`),
 		regexp.MustCompile(`\bsource\s+.*\.sh\b`),
+		regexp.MustCompile(`<\([^)]*\)`),
+		regexp.MustCompile(`>\([^)]*\)`),
 	}
 
 	// absolutePathPattern matches absolute file paths in commands (Unix and Windows).
@@ -128,7 +130,7 @@ func NewExecToolWithConfig(
 	denyPatterns := make([]*regexp.Regexp, 0)
 	customAllowPatterns := make([]*regexp.Regexp, 0)
 	var allowedPathPatterns []*regexp.Regexp
-	allowRemote := true
+	allowRemote := false
 	if len(allowPaths) > 0 {
 		allowedPathPatterns = allowPaths[0]
 	}
@@ -222,11 +224,11 @@ func (t *ExecTool) Parameters() map[string]any {
 				"description": "Data to write to stdin (required for write)",
 			},
 			"background": map[string]any{
-				"type":        "string",
+				"type":        "boolean",
 				"description": "Run in background immediately",
 			},
 			"pty": map[string]any{
-				"type":        "string",
+				"type":        "boolean",
 				"description": "Run in a pseudo-terminal (PTY) when available",
 			},
 			"cwd": map[string]any{
@@ -320,9 +322,10 @@ func (t *ExecTool) executeRun(ctx context.Context, args map[string]any) *ToolRes
 
 	if cwd == "" {
 		wd, err := os.Getwd()
-		if err == nil {
-			cwd = wd
+		if err != nil {
+			return ErrorResult(fmt.Sprintf("cannot determine working directory: %v", err))
 		}
+		cwd = wd
 	}
 
 	if guardError := t.guardCommand(command, cwd); guardError != "" {
@@ -339,8 +342,14 @@ func (t *ExecTool) executeRun(ctx context.Context, args map[string]any) *ToolRes
 		if isAllowedPath(resolved, t.allowedPathPatterns) {
 			cwd = resolved
 		} else {
-			absWorkspace, _ := filepath.Abs(t.workingDir)
-			wsResolved, _ := filepath.EvalSymlinks(absWorkspace)
+			absWorkspace, absErr := filepath.Abs(t.workingDir)
+			if absErr != nil {
+				return ErrorResult(fmt.Sprintf("Command blocked by safety guard (workspace path resolution failed: %v)", absErr))
+			}
+			wsResolved, symlinkErr := filepath.EvalSymlinks(absWorkspace)
+			if symlinkErr != nil {
+				return ErrorResult(fmt.Sprintf("Command blocked by safety guard (workspace symlink resolution failed: %v)", symlinkErr))
+			}
 			if wsResolved == "" {
 				wsResolved = absWorkspace
 			}
@@ -498,6 +507,7 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 	var stdoutReader io.ReadCloser
 	var stderrReader io.ReadCloser
 	var stdinWriter io.WriteCloser
+	var ptySlaveToClose io.Closer
 
 	if ptyEnabled {
 		ptmx, tty, err := pty.Open()
@@ -508,6 +518,7 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 		cmd.Stdin = tty
 		cmd.Stdout = tty
 		cmd.Stderr = tty
+		ptySlaveToClose = tty
 
 		// For PTY, we need Setsid to create a new session.
 		// Note: Setsid and Setpgid conflict, so we must replace SysProcAttr entirely.
@@ -535,7 +546,13 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 		if session.ptyMaster != nil {
 			session.ptyMaster.Close()
 		}
+		if ptySlaveToClose != nil {
+			ptySlaveToClose.Close()
+		}
 		return ErrorResult(fmt.Sprintf("failed to start command: %v", err))
+	}
+	if ptySlaveToClose != nil {
+		ptySlaveToClose.Close()
 	}
 
 	session.PID = cmd.Process.Pid
@@ -703,7 +720,7 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 	data, marshalErr := json.Marshal(resp)
 	if marshalErr != nil {
 		logger.WarnCF("shell", "failed to marshal exec start response", map[string]any{"error": marshalErr.Error()})
-		data = []byte("{}")
+		data = []byte(fmt.Sprintf(`{"error":"failed to serialize response: %s"}`, marshalErr.Error()))
 	}
 	return &ToolResult{
 		ForLLM:  string(data),
@@ -720,7 +737,7 @@ func (t *ExecTool) executeList() *ToolResult {
 	data, marshalErr := json.Marshal(resp)
 	if marshalErr != nil {
 		logger.WarnCF("shell", "failed to marshal exec list response", map[string]any{"error": marshalErr.Error()})
-		data = []byte("{}")
+		data = []byte(fmt.Sprintf(`{"error":"failed to serialize response: %s"}`, marshalErr.Error()))
 	}
 	return &ToolResult{
 		ForLLM:  string(data),
@@ -751,7 +768,7 @@ func (t *ExecTool) executePoll(args map[string]any) *ToolResult {
 	data, marshalErr := json.Marshal(resp)
 	if marshalErr != nil {
 		logger.WarnCF("shell", "failed to marshal exec poll response", map[string]any{"error": marshalErr.Error()})
-		data = []byte("{}")
+		data = []byte(fmt.Sprintf(`{"error":"failed to serialize response: %s"}`, marshalErr.Error()))
 	}
 	return &ToolResult{
 		ForLLM:  string(data),
@@ -783,7 +800,7 @@ func (t *ExecTool) executeRead(args map[string]any) *ToolResult {
 	data, marshalErr := json.Marshal(resp)
 	if marshalErr != nil {
 		logger.WarnCF("shell", "failed to marshal exec read response", map[string]any{"error": marshalErr.Error()})
-		data = []byte("{}")
+		data = []byte(fmt.Sprintf(`{"error":"failed to serialize response: %s"}`, marshalErr.Error()))
 	}
 	return &ToolResult{
 		ForLLM:  string(data),
@@ -828,7 +845,7 @@ func (t *ExecTool) executeWrite(args map[string]any) *ToolResult {
 	respData, marshalErr := json.Marshal(resp)
 	if marshalErr != nil {
 		logger.WarnCF("shell", "failed to marshal exec write response", map[string]any{"error": marshalErr.Error()})
-		respData = []byte("{}")
+		respData = []byte(fmt.Sprintf(`{"error":"failed to serialize response: %s"}`, marshalErr.Error()))
 	}
 	return &ToolResult{
 		ForLLM:  string(respData),
@@ -867,7 +884,7 @@ func (t *ExecTool) executeKill(args map[string]any) *ToolResult {
 	data, marshalErr := json.Marshal(resp)
 	if marshalErr != nil {
 		logger.WarnCF("shell", "failed to marshal exec kill response", map[string]any{"error": marshalErr.Error()})
-		data = []byte("{}")
+		data = []byte(fmt.Sprintf(`{"error":"failed to serialize response: %s"}`, marshalErr.Error()))
 	}
 	return &ToolResult{
 		ForLLM:  string(data),
@@ -1095,7 +1112,7 @@ func (t *ExecTool) executeSendKeys(args map[string]any) *ToolResult {
 	respData, marshalErr := json.Marshal(resp)
 	if marshalErr != nil {
 		logger.WarnCF("shell", "failed to marshal exec sendkeys response", map[string]any{"error": marshalErr.Error()})
-		respData = []byte("{}")
+		respData = []byte(fmt.Sprintf(`{"error":"failed to serialize response: %s"}`, marshalErr.Error()))
 	}
 	return &ToolResult{
 		ForLLM:  string(respData),
@@ -1138,6 +1155,8 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 	}
 
 	if t.restrictToWorkspace {
+		// Shallow supplementary guard: catches obvious literal traversal sequences.
+		// The real enforcement is the absolute-path regex validator below.
 		if strings.Contains(cmd, "..\\") || strings.Contains(cmd, "../") {
 			return "Command blocked by safety guard (path traversal detected)"
 		}
@@ -1180,7 +1199,7 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 
 			p, err := filepath.Abs(raw)
 			if err != nil {
-				continue
+				return "Command blocked by safety guard (cannot resolve path)"
 			}
 
 			if safePaths[p] {
@@ -1192,7 +1211,7 @@ func (t *ExecTool) guardCommand(command, cwd string) string {
 
 			rel, err := filepath.Rel(cwdPath, p)
 			if err != nil {
-				continue
+				return "Command blocked by safety guard (cannot resolve relative path)"
 			}
 
 			if strings.HasPrefix(rel, "..") {

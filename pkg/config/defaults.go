@@ -65,7 +65,7 @@ func DefaultConfig() *Config {
 					MaxArgsLength: 300,
 				},
 				SplitOnMarker:  false,
-				TimeoutSeconds: 300, // 5 minutes; 0 = disabled
+				TimeoutSeconds: 0, // disabled; OpenRouter queue delays make fixed timeouts unreliable
 			},
 		},
 		Bindings: []AgentBinding{},
@@ -86,7 +86,7 @@ func DefaultConfig() *Config {
 				Typing:    TypingConfig{Enabled: true},
 				Placeholder: PlaceholderConfig{
 					Enabled: true,
-					Text:    FlexibleStringSlice{"Thinking... 💭"},
+					Text:    FlexibleStringSlice{"Thinking..."},
 				},
 				Streaming:     StreamingConfig{Enabled: true, ThrottleSeconds: 3, MinGrowthChars: 200},
 				UseMarkdownV2: false,
@@ -135,10 +135,10 @@ func DefaultConfig() *Config {
 				},
 				Placeholder: PlaceholderConfig{
 					Enabled: true,
-					Text:    FlexibleStringSlice{"Thinking... 💭"},
+					Text:    FlexibleStringSlice{"Thinking..."},
 				},
 				CryptoDatabasePath: "",
-				CryptoPassphrase:   "",
+				CryptoPassphrase:   SecureString{},
 			},
 			LINE: LINEConfig{
 				Enabled:      false,

@@ -51,11 +51,12 @@ func TestHookManager_SortsInProcessBeforeProcess(t *testing.T) {
 	hm := NewHookManager(nil)
 	defer hm.Close()
 
+	// Use a minimal EventObserver so the hook passes interface validation.
 	if err := hm.Mount(HookRegistration{
 		Name:     "process",
 		Priority: -10,
 		Source:   HookSourceProcess,
-		Hook:     struct{}{},
+		Hook:     &llmObserverHook{},
 	}); err != nil {
 		t.Fatalf("mount process hook: %v", err)
 	}
@@ -63,7 +64,7 @@ func TestHookManager_SortsInProcessBeforeProcess(t *testing.T) {
 		Name:     "in-process",
 		Priority: 100,
 		Source:   HookSourceInProcess,
-		Hook:     struct{}{},
+		Hook:     &llmObserverHook{},
 	}); err != nil {
 		t.Fatalf("mount in-process hook: %v", err)
 	}

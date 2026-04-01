@@ -59,6 +59,9 @@ const (
 	eventKindCount
 )
 
+// Compile-time assertion: eventKindNames must have exactly eventKindCount entries.
+var _ [eventKindCount]string = eventKindNames
+
 var eventKindNames = [...]string{
 	"turn_start",
 	"turn_end",
@@ -198,12 +201,16 @@ type SessionSummarizePayload struct {
 
 // ToolExecStartPayload describes a tool execution request.
 type ToolExecStartPayload struct {
-	Tool      string
-	Arguments map[string]any
+	ToolCallID string
+	ChatID     string
+	Tool       string
+	Arguments  map[string]any
 }
 
 // ToolExecEndPayload describes the outcome of a tool execution.
 type ToolExecEndPayload struct {
+	ToolCallID string
+	ChatID     string
 	Tool       string
 	Duration   time.Duration
 	ForLLMLen  int
