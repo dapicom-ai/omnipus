@@ -10,6 +10,7 @@ import {
   AuiIf,
   useComposerRuntime,
   useMessageRuntime,
+  useMessage,
 } from '@assistant-ui/react'
 import {
   ArrowCounterClockwise,
@@ -112,30 +113,29 @@ function AssistantTextPart() {
   )
 }
 
-// Shows thinking dots inside the assistant message when running with no content
+// Shows thinking dots inside the assistant message when running with no text content.
+// Uses useMessage() for reactive state (not getState() which is a snapshot).
 function InlineThinkingIndicator() {
-  const messageRuntime = useMessageRuntime()
-  const state = messageRuntime.getState()
-  const isRunning = state.status?.type === 'running'
-  const hasContent = state.content?.some(
-    (p: { type: string; text?: string }) => p.type === 'text' && p.text && p.text.length > 0
+  const message = useMessage()
+  const isRunning = message.status?.type === 'running'
+  const hasText = message.content?.some(
+    (p: { type: string; text?: string }) => p.type === 'text' && p.text && p.text.trim().length > 0
   )
-
-  if (!isRunning || hasContent) return null
+  if (!isRunning || hasText) return null
   return <ThinkingIndicator />
 }
 
 // Fallback tool UI for tools without a registered makeAssistantToolUI component.
-// Renders the generic JSON badge with live status from the store.
-function FallbackToolUI({ part }: { part: { toolCallId: string; toolName: string; args: unknown; result: unknown; status: import('@assistant-ui/react').MessagePartStatus } }) {
+// ToolCallMessagePartProps passes: toolCallId, toolName, args, result, status, addResult, resume
+function FallbackToolUI(props: { toolCallId: string; toolName: string; args: unknown; result: unknown; status: import('@assistant-ui/react').MessagePartStatus }) {
   const storeToolCalls = useChatStore((s) => s.toolCalls)
-  const liveCall = storeToolCalls[part.toolCallId]
+  const liveCall = storeToolCalls[props.toolCallId]
   return (
     <GenericToolCall
-      toolName={part.toolName}
-      args={part.args}
-      result={liveCall?.result ?? part.result}
-      status={part.status}
+      toolName={props.toolName}
+      args={props.args}
+      result={liveCall?.result ?? props.result}
+      status={props.status}
       error={liveCall?.error}
       durationMs={liveCall?.duration_ms}
     />
