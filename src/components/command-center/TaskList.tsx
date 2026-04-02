@@ -189,12 +189,14 @@ export function TaskList({ statusFilter = 'all', onTaskSelect }: TaskListProps) 
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
-  const { data: allTasks = [], isLoading, isError: tasksError } = useQuery({
+  const { data: allTasks = [], isLoading, isFetching, isError: tasksError } = useQuery({
     queryKey: ['tasks'],
     queryFn: () => fetchTasks(),
     staleTime: 30_000,
     refetchInterval: 10_000,
   })
+  // Show skeleton on initial load (no data yet, still fetching)
+  const showSkeleton = isLoading || (isFetching && allTasks.length === 0)
 
   const { data: agents = [] } = useQuery({
     queryKey: ['agents'],
@@ -392,7 +394,7 @@ export function TaskList({ statusFilter = 'all', onTaskSelect }: TaskListProps) 
             <p className="text-sm text-[var(--color-error)]">Could not load tasks.</p>
             <p className="text-xs text-[var(--color-muted)]">Check your connection and try refreshing.</p>
           </div>
-        ) : isLoading ? (
+        ) : showSkeleton ? (
           <div className="space-y-1 p-2">
             {[1, 2, 3].map((i) => (
               <div key={i} className="h-12 rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] animate-pulse" />
