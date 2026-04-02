@@ -65,7 +65,7 @@ export function SessionPanel() {
 
   // Group chat sessions by agent for sub-accordions
   const chatByAgent = chatSessions.reduce<Record<string, Session[]>>((acc, s) => {
-    const agentId = s.agent_id === 'default' ? systemAgentId : s.agent_id
+    const agentId = (s.agent_id === 'default' || s.agent_id === 'main') ? systemAgentId : s.agent_id
     if (!acc[agentId]) acc[agentId] = []
     acc[agentId].push(s)
     return acc

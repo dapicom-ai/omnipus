@@ -31,7 +31,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useChatStore } from '@/store/chat'
 import { useUiStore } from '@/store/ui'
-import { fetchSessionMessages, createSession } from '@/lib/api'
+import { fetchAgents, fetchSessionMessages, createSession } from '@/lib/api'
 import type { ToolCall } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
@@ -229,6 +229,9 @@ function OmnipusComposer() {
   const composerRuntime = useComposerRuntime()
   const queryClient = useQueryClient()
 
+  const { data: agents = [] } = useQuery({ queryKey: ['agents'], queryFn: fetchAgents })
+  const activeAgentName = agents.find((a) => a.id === activeAgentId)?.name ?? 'Omnipus'
+
   const { mutate: doCreateSession, isPending: isCreatingSession } = useMutation({
     mutationFn: () => {
       if (!activeAgentId) throw new Error('No agent selected')
@@ -350,7 +353,7 @@ function OmnipusComposer() {
               ? 'Connecting to gateway...'
               : isStreaming
                 ? 'Waiting for response...'
-                : 'Message Omnipus…'
+                : `Message ${activeAgentName}…`
           }
           disabled={!isConnected || isStreaming}
           rows={1}
