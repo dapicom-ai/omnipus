@@ -350,16 +350,19 @@ func setupAndStartServices(
 	runningServices.HealthServer = health.NewServer(cfg.Gateway.Host, cfg.Gateway.Port)
 	runningServices.ChannelManager.SetupHTTPServer(addr, runningServices.HealthServer)
 
-	// Initialize PartitionStore for the default (main) agent workspace.
-	// The "main" agent is the default workspace; custom agents have separate workspaces.
-	defaultAgentID := "main"
-	if err := datamodel.InitAgentWorkspace(homePath, defaultAgentID); err != nil {
-		slog.Error("gateway: could not init agent workspace for partition store", "agent_id", defaultAgentID, "error", err)
+	// Initialize PartitionStore for the default workspace.
+	// The partition store manages webchat sessions for all agents in one directory.
+	defaultWorkspace := cfg.Agents.Defaults.Workspace
+	if defaultWorkspace == "" {
+		defaultWorkspace = filepath.Join(homePath, "workspace")
+	}
+	sessionsDir := filepath.Join(defaultWorkspace, "sessions")
+	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
+		slog.Error("gateway: could not create sessions dir", "dir", sessionsDir, "error", err)
 		fmt.Println("WARNING: Session persistence unavailable — conversations will not be saved")
 	} else {
-		agentWorkspace := datamodel.AgentWorkspacePath(homePath, defaultAgentID)
-		runningServices.PartitionStore = session.NewPartitionStore(agentWorkspace, defaultAgentID)
-		slog.Info("gateway: day-partitioned session store initialized", "agent_id", defaultAgentID)
+		runningServices.PartitionStore = session.NewPartitionStore(defaultWorkspace, "main")
+		slog.Info("gateway: day-partitioned session store initialized", "workspace", defaultWorkspace)
 	}
 
 	allowedOrigin := fmt.Sprintf("http://%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
