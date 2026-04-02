@@ -499,7 +499,6 @@ export function ChatScreen() {
           <span className="text-xs text-[var(--color-secondary)] flex-1 truncate">
             Task: {attachedTaskTitle ?? 'Task Execution'}
           </span>
-          <Badge variant="outline" className="text-[10px] shrink-0">Running</Badge>
         </div>
       )}
 
