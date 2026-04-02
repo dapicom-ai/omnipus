@@ -16,6 +16,35 @@ import { fetchActivity } from '@/lib/api'
 import type { ActivityEvent } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
+// Event types shown in the activity feed — chat messages are intentionally excluded
+const ALLOWED_TYPES = new Set([
+  'task_created',
+  'task_updated',
+  'session_started',
+  'session_ended',
+  'agent_error',
+  'tool_called',
+  'approval_requested',
+])
+
+type FilterPill = 'all' | 'errors' | 'tasks' | 'sessions'
+
+const FILTER_PILLS: { value: FilterPill; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'errors', label: 'Errors' },
+  { value: 'tasks', label: 'Tasks' },
+  { value: 'sessions', label: 'Sessions' },
+]
+
+const PILL_TYPES: Record<FilterPill, Set<string>> = {
+  all: ALLOWED_TYPES,
+  errors: new Set(['agent_error']),
+  tasks: new Set(['task_created', 'task_updated', 'approval_requested']),
+  sessions: new Set(['session_started', 'session_ended']),
+}
+
+const PAGE_SIZE = 20
+
 function eventIcon(type: string) {
   switch (type) {
     case 'task_created': return <Plus size={12} />
@@ -70,7 +99,9 @@ function EventRow({ event }: { event: ActivityEvent }) {
 }
 
 export function ActivityFeed() {
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(false)
+  const [activeFilter, setActiveFilter] = useState<FilterPill>('all')
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
 
   const { data: events = [], isLoading, isError: activityError } = useQuery({
     queryKey: ['activity'],
@@ -78,10 +109,25 @@ export function ActivityFeed() {
     refetchInterval: 30_000,
   })
 
+  // Filter to meaningful events only (no chat message echoes)
+  const meaningful = events.filter((e) => ALLOWED_TYPES.has(e.type))
+
+  // Apply pill filter
+  const allowedForPill = PILL_TYPES[activeFilter]
+  const filtered = meaningful.filter((e) => allowedForPill.has(e.type))
+
   // Reverse-chronological
-  const sorted = [...events].sort(
+  const sorted = [...filtered].sort(
     (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
   )
+
+  const visible = sorted.slice(0, visibleCount)
+  const hasMore = sorted.length > visibleCount
+
+  function handleFilterChange(pill: FilterPill) {
+    setActiveFilter(pill)
+    setVisibleCount(PAGE_SIZE)
+  }
 
   return (
     <div>
@@ -93,6 +139,9 @@ export function ActivityFeed() {
         <div className="flex items-center gap-2">
           <Pulse size={13} className="text-[var(--color-muted)]" />
           <span className="text-xs font-semibold text-[var(--color-secondary)]">Activity</span>
+          {meaningful.length > 0 && (
+            <span className="text-[10px] text-[var(--color-muted)]">({meaningful.length})</span>
+          )}
         </div>
         {open ? (
           <CaretUp size={12} className="text-[var(--color-muted)]" />
@@ -103,6 +152,25 @@ export function ActivityFeed() {
 
       {open && (
         <div className="pb-2">
+          {/* Filter pills */}
+          <div className="flex items-center gap-1.5 px-4 pb-2">
+            {FILTER_PILLS.map((pill) => (
+              <button
+                key={pill.value}
+                type="button"
+                onClick={() => handleFilterChange(pill.value)}
+                className={cn(
+                  'px-2.5 py-0.5 rounded-full text-[10px] font-medium transition-colors whitespace-nowrap',
+                  activeFilter === pill.value
+                    ? 'bg-[var(--color-accent)] text-[var(--color-primary)]'
+                    : 'bg-[var(--color-surface-1)] text-[var(--color-muted)] hover:text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)]',
+                )}
+              >
+                {pill.label}
+              </button>
+            ))}
+          </div>
+
           {activityError ? (
             <p className="px-4 pb-2 text-xs text-[var(--color-error)]">Could not load activity feed.</p>
           ) : isLoading ? (
@@ -111,13 +179,22 @@ export function ActivityFeed() {
                 <div key={i} className="h-8 rounded bg-[var(--color-surface-1)] animate-pulse" />
               ))}
             </div>
-          ) : sorted.length === 0 ? (
+          ) : visible.length === 0 ? (
             <p className="px-4 pb-2 text-xs text-[var(--color-muted)]">No recent activity.</p>
           ) : (
             <div>
-              {sorted.map((event) => (
+              {visible.map((event) => (
                 <EventRow key={event.id} event={event} />
               ))}
+              {hasMore && (
+                <button
+                  type="button"
+                  onClick={() => setVisibleCount((n) => n + PAGE_SIZE)}
+                  className="w-full px-4 py-2 text-[10px] text-[var(--color-muted)] hover:text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors text-center"
+                >
+                  Show more ({sorted.length - visibleCount} remaining)
+                </button>
+              )}
             </div>
           )}
         </div>

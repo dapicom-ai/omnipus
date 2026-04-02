@@ -9,6 +9,7 @@ import {
   SpinnerGap,
   CheckCircle,
   XCircle,
+  Warning,
   ShieldCheck,
   Lightning,
   Cube,
@@ -410,7 +411,7 @@ function ProviderStep({
           className="flex items-start gap-2 p-3 rounded-lg border text-xs"
           style={{ borderColor: 'var(--color-warning)', color: 'var(--color-warning)', backgroundColor: 'rgba(212,175,55,0.06)' }}
         >
-          <XCircle size={14} weight="fill" className="shrink-0 mt-0.5" />
+          <Warning size={14} weight="fill" className="shrink-0 mt-0.5" />
           <span>Could not reach the gateway — showing default provider list. Some providers may not be available.</span>
         </div>
       )}

@@ -15,8 +15,8 @@ import { useChatStore } from '@/store/chat'
 import { cn } from '@/lib/utils'
 import avatarUrl from '@/assets/logo/omnipus-avatar.svg?url'
 
-// FR-015/FR-016: spec breakpoint is 768px — matches Tailwind's `md` prefix
-const PHONE_BREAKPOINT = 768
+// FR-015/FR-016: spec breakpoint is 640px — matches Tailwind's `sm` prefix
+const PHONE_BREAKPOINT = 640
 
 const NAV_ITEMS = [
   { to: '/', label: 'Chat', Icon: ChatCircle },
@@ -136,11 +136,11 @@ export function Sidebar() {
           Settings
         </Link>
 
-        {/* FR-015: Pin toggle — hidden below 768px (Tailwind md = 768px, not sm = 640px) */}
+        {/* FR-015: Pin toggle — hidden below 640px (Tailwind sm = 640px) */}
         <button
           onClick={togglePin}
           title={isPinned ? 'Unpin sidebar' : 'Pin sidebar'}
-          className="hidden md:flex items-center gap-3 px-4 py-2.5 mx-2 rounded-lg text-sm text-[var(--color-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-secondary)] transition-colors w-[calc(100%-16px)]"
+          className="hidden sm:flex items-center gap-3 px-4 py-2.5 mx-2 rounded-lg text-sm text-[var(--color-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-secondary)] transition-colors w-[calc(100%-16px)]"
         >
           {isPinned ? <PushPinSlash size={18} /> : <PushPin size={18} />}
           {isPinned ? 'Unpin sidebar' : 'Pin sidebar'}
@@ -151,10 +151,10 @@ export function Sidebar() {
 
   return (
     <>
-      {/* FR-015: Pinned mode — permanent panel, hidden below 768px (md breakpoint) */}
+      {/* FR-015: Pinned mode — permanent panel, hidden below 640px (sm breakpoint) */}
       {isPinned && (
         <aside
-          className="hidden md:flex flex-col h-full flex-shrink-0 bg-[var(--color-surface-1)] border-r border-[var(--color-border)]"
+          className="hidden sm:flex flex-col h-full flex-shrink-0 bg-[var(--color-surface-1)] border-r border-[var(--color-border)]"
           style={{ width: 'var(--spacing-sidebar)' }}
         >
           {sidebarContent}

@@ -50,7 +50,10 @@ export function CommandCenterScreen() {
         </div>
       )}
 
-      {/* 3. Filter tabs */}
+      {/* 3. Agent summary — compact card row */}
+      <AgentSummarySection />
+
+      {/* 4. Filter tabs */}
       <div className="flex items-center gap-0.5 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] overflow-x-auto">
         {FILTER_TABS.map((tab) => {
           const count = countFor(tab.value)
@@ -85,15 +88,14 @@ export function CommandCenterScreen() {
         })}
       </div>
 
-      {/* 4. Task list */}
+      {/* 5. Task list */}
       <TaskList
         statusFilter={statusFilter}
         onTaskSelect={setSelectedTask}
       />
 
-      {/* 5. Agent summary + 6. Activity feed */}
+      {/* 6. Activity feed — collapsed by default, at the bottom */}
       <div className="border-t border-[var(--color-border)]">
-        <AgentSummarySection />
         <ActivityFeed />
       </div>
 
