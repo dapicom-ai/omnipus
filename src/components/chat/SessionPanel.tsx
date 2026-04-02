@@ -71,8 +71,10 @@ export function SessionPanel() {
     return acc
   }, {})
 
-  // The agents list to display under conversations (match existing: hide system when others exist)
-  const visibleAgents = agents.length <= 1 ? agents : agents.filter((a) => a.type !== 'system')
+  // Show all agents that have sessions, including the system agent (Omnipus).
+  // Previously the system agent was hidden, but it needs to be visible since users chat with it.
+  const agentsWithSessions = new Set(Object.keys(chatByAgent))
+  const visibleAgents = agents.filter((a) => agentsWithSessions.has(a.id) || a.type !== 'system')
 
   return (
     <Sheet open={sessionPanelOpen} onOpenChange={(open) => !open && closeSessionPanel()}>
@@ -192,9 +194,15 @@ export function SessionPanel() {
                               </span>
                               <Badge
                                 variant="outline"
-                                className="text-[9px] h-4 px-1 shrink-0"
+                                className={`text-[9px] h-4 px-1 shrink-0 ${
+                                  session.status === 'archived' ? 'text-[var(--color-success)]' :
+                                  session.status === 'interrupted' ? 'text-[var(--color-error)]' :
+                                  'text-[var(--color-warning)]'
+                                }`}
                               >
-                                task
+                                {session.status === 'archived' ? 'completed' :
+                                 session.status === 'interrupted' ? 'failed' :
+                                 'running'}
                               </Badge>
                             </div>
                             {agent && (

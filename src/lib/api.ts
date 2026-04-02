@@ -99,6 +99,7 @@ export interface Session {
   agent_id: string
   title: string
   type: 'chat' | 'task' | 'channel'
+  status?: 'active' | 'archived' | 'interrupted'
   task_id?: string
   created_at: string
   updated_at: string
@@ -112,6 +113,7 @@ interface RawSession {
   agent_id: string
   title: string
   type?: 'chat' | 'task' | 'channel'
+  status?: 'active' | 'archived' | 'interrupted'
   task_id?: string
   created_at: string
   updated_at: string
@@ -132,6 +134,7 @@ function rawToSession(raw: RawSession): Session {
     title: raw.title,
     // Legacy sessions without a type field default to 'chat'
     type: raw.type ?? 'chat',
+    status: raw.status,
     task_id: raw.task_id,
     created_at: raw.created_at,
     updated_at: raw.updated_at,
