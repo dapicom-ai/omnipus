@@ -29,6 +29,7 @@ export function CommandCenterScreen() {
   const { data: tasks = [], isError: tasksError } = useQuery({
     queryKey: ['tasks'],
     queryFn: () => fetchTasks(),
+    staleTime: 30_000,
     refetchInterval: 10_000,
   })
 

@@ -106,6 +106,7 @@ export function ActivityFeed() {
   const { data: events = [], isLoading, isError: activityError } = useQuery({
     queryKey: ['activity'],
     queryFn: fetchActivity,
+    staleTime: 30_000,
     refetchInterval: 30_000,
   })
 

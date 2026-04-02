@@ -29,12 +29,14 @@ export function AgentSummarySection() {
   const { data: agents = [], isLoading, isError: agentsError } = useQuery({
     queryKey: ['agents'],
     queryFn: fetchAgents,
+    staleTime: 30_000,
     refetchInterval: 30_000,
   })
 
   const { data: tasks = [], isError: tasksError } = useQuery({
     queryKey: ['tasks'],
     queryFn: fetchTasks,
+    staleTime: 30_000,
     refetchInterval: 30_000,
   })
 
