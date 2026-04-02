@@ -275,6 +275,21 @@ func (ps *PartitionStore) SetTitle(sessionID string, title string) error {
 	return writeMeta(sessionDir, meta)
 }
 
+// SetAgentID updates the agent_id on an existing session.
+func (ps *PartitionStore) SetAgentID(sessionID string, agentID string) error {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	sessionDir := filepath.Join(ps.baseDir, sessionID)
+	meta, err := readMeta(sessionDir)
+	if err != nil {
+		return err
+	}
+	meta.AgentID = agentID
+	meta.UpdatedAt = time.Now().UTC()
+	return writeMeta(sessionDir, meta)
+}
+
 // GetMeta returns the metadata for sessionID.
 func (ps *PartitionStore) GetMeta(sessionID string) (*SessionMeta, error) {
 	ps.mu.Lock()

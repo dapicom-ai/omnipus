@@ -344,6 +344,13 @@ func (h *WSHandler) handleChatMessage(ctx context.Context, chatID string, sessio
 				})
 				// Continue without sessionID so the message is still delivered to the agent.
 			} else {
+				// Tag the session with the selected agent so session history groups correctly.
+				if agentID != "" {
+					meta.AgentID = agentID
+					if setErr := h.partitions.SetAgentID(meta.ID, agentID); setErr != nil {
+						slog.Debug("ws: could not set agent_id on session", "error", setErr)
+					}
+				}
 				*sessionID = meta.ID
 				// Track sessionID for this chatID so the streamer can record responses
 				h.mu.Lock()

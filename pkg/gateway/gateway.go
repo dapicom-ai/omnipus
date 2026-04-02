@@ -350,12 +350,9 @@ func setupAndStartServices(
 	runningServices.HealthServer = health.NewServer(cfg.Gateway.Host, cfg.Gateway.Port)
 	runningServices.ChannelManager.SetupHTTPServer(addr, runningServices.HealthServer)
 
-	// Initialize PartitionStore for the default agent workspace (US-5).
-	// Uses "default" as the agent ID when no agents are configured.
-	defaultAgentID := "omnipus-system"
-	if len(cfg.Agents.List) > 0 {
-		defaultAgentID = cfg.Agents.List[0].ID
-	}
+	// Initialize PartitionStore for the default (main) agent workspace.
+	// The "main" agent is the default workspace; custom agents have separate workspaces.
+	defaultAgentID := "main"
 	if err := datamodel.InitAgentWorkspace(homePath, defaultAgentID); err != nil {
 		slog.Error("gateway: could not init agent workspace for partition store", "agent_id", defaultAgentID, "error", err)
 		fmt.Println("WARNING: Session persistence unavailable — conversations will not be saved")
