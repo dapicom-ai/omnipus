@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { Outlet, useLocation } from '@tanstack/react-router'
 import { List } from '@phosphor-icons/react'
 import { Sidebar } from './Sidebar'
@@ -5,11 +6,19 @@ import { useSidebarStore } from '@/store/sidebar'
 import { SessionBar } from '@/components/chat/SessionBar'
 import { ToastContainer } from '@/components/ui/toast-container'
 import { OmnipusRuntimeProvider } from '@/components/chat/OmnipusRuntimeProvider'
+import { queryClient } from '@/lib/queryClient'
+import { fetchTasks, fetchAgents } from '@/lib/api'
 
 // US-4: Application shell — hamburger + sidebar + main content area
 export function AppShell() {
   const { toggle } = useSidebarStore()
   const location = useLocation()
+
+  // Prefetch command center data on app load so it's cached when the user navigates there
+  useEffect(() => {
+    queryClient.prefetchQuery({ queryKey: ['tasks'], queryFn: () => fetchTasks() })
+    queryClient.prefetchQuery({ queryKey: ['agents'], queryFn: fetchAgents })
+  }, [])
 
   // Show SessionBar only on the chat screen (root route)
   const isChatScreen = location.pathname === '/' || location.pathname === ''

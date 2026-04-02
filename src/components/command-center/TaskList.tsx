@@ -192,6 +192,7 @@ export function TaskList({ statusFilter = 'all', onTaskSelect }: TaskListProps) 
   const { data: allTasks = [], isLoading, isError: tasksError } = useQuery({
     queryKey: ['tasks'],
     queryFn: () => fetchTasks(),
+    staleTime: 30_000,
     refetchInterval: 10_000,
   })
 
