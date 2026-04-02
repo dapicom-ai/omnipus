@@ -320,9 +320,10 @@ func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsCo
 			h.handleCancel(sessionID)
 		case "exec_approval_response":
 			h.handleApprovalResponse(frame.ID, frame.Decision)
+		case "ping":
+			// Client heartbeat — no action needed, the WebSocket pong handler keeps the connection alive
 		default:
 			slog.Debug("ws: unknown frame type ignored", "type", frame.Type, "chat_id", chatID)
-			sendConnFrame(wc, wsServerFrame{Type: "error", Message: fmt.Sprintf("unknown frame type: %s", frame.Type)})
 		}
 	}
 }
