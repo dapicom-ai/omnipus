@@ -14,12 +14,12 @@ import { cn } from '@/lib/utils'
 type StatusFilter = 'all' | Task['status']
 
 const FILTER_TABS: { value: StatusFilter; label: string }[] = [
-  { value: 'all', label: 'All' },
-  { value: 'inbox', label: 'Inbox' },
-  { value: 'next', label: 'Next' },
-  { value: 'active', label: 'Active' },
-  { value: 'waiting', label: 'Waiting' },
-  { value: 'done', label: 'Done' },
+  { value: 'all',       label: 'All' },
+  { value: 'queued',    label: 'Queued' },
+  { value: 'assigned',  label: 'Assigned' },
+  { value: 'running',   label: 'Running' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'failed',    label: 'Failed' },
 ]
 
 export function CommandCenterScreen() {
@@ -28,7 +28,7 @@ export function CommandCenterScreen() {
 
   const { data: tasks = [], isError: tasksError } = useQuery({
     queryKey: ['tasks'],
-    queryFn: fetchTasks,
+    queryFn: () => fetchTasks(),
     refetchInterval: 10_000,
   })
 
@@ -103,6 +103,7 @@ export function CommandCenterScreen() {
       <TaskDetailPanel
         task={selectedTask}
         onClose={() => setSelectedTask(null)}
+        onTaskSelect={setSelectedTask}
       />
     </div>
   )

@@ -80,6 +80,13 @@ export interface WsExecApprovalRequestFrame {
   matched_policy?: string
 }
 
+export interface WsTaskStatusChangedFrame {
+  type: 'task_status_changed'
+  task_id: string
+  status: string
+  agent_id?: string
+}
+
 export type WsReceiveFrame =
   | WsTokenFrame
   | WsDoneFrame
@@ -87,6 +94,7 @@ export type WsReceiveFrame =
   | WsToolCallStartFrame
   | WsToolCallResultFrame
   | WsExecApprovalRequestFrame
+  | WsTaskStatusChangedFrame
 
 function isValidFrame(frame: unknown): frame is WsReceiveFrame {
   if (typeof frame !== 'object' || frame === null) return false

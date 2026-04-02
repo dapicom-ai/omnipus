@@ -35,16 +35,23 @@ const (
 // channel and chatID are derived from the last active user channel.
 type HeartbeatHandler func(prompt, channel, chatID string) *tools.ToolResult
 
+// TaskQueueChecker is the interface used by HeartbeatService to poll queued tasks.
+// Implemented by agent.TaskExecutor; defined here to avoid an import cycle.
+type TaskQueueChecker interface {
+	CheckQueuedTasks(ctx context.Context)
+}
+
 // HeartbeatService manages periodic heartbeat checks
 type HeartbeatService struct {
-	workspace string
-	bus       *bus.MessageBus
-	state     *state.Manager
-	handler   HeartbeatHandler
-	interval  time.Duration
-	enabled   bool
-	mu        sync.RWMutex
-	stopChan  chan struct{}
+	workspace    string
+	bus          *bus.MessageBus
+	state        *state.Manager
+	handler      HeartbeatHandler
+	interval     time.Duration
+	enabled      bool
+	mu           sync.RWMutex
+	stopChan     chan struct{}
+	taskChecker  TaskQueueChecker
 }
 
 // NewHeartbeatService creates a new heartbeat service
@@ -78,6 +85,13 @@ func (hs *HeartbeatService) SetHandler(handler HeartbeatHandler) {
 	hs.mu.Lock()
 	defer hs.mu.Unlock()
 	hs.handler = handler
+}
+
+// SetTaskChecker sets the task queue checker that is polled on each heartbeat.
+func (hs *HeartbeatService) SetTaskChecker(tc TaskQueueChecker) {
+	hs.mu.Lock()
+	defer hs.mu.Unlock()
+	hs.taskChecker = tc
 }
 
 // Start begins the heartbeat service
@@ -149,19 +163,20 @@ func (hs *HeartbeatService) runLoop(stopChan chan struct{}) {
 // executeHeartbeat performs a single heartbeat check
 func (hs *HeartbeatService) executeHeartbeat() {
 	hs.mu.RLock()
-	enabled := hs.enabled
 	handler := hs.handler
+	taskChecker := hs.taskChecker
 	if !hs.enabled || hs.stopChan == nil {
 		hs.mu.RUnlock()
 		return
 	}
 	hs.mu.RUnlock()
 
-	if !enabled {
-		return
-	}
-
 	logger.DebugC("heartbeat", "Executing heartbeat")
+
+	// Poll queued tasks before running the HEARTBEAT.md prompt.
+	if taskChecker != nil {
+		taskChecker.CheckQueuedTasks(context.Background())
+	}
 
 	prompt := hs.buildPrompt()
 	if prompt == "" {

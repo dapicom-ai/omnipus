@@ -30,6 +30,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/routing"
 	"github.com/dapicom-ai/omnipus/pkg/skills"
 	"github.com/dapicom-ai/omnipus/pkg/state"
+	"github.com/dapicom-ai/omnipus/pkg/taskstore"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 	"github.com/dapicom-ai/omnipus/pkg/utils"
 	"github.com/dapicom-ai/omnipus/pkg/voice"
@@ -69,6 +70,10 @@ type AgentLoop struct {
 	activeRequests sync.WaitGroup
 
 	reloadFunc func() error
+
+	// Task management
+	taskStore    *taskstore.TaskStore
+	taskExecutor *TaskExecutor
 }
 
 // processOptions configures how a message is processed
@@ -141,6 +146,11 @@ func NewAgentLoop(
 	}
 	al.hooks = NewHookManager(eventBus)
 	configureHookManagerFromConfig(al.hooks, cfg)
+
+	// Initialize task store (sibling of workspace: ~/.omnipus/tasks).
+	homePath := filepath.Dir(cfg.WorkspacePath())
+	al.taskStore = taskstore.New(filepath.Join(homePath, "tasks"))
+	al.taskExecutor = newTaskExecutor(al, al.taskStore)
 
 	// Register shared tools to all agents (now that al is created)
 	registerSharedTools(al, cfg, msgBus, registry, provider)
@@ -379,6 +389,58 @@ func registerSharedTools(
 		} else if (spawnEnabled || spawnStatusEnabled) && !cfg.Tools.IsToolEnabled("subagent") {
 			logger.WarnCF("agent", "spawn/spawn_status tools require subagent to be enabled", nil)
 		}
+
+		// Task tools — require a task store (available after first NewAgentLoop call).
+		if al.taskStore != nil {
+			currentAgentID := agentID
+			agentCfg := findAgentConfig(cfg, currentAgentID)
+
+			if cfg.Tools.IsToolEnabled("task_list") {
+				agent.Tools.Register(tools.NewTaskListTool(al.taskStore))
+			}
+			if cfg.Tools.IsToolEnabled("task_create") {
+				t := tools.NewTaskCreateTool(al.taskStore)
+				t.SetDelegateChecker(buildDelegateChecker(agentCfg, cfg.Agents.Defaults))
+				agent.Tools.Register(t)
+			}
+			if cfg.Tools.IsToolEnabled("task_update") {
+				t := tools.NewTaskUpdateTool(al.taskStore)
+				if al.taskExecutor != nil {
+					t.SetOnComplete(al.taskExecutor.onTaskComplete)
+				}
+				agent.Tools.Register(t)
+			}
+		}
+	}
+}
+
+// findAgentConfig returns the AgentConfig for the given agent ID, or nil if not found.
+func findAgentConfig(cfg *config.Config, agentID string) *config.AgentConfig {
+	for i := range cfg.Agents.List {
+		if cfg.Agents.List[i].ID == agentID {
+			return &cfg.Agents.List[i]
+		}
+	}
+	return nil
+}
+
+// buildDelegateChecker returns a function that checks whether delegation from agentCfg
+// to a target agent is allowed.  Supports the "*" wildcard.
+func buildDelegateChecker(agentCfg *config.AgentConfig, defaults config.AgentDefaults) func(string) bool {
+	var allowList []string
+	if agentCfg != nil && len(agentCfg.CanDelegateTo) > 0 {
+		allowList = agentCfg.CanDelegateTo
+	} else {
+		allowList = defaults.CanDelegateTo
+	}
+
+	return func(targetAgentID string) bool {
+		for _, allowed := range allowList {
+			if allowed == "*" || allowed == targetAgentID {
+				return true
+			}
+		}
+		return false
 	}
 }
 
@@ -1096,6 +1158,51 @@ func (al *AgentLoop) GetConfig() *config.Config {
 	al.mu.RLock()
 	defer al.mu.RUnlock()
 	return al.cfg
+}
+
+// GetTaskStore returns the shared TaskStore (may be nil in tests).
+func GetTaskStore(al *AgentLoop) *taskstore.TaskStore {
+	return al.taskStore
+}
+
+// GetTaskExecutor returns the shared TaskExecutor (may be nil in tests).
+func GetTaskExecutor(al *AgentLoop) *TaskExecutor {
+	return al.taskExecutor
+}
+
+// processTaskDirect runs the agent loop for a specific agent with a given prompt and session key.
+// Used by the TaskExecutor to dispatch task work to the designated agent.
+func (al *AgentLoop) processTaskDirect(ctx context.Context, agentID, prompt, sessionKey string) (string, error) {
+	if err := al.ensureHooksInitialized(ctx); err != nil {
+		return "", fmt.Errorf("processTaskDirect: hooks: %w", err)
+	}
+	if err := al.ensureMCPInitialized(ctx); err != nil {
+		return "", fmt.Errorf("processTaskDirect: mcp: %w", err)
+	}
+
+	registry := al.GetRegistry()
+	ag, ok := registry.GetAgent(agentID)
+	if !ok {
+		logger.WarnCF("agent", "processTaskDirect: agent not found, using default", map[string]any{"requested": agentID})
+		ag = registry.GetDefaultAgent()
+	}
+	if ag == nil {
+		return "", fmt.Errorf("processTaskDirect: no agent %q", agentID)
+	}
+
+	// Inject the agent ID into the tool context so task tools know who is executing.
+	taskCtx := tools.WithAgentID(ctx, agentID)
+
+	return al.runAgentLoop(taskCtx, ag, processOptions{
+		SessionKey:  sessionKey,
+		Channel:     "system",
+		ChatID:      "task",
+		SenderID:    "task-executor",
+		UserMessage: prompt,
+		DefaultResponse: defaultResponse,
+		EnableSummary:   false,
+		SendResponse:    false,
+	})
 }
 
 // SetMediaStore injects a MediaStore for media lifecycle management.

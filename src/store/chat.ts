@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { generateId } from '@/lib/constants'
 import { useUiStore } from '@/store/ui'
+import { queryClient } from '@/lib/queryClient'
 import type { Message, ToolCall } from '@/lib/api'
 import type { WsConnection, WsReceiveFrame } from '@/lib/ws'
 import type {
@@ -380,6 +381,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
       case 'exec_approval_request':
         store.addApprovalRequest(frame)
+        break
+
+      case 'task_status_changed':
+        queryClient.invalidateQueries({ queryKey: ['tasks'] })
         break
 
       default:

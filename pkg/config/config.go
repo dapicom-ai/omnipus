@@ -342,13 +342,14 @@ func (m AgentModelConfig) MarshalJSON() ([]byte, error) {
 }
 
 type AgentConfig struct {
-	ID        string            `json:"id"`
-	Default   bool              `json:"default,omitempty"`
-	Name      string            `json:"name,omitempty"`
-	Workspace string            `json:"workspace,omitempty"`
-	Model     *AgentModelConfig `json:"model,omitempty"`
-	Skills    []string          `json:"skills,omitempty"`
-	Subagents *SubagentsConfig  `json:"subagents,omitempty"`
+	ID             string            `json:"id"`
+	Default        bool              `json:"default,omitempty"`
+	Name           string            `json:"name,omitempty"`
+	Workspace      string            `json:"workspace,omitempty"`
+	Model          *AgentModelConfig `json:"model,omitempty"`
+	Skills         []string          `json:"skills,omitempty"`
+	Subagents      *SubagentsConfig  `json:"subagents,omitempty"`
+	CanDelegateTo  []string          `json:"can_delegate_to,omitempty"`
 }
 
 type SubagentsConfig struct {
@@ -427,6 +428,7 @@ type AgentDefaults struct {
 	ToolFeedback              ToolFeedbackConfig `json:"tool_feedback,omitempty"`
 	SplitOnMarker             bool               `json:"split_on_marker"                 env:"PICOCLAW_AGENTS_DEFAULTS_SPLIT_ON_MARKER"` // split messages on <|[SPLIT]|> marker
 	TimeoutSeconds            int                `json:"timeout_seconds"                 env:"PICOCLAW_AGENTS_DEFAULTS_TIMEOUT_SECONDS"`  // per-turn timeout in seconds; 0 = disabled
+	CanDelegateTo             []string           `json:"can_delegate_to,omitempty"`
 }
 
 const DefaultMaxMediaSize = 20 * 1024 * 1024 // 20 MB
@@ -1033,6 +1035,9 @@ type ToolsConfig struct {
 	MCP             MCPConfig          `json:"mcp"               yaml:"-"`
 	AppendFile      ToolConfig         `json:"append_file"       yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_APPEND_FILE_"`
 	EditFile        ToolConfig         `json:"edit_file"         yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_EDIT_FILE_"`
+	TaskList        ToolConfig         `json:"task_list"         yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_TASK_LIST_"`
+	TaskCreate      ToolConfig         `json:"task_create"       yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_TASK_CREATE_"`
+	TaskUpdate      ToolConfig         `json:"task_update"       yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_TASK_UPDATE_"`
 	FindSkills      ToolConfig         `json:"find_skills"       yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_FIND_SKILLS_"`
 	I2C             ToolConfig         `json:"i2c"               yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_I2C_"`
 	InstallSkill    ToolConfig         `json:"install_skill"     yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_INSTALL_SKILL_"`
@@ -1518,6 +1523,12 @@ func (t *ToolsConfig) IsToolEnabled(name string) bool {
 		return t.WriteFile.Enabled
 	case "mcp":
 		return t.MCP.Enabled
+	case "task_list":
+		return t.TaskList.Enabled
+	case "task_create":
+		return t.TaskCreate.Enabled
+	case "task_update":
+		return t.TaskUpdate.Enabled
 	default:
 		// Deny-by-default for unrecognized tool names (CLAUDE.md constraint).
 		// Log at debug level so operators can detect typos in tool names.

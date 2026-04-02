@@ -524,6 +524,15 @@ func DefaultConfig() *Config {
 			WriteFile: ToolConfig{
 				Enabled: true,
 			},
+			TaskList: ToolConfig{
+				Enabled: true,
+			},
+			TaskCreate: ToolConfig{
+				Enabled: true,
+			},
+			TaskUpdate: ToolConfig{
+				Enabled: true,
+			},
 		},
 		Heartbeat: HeartbeatConfig{
 			Enabled:  true,

@@ -306,6 +306,9 @@ func setupAndStartServices(
 	)
 	runningServices.HeartbeatService.SetBus(msgBus)
 	runningServices.HeartbeatService.SetHandler(createHeartbeatHandler(agentLoop))
+	if te := agent.GetTaskExecutor(agentLoop); te != nil {
+		runningServices.HeartbeatService.SetTaskChecker(te)
+	}
 	if err = runningServices.HeartbeatService.Start(); err != nil {
 		return nil, fmt.Errorf("error starting heartbeat service: %w", err)
 	}
@@ -381,12 +384,16 @@ func setupAndStartServices(
 
 	// REST API endpoints for frontend data.
 	onboardingMgr := onboarding.NewManager(homePath)
+	tStore := agent.GetTaskStore(agentLoop)
+	tExecutor := agent.GetTaskExecutor(agentLoop)
 	api := &restAPI{
 		agentLoop:     agentLoop,
 		partitions:    runningServices.PartitionStore,
 		allowedOrigin: allowedOrigin,
 		onboardingMgr: onboardingMgr,
 		homePath:      homePath,
+		taskStore:     tStore,
+		taskExecutor:  tExecutor,
 	}
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions", api.withAuth(api.HandleSessions))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions/", api.withAuth(api.HandleSessions))
@@ -554,6 +561,9 @@ func restartServices(
 	)
 	runningServices.HeartbeatService.SetBus(msgBus)
 	runningServices.HeartbeatService.SetHandler(createHeartbeatHandler(al))
+	if te := agent.GetTaskExecutor(al); te != nil {
+		runningServices.HeartbeatService.SetTaskChecker(te)
+	}
 	if err = runningServices.HeartbeatService.Start(); err != nil {
 		return fmt.Errorf("error restarting heartbeat service: %w", err)
 	}

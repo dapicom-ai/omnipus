@@ -1,7 +1,8 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createRouter, RouterProvider, createHashHistory } from '@tanstack/react-router'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { QueryClientProvider } from '@tanstack/react-query'
+import { queryClient } from './lib/queryClient'
 import { routeTree } from './routeTree.gen'
 import './styles/globals.css'
 
@@ -21,16 +22,6 @@ declare module '@tanstack/react-router' {
     router: typeof router
   }
 }
-
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 30_000,
-      retry: 3,
-      retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 30_000),
-    },
-  },
-})
 
 const rootElement = document.getElementById('root')
 if (!rootElement) {

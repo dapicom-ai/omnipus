@@ -16,7 +16,7 @@ export const Route = createFileRoute('/_app')({
       // propagate so they are visible.
       // TypeError covers: failed to fetch, network error, CORS failure
       // DOMException covers: AbortError from request cancellation
-      if (err instanceof TypeError || err instanceof DOMException) {
+      if (err instanceof TypeError || err instanceof DOMException || err instanceof SyntaxError) {
         // API unreachable — allow through to app (the chat screen will show
         // a connection error via the WebSocket state). Redirecting to onboarding
         // on every network failure would trap users in a loop.

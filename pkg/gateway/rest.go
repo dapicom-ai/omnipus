@@ -5,9 +5,11 @@
 package gateway
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -32,6 +34,7 @@ import (
 	providers_pkg "github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/skills"
+	"github.com/dapicom-ai/omnipus/pkg/taskstore"
 )
 
 // Version is set at build time via -ldflags "-X github.com/dapicom-ai/omnipus/pkg/gateway.Version=x.y.z".
@@ -48,6 +51,8 @@ type restAPI struct {
 	onboardingMgr  *onboarding.Manager     // manages first-launch + doctor state
 	homePath       string                  // ~/.omnipus — root of the data directory
 	configMu       sync.Mutex              // guards safeUpdateConfigJSON (read-modify-write cycle)
+	taskStore      *taskstore.TaskStore    // task persistence
+	taskExecutor   *agent.TaskExecutor     // task execution engine
 }
 
 // --- CORS / JSON helpers ---
@@ -1563,28 +1568,36 @@ func (a *restAPI) HandleStatus(w http.ResponseWriter, r *http.Request) {
 
 // --- Tasks ---
 
-// taskEntity is the persistent shape for a task stored in ~/.omnipus/tasks/{id}.json.
-type taskEntity struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description,omitempty"`
-	Status      string    `json:"status"`
-	AgentID     string    `json:"agent_id,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-}
-
-// tasksDir returns the path to the tasks directory.
-func (a *restAPI) tasksDir() string {
-	return filepath.Join(a.homePath, "tasks")
-}
-
-// HandleTasks handles GET/POST /api/v1/tasks and PUT /api/v1/tasks/{id}.
+// HandleTasks handles GET/POST /api/v1/tasks, GET/PUT /api/v1/tasks/{id},
+// GET /api/v1/tasks/{id}/subtasks, and POST /api/v1/tasks/{id}/start.
 func (a *restAPI) HandleTasks(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimSuffix(r.URL.Path, "/")
-	taskID := strings.TrimPrefix(path, "/api/v1/tasks")
-	taskID = strings.TrimPrefix(taskID, "/")
+	rest := strings.TrimPrefix(path, "/api/v1/tasks")
+	rest = strings.TrimPrefix(rest, "/")
 
+	// /api/v1/tasks/{id}/subtasks
+	if strings.HasSuffix(rest, "/subtasks") {
+		taskID := strings.TrimSuffix(rest, "/subtasks")
+		if r.Method != http.MethodGet {
+			jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		a.listSubtasks(w, taskID)
+		return
+	}
+
+	// /api/v1/tasks/{id}/start
+	if strings.HasSuffix(rest, "/start") {
+		taskID := strings.TrimSuffix(rest, "/start")
+		if r.Method != http.MethodPost {
+			jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		a.startTask(w, r, taskID)
+		return
+	}
+
+	taskID := rest
 	switch r.Method {
 	case http.MethodGet:
 		if taskID == "" {
@@ -1610,43 +1623,14 @@ func (a *restAPI) HandleTasks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *restAPI) listTasks(w http.ResponseWriter, r *http.Request) {
-	statusFilter := r.URL.Query().Get("status")
-	dir := a.tasksDir()
-	entries, err := os.ReadDir(dir)
+	filter := taskstore.TaskFilter{
+		Status:  r.URL.Query().Get("status"),
+		AgentID: r.URL.Query().Get("agent_id"),
+	}
+	tasks, err := a.taskStore.List(filter)
 	if err != nil {
-		if os.IsNotExist(err) {
-			jsonOK(w, []taskEntity{})
-			return
-		}
 		slog.Error("rest: list tasks", "error", err)
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not list tasks: %v", err))
-		return
-	}
-	tasks := make([]taskEntity, 0, len(entries))
-	var warnings []string
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
-		if err != nil {
-			slog.Warn("rest: read task file", "file", e.Name(), "error", err)
-			warnings = append(warnings, fmt.Sprintf("could not read %s: %v", e.Name(), err))
-			continue
-		}
-		var t taskEntity
-		if err := json.Unmarshal(data, &t); err != nil {
-			slog.Warn("rest: parse task file", "file", e.Name(), "error", err)
-			warnings = append(warnings, fmt.Sprintf("could not parse %s: %v", e.Name(), err))
-			continue
-		}
-		if statusFilter != "" && t.Status != statusFilter {
-			continue
-		}
-		tasks = append(tasks, t)
-	}
-	if len(warnings) > 0 {
-		jsonOK(w, map[string]any{"tasks": tasks, "warnings": warnings})
 		return
 	}
 	jsonOK(w, tasks)
@@ -1669,18 +1653,14 @@ func (a *restAPI) getTask(w http.ResponseWriter, id string) {
 		jsonErr(w, http.StatusBadRequest, "invalid task ID")
 		return
 	}
-	data, err := os.ReadFile(filepath.Join(a.tasksDir(), id+".json"))
+	t, err := a.taskStore.Get(id)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, taskstore.ErrNotFound) {
 			jsonErr(w, http.StatusNotFound, fmt.Sprintf("task %q not found", id))
 			return
 		}
+		slog.Error("rest: get task", "id", id, "error", err)
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not read task: %v", err))
-		return
-	}
-	var t taskEntity
-	if err := json.Unmarshal(data, &t); err != nil {
-		jsonErr(w, http.StatusInternalServerError, "could not parse task")
 		return
 	}
 	jsonOK(w, t)
@@ -1688,39 +1668,50 @@ func (a *restAPI) getTask(w http.ResponseWriter, id string) {
 
 func (a *restAPI) createTask(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		// New fields
+		Title        string `json:"title"`
+		Prompt       string `json:"prompt"`
+		AgentID      string `json:"agent_id"`
+		Priority     int    `json:"priority"`
+		ParentTaskID string `json:"parent_task_id"`
+		TriggerType  string `json:"trigger_type"`
+		// Backward compat aliases
 		Name        string `json:"name"`
 		Description string `json:"description"`
-		Status      string `json:"status"`
-		AgentID     string `json:"agent_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if req.Name == "" {
-		jsonErr(w, http.StatusUnprocessableEntity, "name is required")
+	// Backward compat: accept name→title, description→prompt
+	if req.Title == "" && req.Name != "" {
+		req.Title = req.Name
+	}
+	if req.Prompt == "" && req.Description != "" {
+		req.Prompt = req.Description
+	}
+	if req.Title == "" {
+		jsonErr(w, http.StatusUnprocessableEntity, "title is required")
 		return
 	}
-	if req.Status == "" {
-		req.Status = "inbox"
+	if req.Priority == 0 {
+		req.Priority = 3
 	}
-	now := time.Now().UTC()
-	t := taskEntity{
-		ID:          uuid.New().String(),
-		Name:        req.Name,
-		Description: req.Description,
-		Status:      req.Status,
-		AgentID:     req.AgentID,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+	if req.TriggerType == "" {
+		req.TriggerType = "manual"
 	}
-	data, err := json.MarshalIndent(t, "", "  ")
-	if err != nil {
-		jsonErr(w, http.StatusInternalServerError, "could not serialize task")
-		return
+	t := &taskstore.TaskEntity{
+		Title:        req.Title,
+		Prompt:       req.Prompt,
+		AgentID:      req.AgentID,
+		Priority:     req.Priority,
+		ParentTaskID: req.ParentTaskID,
+		TriggerType:  req.TriggerType,
+		CreatedBy:    "user",
+		Status:       "queued",
 	}
-	if err := fileutil.WriteFileAtomic(filepath.Join(a.tasksDir(), t.ID+".json"), data, 0o600); err != nil {
-		slog.Error("rest: write task", "id", t.ID, "error", err)
+	if err := a.taskStore.Create(t); err != nil {
+		slog.Error("rest: create task", "error", err)
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save task: %v", err))
 		return
 	}
@@ -1733,55 +1724,98 @@ func (a *restAPI) updateTask(w http.ResponseWriter, r *http.Request, id string) 
 		jsonErr(w, http.StatusBadRequest, "invalid task ID")
 		return
 	}
-	taskPath := filepath.Join(a.tasksDir(), id+".json")
-	existing, err := os.ReadFile(taskPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			jsonErr(w, http.StatusNotFound, fmt.Sprintf("task %q not found", id))
-			return
-		}
-		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not read task: %v", err))
-		return
-	}
-	var t taskEntity
-	if err := json.Unmarshal(existing, &t); err != nil {
-		jsonErr(w, http.StatusInternalServerError, "could not parse task")
-		return
-	}
 	var req struct {
+		Status      *string   `json:"status"`
+		Result      *string   `json:"result"`
+		Artifacts   *[]string `json:"artifacts"`
+		Title       *string   `json:"title"`
+		AgentID     *string   `json:"agent_id"`
+		Priority    *int      `json:"priority"`
+		StartedAt   *time.Time `json:"started_at"`
+		CompletedAt *time.Time `json:"completed_at"`
+		// Backward compat
 		Name        *string `json:"name"`
 		Description *string `json:"description"`
-		Status      *string `json:"status"`
-		AgentID     *string `json:"agent_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if req.Name != nil {
-		t.Name = *req.Name
+	// Backward compat mappings
+	if req.Title == nil && req.Name != nil {
+		req.Title = req.Name
 	}
-	if req.Description != nil {
-		t.Description = *req.Description
+	if req.Result == nil && req.Description != nil {
+		req.Result = req.Description
 	}
-	if req.Status != nil {
-		t.Status = *req.Status
+	patch := taskstore.TaskPatch{
+		Status:      req.Status,
+		Result:      req.Result,
+		Artifacts:   req.Artifacts,
+		Title:       req.Title,
+		AgentID:     req.AgentID,
+		Priority:    req.Priority,
+		StartedAt:   req.StartedAt,
+		CompletedAt: req.CompletedAt,
 	}
-	if req.AgentID != nil {
-		t.AgentID = *req.AgentID
-	}
-	t.UpdatedAt = time.Now().UTC()
-	data, err := json.MarshalIndent(t, "", "  ")
+	t, err := a.taskStore.Update(id, patch)
 	if err != nil {
-		jsonErr(w, http.StatusInternalServerError, "could not serialize task")
-		return
-	}
-	if err := fileutil.WriteFileAtomic(taskPath, data, 0o600); err != nil {
-		slog.Error("rest: update task", "id", id, "error", err)
-		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save task: %v", err))
+		if errors.Is(err, taskstore.ErrNotFound) {
+			jsonErr(w, http.StatusNotFound, fmt.Sprintf("task %q not found", id))
+			return
+		}
+		slog.Warn("rest: update task", "id", id, "error", err)
+		jsonErr(w, http.StatusUnprocessableEntity, fmt.Sprintf("could not update task: %v", err))
 		return
 	}
 	jsonOK(w, t)
+}
+
+func (a *restAPI) listSubtasks(w http.ResponseWriter, parentID string) {
+	if err := validateEntityID(parentID); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid task ID")
+		return
+	}
+	tasks, err := a.taskStore.List(taskstore.TaskFilter{ParentTaskID: parentID})
+	if err != nil {
+		slog.Error("rest: list subtasks", "parent_id", parentID, "error", err)
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not list subtasks: %v", err))
+		return
+	}
+	jsonOK(w, tasks)
+}
+
+func (a *restAPI) startTask(w http.ResponseWriter, r *http.Request, id string) {
+	if err := validateEntityID(id); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid task ID")
+		return
+	}
+	t, err := a.taskStore.Get(id)
+	if err != nil {
+		if errors.Is(err, taskstore.ErrNotFound) {
+			jsonErr(w, http.StatusNotFound, fmt.Sprintf("task %q not found", id))
+			return
+		}
+		slog.Error("rest: start task: get", "id", id, "error", err)
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not read task: %v", err))
+		return
+	}
+	if t.Status != "queued" {
+		jsonErr(w, http.StatusUnprocessableEntity, fmt.Sprintf("task is %s, only queued tasks can be started", t.Status))
+		return
+	}
+	if a.taskExecutor == nil {
+		jsonErr(w, http.StatusServiceUnavailable, "task executor not available")
+		return
+	}
+	go func() {
+		if err := a.taskExecutor.ExecuteTask(context.Background(), id); err != nil {
+			slog.Error("rest: start task: execute", "id", id, "error", err)
+		}
+	}()
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	json.NewEncoder(w).Encode(map[string]string{"status": "accepted", "task_id": id})
 }
 
 // --- Activity ---
@@ -1841,41 +1875,28 @@ func (a *restAPI) HandleActivity(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Collect task_created and task_updated events from tasks directory.
-	taskEntries, err := os.ReadDir(a.tasksDir())
-	if err != nil && !os.IsNotExist(err) {
-		slog.Error("rest: activity: read tasks dir", "error", err)
+	// Collect task_created events from tasks directory.
+	recentTasks, taskErr := a.taskStore.List(taskstore.TaskFilter{})
+	if taskErr != nil {
+		slog.Warn("rest: activity: list tasks", "error", taskErr)
 	}
-	for _, e := range taskEntries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(a.tasksDir(), e.Name()))
-		if err != nil {
-			slog.Warn("rest: activity: read task file", "file", e.Name(), "error", err)
-			continue
-		}
-		var t taskEntity
-		if err := json.Unmarshal(data, &t); err != nil {
-			slog.Warn("rest: activity: parse task file", "file", e.Name(), "error", err)
-			continue
-		}
+	for _, t := range recentTasks {
 		if t.CreatedAt.After(cutoff) {
 			events = append(events, activityEvent{
 				ID:        "task-c-" + t.ID,
 				Type:      "task_created",
 				AgentID:   t.AgentID,
 				Timestamp: t.CreatedAt,
-				Summary:   t.Name,
+				Summary:   t.Title,
 			})
 		}
-		if t.UpdatedAt.After(cutoff) && !t.UpdatedAt.Equal(t.CreatedAt) {
+		if t.CompletedAt != nil && t.CompletedAt.After(cutoff) {
 			events = append(events, activityEvent{
 				ID:        "task-u-" + t.ID,
 				Type:      "task_updated",
 				AgentID:   t.AgentID,
-				Timestamp: t.UpdatedAt,
-				Summary:   t.Name,
+				Timestamp: *t.CompletedAt,
+				Summary:   t.Title,
 			})
 		}
 	}

@@ -14,10 +14,12 @@ vi.mock('@/lib/api', async (importOriginal) => {
     fetchGatewayStatus: vi.fn(),
     fetchTasks: vi.fn(),
     createTask: vi.fn(),
+    fetchAgents: vi.fn(),
+    fetchActivity: vi.fn(),
   }
 })
 
-import { fetchGatewayStatus, fetchTasks } from '@/lib/api'
+import { fetchGatewayStatus, fetchTasks, fetchAgents, fetchActivity } from '@/lib/api'
 
 const mockStatus = {
   online: true,
@@ -28,9 +30,42 @@ const mockStatus = {
 }
 
 const mockTasks = [
-  { id: 't1', name: 'Refactor auth', agent_id: 'general-assistant', agent_name: 'General Assistant', status: 'active' as const, cost: 0.45, created_at: '2026-03-29T09:00:00Z', updated_at: '2026-03-29T10:00:00Z' },
-  { id: 't2', name: 'Write docs', agent_id: 'researcher', agent_name: 'Researcher', status: 'next' as const, created_at: '2026-03-29T08:00:00Z', updated_at: '2026-03-29T09:00:00Z' },
-  { id: 't3', name: 'Deploy', agent_id: 'general-assistant', agent_name: 'General Assistant', status: 'done' as const, cost: 1.23, created_at: '2026-03-28T08:00:00Z', updated_at: '2026-03-29T08:00:00Z' },
+  {
+    id: 't1',
+    title: 'Refactor auth',
+    prompt: 'Refactor the auth module',
+    agent_id: 'general-assistant',
+    agent_name: 'General Assistant',
+    status: 'running' as const,
+    priority: 2,
+    trigger_type: 'manual' as const,
+    created_at: '2026-03-29T09:00:00Z',
+    started_at: '2026-03-29T10:00:00Z',
+  },
+  {
+    id: 't2',
+    title: 'Write docs',
+    prompt: 'Write documentation for the API',
+    agent_id: 'researcher',
+    agent_name: 'Researcher',
+    status: 'queued' as const,
+    priority: 3,
+    trigger_type: 'manual' as const,
+    created_at: '2026-03-29T08:00:00Z',
+  },
+  {
+    id: 't3',
+    title: 'Deploy',
+    prompt: 'Deploy to production',
+    agent_id: 'general-assistant',
+    agent_name: 'General Assistant',
+    status: 'completed' as const,
+    priority: 1,
+    trigger_type: 'manual' as const,
+    result: 'Deployed successfully',
+    created_at: '2026-03-28T08:00:00Z',
+    completed_at: '2026-03-29T08:00:00Z',
+  },
 ]
 
 function makeClient() {
@@ -44,6 +79,8 @@ function wrapper({ children }: { children: React.ReactNode }) {
 beforeEach(() => {
   vi.mocked(fetchGatewayStatus).mockResolvedValue(mockStatus)
   vi.mocked(fetchTasks).mockResolvedValue(mockTasks)
+  vi.mocked(fetchAgents).mockResolvedValue([])
+  vi.mocked(fetchActivity).mockResolvedValue([])
 })
 
 describe('command center integration (test #28)', () => {

@@ -295,26 +295,47 @@ export function rotateGatewayToken(): Promise<{ token: string }> {
 
 export interface Task {
   id: string
-  name: string
-  description?: string
-  status: 'inbox' | 'next' | 'active' | 'waiting' | 'done'
+  title: string
+  prompt: string
   agent_id?: string
   agent_name?: string
-  cost?: number
+  created_by?: string
+  parent_task_id?: string
+  priority: number
+  status: 'queued' | 'assigned' | 'running' | 'completed' | 'failed'
+  result?: string
+  artifacts?: string[]
+  trigger_type: 'manual' | 'time' | 'event'
   created_at?: string
-  updated_at?: string
+  started_at?: string
+  completed_at?: string
 }
 
-export function fetchTasks(): Promise<Task[]> {
-  return request<Task[]>('/tasks')
+export function fetchTasks(status?: Task['status']): Promise<Task[]> {
+  const qs = status ? '?' + new URLSearchParams({ status }).toString() : ''
+  return request<Task[]>(`/tasks${qs}`)
 }
 
-export function createTask(data: Pick<Task, 'name' | 'description' | 'agent_id'>): Promise<Task> {
+export function fetchSubtasks(taskId: string): Promise<Task[]> {
+  return request<Task[]>(`/tasks/${encodeURIComponent(taskId)}/subtasks`)
+}
+
+export function createTask(data: {
+  title: string
+  prompt: string
+  agent_id?: string
+  priority?: number
+  parent_task_id?: string
+}): Promise<Task> {
   return request<Task>('/tasks', { method: 'POST', body: JSON.stringify(data) })
 }
 
 export function updateTask(id: string, data: Partial<Task>): Promise<Task> {
   return request<Task>(`/tasks/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) })
+}
+
+export function startTask(id: string): Promise<void> {
+  return request(`/tasks/${encodeURIComponent(id)}/start`, { method: 'POST' })
 }
 
 // ── Gateway Status ────────────────────────────────────────────────────────────
