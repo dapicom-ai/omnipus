@@ -1617,6 +1617,12 @@ func (a *restAPI) HandleTasks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.updateTask(w, r, taskID)
+	case http.MethodDelete:
+		if taskID == "" {
+			jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		a.deleteTask(w, taskID)
 	default:
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
@@ -1816,6 +1822,22 @@ func (a *restAPI) startTask(w http.ResponseWriter, r *http.Request, id string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(map[string]string{"status": "accepted", "task_id": id})
+}
+
+func (a *restAPI) deleteTask(w http.ResponseWriter, id string) {
+	if err := validateEntityID(id); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid task id")
+		return
+	}
+	if err := a.taskStore.Delete(id); err != nil {
+		if errors.Is(err, taskstore.ErrNotFound) {
+			jsonErr(w, http.StatusNotFound, "task not found")
+			return
+		}
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not delete task: %v", err))
+		return
+	}
+	jsonOK(w, map[string]string{"deleted": id})
 }
 
 // --- Activity ---

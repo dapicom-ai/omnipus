@@ -338,6 +338,10 @@ export function startTask(id: string): Promise<void> {
   return request(`/tasks/${encodeURIComponent(id)}/start`, { method: 'POST' })
 }
 
+export function deleteTask(id: string): Promise<void> {
+  return request(`/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' })
+}
+
 // ── Gateway Status ────────────────────────────────────────────────────────────
 
 export interface GatewayStatus {

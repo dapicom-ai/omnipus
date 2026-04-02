@@ -410,6 +410,16 @@ func registerSharedTools(
 				}
 				agent.Tools.Register(t)
 			}
+			agent.Tools.Register(tools.NewTaskDeleteTool(al.taskStore))
+			agent.Tools.Register(tools.NewAgentListTool(func() []tools.AgentInfo {
+				var infos []tools.AgentInfo
+				for _, id := range registry.ListAgentIDs() {
+					if a, ok := registry.GetAgent(id); ok {
+						infos = append(infos, tools.AgentInfo{ID: a.ID, Name: a.Name, Type: "custom"})
+					}
+				}
+				return infos
+			}))
 		}
 	}
 }
