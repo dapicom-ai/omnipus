@@ -38,7 +38,12 @@ export interface WsPingFrame {
   type: 'ping'
 }
 
-export type WsSendFrame = WsAuthFrame | WsMessageFrame | WsCancelFrame | WsExecApprovalResponseFrame | WsPingFrame
+export interface WsAttachSessionFrame {
+  type: 'attach_session'
+  session_id: string
+}
+
+export type WsSendFrame = WsAuthFrame | WsMessageFrame | WsCancelFrame | WsExecApprovalResponseFrame | WsPingFrame | WsAttachSessionFrame
 
 export interface WsTokenFrame {
   type: 'token'

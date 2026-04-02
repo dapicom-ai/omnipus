@@ -38,6 +38,11 @@ interface ChatStore {
   activeAgentType: 'system' | 'core' | 'custom' | null
   setActiveSession: (sessionId: string | null, agentId?: string | null, agentType?: 'system' | 'core' | 'custom' | null) => void
 
+  // Attached session context — tracks when viewing a task/channel session
+  attachedSessionType: 'chat' | 'task' | 'channel' | null
+  attachedTaskTitle: string | null
+  attachToSession: (sessionId: string, type: string, title?: string) => void
+
   // Messages
   messages: ChatMessage[]
   isStreaming: boolean
@@ -96,7 +101,35 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       sessionTokens: 0,
       sessionCost: 0,
       isStreaming: false,
+      // Reset attached session context on any explicit session switch
+      attachedSessionType: null,
+      attachedTaskTitle: null,
     }),
+
+  attachedSessionType: null,
+  attachedTaskTitle: null,
+  attachToSession: (sessionId, type, title) => {
+    const { connection } = get()
+    // Normalize type to known union members; fall back to 'chat' for unknown values
+    const normalizedType = (type === 'task' || type === 'channel') ? type : 'chat'
+    set({
+      activeSessionId: sessionId,
+      attachedSessionType: normalizedType,
+      attachedTaskTitle: title ?? null,
+      // Clear stale messages — the server will stream the transcript after attach
+      messages: [],
+      toolCalls: {},
+      pendingApprovals: [],
+      sessionTokens: 0,
+      sessionCost: 0,
+      isStreaming: false,
+    })
+    if (connection) {
+      connection.send({ type: 'attach_session', session_id: sessionId })
+    } else {
+      console.warn('[chat] attachToSession: no connection — attach_session not sent')
+    }
+  },
 
   messages: [],
   isStreaming: false,

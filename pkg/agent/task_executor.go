@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/taskstore"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 )
@@ -95,6 +96,28 @@ func (te *TaskExecutor) runTask(ctx context.Context, task *taskstore.TaskEntity,
 		te.mu.Unlock()
 	}()
 
+	// Create a task session in the agent's unified store so the UI can display it.
+	var taskSessionID string
+	if store := te.agentLoop.GetAgentStore(task.AgentID); store != nil {
+		if meta, err := store.NewSession(session.SessionTypeTask, "system"); err != nil {
+			slog.Warn("task_executor: could not create task session", "task_id", task.ID, "error", err)
+		} else {
+			taskSessionID = meta.ID
+			title := task.Title
+			taskID := task.ID
+			if setErr := store.SetMeta(meta.ID, session.MetaPatch{Title: &title, TaskID: &taskID}); setErr != nil {
+				slog.Warn("task_executor: could not set task session meta", "task_id", task.ID, "error", setErr)
+			}
+			// Record the initial prompt as the user turn.
+			_ = store.AppendTranscript(taskSessionID, session.TranscriptEntry{
+				ID:        task.ID + "-prompt",
+				Role:      "user",
+				Content:   te.buildPrompt(task),
+				Timestamp: time.Now().UTC(),
+			})
+		}
+	}
+
 	// Inject the agent ID into the tool context used during this task session.
 	taskCtx := tools.WithAgentID(ctx, task.AgentID)
 
@@ -104,8 +127,34 @@ func (te *TaskExecutor) runTask(ctx context.Context, task *taskstore.TaskEntity,
 	resp, err := te.agentLoop.processTaskDirect(taskCtx, task.AgentID, prompt, sessionKey)
 	if err != nil {
 		slog.Error("task_executor: agent execution failed", "task_id", task.ID, "agent_id", task.AgentID, "error", err)
+		// Record the failure to the task transcript.
+		if taskSessionID != "" {
+			if store := te.agentLoop.GetAgentStore(task.AgentID); store != nil {
+				_ = store.AppendTranscript(taskSessionID, session.TranscriptEntry{
+					ID:        task.ID + "-error",
+					Role:      "assistant",
+					Content:   fmt.Sprintf("Task execution failed: %v", err),
+					Status:    "error",
+					Timestamp: time.Now().UTC(),
+				})
+				status := session.StatusInterrupted
+				_ = store.SetMeta(taskSessionID, session.MetaPatch{Status: &status})
+			}
+		}
 		te.failTask(task.ID, fmt.Sprintf("execution error: %v", err))
 		return
+	}
+
+	// Record the final response to the task transcript.
+	if taskSessionID != "" && resp != "" {
+		if store := te.agentLoop.GetAgentStore(task.AgentID); store != nil {
+			_ = store.AppendTranscript(taskSessionID, session.TranscriptEntry{
+				ID:        task.ID + "-response",
+				Role:      "assistant",
+				Content:   resp,
+				Timestamp: time.Now().UTC(),
+			})
+		}
 	}
 
 	// Check whether the agent already called task_update (task status is terminal).
@@ -116,7 +165,13 @@ func (te *TaskExecutor) runTask(ctx context.Context, task *taskstore.TaskEntity,
 	}
 	if current.Status == "completed" || current.Status == "failed" {
 		// Agent already called task_update which fired onTaskComplete via the tool callback.
-		// Do not fire again to avoid duplicate parent notifications.
+		// Mark session completed and do not fire again to avoid duplicate parent notifications.
+		if taskSessionID != "" {
+			if store := te.agentLoop.GetAgentStore(task.AgentID); store != nil {
+				statusCompleted := session.StatusArchived
+				_ = store.SetMeta(taskSessionID, session.MetaPatch{Status: &statusCompleted})
+			}
+		}
 		return
 	}
 
@@ -134,6 +189,13 @@ func (te *TaskExecutor) runTask(ctx context.Context, task *taskstore.TaskEntity,
 	if uerr != nil {
 		slog.Error("task_executor: auto-complete task failed", "task_id", task.ID, "error", uerr)
 		return
+	}
+	// Mark the task session as archived on successful auto-completion.
+	if taskSessionID != "" {
+		if store := te.agentLoop.GetAgentStore(task.AgentID); store != nil {
+			statusArchived := session.StatusArchived
+			_ = store.SetMeta(taskSessionID, session.MetaPatch{Status: &statusArchived})
+		}
 	}
 	te.onTaskComplete(final)
 }

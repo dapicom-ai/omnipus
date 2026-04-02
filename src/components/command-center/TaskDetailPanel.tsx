@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from '@tanstack/react-router'
 import { fetchAgents, fetchSubtasks, updateTask, startTask } from '@/lib/api'
 import type { Task } from '@/lib/api'
 import {
@@ -19,6 +20,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useUiStore } from '@/store/ui'
+import { useChatStore } from '@/store/chat'
 import {
   Play,
   Copy,
@@ -26,6 +28,7 @@ import {
   Check,
   Robot,
   X,
+  ChatCircle,
 } from '@phosphor-icons/react'
 import { cn } from '@/lib/utils'
 
@@ -70,6 +73,8 @@ interface TaskDetailPanelProps {
 export function TaskDetailPanel({ task, onClose, onTaskSelect }: TaskDetailPanelProps) {
   const { addToast } = useUiStore()
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
+  const attachToSession = useChatStore((s) => s.attachToSession)
 
   // Prompt editing state — only for queued tasks
   const [editingPrompt, setEditingPrompt] = useState(false)
@@ -281,6 +286,28 @@ export function TaskDetailPanel({ task, onClose, onTaskSelect }: TaskDetailPanel
               >
                 <Play size={13} weight="fill" />
                 {isStarting ? 'Starting...' : 'Start Task'}
+              </Button>
+            )}
+
+            {/* Open in Chat — available once the task has started (has a session) */}
+            {task.status !== 'queued' && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full gap-2 text-xs h-8"
+                onClick={() => {
+                  // Session key mirrors the backend's sanitization: agent_{agentId}_task_{taskId}
+                  // where `:` and other special chars become `_`
+                  const agentPart = (task.agent_id ?? 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_')
+                  const taskPart = task.id.replace(/[^a-zA-Z0-9_-]/g, '_')
+                  const taskSessionId = `agent_${agentPart}_task_${taskPart}`
+                  attachToSession(taskSessionId, 'task', task.title)
+                  void navigate({ to: '/' })
+                  onClose()
+                }}
+              >
+                <ChatCircle size={13} />
+                Open in Chat
               </Button>
             )}
 

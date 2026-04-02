@@ -22,7 +22,6 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
-	"github.com/dapicom-ai/omnipus/pkg/session"
 )
 
 // restMockProvider satisfies providers.LLMProvider with no-op responses.
@@ -62,7 +61,6 @@ func newTestRestAPI(t *testing.T) (*restAPI, func()) {
 
 	api := &restAPI{
 		agentLoop:     al,
-		partitions:    nil,
 		allowedOrigin: "http://localhost:3000",
 	}
 	return api, func() {}
@@ -254,47 +252,23 @@ func TestHandleAgentsCreateWithExplicitID(t *testing.T) {
 
 // --- HandleSessions tests ---
 
-// TestHandleSessionsListNilPartitions verifies that when partitions is nil,
-// GET /api/v1/sessions returns 503 Service Unavailable.
-// BDD: Given the session store is not configured (nil),
-// When GET /api/v1/sessions is called,
-// Then the response has status 503 and an error message.
-// Traces to: wave5a-wire-ui-spec.md — A12: nil partition store returns 503
-func TestHandleSessionsListNilPartitions(t *testing.T) {
+// TestHandleSessionsList verifies that GET /api/v1/sessions returns 200 with an empty list
+// when no sessions have been created yet.
+// BDD: Given no sessions exist, When GET /api/v1/sessions is called,
+// Then the response has status 200 and an empty array.
+func TestHandleSessionsList(t *testing.T) {
 	api, cleanup := newTestRestAPI(t)
 	defer cleanup()
-	api.partitions = nil
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/sessions", nil)
 	api.HandleSessions(w, r)
 
-	require.Equal(t, http.StatusServiceUnavailable, w.Code)
-
-	var resp map[string]string
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Contains(t, resp["error"], "unavailable")
+	require.Equal(t, http.StatusOK, w.Code)
 }
 
-// TestHandleSessionsGetNotFoundNilPartitions verifies 503 when store is nil and ID given.
-// BDD: Given the session store is not configured,
-// When GET /api/v1/sessions/some-id is called,
-// Then the response has status 503.
-// Traces to: wave5a-wire-ui-spec.md — Scenario: Session detail unavailable (US-15 AC2)
-func TestHandleSessionsGetNotFoundNilPartitions(t *testing.T) {
-	api, cleanup := newTestRestAPI(t)
-	defer cleanup()
-	api.partitions = nil
-
-	w := httptest.NewRecorder()
-	r := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/session_1234", nil)
-	api.HandleSessions(w, r)
-
-	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
-}
-
-// TestHandleSessionsGetNotFound verifies 404 when session ID does not exist in store.
-// BDD: Given a PartitionStore with no sessions,
+// TestHandleSessionsGetNotFound verifies 404 when session ID does not exist in any agent store.
+// BDD: Given no sessions exist,
 // When GET /api/v1/sessions/unknown-id is called,
 // Then the response has status 404.
 // Traces to: wave5a-wire-ui-spec.md — Scenario: Session not found returns 404 (US-15 AC3)
@@ -302,21 +276,11 @@ func TestHandleSessionsGetNotFound(t *testing.T) {
 	api, cleanup := newTestRestAPI(t)
 	defer cleanup()
 
-	// Real PartitionStore pointed at a temp dir — session doesn't exist
-	ps := newTestPartitionStore(t)
-	api.partitions = ps
-
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/sessions/session_does_not_exist", nil)
 	api.HandleSessions(w, r)
 
 	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-// newTestPartitionStore returns a PartitionStore backed by a temp dir.
-func newTestPartitionStore(t *testing.T) *session.PartitionStore {
-	t.Helper()
-	return session.NewPartitionStore(t.TempDir(), "test-agent")
 }
 
 // --- HandleDoctor tests ---

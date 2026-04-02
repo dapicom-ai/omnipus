@@ -20,6 +20,7 @@ import {
   Stop,
   Copy,
   Check,
+  ListChecks,
 } from '@phosphor-icons/react'
 import OmnipusAvatar from '@/assets/logo/omnipus-avatar.svg?url'
 import { SessionPanel } from './SessionPanel'
@@ -27,6 +28,7 @@ import { GenericToolCall } from './tools/GenericToolCall'
 import { ExecApprovalBlock } from './ExecApprovalBlock'
 import { MarkdownText } from './markdown-text'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { useChatStore } from '@/store/chat'
 import { useUiStore } from '@/store/ui'
 import { fetchSessionMessages, createSession } from '@/lib/api'
@@ -443,6 +445,8 @@ export function ChatScreen() {
   const pendingApprovals = useChatStore((s) => s.pendingApprovals)
   const setMessages = useChatStore((s) => s.setMessages)
   const reconnect = useChatStore((s) => s.reconnect)
+  const attachedSessionType = useChatStore((s) => s.attachedSessionType)
+  const attachedTaskTitle = useChatStore((s) => s.attachedTaskTitle)
 
   // Load message history when session changes
   const isConnected = useChatStore((s) => s.isConnected)
@@ -482,6 +486,17 @@ export function ChatScreen() {
           >
             <ArrowCounterClockwise size={11} /> Retry
           </Button>
+        </div>
+      )}
+
+      {/* Task session banner — shown when viewing a task execution transcript */}
+      {attachedSessionType === 'task' && (
+        <div className="px-4 py-2 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] flex items-center gap-2">
+          <ListChecks size={14} className="text-[var(--color-accent)] shrink-0" />
+          <span className="text-xs text-[var(--color-secondary)] flex-1 truncate">
+            Task: {attachedTaskTitle ?? 'Task Execution'}
+          </span>
+          <Badge variant="outline" className="text-[10px] shrink-0">Running</Badge>
         </div>
       )}
 

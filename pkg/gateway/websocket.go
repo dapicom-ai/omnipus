@@ -28,12 +28,12 @@ import (
 
 // wsClientFrame is a message sent from the browser to the server over WebSocket.
 type wsClientFrame struct {
-	Type      string `json:"type"`                  // "auth" | "message" | "cancel" | "exec_approval_response"
+	Type      string `json:"type"`                  // "auth" | "message" | "cancel" | "exec_approval_response" | "attach_session"
 	Token     string `json:"token,omitempty"`       // for "auth"
-	Content   string `json:"content,omitempty"`    // for "message"
-	SessionID string `json:"session_id,omitempty"` // for "message" / "cancel"
-	AgentID   string `json:"agent_id,omitempty"`   // for "message" — route to specific agent
-	ID        string `json:"id,omitempty"`          // for "exec_approval_response"
+	Content   string `json:"content,omitempty"`     // for "message"
+	SessionID string `json:"session_id,omitempty"`  // for "message" / "cancel" / "attach_session"
+	AgentID   string `json:"agent_id,omitempty"`    // for "message" — route to specific agent
+	ID        string `json:"id,omitempty"`           // for "exec_approval_response"
 	Decision  string `json:"decision,omitempty"`    // "allow" | "deny" | "always"
 }
 
@@ -61,7 +61,6 @@ type wsServerFrame struct {
 type WSHandler struct {
 	msgBus        *bus.MessageBus
 	agentLoop     *agent.AgentLoop
-	partitions    *session.PartitionStore // may be nil
 	allowedOrigin string
 
 	mu         sync.Mutex
@@ -95,13 +94,11 @@ func (c *wsConn) close() {
 func newWSHandler(
 	msgBus *bus.MessageBus,
 	agentLoop *agent.AgentLoop,
-	ps *session.PartitionStore,
 	allowedOrigin string,
 ) *WSHandler {
 	h := &WSHandler{
 		msgBus:           msgBus,
 		agentLoop:        agentLoop,
-		partitions:       ps,
 		allowedOrigin:    allowedOrigin,
 		sessions:         make(map[string]*wsConn),
 		sessionIDs:       make(map[string]string),
@@ -164,13 +161,48 @@ func (h *WSHandler) GetStreamer(_ context.Context, channel, chatID string) (bus.
 	if !ok {
 		return nil, false
 	}
+
+	// Resolve the agent store for transcript recording.
+	// The session is associated with a specific agent; look up that agent's store.
+	// agentID is stored in the session meta — we use "main" as default for webchat.
+	var agentStore *session.UnifiedStore
+	if sid != "" {
+		// Try to find which agent owns this session by scanning agent stores.
+		agentStore = h.resolveSessionStore(sid)
+	}
+
 	return &wsStreamer{
 		conn:       conn,
 		chatID:     chatID,
 		sessionID:  sid,
-		partitions: h.partitions,
+		agentStore: agentStore,
 		channel:    h.webchatCh,
 	}, true
+}
+
+// resolveSessionStore finds the UnifiedStore that owns sessionID.
+// Checks the main agent first (most common case), then falls back to scanning all agents.
+func (h *WSHandler) resolveSessionStore(sessionID string) *session.UnifiedStore {
+	// Fast path: main agent owns most webchat sessions.
+	if store := h.agentLoop.GetAgentStore("main"); store != nil {
+		if _, err := store.GetMeta(sessionID); err == nil {
+			return store
+		}
+	}
+	// Slow path: scan all agents.
+	for _, id := range h.agentLoop.GetRegistry().ListAgentIDs() {
+		if id == "main" {
+			continue
+		}
+		store := h.agentLoop.GetAgentStore(id)
+		if store == nil {
+			continue
+		}
+		if _, err := store.GetMeta(sessionID); err == nil {
+			return store
+		}
+	}
+	return nil
 }
 
 // ServeHTTP handles the WebSocket upgrade and full connection lifecycle.
@@ -320,6 +352,10 @@ func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsCo
 			h.handleCancel(sessionID)
 		case "exec_approval_response":
 			h.handleApprovalResponse(frame.ID, frame.Decision)
+		case "attach_session":
+			if frame.SessionID != "" {
+				h.handleAttachSession(ctx, chatID, sessionID, frame.SessionID, wc)
+			}
 		case "ping":
 			// Client heartbeat — no action needed, the WebSocket pong handler keeps the connection alive
 		default:
@@ -332,10 +368,18 @@ func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsCo
 // and publishes the message to the bus. If session creation fails, the client is warned
 // that the conversation will not be persisted (fix for silent persistence failure).
 func (h *WSHandler) handleChatMessage(ctx context.Context, chatID string, sessionID *string, content string, agentID string, wc *wsConn) {
-	if h.partitions != nil {
+	// Resolve the agent store to use. If agentID is provided, use that agent's store;
+	// otherwise fall back to the main agent's store.
+	targetAgentID := agentID
+	if targetAgentID == "" {
+		targetAgentID = "main"
+	}
+	store := h.agentLoop.GetAgentStore(targetAgentID)
+
+	if store != nil {
 		// Create the session on the first message of this WebSocket connection.
 		if *sessionID == "" {
-			meta, err := h.partitions.NewSession("webchat", "", "")
+			meta, err := store.NewSession(session.SessionTypeChat, "webchat")
 			if err != nil {
 				slog.Warn("ws: could not create session — conversation will not be saved", "error", err)
 				sendConnFrame(wc, wsServerFrame{
@@ -344,19 +388,12 @@ func (h *WSHandler) handleChatMessage(ctx context.Context, chatID string, sessio
 				})
 				// Continue without sessionID so the message is still delivered to the agent.
 			} else {
-				// Tag the session with the selected agent so session history groups correctly.
-				if agentID != "" {
-					meta.AgentID = agentID
-					if setErr := h.partitions.SetAgentID(meta.ID, agentID); setErr != nil {
-						slog.Debug("ws: could not set agent_id on session", "error", setErr)
-					}
-				}
 				*sessionID = meta.ID
-				// Track sessionID for this chatID so the streamer can record responses
+				// Track sessionID for this chatID so the streamer can record responses.
 				h.mu.Lock()
 				h.sessionIDs[chatID] = meta.ID
 				h.mu.Unlock()
-				// M3: truncate using []rune so multi-byte UTF-8 characters aren't split.
+				// Truncate using []rune so multi-byte UTF-8 characters aren't split.
 				titleRunes := []rune(content)
 				var title string
 				if len(titleRunes) > 60 {
@@ -364,8 +401,8 @@ func (h *WSHandler) handleChatMessage(ctx context.Context, chatID string, sessio
 				} else {
 					title = content
 				}
-				if err := h.partitions.SetTitle(*sessionID, title); err != nil {
-					slog.Warn("ws: could not set session title", "session_id", *sessionID, "error", err)
+				if err := store.SetMeta(meta.ID, session.MetaPatch{Title: &title}); err != nil {
+					slog.Warn("ws: could not set session title", "session_id", meta.ID, "error", err)
 				}
 			}
 		}
@@ -378,7 +415,7 @@ func (h *WSHandler) handleChatMessage(ctx context.Context, chatID string, sessio
 				Content:   content,
 				Timestamp: time.Now().UTC(),
 			}
-			if err := h.partitions.AppendMessage(*sessionID, entry); err != nil {
+			if err := store.AppendTranscript(*sessionID, entry); err != nil {
 				slog.Warn("ws: could not record user message", "session_id", *sessionID, "error", err)
 			}
 		}
@@ -414,11 +451,64 @@ func (h *WSHandler) handleCancel(sessionID *string) {
 	if err := h.agentLoop.InterruptGraceful("user cancelled via WebSocket"); err != nil {
 		slog.Debug("ws: cancel — no active turn", "error", err)
 	}
-	if h.partitions != nil && sessionID != nil && *sessionID != "" {
-		if err := h.partitions.SetStatus(*sessionID, session.StatusInterrupted); err != nil {
-			slog.Warn("ws: could not mark session interrupted", "session_id", *sessionID, "error", err)
+	if sessionID != nil && *sessionID != "" {
+		store := h.resolveSessionStore(*sessionID)
+		if store != nil {
+			status := session.StatusInterrupted
+			if err := store.SetMeta(*sessionID, session.MetaPatch{Status: &status}); err != nil {
+				slog.Warn("ws: could not mark session interrupted", "session_id", *sessionID, "error", err)
+			}
 		}
 	}
+}
+
+// handleAttachSession loads an existing session's transcript and replays it to the client,
+// then sets the connection's active session to the requested session.
+func (h *WSHandler) handleAttachSession(ctx context.Context, chatID string, sessionID *string, attachID string, wc *wsConn) {
+	if err := validateEntityID(attachID); err != nil {
+		sendConnFrame(wc, wsServerFrame{Type: "error", Message: "invalid session_id"})
+		return
+	}
+
+	store := h.resolveSessionStore(attachID)
+	if store == nil {
+		sendConnFrame(wc, wsServerFrame{Type: "error", Message: "session not found"})
+		return
+	}
+
+	entries, err := store.ReadTranscript(attachID)
+	if err != nil {
+		slog.Warn("ws: attach_session: could not read transcript", "session_id", attachID, "error", err)
+		sendConnFrame(wc, wsServerFrame{Type: "error", Message: "could not read session transcript"})
+		return
+	}
+
+	// Replay existing transcript entries as token frames.
+	for _, entry := range entries {
+		if entry.Content != "" {
+			data, merr := json.Marshal(wsServerFrame{
+				Type:    "token",
+				Content: entry.Content,
+			})
+			if merr == nil {
+				select {
+				case wc.sendCh <- data:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}
+
+	sendConnFrame(wc, wsServerFrame{Type: "done", Stats: map[string]any{}})
+
+	// Switch this connection's active session.
+	*sessionID = attachID
+	h.mu.Lock()
+	h.sessionIDs[chatID] = attachID
+	h.mu.Unlock()
+
+	slog.Debug("ws: attached to session", "chat_id", chatID, "session_id", attachID)
 }
 
 // handleApprovalResponse resolves a pending exec approval request.
@@ -585,12 +675,12 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 // wsStreamer implements bus.Streamer, pushing token/done frames into a wsConn's send channel.
 // It also accumulates the full response to persist it to the session transcript on Finalize.
 type wsStreamer struct {
-	conn       *wsConn
-	chatID     string
-	sessionID  string                  // for recording assistant message
-	partitions *session.PartitionStore // for recording assistant message
-	channel    *webchatChannel         // to mark streaming complete and suppress duplicate Send()
-	accumulated strings.Builder        // accumulates full response text
+	conn        *wsConn
+	chatID      string
+	sessionID   string                   // for recording assistant message
+	agentStore  *session.UnifiedStore    // for recording assistant message
+	channel     *webchatChannel          // to mark streaming complete and suppress duplicate Send()
+	accumulated strings.Builder          // accumulates full response text
 }
 
 func (s *wsStreamer) Update(_ context.Context, content string) error {
@@ -614,12 +704,12 @@ func (s *wsStreamer) Finalize(_ context.Context, _ string) error {
 		stats["tokens_dropped"] = s.conn.droppedTokens
 	}
 	sendConnFrame(s.conn, wsServerFrame{Type: "done", Stats: stats})
-	// Mark this chatID as streamed so webchatChannel.Send() skips the duplicate
+	// Mark this chatID as streamed so webchatChannel.Send() skips the duplicate.
 	if s.channel != nil {
 		s.channel.markStreamed(s.chatID)
 	}
-	// Record the full assistant response to the session transcript
-	if s.partitions != nil && s.sessionID != "" {
+	// Record the full assistant response to the session transcript.
+	if s.agentStore != nil && s.sessionID != "" {
 		content := s.accumulated.String()
 		if content != "" {
 			entry := session.TranscriptEntry{
@@ -628,7 +718,7 @@ func (s *wsStreamer) Finalize(_ context.Context, _ string) error {
 				Content:   content,
 				Timestamp: time.Now().UTC(),
 			}
-			if err := s.partitions.AppendMessage(s.sessionID, entry); err != nil {
+			if err := s.agentStore.AppendTranscript(s.sessionID, entry); err != nil {
 				slog.Warn("ws: could not record streamed assistant message", "session_id", s.sessionID, "error", err)
 			}
 		}

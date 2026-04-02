@@ -98,6 +98,8 @@ export interface Session {
   id: string
   agent_id: string
   title: string
+  type: 'chat' | 'task' | 'channel'
+  task_id?: string
   created_at: string
   updated_at: string
   message_count: number
@@ -109,6 +111,8 @@ interface RawSession {
   id: string
   agent_id: string
   title: string
+  type?: 'chat' | 'task' | 'channel'
+  task_id?: string
   created_at: string
   updated_at: string
   stats?: {
@@ -126,6 +130,9 @@ function rawToSession(raw: RawSession): Session {
     id: raw.id,
     agent_id: raw.agent_id,
     title: raw.title,
+    // Legacy sessions without a type field default to 'chat'
+    type: raw.type ?? 'chat',
+    task_id: raw.task_id,
     created_at: raw.created_at,
     updated_at: raw.updated_at,
     message_count: raw.stats?.message_count ?? 0,
@@ -156,8 +163,11 @@ export interface ToolCall {
   error?: string
 }
 
-export async function fetchSessions(agentId?: string): Promise<Session[]> {
-  const qs = agentId ? '?' + new URLSearchParams({ agent_id: agentId }).toString() : ''
+export async function fetchSessions(agentId?: string, type?: Session['type']): Promise<Session[]> {
+  const params: Record<string, string> = {}
+  if (agentId) params.agent_id = agentId
+  if (type) params.type = type
+  const qs = Object.keys(params).length > 0 ? '?' + new URLSearchParams(params).toString() : ''
   const raw = await request<RawSession[]>(`/sessions${qs}`)
   return raw.map(rawToSession)
 }

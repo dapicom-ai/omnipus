@@ -14,6 +14,7 @@ import (
 	"math/rand/v2"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,6 +29,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/media"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/routing"
+	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/skills"
 	"github.com/dapicom-ai/omnipus/pkg/state"
 	"github.com/dapicom-ai/omnipus/pkg/taskstore"
@@ -1178,6 +1180,42 @@ func GetTaskStore(al *AgentLoop) *taskstore.TaskStore {
 // GetTaskExecutor returns the shared TaskExecutor (may be nil in tests).
 func GetTaskExecutor(al *AgentLoop) *TaskExecutor {
 	return al.taskExecutor
+}
+
+// GetAgentStore returns the UnifiedStore for a given agent, or nil if not found
+// or if the agent's session store is not a UnifiedStore.
+func (al *AgentLoop) GetAgentStore(agentID string) *session.UnifiedStore {
+	agent, ok := al.GetRegistry().GetAgent(agentID)
+	if !ok {
+		return nil
+	}
+	us, ok := agent.Sessions.(*session.UnifiedStore)
+	if !ok {
+		return nil
+	}
+	return us
+}
+
+// ListAllSessions returns sessions from all agent stores merged and sorted by UpdatedAt descending.
+func (al *AgentLoop) ListAllSessions() ([]*session.UnifiedMeta, error) {
+	var all []*session.UnifiedMeta
+	for _, id := range al.GetRegistry().ListAgentIDs() {
+		store := al.GetAgentStore(id)
+		if store == nil {
+			continue
+		}
+		sessions, err := store.ListSessions()
+		if err != nil {
+			logger.WarnCF("agent", "ListAllSessions: could not list sessions for agent",
+				map[string]any{"agent_id": id, "error": err.Error()})
+			continue
+		}
+		all = append(all, sessions...)
+	}
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].UpdatedAt.After(all[j].UpdatedAt)
+	})
+	return all, nil
 }
 
 // processTaskDirect runs the agent loop for a specific agent with a given prompt and session key.

@@ -19,7 +19,6 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/datamodel"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
-	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/dingtalk"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/discord"
@@ -66,9 +65,6 @@ type services struct {
 	ChannelManager   *channels.Manager
 	DeviceService    *devices.Service
 	HealthServer     *health.Server
-	// PartitionStore is the day-partitioned session backend for the primary agent.
-	// Initialized for the first configured agent (or 'default' if none configured).
-	PartitionStore   *session.PartitionStore
 	manualReloadChan chan struct{}
 	reloading        atomic.Bool
 }
@@ -350,29 +346,14 @@ func setupAndStartServices(
 	runningServices.HealthServer = health.NewServer(cfg.Gateway.Host, cfg.Gateway.Port)
 	runningServices.ChannelManager.SetupHTTPServer(addr, runningServices.HealthServer)
 
-	// Initialize PartitionStore for the default workspace.
-	// The partition store manages webchat sessions for all agents in one directory.
-	defaultWorkspace := cfg.Agents.Defaults.Workspace
-	if defaultWorkspace == "" {
-		defaultWorkspace = filepath.Join(homePath, "workspace")
-	}
-	sessionsDir := filepath.Join(defaultWorkspace, "sessions")
-	if err := os.MkdirAll(sessionsDir, 0o755); err != nil {
-		slog.Error("gateway: could not create sessions dir", "dir", sessionsDir, "error", err)
-		fmt.Println("WARNING: Session persistence unavailable — conversations will not be saved")
-	} else {
-		runningServices.PartitionStore = session.NewPartitionStore(defaultWorkspace, "main")
-		slog.Info("gateway: day-partitioned session store initialized", "workspace", defaultWorkspace)
-	}
-
 	allowedOrigin := fmt.Sprintf("http://%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
 
 	// SSE chat endpoint — kept for backward compatibility; streaming tokens now route through WebSocket.
-	sseHandler := newSSEHandler(msgBus, runningServices.PartitionStore, allowedOrigin)
+	sseHandler := newSSEHandler(msgBus, nil, allowedOrigin)
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/chat", sseHandler)
 
 	// WebSocket chat endpoint — primary transport for bi-directional chat streaming.
-	wsHandler := newWSHandler(msgBus, agentLoop, runningServices.PartitionStore, allowedOrigin)
+	wsHandler := newWSHandler(msgBus, agentLoop, allowedOrigin)
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/chat/ws", wsHandler)
 	// Register WebSocket handler as stream fallback so streaming tokens route back for webchat.
 	runningServices.ChannelManager.SetStreamFallback(wsHandler)
@@ -388,7 +369,6 @@ func setupAndStartServices(
 	tExecutor := agent.GetTaskExecutor(agentLoop)
 	api := &restAPI{
 		agentLoop:     agentLoop,
-		partitions:    runningServices.PartitionStore,
 		allowedOrigin: allowedOrigin,
 		onboardingMgr: onboardingMgr,
 		homePath:      homePath,

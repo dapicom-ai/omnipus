@@ -116,8 +116,21 @@ func NewAgentInstance(
 		toolsRegistry.Register(tools.NewAppendFileTool(workspace, restrict, allowWritePaths))
 	}
 
+	// Resolve agentID early so the session store can tag sessions with the correct owner.
+	agentID := routing.DefaultAgentID
+	agentName := ""
+	var subagents *config.SubagentsConfig
+	var skillsFilter []string
+
+	if agentCfg != nil {
+		agentID = routing.NormalizeAgentID(agentCfg.ID)
+		agentName = agentCfg.Name
+		subagents = agentCfg.Subagents
+		skillsFilter = agentCfg.Skills
+	}
+
 	sessionsDir := filepath.Join(workspace, "sessions")
-	sessions := initSessionStore(sessionsDir)
+	sessions := initSessionStore(sessionsDir, agentID)
 
 	mcpDiscoveryActive := cfg.Tools.MCP.Enabled && cfg.Tools.MCP.Discovery.Enabled
 	contextBuilder := NewContextBuilder(workspace).
@@ -127,17 +140,8 @@ func NewAgentInstance(
 		).
 		WithSplitOnMarker(cfg.Agents.Defaults.SplitOnMarker)
 
-	agentID := routing.DefaultAgentID
-	agentName := ""
-	var subagents *config.SubagentsConfig
-	var skillsFilter []string
-
 	if agentCfg != nil {
-		agentID = routing.NormalizeAgentID(agentCfg.ID)
-		agentName = agentCfg.Name
 		contextBuilder.WithAgentInfo(agentID, agentName)
-		subagents = agentCfg.Subagents
-		skillsFilter = agentCfg.Skills
 	}
 
 	maxIter := defaults.MaxToolIterations
@@ -351,31 +355,30 @@ func (a *AgentInstance) Close() error {
 	return nil
 }
 
-// initSessionStore creates the session persistence backend.
-// It uses the JSONL store by default and auto-migrates legacy JSON sessions.
-// Falls back to SessionManager if the JSONL store cannot be initialized or
-// if migration fails (which indicates the store cannot write reliably).
-func initSessionStore(dir string) session.SessionStore {
-	store, err := memory.NewJSONLStore(dir)
+// initSessionStore creates the unified session store for an agent.
+// Falls back to the JSONL backend if the unified store cannot be initialized.
+func initSessionStore(dir, agentID string) session.SessionStore {
+	us, err := session.NewUnifiedStore(dir, agentID)
 	if err != nil {
-		logger.ErrorCF("agent", "Memory JSONL store init failed; falling back to json sessions — conversation history may not persist reliably",
-			map[string]any{"error": err.Error()})
-		return session.NewSessionManager(dir)
+		logger.ErrorCF("agent", "UnifiedStore init failed; falling back to JSONL backend",
+			map[string]any{"dir": dir, "error": err.Error()})
+		store, storeErr := memory.NewJSONLStore(dir)
+		if storeErr != nil {
+			logger.ErrorCF("agent", "JSONL store fallback also failed; using SessionManager",
+				map[string]any{"error": storeErr.Error()})
+			return session.NewSessionManager(dir)
+		}
+		if n, merr := memory.MigrateFromJSON(context.Background(), dir, store); merr != nil {
+			logger.ErrorCF("agent", "Memory migration failed; falling back to SessionManager",
+				map[string]any{"error": merr.Error()})
+			store.Close()
+			return session.NewSessionManager(dir)
+		} else if n > 0 {
+			logger.InfoCF("agent", "Memory migrated to JSONL", map[string]any{"sessions_migrated": n})
+		}
+		return session.NewJSONLBackend(store)
 	}
-
-	if n, merr := memory.MigrateFromJSON(context.Background(), dir, store); merr != nil {
-		// Migration failure means the store could not write data.
-		// Fall back to SessionManager to avoid a split state where
-		// some sessions are in JSONL and others remain in JSON.
-		logger.ErrorCF("agent", "Memory migration failed; falling back to json sessions — conversation history may not persist reliably",
-			map[string]any{"error": merr.Error()})
-		store.Close()
-		return session.NewSessionManager(dir)
-	} else if n > 0 {
-		logger.InfoCF("agent", "Memory migrated to JSONL", map[string]any{"sessions_migrated": n})
-	}
-
-	return session.NewJSONLBackend(store)
+	return us
 }
 
 func expandHome(path string) string {

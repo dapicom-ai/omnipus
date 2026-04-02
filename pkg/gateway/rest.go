@@ -46,13 +46,12 @@ var Version = "dev"
 // the current config, since config can hot-reload.
 type restAPI struct {
 	agentLoop      *agent.AgentLoop
-	partitions     *session.PartitionStore  // may be nil
 	allowedOrigin  string
-	onboardingMgr  *onboarding.Manager     // manages first-launch + doctor state
-	homePath       string                  // ~/.omnipus — root of the data directory
-	configMu       sync.Mutex              // guards safeUpdateConfigJSON (read-modify-write cycle)
-	taskStore      *taskstore.TaskStore    // task persistence
-	taskExecutor   *agent.TaskExecutor     // task execution engine
+	onboardingMgr  *onboarding.Manager  // manages first-launch + doctor state
+	homePath       string               // ~/.omnipus — root of the data directory
+	configMu       sync.Mutex           // guards safeUpdateConfigJSON (read-modify-write cycle)
+	taskStore      *taskstore.TaskStore // task persistence
+	taskExecutor   *agent.TaskExecutor  // task execution engine
 }
 
 // --- CORS / JSON helpers ---
@@ -192,51 +191,61 @@ func (a *restAPI) HandleSessions(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (a *restAPI) listSessions(w http.ResponseWriter, _ *http.Request) {
-	if a.partitions == nil {
-		jsonErr(w, http.StatusServiceUnavailable, "session store unavailable")
-		return
-	}
-	metas, err := a.partitions.ListSessions()
+func (a *restAPI) listSessions(w http.ResponseWriter, r *http.Request) {
+	agentFilter := r.URL.Query().Get("agent_id")
+	typeFilter := r.URL.Query().Get("type")
+
+	metas, err := a.agentLoop.ListAllSessions()
 	if err != nil {
 		slog.Error("rest: list sessions", "error", err)
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not list sessions: %v", err))
 		return
 	}
-	if metas == nil {
-		metas = []*session.SessionMeta{}
+
+	// Apply filters.
+	filtered := make([]*session.UnifiedMeta, 0, len(metas))
+	for _, m := range metas {
+		if agentFilter != "" && m.AgentID != agentFilter {
+			continue
+		}
+		if typeFilter != "" && string(m.Type) != typeFilter {
+			continue
+		}
+		filtered = append(filtered, m)
 	}
-	jsonOK(w, metas)
+	jsonOK(w, filtered)
 }
 
 func (a *restAPI) getSession(w http.ResponseWriter, _ *http.Request, id string) {
-	if a.partitions == nil {
-		jsonErr(w, http.StatusServiceUnavailable, "session store not available")
+	store := a.resolveSessionStore(id)
+	if store == nil {
+		jsonErr(w, http.StatusNotFound, "session not found")
 		return
 	}
-	meta, err := a.partitions.GetMeta(id)
+	meta, err := store.GetMeta(id)
 	if err != nil {
 		jsonErr(w, http.StatusNotFound, fmt.Sprintf("session not found: %v", err))
 		return
 	}
-	messages, err := a.partitions.ReadMessages(id)
+	messages, err := store.ReadTranscript(id)
 	if err != nil {
-		slog.Error("rest: could not read messages", "session_id", id, "error", err)
-		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not read messages: %v", err))
+		slog.Error("rest: could not read transcript", "session_id", id, "error", err)
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not read transcript: %v", err))
 		return
 	}
-	jsonOK(w, sessionDetailResponse{Session: meta, Messages: messages})
+	jsonOK(w, unifiedSessionDetailResponse{Session: meta, Messages: messages})
 }
 
 func (a *restAPI) getSessionMessages(w http.ResponseWriter, _ *http.Request, id string) {
-	if a.partitions == nil {
-		jsonErr(w, http.StatusServiceUnavailable, "session store unavailable")
+	store := a.resolveSessionStore(id)
+	if store == nil {
+		jsonErr(w, http.StatusNotFound, "session not found")
 		return
 	}
-	messages, err := a.partitions.ReadMessages(id)
+	messages, err := store.ReadTranscript(id)
 	if err != nil {
-		slog.Error("rest: could not read messages", "session_id", id, "error", err)
-		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not read messages: %v", err))
+		slog.Error("rest: could not read transcript", "session_id", id, "error", err)
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not read transcript: %v", err))
 		return
 	}
 	jsonOK(w, messages)
@@ -245,16 +254,31 @@ func (a *restAPI) getSessionMessages(w http.ResponseWriter, _ *http.Request, id 
 func (a *restAPI) createSessionHTTP(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		AgentID string `json:"agent_id"`
+		Type    string `json:"type"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if a.partitions == nil {
-		jsonErr(w, http.StatusServiceUnavailable, "session store not available")
+
+	agentID := req.AgentID
+	if agentID == "" {
+		agentID = "main"
+	}
+	store := a.agentLoop.GetAgentStore(agentID)
+	if store == nil {
+		jsonErr(w, http.StatusBadRequest, fmt.Sprintf("agent %q not found", agentID))
 		return
 	}
-	meta, err := a.partitions.NewSession("webchat", req.AgentID, "")
+
+	sessionType := session.SessionTypeChat
+	if req.Type == string(session.SessionTypeTask) {
+		sessionType = session.SessionTypeTask
+	} else if req.Type == string(session.SessionTypeChannel) {
+		sessionType = session.SessionTypeChannel
+	}
+
+	meta, err := store.NewSession(sessionType, "webchat")
 	if err != nil {
 		slog.Error("rest: create session", "error", err)
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not create session: %v", err))
@@ -326,23 +350,46 @@ func (a *restAPI) listAgentSessions(w http.ResponseWriter, agentID string) {
 		jsonErr(w, http.StatusBadRequest, "invalid agent ID")
 		return
 	}
-	if a.partitions == nil {
-		jsonOK(w, []*session.SessionMeta{})
+	store := a.agentLoop.GetAgentStore(agentID)
+	if store == nil {
+		jsonOK(w, []*session.UnifiedMeta{})
 		return
 	}
-	all, err := a.partitions.ListSessions()
+	metas, err := store.ListSessions()
 	if err != nil {
 		slog.Error("rest: list agent sessions", "agent_id", agentID, "error", err)
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not list sessions: %v", err))
 		return
 	}
-	filtered := make([]*session.SessionMeta, 0)
-	for _, m := range all {
-		if m.AgentID == agentID {
-			filtered = append(filtered, m)
+	if metas == nil {
+		metas = []*session.UnifiedMeta{}
+	}
+	jsonOK(w, metas)
+}
+
+// resolveSessionStore finds which agent's UnifiedStore owns the given sessionID.
+// Returns nil if the session cannot be found across any agent.
+func (a *restAPI) resolveSessionStore(sessionID string) *session.UnifiedStore {
+	// Fast path: main agent owns most sessions.
+	if store := a.agentLoop.GetAgentStore("main"); store != nil {
+		if _, err := store.GetMeta(sessionID); err == nil {
+			return store
 		}
 	}
-	jsonOK(w, filtered)
+	// Slow path: scan all agents.
+	for _, id := range a.agentLoop.GetRegistry().ListAgentIDs() {
+		if id == "main" {
+			continue
+		}
+		store := a.agentLoop.GetAgentStore(id)
+		if store == nil {
+			continue
+		}
+		if _, err := store.GetMeta(sessionID); err == nil {
+			return store
+		}
+	}
+	return nil
 }
 
 // skillResponse is the JSON shape returned for a single installed skill.
@@ -358,8 +405,16 @@ type skillResponse struct {
 }
 
 // sessionDetailResponse is the JSON shape returned by GET /api/v1/sessions/{id}.
+// Kept for backward compatibility; new code uses unifiedSessionDetailResponse.
 type sessionDetailResponse struct {
 	Session  *session.SessionMeta      `json:"session"`
+	Messages []session.TranscriptEntry `json:"messages"`
+}
+
+// unifiedSessionDetailResponse is the JSON shape returned by GET /api/v1/sessions/{id}
+// using the unified session store.
+type unifiedSessionDetailResponse struct {
+	Session  *session.UnifiedMeta      `json:"session"`
 	Messages []session.TranscriptEntry `json:"messages"`
 }
 
@@ -1302,8 +1357,8 @@ func (a *restAPI) HandleDoctor(w http.ResponseWriter, r *http.Request) {
 				"info":   info,
 			},
 			"session_store": map[string]any{
-				"status":    func() string { if a.partitions != nil { return "ok" }; return "unavailable" }(),
-				"available": a.partitions != nil,
+				"status":    "ok",
+				"available": true,
 			},
 			"go_runtime": map[string]any{
 				"version":    runtime.Version(),
@@ -1334,16 +1389,7 @@ func (a *restAPI) runDiagnosticChecks(cfg *config.Config) []map[string]any {
 		})
 	}
 
-	// Check session store availability.
-	if a.partitions == nil {
-		issues = append(issues, map[string]any{
-			"id":             "no-session-store",
-			"severity":       "medium",
-			"title":          "Session store unavailable",
-			"description":    "The day-partitioned session store failed to initialize. Conversations will not be saved.",
-			"recommendation": "Check file permissions on the ~/.omnipus/ directory.",
-		})
-	}
+	// Session store is always available via the unified store on each agent.
 
 	// Check if any agents are configured.
 	if len(cfg.Agents.List) == 0 {
@@ -1871,9 +1917,9 @@ func (a *restAPI) HandleActivity(w http.ResponseWriter, r *http.Request) {
 		agentNames[ac.ID] = ac.Name
 	}
 
-	// Collect session_start events from PartitionStore (last 24h).
-	if a.partitions != nil {
-		metas, err := a.partitions.ListSessions()
+	// Collect session_start events from all agent stores (last 24h).
+	{
+		metas, err := a.agentLoop.ListAllSessions()
 		if err != nil {
 			slog.Error("rest: activity: list sessions", "error", err)
 			sessionWarning = fmt.Sprintf("could not load session history: %v", err)
@@ -2619,13 +2665,11 @@ func (a *restAPI) HandleStorageStats(w http.ResponseWriter, r *http.Request) {
 	var sessionCount int
 	var workspaceSize int64
 	var warnings []string
-	if a.partitions != nil {
-		if metas, err := a.partitions.ListSessions(); err != nil {
-			slog.Warn("rest: storage stats: list sessions failed", "error", err)
-			warnings = append(warnings, fmt.Sprintf("session count unavailable: %v", err))
-		} else {
-			sessionCount = len(metas)
-		}
+	if metas, err := a.agentLoop.ListAllSessions(); err != nil {
+		slog.Warn("rest: storage stats: list sessions failed", "error", err)
+		warnings = append(warnings, fmt.Sprintf("session count unavailable: %v", err))
+	} else {
+		sessionCount = len(metas)
 	}
 	// Walk the home directory for workspace size.
 	homeDir := a.homePath
