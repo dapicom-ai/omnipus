@@ -2,11 +2,8 @@ import { create } from 'zustand'
 import { generateId } from '@/lib/constants'
 import { useUiStore } from '@/store/ui'
 import { queryClient } from '@/lib/queryClient'
-import type { Message, ToolCall } from '@/lib/api'
-import type { WsConnection, WsReceiveFrame } from '@/lib/ws'
-import type {
-  WsExecApprovalRequestFrame,
-} from '@/lib/ws'
+import type { Message, ToolCall, Session } from '@/lib/api'
+import type { WsConnection, WsReceiveFrame, WsExecApprovalRequestFrame, WsReplayMessageFrame } from '@/lib/ws'
 
 export interface ChatMessage extends Message {
   isStreaming?: boolean
@@ -41,7 +38,7 @@ interface ChatStore {
   // Attached session context — tracks when viewing a task/channel session
   attachedSessionType: 'chat' | 'task' | 'channel' | null
   attachedTaskTitle: string | null
-  attachToSession: (sessionId: string, type: string, title?: string) => void
+  attachToSession: (sessionId: string, type: Session['type'], title?: string) => void
 
   // Messages
   messages: ChatMessage[]
@@ -78,6 +75,16 @@ interface ChatStore {
   handleFrame: (frame: WsReceiveFrame) => void
 }
 
+/** State reset applied whenever switching or attaching to a session. */
+const CLEAN_SESSION_STATE = {
+  messages: [] as ChatMessage[],
+  toolCalls: {} as Record<string, ToolCall & { call_id: string }>,
+  pendingApprovals: [] as ExecApprovalRequest[],
+  sessionTokens: 0,
+  sessionCost: 0,
+  isStreaming: false,
+} as const
+
 export const useChatStore = create<ChatStore>((set, get) => ({
   connection: null,
   isConnected: false,
@@ -94,14 +101,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       activeSessionId: sessionId,
       activeAgentId: agentId ?? get().activeAgentId,
       activeAgentType: agentType ?? get().activeAgentType,
-      // Clear ALL session-scoped state on switch to prevent stale data bleeding across sessions
-      messages: [],
-      toolCalls: {},
-      pendingApprovals: [],
-      sessionTokens: 0,
-      sessionCost: 0,
-      isStreaming: false,
-      // Reset attached session context on any explicit session switch
+      ...CLEAN_SESSION_STATE,
       attachedSessionType: null,
       attachedTaskTitle: null,
     }),
@@ -110,19 +110,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   attachedTaskTitle: null,
   attachToSession: (sessionId, type, title) => {
     const { connection } = get()
-    // Normalize type to known union members; fall back to 'chat' for unknown values
-    const normalizedType = (type === 'task' || type === 'channel') ? type : 'chat'
     set({
       activeSessionId: sessionId,
-      attachedSessionType: normalizedType,
+      attachedSessionType: type,
       attachedTaskTitle: title ?? null,
-      // Clear stale messages — the server will stream the transcript after attach
-      messages: [],
-      toolCalls: {},
-      pendingApprovals: [],
-      sessionTokens: 0,
-      sessionCost: 0,
-      isStreaming: false,
+      ...CLEAN_SESSION_STATE,
     })
     if (connection) {
       connection.send({ type: 'attach_session', session_id: sessionId })
@@ -419,6 +411,23 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       case 'task_status_changed':
         queryClient.invalidateQueries({ queryKey: ['tasks'] })
         break
+
+      case 'replay_message': {
+        const replayFrame = frame as WsReplayMessageFrame
+        set((state) => ({
+          messages: [
+            ...state.messages,
+            {
+              id: generateId(),
+              role: replayFrame.role as 'user' | 'assistant',
+              content: replayFrame.content,
+              timestamp: new Date().toISOString(),
+              status: 'done' as const,
+            },
+          ],
+        }))
+        break
+      }
 
       default:
         console.warn('[chat] Unknown frame type:', (frame as { type: string }).type)

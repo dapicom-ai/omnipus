@@ -213,7 +213,7 @@ const HELP_TEXT = `**Omnipus commands:**
 **Tips:**
 - Press **Enter** to send, **Shift+Enter** for newline
 - Click tool call headers to expand/collapse details
-- Hover over messages to copy or pin them`
+- Hover over messages to copy them`
 
 // ── Composer ──────────────────────────────────────────────────────────────────
 

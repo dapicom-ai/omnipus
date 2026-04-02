@@ -444,6 +444,7 @@ func (a *restAPI) HandleClearSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	totalRemoved := 0
+	var warnings []string
 	for _, id := range a.agentLoop.GetRegistry().ListAgentIDs() {
 		store := a.agentLoop.GetAgentStore(id)
 		if store == nil {
@@ -452,10 +453,15 @@ func (a *restAPI) HandleClearSessions(w http.ResponseWriter, r *http.Request) {
 		n, err := store.ClearAll()
 		if err != nil {
 			slog.Error("rest: clear sessions for agent", "agent_id", id, "error", err)
+			warnings = append(warnings, fmt.Sprintf("agent %q: %v", id, err))
 		}
 		totalRemoved += n
 	}
-	jsonOK(w, map[string]any{"status": "cleared", "count": totalRemoved})
+	resp := map[string]any{"status": "cleared", "count": totalRemoved}
+	if len(warnings) > 0 {
+		resp["warnings"] = warnings
+	}
+	jsonOK(w, resp)
 }
 
 // HandleAbout handles GET /api/v1/about.

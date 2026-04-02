@@ -92,6 +92,12 @@ export interface WsTaskStatusChangedFrame {
   agent_id?: string
 }
 
+export interface WsReplayMessageFrame {
+  type: 'replay_message'
+  content: string
+  role: string
+}
+
 export type WsReceiveFrame =
   | WsTokenFrame
   | WsDoneFrame
@@ -100,6 +106,7 @@ export type WsReceiveFrame =
   | WsToolCallResultFrame
   | WsExecApprovalRequestFrame
   | WsTaskStatusChangedFrame
+  | WsReplayMessageFrame
 
 function isValidFrame(frame: unknown): frame is WsReceiveFrame {
   if (typeof frame !== 'object' || frame === null) return false

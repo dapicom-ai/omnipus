@@ -57,10 +57,11 @@ type sseSession struct {
 func newSSEHandler(msgBus *bus.MessageBus, ps *session.PartitionStore, allowedOrigin string) *SSEHandler {
 	h := &SSEHandler{
 		msgBus:        msgBus,
-		partitions:    ps,
+		partitions:    nil, // always nil — SSE is legacy; use WebSocket for persistent sessions
 		allowedOrigin: allowedOrigin,
 		sessions:      make(map[string]*sseSession),
 	}
+	slog.Info("sse: session recording disabled (use WebSocket for persistent sessions)")
 	// NOTE: Do NOT call msgBus.SetStreamDelegate(h) here.
 	// The WebSocket handler (Wave 5a) is the primary stream delegate.
 	// SSE is kept for backward compatibility. It is not registered as the bus stream

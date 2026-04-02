@@ -60,6 +60,14 @@ const STATUS_BADGE: Record<string, string> = {
   failed:    'text-red-400 bg-red-400/10',
 }
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Build a session ID matching the backend's sanitization: agent_{agentId}_task_{taskId} */
+function buildTaskSessionId(agentId: string | undefined, taskId: string): string {
+  const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, '_')
+  return `agent_${sanitize(agentId ?? 'unknown')}_task_${sanitize(taskId)}`
+}
+
 // ── Props ──────────────────────────────────────────────────────────────────────
 
 interface TaskDetailPanelProps {
@@ -296,12 +304,7 @@ export function TaskDetailPanel({ task, onClose, onTaskSelect }: TaskDetailPanel
                 size="sm"
                 className="w-full gap-2 text-xs h-8"
                 onClick={() => {
-                  // Session key mirrors the backend's sanitization: agent_{agentId}_task_{taskId}
-                  // where `:` and other special chars become `_`
-                  const agentPart = (task.agent_id ?? 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_')
-                  const taskPart = task.id.replace(/[^a-zA-Z0-9_-]/g, '_')
-                  const taskSessionId = `agent_${agentPart}_task_${taskPart}`
-                  attachToSession(taskSessionId, 'task', task.title)
+                  attachToSession(buildTaskSessionId(task.agent_id, task.id), 'task', task.title)
                   void navigate({ to: '/' })
                   onClose()
                 }}

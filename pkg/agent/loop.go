@@ -1191,9 +1191,37 @@ func (al *AgentLoop) GetAgentStore(agentID string) *session.UnifiedStore {
 	}
 	us, ok := agent.Sessions.(*session.UnifiedStore)
 	if !ok {
+		logger.WarnCF("agent", "GetAgentStore: session store is not UnifiedStore",
+			map[string]any{"agent_id": agentID})
 		return nil
 	}
 	return us
+}
+
+// ResolveSessionStore finds which agent's UnifiedStore owns the given sessionID.
+// Checks the main agent first (most common case), then falls back to scanning all agents.
+// Returns nil if the session cannot be found across any agent.
+func (al *AgentLoop) ResolveSessionStore(sessionID string) *session.UnifiedStore {
+	// Fast path: main agent owns most sessions.
+	if store := al.GetAgentStore("main"); store != nil {
+		if _, err := store.GetMeta(sessionID); err == nil {
+			return store
+		}
+	}
+	// Slow path: scan all agents.
+	for _, id := range al.GetRegistry().ListAgentIDs() {
+		if id == "main" {
+			continue
+		}
+		store := al.GetAgentStore(id)
+		if store == nil {
+			continue
+		}
+		if _, err := store.GetMeta(sessionID); err == nil {
+			return store
+		}
+	}
+	return nil
 }
 
 // ListAllSessions returns sessions from all agent stores merged and sorted by UpdatedAt descending.

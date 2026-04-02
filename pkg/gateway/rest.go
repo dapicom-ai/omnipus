@@ -265,17 +265,24 @@ func (a *restAPI) createSessionHTTP(w http.ResponseWriter, r *http.Request) {
 	if agentID == "" {
 		agentID = "main"
 	}
+	if err := validateEntityID(agentID); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid agent_id")
+		return
+	}
 	store := a.agentLoop.GetAgentStore(agentID)
 	if store == nil {
 		jsonErr(w, http.StatusBadRequest, fmt.Sprintf("agent %q not found", agentID))
 		return
 	}
 
-	sessionType := session.SessionTypeChat
-	if req.Type == string(session.SessionTypeTask) {
+	var sessionType session.UnifiedSessionType
+	switch req.Type {
+	case string(session.SessionTypeTask):
 		sessionType = session.SessionTypeTask
-	} else if req.Type == string(session.SessionTypeChannel) {
+	case string(session.SessionTypeChannel):
 		sessionType = session.SessionTypeChannel
+	default:
+		sessionType = session.SessionTypeChat
 	}
 
 	meta, err := store.NewSession(sessionType, "webchat")
@@ -346,10 +353,7 @@ func (a *restAPI) HandleAgents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *restAPI) listAgentSessions(w http.ResponseWriter, agentID string) {
-	if err := validateEntityID(agentID); err != nil {
-		jsonErr(w, http.StatusBadRequest, "invalid agent ID")
-		return
-	}
+	// agentID is already validated by HandleAgents before reaching here.
 	store := a.agentLoop.GetAgentStore(agentID)
 	if store == nil {
 		jsonOK(w, []*session.UnifiedMeta{})
@@ -368,28 +372,9 @@ func (a *restAPI) listAgentSessions(w http.ResponseWriter, agentID string) {
 }
 
 // resolveSessionStore finds which agent's UnifiedStore owns the given sessionID.
-// Returns nil if the session cannot be found across any agent.
+// Delegates to the shared AgentLoop method.
 func (a *restAPI) resolveSessionStore(sessionID string) *session.UnifiedStore {
-	// Fast path: main agent owns most sessions.
-	if store := a.agentLoop.GetAgentStore("main"); store != nil {
-		if _, err := store.GetMeta(sessionID); err == nil {
-			return store
-		}
-	}
-	// Slow path: scan all agents.
-	for _, id := range a.agentLoop.GetRegistry().ListAgentIDs() {
-		if id == "main" {
-			continue
-		}
-		store := a.agentLoop.GetAgentStore(id)
-		if store == nil {
-			continue
-		}
-		if _, err := store.GetMeta(sessionID); err == nil {
-			return store
-		}
-	}
-	return nil
+	return a.agentLoop.ResolveSessionStore(sessionID)
 }
 
 // skillResponse is the JSON shape returned for a single installed skill.
@@ -404,15 +389,7 @@ type skillResponse struct {
 	Status      string `json:"status"` // "active" | "disabled"
 }
 
-// sessionDetailResponse is the JSON shape returned by GET /api/v1/sessions/{id}.
-// Kept for backward compatibility; new code uses unifiedSessionDetailResponse.
-type sessionDetailResponse struct {
-	Session  *session.SessionMeta      `json:"session"`
-	Messages []session.TranscriptEntry `json:"messages"`
-}
-
-// unifiedSessionDetailResponse is the JSON shape returned by GET /api/v1/sessions/{id}
-// using the unified session store.
+// unifiedSessionDetailResponse is the JSON shape returned by GET /api/v1/sessions/{id}.
 type unifiedSessionDetailResponse struct {
 	Session  *session.UnifiedMeta      `json:"session"`
 	Messages []session.TranscriptEntry `json:"messages"`
@@ -1356,10 +1333,14 @@ func (a *restAPI) HandleDoctor(w http.ResponseWriter, r *http.Request) {
 				"status": "ok",
 				"info":   info,
 			},
-			"session_store": map[string]any{
-				"status":    "ok",
-				"available": true,
-			},
+			"session_store": func() map[string]any {
+				for _, id := range a.agentLoop.GetRegistry().ListAgentIDs() {
+					if store := a.agentLoop.GetAgentStore(id); store != nil {
+						return map[string]any{"status": "ok", "available": true}
+					}
+				}
+				return map[string]any{"status": "degraded", "available": false}
+			}(),
 			"go_runtime": map[string]any{
 				"version":    runtime.Version(),
 				"goroutines": runtime.NumGoroutine(),

@@ -54,10 +54,19 @@ type UnifiedStore struct {
 	backend *memory.JSONLStore
 }
 
+// validateSessionID rejects IDs that could escape the base directory.
+func validateSessionID(id string) error {
+	if id == "" || strings.Contains(id, "/") || strings.Contains(id, "\\") ||
+		strings.Contains(id, "..") || id == "." || id == ".context" {
+		return fmt.Errorf("unified_store: invalid session ID %q", id)
+	}
+	return nil
+}
+
 // NewUnifiedStore creates a UnifiedStore rooted at baseDir.
 // It migrates legacy flat JSONL files if any are found.
 func NewUnifiedStore(baseDir, agentID string) (*UnifiedStore, error) {
-	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+	if err := os.MkdirAll(baseDir, 0o700); err != nil {
 		return nil, fmt.Errorf("unified_store: create base dir %q: %w", baseDir, err)
 	}
 
@@ -91,7 +100,7 @@ func (us *UnifiedStore) migrateLegacy() {
 		}
 		name := strings.TrimSuffix(e.Name(), ".jsonl")
 		sessionDir := filepath.Join(us.baseDir, name)
-		if mkErr := os.MkdirAll(sessionDir, 0o755); mkErr != nil {
+		if mkErr := os.MkdirAll(sessionDir, 0o700); mkErr != nil {
 			slog.Warn("unified_store: migrate: could not create dir", "name", name, "error", mkErr)
 			continue
 		}
@@ -162,13 +171,11 @@ func (us *UnifiedStore) NewSession(sessionType UnifiedSessionType, channel strin
 	if err := writeUnifiedMeta(sessionDir, meta); err != nil {
 		return nil, err
 	}
-	// Create empty files so readers don't error on first access.
-	for _, fname := range []string{"transcript.jsonl"} {
-		p := filepath.Join(sessionDir, fname)
-		if _, statErr := os.Stat(p); os.IsNotExist(statErr) {
-			if wErr := fileutil.WriteFileAtomic(p, []byte{}, 0o600); wErr != nil {
-				slog.Warn("unified_store: could not create empty file", "path", p, "error", wErr)
-			}
+	// Create empty transcript so readers don't error on first access.
+	transcriptPath := filepath.Join(sessionDir, "transcript.jsonl")
+	if _, statErr := os.Stat(transcriptPath); os.IsNotExist(statErr) {
+		if wErr := fileutil.WriteFileAtomic(transcriptPath, []byte{}, 0o600); wErr != nil {
+			slog.Warn("unified_store: could not create empty transcript", "path", transcriptPath, "error", wErr)
 		}
 	}
 
@@ -178,6 +185,9 @@ func (us *UnifiedStore) NewSession(sessionType UnifiedSessionType, channel strin
 
 // GetMeta returns the metadata for a session.
 func (us *UnifiedStore) GetMeta(sessionID string) (*UnifiedMeta, error) {
+	if err := validateSessionID(sessionID); err != nil {
+		return nil, err
+	}
 	us.mu.Lock()
 	defer us.mu.Unlock()
 	return readUnifiedMeta(filepath.Join(us.baseDir, sessionID))
@@ -185,6 +195,9 @@ func (us *UnifiedStore) GetMeta(sessionID string) (*UnifiedMeta, error) {
 
 // SetMeta applies a partial update to a session's meta.json.
 func (us *UnifiedStore) SetMeta(sessionID string, patch MetaPatch) error {
+	if err := validateSessionID(sessionID); err != nil {
+		return err
+	}
 	us.mu.Lock()
 	defer us.mu.Unlock()
 
@@ -208,9 +221,15 @@ func (us *UnifiedStore) SetMeta(sessionID string, patch MetaPatch) error {
 
 // AppendTranscript appends an entry to {session-id}/transcript.jsonl.
 func (us *UnifiedStore) AppendTranscript(sessionID string, entry TranscriptEntry) error {
+	if err := validateSessionID(sessionID); err != nil {
+		return err
+	}
 	if entry.Timestamp.IsZero() {
 		entry.Timestamp = time.Now().UTC()
 	}
+
+	us.mu.Lock()
+	defer us.mu.Unlock()
 
 	transcriptPath := filepath.Join(us.baseDir, sessionID, "transcript.jsonl")
 	if err := fileutil.AppendJSONL(transcriptPath, entry); err != nil {
@@ -218,8 +237,6 @@ func (us *UnifiedStore) AppendTranscript(sessionID string, entry TranscriptEntry
 	}
 
 	// Update stats and UpdatedAt in meta (best-effort).
-	us.mu.Lock()
-	defer us.mu.Unlock()
 	sessionDir := filepath.Join(us.baseDir, sessionID)
 	meta, err := readUnifiedMeta(sessionDir)
 	if err != nil {
@@ -246,6 +263,9 @@ func (us *UnifiedStore) AppendTranscript(sessionID string, entry TranscriptEntry
 
 // ReadTranscript returns all entries from {session-id}/transcript.jsonl.
 func (us *UnifiedStore) ReadTranscript(sessionID string) ([]TranscriptEntry, error) {
+	if err := validateSessionID(sessionID); err != nil {
+		return nil, err
+	}
 	transcriptPath := filepath.Join(us.baseDir, sessionID, "transcript.jsonl")
 	data, err := os.ReadFile(transcriptPath)
 	if err != nil {
@@ -302,32 +322,23 @@ func (us *UnifiedStore) ListSessions() ([]*UnifiedMeta, error) {
 	return metas, nil
 }
 
-// sessionKeyToContextKey converts a session key (like "agent:main:task:xxx")
-// to a context backend key. The backend sanitizes keys itself, so we pass as-is.
-func sessionKeyToContextKey(sessionKey string) string {
-	return sessionKey
-}
-
 // AddMessage implements SessionStore — appends a simple role/content message to context.jsonl.
 func (us *UnifiedStore) AddMessage(sessionKey, role, content string) {
-	key := sessionKeyToContextKey(sessionKey)
-	if err := us.backend.AddMessage(context.Background(), key, role, content); err != nil {
+	if err := us.backend.AddMessage(context.Background(), sessionKey, role, content); err != nil {
 		slog.Error("unified_store: add message", "key", sessionKey, "error", err)
 	}
 }
 
 // AddFullMessage implements SessionStore — appends a complete message to context.jsonl.
 func (us *UnifiedStore) AddFullMessage(sessionKey string, msg providers.Message) {
-	key := sessionKeyToContextKey(sessionKey)
-	if err := us.backend.AddFullMessage(context.Background(), key, msg); err != nil {
+	if err := us.backend.AddFullMessage(context.Background(), sessionKey, msg); err != nil {
 		slog.Error("unified_store: add full message", "key", sessionKey, "error", err)
 	}
 }
 
 // GetHistory implements SessionStore — returns message history from context.jsonl.
 func (us *UnifiedStore) GetHistory(sessionKey string) []providers.Message {
-	key := sessionKeyToContextKey(sessionKey)
-	msgs, err := us.backend.GetHistory(context.Background(), key)
+	msgs, err := us.backend.GetHistory(context.Background(), sessionKey)
 	if err != nil {
 		slog.Error("unified_store: get history", "key", sessionKey, "error", err)
 		return []providers.Message{}
@@ -337,8 +348,7 @@ func (us *UnifiedStore) GetHistory(sessionKey string) []providers.Message {
 
 // GetSummary implements SessionStore.
 func (us *UnifiedStore) GetSummary(sessionKey string) string {
-	key := sessionKeyToContextKey(sessionKey)
-	summary, err := us.backend.GetSummary(context.Background(), key)
+	summary, err := us.backend.GetSummary(context.Background(), sessionKey)
 	if err != nil {
 		slog.Error("unified_store: get summary", "key", sessionKey, "error", err)
 		return ""
@@ -348,32 +358,28 @@ func (us *UnifiedStore) GetSummary(sessionKey string) string {
 
 // SetSummary implements SessionStore.
 func (us *UnifiedStore) SetSummary(sessionKey, summary string) {
-	key := sessionKeyToContextKey(sessionKey)
-	if err := us.backend.SetSummary(context.Background(), key, summary); err != nil {
+	if err := us.backend.SetSummary(context.Background(), sessionKey, summary); err != nil {
 		slog.Error("unified_store: set summary", "key", sessionKey, "error", err)
 	}
 }
 
 // SetHistory implements SessionStore.
 func (us *UnifiedStore) SetHistory(sessionKey string, history []providers.Message) {
-	key := sessionKeyToContextKey(sessionKey)
-	if err := us.backend.SetHistory(context.Background(), key, history); err != nil {
+	if err := us.backend.SetHistory(context.Background(), sessionKey, history); err != nil {
 		slog.Error("unified_store: set history", "key", sessionKey, "error", err)
 	}
 }
 
 // TruncateHistory implements SessionStore.
 func (us *UnifiedStore) TruncateHistory(sessionKey string, keepLast int) {
-	key := sessionKeyToContextKey(sessionKey)
-	if err := us.backend.TruncateHistory(context.Background(), key, keepLast); err != nil {
+	if err := us.backend.TruncateHistory(context.Background(), sessionKey, keepLast); err != nil {
 		slog.Error("unified_store: truncate history", "key", sessionKey, "error", err)
 	}
 }
 
 // Save implements SessionStore — compacts the context backend.
 func (us *UnifiedStore) Save(sessionKey string) error {
-	key := sessionKeyToContextKey(sessionKey)
-	return us.backend.Compact(context.Background(), key)
+	return us.backend.Compact(context.Background(), sessionKey)
 }
 
 // Close implements SessionStore.

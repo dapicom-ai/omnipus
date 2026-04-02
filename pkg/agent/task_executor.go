@@ -96,25 +96,30 @@ func (te *TaskExecutor) runTask(ctx context.Context, task *taskstore.TaskEntity,
 		te.mu.Unlock()
 	}()
 
+	// Resolve the agent's session store once for the entire task execution.
+	taskStore := te.agentLoop.GetAgentStore(task.AgentID)
+
 	// Create a task session in the agent's unified store so the UI can display it.
 	var taskSessionID string
-	if store := te.agentLoop.GetAgentStore(task.AgentID); store != nil {
-		if meta, err := store.NewSession(session.SessionTypeTask, "system"); err != nil {
+	if taskStore != nil {
+		if meta, err := taskStore.NewSession(session.SessionTypeTask, "system"); err != nil {
 			slog.Warn("task_executor: could not create task session", "task_id", task.ID, "error", err)
 		} else {
 			taskSessionID = meta.ID
 			title := task.Title
 			taskID := task.ID
-			if setErr := store.SetMeta(meta.ID, session.MetaPatch{Title: &title, TaskID: &taskID}); setErr != nil {
+			if setErr := taskStore.SetMeta(meta.ID, session.MetaPatch{Title: &title, TaskID: &taskID}); setErr != nil {
 				slog.Warn("task_executor: could not set task session meta", "task_id", task.ID, "error", setErr)
 			}
 			// Record the initial prompt as the user turn.
-			_ = store.AppendTranscript(taskSessionID, session.TranscriptEntry{
+			if err := taskStore.AppendTranscript(taskSessionID, session.TranscriptEntry{
 				ID:        task.ID + "-prompt",
 				Role:      "user",
 				Content:   te.buildPrompt(task),
 				Timestamp: time.Now().UTC(),
-			})
+			}); err != nil {
+				slog.Warn("task_executor: transcript write failed", "task_id", task.ID, "error", err)
+			}
 		}
 	}
 
@@ -129,16 +134,20 @@ func (te *TaskExecutor) runTask(ctx context.Context, task *taskstore.TaskEntity,
 		slog.Error("task_executor: agent execution failed", "task_id", task.ID, "agent_id", task.AgentID, "error", err)
 		// Record the failure to the task transcript.
 		if taskSessionID != "" {
-			if store := te.agentLoop.GetAgentStore(task.AgentID); store != nil {
-				_ = store.AppendTranscript(taskSessionID, session.TranscriptEntry{
+			if taskStore != nil {
+				if appendErr := taskStore.AppendTranscript(taskSessionID, session.TranscriptEntry{
 					ID:        task.ID + "-error",
 					Role:      "assistant",
 					Content:   fmt.Sprintf("Task execution failed: %v", err),
 					Status:    "error",
 					Timestamp: time.Now().UTC(),
-				})
+				}); appendErr != nil {
+					slog.Warn("task_executor: transcript write failed", "task_id", task.ID, "error", appendErr)
+				}
 				status := session.StatusInterrupted
-				_ = store.SetMeta(taskSessionID, session.MetaPatch{Status: &status})
+				if setErr := taskStore.SetMeta(taskSessionID, session.MetaPatch{Status: &status}); setErr != nil {
+					slog.Warn("task_executor: transcript write failed", "task_id", task.ID, "error", setErr)
+				}
 			}
 		}
 		te.failTask(task.ID, fmt.Sprintf("execution error: %v", err))
@@ -147,13 +156,15 @@ func (te *TaskExecutor) runTask(ctx context.Context, task *taskstore.TaskEntity,
 
 	// Record the final response to the task transcript.
 	if taskSessionID != "" && resp != "" {
-		if store := te.agentLoop.GetAgentStore(task.AgentID); store != nil {
-			_ = store.AppendTranscript(taskSessionID, session.TranscriptEntry{
+		if taskStore != nil {
+			if err := taskStore.AppendTranscript(taskSessionID, session.TranscriptEntry{
 				ID:        task.ID + "-response",
 				Role:      "assistant",
 				Content:   resp,
 				Timestamp: time.Now().UTC(),
-			})
+			}); err != nil {
+				slog.Warn("task_executor: transcript write failed", "task_id", task.ID, "error", err)
+			}
 		}
 	}
 
@@ -167,9 +178,11 @@ func (te *TaskExecutor) runTask(ctx context.Context, task *taskstore.TaskEntity,
 		// Agent already called task_update which fired onTaskComplete via the tool callback.
 		// Mark session completed and do not fire again to avoid duplicate parent notifications.
 		if taskSessionID != "" {
-			if store := te.agentLoop.GetAgentStore(task.AgentID); store != nil {
+			if taskStore != nil {
 				statusCompleted := session.StatusArchived
-				_ = store.SetMeta(taskSessionID, session.MetaPatch{Status: &statusCompleted})
+				if err := taskStore.SetMeta(taskSessionID, session.MetaPatch{Status: &statusCompleted}); err != nil {
+					slog.Warn("task_executor: transcript write failed", "task_id", task.ID, "error", err)
+				}
 			}
 		}
 		return
@@ -192,9 +205,11 @@ func (te *TaskExecutor) runTask(ctx context.Context, task *taskstore.TaskEntity,
 	}
 	// Mark the task session as archived on successful auto-completion.
 	if taskSessionID != "" {
-		if store := te.agentLoop.GetAgentStore(task.AgentID); store != nil {
+		if taskStore != nil {
 			statusArchived := session.StatusArchived
-			_ = store.SetMeta(taskSessionID, session.MetaPatch{Status: &statusArchived})
+			if err := taskStore.SetMeta(taskSessionID, session.MetaPatch{Status: &statusArchived}); err != nil {
+				slog.Warn("task_executor: transcript write failed", "task_id", task.ID, "error", err)
+			}
 		}
 	}
 	te.onTaskComplete(final)

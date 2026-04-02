@@ -41,6 +41,7 @@ type wsClientFrame struct {
 type wsServerFrame struct {
 	Type       string         `json:"type"`
 	Content    string         `json:"content,omitempty"`
+	Role       string         `json:"role,omitempty"`
 	Tool       string         `json:"tool,omitempty"`
 	Params     map[string]any `json:"params,omitempty"`
 	Result     any            `json:"result,omitempty"`
@@ -180,29 +181,9 @@ func (h *WSHandler) GetStreamer(_ context.Context, channel, chatID string) (bus.
 	}, true
 }
 
-// resolveSessionStore finds the UnifiedStore that owns sessionID.
-// Checks the main agent first (most common case), then falls back to scanning all agents.
+// resolveSessionStore delegates to the shared AgentLoop method.
 func (h *WSHandler) resolveSessionStore(sessionID string) *session.UnifiedStore {
-	// Fast path: main agent owns most webchat sessions.
-	if store := h.agentLoop.GetAgentStore("main"); store != nil {
-		if _, err := store.GetMeta(sessionID); err == nil {
-			return store
-		}
-	}
-	// Slow path: scan all agents.
-	for _, id := range h.agentLoop.GetRegistry().ListAgentIDs() {
-		if id == "main" {
-			continue
-		}
-		store := h.agentLoop.GetAgentStore(id)
-		if store == nil {
-			continue
-		}
-		if _, err := store.GetMeta(sessionID); err == nil {
-			return store
-		}
-	}
-	return nil
+	return h.agentLoop.ResolveSessionStore(sessionID)
 }
 
 // ServeHTTP handles the WebSocket upgrade and full connection lifecycle.
@@ -483,19 +464,22 @@ func (h *WSHandler) handleAttachSession(ctx context.Context, chatID string, sess
 		return
 	}
 
-	// Replay existing transcript entries as token frames.
+	// Replay existing transcript entries as role-aware replay_message frames.
 	for _, entry := range entries {
 		if entry.Content != "" {
 			data, merr := json.Marshal(wsServerFrame{
-				Type:    "token",
+				Type:    "replay_message",
 				Content: entry.Content,
+				Role:    entry.Role,
 			})
-			if merr == nil {
-				select {
-				case wc.sendCh <- data:
-				case <-ctx.Done():
-					return
-				}
+			if merr != nil {
+				slog.Warn("ws: attach_session: could not marshal replay entry", "session_id", attachID, "error", merr)
+				continue
+			}
+			select {
+			case wc.sendCh <- data:
+			case <-ctx.Done():
+				return
 			}
 		}
 	}
@@ -544,7 +528,7 @@ func (h *WSHandler) handleApprovalResponse(id, decision string) {
 // Using a sentinel through sendCh ensures all writes go through the single writer goroutine,
 // satisfying gorilla/websocket's single-writer requirement (fix for gorilla write race).
 // Important: do not pass nil []byte through sendCh for any other purpose — nil is reserved as the ping sentinel.
-var wsPingMsg []byte = nil
+var wsPingMsg []byte
 
 // writePump is the single goroutine that writes all frames to the WebSocket connection.
 // gorilla/websocket requires all writes to happen from the same goroutine.

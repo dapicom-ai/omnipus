@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus, Circle, ChatCircle, ListChecks } from '@phosphor-icons/react'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from '@/components/ui/accordion'
@@ -7,7 +7,12 @@ import { useUiStore } from '@/store/ui'
 import { useChatStore } from '@/store/chat'
 import { fetchAgents, fetchSessions, createSession } from '@/lib/api'
 import type { Session } from '@/lib/api'
-import { useQueryClient } from '@tanstack/react-query'
+
+function sessionButtonClass(isActive: boolean): string {
+  return isActive
+    ? 'bg-[var(--color-accent)]/10 text-[var(--color-accent)]'
+    : 'text-[var(--color-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-secondary)]'
+}
 
 export function SessionPanel() {
   const { sessionPanelOpen, closeSessionPanel, addToast } = useUiStore()
@@ -124,11 +129,7 @@ export function SessionPanel() {
                                   key={session.id}
                                   type="button"
                                   onClick={() => handleSelectSession(session.id, agent.id)}
-                                  className={`w-full text-left px-10 py-2 text-xs transition-colors rounded-sm ${
-                                    session.id === activeSessionId
-                                      ? 'bg-[var(--color-accent)]/10 text-[var(--color-accent)]'
-                                      : 'text-[var(--color-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-secondary)]'
-                                  }`}
+                                  className={`w-full text-left px-10 py-2 text-xs transition-colors rounded-sm ${sessionButtonClass(session.id === activeSessionId)}`}
                                 >
                                   <div className="flex items-center gap-2">
                                     {session.id === activeSessionId && (
@@ -182,11 +183,7 @@ export function SessionPanel() {
                           key={session.id}
                           type="button"
                           onClick={() => handleSelectTaskSession(session)}
-                          className={`w-full text-left px-4 py-2.5 text-xs transition-colors rounded-sm ${
-                            session.id === activeSessionId
-                              ? 'bg-[var(--color-accent)]/10 text-[var(--color-accent)]'
-                              : 'text-[var(--color-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-secondary)]'
-                          }`}
+                          className={`w-full text-left px-4 py-2.5 text-xs transition-colors rounded-sm ${sessionButtonClass(session.id === activeSessionId)}`}
                         >
                           <div className="flex flex-col gap-0.5">
                             <div className="flex items-center gap-2 min-w-0">
