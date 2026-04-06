@@ -118,7 +118,7 @@ Omnipus has been substantially rewritten from these foundations with a new agent
 
 ## License
 
-TBD
+MIT
 
 ## Contributing
 
