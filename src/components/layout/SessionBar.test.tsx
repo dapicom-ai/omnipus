@@ -4,6 +4,7 @@ import { act } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SessionBar } from '../chat/SessionBar'
 import { useChatStore } from '@/store/chat'
+import { useSessionStore } from '@/store/session'
 import { useUiStore } from '@/store/ui'
 
 // test_session_bar_elements (test #11)
@@ -37,9 +38,11 @@ function renderBar() {
 
 beforeEach(() => {
   act(() => {
-    useChatStore.setState({
+    useSessionStore.setState({
       activeAgentId: 'general-assistant',
       activeSessionId: 'sess_1',
+    })
+    useChatStore.setState({
       sessionTokens: 1500,
       sessionCost: 0.0023,
       isStreaming: false,
@@ -58,7 +61,7 @@ describe('SessionBar — rendering (test #11)', () => {
 
   it('shows "Select agent" when no active agent', async () => {
     // Dataset: Session Bar row 3 — no active agent
-    act(() => { useChatStore.setState({ activeAgentId: null }) })
+    act(() => { useSessionStore.setState({ activeAgentId: null }) })
     renderBar()
     await vi.waitFor(() => {
       expect(screen.getByText(/select agent/i)).toBeInTheDocument()

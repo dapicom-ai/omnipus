@@ -140,7 +140,7 @@ func TestRBACEnforcement(t *testing.T) {
 
 	tests := []struct {
 		name        string
-		role        sysagent.Role
+		role        sysagent.PrincipalRole
 		tool        string
 		expectDeny  bool
 		description string
@@ -734,8 +734,8 @@ func TestRedirectMessage(t *testing.T) {
 func TestFriendlyDenialMessage(t *testing.T) {
 	tests := []struct {
 		tool     string
-		caller   sysagent.Role
-		required sysagent.Role
+		caller   sysagent.PrincipalRole
+		required sysagent.PrincipalRole
 	}{
 		{"system.agent.create", sysagent.RoleViewer, sysagent.RoleOperator},
 		{"system.agent.delete", sysagent.RoleOperator, sysagent.RoleAdmin},

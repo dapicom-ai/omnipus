@@ -14,27 +14,29 @@ package sysagent
 
 import "fmt"
 
-// Role is the RBAC role of the caller invoking a system tool.
-type Role string
+// PrincipalRole is the RBAC role of the caller invoking a system tool.
+// This is distinct from config.UserRole (human user roles) — PrincipalRole
+// models the agent/principal access level for system tool operations.
+type PrincipalRole string
 
 const (
 	// RoleAdmin has full system tool access including destructive operations.
-	RoleAdmin Role = "admin"
+	RoleAdmin PrincipalRole = "admin"
 	// RoleOperator can create/configure but not destroy or modify security settings.
-	RoleOperator Role = "operator"
+	RoleOperator PrincipalRole = "operator"
 	// RoleViewer has read-only system tool access.
-	RoleViewer Role = "viewer"
+	RoleViewer PrincipalRole = "viewer"
 	// RoleAgent means the caller is a user agent — no system tool access.
-	RoleAgent Role = "agent"
+	RoleAgent PrincipalRole = "agent"
 	// RoleSingleUser is the default when RBAC is not configured. All ops allowed
 	// (with UI confirmation for destructive ones).
-	RoleSingleUser Role = "single_user"
+	RoleSingleUser PrincipalRole = "single_user"
 )
 
 // ToolPermission describes the minimum RBAC role required to call a system tool.
 type ToolPermission struct {
 	// MinRole is the minimum role required. RoleSingleUser bypasses all RBAC checks.
-	MinRole Role
+	MinRole PrincipalRole
 }
 
 // toolPermissions maps each system tool name to its required minimum role.
@@ -100,7 +102,7 @@ var toolPermissions = map[string]ToolPermission{
 }
 
 // roleWeight returns a numeric weight for ordering; higher = more privileged.
-func roleWeight(r Role) int {
+func roleWeight(r PrincipalRole) int {
 	switch r {
 	case RoleAdmin:
 		return 4
@@ -118,8 +120,8 @@ func roleWeight(r Role) int {
 // ErrPermissionDenied is returned when the caller's role is insufficient.
 type ErrPermissionDenied struct {
 	Tool     string
-	Caller   Role
-	Required Role
+	Caller   PrincipalRole
+	Required PrincipalRole
 }
 
 func (e *ErrPermissionDenied) Error() string {
@@ -132,7 +134,7 @@ func (e *ErrPermissionDenied) Error() string {
 // CheckRBAC returns nil when callerRole may call toolName, or ErrPermissionDenied.
 // Single-user mode (RoleSingleUser) bypasses role checks — RBAC only applies when
 // SEC-19 is enabled.
-func CheckRBAC(callerRole Role, toolName string) error {
+func CheckRBAC(callerRole PrincipalRole, toolName string) error {
 	// User agents never get system tool access.
 	if callerRole == RoleAgent {
 		return &ErrPermissionDenied{Tool: toolName, Caller: callerRole, Required: RoleViewer}

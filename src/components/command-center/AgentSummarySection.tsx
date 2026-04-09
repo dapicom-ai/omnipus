@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Robot, CaretDown, CaretUp, ArrowRight } from '@phosphor-icons/react'
 import { fetchAgents, fetchTasks, type Task } from '@/lib/api'
-import { useChatStore } from '@/store/chat'
+import { useSessionStore } from '@/store/session'
 import { useNavigate } from '@tanstack/react-router'
 import { cn } from '@/lib/utils'
 
@@ -24,7 +24,7 @@ export function AgentSummarySection() {
   const [open, setOpen] = useState(true)
   const [showDrafts, setShowDrafts] = useState(false)
   const navigate = useNavigate()
-  const setActiveSession = useChatStore((s) => s.setActiveSession)
+  const setActiveSession = useSessionStore((s) => s.setActiveSession)
 
   const { data: agents = [], isLoading, isError: agentsError } = useQuery({
     queryKey: ['agents'],

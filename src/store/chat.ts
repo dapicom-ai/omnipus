@@ -1,9 +1,11 @@
 import { create } from 'zustand'
 import { generateId } from '@/lib/constants'
 import { useUiStore } from '@/store/ui'
+import { useConnectionStore } from '@/store/connection'
+import { useSessionStore, registerChatResetSession } from '@/store/session'
 import { queryClient } from '@/lib/queryClient'
-import type { Message, ToolCall, Session } from '@/lib/api'
-import type { WsConnection, WsReceiveFrame, WsExecApprovalRequestFrame, WsReplayMessageFrame } from '@/lib/ws'
+import type { Message, ToolCall } from '@/lib/api'
+import type { WsReceiveFrame, WsExecApprovalRequestFrame, WsReplayMessageFrame } from '@/lib/ws'
 
 export interface ChatMessage extends Message {
   isStreaming?: boolean
@@ -19,27 +21,6 @@ export interface ExecApprovalRequest {
 }
 
 interface ChatStore {
-  // Connection
-  connection: WsConnection | null
-  isConnected: boolean
-  connectionError: string | null
-  setConnection: (conn: WsConnection | null) => void
-  setConnected: (connected: boolean) => void
-  setConnectionError: (error: string | null) => void
-
-  // Session & agent selection
-  activeSessionId: string | null
-  activeAgentId: string | null
-  /** The type of the currently active agent ('system' | 'core' | 'custom' | null).
-   *  Set by setActiveSession so all callers stay in sync without manual tracking. */
-  activeAgentType: 'system' | 'core' | 'custom' | null
-  setActiveSession: (sessionId: string | null, agentId?: string | null, agentType?: 'system' | 'core' | 'custom' | null) => void
-
-  // Attached session context — tracks when viewing a task/channel session
-  attachedSessionType: 'chat' | 'task' | 'channel' | null
-  attachedTaskTitle: string | null
-  attachToSession: (sessionId: string, type: Session['type'], title?: string, agentId?: string) => void
-
   // Messages
   messages: ChatMessage[]
   isStreaming: boolean
@@ -49,7 +30,6 @@ interface ChatStore {
   markLastMessageInterrupted: () => void
 
   // Tool calls (keyed by call_id) + insertion order for interleaved rendering
-  // TODO: standardize call_id/id naming at deserialization boundary
   toolCalls: Record<string, ToolCall & { call_id: string }>
   toolCallOrder: string[]
   textAtToolCallStart: Record<string, string> // snapshot of assistant content when each tool call started
@@ -67,10 +47,12 @@ interface ChatStore {
   sessionCost: number
   updateSessionStats: (tokens: number, cost: number) => void
 
+  // Reset all session-scoped state (called by sessionStore on session switch)
+  resetSession: () => void
+
   // Actions
   sendMessage: (content: string) => void
   cancelStream: () => void
-  reconnect: () => void
   respondToApproval: (id: string, decision: 'allow' | 'deny' | 'always') => void
   respondToPairing: (deviceId: string, decision: 'approve' | 'reject') => void
 
@@ -91,47 +73,10 @@ const CLEAN_SESSION_STATE = {
 } as const
 
 export const useChatStore = create<ChatStore>((set, get) => ({
-  connection: null,
-  isConnected: false,
-  connectionError: null,
-  setConnection: (conn) => set({ connection: conn }),
-  setConnected: (connected) => set({ isConnected: connected, connectionError: connected ? null : get().connectionError }),
-  setConnectionError: (error) => set({ connectionError: error }),
-
-  activeSessionId: null,
-  activeAgentId: null,
-  activeAgentType: null,
-  setActiveSession: (sessionId, agentId, agentType) =>
-    set({
-      activeSessionId: sessionId,
-      activeAgentId: agentId ?? get().activeAgentId,
-      activeAgentType: agentType ?? get().activeAgentType,
-      ...CLEAN_SESSION_STATE,
-      attachedSessionType: null,
-      attachedTaskTitle: null,
-    }),
-
-  attachedSessionType: null,
-  attachedTaskTitle: null,
-  attachToSession: (sessionId, type, title, agentId) => {
-    const { connection } = get()
-    set({
-      activeSessionId: sessionId,
-      attachedSessionType: type,
-      attachedTaskTitle: title ?? null,
-      ...(agentId ? { activeAgentId: agentId } : {}),
-      ...CLEAN_SESSION_STATE,
-    })
-    if (connection) {
-      connection.send({ type: 'attach_session', session_id: sessionId })
-    } else {
-      console.warn('[chat] attachToSession: no connection — attach_session not sent')
-    }
-  },
-
   messages: [],
   isStreaming: false,
-  setMessages: (messages) => set({ messages, toolCalls: {}, toolCallOrder: [], textAtToolCallStart: {}, pendingApprovals: [], sessionTokens: 0, sessionCost: 0 }),
+  setMessages: (messages) =>
+    set({ ...CLEAN_SESSION_STATE, messages }),
 
   appendMessage: (message) =>
     set((state) => ({ messages: [...state.messages, message] })),
@@ -244,14 +189,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   sessionCost: 0,
   updateSessionStats: (tokens, cost) => set({ sessionTokens: tokens, sessionCost: cost }),
 
+  resetSession: () => set(CLEAN_SESSION_STATE),
+
   sendMessage: (content) => {
-    const { connection, activeSessionId, activeAgentId, activeAgentType, isStreaming } = get()
+    const { connection, isConnected } = useConnectionStore.getState()
+    const { activeSessionId, activeAgentId, activeAgentType } = useSessionStore.getState()
+    const { isStreaming } = get()
+
     if (isStreaming) {
-      set({ connectionError: 'Please wait — a response is still generating.' })
+      useConnectionStore.getState().setConnectionError('Please wait — a response is still generating.')
       return
     }
-    if (!connection) {
-      set({ connectionError: 'Cannot send message — not connected to the server. Check your connection and try again.' })
+    if (!connection || !isConnected) {
+      useConnectionStore.getState().setConnectionError('Cannot send message — not connected to the server. Check your connection and try again.')
       return
     }
 
@@ -297,13 +247,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       set((state) => ({
         messages: state.messages.filter((m) => m.id !== userMsg.id && m.id !== assistantMsg.id),
         isStreaming: false,
-        connectionError: 'Message could not be sent — connection dropped. Please try again.',
       }))
+      useConnectionStore.getState().setConnectionError('Message could not be sent — connection dropped. Please try again.')
     }
   },
 
   cancelStream: () => {
-    const { connection, activeSessionId, isStreaming } = get()
+    const { connection } = useConnectionStore.getState()
+    const { activeSessionId } = useSessionStore.getState()
+    const { isStreaming } = get()
+
     if (!connection || !isStreaming) return
     if (!activeSessionId) {
       // No session to cancel — still unblock the UI
@@ -336,26 +289,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     })
   },
 
-  reconnect: () => {
-    const { connection } = get()
-    if (!connection) {
-      set({ connectionError: 'Cannot reconnect — please refresh the page.' })
-      return
-    }
-    set({ connectionError: null })
-    connection.connect()
-  },
-
   respondToApproval: (id, decision) => {
-    const { connection } = get()
+    const { connection } = useConnectionStore.getState()
     if (!connection) {
-      set({ connectionError: 'Cannot respond to approval — not connected. Reconnect and try again.' })
+      useConnectionStore.getState().setConnectionError('Cannot respond to approval — not connected. Reconnect and try again.')
       return
     }
 
     const sent = connection.send({ type: 'exec_approval_response', id, decision })
     if (!sent) {
-      set({ connectionError: 'Failed to send approval response — connection dropped. Reconnect and try again.' })
+      useConnectionStore.getState().setConnectionError('Failed to send approval response — connection dropped. Reconnect and try again.')
       return
     }
     const statusMap = { allow: 'allowed', deny: 'denied', always: 'always_allowed' } as const
@@ -363,15 +306,15 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   respondToPairing: (deviceId, decision) => {
-    const { connection } = get()
+    const { connection } = useConnectionStore.getState()
     if (!connection) {
-      set({ connectionError: 'Cannot respond to pairing — not connected. Reconnect and try again.' })
+      useConnectionStore.getState().setConnectionError('Cannot respond to pairing — not connected. Reconnect and try again.')
       return
     }
 
     const sent = connection.send({ type: 'device_pairing_response', device_id: deviceId, decision })
     if (!sent) {
-      set({ connectionError: 'Failed to send pairing response — connection dropped. Reconnect and try again.' })
+      useConnectionStore.getState().setConnectionError('Failed to send pairing response — connection dropped. Reconnect and try again.')
     }
   },
 
@@ -420,7 +363,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             isStreaming: false,
             streamCursor: false,
           })
-          return { messages: msgs, isStreaming: false, connectionError: frame.message }
+          useConnectionStore.getState().setConnectionError(frame.message)
+          return { messages: msgs, isStreaming: false }
         })
         break
 
@@ -471,3 +415,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
   },
 }))
+
+// Register resetSession with the session store to break the circular import.
+// This runs after useChatStore is fully initialized.
+registerChatResetSession(() => useChatStore.getState().resetSession())

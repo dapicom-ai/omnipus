@@ -5,6 +5,7 @@ import { useEffect, useRef } from "react";
 import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { useOmnipusRuntime } from "@/lib/omnipus-runtime";
 import { useChatStore } from "@/store/chat";
+import { useConnectionStore } from "@/store/connection";
 import { WsConnection } from "@/lib/ws";
 import { TerminalOutputUI } from "./tools/TerminalOutput";
 import { FileReadPreviewUI, FileReadAliasDotUI } from "./tools/FileReadPreview";
@@ -17,9 +18,9 @@ import { BrowserNavigateUI, BrowserNavigateUnderscoreUI } from "./tools/BrowserN
 // Manages WebSocket connection lifecycle — renders nothing, only side effects.
 function WsLifecycle() {
   const handleFrame = useChatStore((s) => s.handleFrame);
-  const setConnection = useChatStore((s) => s.setConnection);
-  const setConnected = useChatStore((s) => s.setConnected);
-  const setConnectionError = useChatStore((s) => s.setConnectionError);
+  const setConnection = useConnectionStore((s) => s.setConnection);
+  const setConnected = useConnectionStore((s) => s.setConnected);
+  const setConnectionError = useConnectionStore((s) => s.setConnectionError);
   const connectionRef = useRef<WsConnection | null>(null);
 
   useEffect(() => {

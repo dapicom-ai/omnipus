@@ -104,7 +104,7 @@ type wsConn struct {
 	closeOnce     sync.Once
 	droppedTokens atomic.Int32
 	droppedFrames atomic.Int32 // non-critical frames dropped due to backpressure
-	role          config.Role  // RBAC role resolved at auth time
+	role          config.UserRole // RBAC role resolved at auth time
 }
 
 func (c *wsConn) close() {
@@ -341,7 +341,7 @@ func (h *WSHandler) authenticateWS(conn *websocket.Conn, wc *wsConn) bool {
 	if required == "" {
 		if cfg.Gateway.DevModeBypass {
 			// Dev mode: allow without auth, treated as admin.
-			wc.role = config.RoleAdmin
+			wc.role = config.UserRoleAdmin
 			conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 			return true
 		}
@@ -355,7 +355,7 @@ func (h *WSHandler) authenticateWS(conn *websocket.Conn, wc *wsConn) bool {
 		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "authentication failed"))
 		return false
 	}
-	wc.role = config.RoleAdmin
+	wc.role = config.UserRoleAdmin
 	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	return true
 }

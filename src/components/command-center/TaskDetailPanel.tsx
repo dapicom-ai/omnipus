@@ -14,7 +14,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { useUiStore } from '@/store/ui'
-import { useChatStore } from '@/store/chat'
+import { useSessionStore } from '@/store/session'
 import {
   Play,
   Copy,
@@ -71,7 +71,7 @@ export function TaskDetailPanel({ task, onClose, onTaskSelect }: TaskDetailPanel
   const { addToast } = useUiStore()
   const queryClient = useQueryClient()
   const navigate = useNavigate()
-  const attachToSession = useChatStore((s) => s.attachToSession)
+  const attachToSession = useSessionStore((s) => s.attachToSession)
 
   // Prompt editing state — only for queued tasks
   const [editingPrompt, setEditingPrompt] = useState(false)

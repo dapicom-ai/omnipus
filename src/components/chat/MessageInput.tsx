@@ -1,12 +1,14 @@
 import { useState, useRef, useCallback } from 'react'
 import { PaperPlaneRight, Stop } from '@phosphor-icons/react'
 import { useChatStore } from '@/store/chat'
+import { useConnectionStore } from '@/store/connection'
 import { cn } from '@/lib/utils'
 
 export function MessageInput() {
   const [value, setValue] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const { sendMessage, cancelStream, isStreaming, isConnected } = useChatStore()
+  const { sendMessage, cancelStream, isStreaming } = useChatStore()
+  const { isConnected } = useConnectionStore()
 
   const handleSend = useCallback(() => {
     const trimmed = value.trim()

@@ -10,15 +10,15 @@ import { ErrorBoundary } from '@/components/ui/error-boundary'
 import { queryClient } from '@/lib/queryClient'
 import { fetchTasks, fetchAgents } from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
-import { useChatStore } from '@/store/chat'
+import { useConnectionStore } from '@/store/connection'
 
 // US-4: Application shell — hamburger + sidebar + main content area
 export function AppShell() {
   const { toggle } = useSidebarStore()
   const location = useLocation()
   const navigate = useNavigate()
-  const connectionError = useChatStore((s) => s.connectionError)
-  const reconnect = useChatStore((s) => s.reconnect)
+  const connectionError = useConnectionStore((s) => s.connectionError)
+  const reconnect = useConnectionStore((s) => s.reconnect)
 
   const handleLogout = useCallback(() => {
     useAuthStore.getState().clearAuth()

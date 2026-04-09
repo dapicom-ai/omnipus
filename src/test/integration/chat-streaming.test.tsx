@@ -3,6 +3,8 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { act } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useChatStore } from '@/store/chat'
+import { useConnectionStore } from '@/store/connection'
+import { useSessionStore } from '@/store/session'
 import { ChatThread } from '@/components/chat/ChatThread'
 
 // test_chat_streaming_integration (test #24)
@@ -28,13 +30,11 @@ beforeEach(() => {
     useChatStore.setState({
       messages: [],
       isStreaming: false,
-      isConnected: false,
-      connection: null,
       toolCalls: {},
       pendingApprovals: [],
-      activeSessionId: null,
-      activeAgentId: null,
     })
+    useConnectionStore.setState({ connection: null, isConnected: false, connectionError: null })
+    useSessionStore.setState({ activeSessionId: null, activeAgentId: null })
   })
 })
 
@@ -99,8 +99,25 @@ describe('chat streaming integration (test #24) — token rendering', () => {
     expect(msg?.streamCursor).toBe(false)
   })
 
-  it('records connectionError on error frame', async () => {
+  it('records connectionError on error frame when no assistant message exists', async () => {
     // Traces to: wave5a-wire-ui-spec.md — Scenario: WebSocket connection error during streaming
+    // When NO assistant message exists, error frames are connection-level and set connectionError.
+    render(<ChatThread />, { wrapper })
+
+    act(() => {
+      // No assistant message appended — error is connection-level
+      useChatStore.setState({ isStreaming: true })
+      useChatStore.getState().handleFrame({ type: 'error', message: 'Connection lost' })
+    })
+
+    await waitFor(() => {
+      expect(useChatStore.getState().isStreaming).toBe(false)
+      expect(useConnectionStore.getState().connectionError).toBe('Connection lost')
+    })
+  })
+
+  it('does NOT set connectionError on error frame when assistant message exists', async () => {
+    // Message-level errors update the message inline without setting the global banner
     render(<ChatThread />, { wrapper })
 
     act(() => {
@@ -119,7 +136,11 @@ describe('chat streaming integration (test #24) — token rendering', () => {
 
     await waitFor(() => {
       expect(useChatStore.getState().isStreaming).toBe(false)
-      expect(useChatStore.getState().connectionError).toBe('Connection lost')
+      // Message-level error does NOT set connectionError
+      expect(useConnectionStore.getState().connectionError).toBeNull()
+      // Instead, the message itself has error status
+      const msg = useChatStore.getState().messages.find((m) => m.id === 'asst_3')
+      expect(msg?.status).toBe('error')
     })
   })
 })
@@ -140,9 +161,8 @@ describe('cancel integration (test #40)', () => {
         status: 'streaming',
         isStreaming: true,
       })
-      useChatStore.setState({
-        isStreaming: true,
-        activeSessionId: 'sess_cancel',
+      useChatStore.setState({ isStreaming: true })
+      useConnectionStore.setState({
         connection: {
           send: mockSend,
           disconnect: vi.fn(),
@@ -151,6 +171,7 @@ describe('cancel integration (test #40)', () => {
         } as any,
         isConnected: true,
       })
+      useSessionStore.setState({ activeSessionId: 'sess_cancel' })
       useChatStore.getState().cancelStream()
     })
 

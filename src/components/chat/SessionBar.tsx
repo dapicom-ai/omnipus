@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
 import { useChatStore } from '@/store/chat'
+import { useSessionStore } from '@/store/session'
 import { useUiStore } from '@/store/ui'
 import { fetchAgents } from '@/lib/api'
 
@@ -25,7 +26,8 @@ function formatTokens(tokens: number): string {
 }
 
 export function SessionBar() {
-  const { activeAgentId, setActiveSession, sessionTokens, sessionCost, isStreaming } = useChatStore()
+  const { activeAgentId, setActiveSession } = useSessionStore()
+  const { sessionTokens, sessionCost, isStreaming } = useChatStore()
   const { openSessionPanel } = useUiStore()
 
   const { data: agents = [], isError: agentsError } = useQuery({

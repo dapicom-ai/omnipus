@@ -828,26 +828,26 @@ func (c *ModelConfig) SetAPIKey(value string) {
 	}
 }
 
-// Role represents a user's role in the system.
-type Role string
+// UserRole represents a human user's role in the system.
+type UserRole string
 
 const (
-	RoleAdmin Role = "admin"
-	RoleUser  Role = "user"
+	UserRoleAdmin UserRole = "admin"
+	UserRoleUser  UserRole = "user"
 )
 
-// MarshalJSON serializes a Role to JSON.
-func (r Role) MarshalJSON() ([]byte, error) {
+// MarshalJSON serializes a UserRole to JSON.
+func (r UserRole) MarshalJSON() ([]byte, error) {
 	return json.Marshal(string(r))
 }
 
-// UnmarshalJSON validates and deserializes a Role from JSON.
-func (r *Role) UnmarshalJSON(data []byte) error {
+// UnmarshalJSON validates and deserializes a UserRole from JSON.
+func (r *UserRole) UnmarshalJSON(data []byte) error {
 	switch string(data) {
 	case `"admin"`:
-		*r = RoleAdmin
+		*r = UserRoleAdmin
 	case `"user"`:
-		*r = RoleUser
+		*r = UserRoleUser
 	default:
 		return fmt.Errorf("invalid role: %s", string(data))
 	}
@@ -856,11 +856,11 @@ func (r *Role) UnmarshalJSON(data []byte) error {
 
 // UserConfig holds per-user authentication and authorization settings.
 type UserConfig struct {
-	Username     string `json:"username,omitempty"`
-	PasswordHash string `json:"password_hash,omitempty"` // bcrypt hash
-	TokenHash    string `json:"token_hash,omitempty"`    // bcrypt hash of bearer token
-	Role         Role   `json:"role"`
-	Name         string `json:"name,omitempty"`
+	Username     string   `json:"username,omitempty"`
+	PasswordHash string   `json:"password_hash,omitempty"` // bcrypt hash
+	TokenHash    string   `json:"token_hash,omitempty"`    // bcrypt hash of bearer token
+	Role         UserRole `json:"role"`
+	Name         string   `json:"name,omitempty"`
 }
 
 type GatewayConfig struct {

@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { act } from 'react'
 import { ExecApprovalBlock } from './ExecApprovalBlock'
 import { useChatStore } from '@/store/chat'
+import { useConnectionStore } from '@/store/connection'
 
 // test_exec_approval_block (test #9)
 // test_exec_approval_actions (test #10)
@@ -12,13 +13,12 @@ import { useChatStore } from '@/store/chat'
 beforeEach(() => {
   act(() => {
     useChatStore.setState({
-      connection: null,
-      isConnected: false,
       pendingApprovals: [],
       messages: [],
       isStreaming: false,
       toolCalls: {},
     })
+    useConnectionStore.setState({ connection: null, isConnected: false })
   })
 })
 
@@ -97,7 +97,7 @@ describe('ExecApprovalBlock — user actions (test #10)', () => {
     // We mock the connection so respondToApproval can actually call connection.send
     const mockSend = vi.fn()
     act(() => {
-      useChatStore.setState({
+      useConnectionStore.setState({
         connection: { send: mockSend, disconnect: vi.fn(), connect: vi.fn(), isConnected: true } as any,
         isConnected: true,
       })
@@ -122,7 +122,7 @@ describe('ExecApprovalBlock — user actions (test #10)', () => {
     // Traces to: wave5a-wire-ui-spec.md — Scenario Outline: User responds to approval (AC3)
     const mockSend = vi.fn()
     act(() => {
-      useChatStore.setState({
+      useConnectionStore.setState({
         connection: { send: mockSend, disconnect: vi.fn(), connect: vi.fn(), isConnected: true } as any,
         isConnected: true,
       })
@@ -142,7 +142,7 @@ describe('ExecApprovalBlock — user actions (test #10)', () => {
     // Traces to: wave5a-wire-ui-spec.md — Scenario Outline: User responds to approval (AC4)
     const mockSend = vi.fn()
     act(() => {
-      useChatStore.setState({
+      useConnectionStore.setState({
         connection: { send: mockSend, disconnect: vi.fn(), connect: vi.fn(), isConnected: true } as any,
         isConnected: true,
       })

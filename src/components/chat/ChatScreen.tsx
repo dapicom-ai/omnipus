@@ -31,6 +31,8 @@ import { ExecApprovalBlock } from './ExecApprovalBlock'
 import { MarkdownText } from './markdown-text'
 import { Button } from '@/components/ui/button'
 import { useChatStore } from '@/store/chat'
+import { useConnectionStore } from '@/store/connection'
+import { useSessionStore } from '@/store/session'
 import { useUiStore } from '@/store/ui'
 import { fetchAgents, fetchSessionMessages, createSession, uploadFiles } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -278,13 +280,13 @@ function FilePreviewThumbnail({ file }: { file: File }) {
 
 function OmnipusComposer() {
   const isStreaming = useChatStore((s) => s.isStreaming)
-  const isConnected = useChatStore((s) => s.isConnected)
+  const isConnected = useConnectionStore((s) => s.isConnected)
   const cancelStream = useChatStore((s) => s.cancelStream)
   const setMessages = useChatStore((s) => s.setMessages)
   const appendMessage = useChatStore((s) => s.appendMessage)
-  const setActiveSession = useChatStore((s) => s.setActiveSession)
-  const activeAgentId = useChatStore((s) => s.activeAgentId)
-  const activeSessionId = useChatStore((s) => s.activeSessionId)
+  const setActiveSession = useSessionStore((s) => s.setActiveSession)
+  const activeAgentId = useSessionStore((s) => s.activeAgentId)
+  const activeSessionId = useSessionStore((s) => s.activeSessionId)
   const sendMessage = useChatStore((s) => s.sendMessage)
   const addToast = useUiStore((s) => s.addToast)
   const composerRuntime = useComposerRuntime()
@@ -334,7 +336,7 @@ function OmnipusComposer() {
 
     if (cmd === '/clear') {
       setMessages([])
-      const { activeSessionId: sid } = useChatStore.getState()
+      const { activeSessionId: sid } = useSessionStore.getState()
       if (sid) queryClient.removeQueries({ queryKey: ['messages', sid] })
       return
     }
@@ -652,12 +654,12 @@ function WelcomeState({ hasAgent }: { hasAgent: boolean }) {
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export function ChatScreen() {
-  const activeSessionId = useChatStore((s) => s.activeSessionId)
-  const activeAgentId = useChatStore((s) => s.activeAgentId)
+  const activeSessionId = useSessionStore((s) => s.activeSessionId)
+  const activeAgentId = useSessionStore((s) => s.activeAgentId)
   const pendingApprovals = useChatStore((s) => s.pendingApprovals)
   const setMessages = useChatStore((s) => s.setMessages)
-  const attachedSessionType = useChatStore((s) => s.attachedSessionType)
-  const attachedTaskTitle = useChatStore((s) => s.attachedTaskTitle)
+  const attachedSessionType = useSessionStore((s) => s.attachedSessionType)
+  const attachedTaskTitle = useSessionStore((s) => s.attachedTaskTitle)
   // For the ARIA live region: track the last assistant message id for screen reader announcements
   const messages = useChatStore((s) => s.messages)
   const lastAssistantMessage = [...messages].reverse().find((m) => m.role === 'assistant')
@@ -674,7 +676,7 @@ export function ChatScreen() {
   const activeAgentName = agentsForAria.find((a) => a.id === activeAgentId)?.name ?? 'Omnipus'
 
   // Load message history when session changes
-  const isConnected = useChatStore((s) => s.isConnected)
+  const isConnected = useConnectionStore((s) => s.isConnected)
 
   const {
     data: historyData,

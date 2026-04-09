@@ -3,6 +3,8 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { act } from 'react'
 import { MessageInput } from './MessageInput'
 import { useChatStore } from '@/store/chat'
+import { useConnectionStore } from '@/store/connection'
+import { useSessionStore } from '@/store/session'
 
 // test_cancel_button_states (test #36) — MessageInput send/stop button states
 // test_cancel_idle_noop (test #39) — Escape when idle is no-op
@@ -16,22 +18,23 @@ import { useChatStore } from '@/store/chat'
 beforeEach(() => {
   act(() => {
     useChatStore.setState({
-      connection: null,
-      isConnected: false,
       isStreaming: false,
       messages: [],
       toolCalls: {},
       pendingApprovals: [],
-      activeSessionId: null,
-      activeAgentId: null,
     })
+    useConnectionStore.setState({ connection: null, isConnected: false })
+    useSessionStore.setState({ activeSessionId: null, activeAgentId: null })
   })
 })
 
 describe('MessageInput — stop button during streaming (test #36)', () => {
   it('renders Stop button (aria-label="Stop generation") while isStreaming', () => {
     // Traces to: wave5a-wire-ui-spec.md — AC1: send button transforms into Stop during streaming
-    act(() => { useChatStore.setState({ isStreaming: true, isConnected: true }) })
+    act(() => {
+      useChatStore.setState({ isStreaming: true })
+      useConnectionStore.setState({ isConnected: true })
+    })
     render(<MessageInput />)
     expect(screen.getByRole('button', { name: /stop generation/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /send message/i })).toBeNull()
@@ -41,10 +44,9 @@ describe('MessageInput — stop button during streaming (test #36)', () => {
     // Traces to: wave5a-wire-ui-spec.md — Scenario: Cancel during streaming (AC1)
     const mockSend = vi.fn()
     act(() => {
-      useChatStore.setState({
-        isStreaming: true,
+      useChatStore.setState({ isStreaming: true })
+      useConnectionStore.setState({
         isConnected: true,
-        activeSessionId: 'sess_1',
         connection: {
           send: mockSend,
           disconnect: vi.fn(),
@@ -52,6 +54,7 @@ describe('MessageInput — stop button during streaming (test #36)', () => {
           isConnected: true,
         } as any,
       })
+      useSessionStore.setState({ activeSessionId: 'sess_1' })
     })
     render(<MessageInput />)
     fireEvent.click(screen.getByRole('button', { name: /stop generation/i }))
@@ -64,7 +67,10 @@ describe('MessageInput — stop button during streaming (test #36)', () => {
 describe('MessageInput — send button when idle (test #36)', () => {
   it('renders Send button (aria-label="Send message") when idle', () => {
     // Traces to: wave5a-wire-ui-spec.md — AC4: Stop reverts to Send after cancel/done
-    act(() => { useChatStore.setState({ isStreaming: false, isConnected: true }) })
+    act(() => {
+      useChatStore.setState({ isStreaming: false })
+      useConnectionStore.setState({ isConnected: true })
+    })
     render(<MessageInput />)
     expect(screen.getByRole('button', { name: /send message/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /stop generation/i })).toBeNull()
@@ -72,7 +78,10 @@ describe('MessageInput — send button when idle (test #36)', () => {
 
   it('Send button is disabled when input is empty', () => {
     // Traces to: wave5a-wire-ui-spec.md — Edge case: empty message cannot be submitted
-    act(() => { useChatStore.setState({ isStreaming: false, isConnected: true }) })
+    act(() => {
+      useChatStore.setState({ isStreaming: false })
+      useConnectionStore.setState({ isConnected: true })
+    })
     render(<MessageInput />)
     const sendBtn = screen.getByRole('button', { name: /send message/i })
     expect(sendBtn).toBeDisabled()
@@ -80,7 +89,10 @@ describe('MessageInput — send button when idle (test #36)', () => {
 
   it('Send button is disabled when disconnected', () => {
     // Traces to: wave5a-wire-ui-spec.md — Disconnected: send is blocked
-    act(() => { useChatStore.setState({ isStreaming: false, isConnected: false }) })
+    act(() => {
+      useChatStore.setState({ isStreaming: false })
+      useConnectionStore.setState({ isConnected: false })
+    })
     render(<MessageInput />)
     const sendBtn = screen.getByRole('button', { name: /send message/i })
     expect(sendBtn).toBeDisabled()
@@ -92,8 +104,8 @@ describe('MessageInput — Escape key no-op when idle (test #39)', () => {
     // Traces to: wave5a-wire-ui-spec.md — Scenario: Cancel when idle is a no-op (AC3)
     const mockSend = vi.fn()
     act(() => {
-      useChatStore.setState({
-        isStreaming: false,
+      useChatStore.setState({ isStreaming: false })
+      useConnectionStore.setState({
         isConnected: true,
         connection: {
           send: mockSend,
