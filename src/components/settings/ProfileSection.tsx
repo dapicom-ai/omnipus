@@ -1,21 +1,15 @@
 import { useState, useEffect } from 'react'
-import { FloppyDisk, ArrowsClockwise } from '@phosphor-icons/react'
+import { FloppyDisk, ArrowsClockwise, LockKey } from '@phosphor-icons/react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Slider } from '@/components/ui/slider'
 import { Textarea } from '@/components/ui/textarea'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { SmartSelect } from '@/components/ui/smart-select'
 import { Separator } from '@/components/ui/separator'
 import { useUiStore } from '@/store/ui'
-import { fetchUserContext, updateUserContext } from '@/lib/api'
+import { fetchUserContext, updateUserContext, changePassword } from '@/lib/api'
 
 const TIMEZONES = [
   'UTC',
@@ -37,15 +31,6 @@ const TIMEZONES = [
   'Asia/Seoul',
   'Australia/Sydney',
   'Pacific/Auckland',
-]
-
-const LANGUAGES = [
-  { value: 'en', label: 'English' },
-  { value: 'de', label: 'German' },
-  { value: 'es', label: 'Spanish' },
-  { value: 'fr', label: 'French' },
-  { value: 'zh', label: 'Chinese' },
-  { value: 'ja', label: 'Japanese' },
 ]
 
 const LS_PREFIX = 'omnipus_pref_'
@@ -76,9 +61,14 @@ export function ProfileSection() {
 
   const [name, setName] = useState(() => loadPref<string>('name', ''))
   const [timezone, setTimezone] = useState(() => loadPref<string>('timezone', 'UTC'))
-  const [language, setLanguage] = useState(() => loadPref<string>('language', 'en'))
   const [fontSize, setFontSize] = useState(() => loadPref<number>('font_size', 14))
   const [userContent, setUserContent] = useState('')
+
+  // Change password form state
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [passwordError, setPasswordError] = useState<string | null>(null)
 
   const { data: userContextData, isError: userContextError, refetch: refetchUserContext } = useQuery({
     queryKey: ['user-context'],
@@ -100,6 +90,37 @@ export function ProfileSection() {
     onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
   })
 
+  const { mutate: submitPasswordChange, isPending: isChangingPassword } = useMutation({
+    mutationFn: () => changePassword(currentPassword, newPassword),
+    onSuccess: () => {
+      addToast({ message: 'Password changed successfully', variant: 'success' })
+      setCurrentPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
+      setPasswordError(null)
+    },
+    onError: (err: Error) => {
+      setPasswordError(err.message)
+    },
+  })
+
+  function handlePasswordChange() {
+    setPasswordError(null)
+    if (!currentPassword) {
+      setPasswordError('Current password is required.')
+      return
+    }
+    if (newPassword.length < 8) {
+      setPasswordError('New password must be at least 8 characters.')
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError('New passwords do not match.')
+      return
+    }
+    submitPasswordChange()
+  }
+
   // Keep document font-size in sync for preview
   useEffect(() => {
     document.documentElement.style.setProperty('--user-font-size', `${fontSize}px`)
@@ -109,7 +130,6 @@ export function ProfileSection() {
     const ok =
       savePref('name', name) &&
       savePref('timezone', timezone) &&
-      savePref('language', language) &&
       savePref('font_size', fontSize)
     if (!ok) {
       addToast({ message: 'Some preferences could not be saved — storage may be full or restricted.', variant: 'error' })
@@ -160,39 +180,14 @@ export function ProfileSection() {
             <div>
               <p className="text-sm text-[var(--color-secondary)]">Timezone</p>
             </div>
-            <Select value={timezone} onValueChange={setTimezone}>
-              <SelectTrigger className="w-[200px] h-8 text-xs font-mono">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent className="max-h-60">
-                {TIMEZONES.map((tz) => (
-                  <SelectItem key={tz} value={tz} className="text-xs font-mono">
-                    {tz}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SmartSelect
+              value={timezone}
+              onValueChange={setTimezone}
+              triggerClassName="w-[200px] h-8 text-xs font-mono"
+              items={TIMEZONES.map((tz) => ({ value: tz, label: tz }))}
+            />
           </div>
 
-          <Separator />
-
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-[var(--color-secondary)]">Language</p>
-            </div>
-            <Select value={language} onValueChange={setLanguage}>
-              <SelectTrigger className="w-[160px] h-8 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {LANGUAGES.map((lang) => (
-                  <SelectItem key={lang.value} value={lang.value} className="text-xs">
-                    {lang.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
         </div>
       </section>
 
@@ -229,6 +224,78 @@ export function ProfileSection() {
               <span>12px</span>
               <span>20px</span>
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Change Password */}
+      <section className="space-y-3">
+        <h3 className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-wider">Security</h3>
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-4">
+          <div className="space-y-1">
+            <h4 className="text-sm font-medium text-[var(--color-secondary)]">Change Password</h4>
+            <p className="text-xs text-[var(--color-muted)]">Update your login password. Must be at least 8 characters.</p>
+          </div>
+
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="current-password" className="text-xs text-[var(--color-secondary)]">
+                Current password
+              </Label>
+              <Input
+                id="current-password"
+                type="password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                placeholder="Current password"
+                className="h-8 text-xs"
+                autoComplete="current-password"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="new-password" className="text-xs text-[var(--color-secondary)]">
+                New password
+              </Label>
+              <Input
+                id="new-password"
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="New password (min 8 chars)"
+                className="h-8 text-xs"
+                autoComplete="new-password"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="confirm-password" className="text-xs text-[var(--color-secondary)]">
+                Confirm new password
+              </Label>
+              <Input
+                id="confirm-password"
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Confirm new password"
+                className="h-8 text-xs"
+                autoComplete="new-password"
+              />
+            </div>
+
+            {passwordError && (
+              <p className="text-xs text-[var(--color-error)]">{passwordError}</p>
+            )}
+
+            <Button
+              size="sm"
+              onClick={handlePasswordChange}
+              disabled={isChangingPassword}
+              className="gap-1.5"
+            >
+              <LockKey size={13} weight="bold" />
+              {isChangingPassword ? 'Changing...' : 'Change Password'}
+            </Button>
           </div>
         </div>
       </section>

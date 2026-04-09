@@ -52,14 +52,6 @@ func NewManager(home string) *Manager {
 	return m
 }
 
-// IsOnboardingComplete returns true when the user has completed the
-// provider-setup + welcome flow.
-func (m *Manager) IsOnboardingComplete() bool {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.state.OnboardingComplete
-}
-
 // CompleteOnboarding marks onboarding as done and persists the state.
 // Subsequent launches skip the onboarding flow (US-7 §AC9).
 func (m *Manager) CompleteOnboarding() error {
@@ -67,6 +59,13 @@ func (m *Manager) CompleteOnboarding() error {
 	defer m.mu.Unlock()
 	m.state.OnboardingComplete = true
 	return m.save()
+}
+
+// IsComplete returns true if onboarding has already been completed.
+func (m *Manager) IsComplete() bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.state.OnboardingComplete
 }
 
 // RecordDoctorRun stores the last doctor run time and risk score.

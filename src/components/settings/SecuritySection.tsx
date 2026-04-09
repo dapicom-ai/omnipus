@@ -4,13 +4,7 @@ import { FloppyDisk, Plus, Trash, Key } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { SmartSelect } from '@/components/ui/smart-select'
 import {
   Dialog,
   DialogContent,
@@ -184,16 +178,16 @@ export function SecuritySection() {
               <p className="text-sm text-[var(--color-secondary)]">Exec approval</p>
               <p className="text-xs text-[var(--color-muted)]">How shell command execution is handled</p>
             </div>
-            <Select value={execApproval} onValueChange={(v) => { markDirty(); setExecApproval(v as typeof execApproval) }}>
-              <SelectTrigger className="w-[120px] h-8 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="auto">Auto-allow</SelectItem>
-                <SelectItem value="ask">Ask each time</SelectItem>
-                <SelectItem value="deny">Always deny</SelectItem>
-              </SelectContent>
-            </Select>
+            <SmartSelect
+              value={execApproval}
+              onValueChange={(v) => { markDirty(); setExecApproval(v as typeof execApproval) }}
+              triggerClassName="w-[120px] h-8 text-xs"
+              items={[
+                { value: 'auto', label: 'Auto-allow' },
+                { value: 'ask', label: 'Ask each time' },
+                { value: 'deny', label: 'Always deny' },
+              ]}
+            />
           </div>
         </div>
       </section>
@@ -207,17 +201,17 @@ export function SecuritySection() {
               <p className="text-sm text-[var(--color-secondary)]">Detection level</p>
               <p className="text-xs text-[var(--color-muted)]">Sensitivity of prompt injection detection</p>
             </div>
-            <Select value={injectionLevel} onValueChange={(v) => { markDirty(); setInjectionLevel(v as typeof injectionLevel) }}>
-              <SelectTrigger className="w-[120px] h-8 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="off">Off</SelectItem>
-                <SelectItem value="low">Low</SelectItem>
-                <SelectItem value="medium">Medium</SelectItem>
-                <SelectItem value="high">High</SelectItem>
-              </SelectContent>
-            </Select>
+            <SmartSelect
+              value={injectionLevel}
+              onValueChange={(v) => { markDirty(); setInjectionLevel(v as typeof injectionLevel) }}
+              triggerClassName="w-[120px] h-8 text-xs"
+              items={[
+                { value: 'off', label: 'Off' },
+                { value: 'low', label: 'Low' },
+                { value: 'medium', label: 'Medium' },
+                { value: 'high', label: 'High' },
+              ]}
+            />
           </div>
         </div>
       </section>

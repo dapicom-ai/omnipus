@@ -38,7 +38,7 @@ interface ChatStore {
   // Attached session context — tracks when viewing a task/channel session
   attachedSessionType: 'chat' | 'task' | 'channel' | null
   attachedTaskTitle: string | null
-  attachToSession: (sessionId: string, type: Session['type'], title?: string) => void
+  attachToSession: (sessionId: string, type: Session['type'], title?: string, agentId?: string) => void
 
   // Messages
   messages: ChatMessage[]
@@ -48,9 +48,11 @@ interface ChatStore {
   updateLastAssistantMessage: (content: string, done?: boolean) => void
   markLastMessageInterrupted: () => void
 
-  // Tool calls (keyed by call_id)
+  // Tool calls (keyed by call_id) + insertion order for interleaved rendering
   // TODO: standardize call_id/id naming at deserialization boundary
   toolCalls: Record<string, ToolCall & { call_id: string }>
+  toolCallOrder: string[]
+  textAtToolCallStart: Record<string, string> // snapshot of assistant content when each tool call started
   startToolCall: (callId: string, tool: string, params: Record<string, unknown>) => void
   resolveToolCall: (callId: string, result: unknown, status: 'success' | 'error', durationMs?: number, error?: string) => void
   cancelToolCall: (callId: string) => void
@@ -70,6 +72,7 @@ interface ChatStore {
   cancelStream: () => void
   reconnect: () => void
   respondToApproval: (id: string, decision: 'allow' | 'deny' | 'always') => void
+  respondToPairing: (deviceId: string, decision: 'approve' | 'reject') => void
 
   // Inbound frame handler
   handleFrame: (frame: WsReceiveFrame) => void
@@ -79,6 +82,8 @@ interface ChatStore {
 const CLEAN_SESSION_STATE = {
   messages: [] as ChatMessage[],
   toolCalls: {} as Record<string, ToolCall & { call_id: string }>,
+  toolCallOrder: [] as string[],
+  textAtToolCallStart: {} as Record<string, string>,
   pendingApprovals: [] as ExecApprovalRequest[],
   sessionTokens: 0,
   sessionCost: 0,
@@ -108,12 +113,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   attachedSessionType: null,
   attachedTaskTitle: null,
-  attachToSession: (sessionId, type, title) => {
+  attachToSession: (sessionId, type, title, agentId) => {
     const { connection } = get()
     set({
       activeSessionId: sessionId,
       attachedSessionType: type,
       attachedTaskTitle: title ?? null,
+      ...(agentId ? { activeAgentId: agentId } : {}),
       ...CLEAN_SESSION_STATE,
     })
     if (connection) {
@@ -125,7 +131,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   messages: [],
   isStreaming: false,
-  setMessages: (messages) => set({ messages, toolCalls: {}, pendingApprovals: [], sessionTokens: 0, sessionCost: 0 }),
+  setMessages: (messages) => set({ messages, toolCalls: {}, toolCallOrder: [], textAtToolCallStart: {}, pendingApprovals: [], sessionTokens: 0, sessionCost: 0 }),
 
   appendMessage: (message) =>
     set((state) => ({ messages: [...state.messages, message] })),
@@ -173,13 +179,22 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }),
 
   toolCalls: {},
+  toolCallOrder: [],
+  textAtToolCallStart: {},
   startToolCall: (callId, tool, params) =>
-    set((state) => ({
-      toolCalls: {
-        ...state.toolCalls,
-        [callId]: { id: callId, call_id: callId, tool, params, status: 'running' },
-      },
-    })),
+    set((state) => {
+      // Capture the current assistant message text so we can interleave tool calls with text during rendering
+      const lastMsg = state.messages[state.messages.length - 1]
+      const textSnapshot = (lastMsg?.role === 'assistant' ? lastMsg.content : '') ?? ''
+      return {
+        toolCalls: {
+          ...state.toolCalls,
+          [callId]: { id: callId, call_id: callId, tool, params, status: 'running' },
+        },
+        toolCallOrder: [...state.toolCallOrder, callId],
+        textAtToolCallStart: { ...state.textAtToolCallStart, [callId]: textSnapshot },
+      }
+    }),
 
   resolveToolCall: (callId, result, status, durationMs, error) =>
     set((state) => {
@@ -347,6 +362,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     get().resolveApproval(id, statusMap[decision])
   },
 
+  respondToPairing: (deviceId, decision) => {
+    const { connection } = get()
+    if (!connection) {
+      set({ connectionError: 'Cannot respond to pairing — not connected. Reconnect and try again.' })
+      return
+    }
+
+    const sent = connection.send({ type: 'device_pairing_response', device_id: deviceId, decision })
+    if (!sent) {
+      set({ connectionError: 'Failed to send pairing response — connection dropped. Reconnect and try again.' })
+    }
+  },
+
   handleFrame: (frame) => {
     const store = get()
     switch (frame.type) {
@@ -396,12 +424,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         })
         break
 
-      case 'tool_call_start':
-        store.startToolCall(frame.call_id, frame.tool, frame.params)
+      case 'tool_call_start': {
+        // During replay, tool_call frames may arrive before any assistant text.
+        // Ensure an assistant message exists so tool calls have a parent to render against.
+        const lastMsg = store.messages[store.messages.length - 1]
+        if (!lastMsg || lastMsg.role !== 'assistant') {
+          store.updateLastAssistantMessage('', false)
+        }
+        store.startToolCall(frame.call_id ?? '', frame.tool ?? '', frame.params ?? {})
         break
+      }
 
       case 'tool_call_result':
-        store.resolveToolCall(frame.call_id, frame.result, frame.status, frame.duration_ms, frame.error)
+        store.resolveToolCall(frame.call_id ?? '', frame.result, frame.status ?? 'success', frame.duration_ms, frame.error)
         break
 
       case 'exec_approval_request':
@@ -414,13 +449,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
       case 'replay_message': {
         const replayFrame = frame as WsReplayMessageFrame
+        const role = (replayFrame.role || 'assistant') as 'user' | 'assistant'
         set((state) => ({
           messages: [
             ...state.messages,
             {
               id: generateId(),
-              role: replayFrame.role as 'user' | 'assistant',
-              content: replayFrame.content,
+              role,
+              content: replayFrame.content ?? '',
               timestamp: new Date().toISOString(),
               status: 'done' as const,
             },

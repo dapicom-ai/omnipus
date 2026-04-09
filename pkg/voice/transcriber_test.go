@@ -22,7 +22,7 @@ func TestDetectTranscriber(t *testing.T) {
 			name: "voice model name selects audio model transcriber",
 			cfg: &config.Config{
 				Voice: config.VoiceConfig{ModelName: "voice-gemini"},
-				ModelList: []*config.ModelConfig{
+				Providers: []*config.ModelConfig{
 					{
 						ModelName: "voice-gemini",
 						Model:     "gemini/gemini-2.5-flash",
@@ -35,7 +35,7 @@ func TestDetectTranscriber(t *testing.T) {
 		{
 			name: "groq via model list",
 			cfg: &config.Config{
-				ModelList: []*config.ModelConfig{
+				Providers: []*config.ModelConfig{
 					{ModelName: "openai", Model: "openai/gpt-4o", APIKeys: config.SimpleSecureStrings("sk-openai")},
 					{
 						ModelName: "groq",
@@ -50,7 +50,7 @@ func TestDetectTranscriber(t *testing.T) {
 			name: "voice model name selects non-gemini audio model transcriber",
 			cfg: &config.Config{
 				Voice: config.VoiceConfig{ModelName: "voice-openai-audio"},
-				ModelList: []*config.ModelConfig{
+				Providers: []*config.ModelConfig{
 					{
 						ModelName: "voice-openai-audio",
 						Model:     "openai/gpt-4o-audio-preview",
@@ -64,7 +64,7 @@ func TestDetectTranscriber(t *testing.T) {
 			name: "voice model name selects azure audio model transcriber",
 			cfg: &config.Config{
 				Voice: config.VoiceConfig{ModelName: "voice-azure-audio"},
-				ModelList: []*config.ModelConfig{
+				Providers: []*config.ModelConfig{
 					{
 						ModelName: "voice-azure-audio",
 						Model:     "azure/my-audio-deployment", APIKeys: config.SimpleSecureStrings("sk-azure"),
@@ -78,7 +78,7 @@ func TestDetectTranscriber(t *testing.T) {
 			name: "voice model name with non openai compatible protocol does not select audio model transcriber",
 			cfg: &config.Config{
 				Voice: config.VoiceConfig{ModelName: "voice-anthropic"},
-				ModelList: []*config.ModelConfig{
+				Providers: []*config.ModelConfig{
 					{
 						ModelName: "voice-anthropic",
 						Model:     "anthropic/claude-sonnet-4.6",
@@ -91,7 +91,7 @@ func TestDetectTranscriber(t *testing.T) {
 		{
 			name: "groq model list entry without key is skipped",
 			cfg: &config.Config{
-				ModelList: []*config.ModelConfig{
+				Providers: []*config.ModelConfig{
 					{Model: "groq/llama-3.3-70b"},
 				},
 			},
@@ -100,7 +100,7 @@ func TestDetectTranscriber(t *testing.T) {
 		{
 			name: "provider key takes priority over model list",
 			cfg: &config.Config{
-				ModelList: []*config.ModelConfig{
+				Providers: []*config.ModelConfig{
 					{
 						ModelName: "groq",
 						Model:     "groq/llama-3.3-70b",
@@ -114,7 +114,7 @@ func TestDetectTranscriber(t *testing.T) {
 			name: "missing voice model name config returns nil",
 			cfg: &config.Config{
 				Voice: config.VoiceConfig{ModelName: "missing"},
-				ModelList: []*config.ModelConfig{
+				Providers: []*config.ModelConfig{
 					{
 						ModelName: "other",
 						Model:     "gemini/gemini-2.5-flash",
@@ -135,7 +135,7 @@ func TestDetectTranscriber(t *testing.T) {
 			name: "elevenlabs takes priority over groq model list",
 			cfg: &config.Config{
 				Voice: config.VoiceConfig{ElevenLabsAPIKey: *config.NewSecureString("sk_elevenlabs_test")},
-				ModelList: []*config.ModelConfig{
+				Providers: []*config.ModelConfig{
 					{
 						ModelName: "groq",
 						Model:     "groq/llama-3.3-70b",
@@ -152,7 +152,7 @@ func TestDetectTranscriber(t *testing.T) {
 					ModelName:        "voice-gemini",
 					ElevenLabsAPIKey: *config.NewSecureString("sk_elevenlabs_test"),
 				},
-				ModelList: []*config.ModelConfig{
+				Providers: []*config.ModelConfig{
 					{
 						ModelName: "voice-gemini",
 						Model:     "gemini/gemini-2.5-flash",

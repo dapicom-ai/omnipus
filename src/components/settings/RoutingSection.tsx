@@ -3,13 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { FloppyDisk } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { SmartSelect } from '@/components/ui/smart-select'
 import {
   Table,
   TableBody,
@@ -142,19 +136,16 @@ export function RoutingSection() {
                     />
                   </TableCell>
                   <TableCell>
-                    <Select
+                    <SmartSelect
                       value={route.dm_policy}
                       onValueChange={(v) => updateRoute(route.id, 'dm_policy', v)}
-                    >
-                      <SelectTrigger className="w-[130px] h-7 text-xs">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="allow">Allow all</SelectItem>
-                        <SelectItem value="known_only">Known users only</SelectItem>
-                        <SelectItem value="deny">Deny all</SelectItem>
-                      </SelectContent>
-                    </Select>
+                      triggerClassName="w-[130px] h-7 text-xs"
+                      items={[
+                        { value: 'allow', label: 'Allow all' },
+                        { value: 'known_only', label: 'Known users only' },
+                        { value: 'deny', label: 'Deny all' },
+                      ]}
+                    />
                   </TableCell>
                 </TableRow>
               ))}

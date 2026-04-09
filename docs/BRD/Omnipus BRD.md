@@ -121,7 +121,7 @@ PicoClaw has a unique window of opportunity: it can deliver NemoClaw-grade secur
 |SEC-15|Structured audit logging       |P0      |Easy    |All security-relevant events are logged in structured JSON format via Go’s `slog` package. Events include: tool invocations, exec commands, file operations, LLM calls, permission checks (allowed/denied), policy changes, and authentication events. Output to file, stdout, or syslog.|
 |SEC-16|Log redaction (API keys, PII)  |P0      |Easy    |Sensitive patterns (API keys, tokens, passwords, email addresses) are automatically scrubbed from log output using configurable regex patterns. Redacted values replaced with `[REDACTED]`.                                                                                              |
 |SEC-17|Explainable policy decisions   |P1      |Easy    |Every allow/deny decision includes the policy rule that matched, enabling operators to understand exactly why an action was permitted or blocked. Logged as part of the audit trail.                                                                                                     |
-|SEC-18|Tamper-evident log chain (HMAC)|P2      |Moderate|Each log entry includes an HMAC-SHA256 hash chained to the previous entry, creating a tamper-evident sequence. If any entry is modified or deleted, the chain breaks and is detectable via a verification command.                                                                       |
+|SEC-18|Tamper-evident log chain (HMAC)|~~P2~~ Descoped v1.0|—|Each log entry includes an HMAC-SHA256 hash chained to the previous entry, creating a tamper-evident sequence. If any entry is modified or deleted, the chain breaks and is detectable via a verification command. **Descoped for v1.0** — not required for NemoClaw parity. Revisit for v1.1 if compliance (SOC2/ISO27001) mandates it.                                                                      |
 
 ### 5.5 SECURITY — RBAC & Access Control
 
@@ -325,7 +325,7 @@ Features included:
 - SEC-10: Two-layer policy enforcement
 - SEC-13: Hot-reloadable policies
 - SEC-14: Policy change approval workflow
-- SEC-18: Tamper-evident log chain
+- ~~SEC-18: Tamper-evident log chain~~ (descoped v1.0)
 - FUNC-01: Privacy-aware inference routing
 - FUNC-02: Inference interception
 - FUNC-03: Cost-based model routing
@@ -418,7 +418,7 @@ Features included:
 |**Deny-by-default**   |A security model where all actions are blocked unless explicitly permitted by policy. The opposite of PicoClaw’s current permissive model.                                                                                      |
 |**ClawHub**           |OpenClaw’s community skill registry, hosting 13,729+ skills as of February 2026. Has been targeted by malware campaigns (ClawHavoc).                                                                                            |
 |**Hot-reload**        |The ability to update configuration or policy at runtime without restarting the agent process.                                                                                                                                  |
-|**Tamper-evident log**|An audit log where each entry is cryptographically chained to the previous entry via HMAC, making modifications or deletions detectable.                                                                                        |
+|**Tamper-evident log**|~~An audit log where each entry is cryptographically chained to the previous entry via HMAC, making modifications or deletions detectable.~~ **Descoped v1.0.** HMAC-chained audit logs are not required for NemoClaw parity or v1.0 enterprise readiness.                                                                                       |
 
 -----
 

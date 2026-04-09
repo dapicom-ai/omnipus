@@ -954,8 +954,7 @@ Community channel providers are locally installed add-ons built with the Omnipus
   "session_id": "session_abc123",
   "tool": "web_search",
   "parameters": { "query": "AWS m5 pricing" },
-  "policy_rule": "tools.allow matched 'web_search'",
-  "hmac": "sha256:previous_chain_hash..."
+  "policy_rule": "tools.allow matched 'web_search'"
 }
 ```
 
@@ -973,7 +972,7 @@ Community channel providers are locally installed add-ons built with the Omnipus
 | tool | string | No | Tool name for tool_call events. |
 | parameters | object | No | Redacted tool parameters. |
 | policy_rule | string | No | Which policy matched (SEC-17 explainable decisions). |
-| hmac | string | No | HMAC-SHA256 chain hash (when tamper-evident logging enabled, SEC-18). |
+| ~~hmac~~ | ~~string~~ | ~~No~~ | ~~HMAC-SHA256 chain hash (when tamper-evident logging enabled, SEC-18).~~ **Descoped v1.0.** |
 
 -----
 

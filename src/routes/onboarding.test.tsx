@@ -55,7 +55,7 @@ import { configureProvider, testProvider, completeOnboarding } from '@/lib/api'
 async function renderWizard() {
   // Dynamic import after mocks are set
   const mod = await import('./onboarding')
-  const Component = (mod.Route as { component: React.ComponentType }).component
+  const Component = ((mod.Route as unknown) as { component: React.ComponentType }).component
   return render(<Component />)
 }
 

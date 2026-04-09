@@ -10,13 +10,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { SmartSelect } from '@/components/ui/smart-select'
 import { addMcpServer } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 
@@ -101,16 +95,15 @@ export function McpServerModal({ open, onOpenChange }: McpServerModalProps) {
 
           <div className="space-y-1">
             <label className="text-xs text-[var(--color-muted)]">Transport</label>
-            <Select value={transport} onValueChange={(v) => setTransport(v as typeof transport)}>
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="stdio">stdio</SelectItem>
-                <SelectItem value="sse">SSE</SelectItem>
-                <SelectItem value="websocket">WebSocket</SelectItem>
-              </SelectContent>
-            </Select>
+            <SmartSelect
+              value={transport}
+              onValueChange={(v) => setTransport(v as typeof transport)}
+              items={[
+                { value: 'stdio', label: 'stdio' },
+                { value: 'sse', label: 'SSE' },
+                { value: 'websocket', label: 'WebSocket' },
+              ]}
+            />
           </div>
         </div>
 

@@ -121,7 +121,7 @@ func (t *ConfigSetTool) Execute(_ context.Context, args map[string]any) *tools.T
 // Keys outside this set are rejected by system.config.set to avoid corrupting the config.
 var knownConfigPrefixes = []string{
 	"gateway.", "agents.", "sandbox.", "security.", "channels.", "tools.",
-	"heartbeat.", "devices.", "model_list", "workspace_path",
+	"heartbeat.", "devices.", "providers", "workspace_path",
 }
 
 // validateConfigKey returns an error if key does not start with a known config prefix.

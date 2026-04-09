@@ -774,7 +774,7 @@ Channel routing rules (which users/groups route to which agents), allow_from res
 - **Prompt Injection Defense:** Strictness level selector (Low / Medium / High) with a one-line description of each level's behavior. Default: Medium. Detail of what each level does is defined in the technical spec (SEC-25); the UI exposes the selector and explains the tradeoff (lower = fewer false positives but less protection, higher = more aggressive filtering but may block legitimate content).
 - **Rate Limits & Cost Control:** Global daily cost cap (USD) with progress bar showing today's spend. Per-agent default limits (LLM calls/hour, tool calls/minute, outbound messages/minute). Per-channel outbound rate limits (auto-populated with platform defaults, editable). Current usage shown alongside each limit. When a limit is hit, agent shows a system message in chat: *"Rate limit reached (30 tool calls/min). Retrying in 28s..."*
 - **Credentials Vault:** Encrypted credentials list, add/edit/remove, encryption status.
-- **Audit Log:** Log output config, redaction patterns, tamper-evident chain toggle. `[↗ View Audit Log]` → fullscreen overlay with search, filters, explainable decisions per entry.
+- **Audit Log:** Log output config, redaction patterns. `[↗ View Audit Log]` → fullscreen overlay with search, filters, explainable decisions per entry. *(Tamper-evident chain toggle descoped v1.0.)*
 - **Device Trust:** Paired devices list with role and remove option.
 - **Diagnostics:** `[Run omnipus doctor]` button, last run results, risk score, recommendations.
 

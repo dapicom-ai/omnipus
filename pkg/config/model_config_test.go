@@ -15,7 +15,7 @@ import (
 func TestGetModelConfig_Found(t *testing.T) {
 	cfg := &Config{
 		Version: CurrentVersion,
-		ModelList: []*ModelConfig{
+		Providers: []*ModelConfig{
 			{ModelName: "test-model", Model: "openai/gpt-4o", APIKeys: SimpleSecureStrings("key1")},
 			{ModelName: "other-model", Model: "anthropic/claude", APIKeys: SimpleSecureStrings("key2")},
 		},
@@ -32,7 +32,7 @@ func TestGetModelConfig_Found(t *testing.T) {
 
 func TestGetModelConfig_NotFound(t *testing.T) {
 	cfg := &Config{
-		ModelList: []*ModelConfig{
+		Providers: []*ModelConfig{
 			{ModelName: "test-model", Model: "openai/gpt-4o", APIKeys: SimpleSecureStrings("key1")},
 		},
 	}
@@ -45,7 +45,7 @@ func TestGetModelConfig_NotFound(t *testing.T) {
 
 func TestGetModelConfig_EmptyList(t *testing.T) {
 	cfg := &Config{
-		ModelList: []*ModelConfig{},
+		Providers: []*ModelConfig{},
 	}
 
 	_, err := cfg.GetModelConfig("any-model")
@@ -56,7 +56,7 @@ func TestGetModelConfig_EmptyList(t *testing.T) {
 
 func TestGetModelConfig_RoundRobin(t *testing.T) {
 	cfg := &Config{
-		ModelList: []*ModelConfig{
+		Providers: []*ModelConfig{
 			{ModelName: "lb-model", Model: "openai/gpt-4o-1", APIKeys: SimpleSecureStrings("key1")},
 			{ModelName: "lb-model", Model: "openai/gpt-4o-2", APIKeys: SimpleSecureStrings("key2")},
 			{ModelName: "lb-model", Model: "openai/gpt-4o-3", APIKeys: SimpleSecureStrings("key3")},
@@ -85,7 +85,7 @@ func TestGetModelConfig_RoundRobinStartsFromFirstMatch(t *testing.T) {
 	rrCounter.Store(0)
 
 	cfg := &Config{
-		ModelList: []*ModelConfig{
+		Providers: []*ModelConfig{
 			{ModelName: "lb-model", Model: "openai/gpt-4o-1", APIKeys: SimpleSecureStrings("key1")},
 			{ModelName: "lb-model", Model: "openai/gpt-4o-2", APIKeys: SimpleSecureStrings("key2")},
 			{ModelName: "lb-model", Model: "openai/gpt-4o-3", APIKeys: SimpleSecureStrings("key3")},
@@ -113,7 +113,7 @@ func TestGetModelConfig_RoundRobinStartsFromFirstMatch(t *testing.T) {
 
 func TestGetModelConfig_Concurrent(t *testing.T) {
 	cfg := &Config{
-		ModelList: []*ModelConfig{
+		Providers: []*ModelConfig{
 			{ModelName: "concurrent-model", Model: "openai/gpt-4o-1", APIKeys: SimpleSecureStrings("key1")},
 			{ModelName: "concurrent-model", Model: "openai/gpt-4o-2", APIKeys: SimpleSecureStrings("key2")},
 		},
@@ -225,7 +225,7 @@ func TestModelConfig_Validate(t *testing.T) {
 	}
 }
 
-func TestConfig_ValidateModelList(t *testing.T) {
+func TestConfig_ValidateProviders(t *testing.T) {
 	tests := []struct {
 		name    string
 		config  *Config
@@ -235,7 +235,7 @@ func TestConfig_ValidateModelList(t *testing.T) {
 		{
 			name: "valid list",
 			config: &Config{
-				ModelList: []*ModelConfig{
+				Providers: []*ModelConfig{
 					{ModelName: "test1", Model: "openai/gpt-4o"},
 					{ModelName: "test2", Model: "anthropic/claude"},
 				},
@@ -245,7 +245,7 @@ func TestConfig_ValidateModelList(t *testing.T) {
 		{
 			name: "invalid entry",
 			config: &Config{
-				ModelList: []*ModelConfig{
+				Providers: []*ModelConfig{
 					{ModelName: "test1", Model: "openai/gpt-4o"},
 					{ModelName: "", Model: "anthropic/claude"}, // missing model_name
 				},
@@ -256,41 +256,21 @@ func TestConfig_ValidateModelList(t *testing.T) {
 		{
 			name: "empty list",
 			config: &Config{
-				ModelList: []*ModelConfig{},
+				Providers: []*ModelConfig{},
 			},
 			wantErr: false,
-		},
-		{
-			// Load balancing: multiple entries with same model_name are allowed
-			name: "duplicate model_name for load balancing",
-			config: &Config{
-				ModelList: []*ModelConfig{},
-			},
-			wantErr: false, // Changed: duplicates are allowed for load balancing
-		},
-		{
-			// Load balancing: non-adjacent entries with same model_name are also allowed
-			name: "duplicate model_name non-adjacent for load balancing",
-			config: &Config{
-				ModelList: []*ModelConfig{
-					{ModelName: "model-a", Model: "openai/gpt-4o"},
-					{ModelName: "model-b", Model: "anthropic/claude"},
-					{ModelName: "model-a", Model: "openai/gpt-4-turbo"},
-				},
-			},
-			wantErr: false, // Changed: duplicates are allowed for load balancing
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.config.ValidateModelList()
+			err := tt.config.ValidateProviders()
 			if (err != nil) != tt.wantErr {
-				t.Errorf("ValidateModelList() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("ValidateProviders() error = %v, wantErr %v", err, tt.wantErr)
 			}
 			if err != nil && tt.errMsg != "" {
 				if !strings.Contains(err.Error(), tt.errMsg) {
-					t.Errorf("ValidateModelList() error = %v, want error containing %q", err, tt.errMsg)
+					t.Errorf("ValidateProviders() error = %v, want error containing %q", err, tt.errMsg)
 				}
 			}
 		})

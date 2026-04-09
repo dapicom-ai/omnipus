@@ -381,6 +381,9 @@ func TestHandleApprovalResponse_Allow(t *testing.T) {
 	conn := dialTestWS(t, srv)
 	t.Cleanup(func() { _ = conn.Close() })
 
+	// Authenticate first — required by authenticateWS before any other frames.
+	sendWSAuthFrameDevMode(t, conn)
+
 	pendingID := "test-allow-request-id"
 	ch := handler.approvalRegistry.register(pendingID)
 	defer handler.approvalRegistry.unregister(pendingID)
@@ -413,6 +416,9 @@ func TestHandleApprovalResponse_Deny(t *testing.T) {
 	conn := dialTestWS(t, srv)
 	t.Cleanup(func() { _ = conn.Close() })
 
+	// Authenticate first — required by authenticateWS before any other frames.
+	sendWSAuthFrameDevMode(t, conn)
+
 	pendingID := "test-deny-request-id"
 	ch := handler.approvalRegistry.register(pendingID)
 	defer handler.approvalRegistry.unregister(pendingID)
@@ -444,6 +450,9 @@ func TestHandleApprovalResponse_Always(t *testing.T) {
 
 	conn := dialTestWS(t, srv)
 	t.Cleanup(func() { _ = conn.Close() })
+
+	// Authenticate first — required by authenticateWS before any other frames.
+	sendWSAuthFrameDevMode(t, conn)
 
 	pendingID := "test-always-request-id"
 	ch := handler.approvalRegistry.register(pendingID)

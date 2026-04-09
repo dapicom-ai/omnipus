@@ -1,3 +1,5 @@
+//go:build !cgo
+
 // Omnipus - Ultra-lightweight personal AI agent
 // License: MIT
 // Copyright (c) 2026 Omnipus contributors
@@ -473,11 +475,12 @@ func (a *restAPI) HandleAbout(w http.ResponseWriter, r *http.Request) {
 	}
 	uptime := time.Since(startTime).Round(time.Second)
 	jsonOK(w, map[string]any{
-		"version":    Version,
-		"go_version": runtime.Version(),
-		"os":         runtime.GOOS,
-		"arch":       runtime.GOARCH,
-		"uptime":     uptime.String(),
-		"pid":        os.Getpid(),
+		"version":        Version,
+		"go_version":     runtime.Version(),
+		"os":             runtime.GOOS,
+		"arch":           runtime.GOARCH,
+		"uptime":         uptime.String(),
+		"uptime_seconds": int(uptime.Seconds()),
+		"pid":            os.Getpid(),
 	})
 }

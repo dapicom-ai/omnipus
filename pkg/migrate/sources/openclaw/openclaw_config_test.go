@@ -274,8 +274,8 @@ func TestConvertToOmnipus(t *testing.T) {
 		t.Errorf("expected feishu app ID 'app-id', got '%s'", picoCfg.Channels.Feishu.AppID)
 	}
 
-	if len(picoCfg.ModelList) != 1 {
-		t.Errorf("expected 1 model config (no models.json provided), got %d", len(picoCfg.ModelList))
+	if len(picoCfg.Providers) != 1 {
+		t.Errorf("expected 1 model config (no models.json provided), got %d", len(picoCfg.Providers))
 	}
 
 	foundWarning := false
@@ -649,7 +649,7 @@ func TestToStandardConfig(t *testing.T) {
 				},
 			},
 		},
-		ModelList: []ModelConfig{
+		Providers: []ModelConfig{
 			{
 				ModelName: "claude-sonnet-4-20250514",
 				Model:     "anthropic/claude-sonnet-4-20250514",
@@ -694,7 +694,7 @@ func TestToStandardConfig(t *testing.T) {
 
 	foundModel := false
 	var foundAPIKey string
-	for _, m := range stdCfg.ModelList {
+	for _, m := range stdCfg.Providers {
 		if m.ModelName == "claude-sonnet-4-20250514" {
 			foundModel = true
 			foundAPIKey = m.APIKey()

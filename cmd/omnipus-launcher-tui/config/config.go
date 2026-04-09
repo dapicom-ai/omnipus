@@ -192,7 +192,7 @@ func SyncSelectedModelToMainConfig(scheme Scheme, user User, modelID string) err
 	}
 
 	modelList := []any{}
-	if ml, ok := cfg["model_list"].([]any); ok {
+	if ml, ok := cfg["providers"].([]any); ok {
 		modelList = ml
 	}
 
@@ -209,7 +209,7 @@ func SyncSelectedModelToMainConfig(scheme Scheme, user User, modelID string) err
 	if !found {
 		modelList = append(modelList, tuiModel)
 	}
-	cfg["model_list"] = modelList
+	cfg["providers"] = modelList
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {

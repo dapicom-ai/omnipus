@@ -584,7 +584,7 @@ func TestMigration_PreservesExistingSecurityConfig(t *testing.T) {
 				"model": "gpt-4"
 			}
 		},
-		"model_list": [
+		"providers": [
 			{
 				"model_name": "openai",
 				"model": "openai/gpt-4"
@@ -655,9 +655,9 @@ web:
 	}
 
 	// Model API key should be preserved
-	if cfg.ModelList[0].APIKey() != "sk-existing-key-from-env" {
+	if cfg.Providers[0].APIKey() != "sk-existing-key-from-env" {
 		t.Errorf("Model API key was overwritten: got %q, want %q",
-			cfg.ModelList[0].APIKey(), "sk-existing-key-from-env")
+			cfg.Providers[0].APIKey(), "sk-existing-key-from-env")
 	}
 
 	// Brave API key should be preserved

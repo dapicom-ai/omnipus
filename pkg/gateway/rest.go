@@ -1,3 +1,5 @@
+//go:build !cgo
+
 // Omnipus - Ultra-lightweight personal AI agent
 // License: MIT
 // Copyright (c) 2026 Omnipus contributors
@@ -29,6 +31,7 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/fileutil"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	providers_pkg "github.com/dapicom-ai/omnipus/pkg/providers"
@@ -114,27 +117,59 @@ func (a *restAPI) handlePreflight(w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
-// withAuth wraps a handler with preflight, bearer auth, CORS header boilerplate,
-// and a 1 MB request body size limit to prevent unbounded memory allocation.
-func (a *restAPI) withAuth(handler http.HandlerFunc) http.HandlerFunc {
+// withAuthAndBodyLimit wraps a handler with preflight, bearer auth, CORS headers,
+// and the given request body size limit. This is the shared implementation used
+// by withAuth (1 MB) and withUploadAuth (1 GB).
+func (a *restAPI) withAuthAndBodyLimit(handler http.HandlerFunc, bodyLimit int64) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if a.handlePreflight(w, r) {
 			return
 		}
-		if !checkBearerAuth(w, r) {
+		// Prefer config snapshot from configSnapshotMiddleware (race-free during
+		// hot-reload). Fall back to GetConfig() if middleware was not applied.
+		cfg := configFromContext(r.Context())
+		if cfg == nil {
+			slog.Warn("configFromContext returned nil — configSnapshotMiddleware may not be applied")
+			cfg = a.agentLoop.GetConfig()
+		}
+		result := checkBearerAuth(r.Context(), w, r, cfg)
+		if !result.Authenticated {
 			return
 		}
 		a.setCORSHeaders(w, r)
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB limit
-		handler(w, r)
+		r.Body = http.MaxBytesReader(w, r.Body, bodyLimit)
+		ctx := r.Context()
+		if result.User != nil {
+			ctx = context.WithValue(ctx, UserContextKey{}, result.User)
+		}
+		if result.Role != "" {
+			ctx = context.WithValue(ctx, RoleContextKey{}, result.Role)
+		}
+		handler(w, r.WithContext(ctx))
 	}
 }
 
+// withAuth wraps a handler with preflight, bearer auth, CORS header boilerplate,
+// and a 1 MB request body size limit to prevent unbounded memory allocation.
+func (a *restAPI) withAuth(handler http.HandlerFunc) http.HandlerFunc {
+	return a.withAuthAndBodyLimit(handler, 1<<20) // 1 MB
+}
+
 func jsonOK(w http.ResponseWriter, body any) {
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(body); err != nil {
+	buf, err := json.Marshal(body)
+	if err != nil {
 		slog.Error("rest: json encode failed", "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]string{"error": "internal server error"})
+		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	if _, err := w.Write(buf); err != nil {
+		slog.Debug("rest: write response body failed", "error", err)
+		return
+	}
+	w.Write([]byte("\n"))
 }
 
 func jsonErr(w http.ResponseWriter, status int, msg string) {
@@ -147,7 +182,7 @@ func jsonErr(w http.ResponseWriter, status int, msg string) {
 
 // --- Sessions ---
 
-// HandleSessions handles GET /api/v1/sessions (list) and GET /api/v1/sessions/{id} (detail).
+// HandleSessions routes /api/v1/sessions requests: GET (list/detail/messages), POST (create), PUT (rename), DELETE (delete).
 func (a *restAPI) HandleSessions(w http.ResponseWriter, r *http.Request) {
 	// Extract optional session ID and sub-path from the URL.
 	// Supports: /api/v1/sessions, /api/v1/sessions/{id}, /api/v1/sessions/{id}/messages
@@ -185,6 +220,18 @@ func (a *restAPI) HandleSessions(w http.ResponseWriter, r *http.Request) {
 			a.createSessionHTTP(w, r)
 		} else {
 			jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	case http.MethodPut:
+		if sessionID == "" {
+			jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		} else {
+			a.renameSession(w, r, sessionID)
+		}
+	case http.MethodDelete:
+		if sessionID == "" {
+			jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		} else {
+			a.deleteSession(w, r, sessionID)
 		}
 	default:
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -249,6 +296,59 @@ func (a *restAPI) getSessionMessages(w http.ResponseWriter, _ *http.Request, id 
 		return
 	}
 	jsonOK(w, messages)
+}
+
+// renameSession handles PUT /api/v1/sessions/{id}.
+// Accepts {"title": "new name"} and returns the updated session meta.
+func (a *restAPI) renameSession(w http.ResponseWriter, r *http.Request, id string) {
+	var req struct {
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if req.Title == "" {
+		jsonErr(w, http.StatusBadRequest, "title is required")
+		return
+	}
+	if len(req.Title) > 256 {
+		jsonErr(w, http.StatusBadRequest, "title too long (max 256 characters)")
+		return
+	}
+	store := a.resolveSessionStore(id)
+	if store == nil {
+		jsonErr(w, http.StatusNotFound, "session not found")
+		return
+	}
+	if err := store.SetMeta(id, session.MetaPatch{Title: &req.Title}); err != nil {
+		slog.Error("rest: rename session", "session_id", id, "error", err)
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not rename session: %v", err))
+		return
+	}
+	meta, err := store.GetMeta(id)
+	if err != nil {
+		slog.Error("rest: rename session: get meta after update", "session_id", id, "error", err)
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not read updated session: %v", err))
+		return
+	}
+	jsonOK(w, meta)
+}
+
+// deleteSession handles DELETE /api/v1/sessions/{id}.
+// Removes all session data and returns {"success": true}.
+func (a *restAPI) deleteSession(w http.ResponseWriter, _ *http.Request, id string) {
+	store := a.resolveSessionStore(id)
+	if store == nil {
+		jsonErr(w, http.StatusNotFound, "session not found")
+		return
+	}
+	if err := store.DeleteSession(id); err != nil {
+		slog.Error("rest: delete session", "session_id", id, "error", err)
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not delete session: %v", err))
+		return
+	}
+	jsonOK(w, map[string]bool{"success": true})
 }
 
 func (a *restAPI) createSessionHTTP(w http.ResponseWriter, r *http.Request) {
@@ -414,6 +514,32 @@ type providerResponse struct {
 	Warning string   `json:"warning,omitempty"`
 }
 
+// strVal extracts a string value from a JSON-decoded map, returning "" if missing or wrong type.
+func strVal(m map[string]any, key string) string {
+	s, _ := m[key].(string)
+	return s
+}
+
+// firstAPIKey returns the resolved value of the first non-empty API key, or "".
+func firstAPIKey(keys config.SecureStrings) string {
+	if len(keys) == 0 {
+		return ""
+	}
+	return keys[0].String()
+}
+
+// inferProviderName returns the provider name from an explicit Provider field,
+// or infers it from the Model field's "provider/model" format. Falls back to "default".
+func inferProviderName(provider, model string) string {
+	if provider != "" {
+		return provider
+	}
+	if parts := strings.SplitN(model, "/", 2); len(parts) == 2 {
+		return parts[0]
+	}
+	return "default"
+}
+
 // fetchUpstreamModels fetches the list of available models from an OpenAI-compatible
 // provider's /models endpoint. Returns model IDs sorted alphabetically, or nil on error.
 // Used to populate the model dropdown with all models the provider supports, not just
@@ -425,6 +551,7 @@ func fetchUpstreamModels(baseURL, apiKey string) ([]string, error) {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("x-api-key", apiKey)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -627,30 +754,70 @@ func (a *restAPI) activeAgentIDSet() map[string]bool {
 	return m
 }
 
-func (a *restAPI) listAgents(w http.ResponseWriter) {
-	cfg := a.agentLoop.GetConfig()
-	agents := make([]agentResponse, 0, len(cfg.Agents.List)+1)
-	activeIDs := a.activeAgentIDSet()
+// computeAgentStatus determines the agent status based on whether it is active,
+// has a non-empty SOUL.md, or is a system agent.
+func computeAgentStatus(agentID string, activeIDs map[string]bool, soul string) string {
+	if activeIDs[agentID] {
+		return "active"
+	}
+	if strings.TrimSpace(soul) == "" {
+		return "draft"
+	}
+	return "idle"
+}
 
-	// System agent is always present and always active — it is always available for
-	// interaction, unlike turn-based custom agents.
-	defaultModel := cfg.Agents.Defaults.ModelName
-	agents = append(agents, agentResponse{
-		ID:                "omnipus-system",
-		Name:              "Omnipus",
-		Type:              "system",
-		Model:             defaultModel,
-		Status:            "active",
-		Soul:              "",
-		Heartbeat:         "",
-		Instructions:      "",
+// buildAgentDefaults populates the execution-related fields from config defaults.
+func buildAgentDefaults(cfg *config.Config) agentResponse {
+	return agentResponse{
 		TimeoutSeconds:    cfg.Agents.Defaults.TimeoutSeconds,
 		MaxToolIterations: cfg.Agents.Defaults.MaxToolIterations,
 		SteeringMode:      steeringModeOrDefault(cfg.Agents.Defaults.SteeringMode),
 		ToolFeedback:      cfg.Agents.Defaults.ToolFeedback.Enabled,
 		HeartbeatEnabled:  cfg.Heartbeat.Enabled,
 		HeartbeatInterval: cfg.Heartbeat.Interval,
-	})
+	}
+}
+
+// readChannelConfigRaw reads config.json from disk and returns the raw map for
+// the given channel. Both getChannelConfig and testChannel use this to avoid
+// reading stale in-memory config after async reloads.
+func (a *restAPI) readChannelConfigRaw(channelID string) (map[string]any, error) {
+	a.configMu.Lock()
+	raw, err := os.ReadFile(a.configPath())
+	a.configMu.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("read config: %w", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, fmt.Errorf("parse config: %w", err)
+	}
+	channels, _ := m["channels"].(map[string]any)
+	if channels == nil {
+		return map[string]any{}, nil
+	}
+	chCfg, _ := channels[channelID].(map[string]any)
+	if chCfg == nil {
+		return map[string]any{}, nil
+	}
+	return chCfg, nil
+}
+
+func (a *restAPI) listAgents(w http.ResponseWriter) {
+	cfg := a.agentLoop.GetConfig()
+	agents := make([]agentResponse, 0, len(cfg.Agents.List)+1)
+	activeIDs := a.activeAgentIDSet()
+
+	// System agent is always present and always active.
+	defaults := buildAgentDefaults(cfg)
+	defaultModel := cfg.Agents.Defaults.ModelName
+	sysAgent := defaults
+	sysAgent.ID = "omnipus-system"
+	sysAgent.Name = "Omnipus"
+	sysAgent.Type = "system"
+	sysAgent.Model = defaultModel
+	sysAgent.Status = "active"
+	agents = append(agents, sysAgent)
 
 	for _, ac := range cfg.Agents.List {
 		model := defaultModel
@@ -664,28 +831,14 @@ func (a *restAPI) listAgents(w http.ResponseWriter) {
 		// M2: listAgents only needs SOUL.md to determine draft status — avoid reading
 		// HEARTBEAT.md and AGENT.md unnecessarily in the list endpoint.
 		soul := readSoulMD(workspace)
-		status := "idle"
-		if activeIDs[ac.ID] {
-			status = "active"
-		} else if strings.TrimSpace(soul) == "" {
-			status = "draft"
-		}
-		agents = append(agents, agentResponse{
-			ID:                ac.ID,
-			Name:              ac.Name,
-			Type:              "custom",
-			Model:             model,
-			Status:            status,
-			Soul:              soul,
-			Heartbeat:         "",
-			Instructions:      "",
-			TimeoutSeconds:    cfg.Agents.Defaults.TimeoutSeconds,
-			MaxToolIterations: cfg.Agents.Defaults.MaxToolIterations,
-			SteeringMode:      steeringModeOrDefault(cfg.Agents.Defaults.SteeringMode),
-			ToolFeedback:      cfg.Agents.Defaults.ToolFeedback.Enabled,
-			HeartbeatEnabled:  cfg.Heartbeat.Enabled,
-			HeartbeatInterval: cfg.Heartbeat.Interval,
-		})
+		ag := defaults
+		ag.ID = ac.ID
+		ag.Name = ac.Name
+		ag.Type = "custom"
+		ag.Model = model
+		ag.Status = computeAgentStatus(ac.ID, activeIDs, soul)
+		ag.Soul = soul
+		agents = append(agents, ag)
 	}
 
 	jsonOK(w, agents)
@@ -693,31 +846,25 @@ func (a *restAPI) listAgents(w http.ResponseWriter) {
 
 func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 	cfg := a.agentLoop.GetConfig()
+	defaults := buildAgentDefaults(cfg)
 
-	// System agent is always present and always active — it is always available for
-	// interaction, unlike turn-based custom agents.
+	// System agent is always present and always active.
 	if id == "omnipus-system" {
 		workspace, wsErr := agentWorkspacePath(cfg, "omnipus-system", "")
 		if wsErr != nil {
 			slog.Warn("rest: getAgent: could not resolve system agent workspace", "error", wsErr)
 		}
 		soul, heartbeat, instructions := readAgentFiles(workspace)
-		jsonOK(w, agentResponse{
-			ID:                "omnipus-system",
-			Name:              "Omnipus",
-			Type:              "system",
-			Model:             cfg.Agents.Defaults.ModelName,
-			Status:            "active",
-			Soul:              soul,
-			Heartbeat:         heartbeat,
-			Instructions:      instructions,
-			TimeoutSeconds:    cfg.Agents.Defaults.TimeoutSeconds,
-			MaxToolIterations: cfg.Agents.Defaults.MaxToolIterations,
-			SteeringMode:      steeringModeOrDefault(cfg.Agents.Defaults.SteeringMode),
-			ToolFeedback:      cfg.Agents.Defaults.ToolFeedback.Enabled,
-			HeartbeatEnabled:  cfg.Heartbeat.Enabled,
-			HeartbeatInterval: cfg.Heartbeat.Interval,
-		})
+		ag := defaults
+		ag.ID = "omnipus-system"
+		ag.Name = "Omnipus"
+		ag.Type = "system"
+		ag.Model = cfg.Agents.Defaults.ModelName
+		ag.Status = "active"
+		ag.Soul = soul
+		ag.Heartbeat = heartbeat
+		ag.Instructions = instructions
+		jsonOK(w, ag)
 		return
 	}
 
@@ -734,28 +881,16 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 				slog.Warn("rest: getAgent: could not resolve workspace", "agent_id", ac.ID, "error", wsErr)
 			}
 			soul, heartbeat, instructions := readAgentFiles(workspace)
-			status := "idle"
-			if activeIDs[ac.ID] {
-				status = "active"
-			} else if strings.TrimSpace(soul) == "" {
-				status = "draft"
-			}
-			jsonOK(w, agentResponse{
-				ID:                ac.ID,
-				Name:              ac.Name,
-				Type:              "custom",
-				Model:             model,
-				Status:            status,
-				Soul:              soul,
-				Heartbeat:         heartbeat,
-				Instructions:      instructions,
-				TimeoutSeconds:    cfg.Agents.Defaults.TimeoutSeconds,
-				MaxToolIterations: cfg.Agents.Defaults.MaxToolIterations,
-				SteeringMode:      steeringModeOrDefault(cfg.Agents.Defaults.SteeringMode),
-				ToolFeedback:      cfg.Agents.Defaults.ToolFeedback.Enabled,
-				HeartbeatEnabled:  cfg.Heartbeat.Enabled,
-				HeartbeatInterval: cfg.Heartbeat.Interval,
-			})
+			ag := defaults
+			ag.ID = ac.ID
+			ag.Name = ac.Name
+			ag.Type = "custom"
+			ag.Model = model
+			ag.Status = computeAgentStatus(ac.ID, activeIDs, soul)
+			ag.Soul = soul
+			ag.Heartbeat = heartbeat
+			ag.Instructions = instructions
+			jsonOK(w, ag)
 			return
 		}
 	}
@@ -824,24 +959,15 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	// Capture execution config AFTER reload (TriggerReload may have swapped the live config).
 	cfgAfterCreate := a.agentLoop.GetConfig()
+	ag := buildAgentDefaults(cfgAfterCreate)
+	ag.ID = ac.ID
+	ag.Name = ac.Name
+	ag.Type = "custom"
+	ag.Model = model
+	ag.Status = "draft"
+	ag.Warning = createReloadWarning
 	w.WriteHeader(http.StatusCreated)
-	jsonOK(w, agentResponse{
-		ID:                ac.ID,
-		Name:              ac.Name,
-		Type:              "custom",
-		Model:             model,
-		Status:            "draft",
-		Soul:              "",
-		Heartbeat:         "",
-		Instructions:      "",
-		Warning:           createReloadWarning,
-		TimeoutSeconds:    cfgAfterCreate.Agents.Defaults.TimeoutSeconds,
-		MaxToolIterations: cfgAfterCreate.Agents.Defaults.MaxToolIterations,
-		SteeringMode:      steeringModeOrDefault(cfgAfterCreate.Agents.Defaults.SteeringMode),
-		ToolFeedback:      cfgAfterCreate.Agents.Defaults.ToolFeedback.Enabled,
-		HeartbeatEnabled:  cfgAfterCreate.Heartbeat.Enabled,
-		HeartbeatInterval: cfgAfterCreate.Heartbeat.Interval,
-	})
+	jsonOK(w, ag)
 }
 
 func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string) {
@@ -1010,62 +1136,43 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 	}
 	// Re-read the files so the response reflects what was just persisted.
 	soul, heartbeat, instructions := readAgentFiles(workspace)
-	// Build the response entirely from local variables (do NOT read from live config — race).
+	// Build the response from defaults, then override with request values.
 	agentID := cfg.Agents.List[foundIdx].ID
 	model := cfg.Agents.Defaults.ModelName
 	if newModel != "" {
 		model = newModel
 	}
-	// Compute execution config fields: use request value when provided, else existing default.
-	respTimeoutSeconds := cfg.Agents.Defaults.TimeoutSeconds
-	if req.TimeoutSeconds != nil {
-		respTimeoutSeconds = *req.TimeoutSeconds
-	}
-	respMaxToolIterations := cfg.Agents.Defaults.MaxToolIterations
-	if req.MaxToolIterations != nil {
-		respMaxToolIterations = *req.MaxToolIterations
-	}
-	respSteeringMode := steeringModeOrDefault(cfg.Agents.Defaults.SteeringMode)
-	if req.SteeringMode != nil {
-		respSteeringMode = steeringModeOrDefault(*req.SteeringMode)
-	}
-	respToolFeedback := cfg.Agents.Defaults.ToolFeedback.Enabled
-	if req.ToolFeedback != nil {
-		respToolFeedback = *req.ToolFeedback
-	}
-	respHeartbeatEnabled := cfg.Heartbeat.Enabled
-	if req.HeartbeatEnabled != nil {
-		respHeartbeatEnabled = *req.HeartbeatEnabled
-	}
-	respHeartbeatInterval := cfg.Heartbeat.Interval
-	if req.HeartbeatInterval != nil {
-		respHeartbeatInterval = *req.HeartbeatInterval
-	}
-	// Compute status: draft when soul is empty and agent is not active.
 	activeIDs := a.activeAgentIDSet()
-	status := "idle"
-	if activeIDs[agentID] {
-		status = "active"
-	} else if strings.TrimSpace(soul) == "" {
-		status = "draft"
+	ag := buildAgentDefaults(cfg)
+	ag.ID = agentID
+	ag.Name = newName
+	ag.Type = "custom"
+	ag.Model = model
+	ag.Status = computeAgentStatus(agentID, activeIDs, soul)
+	ag.Soul = soul
+	ag.Heartbeat = heartbeat
+	ag.Instructions = instructions
+	ag.Warning = reloadWarning
+	// Override defaults with request values when provided.
+	if req.TimeoutSeconds != nil {
+		ag.TimeoutSeconds = *req.TimeoutSeconds
 	}
-	jsonOK(w, agentResponse{
-		ID:                agentID,
-		Name:              newName,
-		Type:              "custom",
-		Model:             model,
-		Status:            status,
-		Soul:              soul,
-		Heartbeat:         heartbeat,
-		Instructions:      instructions,
-		Warning:           reloadWarning,
-		TimeoutSeconds:    respTimeoutSeconds,
-		MaxToolIterations: respMaxToolIterations,
-		SteeringMode:      respSteeringMode,
-		ToolFeedback:      respToolFeedback,
-		HeartbeatEnabled:  respHeartbeatEnabled,
-		HeartbeatInterval: respHeartbeatInterval,
-	})
+	if req.MaxToolIterations != nil {
+		ag.MaxToolIterations = *req.MaxToolIterations
+	}
+	if req.SteeringMode != nil {
+		ag.SteeringMode = steeringModeOrDefault(*req.SteeringMode)
+	}
+	if req.ToolFeedback != nil {
+		ag.ToolFeedback = *req.ToolFeedback
+	}
+	if req.HeartbeatEnabled != nil {
+		ag.HeartbeatEnabled = *req.HeartbeatEnabled
+	}
+	if req.HeartbeatInterval != nil {
+		ag.HeartbeatInterval = *req.HeartbeatInterval
+	}
+	jsonOK(w, ag)
 }
 
 // --- Config ---
@@ -1137,6 +1244,44 @@ func (a *restAPI) configPath() string {
 	return filepath.Join(a.homePath, "config.json")
 }
 
+// resolveCredentialRef resolves an api_key_ref from the encrypted credentials store.
+// Returns the plaintext API key, or empty string if the store is locked or the ref is missing.
+func (a *restAPI) resolveCredentialRef(ref string) string {
+	if ref == "" {
+		return ""
+	}
+	store := credentials.NewStore(a.credentialsStorePath())
+	if err := credentials.Unlock(store); err != nil {
+		slog.Warn("rest: credential store locked for ref resolution", "ref", ref, "error", err)
+		return ""
+	}
+	value, err := credentials.ResolveRef(store, ref)
+	if err != nil {
+		slog.Warn("rest: could not resolve credential ref", "ref", ref, "error", err)
+		return ""
+	}
+	return value
+}
+
+// storeCredential stores an API key in the encrypted credentials store and
+// returns the credential reference name. If the store is unavailable (locked or
+// write error), it logs a warning and returns "" so the caller can fall back to
+// plaintext storage.
+func (a *restAPI) storeCredential(refName, apiKey string) string {
+	store := credentials.NewStore(a.credentialsStorePath())
+	if err := credentials.Unlock(store); err != nil {
+		slog.Warn("rest: credential store locked, falling back to plaintext api_key",
+			"ref", refName, "error", err)
+		return ""
+	}
+	if err := store.Set(refName, apiKey); err != nil {
+		slog.Error("rest: failed to store API key in credentials store, falling back to plaintext",
+			"ref", refName, "error", err)
+		return ""
+	}
+	return refName
+}
+
 // safeUpdateConfigJSON reads config.json, applies a mutation function on the raw JSON map,
 // and writes it back atomically. This preserves SecureStrings (API keys) that would be
 // destroyed by config.SaveConfig's JSON round-trip through the Go struct.
@@ -1168,10 +1313,10 @@ func (a *restAPI) updateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Block credential fields and model_list (credentials must use /providers endpoint)
+	// Block credential fields and providers (credentials must use /providers endpoint)
 	for k := range updates {
 		kl := strings.ToLower(k)
-		if kl == "model_list" || strings.Contains(kl, "api_key") || strings.Contains(kl, "secret") || strings.Contains(kl, "password") {
+		if kl == "providers" || strings.Contains(kl, "api_key") || strings.Contains(kl, "secret") || strings.Contains(kl, "password") {
 			jsonErr(w, http.StatusForbidden, fmt.Sprintf("credential field %q cannot be set via config endpoint", k))
 			return
 		}
@@ -1360,7 +1505,7 @@ func (a *restAPI) runDiagnosticChecks(cfg *config.Config) []map[string]any {
 	var issues []map[string]any
 
 	// Check if a default model is configured.
-	if len(cfg.ModelList) == 0 {
+	if len(cfg.Providers) == 0 {
 		issues = append(issues, map[string]any{
 			"id":             "no-models",
 			"severity":       "high",
@@ -1450,12 +1595,12 @@ func (a *restAPI) putUserContext(w http.ResponseWriter, r *http.Request) {
 // Each returns a valid JSON response matching the shape the frontend expects,
 // preventing "Unexpected token '<'" errors from the SPA catch-all.
 func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
-	cm.RegisterHTTPHandler("/api/v1/state", a.withAuth(a.HandleState))
+	cm.RegisterHTTPHandler("/api/v1/state", a.withOptionalAuth(a.HandleState))
 	cm.RegisterHTTPHandler("/api/v1/status", a.withAuth(a.HandleStatus))
 	cm.RegisterHTTPHandler("/api/v1/tasks", a.withAuth(a.HandleTasks))
 	cm.RegisterHTTPHandler("/api/v1/tasks/", a.withAuth(a.HandleTasks))
-	cm.RegisterHTTPHandler("/api/v1/providers", a.withAuth(a.HandleProviders))
-	cm.RegisterHTTPHandler("/api/v1/providers/", a.withAuth(a.HandleProviders))
+	cm.RegisterHTTPHandler("/api/v1/providers", a.withOptionalAuth(a.HandleProviders))
+	cm.RegisterHTTPHandler("/api/v1/providers/", a.withOptionalAuth(a.HandleProviders))
 	cm.RegisterHTTPHandler("/api/v1/mcp-servers", a.withAuth(a.HandleMCPServers))
 	cm.RegisterHTTPHandler("/api/v1/mcp-servers/", a.withAuth(a.HandleMCPServers))
 	cm.RegisterHTTPHandler("/api/v1/storage/stats", a.withAuth(a.HandleStorageStats))
@@ -1477,6 +1622,16 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	cm.RegisterHTTPHandler("/api/v1/sessions/all", a.withAuth(a.HandleClearSessions))
 	cm.RegisterHTTPHandler("/api/v1/about", a.withAuth(a.HandleAbout))
 	cm.RegisterHTTPHandler("/api/v1/user-context", a.withAuth(a.HandleUserContext))
+	cm.RegisterHTTPHandler("/api/v1/onboarding/complete", a.withOptionalAuth(withRateLimit(onboardingCompleteLimiter, a.HandleCompleteOnboarding)))
+	cm.RegisterHTTPHandler("/api/v1/auth/login", a.withOptionalAuth(a.HandleLogin))
+	cm.RegisterHTTPHandler("/api/v1/auth/register-admin", a.withOptionalAuth(withRateLimit(registerAdminLimiter, a.HandleRegisterAdmin)))
+	cm.RegisterHTTPHandler("/api/v1/auth/validate", a.withAuth(withRateLimit(validateLimiter, a.HandleValidateToken)))
+	cm.RegisterHTTPHandler("/api/v1/auth/logout", a.withAuth(a.HandleLogout))
+	cm.RegisterHTTPHandler("/api/v1/auth/change-password", a.withAuth(a.HandleChangePassword))
+
+	// File upload endpoints (Milestone 3).
+	cm.RegisterHTTPHandler("/api/v1/upload", a.withUploadAuth(a.HandleUpload))
+	cm.RegisterHTTPHandler("/api/v1/uploads/", a.withOptionalAuth(a.HandleServeUpload))
 }
 
 // rotateGatewayToken generates a new random bearer token, persists it to config, and returns it.
@@ -1533,7 +1688,7 @@ func (a *restAPI) HandleState(w http.ResponseWriter, r *http.Request) {
 		var lastRun *time.Time
 		var lastScore *int
 		if a.onboardingMgr != nil {
-			complete = a.onboardingMgr.IsOnboardingComplete()
+			complete = a.onboardingMgr.IsComplete()
 			lastRun = a.onboardingMgr.LastDoctorRun()
 			lastScore = a.onboardingMgr.LastDoctorScore()
 		}
@@ -1985,27 +2140,30 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 		providerModels := make(map[string][]string)
 		providerAPIKeys := make(map[string]string)
 		providerOrder := make([]string, 0)
-		for _, m := range cfg.ModelList {
-			providerName := "default"
-			if parts := strings.SplitN(m.Model, "/", 2); len(parts) == 2 {
-				providerName = parts[0]
-			}
+		for _, m := range cfg.Providers {
+			providerName := inferProviderName(m.Provider, m.Model)
 			if _, exists := providerModels[providerName]; !exists {
 				providerOrder = append(providerOrder, providerName)
 			}
 			providerModels[providerName] = append(providerModels[providerName], m.ModelName)
 			// Store the first API key per provider for upstream model fetching.
-			if _, hasKey := providerAPIKeys[providerName]; !hasKey && len(m.APIKeys) > 0 {
-				if resolved := m.APIKeys[0].String(); resolved != "" {
+			// Check APIKeys first (plaintext or env-resolved), then fall back to
+			// api_key_ref resolution from the encrypted credentials store.
+			if _, hasKey := providerAPIKeys[providerName]; !hasKey {
+				resolved := firstAPIKey(m.APIKeys)
+				if resolved == "" && m.APIKeyRef != "" {
+					resolved = a.resolveCredentialRef(m.APIKeyRef)
+				}
+				if resolved != "" {
 					providerAPIKeys[providerName] = resolved
 				}
 			}
 		}
 		providers := make([]providerResponse, 0, len(providerOrder))
 		for _, name := range providerOrder {
-			models := providerModels[name]
+			var models []string
 			var modelFetchWarning string
-			// For OpenAI-compatible providers, fetch the full model list from upstream.
+			// Try to fetch the full model list from the provider's upstream API.
 			if apiKey, ok := providerAPIKeys[name]; ok {
 				if baseURL := providers_pkg.GetDefaultAPIBase(name); baseURL != "" {
 					if upstream, err := fetchUpstreamModels(baseURL, apiKey); err != nil {
@@ -2035,61 +2193,93 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, providers)
 
 	case r.Method == http.MethodPut && sub != "" && !strings.HasSuffix(sub, "/test"):
-		// PUT /api/v1/providers/{id} — update API key for a provider.
+		// PUT /api/v1/providers/{id} — update or insert a provider entry.
+		// Allow unauthenticated access during onboarding so the wizard can
+		// configure the provider before the admin user exists.
+		onboardingDone := a.onboardingMgr != nil && a.onboardingMgr.IsComplete()
+		if onboardingDone && r.Context().Value(UserContextKey{}) == nil {
+			jsonErr(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
 		providerID := sub
 		var req struct {
 			APIKey string `json:"api_key"`
+			Model  string `json:"model"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonErr(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
-		if req.APIKey == "" {
-			jsonErr(w, http.StatusUnprocessableEntity, "api_key is required")
-			return
-		}
-		// Check if the provider exists before persisting.
+		// Check if the provider already exists.
 		cfg := a.agentLoop.GetConfig()
 		found := false
-		for _, m := range cfg.ModelList {
+		for _, m := range cfg.Providers {
 			if m.IsVirtual() {
 				continue
 			}
-			pName := "default"
-			if parts := strings.SplitN(m.Model, "/", 2); len(parts) == 2 {
-				pName = parts[0]
-			}
+			pName := inferProviderName(m.Provider, m.Model)
 			if pName == providerID {
 				found = true
 				break
 			}
 		}
 		if !found {
-			jsonErr(w, http.StatusNotFound, fmt.Sprintf("provider %q not found", providerID))
-			return
+			// New provider — api_key is required.
+			if req.APIKey == "" {
+				jsonErr(w, http.StatusUnprocessableEntity, "api_key is required")
+				return
+			}
+			if req.Model == "" {
+				req.Model = "default"
+			}
 		}
-		// TODO(security): API keys should be stored in credentials.json (AES-256-GCM)
-		// rather than plaintext in config.json. This is a known gap — migrating to the
-		// credentials store requires a reference scheme so config.json can point to the
-		// credential key by name rather than embedding the secret. Tracked for Phase 2.
-		// For now, keys are written to config.json to preserve backward compatibility
-		// with the existing model_list format used by all provider adapters.
+		// Store API key in the encrypted credentials store (AES-256-GCM) and
+		// reference it via api_key_ref in config.json. Falls back to plaintext
+		// api_keys if the credential store is unavailable.
+		var credRefName string
+		if req.APIKey != "" {
+			credRefName = a.storeCredential(providerID+"_API_KEY", req.APIKey)
+		}
 		if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
-			// Patch the API key directly in the raw model_list JSON
-			modelList, _ := m["model_list"].([]any)
-			for _, entry := range modelList {
+			providerList, _ := m["providers"].([]any)
+			updated := false
+			for _, entry := range providerList {
 				model, ok := entry.(map[string]any)
 				if !ok {
 					continue
 				}
-				modelStr, _ := model["model"].(string)
-				pName := "default"
-				if parts := strings.SplitN(modelStr, "/", 2); len(parts) == 2 {
-					pName = parts[0]
-				}
+				pName := inferProviderName(strVal(model, "provider"), strVal(model, "model"))
 				if pName == providerID {
-					model["api_keys"] = []string{req.APIKey}
+					if req.APIKey != "" {
+						if credRefName != "" {
+							model["api_key_ref"] = credRefName
+							delete(model, "api_key")
+							delete(model, "api_keys")
+						} else {
+							model["api_keys"] = []string{req.APIKey}
+						}
+					}
+					if req.Model != "" {
+						model["model"] = req.Model
+					}
+					model["provider"] = providerID
+					updated = true
+					break
 				}
+			}
+			if !updated {
+				// Provider not found — add a new entry.
+				newEntry := map[string]any{
+					"model_name": providerID,
+					"provider":   providerID,
+					"model":      req.Model,
+				}
+				if credRefName != "" {
+					newEntry["api_key_ref"] = credRefName
+				} else {
+					newEntry["api_keys"] = []string{req.APIKey}
+				}
+				m["providers"] = append(providerList, newEntry)
 			}
 			return nil
 		}); err != nil {
@@ -2111,28 +2301,49 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 
 	case r.Method == http.MethodPost && strings.HasSuffix(sub, "/test"):
 		// POST /api/v1/providers/{id}/test — verify the provider has an API key configured.
+		// Allow unauthenticated access during onboarding (same reason as PUT above).
+		onboardingDone := a.onboardingMgr != nil && a.onboardingMgr.IsComplete()
+		if onboardingDone && r.Context().Value(UserContextKey{}) == nil {
+			jsonErr(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+		// Read from disk directly to avoid stale in-memory config after async reload.
 		providerID := strings.TrimSuffix(sub, "/test")
-		cfg := a.agentLoop.GetConfig()
-		var found *config.ModelConfig
-		for _, m := range cfg.ModelList {
-			if m.IsVirtual() {
+		cfgData, err := os.ReadFile(a.configPath())
+		if err != nil {
+			jsonOK(w, map[string]any{"success": false, "error": "could not read config"})
+			return
+		}
+		var cfgRaw map[string]any
+		if err := json.Unmarshal(cfgData, &cfgRaw); err != nil {
+			jsonOK(w, map[string]any{"success": false, "error": "could not parse config"})
+			return
+		}
+		providerList, _ := cfgRaw["providers"].([]any)
+		found := false
+		for _, entry := range providerList {
+			modelMap, ok := entry.(map[string]any)
+			if !ok {
 				continue
 			}
-			pName := "default"
-			if parts := strings.SplitN(m.Model, "/", 2); len(parts) == 2 {
-				pName = parts[0]
-			}
+			pName := inferProviderName(strVal(modelMap, "provider"), strVal(modelMap, "model"))
 			if pName == providerID {
-				found = m
+				found = true
+				// Check if API key is set: either via api_keys array or api_key_ref
+				// pointing to the encrypted credentials store.
+				apiKeys, _ := modelMap["api_keys"].([]any)
+				apiKeyRef, _ := modelMap["api_key_ref"].(string)
+				hasPlaintextKey := len(apiKeys) > 0 && apiKeys[0] != ""
+				hasCredRef := apiKeyRef != "" && a.resolveCredentialRef(apiKeyRef) != ""
+				if !hasPlaintextKey && !hasCredRef {
+					jsonOK(w, map[string]any{"success": false, "error": "no API key configured for this provider"})
+					return
+				}
 				break
 			}
 		}
-		if found == nil {
+		if !found {
 			jsonOK(w, map[string]any{"success": false, "error": fmt.Sprintf("provider %q not configured", providerID)})
-			return
-		}
-		if found.APIKey() == "" {
-			jsonOK(w, map[string]any{"success": false, "error": "no API key configured for this provider"})
 			return
 		}
 		jsonOK(w, map[string]any{"success": true})
@@ -2290,12 +2501,16 @@ func (a *restAPI) HandleTools(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	info := a.agentLoop.GetStartupInfo()
-	toolsMap, _ := info["tools"].(map[string]any)
-	names, _ := toolsMap["names"].([]string)
-	tools := make([]map[string]any, 0, len(names))
-	for _, name := range names {
-		// Infer category from the tool name prefix (e.g. "system.read_file" → "system").
+	registry := a.agentLoop.GetRegistry()
+	agent := registry.GetDefaultAgent()
+	if agent == nil {
+		jsonOK(w, []map[string]any{})
+		return
+	}
+	allTools := agent.Tools.GetAll()
+	tools := make([]map[string]any, 0, len(allTools))
+	for _, t := range allTools {
+		name := t.Name()
 		category := "general"
 		if idx := strings.Index(name, "."); idx > 0 {
 			category = name[:idx]
@@ -2303,7 +2518,7 @@ func (a *restAPI) HandleTools(w http.ResponseWriter, r *http.Request) {
 		tools = append(tools, map[string]any{
 			"name":        name,
 			"category":    category,
-			"description": "",
+			"description": t.Description(),
 		})
 	}
 	jsonOK(w, tools)
@@ -2499,27 +2714,11 @@ func redactChannelConfig(channelID string, cfg map[string]any) map[string]any {
 // getChannelConfig handles GET /api/v1/channels/{id}.
 // Returns the channel's config with credential fields redacted.
 func (a *restAPI) getChannelConfig(w http.ResponseWriter, channelID string) {
-	a.configMu.Lock()
-	raw, err := os.ReadFile(a.configPath())
-	a.configMu.Unlock()
+	chCfg, err := a.readChannelConfigRaw(channelID)
 	if err != nil {
 		slog.Error("rest: read config for channel get", "channel", channelID, "error", err)
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not read config: %v", err))
 		return
-	}
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		slog.Error("rest: parse config for channel get", "channel", channelID, "error", err)
-		jsonErr(w, http.StatusInternalServerError, "could not parse config")
-		return
-	}
-	channels, _ := m["channels"].(map[string]any)
-	var chCfg map[string]any
-	if channels != nil {
-		chCfg, _ = channels[channelID].(map[string]any)
-	}
-	if chCfg == nil {
-		chCfg = map[string]any{}
 	}
 	jsonOK(w, redactChannelConfig(channelID, chCfg))
 }
@@ -2564,33 +2763,21 @@ func (a *restAPI) configureChannel(w http.ResponseWriter, r *http.Request, chann
 // testChannel handles POST /api/v1/channels/{id}/test.
 // For v1.0: verifies required credential fields are configured without starting the channel.
 func (a *restAPI) testChannel(w http.ResponseWriter, channelID string) {
-	a.configMu.Lock()
-	raw, err := os.ReadFile(a.configPath())
-	a.configMu.Unlock()
+	chCfg, err := a.readChannelConfigRaw(channelID)
 	if err != nil {
 		slog.Error("rest: read config for channel test", "channel", channelID, "error", err)
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not read config: %v", err))
 		return
 	}
-	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		slog.Error("rest: parse config for channel test", "channel", channelID, "error", err)
-		jsonErr(w, http.StatusInternalServerError, "could not parse config")
-		return
-	}
-	var chCfg map[string]any
-	if channels, _ := m["channels"].(map[string]any); channels != nil {
-		chCfg, _ = channels[channelID].(map[string]any)
-	}
-	if chCfg == nil {
-		chCfg = map[string]any{}
-	}
 
 	required := channelRequiredFields[channelID]
 	var missing []string
 	for _, field := range required {
-		v, _ := chCfg[field].(string)
-		if v == "" {
+		if v, vOk := chCfg[field].(string); vOk {
+			if v == "" {
+				missing = append(missing, field)
+			}
+		} else {
 			missing = append(missing, field)
 		}
 	}
@@ -2680,4 +2867,264 @@ func (a *restAPI) HandleStorageStats(w http.ResponseWriter, r *http.Request) {
 		resp["warnings"] = warnings
 	}
 	jsonOK(w, resp)
+}
+
+// --- File upload ---
+
+const (
+	// maxUploadFileSize is the per-file limit enforced via io.LimitReader.
+	maxUploadFileSize int64 = 100 << 20 // 100 MB
+)
+
+// withUploadAuth is like withAuth but applies a 1 GB total body limit instead of
+// the default 1 MB limit so that multi-file uploads can proceed. The per-file
+// limit (100 MB) is enforced separately via io.LimitReader inside HandleUpload.
+func (a *restAPI) withUploadAuth(handler http.HandlerFunc) http.HandlerFunc {
+	return a.withAuthAndBodyLimit(handler, maxUploadFileSize*10)
+}
+
+// uploadedFileInfo describes a single file that was successfully uploaded.
+type uploadedFileInfo struct {
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	Size        int64  `json:"size"`
+	ContentType string `json:"content_type"`
+}
+
+// HandleUpload handles POST /api/v1/upload — streams multipart file uploads to disk.
+// Files are stored at ~/.omnipus/uploads/{session_id}/{sanitized_filename}.
+// Max file size per part: 100 MB. Data is streamed directly to disk; the full
+// file is never buffered in memory.
+func (a *restAPI) HandleUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// session_id may come from either a query parameter or a form field that
+	// appears before any file parts. We prefer the query param for simplicity.
+	sessionID := r.URL.Query().Get("session_id")
+
+	// Parse the multipart stream without buffering file content in memory.
+	reader, err := r.MultipartReader()
+	if err != nil {
+		slog.Warn("rest: upload: multipart reader failed", "error", err)
+		jsonErr(w, http.StatusBadRequest, fmt.Sprintf("invalid multipart request: %v", err))
+		return
+	}
+
+	var uploaded []uploadedFileInfo
+
+	for {
+		part, err := reader.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			slog.Warn("rest: upload: read part failed", "error", err)
+			jsonErr(w, http.StatusBadRequest, fmt.Sprintf("multipart read error: %v", err))
+			return
+		}
+
+		formName := part.FormName()
+		fileName := part.FileName()
+
+		// Non-file field — check for session_id override (only if not already set).
+		if fileName == "" {
+			if formName == "session_id" && sessionID == "" {
+				buf, readErr := io.ReadAll(io.LimitReader(part, 256))
+				part.Close()
+				if readErr != nil {
+					slog.Warn("rest: upload: read session_id field", "error", readErr)
+					jsonErr(w, http.StatusBadRequest, "could not read session_id field")
+					return
+				}
+				sessionID = strings.TrimSpace(string(buf))
+			} else {
+				// Discard unrecognised non-file fields.
+				if _, discardErr := io.Copy(io.Discard, part); discardErr != nil {
+					slog.Warn("rest: upload: discard field failed", "field", formName, "error", discardErr)
+				}
+				part.Close()
+			}
+			continue
+		}
+
+		// Validate session_id before the first file write.
+		if sessionID == "" {
+			part.Close()
+			jsonErr(w, http.StatusBadRequest, "session_id is required (query param or form field before files)")
+			return
+		}
+		if err := validateEntityID(sessionID); err != nil {
+			part.Close()
+			jsonErr(w, http.StatusBadRequest, "invalid session_id")
+			return
+		}
+
+		// Sanitize the filename: strip directory components, reject empty result.
+		sanitized := filepath.Base(filepath.Clean("/" + fileName))
+		if sanitized == "" || sanitized == "." || sanitized == "/" {
+			part.Close()
+			jsonErr(w, http.StatusBadRequest, fmt.Sprintf("invalid filename: %q", fileName))
+			return
+		}
+		// Additional safety: reject null bytes.
+		if strings.ContainsRune(sanitized, 0) {
+			part.Close()
+			jsonErr(w, http.StatusBadRequest, "filename contains null byte")
+			return
+		}
+
+		uploadDir := filepath.Join(a.homePath, "uploads", sessionID)
+		if mkErr := os.MkdirAll(uploadDir, 0700); mkErr != nil {
+			part.Close()
+			slog.Error("rest: upload: mkdir failed", "dir", uploadDir, "error", mkErr)
+			jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not create upload directory: %v", mkErr))
+			return
+		}
+
+		destPath := filepath.Join(uploadDir, sanitized)
+
+		// If a file with this name already exists, append a nanosecond timestamp
+		// to avoid silent overwrites.
+		if _, statErr := os.Stat(destPath); statErr == nil {
+			ext := filepath.Ext(sanitized)
+			base := strings.TrimSuffix(sanitized, ext)
+			sanitized = fmt.Sprintf("%s_%d%s", base, time.Now().UnixNano(), ext)
+			destPath = filepath.Join(uploadDir, sanitized)
+		}
+
+		// Read Content-Type before closing the part.
+		contentType := part.Header.Get("Content-Type")
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+
+		// cleanupUploaded removes all previously uploaded files on error.
+		cleanupUploaded := func() {
+			for _, prev := range uploaded {
+				os.Remove(filepath.Join(a.homePath, prev.Path))
+			}
+		}
+
+		f, createErr := os.Create(destPath)
+		if createErr != nil {
+			part.Close()
+			slog.Error("rest: upload: create file failed", "path", destPath, "error", createErr)
+			cleanupUploaded()
+			jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not create file: %v", createErr))
+			return
+		}
+
+		// Enforce per-file size limit. If the limit is exceeded, io.Copy returns
+		// an error because LimitReader returns 0 bytes after the limit and the
+		// copy stops, but to make the violation explicit we detect it below.
+		limitedPart := io.LimitReader(part, maxUploadFileSize+1)
+		written, copyErr := io.Copy(f, limitedPart)
+		f.Close()
+		part.Close()
+
+		if copyErr != nil {
+			slog.Error("rest: upload: copy failed", "path", destPath, "error", copyErr)
+			if rmErr := os.Remove(destPath); rmErr != nil && !os.IsNotExist(rmErr) {
+				slog.Warn("rest: upload: remove partial file failed", "path", destPath, "error", rmErr)
+			}
+			cleanupUploaded()
+			jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("file write failed: %v", copyErr))
+			return
+		}
+
+		if written > maxUploadFileSize {
+			if rmErr := os.Remove(destPath); rmErr != nil && !os.IsNotExist(rmErr) {
+				slog.Warn("rest: upload: remove oversized file failed", "path", destPath, "error", rmErr)
+			}
+			cleanupUploaded()
+			jsonErr(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("file %q exceeds 100 MB limit", sanitized))
+			return
+		}
+
+		// Relative path for the response — callers use this to construct the
+		// /api/v1/uploads/{session_id}/{filename} URL.
+		relativePath := filepath.Join("uploads", sessionID, sanitized)
+
+		slog.Info("rest: upload: file stored",
+			"session_id", sessionID,
+			"filename", sanitized,
+			"size", written,
+			"content_type", contentType,
+		)
+
+		uploaded = append(uploaded, uploadedFileInfo{
+			Name:        sanitized,
+			Path:        relativePath,
+			Size:        written,
+			ContentType: contentType,
+		})
+	}
+
+	if len(uploaded) == 0 {
+		jsonErr(w, http.StatusBadRequest, "no files found in upload")
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(map[string]any{"files": uploaded}); err != nil {
+		slog.Warn("rest: upload: encode response failed", "error", err)
+	}
+}
+
+// HandleServeUpload serves uploaded files for display in chat.
+// GET /api/v1/uploads/{session_id}/{filename}
+// Authentication is optional — browsers must be able to load image URLs directly.
+func (a *restAPI) HandleServeUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// Extract session_id and filename from the URL path.
+	// Pattern: /api/v1/uploads/{session_id}/{filename}
+	trimmed := strings.TrimPrefix(r.URL.Path, "/api/v1/uploads/")
+	trimmed = strings.TrimPrefix(trimmed, "/")
+	parts := strings.SplitN(trimmed, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		jsonErr(w, http.StatusBadRequest, "path must be /api/v1/uploads/{session_id}/{filename}")
+		return
+	}
+
+	sessionID := parts[0]
+	filename := parts[1]
+
+	if err := validateEntityID(sessionID); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid session_id")
+		return
+	}
+
+	// Sanitize filename — reject anything with path separators or "..".
+	if strings.ContainsAny(filename, "/\\") || strings.Contains(filename, "..") || strings.ContainsRune(filename, 0) {
+		jsonErr(w, http.StatusBadRequest, "invalid filename")
+		return
+	}
+
+	filePath := filepath.Join(a.homePath, "uploads", sessionID, filename)
+
+	// Defense-in-depth: resolve symlinks and confirm the real path is still inside
+	// the uploads directory. EvalSymlinks also returns an error if the file does
+	// not exist, which naturally produces the 404 case below.
+	uploadsRoot, _ := filepath.EvalSymlinks(filepath.Join(a.homePath, "uploads"))
+	resolved, err := filepath.EvalSymlinks(filePath)
+	if err != nil {
+		jsonErr(w, http.StatusNotFound, "file not found")
+		return
+	}
+	if !strings.HasPrefix(resolved, uploadsRoot+string(filepath.Separator)) {
+		jsonErr(w, http.StatusBadRequest, "invalid path")
+		return
+	}
+
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Disposition", "inline")
+	http.ServeFile(w, r, resolved)
 }

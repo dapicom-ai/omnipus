@@ -185,7 +185,7 @@ func DefaultConfig() *Config {
 				ApprovalTimeoutMS:    60000,
 			},
 		},
-		ModelList: []*ModelConfig{
+		Providers: []*ModelConfig{
 			// ============================================
 			// Add your API key to the model you want to use
 			// ============================================
@@ -339,11 +339,11 @@ func DefaultConfig() *Config {
 				APIBase:   "https://api.avian.io/v1",
 			},
 
-			// Minimax - https://api.minimaxi.com/
+			// Minimax - https://api.minimax.io/
 			{
 				ModelName: "MiniMax-M2.5",
 				Model:     "minimax/MiniMax-M2.5",
-				APIBase:   "https://api.minimaxi.com/v1",
+				APIBase:   "https://api.minimax.io/v1",
 				ExtraBody: map[string]any{"reasoning_split": true},
 			},
 

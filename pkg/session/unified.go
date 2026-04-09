@@ -387,6 +387,30 @@ func (us *UnifiedStore) Close() error {
 	return us.backend.Close()
 }
 
+// DeleteSession removes a single session directory from the store.
+// Returns an error if the session does not exist or cannot be removed.
+func (us *UnifiedStore) DeleteSession(sessionID string) error {
+	if err := validateSessionID(sessionID); err != nil {
+		return err
+	}
+	us.mu.Lock()
+	defer us.mu.Unlock()
+
+	dir := filepath.Join(us.baseDir, sessionID)
+	if _, err := os.Stat(dir); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("unified_store: session %q not found", sessionID)
+		}
+		return fmt.Errorf("unified_store: stat session %q: %w", sessionID, err)
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("unified_store: delete session %q: %w", sessionID, err)
+	}
+	contextFile := filepath.Join(us.baseDir, ".context", sessionID+".jsonl")
+	os.Remove(contextFile) // best-effort, ignore error if file does not exist
+	return nil
+}
+
 // ClearAll removes every session directory from the store.
 // Returns the number of sessions removed.
 func (us *UnifiedStore) ClearAll() (int, error) {
@@ -411,6 +435,8 @@ func (us *UnifiedStore) ClearAll() (int, error) {
 			slog.Warn("unified_store: clear all: remove session dir", "dir", dir, "error", err)
 			continue
 		}
+		contextFile := filepath.Join(us.baseDir, ".context", entry.Name()+".jsonl")
+		os.Remove(contextFile) // best-effort, ignore error if file does not exist
 		removed++
 	}
 	return removed, nil

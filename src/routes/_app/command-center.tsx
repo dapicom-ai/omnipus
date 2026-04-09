@@ -26,18 +26,17 @@ export function CommandCenterScreen() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
 
-  const { data: tasks = [], isFetching, isError: tasksError } = useQuery({
+  const { data: tasks = [], isError: tasksError } = useQuery({
     queryKey: ['tasks'],
     queryFn: () => fetchTasks(),
     staleTime: 30_000,
     refetchInterval: 10_000,
   })
-  const tasksReady = tasks.length > 0 || !isFetching
-
   const countFor = (filter: StatusFilter) =>
     filter === 'all' ? tasks.length : tasks.filter((t) => t.status === filter).length
 
   return (
+    <div className="absolute inset-0 overflow-y-auto">
     <div className="flex flex-col">
       {/* 1. Status bar */}
       <StatusBar />
@@ -73,7 +72,7 @@ export function CommandCenterScreen() {
               )}
             >
               {tab.label}
-              {tasksReady && count > 0 && (
+              {count > 0 && (
                 <span
                   className={cn(
                     'rounded-full px-1.5 py-0.5 text-[10px] leading-none font-semibold',
@@ -107,6 +106,7 @@ export function CommandCenterScreen() {
         onClose={() => setSelectedTask(null)}
         onTaskSelect={setSelectedTask}
       />
+    </div>
     </div>
   )
 }

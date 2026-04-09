@@ -43,7 +43,13 @@ export interface WsAttachSessionFrame {
   session_id: string
 }
 
-export type WsSendFrame = WsAuthFrame | WsMessageFrame | WsCancelFrame | WsExecApprovalResponseFrame | WsPingFrame | WsAttachSessionFrame
+export interface WsDevicePairingResponseFrame {
+  type: 'device_pairing_response'
+  device_id: string
+  decision: 'approve' | 'reject'
+}
+
+export type WsSendFrame = WsAuthFrame | WsMessageFrame | WsCancelFrame | WsExecApprovalResponseFrame | WsPingFrame | WsAttachSessionFrame | WsDevicePairingResponseFrame
 
 export interface WsTokenFrame {
   type: 'token'
@@ -176,9 +182,10 @@ export class WsConnection {
 
     this.ws.onopen = () => {
       this.reconnectAttempts = 0
-      // Auth token is re-read from localStorage on every (re-)connect
-      // so changes after initial load take effect without a page refresh.
-      const token = localStorage.getItem('omnipus_auth_token')
+      // Auth token is re-read on every (re-)connect so changes after
+      // initial load take effect without a page refresh.
+      // Check sessionStorage first (XSS protection), fall back to localStorage.
+      const token = sessionStorage.getItem('omnipus_auth_token') ?? localStorage.getItem('omnipus_auth_token')
       if (token) {
         this.send({ type: 'auth', token })
       } else {

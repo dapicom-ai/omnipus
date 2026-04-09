@@ -45,7 +45,7 @@ function FileOpBlock({
   isRunning,
   isError,
 }: {
-  icon: React.ComponentType<{ size?: number; weight?: string; className?: string }>
+  icon: React.ComponentType<{ size?: number | undefined; weight?: import('@phosphor-icons/react').IconWeight | undefined; className?: string | undefined }>
   label: string
   path: string
   detail?: string

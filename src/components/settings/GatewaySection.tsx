@@ -4,13 +4,7 @@ import { Copy, ArrowsClockwise, FloppyDisk, CheckCircle, CaretDown, CaretRight }
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { SmartSelect } from '@/components/ui/smart-select'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { fetchConfig, updateConfig, rotateGatewayToken, fetchGatewayStatus } from '@/lib/api'
@@ -135,15 +129,15 @@ export function GatewaySection() {
             <p className="text-sm text-[var(--color-secondary)]">Bind address</p>
             <p className="text-xs text-[var(--color-muted)]">Where the gateway listens</p>
           </div>
-          <Select value={bindAddress} onValueChange={(v) => { markDirty(); setBindAddress(v) }}>
-            <SelectTrigger className="w-[160px] h-8 text-xs font-mono">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="127.0.0.1">127.0.0.1 (localhost only)</SelectItem>
-              <SelectItem value="0.0.0.0">0.0.0.0 (all interfaces)</SelectItem>
-            </SelectContent>
-          </Select>
+          <SmartSelect
+            value={bindAddress}
+            onValueChange={(v) => { markDirty(); setBindAddress(v) }}
+            triggerClassName="w-[160px] h-8 text-xs font-mono"
+            items={[
+              { value: '127.0.0.1', label: '127.0.0.1 (localhost only)' },
+              { value: '0.0.0.0', label: '0.0.0.0 (all interfaces)' },
+            ]}
+          />
         </div>
 
         {/* Port */}
@@ -167,15 +161,15 @@ export function GatewaySection() {
             <p className="text-sm text-[var(--color-secondary)]">Auth mode</p>
             <p className="text-xs text-[var(--color-muted)]">Require a bearer token for API access</p>
           </div>
-          <Select value={authMode} onValueChange={(v) => { markDirty(); setAuthMode(v as 'none' | 'token') }}>
-            <SelectTrigger className="w-[120px] h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none">None</SelectItem>
-              <SelectItem value="token">Bearer token</SelectItem>
-            </SelectContent>
-          </Select>
+          <SmartSelect
+            value={authMode}
+            onValueChange={(v) => { markDirty(); setAuthMode(v as 'none' | 'token') }}
+            triggerClassName="w-[120px] h-8 text-xs"
+            items={[
+              { value: 'none', label: 'None' },
+              { value: 'token', label: 'Bearer token' },
+            ]}
+          />
         </div>
 
         {/* Token management */}
@@ -232,17 +226,17 @@ export function GatewaySection() {
             <p className="text-sm text-[var(--color-secondary)]">Log level</p>
             <p className="text-xs text-[var(--color-muted)]">Verbosity of gateway logs</p>
           </div>
-          <Select value={logLevel} onValueChange={(v) => { markDirty(); setLogLevel(v) }}>
-            <SelectTrigger className="w-[120px] h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="debug">Debug</SelectItem>
-              <SelectItem value="info">Info</SelectItem>
-              <SelectItem value="warn">Warn</SelectItem>
-              <SelectItem value="error">Error</SelectItem>
-            </SelectContent>
-          </Select>
+          <SmartSelect
+            value={logLevel}
+            onValueChange={(v) => { markDirty(); setLogLevel(v) }}
+            triggerClassName="w-[120px] h-8 text-xs"
+            items={[
+              { value: 'debug', label: 'Debug' },
+              { value: 'info', label: 'Info' },
+              { value: 'warn', label: 'Warn' },
+              { value: 'error', label: 'Error' },
+            ]}
+          />
         </div>
       </div>
 

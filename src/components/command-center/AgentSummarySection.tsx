@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Robot, CaretDown, CaretUp, ArrowRight } from '@phosphor-icons/react'
-import { fetchAgents, fetchTasks } from '@/lib/api'
+import { fetchAgents, fetchTasks, type Task } from '@/lib/api'
 import { useChatStore } from '@/store/chat'
 import { useNavigate } from '@tanstack/react-router'
 import { cn } from '@/lib/utils'
@@ -33,9 +33,9 @@ export function AgentSummarySection() {
     refetchInterval: 30_000,
   })
 
-  const { data: tasks = [], isError: tasksError } = useQuery({
+  const { data: tasks = [], isError: tasksError } = useQuery<Task[], Error>({
     queryKey: ['tasks'],
-    queryFn: fetchTasks,
+    queryFn: () => fetchTasks(),
     staleTime: 30_000,
     refetchInterval: 30_000,
   })

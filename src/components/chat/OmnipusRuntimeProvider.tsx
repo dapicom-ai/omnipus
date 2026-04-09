@@ -25,7 +25,7 @@ function WsLifecycle() {
   useEffect(() => {
     const conn = new WsConnection({
       onFrame: handleFrame,
-      onConnected: () => {
+      onConnected: async () => {
         setConnected(true);
         setConnectionError(null);
       },

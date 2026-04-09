@@ -731,10 +731,10 @@ func (c *configV0) Migrate() (*Config, error) {
 	cfg.Devices = c.Devices
 
 	if len(c.ModelList) > 0 {
-		// Convert []modelConfigV0 to []ModelConfig
-		cfg.ModelList = make([]*ModelConfig, len(c.ModelList))
+		// Convert []modelConfigV0 to []*ModelConfig (Providers)
+		cfg.Providers = make([]*ModelConfig, len(c.ModelList))
 		for i, m := range c.ModelList {
-			cfg.ModelList[i] = &ModelConfig{
+			cfg.Providers[i] = &ModelConfig{
 				ModelName:      m.ModelName,
 				Model:          m.Model,
 				APIBase:        m.APIBase,

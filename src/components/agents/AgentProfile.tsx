@@ -18,19 +18,15 @@ import {
   CaretUp,
   Scroll,
   NotePencil,
+  UploadSimple,
 } from '@phosphor-icons/react'
 import { useNavigate } from '@tanstack/react-router'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { SmartSelect } from '@/components/ui/smart-select'
+import { ModelSelector } from '@/components/ui/model-selector'
 import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
 import {
@@ -44,16 +40,6 @@ import {
 } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { AVATAR_COLORS } from '@/lib/constants'
-
-// Fallback model list when no providers are connected
-const FALLBACK_MODELS = [
-  'claude-opus-4-6',
-  'claude-sonnet-4-6',
-  'claude-haiku-4-5-20251001',
-  'gpt-4o',
-  'gpt-4o-mini',
-  'gemini-1.5-pro',
-]
 
 const ICON_OPTIONS = [
   { name: 'Robot', component: Robot },
@@ -112,9 +98,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     .filter((e) => e.agent_id === agentId)
     .slice(0, 5)
 
-  const connectedModels = providers.filter((p) => p.status === 'connected').flatMap((p) => p.models ?? [])
-  const usingFallbackModels = connectedModels.length === 0
-  const availableModels = usingFallbackModels ? FALLBACK_MODELS : connectedModels
+  const availableModels = providers.filter((p) => p.status === 'connected').flatMap((p) => p.models ?? [])
 
   const isDirtyRef = useRef(false)
   const markDirty = () => { isDirtyRef.current = true }
@@ -258,6 +242,55 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     }
   }
 
+  function SaveAllButton({ onUpload }: { onUpload?: (content: string) => void }) {
+    return (
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={isSaving || !hasHydrated.current}
+          onClick={handleSave}
+        >
+          <FloppyDisk size={13} weight="bold" className="mr-1.5" />
+          Save All
+        </Button>
+        {onUpload && (
+          <button
+            type="button"
+            onClick={() => {
+              const input = document.createElement('input')
+              input.type = 'file'
+              input.accept = '.md,.markdown,.txt'
+              input.onchange = (e) => {
+                const file = (e.target as HTMLInputElement).files?.[0]
+                if (!file) return
+                if (file.size > 1_000_000) {
+                  addToast({ message: `File too large (${(file.size / 1_000_000).toFixed(1)}MB). Max 1MB for markdown files.`, variant: 'error' })
+                  return
+                }
+                const reader = new FileReader()
+                reader.onload = () => {
+                  onUpload(reader.result as string)
+                  markDirty()
+                }
+                reader.onerror = () => {
+                  addToast({ message: `Failed to read ${file.name}: ${reader.error?.message ?? 'unknown error'}`, variant: 'error' })
+                }
+                reader.readAsText(file)
+              }
+              input.click()
+            }}
+            className="h-7 px-2 text-xs rounded border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors flex items-center gap-1"
+          >
+            <UploadSimple size={12} />
+            Upload .md
+          </button>
+        )}
+        <span className="text-[10px] text-[var(--color-muted)]">Saves all agent fields</span>
+      </div>
+    )
+  }
+
   const recentSessions = agentSessions.slice(0, 10)
   const AvatarIcon = getIconComponent(selectedIcon)
 
@@ -283,6 +316,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
   const canEdit = agent.type !== 'system'
 
   return (
+    <div className="absolute inset-0 overflow-y-auto">
     <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
@@ -306,7 +340,9 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
         <div className="min-w-0">
           <h1 className="font-headline text-xl font-bold text-[var(--color-secondary)]">{agent.name}</h1>
           <div className="flex items-center gap-2 mt-1">
-            <Badge variant={agent.type === 'system' ? 'warning' : agent.type === 'core' ? 'secondary' : 'outline'}>
+            <Badge variant={
+              agent.type === 'system' ? 'warning' : agent.type === 'core' ? 'secondary' : 'outline'
+            }>
               {agent.type}
             </Badge>
             <span className="text-xs text-[var(--color-muted)]">{agent.description}</span>
@@ -370,24 +406,12 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
             {/* Icon picker */}
             <div className="space-y-1.5">
               <p className="text-xs text-[var(--color-muted)]">Avatar icon</p>
-              <Select
+              <SmartSelect
                 value={selectedIcon}
                 onValueChange={(v) => { markDirty(); setSelectedIcon(v as IconName) }}
-              >
-                <SelectTrigger className="w-48">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {ICON_OPTIONS.map(({ name: iconName, component: IconComp }) => (
-                    <SelectItem key={iconName} value={iconName}>
-                      <div className="flex items-center gap-2">
-                        <IconComp size={14} />
-                        <span>{iconName}</span>
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                triggerClassName="w-48"
+                items={ICON_OPTIONS.map(({ name: iconName }) => ({ value: iconName, label: iconName }))}
+              />
             </div>
           </section>
           <Separator />
@@ -397,28 +421,18 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
       {/* Model section */}
       <section className="space-y-3">
         <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)]">Model</h2>
-        {(usingFallbackModels || providersError) && (
+        {providersError && (
           <p className="text-xs text-[var(--color-warning)]">
-            {providersError
-              ? 'Could not load providers — showing default model list.'
-              : 'No providers connected — showing default model list. Connect a provider in Settings for accurate options.'}
+            Could not load providers. You can still enter a model slug manually.
           </p>
         )}
-        <Select
-          value={model || '__default__'}
-          onValueChange={(v) => { markDirty(); setModel(v === '__default__' ? '' : v) }}
+        <ModelSelector
+          models={availableModels}
+          value={model}
+          onChange={(v) => { markDirty(); setModel(v) }}
+          placeholder="Provider default"
           disabled={!canEdit}
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="Provider default" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="__default__">Provider default</SelectItem>
-            {availableModels.map((m) => (
-              <SelectItem key={m} value={m}>{m}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        />
 
         {/* Fallback models */}
         {canEdit && (
@@ -517,18 +531,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
               rows={8}
               className="text-xs font-mono resize-none"
             />
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={isSaving || !hasHydrated.current}
-                onClick={() => { if (hasHydrated.current) doUpdate(buildFullPayload()) }}
-              >
-                <FloppyDisk size={13} weight="bold" className="mr-1.5" />
-                Save All
-              </Button>
-              <span className="text-[10px] text-[var(--color-muted)]">Saves all agent fields</span>
-            </div>
+            <SaveAllButton onUpload={setSoul} />
           </section>
         </>
       )}
@@ -552,18 +555,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
               rows={6}
               className="text-xs font-mono resize-none"
             />
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={isSaving || !hasHydrated.current}
-                onClick={() => { if (hasHydrated.current) doUpdate(buildFullPayload()) }}
-              >
-                <FloppyDisk size={13} weight="bold" className="mr-1.5" />
-                Save All
-              </Button>
-              <span className="text-[10px] text-[var(--color-muted)]">Saves all agent fields</span>
-            </div>
+            <SaveAllButton onUpload={setInstructions} />
           </section>
         </>
       )}
@@ -610,18 +602,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
               rows={6}
               className="text-xs font-mono resize-none"
             />
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={isSaving || !hasHydrated.current}
-                onClick={() => { if (hasHydrated.current) doUpdate(buildFullPayload()) }}
-              >
-                <FloppyDisk size={13} weight="bold" className="mr-1.5" />
-                Save All
-              </Button>
-              <span className="text-[10px] text-[var(--color-muted)]">Saves all agent fields</span>
-            </div>
+            <SaveAllButton onUpload={setHeartbeat} />
           </section>
         </>
       )}
@@ -722,20 +703,17 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
               </div>
               <div className="flex items-center gap-3">
                 <label className="text-xs text-[var(--color-muted)] w-44 shrink-0">Message handling</label>
-                <Select
+                <SmartSelect
                   value={steeringMode}
                   onValueChange={(v) => { markDirty(); setSteeringMode(v) }}
                   disabled={!canEdit}
-                >
-                  <SelectTrigger className="text-xs h-8">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="one-at-a-time">One at a time</SelectItem>
-                    <SelectItem value="parallel">Parallel</SelectItem>
-                    <SelectItem value="queue">Queue</SelectItem>
-                  </SelectContent>
-                </Select>
+                  triggerClassName="text-xs h-8"
+                  items={[
+                    { value: 'one-at-a-time', label: 'One at a time' },
+                    { value: 'parallel', label: 'Parallel' },
+                    { value: 'queue', label: 'Queue' },
+                  ]}
+                />
               </div>
               <div className="flex items-center justify-between py-1">
                 <div>
@@ -837,6 +815,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
           </div>
         )}
       </section>
+    </div>
     </div>
   )
 }

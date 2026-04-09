@@ -88,7 +88,7 @@ describe('chat streaming integration (test #24) — token rendering', () => {
         streamCursor: true,
       })
       useChatStore.setState({ isStreaming: true })
-      useChatStore.getState().handleFrame({ type: 'done', stats: { tokens: 150, cost: 0.02 } })
+      useChatStore.getState().handleFrame({ type: 'done', stats: { tokens: 150, cost: 0.02, duration_ms: 0 } })
     })
 
     await waitFor(() => {

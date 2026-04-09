@@ -66,4 +66,8 @@ web/backend/dist/*
 docker/data
 .playwright-mcp/
 pkg/gateway/spa/
-*.png
+
+# Screenshots (Playwright test artifacts) — root level only
+/*.png
+/*.jpg
+/*.jpeg

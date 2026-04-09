@@ -30,8 +30,8 @@ func buildModelListResolver(cfg *config.Config) func(raw string) (string, bool) 
 			return ensureProtocol(mc.Model), true
 		}
 
-		for i := range cfg.ModelList {
-			fullModel := strings.TrimSpace(cfg.ModelList[i].Model)
+		for i := range cfg.Providers {
+			fullModel := strings.TrimSpace(cfg.Providers[i].Model)
 			if fullModel == "" {
 				continue
 			}

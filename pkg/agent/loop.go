@@ -96,6 +96,8 @@ type processOptions struct {
 	SuppressToolFeedback    bool                // Whether to suppress inline tool feedback messages
 	NoHistory               bool                // If true, don't load session history (for heartbeat)
 	SkipInitialSteeringPoll bool                // If true, skip the steering poll at loop start (used by Continue)
+	TranscriptSessionID     string              // Session ID for transcript tool call recording (empty = disabled)
+	TranscriptStore         *session.UnifiedStore // Store for transcript tool call recording (nil = disabled)
 }
 
 type continuationTarget struct {
@@ -1246,9 +1248,10 @@ func (al *AgentLoop) ListAllSessions() ([]*session.UnifiedMeta, error) {
 	return all, nil
 }
 
-// processTaskDirect runs the agent loop for a specific agent with a given prompt and session key.
-// Used by the TaskExecutor to dispatch task work to the designated agent.
-func (al *AgentLoop) processTaskDirect(ctx context.Context, agentID, prompt, sessionKey string) (string, error) {
+// processTaskDirect runs the agent loop for a task, dispatching to the given agent.
+// taskChatID identifies the WebSocket chat for event forwarding (defaults to "task:" + sessionKey).
+// Channel is "webchat" for streaming; tool context is "system" so exec/cron tools are permitted.
+func (al *AgentLoop) processTaskDirect(ctx context.Context, agentID, prompt, sessionKey, taskChatID string) (string, error) {
 	if err := al.ensureHooksInitialized(ctx); err != nil {
 		return "", fmt.Errorf("processTaskDirect: hooks: %w", err)
 	}
@@ -1266,18 +1269,25 @@ func (al *AgentLoop) processTaskDirect(ctx context.Context, agentID, prompt, ses
 		return "", fmt.Errorf("processTaskDirect: no agent %q", agentID)
 	}
 
-	// Inject the agent ID into the tool context so task tools know who is executing.
+	// Tool context uses "system" channel so exec/cron tools are permitted.
 	taskCtx := tools.WithAgentID(ctx, agentID)
+	taskCtx = tools.WithToolContext(taskCtx, "system", "")
+
+	if taskChatID == "" {
+		taskChatID = "task:" + sessionKey
+	}
 
 	return al.runAgentLoop(taskCtx, ag, processOptions{
-		SessionKey:  sessionKey,
-		Channel:     "system",
-		ChatID:      "task",
-		SenderID:    "task-executor",
-		UserMessage: prompt,
-		DefaultResponse: defaultResponse,
-		EnableSummary:   false,
-		SendResponse:    false,
+		SessionKey:          sessionKey,
+		Channel:             "webchat",
+		ChatID:              taskChatID,
+		SenderID:            "task-executor",
+		UserMessage:         prompt,
+		DefaultResponse:     defaultResponse,
+		EnableSummary:       false,
+		SendResponse:        false,
+		TranscriptSessionID: taskChatID,
+		TranscriptStore:     al.GetAgentStore(agentID),
 	})
 }
 
@@ -1584,17 +1594,31 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 			"route_channel": route.Channel,
 		})
 
+	// Resolve transcript store for tool call recording (forwarded via message metadata).
+	var transcriptSessionID string
+	var transcriptStore *session.UnifiedStore
+	if tsid := inboundMetadata(msg, "transcript_session_id"); tsid != "" {
+		transcriptSessionID = tsid
+		transcriptStore = al.ResolveSessionStore(tsid)
+		if transcriptStore == nil {
+			logger.WarnCF("agent", "transcript_session_id present but store not found — tool calls will not be recorded",
+				map[string]any{"transcript_session_id": tsid})
+		}
+	}
+
 	opts := processOptions{
-		SessionKey:        sessionKey,
-		Channel:           msg.Channel,
-		ChatID:            msg.ChatID,
-		SenderID:          msg.SenderID,
-		SenderDisplayName: msg.Sender.DisplayName,
-		UserMessage:       msg.Content,
-		Media:             msg.Media,
-		DefaultResponse:   defaultResponse,
-		EnableSummary:     true,
-		SendResponse:      false,
+		SessionKey:          sessionKey,
+		Channel:             msg.Channel,
+		ChatID:              msg.ChatID,
+		SenderID:            msg.SenderID,
+		SenderDisplayName:   msg.Sender.DisplayName,
+		UserMessage:         msg.Content,
+		Media:               msg.Media,
+		DefaultResponse:     defaultResponse,
+		EnableSummary:       true,
+		SendResponse:        false,
+		TranscriptSessionID: transcriptSessionID,
+		TranscriptStore:     transcriptStore,
 	}
 
 	// context-dependent commands check their own Runtime fields and report
@@ -3124,6 +3148,17 @@ turnLoop:
 					Async:      toolResult.Async,
 				},
 			)
+			tcStatus := "success"
+			if toolResult.IsError {
+				tcStatus = "error"
+			}
+			ts.appendToolCallTranscript(session.ToolCall{
+				ID:         toolCallID,
+				Tool:       toolName,
+				Status:     tcStatus,
+				DurationMS: toolDuration.Milliseconds(),
+				Parameters: cloneEventArguments(toolArgs),
+			})
 			messages = append(messages, toolResultMsg)
 			if !ts.opts.NoHistory {
 				ts.agent.Sessions.AddFullMessage(ts.sessionKey, toolResultMsg)
@@ -3415,7 +3450,12 @@ func (al *AgentLoop) maybeSummarize(agent *AgentInstance, sessionKey string, tur
 		summarizeKey := agent.ID + ":" + sessionKey
 		if _, loading := al.summarizing.LoadOrStore(summarizeKey, true); !loading {
 			go func() {
-				defer al.summarizing.Delete(summarizeKey)
+				defer func() {
+					if r := recover(); r != nil {
+						logger.ErrorCF("agent", "Panic during summarization", map[string]any{"panic": r})
+					}
+					al.summarizing.Delete(summarizeKey)
+				}()
 				logger.Debug("Memory threshold reached. Optimizing conversation history...")
 				al.summarizeSession(agent, sessionKey, turnScope)
 			}()

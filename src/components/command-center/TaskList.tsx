@@ -21,13 +21,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { SmartSelect } from '@/components/ui/smart-select'
 import { fetchTasks, fetchAgents, createTask, updateTask, startTask } from '@/lib/api'
 import type { Task } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
@@ -330,30 +324,24 @@ export function TaskList({ statusFilter = 'all', onTaskSelect }: TaskListProps) 
           />
           <div className="flex items-center gap-2">
             {/* Priority */}
-            <Select value={newPriority} onValueChange={setNewPriority}>
-              <SelectTrigger className="h-7 text-xs w-[90px] shrink-0">
-                <SelectValue placeholder="Priority" />
-              </SelectTrigger>
-              <SelectContent>
-                {[1, 2, 3, 4, 5].map((p) => (
-                  <SelectItem key={p} value={String(p)} className="text-xs">
-                    P{p}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SmartSelect
+              value={newPriority}
+              onValueChange={setNewPriority}
+              placeholder="Priority"
+              triggerClassName="h-7 text-xs w-[90px] shrink-0"
+              items={[1, 2, 3, 4, 5].map((p) => ({ value: String(p), label: `P${p}` }))}
+            />
             {/* Agent */}
-            <Select value={newAgentId} onValueChange={setNewAgentId}>
-              <SelectTrigger className="h-7 text-xs flex-1">
-                <SelectValue placeholder="Assign agent..." />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__" className="text-xs">Unassigned</SelectItem>
-                {agents.map((a) => (
-                  <SelectItem key={a.id} value={a.id} className="text-xs">{a.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SmartSelect
+              value={newAgentId}
+              onValueChange={setNewAgentId}
+              placeholder="Assign agent..."
+              triggerClassName="h-7 text-xs flex-1"
+              items={[
+                { value: '__none__', label: 'Unassigned' },
+                ...agents.map((a) => ({ value: a.id, label: a.name })),
+              ]}
+            />
           </div>
           {/* Start immediately checkbox */}
           <label className="flex items-center gap-2 text-xs text-[var(--color-muted)] cursor-pointer select-none">

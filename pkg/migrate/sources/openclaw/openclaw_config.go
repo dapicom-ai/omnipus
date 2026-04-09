@@ -493,7 +493,7 @@ func (c *OpenClawConfig) ConvertToOmnipus(sourceHome string) (*OmnipusConfig, []
 		defaultBaseURL = provCfg.BaseUrl
 	}
 
-	cfg.ModelList = []ModelConfig{
+	cfg.Providers = []ModelConfig{
 		{
 			ModelName: modelName,
 			Model:     fmt.Sprintf("%s/%s", provider, modelName),
@@ -509,7 +509,7 @@ func (c *OpenClawConfig) ConvertToOmnipus(sourceHome string) (*OmnipusConfig, []
 		if provCfg.ApiKey != "" {
 			continue
 		}
-		cfg.ModelList = append(cfg.ModelList, ModelConfig{
+		cfg.Providers = append(cfg.Providers, ModelConfig{
 			ModelName: fmt.Sprintf("%s", provName),
 			Model:     fmt.Sprintf("%s/%s", provName, provName),
 			APIKey:    provCfg.ApiKey,
@@ -570,7 +570,7 @@ type OmnipusConfig struct {
 	Agents    AgentsConfig   `json:"agents"`
 	Bindings  []AgentBinding `json:"bindings,omitempty"`
 	Channels  ChannelsConfig `json:"channels"`
-	ModelList []ModelConfig  `json:"model_list"`
+	Providers []ModelConfig  `json:"providers"`
 	Gateway   GatewayConfig  `json:"gateway"`
 	Tools     ToolsConfig    `json:"tools"`
 }
@@ -980,7 +980,7 @@ func (c *OmnipusConfig) ToStandardConfig() *config.Config {
 	cfg.Agents.Defaults.ModelName = c.Agents.Defaults.ModelName
 	cfg.Agents.Defaults.ModelFallbacks = c.Agents.Defaults.ModelFallbacks
 
-	for _, m := range c.ModelList {
+	for _, m := range c.Providers {
 		mc := &config.ModelConfig{
 			ModelName: m.ModelName,
 			Model:     m.Model,
@@ -990,7 +990,7 @@ func (c *OmnipusConfig) ToStandardConfig() *config.Config {
 		if m.APIKey != "" {
 			mc.SetAPIKey(m.APIKey)
 		}
-		cfg.ModelList = append(cfg.ModelList, mc)
+		cfg.Providers = append(cfg.Providers, mc)
 	}
 
 	cfg.Channels = c.Channels.ToStandardChannels()

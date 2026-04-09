@@ -23,20 +23,23 @@ var ErrNotFound = errors.New("task not found")
 
 // TaskEntity is the persistent shape for one task stored at ~/.omnipus/tasks/<id>.json.
 type TaskEntity struct {
-	ID           string     `json:"id"`
-	Title        string     `json:"title"`
-	Prompt       string     `json:"prompt"`
-	AgentID      string     `json:"agent_id"`
-	CreatedBy    string     `json:"created_by"`
-	ParentTaskID string     `json:"parent_task_id,omitempty"`
-	Priority     int        `json:"priority"`
-	Status       string     `json:"status"`
-	Result       string     `json:"result,omitempty"`
-	Artifacts    []string   `json:"artifacts,omitempty"`
-	TriggerType  string     `json:"trigger_type"`
-	CreatedAt    time.Time  `json:"created_at"`
-	StartedAt    *time.Time `json:"started_at,omitempty"`
-	CompletedAt  *time.Time `json:"completed_at,omitempty"`
+	ID            string     `json:"id"`
+	Title         string     `json:"title"`
+	Prompt        string     `json:"prompt"`
+	AgentID       string     `json:"agent_id"`
+	CreatedBy     string     `json:"created_by"`
+	ParentTaskID  string     `json:"parent_task_id,omitempty"`
+	Priority      int        `json:"priority"`
+	Status        string     `json:"status"`
+	Result        string     `json:"result,omitempty"`
+	Artifacts     []string   `json:"artifacts,omitempty"`
+	SessionID     string     `json:"session_id,omitempty"`
+	TriggerType   string     `json:"trigger_type"`
+	SourceChannel string     `json:"source_channel,omitempty"` // originating channel (e.g. "telegram")
+	SourceChatID  string     `json:"source_chat_id,omitempty"` // originating chat ID for result delivery
+	CreatedAt     time.Time  `json:"created_at"`
+	StartedAt     *time.Time `json:"started_at,omitempty"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
 
 	// Legacy GTD fields — read-only, used only during lazy migration.
 	legacyName        string
@@ -55,16 +58,19 @@ type legacyRaw struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 
 	// New fields — may be zero in old files.
-	Title       string     `json:"title,omitempty"`
-	Prompt      string     `json:"prompt,omitempty"`
-	CreatedBy   string     `json:"created_by,omitempty"`
-	ParentTaskID string    `json:"parent_task_id,omitempty"`
-	Priority    int        `json:"priority,omitempty"`
-	Result      string     `json:"result,omitempty"`
-	Artifacts   []string   `json:"artifacts,omitempty"`
-	TriggerType string     `json:"trigger_type,omitempty"`
-	StartedAt   *time.Time `json:"started_at,omitempty"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	Title         string     `json:"title,omitempty"`
+	Prompt        string     `json:"prompt,omitempty"`
+	CreatedBy     string     `json:"created_by,omitempty"`
+	ParentTaskID  string     `json:"parent_task_id,omitempty"`
+	Priority      int        `json:"priority,omitempty"`
+	Result        string     `json:"result,omitempty"`
+	Artifacts     []string   `json:"artifacts,omitempty"`
+	SessionID     string     `json:"session_id,omitempty"`
+	TriggerType   string     `json:"trigger_type,omitempty"`
+	SourceChannel string     `json:"source_channel,omitempty"`
+	SourceChatID  string     `json:"source_chat_id,omitempty"`
+	StartedAt     *time.Time `json:"started_at,omitempty"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
 }
 
 // TaskFilter filters the result of List.  All fields are optional (zero = skip filter).
@@ -77,14 +83,17 @@ type TaskFilter struct {
 
 // TaskPatch is a partial update applied by Update.
 type TaskPatch struct {
-	Status      *string
-	Result      *string
-	Artifacts   *[]string
-	StartedAt   *time.Time
-	CompletedAt *time.Time
-	Title       *string
-	AgentID     *string
-	Priority    *int
+	Status        *string
+	Result        *string
+	Artifacts     *[]string
+	SessionID     *string
+	StartedAt     *time.Time
+	CompletedAt   *time.Time
+	Title         *string
+	AgentID       *string
+	Priority      *int
+	SourceChannel *string
+	SourceChatID  *string
 }
 
 // TaskStore manages per-entity JSON files in a directory.
@@ -132,20 +141,23 @@ func (s *TaskStore) load(id string) (*TaskEntity, error) {
 	// If the file already uses the new format (has Title), return as-is.
 	if raw.Title != "" || raw.Name == "" {
 		t := &TaskEntity{
-			ID:           raw.ID,
-			Title:        raw.Title,
-			Prompt:       raw.Prompt,
-			AgentID:      raw.AgentID,
-			CreatedBy:    raw.CreatedBy,
-			ParentTaskID: raw.ParentTaskID,
-			Priority:     raw.Priority,
-			Status:       raw.Status,
-			Result:       raw.Result,
-			Artifacts:    raw.Artifacts,
-			TriggerType:  raw.TriggerType,
-			CreatedAt:    raw.CreatedAt,
-			StartedAt:    raw.StartedAt,
-			CompletedAt:  raw.CompletedAt,
+			ID:            raw.ID,
+			Title:         raw.Title,
+			Prompt:        raw.Prompt,
+			AgentID:       raw.AgentID,
+			CreatedBy:     raw.CreatedBy,
+			ParentTaskID:  raw.ParentTaskID,
+			Priority:      raw.Priority,
+			Status:        raw.Status,
+			Result:        raw.Result,
+			Artifacts:     raw.Artifacts,
+			SessionID:     raw.SessionID,
+			TriggerType:   raw.TriggerType,
+			SourceChannel: raw.SourceChannel,
+			SourceChatID:  raw.SourceChatID,
+			CreatedAt:     raw.CreatedAt,
+			StartedAt:     raw.StartedAt,
+			CompletedAt:   raw.CompletedAt,
 		}
 		if t.Priority == 0 {
 			t.Priority = 3
@@ -161,14 +173,22 @@ func (s *TaskStore) load(id string) (*TaskEntity, error) {
 
 	// Lazy migration from GTD format.
 	t := &TaskEntity{
-		ID:          raw.ID,
-		Title:       raw.Name,
-		Prompt:      raw.Description,
-		AgentID:     raw.AgentID,
-		CreatedBy:   "user",
-		Priority:    3,
-		TriggerType: "manual",
-		CreatedAt:   raw.CreatedAt,
+		ID:            raw.ID,
+		Title:         raw.Name,
+		Prompt:        raw.Description,
+		AgentID:       raw.AgentID,
+		CreatedBy:     "user",
+		Priority:      3,
+		TriggerType:   "manual",
+		CreatedAt:     raw.CreatedAt,
+		// Preserve new-format fields that may be present even in legacy files.
+		Result:        raw.Result,
+		Artifacts:     raw.Artifacts,
+		SessionID:     raw.SessionID,
+		SourceChannel: raw.SourceChannel,
+		SourceChatID:  raw.SourceChatID,
+		StartedAt:     raw.StartedAt,
+		CompletedAt:   raw.CompletedAt,
 	}
 	// Migrate GTD statuses to execution statuses.
 	switch raw.Status {
@@ -268,8 +288,8 @@ var validStatuses = map[string]bool{
 
 // validTransitions maps current status → set of allowed next statuses.
 var validTransitions = map[string]map[string]bool{
-	"queued":   {"assigned": true, "running": true},
-	"assigned": {"running": true, "queued": true},
+	"queued":   {"assigned": true, "running": true, "failed": true},
+	"assigned": {"running": true, "queued": true, "failed": true},
 	"running":  {"completed": true, "failed": true},
 }
 
@@ -337,6 +357,9 @@ func (s *TaskStore) Update(id string, patch TaskPatch) (*TaskEntity, error) {
 	if patch.Artifacts != nil {
 		t.Artifacts = *patch.Artifacts
 	}
+	if patch.SessionID != nil {
+		t.SessionID = *patch.SessionID
+	}
 	if patch.StartedAt != nil {
 		t.StartedAt = patch.StartedAt
 	}
@@ -355,6 +378,12 @@ func (s *TaskStore) Update(id string, patch TaskPatch) (*TaskEntity, error) {
 			return nil, fmt.Errorf("taskstore: priority must be 1-5, got %d", p)
 		}
 		t.Priority = p
+	}
+	if patch.SourceChannel != nil {
+		t.SourceChannel = *patch.SourceChannel
+	}
+	if patch.SourceChatID != nil {
+		t.SourceChatID = *patch.SourceChatID
 	}
 
 	if err := s.write(t); err != nil {

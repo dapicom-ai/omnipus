@@ -33,6 +33,8 @@ const (
 	EntryTypeCompaction EntryType = "compaction"
 	// EntryTypeSystem marks a system-level event entry.
 	EntryTypeSystem EntryType = "system"
+	// EntryTypeToolCall marks a tool invocation entry.
+	EntryTypeToolCall EntryType = "tool_call"
 )
 
 // SessionStatus classifies the lifecycle state of a session.

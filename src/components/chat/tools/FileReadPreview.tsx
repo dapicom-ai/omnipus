@@ -89,23 +89,25 @@ function FileReadBlock({
   )
 }
 
-function renderFileRead({ args, result, status }: { args: ReadFileArgs | undefined; result: unknown; status: { type: string } }) {
-  return (
+export const FileReadPreviewUI = makeAssistantToolUI<ReadFileArgs, unknown>({
+  toolName: 'read_file',
+  render: ({ args, result, status }) => (
     <FileReadBlock
       args={args ?? {}}
       result={result}
       isRunning={status.type === 'running'}
     />
-  )
-}
-
-export const FileReadPreviewUI = makeAssistantToolUI<ReadFileArgs, unknown>({
-  toolName: 'read_file',
-  render: renderFileRead,
+  ),
 })
 
 // BRD C.6.1.4 tool name (dot-notation). Backend uses PicoClaw convention (read_file); both registered.
 export const FileReadAliasDotUI = makeAssistantToolUI<ReadFileArgs, unknown>({
   toolName: 'file.read',
-  render: renderFileRead,
+  render: ({ args, result, status }) => (
+    <FileReadBlock
+      args={args ?? {}}
+      result={result}
+      isRunning={status.type === 'running'}
+    />
+  ),
 })

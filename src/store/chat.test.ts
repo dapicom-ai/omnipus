@@ -134,7 +134,7 @@ describe('chat store — streaming via handleFrame', () => {
         streamCursor: true,
       })
       useChatStore.setState({ isStreaming: true })
-      useChatStore.getState().handleFrame({ type: 'done', stats: { tokens: 150, cost: 0.02 } })
+      useChatStore.getState().handleFrame({ type: 'done', stats: { tokens: 150, cost: 0.02, duration_ms: 0 } })
     })
     const state = useChatStore.getState()
     expect(state.isStreaming).toBe(false)

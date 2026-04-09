@@ -1,5 +1,5 @@
-import { useEffect, useCallback } from 'react'
-import { Link, useLocation } from '@tanstack/react-router'
+import { useEffect, useCallback, useRef, useState } from 'react'
+import { Link, useLocation, useNavigate } from '@tanstack/react-router'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ChatCircle,
@@ -9,14 +9,13 @@ import {
   Gear,
   PushPin,
   PushPinSlash,
+  SignOut,
 } from '@phosphor-icons/react'
-import { useSidebarStore } from '@/store/sidebar'
+import { useSidebarStore, SIDEBAR_PIN_BREAKPOINT } from '@/store/sidebar'
 import { useChatStore } from '@/store/chat'
+import { useAuthStore } from '@/store/auth'
 import { cn } from '@/lib/utils'
 import avatarUrl from '@/assets/logo/omnipus-avatar.svg?url'
-
-// FR-015/FR-016: spec breakpoint is 640px — matches Tailwind's `sm` prefix
-const PHONE_BREAKPOINT = 640
 
 const NAV_ITEMS = [
   { to: '/', label: 'Chat', Icon: ChatCircle },
@@ -27,9 +26,28 @@ const NAV_ITEMS = [
 
 // US-5: Sidebar — overlay default, pin option, Framer Motion, Zustand
 export function Sidebar() {
-  const { isOpen, isPinned, close, toggle, togglePin, unpin } = useSidebarStore()
+  const { isOpen, isPinned, close, toggle, togglePin } = useSidebarStore()
   const pendingCount = useChatStore((s) => s.pendingApprovals.length)
   const location = useLocation()
+  const navigate = useNavigate()
+
+  // Track whether the viewport is wide enough to allow pinning (≥1024px).
+  const [canPin, setCanPin] = useState<boolean>(
+    () => window.matchMedia(`(min-width: ${SIDEBAR_PIN_BREAKPOINT}px)`).matches
+  )
+
+  // The sidebar is effectively pinned only when the viewport allows it.
+  // Declared early so all hooks below can reference it.
+  const effectivelyPinned = isPinned && canPin
+  const isVisible = effectivelyPinned || isOpen
+
+  // Track when overlay sidebar was open so we can return focus to the hamburger on close
+  const wasOverlayOpenRef = useRef(false)
+
+  const handleLogout = useCallback(() => {
+    useAuthStore.getState().clearAuth()
+    navigate({ to: '/login' })
+  }, [navigate])
 
   // US-5: Cmd+B / Ctrl+B keyboard shortcut + Escape to close
   const handleKeydown = useCallback(
@@ -38,37 +56,46 @@ export function Sidebar() {
         e.preventDefault()
         toggle()
       }
-      if (e.key === 'Escape' && isOpen && !isPinned) {
+      // Escape closes the overlay sidebar; the pinned sidebar is never closed by Escape.
+      // When viewport < 1024px pin is ignored, so treat isPinned as false there.
+      if (e.key === 'Escape' && isOpen && !effectivelyPinned) {
         close()
       }
     },
-    [toggle, close, isOpen, isPinned]
+    [toggle, close, isOpen, effectivelyPinned]
   )
 
-  // FR-016: Unpin when viewport drops below 768px so sidebar is reachable on mobile
-  const handleResize = useCallback(() => {
-    if (window.innerWidth < PHONE_BREAKPOINT && isPinned) {
-      unpin()
+  // Track when the viewport crosses the pin breakpoint.
+  // We do NOT call unpin() here — the user's pin preference is preserved.
+  // effectivelyPinned = isPinned && canPin already suppresses pinned behaviour
+  // at narrow viewports, and the preference is automatically restored on widen.
+  useEffect(() => {
+    const mq = window.matchMedia(`(min-width: ${SIDEBAR_PIN_BREAKPOINT}px)`)
+    function handleChange(e: MediaQueryListEvent) {
+      setCanPin(e.matches)
     }
-  }, [isPinned, unpin])
+    mq.addEventListener('change', handleChange)
+    return () => mq.removeEventListener('change', handleChange)
+  }, [setCanPin])
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeydown)
     return () => window.removeEventListener('keydown', handleKeydown)
   }, [handleKeydown])
 
+  // Return focus to hamburger when overlay sidebar closes (Task 4)
   useEffect(() => {
-    window.addEventListener('resize', handleResize)
-    // Run once on mount in case the component mounts at phone width while pinned
-    handleResize()
-    return () => window.removeEventListener('resize', handleResize)
-  }, [handleResize])
-
-  const isVisible = isPinned || isOpen
+    const overlayOpen = isOpen && !effectivelyPinned
+    if (wasOverlayOpenRef.current && !overlayOpen) {
+      const hamburger = document.getElementById('sidebar-hamburger') as HTMLButtonElement | null
+      hamburger?.focus()
+    }
+    wasOverlayOpenRef.current = overlayOpen
+  }, [isOpen, effectivelyPinned])
 
   // Sidebar content shared between pinned and overlay modes
   const sidebarContent = (
-    <nav className="flex h-full flex-col">
+    <nav className="flex h-full flex-col" aria-label="Main navigation">
       {/* Brand mark */}
       <div className="flex items-center gap-3 px-4 py-5 border-b border-[var(--color-border)]">
         <img
@@ -90,9 +117,11 @@ export function Sidebar() {
             <Link
               key={to}
               to={to}
+              aria-label={badge !== null ? `${label} (${badge} pending)` : label}
+              aria-current={isActive ? 'page' : undefined}
               onClick={() => {
                 // US-5: overlay mode — close on nav item click
-                if (!isPinned) close()
+                if (!effectivelyPinned) close()
               }}
               className={cn(
                 'flex items-center gap-3 px-4 py-2.5 mx-2 rounded-lg text-sm transition-colors',
@@ -108,7 +137,7 @@ export function Sidebar() {
               />
               <span className="flex-1">{label}</span>
               {badge !== null && (
-                <span className="flex items-center justify-center min-w-[18px] h-[18px] rounded-full bg-[var(--color-error)] text-white text-[10px] font-bold px-1">
+                <span className="flex items-center justify-center min-w-[18px] h-[18px] rounded-full bg-[var(--color-error)] text-white text-[10px] font-bold px-1" aria-hidden="true">
                   {badge > 99 ? '99+' : badge}
                 </span>
               )}
@@ -121,7 +150,9 @@ export function Sidebar() {
       <div className="border-t border-[var(--color-border)] py-3">
         <Link
           to="/settings"
-          onClick={() => { if (!isPinned) close() }}
+          aria-label="Settings"
+          aria-current={location.pathname === '/settings' ? 'page' : undefined}
+          onClick={() => { if (!effectivelyPinned) close() }}
           className={cn(
             'flex items-center gap-3 px-4 py-2.5 mx-2 rounded-lg text-sm transition-colors',
             location.pathname === '/settings'
@@ -136,26 +167,41 @@ export function Sidebar() {
           Settings
         </Link>
 
-        {/* FR-015: Pin toggle — hidden below 640px (Tailwind sm = 640px) */}
+        {/* Sign out */}
         <button
-          onClick={togglePin}
-          title={isPinned ? 'Unpin sidebar' : 'Pin sidebar'}
-          className="hidden sm:flex items-center gap-3 px-4 py-2.5 mx-2 rounded-lg text-sm text-[var(--color-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-secondary)] transition-colors w-[calc(100%-16px)]"
+          onClick={handleLogout}
+          aria-label="Sign out"
+          className="flex items-center gap-3 px-4 py-2.5 mx-2 rounded-lg text-sm text-[var(--color-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-secondary)] transition-colors w-[calc(100%-16px)]"
         >
-          {isPinned ? <PushPinSlash size={18} /> : <PushPin size={18} />}
-          {isPinned ? 'Unpin sidebar' : 'Pin sidebar'}
+          <SignOut size={18} />
+          Sign out
         </button>
+
+        {/* Pin toggle — only shown when the viewport is wide enough to support it (≥1024px) */}
+        {canPin && (
+          <button
+            onClick={togglePin}
+            aria-label={isPinned ? 'Unpin sidebar' : 'Pin sidebar'}
+            aria-pressed={isPinned}
+            title={isPinned ? 'Unpin sidebar' : 'Pin sidebar'}
+            className="flex items-center gap-3 px-4 py-2.5 mx-2 rounded-lg text-sm text-[var(--color-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-secondary)] transition-colors w-[calc(100%-16px)]"
+          >
+            {isPinned ? <PushPinSlash size={18} /> : <PushPin size={18} />}
+            {isPinned ? 'Unpin sidebar' : 'Pin sidebar'}
+          </button>
+        )}
       </div>
     </nav>
   )
 
   return (
     <>
-      {/* FR-015: Pinned mode — permanent panel, hidden below 640px (sm breakpoint) */}
-      {isPinned && (
+      {/* FR-015: Pinned mode — permanent panel, only rendered when ≥1024px AND user chose to pin */}
+      {effectivelyPinned && (
         <aside
-          className="hidden sm:flex flex-col h-full flex-shrink-0 bg-[var(--color-surface-1)] border-r border-[var(--color-border)]"
+          className="flex flex-col h-full flex-shrink-0 bg-[var(--color-surface-1)] border-r border-[var(--color-border)]"
           style={{ width: 'var(--spacing-sidebar)' }}
+          aria-label="Main navigation"
         >
           {sidebarContent}
         </aside>
@@ -163,7 +209,7 @@ export function Sidebar() {
 
       {/* US-5: Overlay mode — slides in from left, no backdrop dim */}
       <AnimatePresence>
-        {isVisible && !isPinned && (
+        {isVisible && !effectivelyPinned && (
           <motion.aside
             initial={{ x: '-100%' }}
             animate={{ x: 0 }}
@@ -171,6 +217,9 @@ export function Sidebar() {
             transition={{ type: 'tween', duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
             className="fixed left-0 top-0 z-40 flex h-full flex-col bg-[var(--color-surface-1)] border-r border-[var(--color-border)] shadow-2xl"
             style={{ width: 'var(--spacing-sidebar)' }}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Main navigation"
           >
             {sidebarContent}
           </motion.aside>
@@ -179,7 +228,7 @@ export function Sidebar() {
 
       {/* US-5: Click-outside overlay dismiss — no background dimming */}
       <AnimatePresence>
-        {isOpen && !isPinned && (
+        {isOpen && !effectivelyPinned && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}

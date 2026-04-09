@@ -31,7 +31,7 @@ func newTestWSHandler(t *testing.T) (*WSHandler, *bus.MessageBus, *agent.AgentLo
 
 	tmpDir := t.TempDir()
 	cfg := &config.Config{
-		Gateway: config.GatewayConfig{Host: "127.0.0.1", Port: 8080},
+		Gateway: config.GatewayConfig{Host: "127.0.0.1", Port: 8080, DevModeBypass: true},
 		Agents: config.AgentsConfig{
 			Defaults: config.AgentDefaults{
 				Workspace: tmpDir,
@@ -54,6 +54,17 @@ func dialTestWS(t *testing.T, srv *httptest.Server) *websocket.Conn {
 	conn, _, err := dialer.Dial(wsURL, nil)
 	require.NoError(t, err, "WebSocket dial must succeed")
 	return conn
+}
+
+// sendWSAuthFrameDevMode sends the required auth frame as the first WebSocket message.
+// In dev mode (OMNIPUS_BEARER_TOKEN=""), authenticateWS requires the "Bearer " prefix
+// and non-empty token value, but the token itself is not validated.
+func sendWSAuthFrameDevMode(t *testing.T, conn *websocket.Conn) {
+	t.Helper()
+	authFrame := wsClientFrame{Type: "auth", Token: "dev-token"}
+	data, err := json.Marshal(authFrame)
+	require.NoError(t, err, "marshal auth frame")
+	require.NoError(t, conn.WriteMessage(websocket.TextMessage, data), "auth frame write")
 }
 
 // --- E1: WebSocket handler tests ---
@@ -210,6 +221,9 @@ func TestWSHandlerMessagePublishedToBus(t *testing.T) {
 	conn := dialTestWS(t, srv)
 	t.Cleanup(func() { _ = conn.Close() })
 
+	// Authenticate first — required by authenticateWS before any other frames.
+	sendWSAuthFrameDevMode(t, conn)
+
 	// Listen on the bus before sending the message.
 	received := make(chan bus.InboundMessage, 1)
 	go func() {
@@ -249,6 +263,9 @@ func TestWSHandlerAuthNotRequired_NoFirstFrameNeeded(t *testing.T) {
 
 	conn := dialTestWS(t, srv)
 	t.Cleanup(func() { _ = conn.Close() })
+
+	// Authenticate first — required by authenticateWS before any other frames.
+	sendWSAuthFrameDevMode(t, conn)
 
 	received := make(chan bus.InboundMessage, 1)
 	go func() {

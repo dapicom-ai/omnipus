@@ -44,7 +44,7 @@ func newTestRestAPIWithHome(t *testing.T) *restAPI {
 	}
 	// Write a minimal config.json so safeUpdateConfigJSON can read and atomically update it
 	// without writing to the committed pkg/gateway/config.json fixture.
-	minimalCfg := []byte(`{"agents":{"defaults":{},"list":[]},"model_list":[]}`)
+	minimalCfg := []byte(`{"agents":{"defaults":{},"list":[]},"providers":[]}`)
 	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
 
 	msgBus := bus.NewMessageBus()

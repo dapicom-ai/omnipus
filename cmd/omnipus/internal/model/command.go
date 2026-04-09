@@ -69,14 +69,14 @@ func showCurrentModel(cfg *config.Config) {
 }
 
 func listAvailableModels(cfg *config.Config) {
-	if len(cfg.ModelList) == 0 {
-		fmt.Println("  No models configured in model_list")
+	if len(cfg.Providers) == 0 {
+		fmt.Println("  No providers configured in providers")
 		return
 	}
 
 	defaultModel := cfg.Agents.Defaults.ModelName
 
-	for _, model := range cfg.ModelList {
+	for _, model := range cfg.Providers {
 		marker := "  "
 		if model.ModelName == defaultModel {
 			marker = "> "
@@ -89,9 +89,9 @@ func listAvailableModels(cfg *config.Config) {
 }
 
 func setDefaultModel(configPath string, cfg *config.Config, modelName string) error {
-	// Validate that the model exists in model_list
+	// Validate that the model exists in providers
 	modelFound := false
-	for _, model := range cfg.ModelList {
+	for _, model := range cfg.Providers {
 		if model.APIKey() != "" && model.ModelName == modelName {
 			modelFound = true
 			break

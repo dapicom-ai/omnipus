@@ -18,13 +18,7 @@ import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { ModelSelector } from '@/components/ui/model-selector'
 import { useQuery } from '@tanstack/react-query'
 import { useUiStore } from '@/store/ui'
 import { createAgent, fetchProviders } from '@/lib/api'
@@ -51,14 +45,6 @@ function getIconComponent(name: IconName) {
 }
 
 // Fallback model list when no providers are connected
-const FALLBACK_MODELS = [
-  'claude-opus-4-6',
-  'claude-sonnet-4-6',
-  'claude-haiku-4-5-20251001',
-  'gpt-4o',
-  'gpt-4o-mini',
-  'gemini-1.5-pro',
-]
 
 interface CreateAgentModalProps {
   /** Override modal open state (optional — defaults to Zustand store) */
@@ -82,7 +68,7 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
     enabled: isOpen,
   })
   const connectedModels = providers.filter((p) => p.status === 'connected').flatMap((p) => p.models ?? [])
-  const availableModels = connectedModels.length > 0 ? connectedModels : FALLBACK_MODELS
+  const availableModels = connectedModels
 
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -153,7 +139,7 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
     <DialogPrimitive.Root open={isOpen} onOpenChange={(open) => !open && handleClose()}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
-        <DialogPrimitive.Content className="fixed left-[50%] top-[50%] z-50 w-full sm:max-w-lg translate-x-[-50%] translate-y-[-50%] border border-[var(--color-border)] bg-[var(--color-surface-1)] rounded-xl p-6 shadow-xl data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95">
+        <DialogPrimitive.Content className="fixed left-[50%] top-[50%] z-50 w-full sm:max-w-lg max-h-[calc(100vh-4rem)] translate-x-[-50%] translate-y-[-50%] border border-[var(--color-border)] bg-[var(--color-surface-1)] rounded-xl p-6 shadow-xl flex flex-col data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95">
           <DialogPrimitive.Title className="font-headline text-lg font-bold text-[var(--color-secondary)] mb-1">
             Create Agent
           </DialogPrimitive.Title>
@@ -161,7 +147,7 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
             Configure a new custom agent with a persona, model, and tools.
           </DialogPrimitive.Description>
 
-          <div className="space-y-4">
+          <div className="space-y-4 overflow-y-auto flex-1 min-h-0 pr-1">
             {/* Avatar preview + color + icon */}
             <div>
               <label className="text-xs font-medium text-[var(--color-muted)] mb-2 block">
@@ -268,17 +254,12 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
                   </p>
                 </div>
               )}
-              <Select value={model || '__default__'} onValueChange={(v) => setModel(v === '__default__' ? '' : v)}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Use provider default" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__default__">Use provider default</SelectItem>
-                  {availableModels.map((m) => (
-                    <SelectItem key={m} value={m}>{m}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <ModelSelector
+                models={availableModels}
+                value={model}
+                onChange={setModel}
+                placeholder="Use provider default"
+              />
             </div>
 
             {/* Advanced model params */}

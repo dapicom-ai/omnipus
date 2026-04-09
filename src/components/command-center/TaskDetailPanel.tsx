@@ -9,13 +9,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { SmartSelect } from '@/components/ui/smart-select'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -62,11 +56,6 @@ const STATUS_BADGE: Record<string, string> = {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/** Build a session ID matching the backend's sanitization: agent_{agentId}_task_{taskId} */
-function buildTaskSessionId(agentId: string | undefined, taskId: string): string {
-  const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, '_')
-  return `agent_${sanitize(agentId ?? 'unknown')}_task_${sanitize(taskId)}`
-}
 
 // ── Props ──────────────────────────────────────────────────────────────────────
 
@@ -222,67 +211,47 @@ export function TaskDetailPanel({ task, onClose, onTaskSelect }: TaskDetailPanel
 
             {/* Priority */}
             <Field label="Priority">
-              <Select
+              <SmartSelect
                 value={String(task.priority)}
                 onValueChange={(val) => doUpdate({ priority: parseInt(val, 10) })}
                 disabled={!isQueued}
-              >
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {[1, 2, 3, 4, 5].map((p) => (
-                    <SelectItem
-                      key={p}
-                      value={String(p)}
-                      className={cn('text-xs', PRIORITY_CONFIG[p]?.color)}
-                    >
-                      {PRIORITY_CONFIG[p]?.label ?? `P${p}`}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                triggerClassName="h-8 text-xs"
+                items={[1, 2, 3, 4, 5].map((p) => ({
+                  value: String(p),
+                  label: PRIORITY_CONFIG[p]?.label ?? `P${p}`,
+                  className: cn('text-xs', PRIORITY_CONFIG[p]?.color),
+                }))}
+              />
             </Field>
 
             {/* Status */}
             <Field label="Status">
-              <Select
+              <SmartSelect
                 value={task.status}
                 onValueChange={(val) => doUpdate({ status: val as Task['status'] })}
-              >
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {STATUS_OPTIONS.map((o) => (
-                    <SelectItem key={o.value} value={o.value} className={cn('text-xs', o.color)}>
-                      {o.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                triggerClassName="h-8 text-xs"
+                items={STATUS_OPTIONS.map((o) => ({
+                  value: o.value,
+                  label: o.label,
+                  className: cn('text-xs', o.color),
+                }))}
+              />
             </Field>
 
             {/* Agent */}
             <Field label="Agent">
-              <Select
+              <SmartSelect
                 value={task.agent_id ?? '__none__'}
                 onValueChange={(val) =>
                   doUpdate({ agent_id: val === '__none__' ? undefined : val })
                 }
-              >
-                <SelectTrigger className="h-8 text-xs">
-                  <SelectValue placeholder="Unassigned" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__" className="text-xs">Unassigned</SelectItem>
-                  {agents.map((a) => (
-                    <SelectItem key={a.id} value={a.id} className="text-xs">
-                      {a.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                placeholder="Unassigned"
+                triggerClassName="h-8 text-xs"
+                items={[
+                  { value: '__none__', label: 'Unassigned', className: 'text-xs' },
+                  ...agents.map((a) => ({ value: a.id, label: a.name, className: 'text-xs' })),
+                ]}
+              />
             </Field>
 
             {/* Start button — queued tasks only */}
@@ -297,14 +266,14 @@ export function TaskDetailPanel({ task, onClose, onTaskSelect }: TaskDetailPanel
               </Button>
             )}
 
-            {/* Open in Chat — available once the task has started (has a session) */}
-            {task.status !== 'queued' && (
+            {/* Open in Chat — available once the task has a session */}
+            {task.session_id && (
               <Button
                 variant="outline"
                 size="sm"
                 className="w-full gap-2 text-xs h-8"
                 onClick={() => {
-                  attachToSession(buildTaskSessionId(task.agent_id, task.id), 'task', task.title)
+                  attachToSession(task.session_id!, 'task', task.title, task.agent_id)
                   void navigate({ to: '/' })
                   onClose()
                 }}

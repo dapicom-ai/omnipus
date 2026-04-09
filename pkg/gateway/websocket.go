@@ -1,3 +1,5 @@
+//go:build !cgo
+
 // Omnipus - Ultra-lightweight personal AI agent
 // License: MIT
 // Copyright (c) 2026 Omnipus contributors
@@ -16,25 +18,30 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
+	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/pairing"
 	"github.com/dapicom-ai/omnipus/pkg/session"
 )
 
 // wsClientFrame is a message sent from the browser to the server over WebSocket.
 type wsClientFrame struct {
-	Type      string `json:"type"`                  // "auth" | "message" | "cancel" | "exec_approval_response" | "attach_session"
+	Type      string `json:"type"`                  // "auth" | "message" | "cancel" | "exec_approval_response" | "attach_session" | "device_pairing_response"
 	Token     string `json:"token,omitempty"`       // for "auth"
 	Content   string `json:"content,omitempty"`     // for "message"
 	SessionID string `json:"session_id,omitempty"`  // for "message" / "cancel" / "attach_session"
 	AgentID   string `json:"agent_id,omitempty"`    // for "message" — route to specific agent
 	ID        string `json:"id,omitempty"`           // for "exec_approval_response"
-	Decision  string `json:"decision,omitempty"`    // "allow" | "deny" | "always"
+	Decision  string `json:"decision,omitempty"`    // "allow" | "deny" | "always" for exec; "approve" | "reject" for device_pairing_response
+	DeviceID  string `json:"device_id,omitempty"`   // for "device_pairing_response"
 }
 
 // wsServerFrame is a message sent from the server to the browser over WebSocket.
@@ -53,6 +60,11 @@ type wsServerFrame struct {
 	Status     string         `json:"status,omitempty"`
 	DurationMs int64          `json:"duration_ms,omitempty"`
 	Error      string         `json:"error,omitempty"`
+	// device_pairing_request fields
+	DeviceID    string `json:"device_id,omitempty"`
+	Fingerprint string `json:"fingerprint,omitempty"`
+	PairingCode string `json:"pairing_code,omitempty"`
+	DeviceName  string `json:"device_name,omitempty"`
 }
 
 // WSHandler handles the /api/v1/chat/ws WebSocket endpoint for bi-directional
@@ -64,16 +76,23 @@ type WSHandler struct {
 	agentLoop     *agent.AgentLoop
 	allowedOrigin string
 
-	mu         sync.Mutex
-	sessions   map[string]*wsConn  // chatID → connection
-	sessionIDs map[string]string   // chatID → sessionID (for transcript recording)
-	webchatCh  *webchatChannel     // reference to mark streaming complete
+	mu           sync.Mutex
+	sessions     map[string]*wsConn // chatID → connection
+	sessionIDs   map[string]string  // chatID → sessionID (for transcript recording)
+	taskChatIDs  map[string]string  // browser chatID → task chatID for live event forwarding
+	webchatCh    *webchatChannel    // reference to mark streaming complete
 
 	// approvalRegistry tracks in-flight exec approval requests sent to the browser.
 	// Shared across all connections on this handler; keyed by request UUID.
 	// Although the registry is shared, each approval request is associated with the
 	// connection that sent it — only that connection's browser tab can respond.
 	approvalRegistry *wsApprovalRegistry
+
+	// devicePairingRegistry tracks in-flight device pairing requests awaiting admin approval.
+	devicePairingRegistry *devicePairingRegistry
+
+	// pairingStore is the global device pairing state (pending + paired devices).
+	pairingStore *pairing.PairingStore
 
 	upgrader websocket.Upgrader
 }
@@ -83,7 +102,9 @@ type wsConn struct {
 	sendCh        chan []byte
 	doneCh        chan struct{}
 	closeOnce     sync.Once
-	droppedTokens int
+	droppedTokens atomic.Int32
+	droppedFrames atomic.Int32 // non-critical frames dropped due to backpressure
+	role          config.Role  // RBAC role resolved at auth time
 }
 
 func (c *wsConn) close() {
@@ -103,7 +124,10 @@ func newWSHandler(
 		allowedOrigin:    allowedOrigin,
 		sessions:         make(map[string]*wsConn),
 		sessionIDs:       make(map[string]string),
+		taskChatIDs:      make(map[string]string),
 		approvalRegistry: newWSApprovalRegistry(),
+		devicePairingRegistry: newDevicePairingRegistry(),
+		pairingStore:     pairing.NewPairingStore(),
 		upgrader: websocket.Upgrader{
 			// CheckOrigin: parses the Origin URL and compares hostname against the request
 			// Host to allow same-origin requests. Also allows localhost/127.0.0.1 for development.
@@ -133,8 +157,8 @@ func newWSHandler(
 						return true
 					}
 				}
-				// Allow localhost and loopback for development.
-				return hostname == "localhost" || hostname == "127.0.0.1"
+				// Allow localhost and loopback for development ONLY when no explicit origin is configured.
+				return allowedOrigin == "" && (hostname == "localhost" || hostname == "127.0.0.1")
 			},
 		},
 	}
@@ -218,16 +242,18 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	})
 
-	if !h.authenticateWS(conn) {
-		return
-	}
-
-	chatID := "webchat:" + uuid.New().String()
+	// Create wsConn before auth so authenticateWS can set the role on it.
 	wc := &wsConn{
 		conn:   conn,
 		sendCh: make(chan []byte, 256),
 		doneCh: make(chan struct{}),
 	}
+
+	if !h.authenticateWS(conn, wc) {
+		return
+	}
+
+	chatID := "webchat:" + uuid.New().String()
 
 	h.mu.Lock()
 	h.sessions[chatID] = wc
@@ -256,6 +282,11 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.agentLoop.UnsubscribeEvents(eventSub.ID)
 		<-eventDone // wait for forwarder goroutine to exit
 		h.mu.Lock()
+		if tid, ok := h.taskChatIDs[chatID]; ok {
+			delete(h.sessions, tid)
+			delete(h.sessionIDs, tid)
+			delete(h.taskChatIDs, chatID)
+		}
 		delete(h.sessions, chatID)
 		delete(h.sessionIDs, chatID)
 		h.mu.Unlock()
@@ -269,14 +300,11 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.readLoop(r.Context(), conn, wc, chatID, &sessionID)
 }
 
-// authenticateWS reads the first frame and validates the token if OMNIPUS_BEARER_TOKEN is set.
-// Returns true if auth succeeds or is not required.
-func (h *WSHandler) authenticateWS(conn *websocket.Conn) bool {
-	required := os.Getenv("OMNIPUS_BEARER_TOKEN")
-	if required == "" {
-		return true
-	}
-
+// authenticateWS reads the first frame and validates the token.
+// Supports RBAC: checks config.Gateway.Users first (bcrypt), then falls back to
+// OMNIPUS_BEARER_TOKEN env var for backward compatibility.
+// Sets wc.role to the resolved role on success.
+func (h *WSHandler) authenticateWS(conn *websocket.Conn, wc *wsConn) bool {
 	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	_, data, err := conn.ReadMessage()
 	if err != nil {
@@ -290,21 +318,72 @@ func (h *WSHandler) authenticateWS(conn *websocket.Conn) bool {
 		return false
 	}
 
-	if subtle.ConstantTimeCompare([]byte(frame.Token), []byte(required)) != 1 {
+	cfg := h.agentLoop.GetConfig()
+	rawToken := frame.Token
+
+	// 1. Check per-user list (RBAC — bcrypt token hash lookup).
+	if len(cfg.Gateway.Users) > 0 {
+		for _, user := range cfg.Gateway.Users {
+			if err := bcrypt.CompareHashAndPassword([]byte(user.TokenHash), []byte(rawToken)); err == nil {
+				wc.role = user.Role
+				conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+				return true
+			}
+		}
+		// Token not in user list — reject.
 		sendWSFrame(conn, wsServerFrame{Type: "error", Message: "unauthorized: invalid token"})
 		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "authentication failed"))
 		return false
 	}
 
+	// 2. Fallback: legacy OMNIPUS_BEARER_TOKEN env var (treated as admin role).
+	required := os.Getenv("OMNIPUS_BEARER_TOKEN")
+	if required == "" {
+		if cfg.Gateway.DevModeBypass {
+			// Dev mode: allow without auth, treated as admin.
+			wc.role = config.RoleAdmin
+			conn.SetReadDeadline(time.Now().Add(60 * time.Second))
+			return true
+		}
+		// No auth configured — deny by default (fail closed), matching HTTP auth path.
+		sendWSFrame(conn, wsServerFrame{Type: "error", Message: "no users configured, complete onboarding first"})
+		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "authentication failed"))
+		return false
+	}
+	if subtle.ConstantTimeCompare([]byte(rawToken), []byte(required)) != 1 {
+		sendWSFrame(conn, wsServerFrame{Type: "error", Message: "unauthorized: invalid token"})
+		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "authentication failed"))
+		return false
+	}
+	wc.role = config.RoleAdmin
 	conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	return true
 }
 
+// wsMaxMessageBytes is the maximum size of an incoming WebSocket message (5 MB).
+// Messages exceeding this limit are rejected with an error frame and the connection
+// is closed by gorilla/websocket (SetReadLimit causes a protocol-level close).
+const wsMaxMessageBytes = 5 * 1024 * 1024
+
 // readLoop processes client frames until the connection closes.
 func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsConn, chatID string, sessionID *string) {
+	// Enforce a hard read limit so clients cannot exhaust server memory with
+	// oversized frames. gorilla/websocket will return an error on the next
+	// ReadMessage call if the incoming frame exceeds this limit.
+	conn.SetReadLimit(wsMaxMessageBytes)
+
 	for {
 		_, data, err := conn.ReadMessage()
 		if err != nil {
+			// gorilla/websocket returns CloseMessageTooBig (1009) when a frame exceeds
+			// SetReadLimit. Notify the client with a human-readable error frame before
+			// the connection is torn down (the write may silently fail if already closed,
+			// which is acceptable — we make a best-effort attempt).
+			if websocket.IsCloseError(err, websocket.CloseMessageTooBig) {
+				slog.Warn("ws: message too large, closing connection", "chat_id", chatID, "limit_bytes", wsMaxMessageBytes)
+				sendWSFrame(conn, wsServerFrame{Type: "error", Message: "message too large (max 5MB)"})
+				return
+			}
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				slog.Debug("ws: connection closed unexpectedly", "chat_id", chatID, "error", err)
 			}
@@ -312,7 +391,7 @@ func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsCo
 		}
 
 		if err := conn.SetReadDeadline(time.Now().Add(60 * time.Second)); err != nil {
-			slog.Warn("ws: SetReadDeadline failed, closing connection", "chat_id", chatID, "error", err)
+			slog.Warn("ws: SetReadDeadline failed, exiting readLoop", "chat_id", chatID, "error", err)
 			return
 		}
 
@@ -339,6 +418,8 @@ func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsCo
 			}
 		case "ping":
 			// Client heartbeat — no action needed, the WebSocket pong handler keeps the connection alive
+		case "device_pairing_response":
+			h.handleDevicePairingResponse(frame.DeviceID, frame.Decision)
 		default:
 			slog.Debug("ws: unknown frame type ignored", "type", frame.Type, "chat_id", chatID)
 		}
@@ -419,6 +500,14 @@ func (h *WSHandler) handleChatMessage(ctx context.Context, chatID string, sessio
 		}
 		msg.Metadata = map[string]string{"agent_id": agentID}
 	}
+	// Embed the session ID in metadata so the agent loop can record tool calls
+	// to the transcript for later replay via attach_session.
+	if *sessionID != "" {
+		if msg.Metadata == nil {
+			msg.Metadata = make(map[string]string)
+		}
+		msg.Metadata["transcript_session_id"] = *sessionID
+	}
 	pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := h.msgBus.PublishInbound(pubCtx, msg); err != nil {
@@ -464,9 +553,40 @@ func (h *WSHandler) handleAttachSession(ctx context.Context, chatID string, sess
 		return
 	}
 
-	// Replay existing transcript entries as role-aware replay_message frames.
+	// Replay transcript entries in order. Tool call entries are rendered as text
+	// within an assistant message because AssistantUI requires tool calls to be
+	// part of the message tree. (Live tool calls arrive via eventForwarder during
+	// an active streaming turn where AssistantUI already has a message context.)
+
+	// flushToolCalls sends any accumulated tool call lines as a single assistant
+	// replay message, then resets the slice. Returns false if ctx was cancelled.
+	var pendingToolCalls []string
+	flushToolCalls := func() bool {
+		if len(pendingToolCalls) == 0 {
+			return true
+		}
+		tcContent := strings.Join(pendingToolCalls, "\n")
+		pendingToolCalls = nil
+		tcData, err := json.Marshal(wsServerFrame{
+			Type: "replay_message", Content: tcContent, Role: "assistant",
+		})
+		if err != nil {
+			slog.Warn("ws: attach_session: could not marshal tool call batch", "session_id", attachID, "error", err)
+			return true
+		}
+		select {
+		case wc.sendCh <- tcData:
+			return true
+		case <-ctx.Done():
+			return false
+		}
+	}
+
 	for _, entry := range entries {
 		if entry.Content != "" {
+			if !flushToolCalls() {
+				return
+			}
 			data, merr := json.Marshal(wsServerFrame{
 				Type:    "replay_message",
 				Content: entry.Content,
@@ -482,14 +602,36 @@ func (h *WSHandler) handleAttachSession(ctx context.Context, chatID string, sess
 				return
 			}
 		}
+		for _, tc := range entry.ToolCalls {
+			status := tc.Status
+			if status == "" {
+				status = "success"
+			}
+			dur := ""
+			if tc.DurationMS > 0 {
+				dur = fmt.Sprintf(" (%dms)", tc.DurationMS)
+			}
+			pendingToolCalls = append(pendingToolCalls, fmt.Sprintf("**%s** — %s%s", tc.Tool, status, dur))
+		}
 	}
+	flushToolCalls()
 
+	// Signal replay complete so the frontend marks the last message as done.
 	sendConnFrame(wc, wsServerFrame{Type: "done", Stats: map[string]any{}})
 
 	// Switch this connection's active session.
 	*sessionID = attachID
 	h.mu.Lock()
 	h.sessionIDs[chatID] = attachID
+	// Register for live event forwarding: map the browser's chatID to the task's chatID
+	// so eventForwarder picks up task events and GetStreamer finds this connection.
+	if oldTID, ok := h.taskChatIDs[chatID]; ok {
+		delete(h.sessions, oldTID)
+		delete(h.sessionIDs, oldTID)
+	}
+	h.taskChatIDs[chatID] = attachID
+	h.sessions[attachID] = wc
+	h.sessionIDs[attachID] = attachID
 	h.mu.Unlock()
 
 	slog.Debug("ws: attached to session", "chat_id", chatID, "session_id", attachID)
@@ -578,8 +720,16 @@ func (h *WSHandler) pingPump(wc *wsConn) {
 }
 
 // sendConnFrame marshals a frame and enqueues it on wc's send channel.
-// For "done" and "error" frames, blocks up to 5 s rather than dropping, because
-// losing these frames would leave the client in a permanently stuck state.
+// For "done", "error", and approval frames, blocks up to 5 s rather than dropping,
+// because losing these frames would leave the client in a permanently stuck state.
+// For non-critical frames, retries with short delays (immediate, 10ms, 50ms) before dropping.
+// After 20 cumulative dropped frames a "degraded" error frame is
+// injected into the critical path to warn the client; the counter resets on success.
+//
+// droppedFramesWarnThreshold is the number of consecutively dropped non-critical
+// frames after which a "connection degraded" error is sent to the browser.
+const droppedFramesWarnThreshold = 20
+
 func sendConnFrame(wc *wsConn, frame wsServerFrame) {
 	data, err := json.Marshal(frame)
 	if err != nil {
@@ -598,11 +748,53 @@ func sendConnFrame(wc *wsConn, frame wsServerFrame) {
 			wc.close()
 		}
 	default:
-		select {
-		case wc.sendCh <- data:
-		default:
-			slog.Warn("ws: send channel full, frame dropped", "type", frame.Type)
-			wc.droppedTokens++
+		// Try immediate send, then graduated retry delays (10 ms, 50 ms) before dropping.
+		backoffs := [...]time.Duration{0, 10 * time.Millisecond, 50 * time.Millisecond}
+		for _, wait := range backoffs {
+			if wait == 0 {
+				select {
+				case wc.sendCh <- data:
+					wc.droppedFrames.Store(0)
+					return
+				default:
+				}
+			} else {
+				t := time.NewTimer(wait)
+				select {
+				case wc.sendCh <- data:
+					t.Stop()
+					wc.droppedFrames.Store(0)
+					return
+				case <-t.C:
+					// Timer expired, try next delay.
+				}
+			}
+		}
+
+		// All attempts exhausted — drop the frame and record backpressure.
+		slog.Warn("ws: send channel full after backoff, frame dropped", "type", frame.Type)
+		wc.droppedTokens.Add(1)
+		wc.droppedFrames.Add(1)
+
+		// After threshold drops, warn the client over the critical path so it knows
+		// the connection is degraded. This uses the blocking 5-second critical path
+		// intentionally: if we cannot even deliver this warning, the connection is lost.
+		if wc.droppedFrames.Load() >= int32(droppedFramesWarnThreshold) {
+			wc.droppedFrames.Store(0)
+			degraded, merr := json.Marshal(wsServerFrame{
+				Type:    "error",
+				Message: "connection degraded: frames being dropped due to backpressure",
+			})
+			if merr != nil {
+				slog.Error("ws: marshal degraded frame failed", "error", merr)
+				return
+			}
+			select {
+			case wc.sendCh <- degraded:
+			case <-time.After(5 * time.Second):
+				slog.Warn("ws: could not deliver degraded warning frame, closing connection")
+				wc.close()
+			}
 		}
 	}
 }
@@ -621,13 +813,29 @@ func sendWSFrame(conn *websocket.Conn, frame wsServerFrame) {
 
 // eventForwarder listens on the agent EventBus and forwards tool_call_start/result
 // frames to the browser so tool call UIs render in real time.
+// It also matches events from an attached task session (via taskChatIDs).
 func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSubscription, done chan<- struct{}) {
 	defer close(done)
+
+	// matchesChatID returns true if evtChatID belongs to this connection's chat or
+	// to a task session the connection has attached to via handleAttachSession.
+	matchesChatID := func(evtChatID string) bool {
+		if evtChatID == chatID {
+			return true
+		}
+		h.mu.Lock()
+		tid := h.taskChatIDs[chatID]
+		h.mu.Unlock()
+		// Note: using exclusive lock for a read-only lookup. Acceptable for now;
+		// migrate h.mu to sync.RWMutex if contention becomes measurable.
+		return tid != "" && evtChatID == tid
+	}
+
 	for evt := range sub.C {
 		switch evt.Kind {
 		case agent.EventKindToolExecStart:
 			p, ok := evt.Payload.(agent.ToolExecStartPayload)
-			if !ok || p.ChatID != chatID {
+			if !ok || !matchesChatID(p.ChatID) {
 				continue
 			}
 			sendConnFrame(wc, wsServerFrame{
@@ -638,7 +846,7 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 			})
 		case agent.EventKindToolExecEnd:
 			p, ok := evt.Payload.(agent.ToolExecEndPayload)
-			if !ok || p.ChatID != chatID {
+			if !ok || !matchesChatID(p.ChatID) {
 				continue
 			}
 			status := "success"
@@ -684,8 +892,8 @@ func (s *wsStreamer) Update(_ context.Context, content string) error {
 
 func (s *wsStreamer) Finalize(_ context.Context, _ string) error {
 	stats := map[string]any{}
-	if s.conn.droppedTokens > 0 {
-		stats["tokens_dropped"] = s.conn.droppedTokens
+	if dropped := s.conn.droppedTokens.Load(); dropped > 0 {
+		stats["tokens_dropped"] = dropped
 	}
 	sendConnFrame(s.conn, wsServerFrame{Type: "done", Stats: stats})
 	// Mark this chatID as streamed so webchatChannel.Send() skips the duplicate.

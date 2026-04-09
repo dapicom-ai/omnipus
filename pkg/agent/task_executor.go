@@ -3,11 +3,12 @@ package agent
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/dapicom-ai/omnipus/pkg/bus"
+	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/taskstore"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
@@ -50,15 +51,13 @@ func (te *TaskExecutor) ExecuteTask(ctx context.Context, taskID string) error {
 
 	registry := te.agentLoop.GetRegistry()
 	if _, ok := registry.GetAgent(task.AgentID); !ok {
-		// Agent not found — fail the task rather than silently dropping it.
-		slog.Error("task_executor: agent not found, failing task", "task_id", taskID, "agent_id", task.AgentID)
+		logger.ErrorCF("task_executor", "Agent not found, failing task",
+			map[string]any{"task_id": taskID, "agent_id": task.AgentID})
 		te.failTask(taskID, fmt.Sprintf("agent %q not found", task.AgentID))
 		return fmt.Errorf("task_executor: agent %q not found", task.AgentID)
 	}
 
 	// Count running tasks for this specific agent via the store.
-
-
 	runningTasks, err := te.store.List(taskstore.TaskFilter{Status: "running", AgentID: task.AgentID})
 	if err != nil {
 		return fmt.Errorf("task_executor: list running tasks for agent %q: %w", task.AgentID, err)
@@ -96,20 +95,34 @@ func (te *TaskExecutor) runTask(ctx context.Context, task *taskstore.TaskEntity,
 		te.mu.Unlock()
 	}()
 
+	logger.InfoCF("task_executor", "runTask started",
+		map[string]any{"task_id": task.ID, "agent_id": task.AgentID})
+
 	// Resolve the agent's session store once for the entire task execution.
 	taskStore := te.agentLoop.GetAgentStore(task.AgentID)
+	if taskStore == nil {
+		logger.ErrorCF("task_executor", "Agent store not found, task will have no session",
+			map[string]any{"task_id": task.ID, "agent_id": task.AgentID})
+	}
 
 	// Create a task session in the agent's unified store so the UI can display it.
 	var taskSessionID string
 	if taskStore != nil {
 		if meta, err := taskStore.NewSession(session.SessionTypeTask, "system"); err != nil {
-			slog.Warn("task_executor: could not create task session", "task_id", task.ID, "error", err)
+			logger.ErrorCF("task_executor", "Could not create task session",
+				map[string]any{"task_id": task.ID, "error": err.Error()})
 		} else {
 			taskSessionID = meta.ID
 			title := task.Title
 			taskID := task.ID
 			if setErr := taskStore.SetMeta(meta.ID, session.MetaPatch{Title: &title, TaskID: &taskID}); setErr != nil {
-				slog.Warn("task_executor: could not set task session meta", "task_id", task.ID, "error", setErr)
+				logger.ErrorCF("task_executor", "Could not set task session meta",
+					map[string]any{"task_id": task.ID, "error": setErr.Error()})
+			}
+			// Persist the session ID on the task entity so the UI can find it.
+			if _, updateErr := te.store.Update(task.ID, taskstore.TaskPatch{SessionID: &taskSessionID}); updateErr != nil {
+				logger.ErrorCF("task_executor", "Could not persist session_id on task",
+					map[string]any{"task_id": task.ID, "session_id": taskSessionID, "error": updateErr.Error()})
 			}
 			// Record the initial prompt as the user turn.
 			if err := taskStore.AppendTranscript(taskSessionID, session.TranscriptEntry{
@@ -118,7 +131,8 @@ func (te *TaskExecutor) runTask(ctx context.Context, task *taskstore.TaskEntity,
 				Content:   te.buildPrompt(task),
 				Timestamp: time.Now().UTC(),
 			}); err != nil {
-				slog.Warn("task_executor: transcript write failed", "task_id", task.ID, "error", err)
+				logger.ErrorCF("task_executor", "Transcript write failed",
+					map[string]any{"task_id": task.ID, "error": err.Error()})
 			}
 		}
 	}
@@ -129,62 +143,72 @@ func (te *TaskExecutor) runTask(ctx context.Context, task *taskstore.TaskEntity,
 	sessionKey := fmt.Sprintf("agent:%s:task:%s", task.AgentID, task.ID)
 	prompt := te.buildPrompt(task)
 
-	resp, err := te.agentLoop.processTaskDirect(taskCtx, task.AgentID, prompt, sessionKey)
+	taskChatID := taskSessionID
+	if taskChatID == "" {
+		taskChatID = "task:" + task.ID
+	}
+	resp, err := te.agentLoop.processTaskDirect(taskCtx, task.AgentID, prompt, sessionKey, taskChatID)
 	if err != nil {
-		slog.Error("task_executor: agent execution failed", "task_id", task.ID, "agent_id", task.AgentID, "error", err)
+		logger.ErrorCF("task_executor", "Agent execution failed",
+			map[string]any{"task_id": task.ID, "agent_id": task.AgentID, "error": err.Error()})
 		// Record the failure to the task transcript.
-		if taskSessionID != "" {
-			if taskStore != nil {
-				if appendErr := taskStore.AppendTranscript(taskSessionID, session.TranscriptEntry{
-					ID:        task.ID + "-error",
-					Role:      "assistant",
-					Content:   fmt.Sprintf("Task execution failed: %v", err),
-					Status:    "error",
-					Timestamp: time.Now().UTC(),
-				}); appendErr != nil {
-					slog.Warn("task_executor: transcript write failed", "task_id", task.ID, "error", appendErr)
-				}
-				status := session.StatusInterrupted
-				if setErr := taskStore.SetMeta(taskSessionID, session.MetaPatch{Status: &status}); setErr != nil {
-					slog.Warn("task_executor: transcript write failed", "task_id", task.ID, "error", setErr)
-				}
+		if taskSessionID != "" && taskStore != nil {
+			if appendErr := taskStore.AppendTranscript(taskSessionID, session.TranscriptEntry{
+				ID:        task.ID + "-error",
+				Role:      "assistant",
+				Content:   fmt.Sprintf("Task execution failed: %v", err),
+				Status:    "error",
+				Timestamp: time.Now().UTC(),
+			}); appendErr != nil {
+				logger.WarnCF("task_executor", "Transcript write failed",
+					map[string]any{"task_id": task.ID, "error": appendErr.Error()})
+			}
+			status := session.StatusInterrupted
+			if setErr := taskStore.SetMeta(taskSessionID, session.MetaPatch{Status: &status}); setErr != nil {
+				logger.WarnCF("task_executor", "Meta update failed",
+					map[string]any{"task_id": task.ID, "error": setErr.Error()})
 			}
 		}
 		te.failTask(task.ID, fmt.Sprintf("execution error: %v", err))
+		// Notify the originating channel that the task failed.
+		failedTask := *task
+		failedTask.Status = "failed"
+		failedTask.Result = fmt.Sprintf("execution error: %v", err)
+		te.notifySourceChannel(&failedTask)
 		return
 	}
 
 	// Record the final response to the task transcript.
-	if taskSessionID != "" && resp != "" {
-		if taskStore != nil {
-			if err := taskStore.AppendTranscript(taskSessionID, session.TranscriptEntry{
-				ID:        task.ID + "-response",
-				Role:      "assistant",
-				Content:   resp,
-				Timestamp: time.Now().UTC(),
-			}); err != nil {
-				slog.Warn("task_executor: transcript write failed", "task_id", task.ID, "error", err)
-			}
+	if taskSessionID != "" && resp != "" && taskStore != nil {
+		if err := taskStore.AppendTranscript(taskSessionID, session.TranscriptEntry{
+			ID:        task.ID + "-response",
+			Role:      "assistant",
+			Content:   resp,
+			Timestamp: time.Now().UTC(),
+		}); err != nil {
+			logger.WarnCF("task_executor", "Transcript write failed",
+				map[string]any{"task_id": task.ID, "error": err.Error()})
 		}
 	}
 
 	// Check whether the agent already called task_update (task status is terminal).
 	current, lerr := te.store.Get(task.ID)
 	if lerr != nil {
-		slog.Warn("task_executor: could not re-read task after execution", "task_id", task.ID, "error", lerr)
+		logger.WarnCF("task_executor", "Could not re-read task after execution",
+			map[string]any{"task_id": task.ID, "error": lerr.Error()})
 		return
 	}
 	if current.Status == "completed" || current.Status == "failed" {
 		// Agent already called task_update which fired onTaskComplete via the tool callback.
 		// Mark session completed and do not fire again to avoid duplicate parent notifications.
-		if taskSessionID != "" {
-			if taskStore != nil {
-				statusCompleted := session.StatusArchived
-				if err := taskStore.SetMeta(taskSessionID, session.MetaPatch{Status: &statusCompleted}); err != nil {
-					slog.Warn("task_executor: transcript write failed", "task_id", task.ID, "error", err)
-				}
+		if taskSessionID != "" && taskStore != nil {
+			statusCompleted := session.StatusArchived
+			if err := taskStore.SetMeta(taskSessionID, session.MetaPatch{Status: &statusCompleted}); err != nil {
+				logger.WarnCF("task_executor", "Meta update failed",
+					map[string]any{"task_id": task.ID, "error": err.Error()})
 			}
 		}
+		te.notifySourceChannel(current)
 		return
 	}
 
@@ -200,19 +224,58 @@ func (te *TaskExecutor) runTask(ctx context.Context, task *taskstore.TaskEntity,
 		CompletedAt: &now,
 	})
 	if uerr != nil {
-		slog.Error("task_executor: auto-complete task failed", "task_id", task.ID, "error", uerr)
+		logger.ErrorCF("task_executor", "Auto-complete task failed",
+			map[string]any{"task_id": task.ID, "error": uerr.Error()})
 		return
 	}
 	// Mark the task session as archived on successful auto-completion.
-	if taskSessionID != "" {
-		if taskStore != nil {
-			statusArchived := session.StatusArchived
-			if err := taskStore.SetMeta(taskSessionID, session.MetaPatch{Status: &statusArchived}); err != nil {
-				slog.Warn("task_executor: transcript write failed", "task_id", task.ID, "error", err)
-			}
+	if taskSessionID != "" && taskStore != nil {
+		statusArchived := session.StatusArchived
+		if err := taskStore.SetMeta(taskSessionID, session.MetaPatch{Status: &statusArchived}); err != nil {
+			logger.WarnCF("task_executor", "Meta update failed",
+				map[string]any{"task_id": task.ID, "error": err.Error()})
 		}
 	}
 	te.onTaskComplete(final)
+	te.notifySourceChannel(final)
+}
+
+// notifySourceChannel sends a compact task result back to the channel that triggered it.
+// Only sends for terminal statuses (completed/failed); silently returns otherwise.
+func (te *TaskExecutor) notifySourceChannel(task *taskstore.TaskEntity) {
+	if task.SourceChannel == "" || task.SourceChatID == "" {
+		return
+	}
+	if te.agentLoop.bus == nil {
+		logger.WarnCF("task_executor", "Cannot notify source channel — message bus is nil",
+			map[string]any{"task_id": task.ID, "channel": task.SourceChannel})
+		return
+	}
+
+	status := task.Status
+	if status != "completed" && status != "failed" {
+		return
+	}
+
+	msg := fmt.Sprintf("**%s** — %s", task.Title, status)
+	if task.Result != "" {
+		result := task.Result
+		if len(result) > 500 {
+			result = result[:497] + "..."
+		}
+		msg += "\n\n" + result
+	}
+
+	notifyCtx, notifyCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer notifyCancel()
+	if err := te.agentLoop.bus.PublishOutbound(notifyCtx, bus.OutboundMessage{
+		Channel: task.SourceChannel,
+		ChatID:  task.SourceChatID,
+		Content: msg,
+	}); err != nil {
+		logger.WarnCF("task_executor", "Could not notify source channel",
+			map[string]any{"task_id": task.ID, "channel": task.SourceChannel, "error": err.Error()})
+	}
 }
 
 // buildPrompt constructs the prompt sent to the agent for a task.
@@ -240,7 +303,8 @@ func (te *TaskExecutor) onTaskComplete(task *taskstore.TaskEntity) {
 
 	siblings, err := te.store.List(taskstore.TaskFilter{ParentTaskID: task.ParentTaskID})
 	if err != nil {
-		slog.Warn("task_executor: could not list siblings", "parent_id", task.ParentTaskID, "error", err)
+		logger.WarnCF("task_executor", "Could not list siblings",
+			map[string]any{"parent_id": task.ParentTaskID, "error": err.Error()})
 		return
 	}
 	for _, s := range siblings {
@@ -252,7 +316,8 @@ func (te *TaskExecutor) onTaskComplete(task *taskstore.TaskEntity) {
 	// All siblings done — notify the parent agent.
 	parent, err := te.store.Get(task.ParentTaskID)
 	if err != nil {
-		slog.Warn("task_executor: could not load parent task", "parent_id", task.ParentTaskID, "error", err)
+		logger.WarnCF("task_executor", "Could not load parent task",
+			map[string]any{"parent_id": task.ParentTaskID, "error": err.Error()})
 		return
 	}
 	if parent.Status != "running" {
@@ -263,10 +328,20 @@ func (te *TaskExecutor) onTaskComplete(task *taskstore.TaskEntity) {
 	sessionKey := fmt.Sprintf("agent:%s:task:%s", parent.AgentID, parent.ID)
 	followUp := fmt.Sprintf("All child tasks of task %q have completed.\n\n%s", parent.ID, summary)
 
+	parentChatID := "task:" + parent.ID
 	go func() {
-		_, ferr := te.agentLoop.processTaskDirect(context.Background(), parent.AgentID, followUp, sessionKey)
+		defer func() {
+			if r := recover(); r != nil {
+				logger.ErrorCF("task_executor", "Panic in parent follow-up",
+					map[string]any{"parent_id": parent.ID, "panic": r})
+			}
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		_, ferr := te.agentLoop.processTaskDirect(ctx, parent.AgentID, followUp, sessionKey, parentChatID)
 		if ferr != nil {
-			slog.Warn("task_executor: parent follow-up failed", "parent_id", parent.ID, "error", ferr)
+			logger.WarnCF("task_executor", "Parent follow-up failed",
+				map[string]any{"parent_id": parent.ID, "error": ferr.Error()})
 		}
 	}()
 }
@@ -293,7 +368,8 @@ func (te *TaskExecutor) failTask(taskID, reason string) {
 		Result:      &reason,
 		CompletedAt: &now,
 	}); err != nil {
-		slog.Error("task_executor: could not mark task failed", "task_id", taskID, "error", err)
+		logger.ErrorCF("task_executor", "Could not mark task failed",
+			map[string]any{"task_id": taskID, "error": err.Error()})
 	}
 }
 
@@ -312,7 +388,8 @@ func (te *TaskExecutor) Stop() {
 func (te *TaskExecutor) CheckQueuedTasks(ctx context.Context) {
 	queued, err := te.store.List(taskstore.TaskFilter{Status: "queued"})
 	if err != nil {
-		slog.Warn("task_executor: check queued tasks: list failed", "error", err)
+		logger.WarnCF("task_executor", "Check queued tasks: list failed",
+			map[string]any{"error": err.Error()})
 		return
 	}
 	if len(queued) == 0 {
@@ -330,7 +407,8 @@ func (te *TaskExecutor) CheckQueuedTasks(ctx context.Context) {
 
 	for _, t := range byAgent {
 		if err := te.ExecuteTask(ctx, t.ID); err != nil {
-			slog.Warn("task_executor: heartbeat: could not start task", "task_id", t.ID, "error", err)
+			logger.WarnCF("task_executor", "Heartbeat: could not start task",
+				map[string]any{"task_id": t.ID, "error": err.Error()})
 		}
 	}
 }

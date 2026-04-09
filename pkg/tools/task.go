@@ -169,6 +169,12 @@ func (t *TaskCreateTool) Execute(ctx context.Context, args map[string]any) *Tool
 		Status:       "queued",
 	}
 
+	// Propagate the originating channel so completed tasks can route results back.
+	if channel := ToolChannel(ctx); channel != "" && channel != "webchat" {
+		entity.SourceChannel = channel
+		entity.SourceChatID = ToolChatID(ctx)
+	}
+
 	if err := t.store.Create(entity); err != nil {
 		return ErrorResult(fmt.Sprintf("task_create failed: %v", err))
 	}

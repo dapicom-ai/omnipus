@@ -399,7 +399,7 @@ func TestSaveConfig_FiltersVirtualModels(t *testing.T) {
 
 	cfg := DefaultConfig()
 
-	// Manually add a virtual model to ModelList (simulating what expandMultiKeyModels does)
+	// Manually add a virtual model to Providers (simulating what expandMultiKeyModels does)
 	primaryModel := &ModelConfig{
 		ModelName: "gpt-4",
 		Model:     "openai/gpt-4o",
@@ -411,7 +411,7 @@ func TestSaveConfig_FiltersVirtualModels(t *testing.T) {
 		APIKeys:   SimpleSecureStrings("key2"),
 		isVirtual: true,
 	}
-	cfg.ModelList = []*ModelConfig{primaryModel, virtualModel}
+	cfg.Providers = []*ModelConfig{primaryModel, virtualModel}
 
 	// SaveConfig should filter out virtual models
 	if err := SaveConfig(path, cfg); err != nil {
@@ -425,16 +425,16 @@ func TestSaveConfig_FiltersVirtualModels(t *testing.T) {
 	}
 
 	// Should only have the primary model, not the virtual one
-	if len(reloaded.ModelList) != 1 {
-		t.Fatalf("expected 1 model after reload, got %d", len(reloaded.ModelList))
+	if len(reloaded.Providers) != 1 {
+		t.Fatalf("expected 1 model after reload, got %d", len(reloaded.Providers))
 	}
 
-	if reloaded.ModelList[0].ModelName != "gpt-4" {
-		t.Errorf("expected model_name 'gpt-4', got %q", reloaded.ModelList[0].ModelName)
+	if reloaded.Providers[0].ModelName != "gpt-4" {
+		t.Errorf("expected model_name 'gpt-4', got %q", reloaded.Providers[0].ModelName)
 	}
 
 	// Verify virtual model was not persisted
-	for _, m := range reloaded.ModelList {
+	for _, m := range reloaded.Providers {
 		if m.ModelName == "gpt-4__key_1" {
 			t.Errorf("virtual model gpt-4__key_1 should not have been saved")
 		}
@@ -659,7 +659,7 @@ func TestLoadConfig_WebToolsProxy(t *testing.T) {
 	configPath := filepath.Join(tmpDir, "config.json")
 	configJSON := `{
   "agents": {"defaults":{"workspace":"./workspace","model":"gpt4","max_tokens":8192,"max_tool_iterations":20}},
-  "model_list": [{"model_name":"gpt4","model":"openai/gpt-5.4","api_key":"x"}],
+  "providers": [{"model_name":"gpt4","model":"openai/gpt-5.4","api_key":"x"}],
   "tools": {"web":{"proxy":"http://127.0.0.1:7890"}}
 }`
 	if err := os.WriteFile(configPath, []byte(configJSON), 0o600); err != nil {
@@ -991,7 +991,7 @@ func TestLoadConfig_TelegramPlaceholderTextAcceptsSingleString(t *testing.T) {
 				}
 			}
 		},
-		"model_list": [],
+		"providers": [],
 		"gateway": {},
 		"tools": {},
 		"heartbeat": {},
@@ -1017,7 +1017,7 @@ func TestLoadConfig_TelegramPlaceholderTextAcceptsSingleString(t *testing.T) {
 func TestLoadConfig_WarnsForPlaintextAPIKey(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")
-	const original = `{"version":1,"model_list":[{"model_name":"test","model":"openai/gpt-4","api_key":"sk-plaintext"}]}`
+	const original = `{"version":1,"providers":[{"model_name":"test","model":"openai/gpt-4","api_key":"sk-plaintext"}]}`
 	if err := os.WriteFile(cfgPath, []byte(original), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -1043,8 +1043,8 @@ model_list:
 		t.Fatalf("LoadConfig: %v", err)
 	}
 	// In-memory value must be the resolved plaintext.
-	if cfg.ModelList[0].APIKey() != "sk-plaintext" {
-		t.Errorf("in-memory api_key = %q, want %q", cfg.ModelList[0].APIKey(), "sk-plaintext")
+	if cfg.Providers[0].APIKey() != "sk-plaintext" {
+		t.Errorf("in-memory api_key = %q, want %q", cfg.Providers[0].APIKey(), "sk-plaintext")
 	}
 	// The file on disk must remain unchanged — no need upgrade version
 	raw, _ := os.ReadFile(cfgPath)
@@ -1063,10 +1063,10 @@ func TestSaveConfig_EncryptsPlaintextAPIKey(t *testing.T) {
 	mustSetupSSHKey(t)
 
 	cfg := DefaultConfig()
-	cfg.ModelList = []*ModelConfig{
+	cfg.Providers = []*ModelConfig{
 		{ModelName: "test", Model: "openai/gpt-4", APIKeys: SimpleSecureStrings("")},
 	}
-	cfg.ModelList[0].APIKeys[0].Set("sk-plaintext")
+	cfg.Providers[0].APIKeys[0].Set("sk-plaintext")
 
 	if err := SaveConfig(cfgPath, cfg); err != nil {
 		t.Fatalf("SaveConfig: %v", err)
@@ -1087,8 +1087,8 @@ func TestSaveConfig_EncryptsPlaintextAPIKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig after SaveConfig: %v", err)
 	}
-	if cfg2.ModelList[0].APIKey() != "sk-plaintext" {
-		t.Errorf("loaded api_key = %q, want %q", cfg2.ModelList[0].APIKey(), "sk-plaintext")
+	if cfg2.Providers[0].APIKey() != "sk-plaintext" {
+		t.Errorf("loaded api_key = %q, want %q", cfg2.Providers[0].APIKey(), "sk-plaintext")
 	}
 }
 
@@ -1097,7 +1097,7 @@ func TestSaveConfig_EncryptsPlaintextAPIKey(t *testing.T) {
 func TestLoadConfig_NoSealWithoutPassphrase(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.json")
-	data := `{"model_list":[{"model_name":"test","model":"openai/gpt-4","api_key":"sk-plaintext"}]}`
+	data := `{"providers":[{"model_name":"test","model":"openai/gpt-4","api_key":"sk-plaintext"}]}`
 	if err := os.WriteFile(cfgPath, []byte(data), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -1124,14 +1124,14 @@ func TestLoadConfig_FileRefNotSealed(t *testing.T) {
 	if err := os.WriteFile(keyFile, []byte("sk-from-file"), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	data := `{"version":1,"model_list":[{"model_name":"test","model":"openai/gpt-4"}]}`
+	data := `{"version":1,"providers":[{"model_name":"test","model":"openai/gpt-4"}]}`
 	if err := os.WriteFile(cfgPath, []byte(data), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	secPath := filepath.Join(dir, SecurityConfigFile)
 	if err := saveSecurityConfig(
 		secPath,
-		&Config{ModelList: SecureModelList{
+		&Config{Providers: SecureModelList{
 			&ModelConfig{ModelName: "test", APIKeys: SimpleSecureStrings("file://openai.key")},
 		}}); err != nil {
 		t.Fatalf("saveSecurityConfig: %v", err)
@@ -1164,7 +1164,7 @@ func TestSaveConfig_MixedKeys(t *testing.T) {
 
 	// Pre-encrypt one key so we have a genuine enc:// value to put in the config.
 	if err := SaveConfig(cfgPath, &Config{
-		ModelList: []*ModelConfig{
+		Providers: []*ModelConfig{
 			{ModelName: "pre", Model: "openai/gpt-4", APIKeys: SimpleSecureStrings("sk-already-plain")},
 		},
 	}); err != nil {
@@ -1173,14 +1173,14 @@ func TestSaveConfig_MixedKeys(t *testing.T) {
 	raw, _ := os.ReadFile(filepath.Join(dir, SecurityConfigFile))
 	// Extract the enc:// value from the saved file.
 	var tmp struct {
-		ModelList map[string]struct {
+		Providers map[string]struct {
 			APIKeys []string `yaml:"api_keys"`
-		} `yaml:"model_list"`
+		} `yaml:"providers"`
 	}
-	if err := yaml.Unmarshal(raw, &tmp); err != nil || len(tmp.ModelList) == 0 {
+	if err := yaml.Unmarshal(raw, &tmp); err != nil || len(tmp.Providers) == 0 {
 		t.Fatalf("setup: could not parse saved config: %v", err)
 	}
-	alreadyEncrypted := tmp.ModelList["pre:0"].APIKeys[0]
+	alreadyEncrypted := tmp.Providers["pre:0"].APIKeys[0]
 	if !strings.HasPrefix(alreadyEncrypted, "enc://") {
 		t.Fatalf("setup: expected enc:// key, got %q", alreadyEncrypted)
 	}
@@ -1195,7 +1195,7 @@ func TestSaveConfig_MixedKeys(t *testing.T) {
 	}
 	cfg := &Config{
 		Version: CurrentVersion,
-		ModelList: []*ModelConfig{
+		Providers: []*ModelConfig{
 			{ModelName: "plain", Model: "openai/gpt-4", APIKeys: SimpleSecureStrings("sk-new-plaintext")},
 			{ModelName: "enc", Model: "openai/gpt-4", APIKeys: SimpleSecureStrings(alreadyEncrypted)},
 			{ModelName: "file", Model: "openai/gpt-4", APIKeys: SimpleSecureStrings("file://api.key")},
@@ -1230,7 +1230,7 @@ func TestSaveConfig_MixedKeys(t *testing.T) {
 		t.Fatalf("LoadConfig after SaveConfig: %v", err)
 	}
 	byName := make(map[string]string)
-	for _, m := range cfg2.ModelList {
+	for _, m := range cfg2.Providers {
 		byName[m.ModelName] = m.APIKey()
 	}
 	if byName["plain"] != "sk-new-plaintext" {
@@ -1256,7 +1256,7 @@ func TestLoadConfig_MixedKeys_NoPassphrase(t *testing.T) {
 	mustSetupSSHKey(t)
 	if err := SaveConfig(cfgPath, &Config{
 		Version: CurrentVersion,
-		ModelList: []*ModelConfig{
+		Providers: []*ModelConfig{
 			{ModelName: "m", Model: "openai/gpt-4", APIKeys: SimpleSecureStrings("sk-secret")},
 		},
 	}); err != nil {
@@ -1264,7 +1264,7 @@ func TestLoadConfig_MixedKeys_NoPassphrase(t *testing.T) {
 	}
 	raw, err := LoadConfig(cfgPath)
 	assert.NoError(t, err)
-	encValue := raw.ModelList[0].APIKeys[0].raw
+	encValue := raw.Providers[0].APIKeys[0].raw
 	assert.NotEmpty(t, encValue)
 	assert.Equal(t, "enc://", encValue[:6])
 
@@ -1274,7 +1274,7 @@ func TestLoadConfig_MixedKeys_NoPassphrase(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 	mixed, _ := json.Marshal(map[string]any{
-		"model_list": []map[string]any{
+		"providers": []map[string]any{
 			{"model_name": "enc", "model": "openai/gpt-4", "api_key": encValue},
 			{"model_name": "plain", "model": "openai/gpt-4", "api_key": "sk-plain"},
 			{"model_name": "file", "model": "openai/gpt-4", "api_key": "file://api.key"},
@@ -1284,7 +1284,7 @@ func TestLoadConfig_MixedKeys_NoPassphrase(t *testing.T) {
 		t.Fatalf("setup write: %v", err)
 	}
 	secs, _ := yaml.Marshal(map[string]any{
-		"model_list": map[string]map[string]any{
+		"providers": map[string]map[string]any{
 			"enc:0":   {"api_keys": []string{encValue}},
 			"plain:0": {"api_keys": []string{"sk-plain"}},
 			"file:0":  {"api_keys": []string{"file://api.key"}},
@@ -1299,7 +1299,7 @@ func TestLoadConfig_MixedKeys_NoPassphrase(t *testing.T) {
 
 	cfg2, err := LoadConfig(cfgPath)
 	if err == nil {
-		t.Logf("LoadConfig: %#v", cfg2.ModelList)
+		t.Logf("LoadConfig: %#v", cfg2.Providers)
 		t.Fatal("LoadConfig should fail when enc:// key is present and no passphrase is set")
 	}
 	if !strings.Contains(err.Error(), "passphrase required") {
@@ -1326,7 +1326,7 @@ func TestSaveConfig_UsesPassphraseProvider(t *testing.T) {
 	t.Cleanup(func() { credential.PassphraseProvider = orig })
 
 	cfg := DefaultConfig()
-	cfg.ModelList = []*ModelConfig{
+	cfg.Providers = []*ModelConfig{
 		{ModelName: "test", Model: "openai/gpt-4", APIKeys: SimpleSecureStrings("sk-plaintext")},
 	}
 	if err := SaveConfig(cfgPath, cfg); err != nil {
@@ -1359,7 +1359,7 @@ func TestLoadConfig_UsesPassphraseProvider(t *testing.T) {
 	}
 
 	raw, _ := json.Marshal(map[string]any{
-		"model_list": []map[string]any{
+		"providers": []map[string]any{
 			{"model_name": "test", "model": "openai/gpt-4", "api_key": encrypted},
 		},
 	})
@@ -1378,8 +1378,8 @@ func TestLoadConfig_UsesPassphraseProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	if cfg.ModelList[0].APIKey() != plainKey {
-		t.Errorf("api_key = %q, want %q", cfg.ModelList[0].APIKey(), plainKey)
+	if cfg.Providers[0].APIKey() != plainKey {
+		t.Errorf("api_key = %q, want %q", cfg.Providers[0].APIKey(), plainKey)
 	}
 }
 
@@ -1424,7 +1424,7 @@ func TestModelConfig_ExtraBodyRoundTrip(t *testing.T) {
 
 	cfg := &Config{
 		Version: CurrentVersion,
-		ModelList: []*ModelConfig{
+		Providers: []*ModelConfig{
 			{
 				ModelName: "test-model",
 				Model:     "openai/test",
@@ -1443,13 +1443,13 @@ func TestModelConfig_ExtraBodyRoundTrip(t *testing.T) {
 		t.Fatalf("LoadConfig error: %v", err)
 	}
 
-	if loaded.ModelList[0].ExtraBody == nil {
+	if loaded.Providers[0].ExtraBody == nil {
 		t.Fatal("ExtraBody should not be nil after round-trip")
 	}
-	if got := loaded.ModelList[0].ExtraBody["custom_field"]; got != "value" {
+	if got := loaded.Providers[0].ExtraBody["custom_field"]; got != "value" {
 		t.Errorf("ExtraBody[custom_field] = %v, want value", got)
 	}
-	if got := loaded.ModelList[0].ExtraBody["num_field"]; got != float64(42) {
+	if got := loaded.Providers[0].ExtraBody["num_field"]; got != float64(42) {
 		t.Errorf("ExtraBody[num_field] = %v, want 42", got)
 	}
 }
@@ -1458,14 +1458,14 @@ func TestDefaultConfig_MinimaxExtraBody(t *testing.T) {
 	cfg := DefaultConfig()
 
 	var minimaxCfg *ModelConfig
-	for i := range cfg.ModelList {
-		if cfg.ModelList[i].Model == "minimax/MiniMax-M2.5" {
-			minimaxCfg = cfg.ModelList[i]
+	for i := range cfg.Providers {
+		if cfg.Providers[i].Model == "minimax/MiniMax-M2.5" {
+			minimaxCfg = cfg.Providers[i]
 			break
 		}
 	}
 	if minimaxCfg == nil {
-		t.Fatal("Minimax model not found in ModelList")
+		t.Fatal("Minimax model not found in Providers")
 	}
 	if minimaxCfg.ExtraBody == nil {
 		t.Fatal("Minimax ExtraBody should not be nil")
@@ -1488,7 +1488,7 @@ func TestFilterSensitiveData(t *testing.T) {
 	}
 
 	// Test short content (less than FilterMinLength=8, should skip filtering)
-	cfg.ModelList = SecureModelList{
+	cfg.Providers = SecureModelList{
 		&ModelConfig{
 			ModelName: "test",
 			APIKeys:   SimpleSecureStrings("sk-long-key-12345"),
@@ -1529,7 +1529,7 @@ func TestFilterSensitiveData_MultipleKeys(t *testing.T) {
 			FilterSensitiveData: true,
 			FilterMinLength:     8,
 		},
-		ModelList: SecureModelList{
+		Providers: SecureModelList{
 			&ModelConfig{
 				ModelName: "model1",
 				Model:     "openai/model1",
@@ -1553,7 +1553,7 @@ func TestFilterSensitiveData_MultipleKeys(t *testing.T) {
 func TestFilterSensitiveData_AllTokenTypes(t *testing.T) {
 	cfg := &Config{
 		// Model API keys
-		ModelList: SecureModelList{
+		Providers: SecureModelList{
 			&ModelConfig{
 				ModelName: "test-model",
 				APIKeys:   SecureStrings{NewSecureString("sk-model-key-12345")},
