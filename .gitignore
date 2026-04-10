@@ -29,7 +29,6 @@ security.yml
 .security.yml
 *.pem
 *.key
-onboard
 config/config.json
 
 # OS
