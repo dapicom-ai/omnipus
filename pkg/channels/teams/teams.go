@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/infracloudio/msbotbuilder-go/core"
 	"github.com/infracloudio/msbotbuilder-go/core/activity"
@@ -69,7 +70,9 @@ type TeamsChannel struct {
 	lastMsgID sync.Map // chatID → messageID
 }
 
-// NewTeamsChannel creates a new Teams channel.
+// NewTeamsChannel creates a new Teams channel with the given configuration.
+// Returns nil if AppID or AppPassword is empty. MaxMessageLength defaults to 4000
+// if not specified or set to a non-positive value.
 func NewTeamsChannel(cfg config.TeamsConfig, messageBus *bus.MessageBus) (*TeamsChannel, error) {
 	if cfg.AppID == "" || cfg.AppPassword.String() == "" {
 		return nil, fmt.Errorf("teams app_id and app_password are required")
@@ -104,7 +107,9 @@ func isValidServiceURL(serviceURL string) bool {
 	return false
 }
 
-// Start initializes the Teams bot via msbotbuilder-go.
+// Start initializes the Teams bot via msbotbuilder-go and sets running=true.
+// Returns an error if adapter creation fails. Pre-registers ReasoningChannelID as "channel"
+// in the chatType map if configured.
 func (c *TeamsChannel) Start(ctx context.Context) error {
 	logger.InfoC("teams", "Starting Microsoft Teams channel")
 
@@ -134,7 +139,8 @@ func (c *TeamsChannel) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop gracefully stops the Teams channel.
+// Stop gracefully stops the Teams channel. Sets running=false, cancels the context,
+// and waits up to 10 seconds for all in-flight processActivity goroutines to complete.
 func (c *TeamsChannel) Stop(ctx context.Context) error {
 	logger.InfoC("teams", "Stopping Microsoft Teams channel")
 
@@ -145,7 +151,18 @@ func (c *TeamsChannel) Stop(ctx context.Context) error {
 			c.cancel()
 		}
 		// Wait for all in-flight processActivity goroutines to complete.
-		c.activeGoroutines.Wait()
+		// Use a timeout to avoid indefinite blocking if a goroutine hangs.
+		done := make(chan struct{})
+		go func() {
+			c.activeGoroutines.Wait()
+			close(done)
+		}()
+		select {
+		case <-done:
+			// All goroutines completed normally
+		case <-time.After(10 * time.Second):
+			logger.WarnC("teams", "Stop() timed out waiting for goroutines to complete")
+		}
 	})
 
 	return nil
@@ -247,7 +264,9 @@ func (c *TeamsChannel) processActivity(act schema.Activity) {
 
 	content := strings.TrimSpace(act.Text)
 	if content == "" && len(act.Attachments) == 0 {
-		logger.DebugC("teams", "Received empty message with no attachments, ignoring")
+		logger.WarnCF("teams", "Received empty message with no attachments, ignoring", map[string]any{
+			"activity_id": act.ID,
+		})
 		return
 	}
 
@@ -270,8 +289,9 @@ func (c *TeamsChannel) processActivity(act schema.Activity) {
 	}
 
 	if !c.IsAllowedSender(sender) {
-		logger.DebugCF("teams", "Message rejected by allowlist", map[string]any{
+		logger.WarnCF("teams", "Message rejected by allowlist", map[string]any{
 			"sender_id": senderID,
+			"chat_id":   chatID,
 		})
 		return
 	}
@@ -363,7 +383,7 @@ func (c *TeamsChannel) Send(ctx context.Context, msg bus.OutboundMessage) error 
 		logger.WarnCF("teams", "No conversation reference found for chatID, cannot send", map[string]any{
 			"chat_id": msg.ChatID,
 		})
-		return fmt.Errorf("teams: no conversation reference for chatID %s", msg.ChatID)
+		return fmt.Errorf("teams: no conversation reference for chatID %s: %w", msg.ChatID, channels.ErrTemporary)
 	}
 	ref, ok := refVal.(conversationRef)
 	if !ok {
@@ -371,7 +391,7 @@ func (c *TeamsChannel) Send(ctx context.Context, msg bus.OutboundMessage) error 
 			"chat_id": msg.ChatID,
 			"type":    fmt.Sprintf("%T", refVal),
 		})
-		return fmt.Errorf("teams: corrupted conversation reference for chatID %s", msg.ChatID)
+		return fmt.Errorf("teams: corrupted conversation reference for chatID %s: %w", msg.ChatID, channels.ErrTemporary)
 	}
 
 	convRef := schema.ConversationReference{
@@ -394,7 +414,7 @@ func (c *TeamsChannel) Send(ctx context.Context, msg bus.OutboundMessage) error 
 		logger.ErrorCF("teams", "Teams adapter is nil, cannot send", map[string]any{
 			"chat_id": msg.ChatID,
 		})
-		return fmt.Errorf("teams: adapter not initialized")
+		return fmt.Errorf("teams: adapter not initialized: %w", channels.ErrTemporary)
 	}
 
 	if err := c.adapter.ProactiveMessage(ctx, convRef, handler); err != nil {

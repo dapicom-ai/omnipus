@@ -797,3 +797,43 @@ func TestSend_ReturnsErrorWhenConversationRefCorrupted(t *testing.T) {
 		t.Errorf("error = %v, want message containing 'corrupted conversation reference'", err)
 	}
 }
+
+// -- Test extractTenantID ------------------------------------------------------
+
+func TestExtractTenantID_NilChannelData(t *testing.T) {
+	if got := extractTenantID(nil); got != "" {
+		t.Errorf("extractTenantID(nil) = %q, want empty string", got)
+	}
+}
+
+func TestExtractTenantID_MissingTenant(t *testing.T) {
+	if got := extractTenantID(map[string]any{}); got != "" {
+		t.Errorf("extractTenantID({}) = %q, want empty string", got)
+	}
+}
+
+func TestExtractTenantID_NonStringTenant(t *testing.T) {
+	if got := extractTenantID(map[string]any{"tenant": 123}); got != "" {
+		t.Errorf("extractTenantID({tenant: 123}) = %q, want empty string", got)
+	}
+}
+
+func TestExtractTenantID_ValidTenant(t *testing.T) {
+	if got := extractTenantID(map[string]any{"tenant": "abc-123"}); got != "abc-123" {
+		t.Errorf("extractTenantID({tenant: abc-123}) = %q, want abc-123", got)
+	}
+}
+
+// -- Test truncate edge cases --------------------------------------------------
+
+func TestTruncate_ZeroMaxLen(t *testing.T) {
+	if got := truncate("hello", 0); got != "..." {
+		t.Errorf("truncate(%q, 0) = %q, want ...", "hello", got)
+	}
+}
+
+func TestTruncate_NegativeMaxLen(t *testing.T) {
+	if got := truncate("hello", -1); got != "..." {
+		t.Errorf("truncate(%q, -1) = %q, want ...", "hello", got)
+	}
+}
