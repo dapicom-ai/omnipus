@@ -900,6 +900,25 @@ type wsStreamer struct {
 	agentStore  *session.UnifiedStore    // for recording assistant message
 	channel     *webchatChannel          // to mark streaming complete and suppress duplicate Send()
 	accumulated strings.Builder          // accumulates full response text
+
+	// Turn-level stats set by the agent loop via SetTurnStats before Finalize.
+	// Populates the "done" frame so the chat UI shows real token counts and
+	// cost instead of zeros (issue #12). Mutex-protected because SetTurnStats
+	// and Finalize may be called from different goroutines.
+	statsMu       sync.Mutex
+	statsTokens   int64
+	statsCostUSD  float64
+	statsDuration time.Duration
+}
+
+// SetTurnStats is called by the agent loop's finalizeStreamer just before
+// Finalize. Implements the streamerStatsSetter interface from pkg/agent.
+func (s *wsStreamer) SetTurnStats(tokens int64, costUSD float64, duration time.Duration) {
+	s.statsMu.Lock()
+	defer s.statsMu.Unlock()
+	s.statsTokens = tokens
+	s.statsCostUSD = costUSD
+	s.statsDuration = duration
 }
 
 func (s *wsStreamer) Update(_ context.Context, content string) error {
@@ -922,6 +941,14 @@ func (s *wsStreamer) Finalize(_ context.Context, _ string) error {
 	if dropped := s.conn.droppedTokens.Load(); dropped > 0 {
 		stats["tokens_dropped"] = dropped
 	}
+	// Include turn-level token/cost/duration if the agent loop pushed them via
+	// SetTurnStats before this call (issue #12). Zero values are still emitted
+	// so the client can reset the session counters for turns with no LLM usage.
+	s.statsMu.Lock()
+	stats["tokens"] = s.statsTokens
+	stats["cost"] = s.statsCostUSD
+	stats["duration_ms"] = s.statsDuration.Milliseconds()
+	s.statsMu.Unlock()
 	sendConnFrame(s.conn, wsServerFrame{Type: "done", Stats: stats})
 	// Mark this chatID as streamed so webchatChannel.Send() skips the duplicate.
 	if s.channel != nil {

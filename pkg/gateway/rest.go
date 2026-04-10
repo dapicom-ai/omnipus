@@ -834,6 +834,7 @@ func (a *restAPI) listAgents(w http.ResponseWriter) {
 		ag := defaults
 		ag.ID = ac.ID
 		ag.Name = ac.Name
+		ag.Description = ac.Description
 		ag.Type = "custom"
 		ag.Model = model
 		ag.Status = computeAgentStatus(ac.ID, activeIDs, soul)
@@ -884,6 +885,7 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 			ag := defaults
 			ag.ID = ac.ID
 			ag.Name = ac.Name
+			ag.Description = ac.Description
 			ag.Type = "custom"
 			ag.Model = model
 			ag.Status = computeAgentStatus(ac.ID, activeIDs, soul)
@@ -900,8 +902,9 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 
 func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name  string `json:"name"`
-		Model string `json:"model"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Model       string `json:"model"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
@@ -912,8 +915,9 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ac := config.AgentConfig{
-		ID:   uuid.New().String(),
-		Name: req.Name,
+		ID:          uuid.New().String(),
+		Name:        req.Name,
+		Description: strings.TrimSpace(req.Description),
 	}
 	if req.Model != "" {
 		ac.Model = &config.AgentModelConfig{Primary: req.Model}
@@ -930,6 +934,9 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 		newAgent := map[string]any{
 			"id":   ac.ID,
 			"name": ac.Name,
+		}
+		if ac.Description != "" {
+			newAgent["description"] = ac.Description
 		}
 		if ac.Model != nil {
 			newAgent["model"] = map[string]any{"primary": ac.Model.Primary}
@@ -962,6 +969,7 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 	ag := buildAgentDefaults(cfgAfterCreate)
 	ag.ID = ac.ID
 	ag.Name = ac.Name
+	ag.Description = ac.Description
 	ag.Type = "custom"
 	ag.Model = model
 	ag.Status = "draft"
@@ -985,6 +993,7 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 	}
 	var req struct {
 		Name               *string `json:"name"`
+		Description        *string `json:"description"`
 		Model              *string `json:"model"`
 		Soul               *string `json:"soul"`
 		Heartbeat          *string `json:"heartbeat"`
@@ -1029,6 +1038,14 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 			if agentMap["id"] == id {
 				if req.Name != nil {
 					agentMap["name"] = newName
+				}
+				if req.Description != nil {
+					trimmed := strings.TrimSpace(*req.Description)
+					if trimmed == "" {
+						delete(agentMap, "description")
+					} else {
+						agentMap["description"] = trimmed
+					}
 				}
 				if req.Model != nil {
 					modelMap, _ := agentMap["model"].(map[string]any)
@@ -1146,6 +1163,22 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 	ag := buildAgentDefaults(cfg)
 	ag.ID = agentID
 	ag.Name = newName
+	// Description: use the just-updated value when provided, else fall back
+	// to what's on disk (which will be the previously-persisted value because
+	// TriggerReload has refreshed cfg.Agents.List).
+	if req.Description != nil {
+		ag.Description = strings.TrimSpace(*req.Description)
+	} else {
+		// Re-read from the current config after reload.
+		if cur := a.agentLoop.GetConfig(); cur != nil {
+			for _, ac := range cur.Agents.List {
+				if ac.ID == agentID {
+					ag.Description = ac.Description
+					break
+				}
+			}
+		}
+	}
 	ag.Type = "custom"
 	ag.Model = model
 	ag.Status = computeAgentStatus(agentID, activeIDs, soul)

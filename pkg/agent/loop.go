@@ -3106,6 +3106,9 @@ turnLoop:
 		if al.rateLimiter != nil && response != nil && response.Usage != nil {
 			callCost := estimateLLMCallCost(llmModel, response.Usage)
 			al.rateLimiter.RecordSpend(callCost, ts.agent.ID)
+			// Accumulate turn-level stats so the "done" WS frame can surface
+			// real token counts and cost to the chat UI (issue #12).
+			ts.AddTurnStats(int64(response.Usage.TotalTokens), callCost)
 			if al.costTracker != nil {
 				if saveErr := al.costTracker.SaveFromRegistry(al.rateLimiter); saveErr != nil {
 					logger.ErrorCF("agent", "SEC-26: failed to persist daily cost after LLM call — cap may under-count on restart",
