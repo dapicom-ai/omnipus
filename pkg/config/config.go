@@ -479,6 +479,7 @@ type ChannelsConfig struct {
 	Pico       PicoConfig       `json:"pico"        yaml:"pico,omitempty"`
 	PicoClient PicoClientConfig `json:"pico_client" yaml:"pico_client,omitempty"`
 	IRC        IRCConfig        `json:"irc"         yaml:"irc,omitempty"`
+	Teams      TeamsConfig      `json:"teams"       yaml:"teams,omitempty"`
 }
 
 // GroupTriggerConfig controls when the bot responds in group chats.
@@ -732,6 +733,19 @@ type IRCConfig struct {
 	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"    yaml:"-"`
 	Typing             TypingConfig        `json:"typing,omitempty"           yaml:"-"`
 	ReasoningChannelID string              `json:"reasoning_channel_id"       yaml:"-"`
+}
+
+type TeamsConfig struct {
+	Enabled            bool                `json:"enabled"                 yaml:"-"                           env:"PICOCLAW_CHANNELS_TEAMS_ENABLED"`
+	AppID              string              `json:"app_id"                  yaml:"-"                           env:"PICOCLAW_CHANNELS_TEAMS_APP_ID"`
+	AppPassword        SecureString        `json:"app_password,omitzero"   yaml:"app_password,omitempty"       env:"PICOCLAW_CHANNELS_TEAMS_APP_PASSWORD"`
+	TenantID           string              `json:"tenant_id"               yaml:"-"                           env:"PICOCLAW_CHANNELS_TEAMS_TENANT_ID"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"              yaml:"-"                           env:"PICOCLAW_CHANNELS_TEAMS_ALLOW_FROM"`
+	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty" yaml:"-"`
+	Typing             TypingConfig        `json:"typing,omitempty"        yaml:"-"`
+	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"   yaml:"-"`
+	ReasoningChannelID string              `json:"reasoning_channel_id"    yaml:"-"                           env:"PICOCLAW_CHANNELS_TEAMS_REASONING_CHANNEL_ID"`
+	MaxMessageLength   int                 `json:"max_message_length"      yaml:"-"                           env:"PICOCLAW_CHANNELS_TEAMS_MAX_MESSAGE_LENGTH"`
 }
 
 type HeartbeatConfig struct {
