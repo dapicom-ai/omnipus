@@ -31,6 +31,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/policy"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/routing"
+	"github.com/dapicom-ai/omnipus/pkg/sandbox"
 	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/skills"
 	"github.com/dapicom-ai/omnipus/pkg/state"
@@ -83,6 +84,12 @@ type AgentLoop struct {
 	// Initialized in NewAgentLoop when sandbox.audit_log is enabled.
 	auditLogger   *audit.Logger
 	policyAuditor *policy.PolicyAuditor
+
+	// Wave 2: Kernel-level sandbox backend (SEC-01, SEC-02, SEC-03).
+	// Selected at startup via sandbox.SelectBackend: LinuxBackend on Linux
+	// 5.13+ (Landlock+seccomp), FallbackBackend elsewhere (cooperative env
+	// vars). Applied to every exec child via ExecTool.sandboxBackend.
+	sandboxBackend sandbox.SandboxBackend
 }
 
 // processOptions configures how a message is processed
@@ -163,8 +170,10 @@ func NewAgentLoop(
 	al.taskStore = taskstore.New(filepath.Join(homePath, "tasks"))
 	al.taskExecutor = newTaskExecutor(al, al.taskStore)
 
-	// SEC-15: Initialize structured audit logging and policy evaluation.
-	// Audit directory is ~/.omnipus/system/ (sibling of workspace).
+	// SEC-15: Initialize structured audit logging (optional) and policy
+	// evaluation (always on). Audit directory is ~/.omnipus/system/ (sibling of
+	// workspace). The audit logger and the policy evaluator are decoupled:
+	// disabling audit logging must NOT disable enforcement.
 	if cfg.Sandbox.AuditLog {
 		auditDir := filepath.Join(homePath, "system")
 		auditLogger, auditErr := audit.NewLogger(audit.LoggerConfig{
@@ -177,18 +186,10 @@ func NewAgentLoop(
 		} else {
 			al.auditLogger = auditLogger
 
-			// Create policy evaluator and wrap with PolicyAuditor (ADR W-3).
-			// The PolicyAuditor auto-logs every policy decision to the audit log.
-			policyEval := policy.NewEvaluator(nil) // deny-by-default when no security config
-			bridge := newAuditBridge(auditLogger)
-			// TODO(wave-2): Wire policyAuditor into ToolCompositor once
-			// ComposeAndRegister is called from the agent loop.
-			al.policyAuditor = policy.NewPolicyAuditor(policyEval, bridge, "")
-
 			// Log startup event.
 			if err := auditLogger.Log(&audit.Entry{
 				Event:    audit.EventStartup,
-				Decision: "allow",
+				Decision: audit.DecisionAllow,
 				Details: map[string]any{
 					"audit_dir": auditDir,
 				},
@@ -206,10 +207,140 @@ func NewAgentLoop(
 		}
 	}
 
+	// SEC-05/SEC-07: Build the policy evaluator from the live config.
+	// `cfg.Tools.Exec.AllowedBinaries` is the single source of truth for the
+	// exec allowlist (the same field the UI writes to via
+	// /api/v1/security/exec-allowlist). Constructing with an explicit
+	// SecurityConfig avoids the deny-everything trap of `NewEvaluator(nil)`.
+	//
+	// Default policy derivation:
+	//   - A non-empty allowlist means the operator opted into SEC-05 binary
+	//     restriction — default_policy is "deny" so unlisted binaries are blocked.
+	//   - An empty allowlist means no opt-in — default_policy is "allow" so
+	//     the existing guardCommand() checks remain the only exec restriction.
+	// This preserves backward compatibility for agents that never touched the
+	// allowlist, while honoring fail-closed semantics for agents that did.
+	defaultPolicy := policy.PolicyAllow
+	if len(cfg.Tools.Exec.AllowedBinaries) > 0 {
+		defaultPolicy = policy.PolicyDeny
+	}
+	secCfg := &policy.SecurityConfig{
+		DefaultPolicy: defaultPolicy,
+		Policy: policy.PolicySection{
+			Exec: policy.ExecPolicy{
+				AllowedBinaries: cfg.Tools.Exec.AllowedBinaries,
+				Approval:        cfg.Tools.Exec.Approval,
+			},
+		},
+	}
+	policyEval := policy.NewEvaluator(secCfg)
+
+	// Wrap the evaluator in a PolicyAuditor so every decision is audit-logged
+	// (ADR-002 §W-3). When audit logging is disabled the bridge is nil; the
+	// PolicyAuditor tolerates a nil logger and still enforces — enforcement
+	// must NOT depend on audit logging being enabled.
+	var auditBridgeImpl *auditBridge
+	if al.auditLogger != nil {
+		auditBridgeImpl = newAuditBridge(al.auditLogger)
+	}
+	var policyAuditorLogger policy.AuditLogger
+	if auditBridgeImpl != nil {
+		policyAuditorLogger = auditBridgeImpl
+	}
+	al.policyAuditor = policy.NewPolicyAuditor(policyEval, policyAuditorLogger, "")
+
+	// SEC-01/02/03: Select the best-available sandbox backend. This never
+	// fails: on unsupported kernels SelectBackend returns a FallbackBackend.
+	backend, backendName := sandbox.SelectBackend()
+	al.sandboxBackend = backend
+	logger.InfoCF("agent", "Sandbox backend selected", map[string]any{"backend": backendName})
+
 	// Register shared tools to all agents (now that al is created)
 	registerSharedTools(al, cfg, msgBus, registry, provider)
 
+	// Wave 2: replace the exec tool in each agent's registry with a version
+	// that has the policy auditor and sandbox backend wired in. Registering
+	// the same tool name overwrites the previous entry (see ToolRegistry.Register).
+	al.wireExecToolDeps()
+
 	return al
+}
+
+// AuditLogger returns the audit logger, or nil if audit logging is disabled.
+// Used by gateway handlers that need to log policy changes.
+func (al *AgentLoop) AuditLogger() *audit.Logger {
+	if al == nil {
+		return nil
+	}
+	return al.auditLogger
+}
+
+// wireExecToolDeps replaces each agent's exec tool with one constructed via
+// NewExecToolWithDeps, injecting the policy auditor (SEC-05) and the sandbox
+// backend (SEC-01/02/03). This runs after NewAgentInstance has created the
+// default exec tool so that all other tool setup (deny patterns, allow paths,
+// timeouts) is preserved — we only add the Wave 2 security deps on top.
+//
+// No-op when the agent has exec disabled or when the registry lookup fails.
+func (al *AgentLoop) wireExecToolDeps() {
+	if al.registry == nil {
+		return
+	}
+	cfg := al.cfg
+	if cfg == nil || !cfg.Tools.IsToolEnabled("exec") {
+		return
+	}
+	allowReadPaths := buildAllowReadPatterns(cfg)
+
+	for _, agentID := range al.registry.ListAgentIDs() {
+		agent, ok := al.registry.GetAgent(agentID)
+		if !ok || agent == nil || agent.Tools == nil {
+			continue
+		}
+
+		// Workspace-scoped sandbox policy: allow read/write/execute under
+		// the agent's workspace. Landlock inherits to children natively on
+		// Linux 5.13+, so no per-child application is actually required
+		// there — the fallback backend still uses this to emit
+		// OMNIPUS_SANDBOX_PATHS for cooperative scripts.
+		policy := sandbox.SandboxPolicy{
+			FilesystemRules: []sandbox.PathRule{
+				{
+					Path:   agent.Workspace,
+					Access: sandbox.AccessRead | sandbox.AccessWrite | sandbox.AccessExecute,
+				},
+			},
+			InheritToChildren: true,
+		}
+
+		deps := tools.ExecToolDeps{
+			SandboxPolicy: policy,
+		}
+		// Both dependency fields use interfaces, so we must nil-guard at
+		// assignment time to avoid typed-nil traps: storing a nil
+		// *policy.PolicyAuditor or nil sandbox.SandboxBackend in an interface
+		// field would create a non-nil interface holding a nil pointer,
+		// defeating downstream `!= nil` checks and causing nil-pointer panics.
+		if al.policyAuditor != nil {
+			deps.PolicyAuditor = al.policyAuditor
+		}
+		if al.sandboxBackend != nil {
+			deps.SandboxBackend = al.sandboxBackend
+		}
+
+		restrict := cfg.Agents.Defaults.RestrictToWorkspace
+		execTool, err := tools.NewExecToolWithDeps(agent.Workspace, restrict, cfg, deps, allowReadPaths)
+		if err != nil {
+			// Fail closed: if Wave 2 security wiring fails, remove the exec
+			// tool from the registry entirely. The agent will lose exec
+			// capability but cannot run commands without the security layer.
+			logger.ErrorCF("agent", "Failed to wire exec tool deps; removing exec tool (fail closed)",
+				map[string]any{"agent_id": agentID, "error": err.Error()})
+			agent.Tools.Unregister("exec")
+			continue
+		}
+		agent.Tools.Register(execTool)
+	}
 }
 
 // registerSharedTools registers tools that are shared across all agents.

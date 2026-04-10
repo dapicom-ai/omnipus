@@ -12,6 +12,7 @@ package sandbox
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -175,8 +176,45 @@ func (f *FallbackBackend) Apply(policy SandboxPolicy) error {
 	return nil
 }
 
-// ApplyToCmd is a no-op for the fallback backend.
-func (f *FallbackBackend) ApplyToCmd(_ *exec.Cmd, _ SandboxPolicy) error {
+// ApplyToCmd injects sandbox policy as environment variables on the child
+// process. This is the application-level counterpart to Landlock/seccomp: when
+// kernel sandboxing is unavailable (non-Linux platforms, Linux < 5.13, Termux,
+// etc.), cooperative child processes (such as Omnipus helper scripts) can read
+// OMNIPUS_SANDBOX_PATHS and self-enforce path restrictions.
+//
+// Threat model: this mechanism ONLY covers cooperative processes. Arbitrary
+// uncooperative binaries are NOT contained — that requires kernel enforcement
+// (SEC-01 Landlock). This fulfills ADR W-1 by replacing the previous no-op
+// with a real mechanism, while documenting the gap that Landlock closes on
+// supported kernels.
+//
+// The filesystem rules are resolved to absolute paths before being passed to
+// the child so that relative workspace paths remain meaningful across cwd
+// changes inside the child process.
+func (f *FallbackBackend) ApplyToCmd(cmd *exec.Cmd, pol SandboxPolicy) error {
+	if cmd == nil {
+		return fmt.Errorf("sandbox fallback: nil cmd")
+	}
+	if len(pol.FilesystemRules) == 0 {
+		return nil
+	}
+	paths := make([]string, 0, len(pol.FilesystemRules))
+	for _, rule := range pol.FilesystemRules {
+		abs, err := filepath.Abs(rule.Path)
+		if err != nil {
+			return fmt.Errorf("sandbox fallback: cannot resolve path %q: %w", rule.Path, err)
+		}
+		paths = append(paths, abs)
+	}
+	// Inherit existing env if the caller has not populated it yet. This matches
+	// the stdlib convention where a nil Env means "use os.Environ()".
+	if cmd.Env == nil {
+		cmd.Env = os.Environ()
+	}
+	cmd.Env = append(cmd.Env,
+		"OMNIPUS_SANDBOX_MODE=fallback",
+		"OMNIPUS_SANDBOX_PATHS="+strings.Join(paths, string(os.PathListSeparator)),
+	)
 	return nil
 }
 

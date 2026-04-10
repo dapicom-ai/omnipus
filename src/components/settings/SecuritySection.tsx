@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { AuditLogViewer } from './AuditLogViewer'
+import { ExecAllowlistSection } from './ExecAllowlistSection'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { FloppyDisk, Plus, Trash, Key } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
@@ -378,6 +379,10 @@ export function SecuritySection() {
           ))}
         </div>
       </section>
+
+      {/* ── Exec Binary Allowlist ──────────────────────────── */}
+      <Separator className="my-6" />
+      <ExecAllowlistSection />
 
       {/* ── Audit Log ─────────────────────────────────────── */}
       <Separator className="my-6" />

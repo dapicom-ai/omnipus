@@ -102,6 +102,19 @@ func (r *ToolRegistry) SetAuditLogger(logger *audit.Logger) {
 	r.auditLogger = logger
 }
 
+// Unregister removes a tool from the registry. Used by fail-closed paths where
+// we need to strip a tool that could not be securely wired.
+func (r *ToolRegistry) Unregister(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.tools[name]; !exists {
+		return
+	}
+	delete(r.tools, name)
+	r.version.Add(1)
+	logger.DebugCF("tools", "Unregistered tool", map[string]any{"name": name})
+}
+
 // PromoteTools atomically sets the TTL for multiple non-core tools.
 // This prevents a concurrent TickTTL from decrementing between promotions.
 func (r *ToolRegistry) PromoteTools(names []string, ttl int) {

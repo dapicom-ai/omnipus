@@ -788,3 +788,24 @@ export function changePassword(currentPassword: string, newPassword: string): Pr
     body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
   })
 }
+
+// ── Exec Allowlist ────────────────────────────────────────────────────────────
+
+export interface ExecAllowlist {
+  allowed_binaries: string[]
+  // restart_required is true on a successful PUT: the in-memory agent loop
+  // still uses the previous allowlist until Omnipus restarts (SEC-12). The UI
+  // surfaces this via a "Restart required" badge in ExecAllowlistSection.
+  restart_required?: boolean
+}
+
+export function fetchExecAllowlist(): Promise<ExecAllowlist> {
+  return request<ExecAllowlist>('/security/exec-allowlist')
+}
+
+export function updateExecAllowlist(patterns: string[]): Promise<ExecAllowlist> {
+  return request<ExecAllowlist>('/security/exec-allowlist', {
+    method: 'PUT',
+    body: JSON.stringify({ allowed_binaries: patterns }),
+  })
+}

@@ -21,7 +21,52 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/constants"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
+	"github.com/dapicom-ai/omnipus/pkg/policy"
+	"github.com/dapicom-ai/omnipus/pkg/sandbox"
 )
+
+// ExecPolicyAuditor evaluates an exec command against the policy engine and
+// audit-logs the decision. Implemented by *policy.PolicyAuditor. Defined as an
+// interface so tests can supply lightweight mocks and so this package does not
+// need to directly import the audit package through this dependency edge.
+//
+// Contract: implementations MUST audit-log every decision (allow AND deny) as
+// a side effect of EvaluateExec. Returning a decision without logging violates
+// the SEC-15/ADR-002 §W-3 contract. This is not expressible in the signature
+// but is part of the type's invariant — test doubles must honor it.
+type ExecPolicyAuditor interface {
+	EvaluateExec(agentID, command string) policy.Decision
+}
+
+// ExecSandboxBackend applies kernel or application-level sandbox restrictions
+// to a child process before it starts. Implemented by sandbox.SandboxBackend.
+// Defined as a narrow interface so the tool only depends on the single method
+// it actually calls.
+type ExecSandboxBackend interface {
+	ApplyToCmd(cmd *exec.Cmd, policy sandbox.SandboxPolicy) error
+}
+
+// ExecToolDeps bundles optional Wave 2 security dependencies for ExecTool.
+// All fields are optional — a nil PolicyAuditor disables binary allowlist
+// enforcement (useful when the policy layer is not configured), and a nil
+// SandboxBackend disables per-process sandbox application (useful in headless
+// tests and on unsupported platforms).
+//
+// Note: the interactive approval layer (SEC-08, "ask" prompts) is handled at
+// the agent loop level by HookManager.ApproveTool and routed to the WebSocket
+// approval hook — do NOT also prompt here from shell.go, which would block on
+// stdin in headless deployments. The two layers run in this runtime order:
+//   - Pre-dispatch: interactive approval (SEC-08) via HookManager.ApproveTool
+//     → gateway/ws_approval.go, before the tool ever sees the command
+//   - In-tool: automated binary allowlist (SEC-05) via this file, inside
+//     executeRun after guardCommand() but before the command runs
+//
+// Both layers must allow for the command to run; either can deny.
+type ExecToolDeps struct {
+	PolicyAuditor  ExecPolicyAuditor
+	SandboxBackend ExecSandboxBackend
+	SandboxPolicy  sandbox.SandboxPolicy
+}
 
 var (
 	globalSessionManager = NewSessionManager()
@@ -45,6 +90,17 @@ type ExecTool struct {
 	restrictToWorkspace  bool
 	allowRemote          bool
 	sessionManager       *SessionManager
+
+	// Wave 2: Security wiring (SEC-01/02/03/05).
+	// policyAuditor enforces the binary allowlist (SEC-05) and audit-logs the
+	// decision — the allowlist itself lives on the PolicyAuditor's Evaluator,
+	// not on this struct, so it stays in sync with the live policy config.
+	// sandboxBackend applies kernel (Landlock/seccomp) or application-level
+	// restrictions to every child process. Both are optional: nil means the
+	// corresponding feature is disabled.
+	policyAuditor  ExecPolicyAuditor
+	sandboxBackend ExecSandboxBackend
+	sandboxPolicy  sandbox.SandboxPolicy
 }
 
 var (
@@ -119,6 +175,47 @@ var (
 
 func NewExecTool(workingDir string, restrict bool, allowPaths ...[]*regexp.Regexp) (*ExecTool, error) {
 	return NewExecToolWithConfig(workingDir, restrict, nil, allowPaths...)
+}
+
+// NewExecToolWithDeps constructs an ExecTool with optional Wave 2 security
+// dependencies. Callers that do not need the policy auditor or sandbox backend
+// should use NewExecToolWithConfig, which passes a zero-valued ExecToolDeps.
+func NewExecToolWithDeps(
+	workingDir string,
+	restrict bool,
+	cfg *config.Config,
+	deps ExecToolDeps,
+	allowPaths ...[]*regexp.Regexp,
+) (*ExecTool, error) {
+	tool, err := NewExecToolWithConfig(workingDir, restrict, cfg, allowPaths...)
+	if err != nil {
+		return nil, err
+	}
+	tool.policyAuditor = deps.PolicyAuditor
+	tool.sandboxBackend = deps.SandboxBackend
+	tool.sandboxPolicy = deps.SandboxPolicy
+	return tool, nil
+}
+
+// applySandboxToCmd applies the configured sandbox policy to a child process
+// before Start(). When no backend is configured this is a no-op.
+//
+// On Linux 5.13+ the kernel backend is effectively a no-op because
+// Landlock+seccomp are already in effect on the Omnipus process and inherit
+// to children. On unsupported kernels and other platforms, the
+// FallbackBackend injects OMNIPUS_SANDBOX_PATHS so cooperative helper scripts
+// can self-enforce.
+//
+// The returned error is already prefixed with "sandbox setup failed: " so
+// callers can pass it directly to ErrorResult.
+func (t *ExecTool) applySandboxToCmd(cmd *exec.Cmd) error {
+	if t.sandboxBackend == nil {
+		return nil
+	}
+	if err := t.sandboxBackend.ApplyToCmd(cmd, t.sandboxPolicy); err != nil {
+		return fmt.Errorf("sandbox setup failed: %v", err)
+	}
+	return nil
 }
 
 func NewExecToolWithConfig(
@@ -332,6 +429,27 @@ func (t *ExecTool) executeRun(ctx context.Context, args map[string]any) *ToolRes
 		return ErrorResult(guardError)
 	}
 
+	// SEC-05: Binary allowlist enforcement (Wave 2).
+	//
+	// Delegates unconditionally to the policy auditor, which auto-logs every
+	// decision to the audit log (ADR-002 §W-3). The evaluator decides whether
+	// to enforce based on its own default_policy + allowed_binaries state:
+	//   - empty allowlist + default_policy="allow" → always allows
+	//   - empty allowlist + default_policy="deny" → always denies
+	//   - non-empty allowlist → matches against patterns, honours default_policy on miss
+	// This is the automated enforcement layer — the interactive approval
+	// prompt is handled separately by the agent loop's HookManager.ApproveTool
+	// which routes through the WebSocket approval channel, so we deliberately
+	// do not call ExecApprovalManager.CheckApproval() here (that would block
+	// on stdin in headless deployments).
+	if t.policyAuditor != nil {
+		agentID := ToolAgentID(ctx)
+		decision := t.policyAuditor.EvaluateExec(agentID, command)
+		if !decision.Allowed {
+			return ErrorResult(fmt.Sprintf("Command blocked by exec allowlist: %s", decision.PolicyRule))
+		}
+	}
+
 	// Re-resolve symlinks immediately before execution to shrink the TOCTOU window
 	// between validation and cmd.Dir assignment.
 	if t.restrictToWorkspace && t.workingDir != "" && cwd != t.workingDir {
@@ -390,6 +508,12 @@ func (t *ExecTool) runSync(ctx context.Context, command, cwd string) *ToolResult
 	}
 
 	prepareCommandForTermination(cmd)
+
+	// SEC-01/02/03: Apply sandbox restrictions to the child process before Start().
+	// See applySandboxToCmd for the threat-model rationale.
+	if err := t.applySandboxToCmd(cmd); err != nil {
+		return ErrorResult(err.Error())
+	}
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -540,6 +664,19 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 			return ErrorResult(fmt.Sprintf("failed to create stdin pipe: %v", err))
 		}
 		session.stdinWriter = stdinWriter
+	}
+
+	// SEC-01/02/03: Apply sandbox restrictions to the background child process
+	// before Start(). Must happen after the PTY / pipe setup above (which may
+	// replace SysProcAttr) but before Start().
+	if err := t.applySandboxToCmd(cmd); err != nil {
+		if session.ptyMaster != nil {
+			session.ptyMaster.Close()
+		}
+		if ptySlaveToClose != nil {
+			ptySlaveToClose.Close()
+		}
+		return ErrorResult(err.Error())
 	}
 
 	if err := cmd.Start(); err != nil {
