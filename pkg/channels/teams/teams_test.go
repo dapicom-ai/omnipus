@@ -87,57 +87,35 @@ func TestGetChatKind_CachedNonString(t *testing.T) {
 	}
 }
 
-// -- Test getChatKindFromActivity --------------------------------------------
+// -- Test detectChatKind --------------------------------------------
 
 func TestGetChatKindFromActivity_ChannelID(t *testing.T) {
 	ch := &TeamsChannel{}
-	act := schema.Activity{
-		Conversation: schema.ConversationAccount{
-			ID: "19:abc@thread.tacv2",
-		},
-	}
-	if got := ch.getChatKindFromActivity(act); got != "channel" {
-		t.Errorf("getChatKindFromActivity with channel ID = %q, want channel", got)
+	if got := ch.detectChatKind("19:abc@thread.tacv2", false); got != "channel" {
+		t.Errorf("detectChatKind with channel ID = %q, want channel", got)
 	}
 }
 
 func TestGetChatKindFromActivity_IsGroupTrue(t *testing.T) {
 	// Even with a UPN-style ID, isGroup=true means it's a channel
 	ch := &TeamsChannel{}
-	act := schema.Activity{
-		Conversation: schema.ConversationAccount{
-			ID:      "user@example.com",
-			IsGroup: true,
-		},
-	}
-	if got := ch.getChatKindFromActivity(act); got != "channel" {
-		t.Errorf("getChatKindFromActivity with isGroup=true = %q, want channel", got)
+	if got := ch.detectChatKind("user@example.com", true); got != "channel" {
+		t.Errorf("detectChatKind with isGroup=true = %q, want channel", got)
 	}
 }
 
 func TestGetChatKindFromActivity_DirectUPN(t *testing.T) {
 	// UPN without @thread.tacv2 is direct
 	ch := &TeamsChannel{}
-	act := schema.Activity{
-		Conversation: schema.ConversationAccount{
-			ID:      "john@example.com",
-			IsGroup: false,
-		},
-	}
-	if got := ch.getChatKindFromActivity(act); got != "direct" {
-		t.Errorf("getChatKindFromActivity with UPN = %q, want direct", got)
+	if got := ch.detectChatKind("john@example.com", false); got != "direct" {
+		t.Errorf("detectChatKind with UPN = %q, want direct", got)
 	}
 }
 
 func TestGetChatKindFromActivity_EmptyID(t *testing.T) {
 	ch := &TeamsChannel{}
-	act := schema.Activity{
-		Conversation: schema.ConversationAccount{
-			ID: "",
-		},
-	}
-	if got := ch.getChatKindFromActivity(act); got != "channel" {
-		t.Errorf("getChatKindFromActivity with empty ID = %q, want channel", got)
+	if got := ch.detectChatKind("", false); got != "channel" {
+		t.Errorf("detectChatKind with empty ID = %q, want channel", got)
 	}
 }
 
@@ -373,7 +351,7 @@ func TestWebhookHandler_Returns200AndStoresConversationRef(t *testing.T) {
 		"conversation": map[string]any{
 			"id": "19:channel@thread.tacv2",
 		},
-		"serviceUrl": "https://teams.example.com",
+		"serviceUrl": "https://smba.trafficmanager.net/teams/",
 		"text":      "Hello Teams",
 	}
 	body, _ := json.Marshal(activity)
@@ -392,8 +370,8 @@ func TestWebhookHandler_Returns200AndStoresConversationRef(t *testing.T) {
 		t.Fatal("conversation reference not stored")
 	}
 	ref := refVal.(conversationRef)
-	if ref.ServiceURL != "https://teams.example.com" {
-		t.Errorf("ServiceURL = %q, want %q", ref.ServiceURL, "https://teams.example.com")
+	if ref.ServiceURL != "https://smba.trafficmanager.net/teams/" {
+		t.Errorf("ServiceURL = %q, want %q", ref.ServiceURL, "https://smba.trafficmanager.net/teams/")
 	}
 	if ref.ConversationID != "19:channel@thread.tacv2" {
 		t.Errorf("ConversationID = %q, want %q", ref.ConversationID, "19:channel@thread.tacv2")
@@ -417,7 +395,7 @@ func TestWebhookHandler_IgnoresNonMessageActivity(t *testing.T) {
 		"conversation": map[string]any{
 			"id": "19:channel@thread.tacv2",
 		},
-		"serviceUrl": "https://teams.example.com",
+		"serviceUrl": "https://smba.trafficmanager.net/teams/",
 	}
 	body, _ := json.Marshal(activity)
 	req := httptest.NewRequest(http.MethodPost, "/api/messages", strings.NewReader(string(body)))
@@ -518,7 +496,7 @@ func TestSend_CallsProactiveMessageAndReturnsErrTemporaryOnFailure(t *testing.T)
 	ch.chatType.Store("19:channel@thread.tacv2", "channel")
 	// Pre-store conversation reference
 	ch.convRefs.Store("19:channel@thread.tacv2", conversationRef{
-		ServiceURL:     "https://teams.example.com",
+		ServiceURL:     "https://smba.trafficmanager.net/teams/",
 		ConversationID: "19:channel@thread.tacv2",
 	})
 
@@ -568,7 +546,7 @@ func TestProcessActivity_StoresChatKind(t *testing.T) {
 			"id":      "alice@example.com",
 			"isGroup": false,
 		},
-		"serviceUrl": "https://teams.example.com",
+		"serviceUrl": "https://smba.trafficmanager.net/teams/",
 		"text":       "Hello direct",
 	}
 	body, _ := json.Marshal(activity)
@@ -606,7 +584,7 @@ func TestProcessActivity_StoresLastMsgID(t *testing.T) {
 		"conversation": map[string]any{
 			"id": "19:channel@thread.tacv2",
 		},
-		"serviceUrl": "https://teams.example.com",
+		"serviceUrl": "https://smba.trafficmanager.net/teams/",
 		"text":       "Test message",
 	}
 	body, _ := json.Marshal(activity)
@@ -676,7 +654,7 @@ func TestWebhookHandler_EmptyConversationID(t *testing.T) {
 		"conversation": map[string]any{
 			"id": "",
 		},
-		"serviceUrl": "https://teams.example.com",
+		"serviceUrl": "https://smba.trafficmanager.net/teams/",
 		"text":       "Hello",
 	}
 	body, _ := json.Marshal(activity)

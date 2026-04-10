@@ -21,10 +21,17 @@ import (
 )
 
 const (
-	teamsMaxMessageLength  = 4000
-	teamsWebhookPath        = "/api/messages"
-	maxWebhookBodySize      = 1 << 20 // 1 MiB
+	teamsMaxMessageLength = 4000
+	teamsWebhookPath      = "/api/messages"
+	maxWebhookBodySize    = 1 << 20 // 1 MiB
 )
+
+// Teams API endpoints use these domains. ServiceURL validation prevents SSRF.
+var allowedServiceURLPrefixes = []string{
+	"https://teams.microsoft.com",
+	"https://smba.trafficmanager.net",
+	"https://teams.cloud.gov",
+}
 
 // conversationRef stores the conversation reference for proactive messaging.
 type conversationRef struct {
@@ -32,18 +39,27 @@ type conversationRef struct {
 	ConversationID string
 }
 
+const (
+	chatKindChannel = "channel"
+	chatKindDirect  = "direct"
+)
+
 // TeamsChannel implements the channels.Channel interface for Microsoft Teams.
 type TeamsChannel struct {
 	*channels.BaseChannel
-	config    config.TeamsConfig
-	adapter   core.Adapter
-	ctx       context.Context
-	cancel    context.CancelFunc
+	config  config.TeamsConfig
+	adapter core.Adapter
+	ctx     context.Context
+	cancel  context.CancelFunc
+	stopOnce sync.Once
+
+	// activeGoroutines tracks in-flight processActivity goroutines for graceful shutdown.
+	activeGoroutines sync.WaitGroup
 
 	// chatType stores whether a chatID is a channel or direct message.
 	// Channel IDs look like "19:abc@thread.tacv2" (contain "@thread.tacv2").
 	// Direct message IDs are UPNs like "john@example.com" (contain no "@thread.").
-	chatType sync.Map // chatID → "channel" | "direct"
+	chatType sync.Map // chatID → chatKindChannel | chatKindDirect
 
 	// convRefs stores conversation references for proactive messaging.
 	// Keyed by chatID (conversation ID).
@@ -76,13 +92,24 @@ func NewTeamsChannel(cfg config.TeamsConfig, messageBus *bus.MessageBus) (*Teams
 	}, nil
 }
 
+// isValidServiceURL returns true if the URL has an allowed prefix.
+// This prevents SSRF attacks where a malicious webhook could store an internal
+// network URL (e.g., http://169.254.169.254/) as the ServiceURL.
+func isValidServiceURL(serviceURL string) bool {
+	for _, prefix := range allowedServiceURLPrefixes {
+		if strings.HasPrefix(serviceURL, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // Start initializes the Teams bot via msbotbuilder-go.
 func (c *TeamsChannel) Start(ctx context.Context) error {
 	logger.InfoC("teams", "Starting Microsoft Teams channel")
 
 	c.ctx, c.cancel = context.WithCancel(ctx)
 
-	// Create the Bot Framework adapter with credentials.
 	adapterSetting := core.AdapterSetting{
 		AppID:       c.config.AppID,
 		AppPassword: c.config.AppPassword.String(),
@@ -98,10 +125,8 @@ func (c *TeamsChannel) Start(ctx context.Context) error {
 	}
 	c.adapter = adapter
 
-	// Pre-register reasoning_channel_id as channel if configured,
-	// so outbound-only destinations are routed correctly.
 	if c.config.ReasoningChannelID != "" {
-		c.chatType.Store(c.config.ReasoningChannelID, "channel")
+		c.chatType.Store(c.config.ReasoningChannelID, chatKindChannel)
 	}
 
 	c.SetRunning(true)
@@ -115,9 +140,13 @@ func (c *TeamsChannel) Stop(ctx context.Context) error {
 
 	c.SetRunning(false)
 
-	if c.cancel != nil {
-		c.cancel()
-	}
+	c.stopOnce.Do(func() {
+		if c.cancel != nil {
+			c.cancel()
+		}
+		// Wait for all in-flight processActivity goroutines to complete.
+		c.activeGoroutines.Wait()
+	})
 
 	return nil
 }
@@ -167,8 +196,9 @@ func (c *TeamsChannel) webhookHandler(w http.ResponseWriter, r *http.Request) {
 	// The activity is processed asynchronously via the message bus.
 	w.WriteHeader(http.StatusOK)
 
-	// Store conversation reference for proactive messaging.
-	if act.Conversation.ID != "" {
+	// Store validated conversation reference for proactive messaging.
+	// SSRF guard: reject ServiceURLs that don't point to known Teams endpoints.
+	if act.Conversation.ID != "" && act.ServiceURL != "" && isValidServiceURL(act.ServiceURL) {
 		c.convRefs.Store(act.Conversation.ID, conversationRef{
 			ServiceURL:     act.ServiceURL,
 			ConversationID: act.Conversation.ID,
@@ -176,18 +206,30 @@ func (c *TeamsChannel) webhookHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Process the activity asynchronously to avoid blocking the HTTP response.
+	// Register with WaitGroup so Stop() can wait for completion.
+	c.activeGoroutines.Add(1)
 	go c.processActivity(act)
 }
 
 // processActivity processes a Teams activity and routes it to the message bus.
 func (c *TeamsChannel) processActivity(act schema.Activity) {
-	// Use stored context if available, otherwise Background for unit tests.
+	defer c.activeGoroutines.Done()
+
+	// Panic recovery prevents goroutine leaks from unexpected panics in HandleMessage.
+	defer func() {
+		if r := recover(); r != nil {
+			logger.ErrorCF("teams", "Panic in processActivity goroutine", map[string]any{
+				"panic":       r,
+				"activity_id": act.ID,
+			})
+		}
+	}()
+
 	ctx := c.ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
-	// Only handle message activities.
 	if act.Type != schema.Message {
 		logger.DebugCF("teams", "Ignoring non-message activity", map[string]any{
 			"type": act.Type,
@@ -195,7 +237,6 @@ func (c *TeamsChannel) processActivity(act schema.Activity) {
 		return
 	}
 
-	// Extract sender information.
 	var senderID string
 	if act.From.ID != "" {
 		senderID = act.From.ID
@@ -204,30 +245,24 @@ func (c *TeamsChannel) processActivity(act schema.Activity) {
 		return
 	}
 
-	// Extract content.
 	content := strings.TrimSpace(act.Text)
 	if content == "" && len(act.Attachments) == 0 {
 		logger.DebugC("teams", "Received empty message with no attachments, ignoring")
 		return
 	}
 
-	// Determine chat ID and type from conversation.
 	var chatID string
-	chatKind := c.getChatKindFromActivity(act)
+	chatKind := c.detectChatKind(act.Conversation.ID, act.Conversation.IsGroup)
 
 	if act.Conversation.ID != "" {
 		chatID = act.Conversation.ID
 	}
-
-	// Fallback to from.ID if no conversation ID.
 	if chatID == "" {
 		chatID = senderID
 	}
 
-	// Store the chat type for future routing.
 	c.chatType.Store(chatID, chatKind)
 
-	// Store last message ID for threading.
 	if act.ID != "" {
 		c.lastMsgID.Store(chatID, act.ID)
 	}
@@ -238,7 +273,6 @@ func (c *TeamsChannel) processActivity(act schema.Activity) {
 		CanonicalID: identity.BuildCanonicalID("teams", senderID),
 	}
 
-	// Check allowlist.
 	if !c.IsAllowedSender(sender) {
 		logger.DebugCF("teams", "Message rejected by allowlist", map[string]any{
 			"sender_id": senderID,
@@ -246,26 +280,20 @@ func (c *TeamsChannel) processActivity(act schema.Activity) {
 		return
 	}
 
-	// Determine peer kind.
 	peerKind := bus.PeerGroup
 	peerID := chatID
-	if chatKind == "direct" {
+	if chatKind == chatKindDirect {
 		peerKind = bus.PeerDirect
 		peerID = senderID
 	}
 
 	peer := bus.Peer{Kind: peerKind, ID: peerID}
 
-	// Build metadata.
 	metadata := map[string]string{
 		"platform": "teams",
 	}
-	if act.ChannelData != nil {
-		if tenant, ok := act.ChannelData["tenant"]; ok {
-			if tenantStr, ok := tenant.(string); ok {
-				metadata["tenant_id"] = tenantStr
-			}
-		}
+	if tenantID := extractTenantID(act.ChannelData); tenantID != "" {
+		metadata["tenant_id"] = tenantID
 	}
 
 	logger.DebugCF("teams", "Received message", map[string]any{
@@ -275,7 +303,6 @@ func (c *TeamsChannel) processActivity(act schema.Activity) {
 		"preview":   truncate(content, 50),
 	})
 
-	// Route to HandleMessage.
 	c.HandleMessage(
 		ctx,
 		peer,
@@ -283,48 +310,48 @@ func (c *TeamsChannel) processActivity(act schema.Activity) {
 		senderID,
 		chatID,
 		content,
-		nil, // media
+		nil,
 		metadata,
 		sender,
 	)
 
-	// Send acknowledgment to Teams via the adapter's ProcessActivity.
-	// This prevents Teams from retrying the message delivery.
-	// We use a minimal handler that returns an empty activity.
+	// Send acknowledgment to Teams to prevent retry storms.
+	// Log errors but do not return — message was already processed.
 	if c.adapter != nil {
 		handler := activity.HandlerFuncs{
 			OnMessageFunc: func(turn *activity.TurnContext) (schema.Activity, error) {
-				// Return empty activity - we've already published to the bus.
-				// This acknowledges the message without sending a duplicate response.
 				return schema.Activity{}, nil
 			},
 		}
-		_ = c.adapter.ProcessActivity(ctx, act, handler)
+		if err := c.adapter.ProcessActivity(ctx, act, handler); err != nil {
+			logger.ErrorCF("teams", "Failed to acknowledge activity to Teams (may cause retry)", map[string]any{
+				"activity_id": act.ID,
+				"error":      err.Error(),
+			})
+		}
 	}
 }
 
-// getChatKindFromActivity determines the chat type from the activity.
-func (c *TeamsChannel) getChatKindFromActivity(act schema.Activity) string {
-	// Check if this is a group/channel or direct message.
-	// Teams channel IDs look like "19:abc@thread.tacv2" (contain "@thread.tacv2").
-	// Direct message IDs are UPNs like "john@example.com" (no "@thread.").
-	if act.Conversation.ID != "" {
-		convID := act.Conversation.ID
-		if strings.Contains(convID, "@thread.tacv2") {
-			return "channel"
-		}
-		// Check if it's a group conversation.
-		if act.Conversation.IsGroup {
-			return "channel"
-		}
-		// If it contains @ but not @thread.tacv2, it's likely a UPN (direct).
-		if strings.Contains(convID, "@") {
-			return "direct"
-		}
-		// Default to channel for unknown format.
-		return "channel"
+// detectChatKindFromID determines chat kind from a conversation ID string.
+func detectChatKindFromID(convID string) string {
+	if strings.Contains(convID, "@thread.tacv2") {
+		return chatKindChannel
 	}
-	return "channel"
+	if strings.Contains(convID, "@") {
+		return chatKindDirect
+	}
+	return chatKindChannel
+}
+
+// detectChatKind determines chat kind from conversation ID and group flag.
+func (c *TeamsChannel) detectChatKind(convID string, isGroup bool) string {
+	if convID == "" {
+		return chatKindChannel
+	}
+	if isGroup {
+		return chatKindChannel
+	}
+	return detectChatKindFromID(convID)
 }
 
 // Send sends an outbound message to Teams using proactive messaging.
@@ -335,7 +362,6 @@ func (c *TeamsChannel) Send(ctx context.Context, msg bus.OutboundMessage) error 
 
 	chatKind := c.getChatKind(msg.ChatID)
 
-	// Look up the conversation reference for this chat.
 	refVal, ok := c.convRefs.Load(msg.ChatID)
 	if !ok {
 		logger.WarnCF("teams", "No conversation reference found for chatID, cannot send", map[string]any{
@@ -343,9 +369,15 @@ func (c *TeamsChannel) Send(ctx context.Context, msg bus.OutboundMessage) error 
 		})
 		return fmt.Errorf("teams: no conversation reference for chatID %s", msg.ChatID)
 	}
-	ref := refVal.(conversationRef)
+	ref, ok := refVal.(conversationRef)
+	if !ok {
+		logger.ErrorCF("teams", "Corrupted conversation reference for chatID", map[string]any{
+			"chat_id": msg.ChatID,
+			"type":    fmt.Sprintf("%T", refVal),
+		})
+		return fmt.Errorf("teams: corrupted conversation reference for chatID %s", msg.ChatID)
+	}
 
-	// Build the proactive message conversation reference.
 	convRef := schema.ConversationReference{
 		ServiceURL: ref.ServiceURL,
 		Conversation: schema.ConversationAccount{
@@ -353,25 +385,29 @@ func (c *TeamsChannel) Send(ctx context.Context, msg bus.OutboundMessage) error 
 		},
 	}
 
-	// Create a handler that returns the message as an activity.
 	handler := activity.HandlerFuncs{
 		OnMessageFunc: func(turn *activity.TurnContext) (schema.Activity, error) {
-			activity := schema.Activity{
+			return schema.Activity{
 				Type: schema.Message,
 				Text: msg.Content,
-			}
-			return activity, nil
+			}, nil
 		},
 	}
 
-	// Send via proactive messaging.
+	if c.adapter == nil {
+		logger.ErrorCF("teams", "Teams adapter is nil, cannot send", map[string]any{
+			"chat_id": msg.ChatID,
+		})
+		return fmt.Errorf("teams: adapter not initialized")
+	}
+
 	if err := c.adapter.ProactiveMessage(ctx, convRef, handler); err != nil {
-		logger.ErrorCF("teams", "Failed to send message", map[string]any{
+		logger.ErrorCF("teams", "Failed to send proactive message to Teams", map[string]any{
 			"chat_id":   msg.ChatID,
 			"chat_kind": chatKind,
 			"error":     err.Error(),
 		})
-		return fmt.Errorf("teams send: %w", channels.ErrTemporary)
+		return fmt.Errorf("teams send failed for chatID %s: %w", msg.ChatID, channels.ErrTemporary)
 	}
 
 	logger.DebugCF("teams", "Message sent", map[string]any{
@@ -382,33 +418,44 @@ func (c *TeamsChannel) Send(ctx context.Context, msg bus.OutboundMessage) error 
 	return nil
 }
 
-// getChatKind returns the chat type for a given chatID ("channel" or "direct").
-// Channel IDs contain "@thread.tacv2", direct message IDs are UPNs (contain "@" but not "@thread.tacv2").
-// When no cached value exists, it detects the type directly from the chatID format.
+// getChatKind returns the chat type for a given chatID (cached or detected).
 func (c *TeamsChannel) getChatKind(chatID string) string {
 	if v, ok := c.chatType.Load(chatID); ok {
 		if k, ok := v.(string); ok {
 			return k
 		}
 	}
-	// Detect from chatID format when not cached.
-	// Channel IDs look like "19:abc@thread.tacv2".
-	// Direct message IDs are UPNs (contain "@" but not "@thread.tacv2").
-	if strings.Contains(chatID, "@thread.tacv2") {
-		return "channel"
-	}
-	if strings.Contains(chatID, "@") {
-		return "direct"
-	}
-	// Default to "channel" for unknown chat IDs.
-	return "channel"
+	return detectChatKindFromID(chatID)
 }
 
-// truncate truncates a string to a maximum length.
+// extractTenantID extracts the tenant ID from channel data if present.
+func extractTenantID(channelData map[string]any) string {
+	if channelData == nil {
+		return ""
+	}
+	tenant, ok := channelData["tenant"]
+	if !ok {
+		return ""
+	}
+	tenantStr, ok := tenant.(string)
+	if !ok {
+		return ""
+	}
+	return tenantStr
+}
+
+// truncate truncates a string to a maximum rune count, appending "..." if truncation occurred.
+// This is intended for creating message previews, not for safe string slicing.
 func truncate(s string, maxLen int) string {
+	if maxLen <= 0 {
+		return "..."
+	}
 	if len(s) <= maxLen {
 		return s
 	}
 	runes := []rune(s)
+	if maxLen >= len(runes) {
+		return s
+	}
 	return string(runes[:maxLen]) + "..."
 }
