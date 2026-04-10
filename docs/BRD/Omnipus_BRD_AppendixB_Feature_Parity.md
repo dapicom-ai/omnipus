@@ -128,7 +128,7 @@ These features are needed for Omnipus to be credible in enterprise environments.
 | ID | Requirement | Priority | Effort | Details |
 |---|---|---|---|---|
 | FUNC-04 | Signal channel (detailed) | P1 | Moderate | Integration via Signal CLI or signal-cli-rest-api bridge. Supports send/receive text, images, and group messages. Signal's end-to-end encryption makes it attractive for security-conscious enterprise users. Requires a dedicated phone number. Configuration under `channels.signal`. Matches main BRD FUNC-04. |
-| FUNC-05 | Microsoft Teams channel (detailed) | P1 | Moderate | Bot Framework integration for receiving and sending messages in Teams channels and direct messages. Requires Azure Bot registration and Azure AD app. Configuration under `channels.teams` with `app_id`, `app_password`, and `tenant_id`. Supports text, adaptive cards, and file attachments. Matches main BRD FUNC-05. |
+| FUNC-05 | Microsoft Teams channel (detailed) | P1 | Moderate | Compiled-in Go channel using `msbotbuilder-go` (community Go port of Bot Framework). Receives and sends messages in Teams channels and DMs. Requires Azure Bot registration and Azure AD app. Configuration under `channels.teams` with `app_id`, `app_password`, and `tenant_id`. Supports text, adaptive cards, and file attachments. Matches main BRD FUNC-05. |
 | FUNC-06 | Google Chat channel (detailed) | P1 | Moderate | Google Workspace API integration for Google Chat spaces and DMs. Requires Google Cloud project and service account with Chat API enabled. Configuration under `channels.google_chat`. Supports text, cards, and thread replies. Matches main BRD FUNC-06. |
 
 ### B.4.3 Agent Capability Enhancements
@@ -220,7 +220,7 @@ These features integrate into the main BRD delivery phases. The phasing accounts
 | `whatsmeow` Go library | FUNC-23 (WhatsApp provider) | Active maintenance, used by Matrix bridges. Medium risk — WhatsApp protocol may change. |
 | ClawHub REST API | FUNC-12a (skill compatibility) | No formal API stability guarantee. Medium risk — monitor for changes. |
 | Signal CLI | FUNC-04 (Signal channel) | Java dependency for the bridge. Not compiled into Omnipus binary — runs as external process. |
-| Azure Bot Framework SDK | FUNC-05 (Teams channel) | Microsoft-maintained. Requires Azure account. Low risk. |
+| `msbotbuilder-go` (community Go port) | FUNC-05 (Teams channel) | Community-maintained Go port of Bot Framework SDK. Azure Bot Framework REST API is Microsoft-maintained. Requires Azure account. Low risk. |
 | Google Workspace API | FUNC-06 (Google Chat channel) | Google-maintained. Requires GCP project. Low risk. |
 | Tailscale Go SDK (`tsnet`) | FUNC-17 (Tailscale) | Well-maintained, pure Go. Low risk. |
 

@@ -251,16 +251,12 @@ func (c *TeamsChannel) processActivity(act schema.Activity) {
 		return
 	}
 
-	var chatID string
-	chatKind := c.detectChatKind(act.Conversation.ID, act.Conversation.IsGroup)
-
-	if act.Conversation.ID != "" {
-		chatID = act.Conversation.ID
-	}
+	chatID := act.Conversation.ID
 	if chatID == "" {
 		chatID = senderID
 	}
 
+	chatKind := c.detectChatKind(act.Conversation.ID, act.Conversation.IsGroup)
 	c.chatType.Store(chatID, chatKind)
 
 	if act.ID != "" {
@@ -424,6 +420,10 @@ func (c *TeamsChannel) getChatKind(chatID string) string {
 		if k, ok := v.(string); ok {
 			return k
 		}
+		logger.WarnCF("teams", "Corrupted chat type entry for chatID, falling back to detection", map[string]any{
+			"chat_id": chatID,
+			"type":    fmt.Sprintf("%T", v),
+		})
 	}
 	return detectChatKindFromID(chatID)
 }
@@ -445,7 +445,6 @@ func extractTenantID(channelData map[string]any) string {
 }
 
 // truncate truncates a string to a maximum rune count, appending "..." if truncation occurred.
-// This is intended for creating message previews, not for safe string slicing.
 func truncate(s string, maxLen int) string {
 	if maxLen <= 0 {
 		return "..."
@@ -453,9 +452,5 @@ func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
-	runes := []rune(s)
-	if maxLen >= len(runes) {
-		return s
-	}
-	return string(runes[:maxLen]) + "..."
+	return string([]rune(s)[:maxLen]) + "..."
 }

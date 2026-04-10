@@ -559,8 +559,8 @@ Omnipus uses a **hybrid in-process/bridge channel architecture** inheriting Pico
 | Tier | Channels | Process model |
 |---|---|---|
 | **Built-in** | Web UI (WebChat) | Embedded in gateway process via `go:embed`. |
-| **Compiled-in (Go)** | Telegram, Discord, Slack, WhatsApp, Google Chat, Matrix, IRC, Mattermost, Nostr, Twitch, LINE, WeCom, DingTalk | Compiled into the binary. Communicates via internal `MessageBus`. Zero IPC overhead. Single process. |
-| **External (non-Go)** | Signal, Microsoft Teams, QQ | Managed child process. Bridge adapter in binary manages the external runtime. Uses bridge protocol (JSON over stdin/stdout). |
+| **Compiled-in (Go)** | Telegram, Discord, Slack, WhatsApp, Google Chat, Matrix, IRC, Mattermost, Nostr, Twitch, LINE, WeCom, DingTalk, Microsoft Teams | Compiled into the binary. Communicates via internal `MessageBus`. Zero IPC overhead. Single process. |
+| **External (non-Go)** | Signal, QQ | Managed child process. Bridge adapter in binary manages the external runtime. Uses bridge protocol (JSON over stdin/stdout). |
 | **Community** | Any custom channel | Locally installed by user via `omnipus channel install`. Managed child process. Uses bridge protocol + Omnipus Channel SDK. Any language. **Installed at user's own risk.** |
 
 ### E.10.2 Bridge Protocol
@@ -625,7 +625,7 @@ Go channels are compiled into the binary (in-process, internal MessageBus). Non-
 | WeCom | Compiled-in | Go | REST API | Bundled |
 | DingTalk | Compiled-in | Go | REST API | Bundled |
 | Signal | External (bridge) | Java | `signal-cli` | Bundled bridge adapter |
-| Microsoft Teams | External (bridge) | Node.js | Bot Framework SDK | Bundled bridge adapter |
+| Microsoft Teams | Compiled-in | Go | `msbotbuilder-go` (Bot Framework REST API) | Bundled |
 | QQ | External (bridge) | Various | Various | Bundled bridge adapter |
 
 ### E.10.5 Channel Data Model

@@ -695,3 +695,105 @@ func (r *errorReader) Read(p []byte) (n int, err error) {
 
 // Ensure errorReader implements io.Reader
 var _ io.Reader = (*errorReader)(nil)
+
+// -- Test isValidServiceURL ---------------------------------------------------
+
+func TestIsValidServiceURL_ValidTeamsMicrosoft(t *testing.T) {
+	if !isValidServiceURL("https://teams.microsoft.com") {
+		t.Error("expected teams.microsoft.com to be valid")
+	}
+}
+
+func TestIsValidServiceURL_ValidSmbaTraficManager(t *testing.T) {
+	if !isValidServiceURL("https://smba.trafficmanager.net/teams/") {
+		t.Error("expected smba.trafficmanager.net to be valid")
+	}
+}
+
+func TestIsValidServiceURL_ValidTeamsCloudGov(t *testing.T) {
+	if !isValidServiceURL("https://teams.cloud.gov") {
+		t.Error("expected teams.cloud.gov to be valid")
+	}
+}
+
+func TestIsValidServiceURL_InvalidSpoofedDomain(t *testing.T) {
+	// Prefix-based check cannot distinguish legitimate subdomains from attacker-controlled
+	// ones. A domain literally starting with "https://teams.microsoft.com" will be accepted.
+	// This test verifies that URLs NOT starting with a valid prefix are rejected.
+	if isValidServiceURL("https://teams.example.com/") {
+		t.Error("expected teams.example.com to be invalid")
+	}
+}
+
+func TestIsValidServiceURL_InvalidInternalURL(t *testing.T) {
+	if isValidServiceURL("http://169.254.169.254/latest/meta-data/") {
+		t.Error("expected internal metadata URL to be invalid")
+	}
+}
+
+func TestIsValidServiceURL_InvalidRandomDomain(t *testing.T) {
+	if isValidServiceURL("https://example.com") {
+		t.Error("expected random domain to be invalid")
+	}
+}
+
+func TestIsValidServiceURL_InvalidEmptyString(t *testing.T) {
+	if isValidServiceURL("") {
+		t.Error("expected empty string to be invalid")
+	}
+}
+
+// -- Test Send with nil adapter -----------------------------------------------
+
+func TestSend_ReturnsErrorWhenAdapterNil(t *testing.T) {
+	messageBus := bus.NewMessageBus()
+	ch := &TeamsChannel{
+		BaseChannel: channels.NewBaseChannel("teams", nil, messageBus, nil),
+	}
+	ch.SetRunning(true)
+	ch.chatType.Store("19:channel@thread.tacv2", "channel")
+	ch.convRefs.Store("19:channel@thread.tacv2", conversationRef{
+		ServiceURL:     "https://smba.trafficmanager.net/teams/",
+		ConversationID: "19:channel@thread.tacv2",
+	})
+	// adapter is nil
+
+	err := ch.Send(context.Background(), bus.OutboundMessage{
+		Channel: "teams",
+		ChatID:  "19:channel@thread.tacv2",
+		Content: "Hello",
+	})
+
+	if err == nil {
+		t.Fatal("expected error when adapter is nil")
+	}
+	if !strings.Contains(err.Error(), "adapter not initialized") {
+		t.Errorf("error = %v, want message containing 'adapter not initialized'", err)
+	}
+}
+
+// -- Test Send with corrupted conversation reference -------------------------
+
+func TestSend_ReturnsErrorWhenConversationRefCorrupted(t *testing.T) {
+	messageBus := bus.NewMessageBus()
+	ch := &TeamsChannel{
+		BaseChannel: channels.NewBaseChannel("teams", nil, messageBus, nil),
+	}
+	ch.SetRunning(true)
+	ch.chatType.Store("19:channel@thread.tacv2", "channel")
+	// Store a non-conversationRef value to simulate corruption
+	ch.convRefs.Store("19:channel@thread.tacv2", "not a conversationRef")
+
+	err := ch.Send(context.Background(), bus.OutboundMessage{
+		Channel: "teams",
+		ChatID:  "19:channel@thread.tacv2",
+		Content: "Hello",
+	})
+
+	if err == nil {
+		t.Fatal("expected error when conversation reference is corrupted")
+	}
+	if !strings.Contains(err.Error(), "corrupted conversation reference") {
+		t.Errorf("error = %v, want message containing 'corrupted conversation reference'", err)
+	}
+}
