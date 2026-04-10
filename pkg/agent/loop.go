@@ -14,6 +14,7 @@ import (
 	"math/rand/v2"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,8 +29,10 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/media"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/routing"
+	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/skills"
 	"github.com/dapicom-ai/omnipus/pkg/state"
+	"github.com/dapicom-ai/omnipus/pkg/taskstore"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 	"github.com/dapicom-ai/omnipus/pkg/utils"
 	"github.com/dapicom-ai/omnipus/pkg/voice"
@@ -69,6 +72,10 @@ type AgentLoop struct {
 	activeRequests sync.WaitGroup
 
 	reloadFunc func() error
+
+	// Task management
+	taskStore    *taskstore.TaskStore
+	taskExecutor *TaskExecutor
 }
 
 // processOptions configures how a message is processed
@@ -89,6 +96,8 @@ type processOptions struct {
 	SuppressToolFeedback    bool                // Whether to suppress inline tool feedback messages
 	NoHistory               bool                // If true, don't load session history (for heartbeat)
 	SkipInitialSteeringPoll bool                // If true, skip the steering poll at loop start (used by Continue)
+	TranscriptSessionID     string              // Session ID for transcript tool call recording (empty = disabled)
+	TranscriptStore         *session.UnifiedStore // Store for transcript tool call recording (nil = disabled)
 }
 
 type continuationTarget struct {
@@ -141,6 +150,11 @@ func NewAgentLoop(
 	}
 	al.hooks = NewHookManager(eventBus)
 	configureHookManagerFromConfig(al.hooks, cfg)
+
+	// Initialize task store (sibling of workspace: ~/.omnipus/tasks).
+	homePath := filepath.Dir(cfg.WorkspacePath())
+	al.taskStore = taskstore.New(filepath.Join(homePath, "tasks"))
+	al.taskExecutor = newTaskExecutor(al, al.taskStore)
 
 	// Register shared tools to all agents (now that al is created)
 	registerSharedTools(al, cfg, msgBus, registry, provider)
@@ -379,6 +393,68 @@ func registerSharedTools(
 		} else if (spawnEnabled || spawnStatusEnabled) && !cfg.Tools.IsToolEnabled("subagent") {
 			logger.WarnCF("agent", "spawn/spawn_status tools require subagent to be enabled", nil)
 		}
+
+		// Task tools — require a task store (available after first NewAgentLoop call).
+		if al.taskStore != nil {
+			currentAgentID := agentID
+			agentCfg := findAgentConfig(cfg, currentAgentID)
+
+			if cfg.Tools.IsToolEnabled("task_list") {
+				agent.Tools.Register(tools.NewTaskListTool(al.taskStore))
+			}
+			if cfg.Tools.IsToolEnabled("task_create") {
+				t := tools.NewTaskCreateTool(al.taskStore)
+				t.SetDelegateChecker(buildDelegateChecker(agentCfg, cfg.Agents.Defaults))
+				agent.Tools.Register(t)
+			}
+			if cfg.Tools.IsToolEnabled("task_update") {
+				t := tools.NewTaskUpdateTool(al.taskStore)
+				if al.taskExecutor != nil {
+					t.SetOnComplete(al.taskExecutor.onTaskComplete)
+				}
+				agent.Tools.Register(t)
+			}
+			agent.Tools.Register(tools.NewTaskDeleteTool(al.taskStore))
+			agent.Tools.Register(tools.NewAgentListTool(func() []tools.AgentInfo {
+				var infos []tools.AgentInfo
+				for _, id := range registry.ListAgentIDs() {
+					if a, ok := registry.GetAgent(id); ok {
+						infos = append(infos, tools.AgentInfo{ID: a.ID, Name: a.Name, Type: "custom"})
+					}
+				}
+				return infos
+			}))
+		}
+	}
+}
+
+// findAgentConfig returns the AgentConfig for the given agent ID, or nil if not found.
+func findAgentConfig(cfg *config.Config, agentID string) *config.AgentConfig {
+	for i := range cfg.Agents.List {
+		if cfg.Agents.List[i].ID == agentID {
+			return &cfg.Agents.List[i]
+		}
+	}
+	return nil
+}
+
+// buildDelegateChecker returns a function that checks whether delegation from agentCfg
+// to a target agent is allowed.  Supports the "*" wildcard.
+func buildDelegateChecker(agentCfg *config.AgentConfig, defaults config.AgentDefaults) func(string) bool {
+	var allowList []string
+	if agentCfg != nil && len(agentCfg.CanDelegateTo) > 0 {
+		allowList = agentCfg.CanDelegateTo
+	} else {
+		allowList = defaults.CanDelegateTo
+	}
+
+	return func(targetAgentID string) bool {
+		for _, allowed := range allowList {
+			if allowed == "*" || allowed == targetAgentID {
+				return true
+			}
+		}
+		return false
 	}
 }
 
@@ -1098,6 +1174,123 @@ func (al *AgentLoop) GetConfig() *config.Config {
 	return al.cfg
 }
 
+// GetTaskStore returns the shared TaskStore (may be nil in tests).
+func GetTaskStore(al *AgentLoop) *taskstore.TaskStore {
+	return al.taskStore
+}
+
+// GetTaskExecutor returns the shared TaskExecutor (may be nil in tests).
+func GetTaskExecutor(al *AgentLoop) *TaskExecutor {
+	return al.taskExecutor
+}
+
+// GetAgentStore returns the UnifiedStore for a given agent, or nil if not found
+// or if the agent's session store is not a UnifiedStore.
+func (al *AgentLoop) GetAgentStore(agentID string) *session.UnifiedStore {
+	agent, ok := al.GetRegistry().GetAgent(agentID)
+	if !ok {
+		return nil
+	}
+	us, ok := agent.Sessions.(*session.UnifiedStore)
+	if !ok {
+		logger.WarnCF("agent", "GetAgentStore: session store is not UnifiedStore",
+			map[string]any{"agent_id": agentID})
+		return nil
+	}
+	return us
+}
+
+// ResolveSessionStore finds which agent's UnifiedStore owns the given sessionID.
+// Checks the main agent first (most common case), then falls back to scanning all agents.
+// Returns nil if the session cannot be found across any agent.
+func (al *AgentLoop) ResolveSessionStore(sessionID string) *session.UnifiedStore {
+	// Fast path: main agent owns most sessions.
+	if store := al.GetAgentStore("main"); store != nil {
+		if _, err := store.GetMeta(sessionID); err == nil {
+			return store
+		}
+	}
+	// Slow path: scan all agents.
+	for _, id := range al.GetRegistry().ListAgentIDs() {
+		if id == "main" {
+			continue
+		}
+		store := al.GetAgentStore(id)
+		if store == nil {
+			continue
+		}
+		if _, err := store.GetMeta(sessionID); err == nil {
+			return store
+		}
+	}
+	return nil
+}
+
+// ListAllSessions returns sessions from all agent stores merged and sorted by UpdatedAt descending.
+func (al *AgentLoop) ListAllSessions() ([]*session.UnifiedMeta, error) {
+	var all []*session.UnifiedMeta
+	for _, id := range al.GetRegistry().ListAgentIDs() {
+		store := al.GetAgentStore(id)
+		if store == nil {
+			continue
+		}
+		sessions, err := store.ListSessions()
+		if err != nil {
+			logger.WarnCF("agent", "ListAllSessions: could not list sessions for agent",
+				map[string]any{"agent_id": id, "error": err.Error()})
+			continue
+		}
+		all = append(all, sessions...)
+	}
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].UpdatedAt.After(all[j].UpdatedAt)
+	})
+	return all, nil
+}
+
+// processTaskDirect runs the agent loop for a task, dispatching to the given agent.
+// taskChatID identifies the WebSocket chat for event forwarding (defaults to "task:" + sessionKey).
+// Channel is "webchat" for streaming; tool context is "system" so exec/cron tools are permitted.
+func (al *AgentLoop) processTaskDirect(ctx context.Context, agentID, prompt, sessionKey, taskChatID string) (string, error) {
+	if err := al.ensureHooksInitialized(ctx); err != nil {
+		return "", fmt.Errorf("processTaskDirect: hooks: %w", err)
+	}
+	if err := al.ensureMCPInitialized(ctx); err != nil {
+		return "", fmt.Errorf("processTaskDirect: mcp: %w", err)
+	}
+
+	registry := al.GetRegistry()
+	ag, ok := registry.GetAgent(agentID)
+	if !ok {
+		logger.WarnCF("agent", "processTaskDirect: agent not found, using default", map[string]any{"requested": agentID})
+		ag = registry.GetDefaultAgent()
+	}
+	if ag == nil {
+		return "", fmt.Errorf("processTaskDirect: no agent %q", agentID)
+	}
+
+	// Tool context uses "system" channel so exec/cron tools are permitted.
+	taskCtx := tools.WithAgentID(ctx, agentID)
+	taskCtx = tools.WithToolContext(taskCtx, "system", "")
+
+	if taskChatID == "" {
+		taskChatID = "task:" + sessionKey
+	}
+
+	return al.runAgentLoop(taskCtx, ag, processOptions{
+		SessionKey:          sessionKey,
+		Channel:             "webchat",
+		ChatID:              taskChatID,
+		SenderID:            "task-executor",
+		UserMessage:         prompt,
+		DefaultResponse:     defaultResponse,
+		EnableSummary:       false,
+		SendResponse:        false,
+		TranscriptSessionID: taskChatID,
+		TranscriptStore:     al.GetAgentStore(agentID),
+	})
+}
+
 // SetMediaStore injects a MediaStore for media lifecycle management.
 func (al *AgentLoop) SetMediaStore(s media.MediaStore) {
 	al.mediaStore = s
@@ -1401,17 +1594,31 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 			"route_channel": route.Channel,
 		})
 
+	// Resolve transcript store for tool call recording (forwarded via message metadata).
+	var transcriptSessionID string
+	var transcriptStore *session.UnifiedStore
+	if tsid := inboundMetadata(msg, "transcript_session_id"); tsid != "" {
+		transcriptSessionID = tsid
+		transcriptStore = al.ResolveSessionStore(tsid)
+		if transcriptStore == nil {
+			logger.WarnCF("agent", "transcript_session_id present but store not found — tool calls will not be recorded",
+				map[string]any{"transcript_session_id": tsid})
+		}
+	}
+
 	opts := processOptions{
-		SessionKey:        sessionKey,
-		Channel:           msg.Channel,
-		ChatID:            msg.ChatID,
-		SenderID:          msg.SenderID,
-		SenderDisplayName: msg.Sender.DisplayName,
-		UserMessage:       msg.Content,
-		Media:             msg.Media,
-		DefaultResponse:   defaultResponse,
-		EnableSummary:     true,
-		SendResponse:      false,
+		SessionKey:          sessionKey,
+		Channel:             msg.Channel,
+		ChatID:              msg.ChatID,
+		SenderID:            msg.SenderID,
+		SenderDisplayName:   msg.Sender.DisplayName,
+		UserMessage:         msg.Content,
+		Media:               msg.Media,
+		DefaultResponse:     defaultResponse,
+		EnableSummary:       true,
+		SendResponse:        false,
+		TranscriptSessionID: transcriptSessionID,
+		TranscriptStore:     transcriptStore,
 	}
 
 	// context-dependent commands check their own Runtime fields and report
@@ -2941,6 +3148,17 @@ turnLoop:
 					Async:      toolResult.Async,
 				},
 			)
+			tcStatus := "success"
+			if toolResult.IsError {
+				tcStatus = "error"
+			}
+			ts.appendToolCallTranscript(session.ToolCall{
+				ID:         toolCallID,
+				Tool:       toolName,
+				Status:     tcStatus,
+				DurationMS: toolDuration.Milliseconds(),
+				Parameters: cloneEventArguments(toolArgs),
+			})
 			messages = append(messages, toolResultMsg)
 			if !ts.opts.NoHistory {
 				ts.agent.Sessions.AddFullMessage(ts.sessionKey, toolResultMsg)
@@ -3232,7 +3450,12 @@ func (al *AgentLoop) maybeSummarize(agent *AgentInstance, sessionKey string, tur
 		summarizeKey := agent.ID + ":" + sessionKey
 		if _, loading := al.summarizing.LoadOrStore(summarizeKey, true); !loading {
 			go func() {
-				defer al.summarizing.Delete(summarizeKey)
+				defer func() {
+					if r := recover(); r != nil {
+						logger.ErrorCF("agent", "Panic during summarization", map[string]any{"panic": r})
+					}
+					al.summarizing.Delete(summarizeKey)
+				}()
 				logger.Debug("Memory threshold reached. Optimizing conversation history...")
 				al.summarizeSession(agent, sessionKey, turnScope)
 			}()

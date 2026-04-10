@@ -28,13 +28,13 @@ export function StatusBar() {
       {/* Agents */}
       <div className="flex items-center gap-1.5 text-xs text-[var(--color-muted)]">
         <Robot size={13} />
-        <span>{status?.agent_count ?? '—'} agents</span>
+        <span>{status?.agent_count ?? '—'} {status?.agent_count === 1 ? 'agent' : 'agents'}</span>
       </div>
 
       {/* Channels */}
       <div className="flex items-center gap-1.5 text-xs text-[var(--color-muted)]">
         <Hash size={13} />
-        <span>{status?.channel_count ?? '—'} channels</span>
+        <span>{status?.channel_count ?? '—'} {status?.channel_count === 1 ? 'channel' : 'channels'}</span>
       </div>
 
       {/* Cost */}

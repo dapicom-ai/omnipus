@@ -1,3 +1,9 @@
+//go:build !cgo
+
+// Omnipus - Ultra-lightweight personal AI agent
+// License: MIT
+// Copyright (c) 2026 Omnipus contributors
+
 package gateway
 
 import (
@@ -19,7 +25,6 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/datamodel"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
-	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/dingtalk"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/discord"
@@ -66,9 +71,6 @@ type services struct {
 	ChannelManager   *channels.Manager
 	DeviceService    *devices.Service
 	HealthServer     *health.Server
-	// PartitionStore is the day-partitioned session backend for the primary agent.
-	// Initialized for the first configured agent (or 'default' if none configured).
-	PartitionStore   *session.PartitionStore
 	manualReloadChan chan struct{}
 	reloading        atomic.Bool
 }
@@ -106,7 +108,7 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	defer panicFunc()
 
 	if err = logger.EnableFileLogging(filepath.Join(homePath, logPath, logFile)); err != nil {
-		panic(fmt.Sprintf("error enabling file logging: %v", err))
+		panic(fmt.Errorf("error enabling file logging: %w", err))
 	}
 	defer logger.DisableFileLogging()
 
@@ -228,7 +230,7 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 				runningServices.reloading.Store(false)
 				continue
 			}
-			if err = newCfg.ValidateModelList(); err != nil {
+			if err = newCfg.ValidateProviders(); err != nil {
 				logger.Errorf("Config validation failed: %v", err)
 				runningServices.reloading.Store(false)
 				continue
@@ -306,6 +308,9 @@ func setupAndStartServices(
 	)
 	runningServices.HeartbeatService.SetBus(msgBus)
 	runningServices.HeartbeatService.SetHandler(createHeartbeatHandler(agentLoop))
+	if te := agent.GetTaskExecutor(agentLoop); te != nil {
+		runningServices.HeartbeatService.SetTaskChecker(te)
+	}
 	if err = runningServices.HeartbeatService.Start(); err != nil {
 		return nil, fmt.Errorf("error starting heartbeat service: %w", err)
 	}
@@ -347,29 +352,14 @@ func setupAndStartServices(
 	runningServices.HealthServer = health.NewServer(cfg.Gateway.Host, cfg.Gateway.Port)
 	runningServices.ChannelManager.SetupHTTPServer(addr, runningServices.HealthServer)
 
-	// Initialize PartitionStore for the default agent workspace (US-5).
-	// Uses "default" as the agent ID when no agents are configured.
-	defaultAgentID := "omnipus-system"
-	if len(cfg.Agents.List) > 0 {
-		defaultAgentID = cfg.Agents.List[0].ID
-	}
-	if err := datamodel.InitAgentWorkspace(homePath, defaultAgentID); err != nil {
-		slog.Error("gateway: could not init agent workspace for partition store", "agent_id", defaultAgentID, "error", err)
-		fmt.Println("WARNING: Session persistence unavailable — conversations will not be saved")
-	} else {
-		agentWorkspace := datamodel.AgentWorkspacePath(homePath, defaultAgentID)
-		runningServices.PartitionStore = session.NewPartitionStore(agentWorkspace, defaultAgentID)
-		slog.Info("gateway: day-partitioned session store initialized", "agent_id", defaultAgentID)
-	}
-
 	allowedOrigin := fmt.Sprintf("http://%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
 
 	// SSE chat endpoint — kept for backward compatibility; streaming tokens now route through WebSocket.
-	sseHandler := newSSEHandler(msgBus, runningServices.PartitionStore, allowedOrigin)
+	sseHandler := newSSEHandler(msgBus, nil, allowedOrigin, func() *config.Config { return cfg })
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/chat", sseHandler)
 
 	// WebSocket chat endpoint — primary transport for bi-directional chat streaming.
-	wsHandler := newWSHandler(msgBus, agentLoop, runningServices.PartitionStore, allowedOrigin)
+	wsHandler := newWSHandler(msgBus, agentLoop, allowedOrigin)
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/chat/ws", wsHandler)
 	// Register WebSocket handler as stream fallback so streaming tokens route back for webchat.
 	runningServices.ChannelManager.SetStreamFallback(wsHandler)
@@ -381,18 +371,21 @@ func setupAndStartServices(
 
 	// REST API endpoints for frontend data.
 	onboardingMgr := onboarding.NewManager(homePath)
+	tStore := agent.GetTaskStore(agentLoop)
+	tExecutor := agent.GetTaskExecutor(agentLoop)
 	api := &restAPI{
 		agentLoop:     agentLoop,
-		partitions:    runningServices.PartitionStore,
 		allowedOrigin: allowedOrigin,
 		onboardingMgr: onboardingMgr,
 		homePath:      homePath,
+		taskStore:     tStore,
+		taskExecutor:  tExecutor,
 	}
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions", api.withAuth(api.HandleSessions))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions/", api.withAuth(api.HandleSessions))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/agents", api.withAuth(api.HandleAgents))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/agents/", api.withAuth(api.HandleAgents))
-	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/config", api.withAuth(api.HandleConfig))
+	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/config", api.withAuth(withRateLimit(configLimiter, api.HandleConfig)))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/skills", api.withAuth(api.HandleSkills))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/skills/", api.withAuth(api.HandleSkills))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/doctor", api.withAuth(api.HandleDoctor))
@@ -412,7 +405,18 @@ func setupAndStartServices(
 
 	// Serve the embedded SPA (Sovereign Deep UI) as the default handler.
 	// API routes registered above take priority; anything else serves the SPA.
-	runningServices.ChannelManager.RegisterHTTPHandler("/", newSPAHandler())
+	// If no SPA was embedded at build time, skip registration (UI not available).
+	if spaHandler := newSPAHandler(); spaHandler != nil {
+		runningServices.ChannelManager.RegisterHTTPHandler("/", spaHandler)
+	} else {
+		fmt.Println("Note: No embedded SPA (run 'pnpm build' in web/frontend to enable UI)")
+	}
+
+	// Wrap the HTTP server handler with config snapshot middleware so all
+	// request handlers see a consistent config even during hot-reload.
+	if err = runningServices.ChannelManager.WrapHTTPHandler(api.configSnapshotMiddleware); err != nil {
+		return nil, fmt.Errorf("wrapping HTTP handler: %w", err)
+	}
 
 	if err = runningServices.ChannelManager.StartAll(context.Background()); err != nil {
 		return nil, fmt.Errorf("error starting channels: %w", err)
@@ -554,6 +558,9 @@ func restartServices(
 	)
 	runningServices.HeartbeatService.SetBus(msgBus)
 	runningServices.HeartbeatService.SetHandler(createHeartbeatHandler(al))
+	if te := agent.GetTaskExecutor(al); te != nil {
+		runningServices.HeartbeatService.SetTaskChecker(te)
+	}
 	if err = runningServices.HeartbeatService.Start(); err != nil {
 		return fmt.Errorf("error restarting heartbeat service: %w", err)
 	}
@@ -644,7 +651,7 @@ func setupConfigWatcherPolling(configPath string, debug bool) (chan *config.Conf
 						continue
 					}
 
-					if err := newCfg.ValidateModelList(); err != nil {
+					if err := newCfg.ValidateProviders(); err != nil {
 						logger.Errorf("  ⚠ New config validation failed: %v", err)
 						logger.Warn("  Using previous valid config")
 						continue

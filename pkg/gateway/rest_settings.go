@@ -1,3 +1,5 @@
+//go:build !cgo
+
 // Omnipus - Ultra-lightweight personal AI agent
 // License: MIT
 // Copyright (c) 2026 Omnipus contributors
@@ -437,23 +439,31 @@ func extractTarGz(archivePath, destDir string) error {
 }
 
 // HandleClearSessions handles DELETE /api/v1/sessions/all.
-// Removes all session directories from the partition store.
+// HandleClearSessions removes all session directories from all agent stores.
 func (a *restAPI) HandleClearSessions(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	if a.partitions == nil {
-		jsonErr(w, http.StatusServiceUnavailable, "session store unavailable")
-		return
+	totalRemoved := 0
+	var warnings []string
+	for _, id := range a.agentLoop.GetRegistry().ListAgentIDs() {
+		store := a.agentLoop.GetAgentStore(id)
+		if store == nil {
+			continue
+		}
+		n, err := store.ClearAll()
+		if err != nil {
+			slog.Error("rest: clear sessions for agent", "agent_id", id, "error", err)
+			warnings = append(warnings, fmt.Sprintf("agent %q: %v", id, err))
+		}
+		totalRemoved += n
 	}
-	count, err := a.partitions.ClearAll()
-	if err != nil {
-		slog.Error("rest: clear all sessions", "error", err)
-		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not clear sessions: %v", err))
-		return
+	resp := map[string]any{"status": "cleared", "count": totalRemoved}
+	if len(warnings) > 0 {
+		resp["warnings"] = warnings
 	}
-	jsonOK(w, map[string]any{"status": "cleared", "count": count})
+	jsonOK(w, resp)
 }
 
 // HandleAbout handles GET /api/v1/about.
@@ -465,11 +475,12 @@ func (a *restAPI) HandleAbout(w http.ResponseWriter, r *http.Request) {
 	}
 	uptime := time.Since(startTime).Round(time.Second)
 	jsonOK(w, map[string]any{
-		"version":    Version,
-		"go_version": runtime.Version(),
-		"os":         runtime.GOOS,
-		"arch":       runtime.GOARCH,
-		"uptime":     uptime.String(),
-		"pid":        os.Getpid(),
+		"version":        Version,
+		"go_version":     runtime.Version(),
+		"os":             runtime.GOOS,
+		"arch":           runtime.GOARCH,
+		"uptime":         uptime.String(),
+		"uptime_seconds": int(uptime.Seconds()),
+		"pid":            os.Getpid(),
 	})
 }

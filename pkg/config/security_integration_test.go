@@ -48,7 +48,7 @@ func TestSecurityConfigIntegration(t *testing.T) {
 		configPath := filepath.Join(tmpDir, "config.json")
 		configContent := `{
   "version": 1,
-  "model_list": [
+  "providers": [
     {
       "model_name": "test-model",
       "model": "openai/test-model",
@@ -103,14 +103,14 @@ skills:
 		require.NotNil(t, cfg)
 
 		// Verify model API key from config.json takes precedence
-		assert.Equal(t, 1, len(cfg.ModelList))
-		assert.Equal(t, "test-model", cfg.ModelList[0].ModelName)
-		assert.Equal(t, "sk-from-security-yml", cfg.ModelList[0].APIKey())
+		assert.Equal(t, 1, len(cfg.Providers))
+		assert.Equal(t, "test-model", cfg.Providers[0].ModelName)
+		assert.Equal(t, "sk-from-security-yml", cfg.Providers[0].APIKey())
 
 		// Verify channel token from config.json takes precedence
 		assert.Equal(t, "token-from-security-yml", cfg.Channels.Telegram.Token.String())
 
-		assert.Equal(t, "sk-from-security-yml", cfg.ModelList[0].APIKeys[0].String())
+		assert.Equal(t, "sk-from-security-yml", cfg.Providers[0].APIKeys[0].String())
 
 		// Verify web tool API key from config.json takes precedence
 		assert.Equal(t, "BSA-from-config-json-direct", cfg.Tools.Web.Brave.APIKey())
@@ -128,7 +128,7 @@ func TestSecurityConfigWithAPIKeysArray(t *testing.T) {
 		configPath := filepath.Join(tmpDir, "config.json")
 		configContent := `{
   "version": 1,
-  "model_list": [
+  "providers": [
     {
       "model_name": "multi-key-model",
       "model": "openai/multi-key-model"
@@ -155,13 +155,13 @@ func TestSecurityConfigWithAPIKeysArray(t *testing.T) {
 		cfg, err := LoadConfig(configPath)
 		require.NoError(t, err)
 
-		t.Logf("Config: %+v", cfg.ModelList)
-		for _, m := range cfg.ModelList {
+		t.Logf("Config: %+v", cfg.Providers)
+		for _, m := range cfg.Providers {
 			t.Logf("Model: %+v", m)
 		}
 		// Verify multi-key expansion works
-		assert.Equal(t, 3, len(cfg.ModelList))
-		assert.Equal(t, "multi-key-model", cfg.ModelList[0].ModelName)
+		assert.Equal(t, 3, len(cfg.Providers))
+		assert.Equal(t, "multi-key-model", cfg.Providers[0].ModelName)
 	})
 }
 
@@ -198,7 +198,7 @@ func TestAllSecurityKeysAccessible(t *testing.T) {
 		configPath := filepath.Join(tmpDir, "config.json")
 		configContent := `{
   "version": 1,
-  "model_list": [
+  "providers": [
     {
       "model_name": "test-model-1",
       "model": "openai/test-model-1"
@@ -344,11 +344,11 @@ skills:
 		require.NotNil(t, cfg)
 
 		// Verify Model API keys
-		assert.Equal(t, 1, len(cfg.ModelList))
-		assert.Equal(t, "test-model-1", cfg.ModelList[0].ModelName)
+		assert.Equal(t, 1, len(cfg.Providers))
+		assert.Equal(t, "test-model-1", cfg.Providers[0].ModelName)
 		// file:// reference should be resolved
-		assert.Equal(t, "sk-model-from-file-12345", cfg.ModelList[0].APIKey())
-		t.Logf("Model APIKey(): %s", cfg.ModelList[0].APIKey())
+		assert.Equal(t, "sk-model-from-file-12345", cfg.Providers[0].APIKey())
+		t.Logf("Model APIKey(): %s", cfg.Providers[0].APIKey())
 
 		// Verify Channel tokens via Key() methods
 		// Telegram

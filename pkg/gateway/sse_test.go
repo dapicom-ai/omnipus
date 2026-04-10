@@ -8,6 +8,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -17,7 +18,21 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/dapicom-ai/omnipus/pkg/bus"
+	"github.com/dapicom-ai/omnipus/pkg/config"
 )
+
+// testConfig returns a config suitable for SSE handler tests.
+// When OMNIPUS_BEARER_TOKEN is set to "", the auth check falls back to the env var
+// (which returns AuthResult{Authenticated: true, Role: admin} per auth.go).
+func testConfig() *config.Config {
+	return &config.Config{
+		Gateway: config.GatewayConfig{
+			Users:         nil,  // no per-user list → falls back to env var
+			Token:         "",
+			DevModeBypass: true, // allow unauthenticated access in test mode
+		},
+	}
+}
 
 // captureWriteHeaderRecorder wraps httptest.ResponseRecorder to signal when
 // WriteHeader is called. This allows SSE streaming tests to know when the
@@ -56,9 +71,9 @@ func (r *captureWriteHeaderRecorder) Flush() {
 // Then 204 No Content with Access-Control-Allow-Origin header.
 // Traces to: wave5a-wire-ui-spec.md — Scenario: SSE CORS preflight (E2)
 func TestSSEHandlerOPTIONS(t *testing.T) {
-	t.Setenv("OMNIPUS_BEARER_TOKEN", "")
+	os.Unsetenv("OMNIPUS_BEARER_TOKEN")
 	msgBus := bus.NewMessageBus()
-	h := newSSEHandler(msgBus, nil, "http://localhost:3000")
+	h := newSSEHandler(msgBus, nil, "http://localhost:3000", testConfig)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodOptions, "/api/v1/chat", nil)
@@ -77,9 +92,9 @@ func TestSSEHandlerOPTIONS(t *testing.T) {
 // Then 405 Method Not Allowed.
 // Traces to: wave5a-wire-ui-spec.md — Scenario: SSE method validation (E2)
 func TestSSEHandlerGET(t *testing.T) {
-	t.Setenv("OMNIPUS_BEARER_TOKEN", "")
+	os.Unsetenv("OMNIPUS_BEARER_TOKEN")
 	msgBus := bus.NewMessageBus()
-	h := newSSEHandler(msgBus, nil, "")
+	h := newSSEHandler(msgBus, nil, "", testConfig)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/chat", nil)
@@ -94,13 +109,15 @@ func TestSSEHandlerGET(t *testing.T) {
 // Then 400 Bad Request.
 // Traces to: wave5a-wire-ui-spec.md — Scenario: SSE empty message rejected (E2)
 func TestSSEHandlerPOSTEmptyMessage(t *testing.T) {
-	t.Setenv("OMNIPUS_BEARER_TOKEN", "")
+	os.Unsetenv("OMNIPUS_BEARER_TOKEN")
 	msgBus := bus.NewMessageBus()
-	h := newSSEHandler(msgBus, nil, "")
+	h := newSSEHandler(msgBus, nil, "", testConfig)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/chat", strings.NewReader(`{"message":""}`))
 	r.Header.Set("Content-Type", "application/json")
+	// Dev mode requires "Bearer " prefix; token value is ignored when OMNIPUS_BEARER_TOKEN is unset.
+	r.Header.Set("Authorization", "Bearer dev-token")
 	h.ServeHTTP(w, r)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -109,13 +126,15 @@ func TestSSEHandlerPOSTEmptyMessage(t *testing.T) {
 // TestSSEHandlerPOSTInvalidJSON verifies that POST with invalid JSON body returns 400.
 // Traces to: wave5a-wire-ui-spec.md — Scenario: SSE invalid JSON (E2)
 func TestSSEHandlerPOSTInvalidJSON(t *testing.T) {
-	t.Setenv("OMNIPUS_BEARER_TOKEN", "")
+	os.Unsetenv("OMNIPUS_BEARER_TOKEN")
 	msgBus := bus.NewMessageBus()
-	h := newSSEHandler(msgBus, nil, "")
+	h := newSSEHandler(msgBus, nil, "", testConfig)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/chat", strings.NewReader(`{bad json`))
 	r.Header.Set("Content-Type", "application/json")
+	// Dev mode requires "Bearer " prefix; token value is ignored when OMNIPUS_BEARER_TOKEN is unset.
+	r.Header.Set("Authorization", "Bearer dev-token")
 	h.ServeHTTP(w, r)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
@@ -130,7 +149,7 @@ func TestSSEHandlerPOSTInvalidJSON(t *testing.T) {
 func TestSSEHandlerAuthMissingToken(t *testing.T) {
 	t.Setenv("OMNIPUS_BEARER_TOKEN", "sse-test-secret")
 	msgBus := bus.NewMessageBus()
-	h := newSSEHandler(msgBus, nil, "")
+	h := newSSEHandler(msgBus, nil, "", testConfig)
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/chat", strings.NewReader(`{"message":"hello"}`))
@@ -148,9 +167,9 @@ func TestSSEHandlerAuthMissingToken(t *testing.T) {
 // Then 200 OK with Content-Type: text/event-stream.
 // Traces to: wave5a-wire-ui-spec.md — Scenario: SSE streaming starts on valid message (E2)
 func TestSSEHandlerPOSTValidBody(t *testing.T) {
-	t.Setenv("OMNIPUS_BEARER_TOKEN", "")
+	os.Unsetenv("OMNIPUS_BEARER_TOKEN")
 	msgBus := bus.NewMessageBus()
-	h := newSSEHandler(msgBus, nil, "http://localhost:3000")
+	h := newSSEHandler(msgBus, nil, "http://localhost:3000", testConfig)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -159,6 +178,8 @@ func TestSSEHandlerPOSTValidBody(t *testing.T) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/chat", body)
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
+	// Dev mode requires "Bearer " prefix; token value is ignored when OMNIPUS_BEARER_TOKEN is unset.
+	req.Header.Set("Authorization", "Bearer dev-token")
 
 	w := newCaptureRecorder()
 

@@ -40,7 +40,7 @@ func TestOnboardingStateDetection(t *testing.T) {
 		m := onboarding.NewManager(tmpDir)
 
 		// Then: onboarding_complete=false
-		assert.False(t, m.IsOnboardingComplete(),
+		assert.False(t, m.IsComplete(),
 			"missing state.json must mean onboarding_complete=false (fresh install)")
 	})
 
@@ -50,7 +50,7 @@ func TestOnboardingStateDetection(t *testing.T) {
 		require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, "system"), 0o755))
 
 		m := onboarding.NewManager(tmpDir)
-		assert.False(t, m.IsOnboardingComplete(),
+		assert.False(t, m.IsComplete(),
 			"system dir present but no state.json is still a fresh install")
 	})
 
@@ -64,7 +64,7 @@ func TestOnboardingStateDetection(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(stateDir, "state.json"), stateJSON, 0o600))
 
 		m := onboarding.NewManager(tmpDir)
-		assert.False(t, m.IsOnboardingComplete(),
+		assert.False(t, m.IsComplete(),
 			"explicit onboarding_complete=false must show wizard")
 	})
 
@@ -78,7 +78,7 @@ func TestOnboardingStateDetection(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(stateDir, "state.json"), stateJSON, 0o600))
 
 		m := onboarding.NewManager(tmpDir)
-		assert.True(t, m.IsOnboardingComplete(),
+		assert.True(t, m.IsComplete(),
 			"nested onboarding.completed=true must skip wizard (returning user)")
 	})
 
@@ -92,7 +92,7 @@ func TestOnboardingStateDetection(t *testing.T) {
 
 		// Should not panic — corrupted file treated as fresh install
 		m := onboarding.NewManager(tmpDir)
-		assert.False(t, m.IsOnboardingComplete(),
+		assert.False(t, m.IsComplete(),
 			"corrupted state.json must degrade gracefully to fresh-install state")
 	})
 }
@@ -123,11 +123,11 @@ func TestOnboardingStateResume(t *testing.T) {
 
 		// First "launch"
 		m1 := onboarding.NewManager(tmpDir)
-		assert.False(t, m1.IsOnboardingComplete())
+		assert.False(t, m1.IsComplete())
 
 		// Simulate restart by creating a new Manager (same state.json)
 		m2 := onboarding.NewManager(tmpDir)
-		assert.False(t, m2.IsOnboardingComplete(),
+		assert.False(t, m2.IsComplete(),
 			"onboarding_complete=false must persist across restarts so wizard resumes")
 	})
 
@@ -137,15 +137,15 @@ func TestOnboardingStateResume(t *testing.T) {
 		require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, "system"), 0o755))
 
 		m := onboarding.NewManager(tmpDir)
-		require.False(t, m.IsOnboardingComplete())
+		require.False(t, m.IsComplete())
 
 		// When: onboarding is completed
 		require.NoError(t, m.CompleteOnboarding())
-		assert.True(t, m.IsOnboardingComplete(), "in-memory state must update immediately")
+		assert.True(t, m.IsComplete(), "in-memory state must update immediately")
 
 		// Then: a new Manager reading same state.json also sees completed
 		m2 := onboarding.NewManager(tmpDir)
-		assert.True(t, m2.IsOnboardingComplete(),
+		assert.True(t, m2.IsComplete(),
 			"completed state must survive restart — state.json must have been written atomically")
 	})
 
@@ -188,7 +188,7 @@ func TestOnboardingNeverReshow(t *testing.T) {
 		// When: app "restarts" 3 times
 		for i := 0; i < 3; i++ {
 			m2 := onboarding.NewManager(tmpDir)
-			assert.True(t, m2.IsOnboardingComplete(),
+			assert.True(t, m2.IsComplete(),
 				"launch %d: onboarding wizard must never reshow once completed (US-7 AC9)", i+1)
 		}
 	})
@@ -203,7 +203,7 @@ func TestOnboardingNeverReshow(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(stateDir, "state.json"), stateJSON, 0o600))
 
 		m := onboarding.NewManager(tmpDir)
-		assert.True(t, m.IsOnboardingComplete(),
+		assert.True(t, m.IsComplete(),
 			"flat onboarding_complete=true must skip wizard (backward compatibility)")
 	})
 
@@ -215,7 +215,7 @@ func TestOnboardingNeverReshow(t *testing.T) {
 		m := onboarding.NewManager(tmpDir)
 		require.NoError(t, m.CompleteOnboarding())
 		assert.NoError(t, m.CompleteOnboarding(), "CompleteOnboarding must be idempotent")
-		assert.True(t, m.IsOnboardingComplete())
+		assert.True(t, m.IsComplete())
 	})
 }
 
@@ -326,7 +326,7 @@ func TestDoctorRunIntegration(t *testing.T) {
 		m2 := onboarding.NewManager(tmpDir)
 
 		// Then: both pieces of state are present
-		assert.True(t, m2.IsOnboardingComplete(),
+		assert.True(t, m2.IsComplete(),
 			"onboarding_complete must survive after RecordDoctorRun overwrites state.json")
 		require.NotNil(t, m2.LastDoctorScore())
 		assert.Equal(t, 55, *m2.LastDoctorScore())
@@ -346,7 +346,7 @@ func TestOnboardingManagerConcurrency(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		go func(i int) {
 			defer func() { done <- struct{}{} }()
-			_ = m.IsOnboardingComplete()
+			_ = m.IsComplete()
 			if i%3 == 0 {
 				_ = m.RecordDoctorRun(i * 10)
 			}

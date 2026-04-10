@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { act } from 'react'
 import { useChatStore } from './chat'
+import { useConnectionStore } from './connection'
+import { useSessionStore } from './session'
 
 // test_chat_store (test #22)
 // Traces to: wave5a-wire-ui-spec.md — Scenario: User sends message and receives streaming response
@@ -9,18 +11,22 @@ import { useChatStore } from './chat'
 function resetStore() {
   act(() => {
     useChatStore.setState({
-      connection: null,
-      isConnected: false,
-      connectionError: null,
-      activeSessionId: null,
-      activeAgentId: null,
-      activeAgentType: null,
       messages: [],
       isStreaming: false,
       toolCalls: {},
       pendingApprovals: [],
       sessionTokens: 0,
       sessionCost: 0,
+    })
+    useConnectionStore.setState({
+      connection: null,
+      isConnected: false,
+      connectionError: null,
+    })
+    useSessionStore.setState({
+      activeSessionId: null,
+      activeAgentId: null,
+      activeAgentType: null,
     })
   })
 }
@@ -29,20 +35,21 @@ beforeEach(resetStore)
 
 describe('chat store — initial state', () => {
   it('initializes with empty messages, not streaming, no active session', () => {
-    const state = useChatStore.getState()
-    expect(state.messages).toEqual([])
-    expect(state.isStreaming).toBe(false)
-    expect(state.activeSessionId).toBeNull()
-    expect(state.activeAgentId).toBeNull()
+    const chatState = useChatStore.getState()
+    const sessionState = useSessionStore.getState()
+    expect(chatState.messages).toEqual([])
+    expect(chatState.isStreaming).toBe(false)
+    expect(sessionState.activeSessionId).toBeNull()
+    expect(sessionState.activeAgentId).toBeNull()
   })
 })
 
 describe('chat store — session management', () => {
   it('setActiveSession updates activeSessionId and activeAgentId', () => {
     act(() => {
-      useChatStore.getState().setActiveSession('sess_abc', 'general-assistant')
+      useSessionStore.getState().setActiveSession('sess_abc', 'general-assistant')
     })
-    const state = useChatStore.getState()
+    const state = useSessionStore.getState()
     expect(state.activeSessionId).toBe('sess_abc')
     expect(state.activeAgentId).toBe('general-assistant')
   })
@@ -134,7 +141,7 @@ describe('chat store — streaming via handleFrame', () => {
         streamCursor: true,
       })
       useChatStore.setState({ isStreaming: true })
-      useChatStore.getState().handleFrame({ type: 'done', stats: { tokens: 150, cost: 0.02 } })
+      useChatStore.getState().handleFrame({ type: 'done', stats: { tokens: 150, cost: 0.02, duration_ms: 0 } })
     })
     const state = useChatStore.getState()
     expect(state.isStreaming).toBe(false)
@@ -162,14 +169,15 @@ describe('chat store — streaming via handleFrame', () => {
         isStreaming: true,
       })
       useChatStore.setState({ isStreaming: true })
+      useConnectionStore.setState({ connectionError: null })
       useChatStore.getState().handleFrame({ type: 'error', message: 'LLM quota exceeded' })
     })
-    const state = useChatStore.getState()
-    expect(state.isStreaming).toBe(false)
-    const asst = state.messages.find((m) => m.id === 'asst_3')
+    const chatState = useChatStore.getState()
+    expect(chatState.isStreaming).toBe(false)
+    const asst = chatState.messages.find((m) => m.id === 'asst_3')
     expect(asst?.status).toBe('error')
     // Message-level error must NOT propagate to the connection error banner
-    expect(state.connectionError).toBeNull()
+    expect(useConnectionStore.getState().connectionError).toBeNull()
   })
 
   it('handleFrame(error) with no assistant message sets connectionError banner', () => {
@@ -180,10 +188,10 @@ describe('chat store — streaming via handleFrame', () => {
       useChatStore.setState({ isStreaming: true })
       useChatStore.getState().handleFrame({ type: 'error', message: 'Connection lost' })
     })
-    const state = useChatStore.getState()
-    expect(state.isStreaming).toBe(false)
-    expect(state.connectionError).toBe('Connection lost')
-    const errMsg = state.messages.find((m) => m.status === 'error')
+    const chatState = useChatStore.getState()
+    expect(chatState.isStreaming).toBe(false)
+    expect(useConnectionStore.getState().connectionError).toBe('Connection lost')
+    const errMsg = chatState.messages.find((m) => m.status === 'error')
     expect(errMsg).toBeDefined()
   })
 })
@@ -303,12 +311,12 @@ describe('chat store — cancel/interrupt (test_cancel_preserves_partial)', () =
         status: 'streaming',
         isStreaming: true,
       })
-      useChatStore.setState({
-        isStreaming: true,
-        activeSessionId: 'sess_cancel',
+      useChatStore.setState({ isStreaming: true })
+      useConnectionStore.setState({
         connection: { send: mockSend, disconnect: vi.fn(), connect: vi.fn(), isConnected: true } as any,
         isConnected: true,
       })
+      useSessionStore.setState({ activeSessionId: 'sess_cancel' })
       useChatStore.getState().cancelStream()
     })
     expect(mockSend).toHaveBeenCalledWith({ type: 'cancel', session_id: 'sess_cancel' })
@@ -319,8 +327,8 @@ describe('chat store — cancel/interrupt (test_cancel_preserves_partial)', () =
     // Traces to: wave5a-wire-ui-spec.md — Scenario: Cancel when idle is a no-op (AC3)
     const mockSend = vi.fn()
     act(() => {
-      useChatStore.setState({
-        isStreaming: false,
+      useChatStore.setState({ isStreaming: false })
+      useConnectionStore.setState({
         connection: { send: mockSend, disconnect: vi.fn(), connect: vi.fn(), isConnected: true } as any,
         isConnected: true,
       })
@@ -336,12 +344,14 @@ describe('chat store — sendMessage optimistic render', () => {
     // mockSend must return true — sendMessage reverts the optimistic update if send() returns falsy
     const mockSend = vi.fn().mockReturnValue(true)
     act(() => {
-      useChatStore.setState({
-        activeSessionId: 'sess_1',
-        activeAgentId: 'general-assistant',
+      useChatStore.setState({ isStreaming: false })
+      useConnectionStore.setState({
         connection: { send: mockSend, disconnect: vi.fn(), connect: vi.fn(), isConnected: true } as any,
         isConnected: true,
-        isStreaming: false,
+      })
+      useSessionStore.setState({
+        activeSessionId: 'sess_1',
+        activeAgentId: 'general-assistant',
       })
       useChatStore.getState().sendMessage('Hello, world!')
     })

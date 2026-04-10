@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
@@ -12,28 +12,42 @@ import {
   ShieldCheck,
   Lightning,
   Cube,
+  User,
+  Key,
 } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { configureProvider, testProvider, completeOnboarding, fetchProviders } from '@/lib/api'
-import { useQuery } from '@tanstack/react-query'
+import { ModelSelector } from '@/components/ui/model-selector'
+import { configureProvider, testProvider, completeOnboardingTransaction, completeOnboarding, fetchProviders } from '@/lib/api'
 import OmnipusAvatar from '@/assets/logo/omnipus-avatar.svg?url'
 import { PROVIDER_HINTS } from '@/lib/constants'
 import { useUiStore } from '@/store/ui'
+import { useAuthStore } from '@/store/auth'
 
 // US-7: First-launch onboarding flow — full-screen, outside AppShell
 // US-8: Provider setup with API key input + test connection
 
-type Step = 1 | 2 | 3
+type Step = 1 | 2 | 3 | 4
 type TestStatus = 'idle' | 'testing' | 'success' | 'error'
 
-// Fallback provider list used when the API is unreachable during onboarding
-const DEFAULT_PROVIDERS = [
-  { id: 'anthropic', display_name: 'Anthropic' },
-  { id: 'openrouter', display_name: 'OpenRouter' },
+// All supported providers. Providers with /v1/models get a searchable dropdown;
+// providers without it get a text input for manual model slug entry.
+const AVAILABLE_PROVIDERS = [
   { id: 'openai', display_name: 'OpenAI' },
+  { id: 'openrouter', display_name: 'OpenRouter' },
+  { id: 'anthropic', display_name: 'Anthropic' },
   { id: 'google', display_name: 'Google Gemini' },
   { id: 'groq', display_name: 'Groq' },
+  { id: 'deepseek', display_name: 'DeepSeek' },
+  { id: 'mistral', display_name: 'Mistral' },
+  { id: 'azure', display_name: 'Azure OpenAI' },
+  { id: 'zhipu', display_name: 'Zhipu' },
+  { id: 'moonshot', display_name: 'Moonshot' },
+  { id: 'nvidia', display_name: 'NVIDIA' },
+  { id: 'minimax', display_name: 'MiniMax' },
+  { id: 'qwen', display_name: 'Qwen' },
+  { id: 'ollama', display_name: 'Ollama' },
+  { id: 'cerebras', display_name: 'Cerebras' },
 ]
 
 const WELCOME_FEATURES = [
@@ -58,16 +72,10 @@ function OnboardingWizard() {
   const navigate = useNavigate()
   const { addToast } = useUiStore()
 
-  // Fetch provider list from API; fall back to hardcoded defaults if unavailable
-  const { data: apiProviders = [], isError: providersError } = useQuery({
-    queryKey: ['providers'],
-    queryFn: fetchProviders,
-  })
+  // Fetch provider list from API for model info; use built-in provider list for onboarding UI
 
-  const providers = apiProviders.length > 0
-    ? apiProviders.map((p) => ({ id: p.id, display_name: p.display_name ?? p.name ?? p.id }))
-    : DEFAULT_PROVIDERS
-  const usingFallbackProviders = providersError || apiProviders.length === 0
+  // Always show all available providers in onboarding, regardless of API results
+  const providers = AVAILABLE_PROVIDERS
 
   const [step, setStep] = useState<Step>(1)
   const [direction, setDirection] = useState(1)
@@ -76,7 +84,16 @@ function OnboardingWizard() {
   const [showKey, setShowKey] = useState(false)
   const [testStatus, setTestStatus] = useState<TestStatus>('idle')
   const [testError, setTestError] = useState('')
+  const [selectedModel, setSelectedModel] = useState('')
+  const [availableModels, setAvailableModels] = useState<string[]>([])
   const [isSaving, setIsSaving] = useState(false)
+  // Admin credentials step (Step 3)
+  const [adminUsername, setAdminUsername] = useState('')
+  const [adminPassword, setAdminPassword] = useState('')
+  const [adminPasswordConfirm, setAdminPasswordConfirm] = useState('')
+  const [showAdminPassword, setShowAdminPassword] = useState(false)
+  const [adminStatus, setAdminStatus] = useState<'idle' | 'saving' | 'error'>('idle')
+  const [adminError, setAdminError] = useState('')
 
   const providerDef = providers.find((p) => p.id === selectedProvider)
   const providerHintText = selectedProvider ? PROVIDER_HINTS[selectedProvider] : undefined
@@ -91,6 +108,8 @@ function OnboardingWizard() {
     setApiKey('')
     setTestStatus('idle')
     setTestError('')
+    setSelectedModel('')
+    setAvailableModels([])
   }
 
   const handleApiKeyChange = (k: string) => {
@@ -110,24 +129,58 @@ function OnboardingWizard() {
       const result = await testProvider(selectedProvider)
       if (result.success) {
         setTestStatus('success')
+        // Refetch provider list to get the updated model list for this provider.
+        const freshProviders = await fetchProviders()
+        const providerData = freshProviders.find((p) => p.id === selectedProvider)
+        if (providerData?.models && providerData.models.length > 0) {
+          setAvailableModels(providerData.models)
+        }
       } else {
         setTestStatus('error')
         setTestError(result.error ?? 'Connection test failed')
       }
     } catch (err) {
       setTestStatus('error')
-      setTestError((err as Error).message)
+      setTestError(err instanceof Error ? err.message : String(err))
     }
   }
+
+  // Save the selected model to the backend when it changes
+  useEffect(() => {
+    if (!selectedModel || testStatus !== 'success') return
+    const saveModel = async () => {
+      try {
+        await configureProvider(selectedProvider, undefined, undefined, selectedModel)
+      } catch (err) {
+        console.error('Failed to save model selection:', err)
+        addToast({
+          message: `Failed to save model selection: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          variant: 'error',
+        })
+      }
+    }
+    saveModel()
+  }, [selectedModel, selectedProvider, testStatus])
 
   const handleFinish = async () => {
     setIsSaving(true)
     try {
-      await completeOnboarding()
+      const resp = await completeOnboardingTransaction({
+        provider: {
+          id: selectedProvider,
+          api_key: apiKey,
+          model: selectedModel,
+        },
+        admin: {
+          username: adminUsername,
+          password: adminPassword,
+        },
+      })
+      useAuthStore.getState().setToken(resp.token, resp.role, resp.username)
       navigate({ to: '/' })
     } catch (err) {
       addToast({
-        message: `Could not save onboarding state: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        message: `Could not complete setup: ${err instanceof Error ? err.message : 'Unknown error'}`,
         variant: 'error',
       })
     } finally {
@@ -146,6 +199,27 @@ function OnboardingWizard() {
         variant: 'error',
       })
     }
+  }
+
+  const handleRegisterAdmin = () => {
+    if (!adminUsername.trim() || !adminPassword) {
+      setAdminError('Username and password are required')
+      setAdminStatus('error')
+      return
+    }
+    if (adminPassword.length < 8) {
+      setAdminError('Password must be at least 8 characters')
+      setAdminStatus('error')
+      return
+    }
+    if (adminPassword !== adminPasswordConfirm) {
+      setAdminError('Passwords do not match')
+      setAdminStatus('error')
+      return
+    }
+    setAdminStatus('idle')
+    setAdminError('')
+    goTo(4)
   }
 
   return (
@@ -173,8 +247,8 @@ function OnboardingWizard() {
       />
 
       {/* Step indicator */}
-      <div className="flex items-center gap-2 mb-12 z-10" role="progressbar" aria-valuenow={step} aria-valuemin={1} aria-valuemax={3}>
-        {([1, 2, 3] as Step[]).map((s) => (
+      <div className="flex items-center gap-2 mb-12 z-10" role="progressbar" aria-valuenow={step} aria-valuemin={1} aria-valuemax={4}>
+        {([1, 2, 3, 4] as Step[]).map((s) => (
           <motion.div
             key={s}
             animate={{
@@ -220,7 +294,6 @@ function OnboardingWizard() {
             >
               <ProviderStep
                 providers={providers}
-                usingFallbackProviders={usingFallbackProviders}
                 selectedProvider={selectedProvider}
                 onSelect={handleSelectProvider}
                 apiKey={apiKey}
@@ -233,12 +306,41 @@ function OnboardingWizard() {
                 onBack={() => goTo(1)}
                 onContinue={() => goTo(3)}
                 providerHint={providerHintText}
+                availableModels={availableModels}
+                selectedModel={selectedModel}
+                onSelectModel={setSelectedModel}
               />
             </motion.div>
           )}
           {step === 3 && (
             <motion.div
               key="step3"
+              custom={direction}
+              variants={stepVariants}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{ duration: 0.22, ease: 'easeInOut' }}
+            >
+              <AdminCredentialsStep
+                username={adminUsername}
+                onUsernameChange={setAdminUsername}
+                password={adminPassword}
+                onPasswordChange={setAdminPassword}
+                passwordConfirm={adminPasswordConfirm}
+                onPasswordConfirmChange={setAdminPasswordConfirm}
+                showPassword={showAdminPassword}
+                onToggleShowPassword={() => setShowAdminPassword((v) => !v)}
+                status={adminStatus}
+                error={adminError}
+                onRegister={handleRegisterAdmin}
+                onBack={() => goTo(2)}
+              />
+            </motion.div>
+          )}
+          {step === 4 && (
+            <motion.div
+              key="step4"
               custom={direction}
               variants={stepVariants}
               initial="enter"
@@ -363,7 +465,6 @@ function WelcomeStep({
 
 function ProviderStep({
   providers,
-  usingFallbackProviders,
   selectedProvider,
   onSelect,
   apiKey,
@@ -376,9 +477,11 @@ function ProviderStep({
   onBack,
   onContinue,
   providerHint,
+  availableModels,
+  selectedModel,
+  onSelectModel,
 }: {
   providers: { id: string; display_name: string }[]
-  usingFallbackProviders: boolean
   selectedProvider: string
   onSelect: (id: string) => void
   apiKey: string
@@ -391,6 +494,9 @@ function ProviderStep({
   onBack: () => void
   onContinue: () => void
   providerHint?: string
+  availableModels: string[]
+  selectedModel: string
+  onSelectModel: (model: string) => void
 }) {
   return (
     <div className="flex flex-col gap-6">
@@ -403,17 +509,6 @@ function ProviderStep({
           Omnipus needs an AI provider to power your agents.
         </p>
       </div>
-
-      {/* Warning when using fallback provider list */}
-      {usingFallbackProviders && (
-        <div
-          className="flex items-start gap-2 p-3 rounded-lg border text-xs"
-          style={{ borderColor: 'var(--color-warning)', color: 'var(--color-warning)', backgroundColor: 'rgba(212,175,55,0.06)' }}
-        >
-          <XCircle size={14} weight="fill" className="shrink-0 mt-0.5" />
-          <span>Could not reach the gateway — showing default provider list. Some providers may not be available.</span>
-        </div>
-      )}
 
       {/* Provider selection grid */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -488,13 +583,7 @@ function ProviderStep({
                 </p>
               </div>
 
-              {/* Test connection feedback */}
-              {testStatus === 'success' && (
-                <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--color-success)' }}>
-                  <CheckCircle size={14} weight="fill" />
-                  <span>Connected successfully</span>
-                </div>
-              )}
+              {/* Connection feedback */}
               {testStatus === 'error' && (
                 <div className="flex items-start gap-2 text-sm" style={{ color: 'var(--color-error)' }}>
                   <XCircle size={14} weight="fill" className="shrink-0 mt-0.5" />
@@ -502,26 +591,63 @@ function ProviderStep({
                 </div>
               )}
 
-              <Button
-                variant="outline"
-                className="w-full gap-2"
-                onClick={onTest}
-                disabled={!apiKey.trim() || testStatus === 'testing'}
-              >
-                {testStatus === 'testing' ? (
-                  <>
-                    <SpinnerGap size={13} className="animate-spin" />
-                    Testing connection...
-                  </>
-                ) : testStatus === 'success' ? (
-                  <>
-                    <CheckCircle size={13} weight="fill" style={{ color: 'var(--color-success)' }} />
-                    Test again
-                  </>
-                ) : (
-                  'Test Connection'
+              {/* Connect & Load Models — the main CTA before model selection */}
+              {testStatus !== 'success' && (
+                <Button
+                  className="w-full gap-2 font-headline font-bold"
+                  onClick={onTest}
+                  disabled={!apiKey.trim() || testStatus === 'testing'}
+                >
+                  {testStatus === 'testing' ? (
+                    <>
+                      <SpinnerGap size={13} className="animate-spin" />
+                      Connecting...
+                    </>
+                  ) : testStatus === 'error' ? (
+                    'Retry Connection'
+                  ) : (
+                    'Connect & Load Models'
+                  )}
+                </Button>
+              )}
+
+              {/* Model selection — appears after successful connection */}
+              <AnimatePresence>
+                {testStatus === 'success' && (
+                  <motion.div
+                    key="model-select"
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="overflow-hidden space-y-3"
+                  >
+                    <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--color-success)' }}>
+                      <CheckCircle size={14} weight="fill" />
+                      <span>Connected successfully</span>
+                    </div>
+
+                    <div>
+                      <label
+                        className="text-xs font-medium mb-1.5 block"
+                        style={{ color: 'var(--color-muted)' }}
+                      >
+                        Default Model <span style={{ color: 'var(--color-error)' }}>*</span>
+                      </label>
+                      <ModelSelector
+                        models={availableModels}
+                        value={selectedModel}
+                        onChange={onSelectModel}
+                      />
+                      <p className="text-[10px] mt-1.5" style={{ color: 'var(--color-muted)' }}>
+                        {availableModels.length > 0
+                          ? 'This model will be used by default for agent tasks'
+                          : 'Enter the model slug for this provider (e.g. MiniMax-M2.7)'}
+                      </p>
+                    </div>
+                  </motion.div>
                 )}
-              </Button>
+              </AnimatePresence>
             </div>
           </motion.div>
         )}
@@ -536,7 +662,9 @@ function ProviderStep({
         <Button
           className="flex-1 gap-2 font-headline font-bold"
           onClick={onContinue}
-          disabled={testStatus !== 'success'}
+          disabled={
+            testStatus !== 'success' || !selectedModel.trim()
+          }
         >
           Continue
           <ArrowRight size={14} weight="bold" />
@@ -546,7 +674,182 @@ function ProviderStep({
   )
 }
 
-// ── Step 3: Done ───────────────────────────────────────────────────────────────
+// ── Step 3: Admin Credentials ──────────────────────────────────────────────────
+
+function AdminCredentialsStep({
+  username,
+  onUsernameChange,
+  password,
+  onPasswordChange,
+  passwordConfirm,
+  onPasswordConfirmChange,
+  showPassword,
+  onToggleShowPassword,
+  status,
+  error,
+  onRegister,
+  onBack,
+}: {
+  username: string
+  onUsernameChange: (v: string) => void
+  password: string
+  onPasswordChange: (v: string) => void
+  passwordConfirm: string
+  onPasswordConfirmChange: (v: string) => void
+  showPassword: boolean
+  onToggleShowPassword: () => void
+  status: 'idle' | 'saving' | 'error'
+  error: string
+  onRegister: () => void
+  onBack: () => void
+}) {
+  const isValid = username.trim().length > 0 && password.length >= 8 && password === passwordConfirm
+  return (
+    <div className="flex flex-col items-center text-center gap-6">
+      <motion.div
+        initial={{ scale: 0.8, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ duration: 0.4 }}
+      >
+        <div
+          className="h-16 w-16 rounded-full flex items-center justify-center"
+          style={{ backgroundColor: 'rgba(212,175,55,0.12)' }}
+        >
+          <User size={28} weight="duotone" style={{ color: 'var(--color-accent)' }} />
+        </div>
+      </motion.div>
+
+      <motion.div
+        initial={{ y: 14, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ delay: 0.15, duration: 0.38 }}
+      >
+        <h2 className="font-headline text-3xl font-bold mb-2"
+          style={{ color: 'var(--color-secondary)' }}>
+          Admin Account
+        </h2>
+        <p className="text-sm" style={{ color: 'var(--color-muted)' }}>
+          Set up your admin login for Omnipus
+        </p>
+      </motion.div>
+
+      <motion.div
+        initial={{ y: 14, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        transition={{ delay: 0.25, duration: 0.38 }}
+        className="w-full space-y-4"
+      >
+        {/* Username */}
+        <div>
+          <label htmlFor="admin-username" className="text-xs font-medium mb-1.5 block"
+            style={{ color: 'var(--color-muted)' }}>
+            Username
+          </label>
+          <Input
+            id="admin-username"
+            type="text"
+            value={username}
+            onChange={(e) => onUsernameChange(e.target.value)}
+            placeholder="admin"
+            autoComplete="username"
+            autoFocus
+          />
+        </div>
+
+        {/* Password */}
+        <div>
+          <label htmlFor="admin-password" className="text-xs font-medium mb-1.5 block"
+            style={{ color: 'var(--color-muted)' }}>
+            Password
+          </label>
+          <div className="relative">
+            <Input
+              id="admin-password"
+              type={showPassword ? 'text' : 'password'}
+              value={password}
+              onChange={(e) => onPasswordChange(e.target.value)}
+              placeholder="Min. 8 characters"
+              autoComplete="new-password"
+              className="pr-9"
+            />
+            <button
+              type="button"
+              onClick={onToggleShowPassword}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 transition-colors"
+              style={{ color: 'var(--color-muted)' }}
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+            >
+              {showPassword ? <EyeSlash size={14} /> : <Eye size={14} />}
+            </button>
+          </div>
+        </div>
+
+        {/* Confirm Password */}
+        <div>
+          <label htmlFor="admin-password-confirm" className="text-xs font-medium mb-1.5 block"
+            style={{ color: 'var(--color-muted)' }}>
+            Confirm Password
+          </label>
+          <div className="relative">
+            <Input
+              id="admin-password-confirm"
+              type={showPassword ? 'text' : 'password'}
+              value={passwordConfirm}
+              onChange={(e) => onPasswordConfirmChange(e.target.value)}
+              placeholder="Repeat password"
+              autoComplete="new-password"
+              className="pr-9"
+            />
+            <button
+              type="button"
+              onClick={onToggleShowPassword}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 transition-colors"
+              style={{ color: 'var(--color-muted)' }}
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+            >
+              {showPassword ? <EyeSlash size={14} /> : <Eye size={14} />}
+            </button>
+          </div>
+        </div>
+
+        {/* Error feedback */}
+        {status === 'error' && error && (
+          <div className="flex items-start gap-2 text-sm" style={{ color: 'var(--color-error)' }}>
+            <XCircle size={14} weight="fill" className="shrink-0 mt-0.5" />
+            <span>{error}</span>
+          </div>
+        )}
+      </motion.div>
+
+      {/* Navigation */}
+      <div className="flex items-center gap-3 pt-2 w-full">
+        <Button variant="ghost" className="gap-1.5" onClick={onBack}>
+          <ArrowLeft size={14} />
+          Back
+        </Button>
+        <Button
+          className="flex-1 gap-2 font-headline font-bold"
+          onClick={onRegister}
+          disabled={!isValid || status === 'saving'}
+        >
+          {status === 'saving' ? (
+            <>
+              <SpinnerGap size={13} className="animate-spin" />
+              Setting up...
+            </>
+          ) : (
+            <>
+              <Key size={13} weight="duotone" />
+              Create Account
+            </>
+          )}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+// ── Step 4: Done ───────────────────────────────────────────────────────────────
 
 function DoneStep({
   providerName,

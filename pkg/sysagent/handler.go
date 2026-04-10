@@ -56,7 +56,7 @@ func NewSystemToolHandler(cfg HandlerConfig) *SystemToolHandler {
 // deviceID identifies the calling device for audit purposes.
 func (h *SystemToolHandler) Handle(
 	ctx context.Context,
-	callerRole Role,
+	callerRole PrincipalRole,
 	deviceID string,
 	toolName string,
 	args map[string]any,

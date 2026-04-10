@@ -1,6 +1,10 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
+// Pin is only honoured at or above this viewport width.
+// Below it the sidebar is always overlay regardless of the persisted preference.
+export const SIDEBAR_PIN_BREAKPOINT = 1024
+
 interface SidebarStore {
   isOpen: boolean
   isPinned: boolean

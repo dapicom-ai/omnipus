@@ -73,10 +73,14 @@ func NewAgentRegistry(
 }
 
 // GetAgent returns the agent instance for a given ID.
+// "omnipus-system" is treated as an alias for "main" (the default/system agent).
 func (r *AgentRegistry) GetAgent(agentID string) (*AgentInstance, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	id := routing.NormalizeAgentID(agentID)
+	if id == "omnipus-system" {
+		id = "main"
+	}
 	agent, ok := r.agents[id]
 	return agent, ok
 }

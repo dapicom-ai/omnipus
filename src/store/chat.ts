@@ -1,11 +1,11 @@
 import { create } from 'zustand'
 import { generateId } from '@/lib/constants'
 import { useUiStore } from '@/store/ui'
+import { useConnectionStore } from '@/store/connection'
+import { useSessionStore, registerChatResetSession } from '@/store/session'
+import { queryClient } from '@/lib/queryClient'
 import type { Message, ToolCall } from '@/lib/api'
-import type { WsConnection, WsReceiveFrame } from '@/lib/ws'
-import type {
-  WsExecApprovalRequestFrame,
-} from '@/lib/ws'
+import type { WsReceiveFrame, WsExecApprovalRequestFrame, WsReplayMessageFrame } from '@/lib/ws'
 
 export interface ChatMessage extends Message {
   isStreaming?: boolean
@@ -21,22 +21,6 @@ export interface ExecApprovalRequest {
 }
 
 interface ChatStore {
-  // Connection
-  connection: WsConnection | null
-  isConnected: boolean
-  connectionError: string | null
-  setConnection: (conn: WsConnection | null) => void
-  setConnected: (connected: boolean) => void
-  setConnectionError: (error: string | null) => void
-
-  // Session & agent selection
-  activeSessionId: string | null
-  activeAgentId: string | null
-  /** The type of the currently active agent ('system' | 'core' | 'custom' | null).
-   *  Set by setActiveSession so all callers stay in sync without manual tracking. */
-  activeAgentType: 'system' | 'core' | 'custom' | null
-  setActiveSession: (sessionId: string | null, agentId?: string | null, agentType?: 'system' | 'core' | 'custom' | null) => void
-
   // Messages
   messages: ChatMessage[]
   isStreaming: boolean
@@ -45,9 +29,10 @@ interface ChatStore {
   updateLastAssistantMessage: (content: string, done?: boolean) => void
   markLastMessageInterrupted: () => void
 
-  // Tool calls (keyed by call_id)
-  // TODO: standardize call_id/id naming at deserialization boundary
+  // Tool calls (keyed by call_id) + insertion order for interleaved rendering
   toolCalls: Record<string, ToolCall & { call_id: string }>
+  toolCallOrder: string[]
+  textAtToolCallStart: Record<string, string> // snapshot of assistant content when each tool call started
   startToolCall: (callId: string, tool: string, params: Record<string, unknown>) => void
   resolveToolCall: (callId: string, result: unknown, status: 'success' | 'error', durationMs?: number, error?: string) => void
   cancelToolCall: (callId: string) => void
@@ -62,44 +47,36 @@ interface ChatStore {
   sessionCost: number
   updateSessionStats: (tokens: number, cost: number) => void
 
+  // Reset all session-scoped state (called by sessionStore on session switch)
+  resetSession: () => void
+
   // Actions
   sendMessage: (content: string) => void
   cancelStream: () => void
-  reconnect: () => void
   respondToApproval: (id: string, decision: 'allow' | 'deny' | 'always') => void
+  respondToPairing: (deviceId: string, decision: 'approve' | 'reject') => void
 
   // Inbound frame handler
   handleFrame: (frame: WsReceiveFrame) => void
 }
 
+/** State reset applied whenever switching or attaching to a session. */
+const CLEAN_SESSION_STATE = {
+  messages: [] as ChatMessage[],
+  toolCalls: {} as Record<string, ToolCall & { call_id: string }>,
+  toolCallOrder: [] as string[],
+  textAtToolCallStart: {} as Record<string, string>,
+  pendingApprovals: [] as ExecApprovalRequest[],
+  sessionTokens: 0,
+  sessionCost: 0,
+  isStreaming: false,
+} as const
+
 export const useChatStore = create<ChatStore>((set, get) => ({
-  connection: null,
-  isConnected: false,
-  connectionError: null,
-  setConnection: (conn) => set({ connection: conn }),
-  setConnected: (connected) => set({ isConnected: connected, connectionError: connected ? null : get().connectionError }),
-  setConnectionError: (error) => set({ connectionError: error }),
-
-  activeSessionId: null,
-  activeAgentId: null,
-  activeAgentType: null,
-  setActiveSession: (sessionId, agentId, agentType) =>
-    set({
-      activeSessionId: sessionId,
-      activeAgentId: agentId ?? get().activeAgentId,
-      activeAgentType: agentType ?? get().activeAgentType,
-      // Clear ALL session-scoped state on switch to prevent stale data bleeding across sessions
-      messages: [],
-      toolCalls: {},
-      pendingApprovals: [],
-      sessionTokens: 0,
-      sessionCost: 0,
-      isStreaming: false,
-    }),
-
   messages: [],
   isStreaming: false,
-  setMessages: (messages) => set({ messages, toolCalls: {}, pendingApprovals: [], sessionTokens: 0, sessionCost: 0 }),
+  setMessages: (messages) =>
+    set({ ...CLEAN_SESSION_STATE, messages }),
 
   appendMessage: (message) =>
     set((state) => ({ messages: [...state.messages, message] })),
@@ -147,13 +124,22 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }),
 
   toolCalls: {},
+  toolCallOrder: [],
+  textAtToolCallStart: {},
   startToolCall: (callId, tool, params) =>
-    set((state) => ({
-      toolCalls: {
-        ...state.toolCalls,
-        [callId]: { id: callId, call_id: callId, tool, params, status: 'running' },
-      },
-    })),
+    set((state) => {
+      // Capture the current assistant message text so we can interleave tool calls with text during rendering
+      const lastMsg = state.messages[state.messages.length - 1]
+      const textSnapshot = (lastMsg?.role === 'assistant' ? lastMsg.content : '') ?? ''
+      return {
+        toolCalls: {
+          ...state.toolCalls,
+          [callId]: { id: callId, call_id: callId, tool, params, status: 'running' },
+        },
+        toolCallOrder: [...state.toolCallOrder, callId],
+        textAtToolCallStart: { ...state.textAtToolCallStart, [callId]: textSnapshot },
+      }
+    }),
 
   resolveToolCall: (callId, result, status, durationMs, error) =>
     set((state) => {
@@ -203,14 +189,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   sessionCost: 0,
   updateSessionStats: (tokens, cost) => set({ sessionTokens: tokens, sessionCost: cost }),
 
+  resetSession: () => set(CLEAN_SESSION_STATE),
+
   sendMessage: (content) => {
-    const { connection, activeSessionId, activeAgentId, activeAgentType, isStreaming } = get()
+    const { connection, isConnected } = useConnectionStore.getState()
+    const { activeSessionId, activeAgentId, activeAgentType } = useSessionStore.getState()
+    const { isStreaming } = get()
+
     if (isStreaming) {
-      set({ connectionError: 'Please wait — a response is still generating.' })
+      useConnectionStore.getState().setConnectionError('Please wait — a response is still generating.')
       return
     }
-    if (!connection) {
-      set({ connectionError: 'Cannot send message — not connected to the server. Check your connection and try again.' })
+    if (!connection || !isConnected) {
+      useConnectionStore.getState().setConnectionError('Cannot send message — not connected to the server. Check your connection and try again.')
       return
     }
 
@@ -256,13 +247,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       set((state) => ({
         messages: state.messages.filter((m) => m.id !== userMsg.id && m.id !== assistantMsg.id),
         isStreaming: false,
-        connectionError: 'Message could not be sent — connection dropped. Please try again.',
       }))
+      useConnectionStore.getState().setConnectionError('Message could not be sent — connection dropped. Please try again.')
     }
   },
 
   cancelStream: () => {
-    const { connection, activeSessionId, isStreaming } = get()
+    const { connection } = useConnectionStore.getState()
+    const { activeSessionId } = useSessionStore.getState()
+    const { isStreaming } = get()
+
     if (!connection || !isStreaming) return
     if (!activeSessionId) {
       // No session to cancel — still unblock the UI
@@ -295,30 +289,33 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     })
   },
 
-  reconnect: () => {
-    const { connection } = get()
-    if (!connection) {
-      set({ connectionError: 'Cannot reconnect — please refresh the page.' })
-      return
-    }
-    set({ connectionError: null })
-    connection.connect()
-  },
-
   respondToApproval: (id, decision) => {
-    const { connection } = get()
+    const { connection } = useConnectionStore.getState()
     if (!connection) {
-      set({ connectionError: 'Cannot respond to approval — not connected. Reconnect and try again.' })
+      useConnectionStore.getState().setConnectionError('Cannot respond to approval — not connected. Reconnect and try again.')
       return
     }
 
     const sent = connection.send({ type: 'exec_approval_response', id, decision })
     if (!sent) {
-      set({ connectionError: 'Failed to send approval response — connection dropped. Reconnect and try again.' })
+      useConnectionStore.getState().setConnectionError('Failed to send approval response — connection dropped. Reconnect and try again.')
       return
     }
     const statusMap = { allow: 'allowed', deny: 'denied', always: 'always_allowed' } as const
     get().resolveApproval(id, statusMap[decision])
+  },
+
+  respondToPairing: (deviceId, decision) => {
+    const { connection } = useConnectionStore.getState()
+    if (!connection) {
+      useConnectionStore.getState().setConnectionError('Cannot respond to pairing — not connected. Reconnect and try again.')
+      return
+    }
+
+    const sent = connection.send({ type: 'device_pairing_response', device_id: deviceId, decision })
+    if (!sent) {
+      useConnectionStore.getState().setConnectionError('Failed to send pairing response — connection dropped. Reconnect and try again.')
+    }
   },
 
   handleFrame: (frame) => {
@@ -366,21 +363,51 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             isStreaming: false,
             streamCursor: false,
           })
-          return { messages: msgs, isStreaming: false, connectionError: frame.message }
+          useConnectionStore.getState().setConnectionError(frame.message)
+          return { messages: msgs, isStreaming: false }
         })
         break
 
-      case 'tool_call_start':
-        store.startToolCall(frame.call_id, frame.tool, frame.params)
+      case 'tool_call_start': {
+        // During replay, tool_call frames may arrive before any assistant text.
+        // Ensure an assistant message exists so tool calls have a parent to render against.
+        const lastMsg = store.messages[store.messages.length - 1]
+        if (!lastMsg || lastMsg.role !== 'assistant') {
+          store.updateLastAssistantMessage('', false)
+        }
+        store.startToolCall(frame.call_id ?? '', frame.tool ?? '', frame.params ?? {})
         break
+      }
 
       case 'tool_call_result':
-        store.resolveToolCall(frame.call_id, frame.result, frame.status, frame.duration_ms, frame.error)
+        store.resolveToolCall(frame.call_id ?? '', frame.result, frame.status ?? 'success', frame.duration_ms, frame.error)
         break
 
       case 'exec_approval_request':
         store.addApprovalRequest(frame)
         break
+
+      case 'task_status_changed':
+        queryClient.invalidateQueries({ queryKey: ['tasks'] })
+        break
+
+      case 'replay_message': {
+        const replayFrame = frame as WsReplayMessageFrame
+        const role = (replayFrame.role || 'assistant') as 'user' | 'assistant'
+        set((state) => ({
+          messages: [
+            ...state.messages,
+            {
+              id: generateId(),
+              role,
+              content: replayFrame.content ?? '',
+              timestamp: new Date().toISOString(),
+              status: 'done' as const,
+            },
+          ],
+        }))
+        break
+      }
 
       default:
         console.warn('[chat] Unknown frame type:', (frame as { type: string }).type)
@@ -388,3 +415,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
   },
 }))
+
+// Register resetSession with the session store to break the circular import.
+// This runs after useChatStore is fully initialized.
+registerChatResetSession(() => useChatStore.getState().resetSession())

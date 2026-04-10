@@ -33,6 +33,8 @@ const (
 	EntryTypeCompaction EntryType = "compaction"
 	// EntryTypeSystem marks a system-level event entry.
 	EntryTypeSystem EntryType = "system"
+	// EntryTypeToolCall marks a tool invocation entry.
+	EntryTypeToolCall EntryType = "tool_call"
 )
 
 // SessionStatus classifies the lifecycle state of a session.
@@ -271,6 +273,21 @@ func (ps *PartitionStore) SetTitle(sessionID string, title string) error {
 		return err
 	}
 	meta.Title = title
+	meta.UpdatedAt = time.Now().UTC()
+	return writeMeta(sessionDir, meta)
+}
+
+// SetAgentID updates the agent_id on an existing session.
+func (ps *PartitionStore) SetAgentID(sessionID string, agentID string) error {
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
+
+	sessionDir := filepath.Join(ps.baseDir, sessionID)
+	meta, err := readMeta(sessionDir)
+	if err != nil {
+		return err
+	}
+	meta.AgentID = agentID
 	meta.UpdatedAt = time.Now().UTC()
 	return writeMeta(sessionDir, meta)
 }

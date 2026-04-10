@@ -16,7 +16,7 @@ func TestCreateProviderReturnsHTTPProviderForOpenRouter(t *testing.T) {
 		APIBase:   "https://openrouter.ai/api/v1",
 	}
 	modelCfg.SetAPIKey("sk-or-test")
-	cfg.ModelList = []*config.ModelConfig{modelCfg}
+	cfg.Providers = []*config.ModelConfig{modelCfg}
 
 	provider, _, err := CreateProvider(cfg)
 	if err != nil {
@@ -31,7 +31,7 @@ func TestCreateProviderReturnsHTTPProviderForOpenRouter(t *testing.T) {
 func TestCreateProviderReturnsCodexCliProviderForCodexCode(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agents.Defaults.ModelName = "test-codex"
-	cfg.ModelList = []*config.ModelConfig{
+	cfg.Providers = []*config.ModelConfig{
 		{
 			ModelName: "test-codex",
 			Model:     "codex-cli/codex-model",
@@ -52,7 +52,7 @@ func TestCreateProviderReturnsCodexCliProviderForCodexCode(t *testing.T) {
 func TestCreateProviderReturnsClaudeCliProviderForClaudeCli(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agents.Defaults.ModelName = "test-claude-cli"
-	cfg.ModelList = []*config.ModelConfig{
+	cfg.Providers = []*config.ModelConfig{
 		{
 			ModelName: "test-claude-cli",
 			Model:     "claude-cli/claude-sonnet",
@@ -85,7 +85,7 @@ func TestCreateProviderReturnsClaudeProviderForAnthropicOAuth(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.Agents.Defaults.ModelName = "test-claude-oauth"
-	cfg.ModelList = []*config.ModelConfig{
+	cfg.Providers = []*config.ModelConfig{
 		{
 			ModelName:  "test-claude-oauth",
 			Model:      "anthropic/claude-sonnet-4.6",

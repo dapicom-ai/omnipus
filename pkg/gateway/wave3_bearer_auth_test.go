@@ -8,11 +8,15 @@
 package gateway
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"github.com/dapicom-ai/omnipus/pkg/config"
 )
 
 // TestBearerTokenConstantTimeComparison verifies that checkBearerAuth uses
@@ -20,14 +24,18 @@ import (
 // Traces to: wave3-skill-ecosystem-spec.md line 846 (Test #16: TestBearerTokenConstantTimeComparison)
 // BDD: Given OMNIPUS_BEARER_TOKEN is set,
 // When a request with the correct token is sent,
-// Then checkBearerAuth returns true (constant-time comparison used — verified by code review).
+// Then checkBearerAuth returns AuthResult{Authenticated: true} (constant-time comparison used — verified by code review).
 // When a request with an incorrect token is sent,
-// Then checkBearerAuth returns false and responds 401.
+// Then checkBearerAuth returns AuthResult{Authenticated: false} and responds 401.
 
 func TestBearerTokenConstantTimeComparison(t *testing.T) {
 	// Traces to: wave3-skill-ecosystem-spec.md line 846 (Test #16)
 	const testToken = "test-bearer-token-constant-time-abc123"
 	t.Setenv("OMNIPUS_BEARER_TOKEN", testToken)
+
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{}, // empty users — falls back to env var
+	}
 
 	tests := []struct {
 		name       string
@@ -80,8 +88,8 @@ func TestBearerTokenConstantTimeComparison(t *testing.T) {
 				r.Header.Set("Authorization", tc.authHeader)
 			}
 
-			got := checkBearerAuth(w, r)
-			assert.Equal(t, tc.wantPass, got,
+			got := checkBearerAuth(context.Background(), w, r, cfg)
+			assert.Equal(t, tc.wantPass, got.Authenticated,
 				"checkBearerAuth(%q) result mismatch", tc.authHeader)
 
 			if !tc.wantPass {
@@ -97,16 +105,26 @@ func TestBearerTokenConstantTimeComparison(t *testing.T) {
 // Traces to: wave3-skill-ecosystem-spec.md line 846 (Test #16 — unset token = allow all)
 // BDD: Given OMNIPUS_BEARER_TOKEN is not set,
 // When any request arrives,
-// Then checkBearerAuth returns true (auth not configured → development mode).
+// Then checkBearerAuth returns AuthResult{Authenticated: true, Role: "admin"} (auth not configured → dev mode).
 
 func TestBearerAuthDisabledWhenTokenUnset(t *testing.T) {
 	// Traces to: wave3-skill-ecosystem-spec.md line 846 (Test #16)
-	t.Setenv("OMNIPUS_BEARER_TOKEN", "") // unset
+	// Unset OMNIPUS_BEARER_TOKEN so os.Getenv returns "" (truly not set).
+	// Note: t.Setenv("VAR", "") sets it to the empty string, which is still "set".
+	// Using os.Unsetenv ensures the var is absent from the environment.
+	os.Unsetenv("OMNIPUS_BEARER_TOKEN")
+
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{DevModeBypass: true}, // empty users, dev mode — falls back to env var (unset)
+	}
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/chat", nil)
-	// No Authorization header — should still pass when token not configured
-	got := checkBearerAuth(w, r)
-	assert.True(t, got, "auth must pass when OMNIPUS_BEARER_TOKEN is not configured")
+	// Provide "Bearer " prefix — dev mode skips token validation when
+	// OMNIPUS_BEARER_TOKEN is unset, but the "Bearer " prefix is always required.
+	r.Header.Set("Authorization", "Bearer ")
+	got := checkBearerAuth(context.Background(), w, r, cfg)
+	assert.True(t, got.Authenticated, "auth must pass when OMNIPUS_BEARER_TOKEN is not configured")
 	assert.Equal(t, 200, w.Code, "no 401 written when token not configured")
+	assert.Equal(t, config.UserRoleAdmin, got.Role, "dev mode should return admin role")
 }

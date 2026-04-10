@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Robot, Timer, CurrencyDollar, ArrowsClockwise, CaretDown, PencilSimpleLine } from '@phosphor-icons/react'
+import { Robot, CaretLeft, CurrencyDollar, ArrowsClockwise, CaretDown, PencilSimpleLine } from '@phosphor-icons/react'
 import { IconRenderer } from '@/components/shared/IconRenderer'
 import {
   DropdownMenu,
@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
 import { useChatStore } from '@/store/chat'
+import { useSessionStore } from '@/store/session'
 import { useUiStore } from '@/store/ui'
 import { fetchAgents } from '@/lib/api'
 
@@ -25,7 +26,8 @@ function formatTokens(tokens: number): string {
 }
 
 export function SessionBar() {
-  const { activeAgentId, setActiveSession, sessionTokens, sessionCost, isStreaming } = useChatStore()
+  const { activeAgentId, setActiveSession } = useSessionStore()
+  const { sessionTokens, sessionCost, isStreaming } = useChatStore()
   const { openSessionPanel } = useUiStore()
 
   const { data: agents = [], isError: agentsError } = useQuery({
@@ -84,6 +86,17 @@ export function SessionBar() {
 
   return (
     <div className="flex items-center gap-3 min-w-0 w-full">
+      {/* Sessions button — left side */}
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={openSessionPanel}
+        className="h-7 px-2 text-xs gap-0.5 shrink-0"
+      >
+        <CaretLeft size={11} />
+        <span>Sessions</span>
+      </Button>
+
       {/* Agent selector + New chat icon */}
       <div className="flex items-center gap-0.5">
       <DropdownMenu>
@@ -182,16 +195,6 @@ export function SessionBar() {
         <span>{formatCost(sessionCost)}</span>
       </div>
 
-      {/* Sessions button */}
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={openSessionPanel}
-        className="ml-auto h-7 px-2 text-xs gap-1"
-      >
-        <Timer size={13} />
-        <span className="hidden sm:inline">Sessions</span>
-      </Button>
     </div>
   )
 }

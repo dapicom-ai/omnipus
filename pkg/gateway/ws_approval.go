@@ -1,3 +1,5 @@
+//go:build !cgo
+
 // Omnipus - Ultra-lightweight personal AI agent
 // License: MIT
 // Copyright (c) 2026 Omnipus contributors
@@ -191,7 +193,8 @@ func autoApproveSafeTool(tool string) bool {
 	switch tool {
 	case "read_file", "list_dir", "write_file", "edit_file", "append_file",
 		"web_search", "web_fetch", "send_file", "message",
-		"find_skills", "spawn", "subagent", "spawn_status", "cron":
+		"find_skills", "spawn", "subagent", "spawn_status", "cron",
+		"task_list", "task_create", "task_update", "task_delete", "agent_list":
 		return true
 	default:
 		return false

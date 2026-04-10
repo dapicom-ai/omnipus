@@ -4,7 +4,7 @@ import { act } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SessionPanel } from '../chat/SessionPanel'
 import { useUiStore } from '@/store/ui'
-import { useChatStore } from '@/store/chat'
+import { useSessionStore } from '@/store/session'
 
 // test_session_panel_component (test #20) — Session history panel
 // Traces to: wave5a-wire-ui-spec.md — Scenario: Session panel shows history grouped by agent
@@ -44,7 +44,7 @@ function renderPanel() {
 beforeEach(() => {
   act(() => {
     useUiStore.setState({ sessionPanelOpen: true, createAgentModalOpen: false })
-    useChatStore.setState({
+    useSessionStore.setState({
       activeAgentId: 'general-assistant',
       activeSessionId: 'sess_1',
     })
@@ -87,7 +87,7 @@ describe('SessionPanel — session switching (test #20)', () => {
     renderPanel()
     await screen.findByText('Second session')
     fireEvent.click(screen.getByText('Second session'))
-    expect(useChatStore.getState().activeSessionId).toBe('sess_2')
+    expect(useSessionStore.getState().activeSessionId).toBe('sess_2')
     // Panel closes after selection
     expect(useUiStore.getState().sessionPanelOpen).toBe(false)
   })

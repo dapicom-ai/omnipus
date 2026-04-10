@@ -14,12 +14,12 @@ import { cn } from '@/lib/utils'
 type StatusFilter = 'all' | Task['status']
 
 const FILTER_TABS: { value: StatusFilter; label: string }[] = [
-  { value: 'all', label: 'All' },
-  { value: 'inbox', label: 'Inbox' },
-  { value: 'next', label: 'Next' },
-  { value: 'active', label: 'Active' },
-  { value: 'waiting', label: 'Waiting' },
-  { value: 'done', label: 'Done' },
+  { value: 'all',       label: 'All' },
+  { value: 'queued',    label: 'Queued' },
+  { value: 'assigned',  label: 'Assigned' },
+  { value: 'running',   label: 'Running' },
+  { value: 'completed', label: 'Completed' },
+  { value: 'failed',    label: 'Failed' },
 ]
 
 export function CommandCenterScreen() {
@@ -28,14 +28,15 @@ export function CommandCenterScreen() {
 
   const { data: tasks = [], isError: tasksError } = useQuery({
     queryKey: ['tasks'],
-    queryFn: fetchTasks,
+    queryFn: () => fetchTasks(),
+    staleTime: 30_000,
     refetchInterval: 10_000,
   })
-
   const countFor = (filter: StatusFilter) =>
     filter === 'all' ? tasks.length : tasks.filter((t) => t.status === filter).length
 
   return (
+    <div className="absolute inset-0 overflow-y-auto">
     <div className="flex flex-col">
       {/* 1. Status bar */}
       <StatusBar />
@@ -50,7 +51,10 @@ export function CommandCenterScreen() {
         </div>
       )}
 
-      {/* 3. Filter tabs */}
+      {/* 3. Agent summary — compact card row */}
+      <AgentSummarySection />
+
+      {/* 4. Filter tabs */}
       <div className="flex items-center gap-0.5 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] overflow-x-auto">
         {FILTER_TABS.map((tab) => {
           const count = countFor(tab.value)
@@ -85,15 +89,14 @@ export function CommandCenterScreen() {
         })}
       </div>
 
-      {/* 4. Task list */}
+      {/* 5. Task list */}
       <TaskList
         statusFilter={statusFilter}
         onTaskSelect={setSelectedTask}
       />
 
-      {/* 5. Agent summary + 6. Activity feed */}
+      {/* 6. Activity feed — collapsed by default, at the bottom */}
       <div className="border-t border-[var(--color-border)]">
-        <AgentSummarySection />
         <ActivityFeed />
       </div>
 
@@ -101,7 +104,9 @@ export function CommandCenterScreen() {
       <TaskDetailPanel
         task={selectedTask}
         onClose={() => setSelectedTask(null)}
+        onTaskSelect={setSelectedTask}
       />
+    </div>
     </div>
   )
 }

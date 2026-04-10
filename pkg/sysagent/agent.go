@@ -59,7 +59,7 @@ func (a *SystemAgent) ProcessMessage(
 	ctx context.Context,
 	history []providers.Message,
 	userMessage string,
-	callerRole Role,
+	callerRole PrincipalRole,
 	deviceID string,
 ) (string, []providers.Message, error) {
 	providerDefs := a.buildToolDefs()

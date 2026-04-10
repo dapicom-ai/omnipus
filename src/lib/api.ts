@@ -1,10 +1,10 @@
-// REST API client — all calls go through the backend gateway
-// Auth: Authorization: Bearer <token> header when a token is stored in localStorage ('omnipus_auth_token'). The backend validates against OMNIPUS_BEARER_TOKEN.
+// REST API client — all calls go through the backend gateway.
+// Auth: Authorization: Bearer <token> header. Token read from sessionStorage (preferred) or localStorage ('omnipus_auth_token'). Backend validates against per-user RBAC token hashes or legacy OMNIPUS_BEARER_TOKEN env var.
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? ''
 
 function getAuthHeaders(): HeadersInit {
-  const token = localStorage.getItem('omnipus_auth_token')
+  const token = sessionStorage.getItem('omnipus_auth_token') ?? localStorage.getItem('omnipus_auth_token')
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
@@ -18,7 +18,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     },
   })
   if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText)
+    const text = await res.text().catch((e) => {
+      console.warn('[api] Could not read response body:', e)
+      return res.statusText
+    })
     throw new Error(`${res.status}: ${text}`)
   }
   return res.json() as Promise<T>
@@ -98,6 +101,9 @@ export interface Session {
   id: string
   agent_id: string
   title: string
+  type: 'chat' | 'task' | 'channel'
+  status?: 'active' | 'archived' | 'interrupted'
+  task_id?: string
   created_at: string
   updated_at: string
   message_count: number
@@ -109,6 +115,9 @@ interface RawSession {
   id: string
   agent_id: string
   title: string
+  type?: 'chat' | 'task' | 'channel'
+  status?: 'active' | 'archived' | 'interrupted'
+  task_id?: string
   created_at: string
   updated_at: string
   stats?: {
@@ -126,6 +135,10 @@ function rawToSession(raw: RawSession): Session {
     id: raw.id,
     agent_id: raw.agent_id,
     title: raw.title,
+    // Legacy sessions without a type field default to 'chat'
+    type: raw.type ?? 'chat',
+    status: raw.status,
+    task_id: raw.task_id,
     created_at: raw.created_at,
     updated_at: raw.updated_at,
     message_count: raw.stats?.message_count ?? 0,
@@ -156,8 +169,11 @@ export interface ToolCall {
   error?: string
 }
 
-export async function fetchSessions(agentId?: string): Promise<Session[]> {
-  const qs = agentId ? '?' + new URLSearchParams({ agent_id: agentId }).toString() : ''
+export async function fetchSessions(agentId?: string, type?: Session['type']): Promise<Session[]> {
+  const params: Record<string, string> = {}
+  if (agentId) params.agent_id = agentId
+  if (type) params.type = type
+  const qs = Object.keys(params).length > 0 ? '?' + new URLSearchParams(params).toString() : ''
   const raw = await request<RawSession[]>(`/sessions${qs}`)
   return raw.map(rawToSession)
 }
@@ -216,16 +232,21 @@ function validEnum<T extends string>(value: unknown, valid: readonly T[], fallba
   return fallback
 }
 
+// cast provides a type-safe wrapper around the repetitive (raw.foo ?? fallback) as T pattern.
+function cast<T>(obj: unknown, fallback: T): T {
+  return (obj ?? fallback) as T
+}
+
 function rawToFrontendConfig(raw: Record<string, unknown>): Config {
-  const gateway = (raw.gateway ?? {}) as Record<string, unknown>
-  const storage = (raw.storage ?? {}) as Record<string, unknown>
-  const retention = (storage.retention ?? {}) as Record<string, unknown>
-  const security = (raw.security ?? {}) as Record<string, unknown>
-  const rateLimits = (security.rate_limits ?? {}) as Record<string, unknown>
+  const gateway = cast<Record<string, unknown>>(raw.gateway, {})
+  const storage = cast<Record<string, unknown>>(raw.storage, {})
+  const retention = cast<Record<string, unknown>>(storage.retention, {})
+  const security = cast<Record<string, unknown>>(raw.security, {})
+  const rateLimits = cast<Record<string, unknown>>(security.rate_limits, {})
   return {
     gateway: {
-      bind_address: (gateway.host as string) ?? '127.0.0.1',
-      port: (gateway.port as number) ?? 8080,
+      bind_address: cast<string>(gateway.host, '127.0.0.1'),
+      port: cast<number>(gateway.port, 8080),
       auth_mode: validEnum(gateway.auth_mode, VALID_AUTH_MODES, 'none'),
       token: gateway.token as string | undefined,
       hot_reload: gateway.hot_reload as boolean | undefined,
@@ -247,7 +268,7 @@ function rawToFrontendConfig(raw: Record<string, unknown>): Config {
       },
     },
     data: {
-      session_retention_days: (retention.session_days as number) ?? 90,
+      session_retention_days: cast<number>(retention.session_days, 90),
     },
   }
 }
@@ -276,10 +297,14 @@ export function fetchProviders(): Promise<Provider[]> {
   return request<Provider[]>('/providers')
 }
 
-export function configureProvider(id: string, apiKey: string, endpoint?: string): Promise<Provider> {
+export function configureProvider(id: string, apiKey?: string, endpoint?: string, model?: string): Promise<Provider> {
+  const body: Record<string, string> = {}
+  if (apiKey !== undefined) body.api_key = apiKey
+  if (endpoint !== undefined) body.endpoint = endpoint
+  if (model !== undefined) body.model = model
   return request<Provider>(`/providers/${id}`, {
     method: 'PUT',
-    body: JSON.stringify({ api_key: apiKey, endpoint }),
+    body: JSON.stringify(body),
   })
 }
 
@@ -295,26 +320,52 @@ export function rotateGatewayToken(): Promise<{ token: string }> {
 
 export interface Task {
   id: string
-  name: string
-  description?: string
-  status: 'inbox' | 'next' | 'active' | 'waiting' | 'done'
+  title: string
+  prompt: string
   agent_id?: string
   agent_name?: string
-  cost?: number
+  created_by?: string
+  parent_task_id?: string
+  priority: number
+  status: 'queued' | 'assigned' | 'running' | 'completed' | 'failed'
+  result?: string
+  artifacts?: string[]
+  session_id?: string
+  trigger_type: 'manual' | 'time' | 'event'
   created_at?: string
-  updated_at?: string
+  started_at?: string
+  completed_at?: string
 }
 
-export function fetchTasks(): Promise<Task[]> {
-  return request<Task[]>('/tasks')
+export function fetchTasks(status?: Task['status']): Promise<Task[]> {
+  const qs = status ? '?' + new URLSearchParams({ status }).toString() : ''
+  return request<Task[]>(`/tasks${qs}`)
 }
 
-export function createTask(data: Pick<Task, 'name' | 'description' | 'agent_id'>): Promise<Task> {
+export function fetchSubtasks(taskId: string): Promise<Task[]> {
+  return request<Task[]>(`/tasks/${encodeURIComponent(taskId)}/subtasks`)
+}
+
+export function createTask(data: {
+  title: string
+  prompt: string
+  agent_id?: string
+  priority?: number
+  parent_task_id?: string
+}): Promise<Task> {
   return request<Task>('/tasks', { method: 'POST', body: JSON.stringify(data) })
 }
 
 export function updateTask(id: string, data: Partial<Task>): Promise<Task> {
   return request<Task>(`/tasks/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) })
+}
+
+export function startTask(id: string): Promise<void> {
+  return request(`/tasks/${encodeURIComponent(id)}/start`, { method: 'POST' })
+}
+
+export function deleteTask(id: string): Promise<void> {
+  return request(`/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 // ── Gateway Status ────────────────────────────────────────────────────────────
@@ -465,6 +516,56 @@ export function completeOnboarding(): Promise<void> {
   })
 }
 
+// ── Auth / Login ─────────────────────────────────────────────────────────────────
+
+export interface LoginResponse {
+  token: string
+  role: UserRole
+  username: string
+}
+
+export async function login(username: string, password: string): Promise<LoginResponse> {
+  return request<LoginResponse>('/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ username, password }),
+  })
+}
+
+export async function registerAdmin(username: string, password: string): Promise<LoginResponse> {
+  return request<LoginResponse>('/auth/register-admin', {
+    method: 'POST',
+    body: JSON.stringify({ username, password }),
+  })
+}
+
+export interface CompleteOnboardingRequest {
+  provider: {
+    id: string
+    api_key: string
+    model: string
+  }
+  admin: {
+    username: string
+    password: string
+  }
+}
+
+export async function completeOnboardingTransaction(req: CompleteOnboardingRequest): Promise<LoginResponse> {
+  return request<LoginResponse>('/onboarding/complete', {
+    method: 'POST',
+    body: JSON.stringify(req),
+  })
+}
+
+export interface ValidateTokenResponse {
+  username: string
+  role: UserRole
+}
+
+export async function validateToken(): Promise<ValidateTokenResponse> {
+  return request<ValidateTokenResponse>('/auth/validate')
+}
+
 // ── Doctor ────────────────────────────────────────────────────────────────────
 
 export interface DoctorIssue {
@@ -526,6 +627,35 @@ export function deleteCredential(key: string): Promise<void> {
   return request<void>(`/credentials/${encodeURIComponent(key)}`, { method: 'DELETE' })
 }
 
+// ── Devices ───────────────────────────────────────────────────────────────────
+
+export interface DevicePending {
+  device_id: string
+  fingerprint: string
+  pairing_code: string
+  device_name: string
+  created_at: string
+  expires_at: string
+}
+
+export interface DevicePaired {
+  device_id: string
+  fingerprint: string
+  device_name: string
+  paired_at: string
+  last_seen_at: string
+  status: 'active' | 'revoked'
+}
+
+export interface DevicesResponse {
+  pending: DevicePending[]
+  paired: DevicePaired[]
+}
+
+export function fetchDevices(): Promise<DevicesResponse> {
+  return request<DevicesResponse>('/devices')
+}
+
 // ── Backup / Restore ──────────────────────────────────────────────────────────
 
 export interface BackupEntry {
@@ -548,6 +678,17 @@ export function restoreBackup(filename: string): Promise<void> {
 
 export function clearAllSessions(): Promise<void> {
   return request<void>('/sessions/all', { method: 'DELETE' })
+}
+
+export function renameSession(id: string, title: string): Promise<Session> {
+  return request<Session>(`/sessions/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ title }),
+  })
+}
+
+export function deleteSession(id: string): Promise<{ success: boolean }> {
+  return request<{ success: boolean }>(`/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
 // ── About ─────────────────────────────────────────────────────────────────────
@@ -589,5 +730,54 @@ export function updateUserContext(content: string): Promise<void> {
   return request<void>('/user-context', {
     method: 'PUT',
     body: JSON.stringify({ content }),
+  })
+}
+
+// ── RBAC / Me ─────────────────────────────────────────────────────────────────
+
+export type UserRole = 'admin' | 'user'
+
+export interface MeInfo {
+  role: UserRole
+}
+
+export async function fetchMe(): Promise<MeInfo> {
+  return request<MeInfo>('/me')
+}
+
+// ── File Upload ───────────────────────────────────────────────────────────────
+
+export interface UploadedFile {
+  name: string
+  path: string
+  size: number
+  content_type: string
+}
+
+export async function uploadFiles(sessionId: string, files: File[]): Promise<{ files: UploadedFile[] }> {
+  const formData = new FormData()
+  formData.append('session_id', sessionId)
+  for (const file of files) {
+    formData.append('files', file)
+  }
+  const token = sessionStorage.getItem('omnipus_auth_token') ?? localStorage.getItem('omnipus_auth_token')
+  const res = await fetch(`${BASE_URL}/api/v1/upload`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: formData,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }))
+    throw new Error(err.error || `Upload failed: ${res.status}`)
+  }
+  return res.json()
+}
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+
+export function changePassword(currentPassword: string, newPassword: string): Promise<{ success: boolean }> {
+  return request<{ success: boolean }>('/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
   })
 }

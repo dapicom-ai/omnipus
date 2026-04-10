@@ -5,7 +5,7 @@ import {
   Rows,
   SquaresFour,
   Robot,
-  CurrencyDollar,
+  Play,
 } from '@phosphor-icons/react'
 import {
   DndContext,
@@ -21,31 +21,48 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import { fetchTasks, fetchAgents, createTask, updateTask } from '@/lib/api'
+import { SmartSelect } from '@/components/ui/smart-select'
+import { fetchTasks, fetchAgents, createTask, updateTask, startTask } from '@/lib/api'
 import type { Task } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { cn } from '@/lib/utils'
 
-const STATUS_CONFIG = {
-  inbox: { label: 'Inbox', color: 'text-[var(--color-muted)]', bg: 'bg-[var(--color-surface-2)]' },
-  next: { label: 'Next', color: 'text-[var(--color-info)]', bg: 'bg-[var(--color-info)]/10' },
-  active: { label: 'Active', color: 'text-[var(--color-success)]', bg: 'bg-[var(--color-success)]/10' },
-  waiting: { label: 'Waiting', color: 'text-[var(--color-warning)]', bg: 'bg-[var(--color-warning)]/10' },
-  done: { label: 'Done', color: 'text-[var(--color-muted)]', bg: 'bg-[var(--color-surface-1)]' },
-} as const
+// ── Status config ──────────────────────────────────────────────────────────────
+
+const STATUS_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
+  queued:    { label: 'Queued',    color: 'text-blue-400',   bg: 'bg-blue-400/10' },
+  assigned:  { label: 'Assigned',  color: 'text-purple-400', bg: 'bg-purple-400/10' },
+  running:   { label: 'Running',   color: 'text-yellow-400', bg: 'bg-yellow-400/10' },
+  completed: { label: 'Completed', color: 'text-green-400',  bg: 'bg-green-400/10' },
+  failed:    { label: 'Failed',    color: 'text-red-400',    bg: 'bg-red-400/10' },
+}
+
+const BOARD_COLUMNS: Task['status'][] = ['queued', 'running', 'completed', 'failed']
+
+// ── Priority badge ─────────────────────────────────────────────────────────────
+
+const PRIORITY_CONFIG: Record<number, { label: string; color: string }> = {
+  1: { label: 'P1', color: 'text-red-400 bg-red-400/10' },
+  2: { label: 'P2', color: 'text-orange-400 bg-orange-400/10' },
+  3: { label: 'P3', color: 'text-yellow-400 bg-yellow-400/10' },
+  4: { label: 'P4', color: 'text-blue-400 bg-blue-400/10' },
+  5: { label: 'P5', color: 'text-[var(--color-muted)] bg-[var(--color-surface-2)]' },
+}
+
+function PriorityBadge({ priority }: { priority: number }) {
+  const cfg = PRIORITY_CONFIG[priority] ?? PRIORITY_CONFIG[3]
+  return (
+    <span className={cn('text-[9px] font-bold px-1 py-0.5 rounded', cfg.color)}>
+      {cfg.label}
+    </span>
+  )
+}
 
 // ── Draggable card (board view) ────────────────────────────────────────────────
 
 function DraggableCard({ task, onSelect }: { task: Task; onSelect: (t: Task) => void }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: task.id })
-  const descFirstLine = task.description?.split('\n')[0]
+  const resultPreview = task.result?.split('\n')[0]?.slice(0, 60)
   return (
     <div
       ref={setNodeRef}
@@ -58,9 +75,12 @@ function DraggableCard({ task, onSelect }: { task: Task; onSelect: (t: Task) => 
         isDragging && 'opacity-40',
       )}
     >
-      <p className="text-[var(--color-secondary)] font-medium line-clamp-2">{task.name}</p>
-      {descFirstLine && (
-        <p className="text-[var(--color-muted)] mt-0.5 line-clamp-1">{descFirstLine}</p>
+      <div className="flex items-start justify-between gap-1 mb-0.5">
+        <p className="text-[var(--color-secondary)] font-medium line-clamp-2">{task.title}</p>
+        <PriorityBadge priority={task.priority} />
+      </div>
+      {(task.status === 'completed' || task.status === 'failed') && resultPreview && (
+        <p className="text-[var(--color-muted)] mt-0.5 line-clamp-1">{resultPreview}</p>
       )}
       {task.agent_name && (
         <p className="text-[var(--color-muted)] mt-1 flex items-center gap-1">
@@ -108,17 +128,23 @@ function BoardColumn({
 // ── List row ───────────────────────────────────────────────────────────────────
 
 function TaskRow({ task, onSelect }: { task: Task; onSelect: (t: Task) => void }) {
-  const cfg = STATUS_CONFIG[task.status]
+  const cfg = STATUS_CONFIG[task.status] ?? STATUS_CONFIG.queued
+  const resultPreview = (task.status === 'completed' || task.status === 'failed')
+    ? task.result?.split('\n')[0]?.slice(0, 60)
+    : undefined
   return (
     <div
       onClick={() => onSelect(task)}
       className="flex items-center gap-3 px-4 py-3 border-b border-[var(--color-border)] last:border-0 hover:bg-[var(--color-surface-2)] transition-colors group cursor-pointer"
     >
+      <PriorityBadge priority={task.priority} />
       <div className="flex-1 min-w-0">
-        <p className="text-sm text-[var(--color-secondary)] truncate">{task.name}</p>
-        {task.description && (
-          <p className="text-xs text-[var(--color-muted)] truncate mt-0.5">{task.description}</p>
-        )}
+        <p className="text-sm text-[var(--color-secondary)] truncate">{task.title}</p>
+        {resultPreview ? (
+          <p className="text-xs text-[var(--color-muted)] truncate mt-0.5">{resultPreview}</p>
+        ) : task.prompt ? (
+          <p className="text-xs text-[var(--color-muted)] truncate mt-0.5">{task.prompt}</p>
+        ) : null}
       </div>
       {task.agent_name && (
         <Badge variant="outline" className="text-[10px] shrink-0 gap-1 text-[var(--color-muted)]">
@@ -132,12 +158,6 @@ function TaskRow({ task, onSelect }: { task: Task; onSelect: (t: Task) => void }
       >
         {cfg.label}
       </Badge>
-      {task.cost != null && (
-        <div className="flex items-center gap-0.5 text-[10px] text-[var(--color-muted)] shrink-0">
-          <CurrencyDollar size={10} />
-          {task.cost.toFixed(4)}
-        </div>
-      )}
     </div>
   )
 }
@@ -154,18 +174,23 @@ export function TaskList({ statusFilter = 'all', onTaskSelect }: TaskListProps) 
   const queryClient = useQueryClient()
   const [view, setView] = useState<'list' | 'board'>('list')
   const [showCreate, setShowCreate] = useState(false)
-  const [newTaskName, setNewTaskName] = useState('')
-  const [newTaskDesc, setNewTaskDesc] = useState('')
-  const [newTaskAgentId, setNewTaskAgentId] = useState('__none__')
+  const [newTitle, setNewTitle] = useState('')
+  const [newPrompt, setNewPrompt] = useState('')
+  const [newPriority, setNewPriority] = useState('3')
+  const [newAgentId, setNewAgentId] = useState('__none__')
+  const [startImmediately, setStartImmediately] = useState(false)
   const [draggingTask, setDraggingTask] = useState<Task | null>(null)
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
 
-  const { data: allTasks = [], isLoading, isError: tasksError } = useQuery({
+  const { data: allTasks = [], isLoading, isFetching, isError: tasksError } = useQuery({
     queryKey: ['tasks'],
-    queryFn: fetchTasks,
+    queryFn: () => fetchTasks(),
+    staleTime: 30_000,
     refetchInterval: 10_000,
   })
+  // Show skeleton on initial load (no data yet, still fetching)
+  const showSkeleton = isLoading || (isFetching && allTasks.length === 0)
 
   const { data: agents = [] } = useQuery({
     queryKey: ['agents'],
@@ -173,16 +198,25 @@ export function TaskList({ statusFilter = 'all', onTaskSelect }: TaskListProps) 
   })
 
   const { mutate: doCreate, isPending: isCreating } = useMutation({
-    mutationFn: () => createTask({
-      name: newTaskName,
-      description: newTaskDesc.trim() || undefined,
-      agent_id: newTaskAgentId !== '__none__' ? newTaskAgentId : undefined,
-    }),
+    mutationFn: async () => {
+      const newTask = await createTask({
+        title: newTitle.trim(),
+        prompt: newPrompt.trim(),
+        priority: parseInt(newPriority, 10),
+        agent_id: newAgentId !== '__none__' ? newAgentId : undefined,
+      })
+      if (startImmediately) {
+        await startTask(newTask.id)
+      }
+      return newTask
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
-      setNewTaskName('')
-      setNewTaskDesc('')
-      setNewTaskAgentId('__none__')
+      setNewTitle('')
+      setNewPrompt('')
+      setNewPriority('3')
+      setNewAgentId('__none__')
+      setStartImmediately(false)
       setShowCreate(false)
     },
     onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
@@ -199,8 +233,7 @@ export function TaskList({ statusFilter = 'all', onTaskSelect }: TaskListProps) 
     ? allTasks
     : allTasks.filter((t) => t.status === statusFilter)
 
-  const statuses: Task['status'][] = ['inbox', 'next', 'active', 'waiting', 'done']
-  const tasksByStatus = statuses.reduce<Record<string, Task[]>>((acc, s) => {
+  const tasksByStatus = BOARD_COLUMNS.reduce<Record<string, Task[]>>((acc, s) => {
     acc[s] = allTasks.filter((t) => t.status === s)
     return acc
   }, {})
@@ -215,7 +248,7 @@ export function TaskList({ statusFilter = 'all', onTaskSelect }: TaskListProps) 
     const { active, over } = event
     if (!over || active.id === over.id) return
     const newStatus = over.id as Task['status']
-    if (!statuses.includes(newStatus)) return
+    if (!BOARD_COLUMNS.includes(newStatus)) return
     const task = allTasks.find((t) => t.id === active.id)
     if (!task || task.status === newStatus) return
     doUpdateStatus({ id: task.id, status: newStatus })
@@ -274,9 +307,9 @@ export function TaskList({ statusFilter = 'all', onTaskSelect }: TaskListProps) 
       {showCreate && (
         <div className="flex flex-col gap-2 px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-2)]">
           <Input
-            value={newTaskName}
-            onChange={(e) => setNewTaskName(e.target.value)}
-            placeholder="Task name..."
+            value={newTitle}
+            onChange={(e) => setNewTitle(e.target.value)}
+            placeholder="Title..."
             className="h-7 text-xs"
             autoFocus
             onKeyDown={(e) => {
@@ -284,30 +317,51 @@ export function TaskList({ statusFilter = 'all', onTaskSelect }: TaskListProps) 
             }}
           />
           <Textarea
-            value={newTaskDesc}
-            onChange={(e) => setNewTaskDesc(e.target.value)}
-            placeholder="Description / instructions (optional)..."
+            value={newPrompt}
+            onChange={(e) => setNewPrompt(e.target.value)}
+            placeholder="Prompt / Instructions..."
             className="text-xs min-h-[60px]"
           />
           <div className="flex items-center gap-2">
-            <Select value={newTaskAgentId} onValueChange={setNewTaskAgentId}>
-              <SelectTrigger className="h-7 text-xs flex-1">
-                <SelectValue placeholder="Assign agent..." />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__" className="text-xs">Unassigned</SelectItem>
-                {agents.map((a) => (
-                  <SelectItem key={a.id} value={a.id} className="text-xs">{a.name}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            {/* Priority */}
+            <SmartSelect
+              value={newPriority}
+              onValueChange={setNewPriority}
+              placeholder="Priority"
+              triggerClassName="h-7 text-xs w-[90px] shrink-0"
+              items={[1, 2, 3, 4, 5].map((p) => ({ value: String(p), label: `P${p}` }))}
+            />
+            {/* Agent */}
+            <SmartSelect
+              value={newAgentId}
+              onValueChange={setNewAgentId}
+              placeholder="Assign agent..."
+              triggerClassName="h-7 text-xs flex-1"
+              items={[
+                { value: '__none__', label: 'Unassigned' },
+                ...agents.map((a) => ({ value: a.id, label: a.name })),
+              ]}
+            />
+          </div>
+          {/* Start immediately checkbox */}
+          <label className="flex items-center gap-2 text-xs text-[var(--color-muted)] cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={startImmediately}
+              onChange={(e) => setStartImmediately(e.target.checked)}
+              className="accent-[var(--color-accent)] w-3.5 h-3.5"
+            />
+            <Play size={11} />
+            Start immediately
+          </label>
+          <div className="flex items-center gap-2">
             <Button
               size="sm"
               className="h-7 px-3 text-xs"
               onClick={() => doCreate()}
-              disabled={!newTaskName.trim() || isCreating}
+              disabled={!newTitle.trim() || !newPrompt.trim() || isCreating}
             >
-              Add
+              {isCreating ? 'Adding...' : 'Add'}
             </Button>
             <Button
               variant="ghost"
@@ -328,7 +382,7 @@ export function TaskList({ statusFilter = 'all', onTaskSelect }: TaskListProps) 
             <p className="text-sm text-[var(--color-error)]">Could not load tasks.</p>
             <p className="text-xs text-[var(--color-muted)]">Check your connection and try refreshing.</p>
           </div>
-        ) : isLoading ? (
+        ) : showSkeleton ? (
           <div className="space-y-1 p-2">
             {[1, 2, 3].map((i) => (
               <div key={i} className="h-12 rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] animate-pulse" />
@@ -350,7 +404,7 @@ export function TaskList({ statusFilter = 'all', onTaskSelect }: TaskListProps) 
         ) : (
           <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
             <div className="flex gap-3 px-4 py-3 overflow-x-auto min-h-[300px]">
-              {statuses.map((status) => (
+              {BOARD_COLUMNS.map((status) => (
                 <BoardColumn
                   key={status}
                   status={status}
@@ -362,7 +416,7 @@ export function TaskList({ statusFilter = 'all', onTaskSelect }: TaskListProps) 
             <DragOverlay>
               {draggingTask ? (
                 <div className="mx-1 p-2.5 rounded-lg border border-[var(--color-accent)]/50 bg-[var(--color-surface-2)] text-xs shadow-lg rotate-1">
-                  <p className="text-[var(--color-secondary)] font-medium">{draggingTask.name}</p>
+                  <p className="text-[var(--color-secondary)] font-medium">{draggingTask.title}</p>
                 </div>
               ) : null}
             </DragOverlay>

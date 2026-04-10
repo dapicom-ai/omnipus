@@ -378,6 +378,11 @@ func (ph *ProcessHook) send(ctx context.Context, msg processHookRPCMessage) erro
 
 	done := make(chan error, 1)
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- fmt.Errorf("panic writing to process hook %q stdin: %v", ph.name, r)
+			}
+		}()
 		_, writeErr := ph.stdin.Write(body)
 		done <- writeErr
 	}()

@@ -71,7 +71,13 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 		return nil, "", fmt.Errorf("model is required")
 	}
 
-	protocol, modelID := ExtractProtocol(cfg.Model)
+	var protocol, modelID string
+	if cfg.Provider != "" {
+		protocol = cfg.Provider
+		modelID = cfg.Model
+	} else {
+		protocol, modelID = ExtractProtocol(cfg.Model)
+	}
 
 	switch protocol {
 	case "openai":
@@ -162,7 +168,7 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 		}
 		return provider, modelID, nil
 
-	case "litellm", "openrouter", "groq", "zhipu", "gemini", "nvidia",
+	case "litellm", "openrouter", "groq", "zhipu", "gemini", "google", "nvidia",
 		"ollama", "moonshot", "shengsuanyun", "deepseek", "cerebras",
 		"vivgrid", "volcengine", "vllm", "qwen", "qwen-intl", "qwen-international", "dashscope-intl",
 		"qwen-us", "dashscope-us", "mistral", "avian", "longcat", "modelscope", "novita",
@@ -329,14 +335,14 @@ func GetDefaultAPIBase(protocol string) string {
 		return "https://api.groq.com/openai/v1"
 	case "zhipu":
 		return "https://open.bigmodel.cn/api/paas/v4"
-	case "gemini":
-		return "https://generativelanguage.googleapis.com/v1beta"
+	case "gemini", "google":
+		return "https://generativelanguage.googleapis.com/v1beta/openai"
 	case "nvidia":
 		return "https://integrate.api.nvidia.com/v1"
 	case "ollama":
 		return "http://localhost:11434/v1"
 	case "moonshot":
-		return "https://api.moonshot.cn/v1"
+		return "https://api.moonshot.ai/v1"
 	case "shengsuanyun":
 		return "https://router.shengsuanyun.com/api/v1"
 	case "deepseek":
@@ -364,7 +370,7 @@ func GetDefaultAPIBase(protocol string) string {
 	case "avian":
 		return "https://api.avian.io/v1"
 	case "minimax":
-		return "https://api.minimaxi.com/v1"
+		return "https://api.minimax.io/v1"
 	case "longcat":
 		return "https://api.longcat.chat/openai"
 	case "modelscope":

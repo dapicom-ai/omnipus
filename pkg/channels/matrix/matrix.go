@@ -257,7 +257,7 @@ func (c *MatrixChannel) Start(ctx context.Context) error {
 	c.startTime = time.Now()
 
 	// Initialize crypto helper if database and passphrase are configured
-	if c.cryptoDbPath != "" && c.config.CryptoPassphrase != "" {
+	if c.cryptoDbPath != "" && c.config.CryptoPassphrase.String() != "" {
 		if err := c.initCrypto(ctx); err != nil {
 			logger.WarnCF(
 				"matrix",
@@ -349,7 +349,7 @@ func (c *MatrixChannel) initCrypto(ctx context.Context) error {
 		return fmt.Errorf("wrap database: %w", err)
 	}
 
-	cryptoHelper, err := cryptohelper.NewCryptoHelper(c.client, []byte(c.config.CryptoPassphrase), wrappedDB)
+	cryptoHelper, err := cryptohelper.NewCryptoHelper(c.client, []byte(c.config.CryptoPassphrase.String()), wrappedDB)
 	if err != nil {
 		return fmt.Errorf("create crypto helper: %w", err)
 	}

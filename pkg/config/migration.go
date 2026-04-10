@@ -6,7 +6,9 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"reflect"
 	"slices"
@@ -517,21 +519,25 @@ func loadConfigV0(data []byte) (migratable, error) {
 func loadConfig(data []byte) (*Config, error) {
 	cfg := DefaultConfig()
 
-	// Pre-scan the JSON to check how many model_list entries the user provided.
+	// Backward compatibility: rename "model_list" to "providers" in old config files
+	// before unmarshalling so the new field name works.
+	compatData := jsonRenameKey(data, "model_list", "providers")
+
+	// Pre-scan the JSON to check how many providers entries the user provided.
 	// Go's JSON decoder reuses existing slice backing-array elements rather than
 	// zero-initializing them, so fields absent from the user's JSON (e.g. api_base)
 	// would silently inherit values from the DefaultConfig template at the same
-	// index position. We only reset cfg.ModelList when the user actually provides
+	// index position. We only reset cfg.Providers when the user actually provides
 	// entries; when count is 0 we keep DefaultConfig's built-in list as fallback.
 	var tmp Config
-	if err := json.Unmarshal(data, &tmp); err != nil {
+	if err := json.Unmarshal(compatData, &tmp); err != nil {
 		return nil, err
 	}
-	if len(tmp.ModelList) > 0 {
-		cfg.ModelList = nil
+	if len(tmp.Providers) > 0 {
+		cfg.Providers = nil
 	}
 
-	if err := json.Unmarshal(data, cfg); err != nil {
+	if err := json.Unmarshal(compatData, cfg); err != nil {
 		return nil, err
 	}
 
@@ -573,4 +579,16 @@ func detectUnknownConfigFields(data []byte, cfg *Config) {
 			cfg.UnknownFields[k] = v
 		}
 	}
+}
+
+// jsonRenameKey performs a simple string replacement in JSON data to rename a top-level key.
+// This is used for backward compatibility when field names change in the config schema.
+func jsonRenameKey(data []byte, oldKey, newKey string) []byte {
+	// Simple string replacement works here because:
+	// 1. JSON keys are always quoted with double quotes
+	// 2. We only replace top-level keys (not nested ones)
+	// 3. The old and new keys have the same length ("model_list" -> "providers")
+	oldKeyJSON := fmt.Sprintf(`"%s"`, oldKey)
+	newKeyJSON := fmt.Sprintf(`"%s"`, newKey)
+	return bytes.ReplaceAll(data, []byte(oldKeyJSON), []byte(newKeyJSON))
 }

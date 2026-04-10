@@ -122,23 +122,25 @@ function FileTreeBlock({
   )
 }
 
-function renderFileTree({ args, result, status }: { args: ListDirArgs | undefined; result: unknown; status: { type: string } }) {
-  return (
+export const FileTreeViewUI = makeAssistantToolUI<ListDirArgs, unknown>({
+  toolName: 'list_dir',
+  render: ({ args, result, status }) => (
     <FileTreeBlock
       args={args ?? {}}
       result={result}
       isRunning={status.type === 'running'}
     />
-  )
-}
-
-export const FileTreeViewUI = makeAssistantToolUI<ListDirArgs, unknown>({
-  toolName: 'list_dir',
-  render: renderFileTree,
+  ),
 })
 
 // BRD C.6.1.4 tool name (dot-notation). Backend uses PicoClaw convention (list_dir); both registered.
 export const FileListAliasDotUI = makeAssistantToolUI<ListDirArgs, unknown>({
   toolName: 'file.list',
-  render: renderFileTree,
+  render: ({ args, result, status }) => (
+    <FileTreeBlock
+      args={args ?? {}}
+      result={result}
+      isRunning={status.type === 'running'}
+    />
+  ),
 })

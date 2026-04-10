@@ -28,3 +28,7 @@ export const Route = createFileRoute('/_app/agents')({
   errorComponent: AgentsError,
   notFoundComponent: AgentsNotFound,
 })
+
+// Re-export AgentListScreen from the index route for consumers that import from this path.
+// TanStack Router's file-based routing resolves this file for the "/agents" route prefix.
+export { AgentListScreen } from './agents.index'

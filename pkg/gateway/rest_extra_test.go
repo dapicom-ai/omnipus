@@ -22,6 +22,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
+	"github.com/dapicom-ai/omnipus/pkg/taskstore"
 )
 
 // newTestRestAPIWithHome creates a restAPI with homePath and onboardingMgr wired.
@@ -43,7 +44,7 @@ func newTestRestAPIWithHome(t *testing.T) *restAPI {
 	}
 	// Write a minimal config.json so safeUpdateConfigJSON can read and atomically update it
 	// without writing to the committed pkg/gateway/config.json fixture.
-	minimalCfg := []byte(`{"agents":{"defaults":{},"list":[]},"model_list":[]}`)
+	minimalCfg := []byte(`{"agents":{"defaults":{},"list":[]},"providers":[]}`)
 	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
 
 	msgBus := bus.NewMessageBus()
@@ -53,6 +54,7 @@ func newTestRestAPIWithHome(t *testing.T) *restAPI {
 		allowedOrigin: "http://localhost:3000",
 		onboardingMgr: onboarding.NewManager(tmpDir),
 		homePath:      tmpDir,
+		taskStore:     taskstore.New(tmpDir + "/tasks"),
 	}
 }
 
@@ -156,12 +158,12 @@ func TestHandleTasksPOST(t *testing.T) {
 
 	require.Equal(t, http.StatusCreated, w.Code)
 	var task struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
+		ID    string `json:"id"`
+		Title string `json:"title"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &task))
 	assert.True(t, isUUID(task.ID), "task id must be a UUID, got %q", task.ID)
-	assert.Equal(t, "Test task", task.Name)
+	assert.Equal(t, "Test task", task.Title)
 }
 
 // TestHandleProvidersGET verifies GET /api/v1/providers returns 200 with an array.
@@ -353,10 +355,10 @@ func TestTaskPersistence(t *testing.T) {
 	api.HandleTasks(w1, r1)
 	require.Equal(t, http.StatusCreated, w1.Code)
 
-	var task1 taskEntity
+	var task1 taskstore.TaskEntity
 	require.NoError(t, json.Unmarshal(w1.Body.Bytes(), &task1))
 	assert.True(t, isUUID(task1.ID), "task1 id must be UUID, got %q", task1.ID)
-	assert.Equal(t, "Test task one", task1.Name)
+	assert.Equal(t, "Test task one", task1.Title)
 
 	// Step 2: GET /tasks → 1 task.
 	wList1 := httptest.NewRecorder()
@@ -364,7 +366,7 @@ func TestTaskPersistence(t *testing.T) {
 	rList1.URL.Path = "/api/v1/tasks"
 	api.HandleTasks(wList1, rList1)
 	require.Equal(t, http.StatusOK, wList1.Code)
-	var tasks1 []taskEntity
+	var tasks1 []taskstore.TaskEntity
 	require.NoError(t, json.Unmarshal(wList1.Body.Bytes(), &tasks1))
 	assert.Len(t, tasks1, 1, "list must contain 1 task after first POST")
 
@@ -383,21 +385,21 @@ func TestTaskPersistence(t *testing.T) {
 	rList2.URL.Path = "/api/v1/tasks"
 	api.HandleTasks(wList2, rList2)
 	require.Equal(t, http.StatusOK, wList2.Code)
-	var tasks2 []taskEntity
+	var tasks2 []taskstore.TaskEntity
 	require.NoError(t, json.Unmarshal(wList2.Body.Bytes(), &tasks2))
 	assert.Len(t, tasks2, 2, "list must contain 2 tasks after second POST")
 
-	// Step 5: PUT /tasks/{id} {"status":"done"} → 200.
+	// Step 5: PUT /tasks/{id} {"status":"running"} → 200 (queued→running is a valid transition).
 	wPut := httptest.NewRecorder()
 	rPut := httptest.NewRequest(http.MethodPut, "/api/v1/tasks/"+task1.ID,
-		strings.NewReader(`{"status":"done"}`))
+		strings.NewReader(`{"status":"running"}`))
 	rPut.Header.Set("Content-Type", "application/json")
 	rPut.URL.Path = "/api/v1/tasks/" + task1.ID
 	api.HandleTasks(wPut, rPut)
 	require.Equal(t, http.StatusOK, wPut.Code)
-	var updated taskEntity
+	var updated taskstore.TaskEntity
 	require.NoError(t, json.Unmarshal(wPut.Body.Bytes(), &updated))
-	assert.Equal(t, "done", updated.Status, "PUT must update status to 'done'")
+	assert.Equal(t, "running", updated.Status, "PUT must update status to 'running'")
 }
 
 // --- E9: createAgent concurrency test ---

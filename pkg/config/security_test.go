@@ -25,7 +25,7 @@ func TestSecurityConfig(t *testing.T) {
 		err := loadSecurityConfig(sec, "/nonexistent/.security.yml")
 		require.NoError(t, err)
 		assert.NotNil(t, sec)
-		assert.Empty(t, sec.ModelList)
+		assert.Empty(t, sec.Providers)
 		assert.NotNil(t, sec.Channels)
 		assert.NotNil(t, sec.Tools.Web)
 		assert.NotNil(t, sec.Tools.Skills)
@@ -77,7 +77,7 @@ func TestSaveAndLoadSecurityConfig(t *testing.T) {
 	secPath := filepath.Join(tmpDir, SecurityConfigFile)
 
 	original := &Config{
-		ModelList: SecureModelList{
+		Providers: SecureModelList{
 			{
 				ModelName: "model1",
 				Model:     "test/model",
@@ -131,8 +131,8 @@ func TestSaveAndLoadSecurityConfig(t *testing.T) {
 	}
 
 	t.Run("test for original", func(t *testing.T) {
-		assert.Equal(t, 2, len(original.ModelList[0].APIKeys))
-		assert.Equal(t, "key1", original.ModelList[0].APIKeys[0].String())
+		assert.Equal(t, 2, len(original.Providers[0].APIKeys))
+		assert.Equal(t, "key1", original.Providers[0].APIKeys[0].String())
 	})
 
 	cfg2 := &Config{}
@@ -145,9 +145,9 @@ func TestSaveAndLoadSecurityConfig(t *testing.T) {
 
 		err = json.Unmarshal(marshal, cfg2)
 		require.NoError(t, err)
-		require.Equal(t, 2, len(cfg2.ModelList))
-		assert.Empty(t, cfg2.ModelList[0].APIKeys)
-		assert.Empty(t, cfg2.ModelList[1].APIKeys)
+		require.Equal(t, 2, len(cfg2.Providers))
+		assert.Empty(t, cfg2.Providers[0].APIKeys)
+		assert.Empty(t, cfg2.Providers[1].APIKeys)
 	})
 
 	t.Run("test for save yaml", func(t *testing.T) {
@@ -205,10 +205,10 @@ skills:
 		t.Logf("%+v", cfg)
 		t.Logf("%+v", cfg.Tools.Web.Brave.APIKeys)
 		t.Logf("%+v", cfg.Tools.Skills.Github.Token)
-		require.EqualValues(t, 2, len(cfg.ModelList))
-		assert.Equal(t, "key1", cfg.ModelList[0].APIKeys[0].String())
-		assert.Equal(t, "key2", cfg.ModelList[0].APIKeys[1].String())
-		assert.Equal(t, "model2_key", cfg.ModelList[1].APIKeys[0].String())
+		require.EqualValues(t, 2, len(cfg.Providers))
+		assert.Equal(t, "key1", cfg.Providers[0].APIKeys[0].String())
+		assert.Equal(t, "key2", cfg.Providers[0].APIKeys[1].String())
+		assert.Equal(t, "model2_key", cfg.Providers[1].APIKeys[0].String())
 		assert.EqualValues(t, original.Tools.Web.Brave.APIKeys, cfg.Tools.Web.Brave.APIKeys)
 	})
 

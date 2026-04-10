@@ -110,6 +110,10 @@ type turnState struct {
 	// Last streamer used during this turn. Finalized once at turn end
 	// to send the "done" frame, preventing premature done signals mid-turn.
 	lastStreamer bus.Streamer
+
+	// Transcript recording fields (nil transcriptStore disables recording)
+	transcriptSessionID string
+	transcriptStore     *session.UnifiedStore
 }
 
 func newTurnState(agent *AgentInstance, opts processOptions, scope turnEventScope) *turnState {
@@ -134,6 +138,10 @@ func newTurnState(agent *AgentInstance, opts processOptions, scope turnEventScop
 		ts.session = agent.Sessions
 		ts.initialHistoryLength = len(agent.Sessions.GetHistory(opts.SessionKey))
 	}
+
+	// Bind transcript store for persisting tool calls
+	ts.transcriptSessionID = opts.TranscriptSessionID
+	ts.transcriptStore = opts.TranscriptStore
 
 	return ts
 }
@@ -413,6 +421,24 @@ func (ts *turnState) interruptHintMessage() providers.Message {
 	return providers.Message{
 		Role:    "user",
 		Content: content,
+	}
+}
+
+// appendToolCallTranscript records a tool call to the session transcript.
+// It is a no-op when no transcript store or session ID is configured.
+func (ts *turnState) appendToolCallTranscript(tc session.ToolCall) {
+	if ts.transcriptStore == nil || ts.transcriptSessionID == "" {
+		return
+	}
+	entry := session.TranscriptEntry{
+		ID:        tc.ID,
+		Type:      session.EntryTypeToolCall,
+		Timestamp: time.Now().UTC(),
+		ToolCalls: []session.ToolCall{tc},
+	}
+	if err := ts.transcriptStore.AppendTranscript(ts.transcriptSessionID, entry); err != nil {
+		logger.WarnCF("agent", "could not record tool call to transcript",
+			map[string]any{"session_id": ts.transcriptSessionID, "tool": tc.Tool, "error": err.Error()})
 	}
 }
 

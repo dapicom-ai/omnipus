@@ -208,7 +208,7 @@
     "defaults": {},
     "enabled": false
   },
-  "model_list": [],
+  "providers": [],
   "sandbox": {},
   "storage": {
     "retention": {}

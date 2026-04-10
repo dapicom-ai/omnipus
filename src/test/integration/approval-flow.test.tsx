@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { act } from 'react'
 import { ExecApprovalBlock } from '@/components/chat/ExecApprovalBlock'
 import { useChatStore } from '@/store/chat'
+import { useConnectionStore } from '@/store/connection'
 
 // test_approval_flow (test #30)
 // Traces to: wave5a-wire-ui-spec.md — Scenario Outline: User responds to approval prompt
@@ -10,13 +11,12 @@ import { useChatStore } from '@/store/chat'
 beforeEach(() => {
   act(() => {
     useChatStore.setState({
-      connection: null,
-      isConnected: false,
       pendingApprovals: [],
       messages: [],
       isStreaming: false,
       toolCalls: {},
     })
+    useConnectionStore.setState({ connection: null, isConnected: false })
   })
 })
 
@@ -29,7 +29,7 @@ describe('approval flow integration (test #30)', () => {
     // Traces to: wave5a-wire-ui-spec.md — Scenario Outline: User responds to approval prompt (AC2-4)
     const mockSend = vi.fn()
     act(() => {
-      useChatStore.setState({
+      useConnectionStore.setState({
         connection: {
           send: mockSend,
           disconnect: vi.fn(),

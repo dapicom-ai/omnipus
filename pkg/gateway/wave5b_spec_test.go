@@ -236,7 +236,7 @@ func TestOnboardingStateDetection(t *testing.T) {
 		home := t.TempDir()
 		// Do NOT create state.json — Manager must default to fresh install.
 		mgr := onboarding.NewManager(home)
-		assert.False(t, mgr.IsOnboardingComplete(),
+		assert.False(t, mgr.IsComplete(),
 			"missing state.json must default to onboarding_complete=false")
 	})
 
@@ -249,7 +249,7 @@ func TestOnboardingStateDetection(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(sysDir, "state.json"), []byte(stateJSON), 0o600))
 
 		mgr := onboarding.NewManager(home)
-		assert.False(t, mgr.IsOnboardingComplete(),
+		assert.False(t, mgr.IsComplete(),
 			"onboarding_complete:false in state.json must return false")
 	})
 
@@ -262,7 +262,7 @@ func TestOnboardingStateDetection(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(sysDir, "state.json"), []byte(stateJSON), 0o600))
 
 		mgr := onboarding.NewManager(home)
-		assert.True(t, mgr.IsOnboardingComplete(),
+		assert.True(t, mgr.IsComplete(),
 			"onboarding_complete:true in state.json must return true")
 	})
 
@@ -274,7 +274,7 @@ func TestOnboardingStateDetection(t *testing.T) {
 		require.NoError(t, os.WriteFile(filepath.Join(sysDir, "state.json"), []byte("{bad json{{"), 0o600))
 
 		mgr := onboarding.NewManager(home)
-		assert.False(t, mgr.IsOnboardingComplete(),
+		assert.False(t, mgr.IsComplete(),
 			"corrupt state.json must default to onboarding_complete=false")
 	})
 }
@@ -297,12 +297,12 @@ func TestOnboardingStateResume(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(sysDir, "state.json"), []byte(partialState), 0o600))
 
 	mgr := onboarding.NewManager(home)
-	assert.False(t, mgr.IsOnboardingComplete(),
+	assert.False(t, mgr.IsComplete(),
 		"interrupted onboarding (complete=false) must resume wizard, not skip it")
 
 	// After the user completes onboarding, it must be marked complete.
 	require.NoError(t, mgr.CompleteOnboarding())
-	assert.True(t, mgr.IsOnboardingComplete(),
+	assert.True(t, mgr.IsComplete(),
 		"after CompleteOnboarding(), wizard must not show again")
 }
 
@@ -318,16 +318,16 @@ func TestOnboardingNeverReshow(t *testing.T) {
 
 	// Step 1: Fresh install → onboarding required.
 	mgr := onboarding.NewManager(home)
-	assert.False(t, mgr.IsOnboardingComplete(), "fresh install must require onboarding")
+	assert.False(t, mgr.IsComplete(), "fresh install must require onboarding")
 
 	// Step 2: Complete onboarding.
 	require.NoError(t, mgr.CompleteOnboarding())
-	assert.True(t, mgr.IsOnboardingComplete(), "after completion, onboarding must be marked done")
+	assert.True(t, mgr.IsComplete(), "after completion, onboarding must be marked done")
 
 	// Step 3: Load a NEW Manager from the same home directory — simulates app restart.
 	// onboarding_complete must be persisted to state.json so the wizard never reshows.
 	mgr2 := onboarding.NewManager(home)
-	assert.True(t, mgr2.IsOnboardingComplete(),
+	assert.True(t, mgr2.IsComplete(),
 		"after app restart, onboarding_complete=true must be read from state.json — wizard must NOT reshow")
 }
 

@@ -1,3 +1,5 @@
+//go:build !cgo
+
 // Omnipus - Ultra-lightweight personal AI agent
 // License: MIT
 // Copyright (c) 2026 Omnipus contributors
@@ -17,8 +19,12 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/dapicom-ai/omnipus/pkg/bus"
+	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/session"
 )
+
+// configGetter returns the current gateway config (thread-safe).
+type configGetter func() *config.Config
 
 // SSEHandler handles the `/api/v1/chat` endpoint, streaming LLM response tokens
 // to the browser as Server-Sent Events (SSE).
@@ -40,11 +46,12 @@ import (
 //
 // Implements US-8 acceptance criteria.
 type SSEHandler struct {
-	msgBus       *bus.MessageBus
-	partitions   *session.PartitionStore // may be nil before Wave 2 full wiring
-	allowedOrigin string                 // CORS allowed origin (localhost:port)
-	mu           sync.Mutex
-	sessions     map[string]*sseSession // chatID → session
+	msgBus        *bus.MessageBus
+	partitions    *session.PartitionStore // may be nil before Wave 2 full wiring
+	allowedOrigin string                  // CORS allowed origin (localhost:port)
+	cfg           configGetter            // returns the current config for auth checks
+	mu            sync.Mutex
+	sessions      map[string]*sseSession // chatID → session
 }
 
 type sseSession struct {
@@ -54,13 +61,15 @@ type sseSession struct {
 	chCloseOnce sync.Once // guards close(ch)
 }
 
-func newSSEHandler(msgBus *bus.MessageBus, ps *session.PartitionStore, allowedOrigin string) *SSEHandler {
+func newSSEHandler(msgBus *bus.MessageBus, ps *session.PartitionStore, allowedOrigin string, cfg func() *config.Config) *SSEHandler {
 	h := &SSEHandler{
 		msgBus:        msgBus,
-		partitions:    ps,
+		partitions:    nil, // always nil — SSE is legacy; use WebSocket for persistent sessions
 		allowedOrigin: allowedOrigin,
+		cfg:           cfg,
 		sessions:      make(map[string]*sseSession),
 	}
+	slog.Info("sse: session recording disabled (use WebSocket for persistent sessions)")
 	// NOTE: Do NOT call msgBus.SetStreamDelegate(h) here.
 	// The WebSocket handler (Wave 5a) is the primary stream delegate.
 	// SSE is kept for backward compatibility. It is not registered as the bus stream
@@ -105,7 +114,7 @@ func (h *SSEHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !checkBearerAuth(w, r) {
+	if !checkBearerAuth(r.Context(), w, r, h.cfg()).Authenticated {
 		return
 	}
 
@@ -132,6 +141,8 @@ func (h *SSEHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	h.sessions[chatID] = sess
 	h.mu.Unlock()
+	// defer runs even if a panic propagates from the streaming goroutine below,
+	// since panics in spawned goroutines propagate to the HTTP handler's defer chain.
 	defer func() {
 		h.mu.Lock()
 		delete(h.sessions, chatID)

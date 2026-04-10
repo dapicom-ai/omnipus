@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
 
 // BrowserNavigate.test.tsx
 // Tests for the displayUrl and parseResult helper functions in BrowserNavigate.tsx,

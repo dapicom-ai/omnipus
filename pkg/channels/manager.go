@@ -479,6 +479,18 @@ func (m *Manager) SetupHTTPServer(addr string, healthServer *health.Server) {
 	}
 }
 
+// WrapHTTPHandler wraps the HTTP server's root handler with the given middleware.
+// Must be called after SetupHTTPServer and before StartAll. This allows callers
+// to inject cross-cutting concerns (e.g., config snapshot middleware) without
+// modifying individual handler registrations.
+func (m *Manager) WrapHTTPHandler(middleware func(http.Handler) http.Handler) error {
+	if m.httpServer == nil || m.httpServer.Handler == nil {
+		return fmt.Errorf("WrapHTTPHandler: httpServer not initialized")
+	}
+	m.httpServer.Handler = middleware(m.httpServer.Handler)
+	return nil
+}
+
 // registerHTTPHandlersLocked registers webhook and health-check handlers for
 // all channels currently in m.channels. Caller must hold m.mu (or ensure
 // exclusive access).
@@ -1074,8 +1086,10 @@ func (m *Manager) GetEnabledChannels() []string {
 	return names
 }
 
-// Reload updates the config reference without restarting channels.
-// This is used when channel config hasn't changed but other parts of the config have.
+// Reload applies configuration changes to the channel manager. It compares
+// channel config hashes to detect additions and removals: removed channels are
+// stopped, added channels are initialized and started, and existing (unchanged)
+// channel workers are restarted on a fresh context to ensure continued routing.
 func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1166,6 +1180,11 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 	// Restart workers for existing (unchanged) channels on the new dispatch context.
 	// Without this, unchanged channel workers retain the old (cancelled) context
 	// and stop routing messages after a Reload.
+	//
+	// We must wait for old worker goroutines to finish (they close w.done/w.mediaDone
+	// on exit) and then reset those channels before launching new goroutines.
+	// Without this, the new goroutines' defer close() would panic with
+	// "close of closed channel".
 	addedSet := make(map[string]struct{}, len(added))
 	for _, n := range added {
 		addedSet[n] = struct{}{}
@@ -1174,6 +1193,12 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 		if _, isNew := addedSet[name]; isNew {
 			continue // already started above
 		}
+		// Wait for old goroutines to finish (they were cancelled above).
+		<-w.done
+		<-w.mediaDone
+		// Reset done channels so the new goroutines can close them cleanly.
+		w.done = make(chan struct{})
+		w.mediaDone = make(chan struct{})
 		go m.runWorker(dispatchCtx, name, w)
 		go m.runMediaWorker(dispatchCtx, name, w)
 	}

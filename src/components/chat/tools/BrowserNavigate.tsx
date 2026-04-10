@@ -173,24 +173,27 @@ function BrowserNavigateBlock({
   )
 }
 
-function renderBrowserNavigate({ args, result, status }: { args: BrowserNavigateArgs | undefined; result: unknown; status: { type: string } }) {
-  return (
+export const BrowserNavigateUI = makeAssistantToolUI<BrowserNavigateArgs, unknown>({
+  toolName: 'browser.navigate',
+  render: ({ args, result, status }) => (
     <BrowserNavigateBlock
       args={args ?? {}}
       result={result}
       isRunning={status.type === 'running'}
       isError={status.type === 'incomplete'}
     />
-  )
-}
-
-export const BrowserNavigateUI = makeAssistantToolUI<BrowserNavigateArgs, unknown>({
-  toolName: 'browser.navigate',
-  render: renderBrowserNavigate,
+  ),
 })
 
 // Underscore alias for the same tool
 export const BrowserNavigateUnderscoreUI = makeAssistantToolUI<BrowserNavigateArgs, unknown>({
   toolName: 'browser_navigate',
-  render: renderBrowserNavigate,
+  render: ({ args, result, status }) => (
+    <BrowserNavigateBlock
+      args={args ?? {}}
+      result={result}
+      isRunning={status.type === 'running'}
+      isError={status.type === 'incomplete'}
+    />
+  ),
 })

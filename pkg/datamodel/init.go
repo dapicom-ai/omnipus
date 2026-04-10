@@ -45,7 +45,7 @@ var defaultConfig = map[string]any{
 		"defaults": map[string]any{},
 		"list":     []any{},
 	},
-	"model_list": []any{},
+	"providers": []any{},
 	"channels":   map[string]any{},
 	"gateway": map[string]any{
 		"host": "localhost",

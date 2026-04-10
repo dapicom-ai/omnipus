@@ -88,7 +88,7 @@ Note: Sensitive fields are omitted because they're loaded from .security.yml
 	      "model_name": "gpt-5.4"
 	    }
 	  },
-	  "model_list": [
+	  "providers": [
 	    {
 	      "model_name": "gpt-5.4",
 	      "model": "openai/gpt-5.4",
@@ -288,7 +288,7 @@ You can still use direct values in config.json if needed:
 ```json
 
 	{
-	  "model_list": [
+	  "providers": [
 	    {
 	      "model_name": "local-model",
 	      "model": "ollama/llama3",
@@ -305,7 +305,7 @@ You can also mix security values and direct values:
 ```json
 
 	{
-	  "model_list": [
+	  "providers": [
 	    {
 	      "model_name": "cloud-model",
 	      // api_key loaded from .security.yml
@@ -391,7 +391,7 @@ model_list:
 ```json
 
 	{
-	  "model_list": [
+	  "providers": [
 	    {
 	      "model_name": "gpt-5.4",
 	      "model": "openai/gpt-5.4",

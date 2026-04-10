@@ -88,28 +88,28 @@ describe('API contract: mock shapes satisfy TypeScript interfaces', () => {
   it('Task mock shape satisfies interface', () => {
     const mock = {
       id: '550e8400-e29b-41d4-a716-446655440000',
-      name: 'Test task',
-      status: 'inbox' as const,
+      title: 'Test task',
+      prompt: '',
+      priority: 1,
+      trigger_type: 'manual' as const,
+      status: 'queued' as const,
     } satisfies Task
 
     expect(mock.id).toBeTruthy()
-    expect(mock.status).toBe('inbox')
+    expect(mock.status).toBe('queued')
   })
 
   it('Task with all optional fields satisfies interface', () => {
     const mock = {
       id: '550e8400-e29b-41d4-a716-446655440001',
-      name: 'Full task',
-      description: 'A detailed task',
-      status: 'active' as const,
-      agent_id: 'my-agent',
-      agent_name: 'My Agent',
-      cost: 0.01,
-      created_at: '2026-03-29T00:00:00Z',
-      updated_at: '2026-03-29T01:00:00Z',
+      title: 'Full task',
+      prompt: 'Do the thing',
+      priority: 5,
+      trigger_type: 'manual' as const,
+      status: 'running' as const,
     } satisfies Task
 
-    expect(mock.status).toBe('active')
+    expect(mock.status).toBe('running')
   })
 
   // ── Provider ──────────────────────────────────────────────────────────────

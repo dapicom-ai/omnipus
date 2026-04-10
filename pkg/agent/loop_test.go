@@ -1502,7 +1502,7 @@ func TestProcessMessage_SwitchModelShowModelConsistency(t *testing.T) {
 				MaxToolIterations: 10,
 			},
 		},
-		ModelList: []*config.ModelConfig{
+		Providers: []*config.ModelConfig{
 			{
 				ModelName: "local",
 				Model:     "openai/local-model",
@@ -1573,7 +1573,7 @@ func TestProcessMessage_SwitchModelRejectsUnknownAlias(t *testing.T) {
 				MaxToolIterations: 10,
 			},
 		},
-		ModelList: []*config.ModelConfig{
+		Providers: []*config.ModelConfig{
 			{
 				ModelName: "local",
 				Model:     "openai/local-model",
@@ -1648,7 +1648,7 @@ func TestProcessMessage_SwitchModelRoutesSubsequentRequestsToSelectedProvider(t 
 				MaxToolIterations: 10,
 			},
 		},
-		ModelList: []*config.ModelConfig{
+		Providers: []*config.ModelConfig{
 			{
 				ModelName: "local",
 				Model:     "openai/Qwen3.5-35B-A3B",
@@ -1778,7 +1778,7 @@ func TestProcessMessage_ModelRoutingUsesLightProvider(t *testing.T) {
 				},
 			},
 		},
-		ModelList: []*config.ModelConfig{
+		Providers: []*config.ModelConfig{
 			{
 				ModelName: "gemini-main",
 				Model:     "gemini/gemini-2.5-flash",

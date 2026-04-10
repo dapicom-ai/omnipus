@@ -1,16 +1,19 @@
 package config
 
 import (
+	cryptorand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
+	mathrand "math/rand"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
 
 	"github.com/caarlos0/env/v11"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/dapicom-ai/omnipus/pkg"
 	"github.com/dapicom-ai/omnipus/pkg/fileutil"
@@ -111,7 +114,7 @@ type Config struct {
 	Bindings  []AgentBinding  `json:"bindings,omitempty" yaml:"-"`
 	Session   SessionConfig   `json:"session,omitempty"  yaml:"-"`
 	Channels  ChannelsConfig  `json:"channels"           yaml:"channels"`
-	ModelList SecureModelList `json:"model_list"         yaml:"model_list"` // New model-centric provider configuration
+	Providers SecureModelList `json:"providers"          yaml:"providers"` // Configured providers with credentials
 	Gateway   GatewayConfig   `json:"gateway"            yaml:"-"`
 	Hooks     HooksConfig     `json:"hooks,omitempty"    yaml:"-"`
 	Tools     ToolsConfig     `json:"tools"              yaml:",inline"`
@@ -144,7 +147,7 @@ type OmnipusStorageConfig struct {
 
 // OmnipusRetentionConfig controls session transcript retention per Appendix E §E.5.4.
 type OmnipusRetentionConfig struct {
-	// SessionDays is how many days transcript partitions are kept. 0 = unlimited.
+	// SessionDays is how many days transcript partitions are kept. 0 = use default (90 days).
 	SessionDays int `json:"session_days,omitempty"`
 	// ArchiveBeforeDelete compresses old partitions to .jsonl.gz before deletion.
 	ArchiveBeforeDelete bool `json:"archive_before_delete,omitempty"`
@@ -342,13 +345,14 @@ func (m AgentModelConfig) MarshalJSON() ([]byte, error) {
 }
 
 type AgentConfig struct {
-	ID        string            `json:"id"`
-	Default   bool              `json:"default,omitempty"`
-	Name      string            `json:"name,omitempty"`
-	Workspace string            `json:"workspace,omitempty"`
-	Model     *AgentModelConfig `json:"model,omitempty"`
-	Skills    []string          `json:"skills,omitempty"`
-	Subagents *SubagentsConfig  `json:"subagents,omitempty"`
+	ID             string            `json:"id"`
+	Default        bool              `json:"default,omitempty"`
+	Name           string            `json:"name,omitempty"`
+	Workspace      string            `json:"workspace,omitempty"`
+	Model          *AgentModelConfig `json:"model,omitempty"`
+	Skills         []string          `json:"skills,omitempty"`
+	Subagents      *SubagentsConfig  `json:"subagents,omitempty"`
+	CanDelegateTo  []string          `json:"can_delegate_to,omitempty"`
 }
 
 type SubagentsConfig struct {
@@ -427,6 +431,7 @@ type AgentDefaults struct {
 	ToolFeedback              ToolFeedbackConfig `json:"tool_feedback,omitempty"`
 	SplitOnMarker             bool               `json:"split_on_marker"                 env:"PICOCLAW_AGENTS_DEFAULTS_SPLIT_ON_MARKER"` // split messages on <|[SPLIT]|> marker
 	TimeoutSeconds            int                `json:"timeout_seconds"                 env:"PICOCLAW_AGENTS_DEFAULTS_TIMEOUT_SECONDS"`  // per-turn timeout in seconds; 0 = disabled
+	CanDelegateTo             []string           `json:"can_delegate_to,omitempty"`
 }
 
 const DefaultMaxMediaSize = 20 * 1024 * 1024 // 20 MB
@@ -501,7 +506,7 @@ func (p *PlaceholderConfig) GetRandomText() string {
 	if len(p.Text) == 1 {
 		return p.Text[0]
 	}
-	idx := rand.Intn(len(p.Text))
+	idx := mathrand.Intn(len(p.Text))
 	return p.Text[idx]
 }
 
@@ -756,6 +761,7 @@ type ModelConfig struct {
 	// Required fields
 	ModelName string `json:"model_name"` // User-facing alias for the model
 	Model     string `json:"model"`      // Protocol/model-identifier (e.g., "openai/gpt-4o", "anthropic/claude-sonnet-4.6")
+	Provider  string `json:"provider,omitempty"` // Routing key — determines which API endpoint to use (e.g. "openrouter", "anthropic")
 
 	// HTTP-based providers
 	APIBase   string   `json:"api_base,omitempty"`  // API endpoint URL
@@ -822,12 +828,49 @@ func (c *ModelConfig) SetAPIKey(value string) {
 	}
 }
 
+// UserRole represents a human user's role in the system.
+type UserRole string
+
+const (
+	UserRoleAdmin UserRole = "admin"
+	UserRoleUser  UserRole = "user"
+)
+
+// MarshalJSON serializes a UserRole to JSON.
+func (r UserRole) MarshalJSON() ([]byte, error) {
+	return json.Marshal(string(r))
+}
+
+// UnmarshalJSON validates and deserializes a UserRole from JSON.
+func (r *UserRole) UnmarshalJSON(data []byte) error {
+	switch string(data) {
+	case `"admin"`:
+		*r = UserRoleAdmin
+	case `"user"`:
+		*r = UserRoleUser
+	default:
+		return fmt.Errorf("invalid role: %s", string(data))
+	}
+	return nil
+}
+
+// UserConfig holds per-user authentication and authorization settings.
+type UserConfig struct {
+	Username     string   `json:"username,omitempty"`
+	PasswordHash string   `json:"password_hash,omitempty"` // bcrypt hash
+	TokenHash    string   `json:"token_hash,omitempty"`    // bcrypt hash of bearer token
+	Role         UserRole `json:"role"`
+	Name         string   `json:"name,omitempty"`
+}
+
 type GatewayConfig struct {
-	Host      string `json:"host"                env:"PICOCLAW_GATEWAY_HOST"`
-	Port      int    `json:"port"                env:"PICOCLAW_GATEWAY_PORT"`
-	HotReload bool   `json:"hot_reload"          env:"PICOCLAW_GATEWAY_HOT_RELOAD"`
-	LogLevel  string `json:"log_level,omitempty" env:"PICOCLAW_LOG_LEVEL"`
-	Token     string `json:"token,omitempty"     env:"-"` // Bearer token stored for reference; runtime auth uses OMNIPUS_BEARER_TOKEN env var
+	Host           string `json:"host"                env:"PICOCLAW_GATEWAY_HOST"`
+	Port           int    `json:"port"                env:"PICOCLAW_GATEWAY_PORT"`
+	HotReload      bool   `json:"hot_reload"          env:"PICOCLAW_GATEWAY_HOT_RELOAD"`
+	LogLevel       string `json:"log_level,omitempty" env:"PICOCLAW_LOG_LEVEL"`
+	Token          string `json:"token,omitempty"     env:"-"`  // Bearer token stored for reference; runtime auth uses OMNIPUS_BEARER_TOKEN env var
+	Users          []UserConfig `json:"users,omitempty" env:"-"` // Per-user RBAC user list
+	DevModeBypass  bool   `json:"dev_mode_bypass,omitempty" env:"-"` // Opt-in flag to allow unauthenticated access in development. NEVER set to true in production.
 }
 
 type ToolDiscoveryConfig struct {
@@ -1033,6 +1076,9 @@ type ToolsConfig struct {
 	MCP             MCPConfig          `json:"mcp"               yaml:"-"`
 	AppendFile      ToolConfig         `json:"append_file"       yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_APPEND_FILE_"`
 	EditFile        ToolConfig         `json:"edit_file"         yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_EDIT_FILE_"`
+	TaskList        ToolConfig         `json:"task_list"         yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_TASK_LIST_"`
+	TaskCreate      ToolConfig         `json:"task_create"       yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_TASK_CREATE_"`
+	TaskUpdate      ToolConfig         `json:"task_update"       yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_TASK_UPDATE_"`
 	FindSkills      ToolConfig         `json:"find_skills"       yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_FIND_SKILLS_"`
 	I2C             ToolConfig         `json:"i2c"               yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_I2C_"`
 	InstallSkill    ToolConfig         `json:"install_skill"     yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_INSTALL_SKILL_"`
@@ -1197,7 +1243,7 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	// Expand multi-key configs into separate entries for key-level failover
-	cfg.ModelList = expandMultiKeyModels(cfg.ModelList)
+	cfg.Providers = expandMultiKeyModels(cfg.Providers)
 
 	// Migrate legacy channel config fields to new unified structures
 	cfg.migrateChannelConfigs()
@@ -1206,7 +1252,7 @@ func LoadConfig(path string) (*Config, error) {
 	cfg.MergeChannelPoliciesIntoBindings()
 
 	// Validate model_list for uniqueness and required fields
-	if err := cfg.ValidateModelList(); err != nil {
+	if err := cfg.ValidateProviders(); err != nil {
 		return nil, err
 	}
 
@@ -1225,7 +1271,35 @@ func LoadConfig(path string) (*Config, error) {
 		cfg.Agents.Defaults.Workspace = filepath.Join(homePath, pkg.WorkspaceName)
 	}
 
+	migrateProviderFields(cfg)
 	return cfg, nil
+}
+
+// migrateProviderFields splits old-format Model fields (e.g. "openrouter/anthropic/claude-opus-4")
+// into separate Provider and Model fields for backward compatibility.
+func migrateProviderFields(cfg *Config) {
+	knownProtocols := map[string]bool{
+		"openai": true, "openrouter": true, "anthropic": true, "anthropic-messages": true,
+		"google": true, "gemini": true, "groq": true, "deepseek": true, "mistral": true,
+		"minimax": true, "moonshot": true, "zhipu": true, "nvidia": true, "qwen": true,
+		"qwen-intl": true, "qwen-international": true, "dashscope-intl": true,
+		"qwen-us": true, "dashscope-us": true,
+		"ollama": true, "cerebras": true, "azure": true, "azure-openai": true,
+		"litellm": true, "vllm": true, "bedrock": true,
+		"coding-plan": true, "alibaba-coding": true, "qwen-coding": true, "mimo": true,
+		"novita": true, "vivgrid": true, "volcengine": true, "modelscope": true,
+		"longcat": true, "avian": true, "shengsuanyun": true,
+	}
+	for _, p := range cfg.Providers {
+		if p.Provider != "" {
+			continue
+		}
+		protocol, modelID, found := strings.Cut(p.Model, "/")
+		if found && knownProtocols[protocol] {
+			p.Provider = protocol
+			p.Model = modelID
+		}
+	}
 }
 
 func makeBackup(path string) error {
@@ -1271,19 +1345,19 @@ func SaveConfig(path string, cfg *Config) error {
 		cfg.Version = CurrentVersion
 	}
 	// Filter out virtual models before serializing to config file
-	nonVirtualModels := make([]*ModelConfig, 0, len(cfg.ModelList))
-	for _, m := range cfg.ModelList {
+	nonVirtualModels := make([]*ModelConfig, 0, len(cfg.Providers))
+	for _, m := range cfg.Providers {
 		if !m.isVirtual {
 			nonVirtualModels = append(nonVirtualModels, m)
 		}
 	}
 	// Temporarily replace ModelList with filtered version for serialization
-	originalModelList := cfg.ModelList
-	cfg.ModelList = nonVirtualModels
+	originalModelList := cfg.Providers
+	cfg.Providers = nonVirtualModels
 
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	// Restore original ModelList after serialization regardless of outcome.
-	cfg.ModelList = originalModelList
+	cfg.Providers = originalModelList
 	if err != nil {
 		return err
 	}
@@ -1343,21 +1417,21 @@ func (c *Config) GetModelConfig(modelName string) (*ModelConfig, error) {
 // findMatches finds all ModelConfig entries with the given model_name.
 func (c *Config) findMatches(modelName string) []*ModelConfig {
 	var matches []*ModelConfig
-	for i := range c.ModelList {
-		if c.ModelList[i].ModelName == modelName {
-			matches = append(matches, c.ModelList[i])
+	for i := range c.Providers {
+		if c.Providers[i].ModelName == modelName {
+			matches = append(matches, c.Providers[i])
 		}
 	}
 	return matches
 }
 
-// ValidateModelList validates all ModelConfig entries in the model_list.
+// ValidateProviders validates all ModelConfig entries in the providers config.
 // It checks that each model config is valid.
 // Note: Multiple entries with the same model_name are allowed for load balancing.
-func (c *Config) ValidateModelList() error {
-	for i := range c.ModelList {
-		if err := c.ModelList[i].Validate(); err != nil {
-			return fmt.Errorf("model_list[%d]: %w", i, err)
+func (c *Config) ValidateProviders() error {
+	for i := range c.Providers {
+		if err := c.Providers[i].Validate(); err != nil {
+			return fmt.Errorf("providers[%d]: %w", i, err)
 		}
 	}
 	return nil
@@ -1365,6 +1439,40 @@ func (c *Config) ValidateModelList() error {
 
 func (c *Config) SecurityCopyFrom(path string) error {
 	return loadSecurityConfig(c, securityPath(path))
+}
+
+// SetUserTokenHash sets the token hash for a user identified by username.
+func (c *Config) SetUserTokenHash(username, token string) error {
+	for i := range c.Gateway.Users {
+		if c.Gateway.Users[i].Username == username {
+			hash, err := bcryptHash(token)
+			if err != nil {
+				return fmt.Errorf("bcrypt hash failed: %w", err)
+			}
+			c.Gateway.Users[i].TokenHash = hash
+			return nil
+		}
+	}
+	return fmt.Errorf("user %q not found", username)
+}
+
+
+// bcryptHash creates a bcrypt hash of the input string.
+func bcryptHash(input string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(input), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hash), nil
+}
+
+// generateToken generates a cryptographically random token string.
+func generateToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := cryptorand.Read(b); err != nil {
+		return "", fmt.Errorf("crypto/rand failed: %w", err)
+	}
+	return hex.EncodeToString(b), nil
 }
 
 func MergeAPIKeys(apiKey string, apiKeys []string) []string {
@@ -1518,6 +1626,12 @@ func (t *ToolsConfig) IsToolEnabled(name string) bool {
 		return t.WriteFile.Enabled
 	case "mcp":
 		return t.MCP.Enabled
+	case "task_list":
+		return t.TaskList.Enabled
+	case "task_create":
+		return t.TaskCreate.Enabled
+	case "task_update":
+		return t.TaskUpdate.Enabled
 	default:
 		// Deny-by-default for unrecognized tool names (CLAUDE.md constraint).
 		// Log at debug level so operators can detect typos in tool names.

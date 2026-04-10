@@ -4,6 +4,8 @@
 **Status**: Draft
 **Input**: BRD Appendix C (UI Spec) §C.6.1–C.6.5, Appendix E (Data Model), existing Wave 0 UI shell + Wave 1 backend gateway
 
+> **Backend Note**: The backend REST API and WebSocket handlers were implemented as part of the core foundation (Wave 1) and subsequent feature waves. Wave 5a covers frontend implementation only. Backend specifications are covered in the relevant feature specs (`agent-reliability-spec`, `agent-task-management-spec`). The Ambiguity #1 clarification ("Wave 5a implements both frontend + backend together") reflects that the two workstreams run in parallel with frontend-lead and backend-lead working concurrently — not that the backend spec lives in this document. See `docs/protocol/websocket-protocol.md` for the canonical WebSocket frame contract that both leads implement against.
+
 ---
 
 ## User Stories & Acceptance Criteria
@@ -282,9 +284,9 @@ The Skills screen is currently empty. This story implements the tabs: Installed 
 
 **Acceptance Scenarios**:
 
-1. **Given** skills are installed, **When** the Installed Skills tab loads, **Then** skill cards render showing: name, version, verification status, description, author, agent assignment.
+1. **Given** skills are installed, **When** the Installed Skills tab loads, **Then** skill cards render showing: name, version, verification status, description, author, agent assignment. Note (MIN-003): The verification status values and their visual treatment are not yet specified. Pending a Wave 3 UI spec amendment, implementors should use three states — `verified` (green checkmark), `unverified` (yellow warning), `untrusted` (red X) — as placeholder values aligned with Wave 3's trust model. This assumption must be confirmed against the Wave 3 spec before shipping.
 2. **Given** the MCP Servers tab is selected, **When** it loads, **Then** connected MCP servers show with: name, transport type, connection status, discovered tools count.
-3. **Given** the Channels tab is selected, **When** it loads, **Then** three sections appear: Enabled channels (with status and Configure/Disable), Available channels (with Enable button), and Community section.
+3. **Given** the Channels tab is selected, **When** it loads, **Then** three sections appear: Enabled channels (with status and Configure/Disable), Available channels (with Enable button), and Community section. Note (MIN-004): The WhatsApp channel (Wave 4) requires QR code display for pairing. Where the QR code renders is not specified in this spec. Pending a follow-up spec, implementors should render the QR code inside the WhatsApp channel's "Configure" modal/panel. A BDD scenario for this path should be added to either Wave 4 or a dedicated channel configuration spec.
 4. **Given** the Built-in Tools tab is selected, **When** it loads, **Then** all built-in tools are listed with expandable inline configuration (approval mode, timeout, agent access, usage stats).
 
 ---
@@ -396,7 +398,9 @@ Boundary conditions:
 - The system must not use SSE (Server-Sent Events) for chat streaming because the protocol has been upgraded to WebSocket for bi-directional communication (cancel, approval responses).
 - The system must not implement Electron-specific features because Wave 5a targets the browser-embedded open source variant only.
 - The system must not implement the onboarding flow because that is scoped to Wave 5b.
-- The system must not render the system agent (omnipus-system) in the agent selector dropdown for chat because the system agent is accessed separately.
+- The system must not render the system agent (omnipus-system) in the agent selector dropdown for chat because the system agent is accessed separately. Note (MIN-005): The system agent SHOULD appear in the session hierarchy panel (User Story 15) because users need to navigate to Omnipus sessions. The "not in agent selector dropdown" rule applies only to the chat agent picker, not the session accordion panel.
+- The system must not implement the pin feature because it is explicitly deferred. Note (MIN-006): The BRD Appendix C §C.6.1.6–C.6.1.7 references a `[Pin]` action on rich chat components. The pin data model is defined in Appendix E (`pins/` directory), but the full pin UI (pinned items list, lifecycle management) is out of scope for Wave 5a. A dedicated pin spec is required before implementation.
+- The system must not implement light mode in Wave 5a because it is explicitly deferred. Note (MIN-008): Settings §C.6.5.1 lists "theme (light/dark/system)" as a preference, but no spec defines the light mode color palette or implementation. Light mode is deferred to a later wave. Until a light mode spec exists, the theme toggle setting SHOULD be omitted or shown as "coming soon" to avoid shipping a broken feature.
 
 ---
 
@@ -1162,8 +1166,8 @@ Boundary conditions:
 - **FR-028**: System MUST use Zustand for all UI state (sidebar, modals, active session, selected agent).
 - **FR-029**: System MUST use TanStack Query for all server state (agents, sessions, tasks, config, credentials).
 - **FR-030**: System MUST use Phosphor Icons exclusively — no emoji in UI chrome.
-- **FR-031**: System MUST be responsive across 3 breakpoints: desktop (>1024px), tablet (640-1024px), phone (<640px).
-- **FR-032**: System MUST support bi-directional WebSocket communication for chat, carrying all event types: token, tool_call_start, tool_call_result, exec_approval_request, done, error (server→client) and message, cancel, exec_approval_response (client→server).
+- **FR-031**: System MUST be responsive across 3 breakpoints: desktop (>1024px), tablet (640-1024px), phone (<640px). Note: Breakpoints updated to Desktop >1024px, Tablet 640-1024px, Phone <640px (aligned with Tailwind's `sm` breakpoint). The BRD Appendix C Section C.5 specifies 768px as the phone/tablet boundary, but this spec uses 640px to match Tailwind v4's `sm` breakpoint, minimizing custom breakpoint configuration. This decision was applied consistently in the implementation (MIN-001 resolution).
+- **FR-032**: System MUST support bi-directional WebSocket communication for chat, carrying all event types: token, tool_call_start, tool_call_result, exec_approval_request, done, error (server→client) and message, cancel, exec_approval_response (client→server). Additionally, the frontend MUST handle system-initiated interruption events: `timeout` (turn timed out mid-stream, partial content preserved) and `compaction` (context window compacted, summary provided). The frontend MUST also handle `task_status_changed` events for real-time task board updates. See `docs/protocol/websocket-protocol.md` for full frame schemas (MAJ-004).
 - **FR-033**: System MUST allow the user to cancel an in-progress streaming response or tool execution by clicking a "Stop" button that replaces the Send button during streaming.
 - **FR-034**: System MUST preserve partial responses after cancellation, displaying them with an "(interrupted)" label and `status: "interrupted"`.
 - **FR-035**: System MUST complete cancel operations within 1 second of the user clicking Stop.
@@ -1278,6 +1282,7 @@ Boundary conditions:
 - **Action**: Send 5 messages rapidly without waiting for responses.
 - **Expected outcome**: All 5 user messages appear in order. Responses stream without interleaving or corruption. No messages are lost.
 - **Category**: Edge Case
+- **Note (MIN-007)**: This scenario tests a backend message queuing behavior that is not covered by any FR or BDD scenario in this spec. The backend-lead must ensure the WebSocket handler serializes concurrent requests per session (i.e., processes one message at a time, queuing subsequent sends). Without this, responses will interleave. This evaluation scenario is retained as a cross-boundary integration check rather than a pure frontend test.
 
 ### Scenario: Phone breakpoint navigation
 - **Setup**: Browser resized to 375px width (iPhone SE equivalent).
@@ -1307,7 +1312,12 @@ Boundary conditions:
 
 ### 2026-03-29
 
-- Q: Should backend REST endpoints be implemented in Wave 5a or assumed to exist? -> A: **Resolved** — Wave 5a implements both frontend + backend together. Frontend-lead and backend-lead work in parallel.
+- Q: Should backend REST endpoints be implemented in Wave 5a or assumed to exist? -> A: **Resolved** — Wave 5a implements both frontend + backend together. Frontend-lead and backend-lead work in parallel. See Backend Note at top of this spec.
 - Q: Should AssistantUI be used for chat or plain WebSocket + react-markdown? -> A: **Resolved** — Use AssistantUI with a custom gateway runtime adapter for our WebSocket protocol.
 - Q: Are tool_call and approval events on the same stream? -> A: **Resolved** — WebSocket carries all event types on a single bi-directional connection. SSE replaced with WebSocket.
 - Q: SSE vs WebSocket for chat streaming? -> A: **Resolved** — WebSocket. Enables bi-directional communication needed for cancel, approval responses, and future features.
+
+### 2026-04-01
+
+- Q: How should the UI handle system-initiated interruptions (timeouts, compaction) that arrive without a preceding user cancel? -> A: **Resolved (MAJ-004)** — Two additional server→client frame types are defined: `timeout` (backend timed out the turn mid-stream; partial content is preserved; UI renders partial with a muted "(timed out)" label analogous to cancel's "(interrupted)" label) and `compaction` (context window was compacted; UI renders a system message "Context compacted — older messages summarized" analogous to the compaction entry in message history). These must NOT be silently ignored — they are semantically significant events. Full frame schemas in `docs/protocol/websocket-protocol.md`.
+- Q: How does the UI stay in sync with task status changes without polling? -> A: **Resolved (MAJ-004)** — The backend emits `task_status_changed` WebSocket frames when a task transitions state. The frontend WebSocket router handles this frame type by invalidating the relevant TanStack Query cache entry, triggering a re-render of the task board. Full schema in `docs/protocol/websocket-protocol.md`.

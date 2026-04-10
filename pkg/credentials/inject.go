@@ -13,7 +13,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/config"
 )
 
-// InjectFromConfig iterates over cfg.ModelList entries, reads each entry's
+// InjectFromConfig iterates over cfg.Providers entries, reads each entry's
 // APIKeyRef field, resolves the referenced credential name from store, and
 // injects the plaintext value into the process environment under that name.
 //
@@ -30,8 +30,8 @@ func InjectFromConfig(cfg *config.Config, store *Store) []error {
 	var errs []error
 	injected := map[string]bool{} // avoid re-injecting duplicates
 
-	for i := range cfg.ModelList {
-		model := cfg.ModelList[i]
+	for i := range cfg.Providers {
+		model := cfg.Providers[i]
 		ref := strings.TrimSpace(model.APIKeyRef)
 		if ref == "" {
 			continue

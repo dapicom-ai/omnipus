@@ -1,31 +1,37 @@
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { AppShell } from '@/components/layout/AppShell'
-import { fetchAppState } from '@/lib/api'
+import { fetchAppState, validateToken } from '@/lib/api'
 
 // Pathless layout route — wraps all app screens in AppShell
 // Landing page (/landing) is a sibling, NOT nested here, so it renders without the shell
 // /onboarding is also a sibling — no AppShell, no beforeLoad
 export const Route = createFileRoute('/_app')({
   beforeLoad: async () => {
-    let state: { onboarding_complete: boolean }
+    // First check onboarding state — if not complete, redirect to onboarding
+    let state: { onboarding_complete: boolean } | undefined
     try {
       state = await fetchAppState()
     } catch (err) {
-      // Suppress network-class errors (API unreachable, aborted requests, all
-      // TypeErrors from fetch). For application errors (4xx/5xx) let them
-      // propagate so they are visible.
-      // TypeError covers: failed to fetch, network error, CORS failure
-      // DOMException covers: AbortError from request cancellation
-      if (err instanceof TypeError || err instanceof DOMException) {
-        // API unreachable — allow through to app (the chat screen will show
-        // a connection error via the WebSocket state). Redirecting to onboarding
-        // on every network failure would trap users in a loop.
-        return
-      }
-      throw err
+      console.error('[app] Failed to fetch app state:', err)
+      // State endpoint failed — proceed to auth check (may redirect to login)
     }
     if (state && !state.onboarding_complete) {
       throw redirect({ to: '/onboarding' })
+    }
+
+    // Onboarding is complete — require login token
+    const token = sessionStorage.getItem('omnipus_auth_token') ?? localStorage.getItem('omnipus_auth_token')
+    if (!token) {
+      throw redirect({ to: '/login' })
+    }
+    // Validate token by calling /auth/validate
+    try {
+      await validateToken()
+    } catch {
+      // Token is invalid or expired — clear it and redirect to login
+      sessionStorage.removeItem('omnipus_auth_token')
+      localStorage.removeItem('omnipus_auth_token')
+      throw redirect({ to: '/login' })
     }
   },
   component: AppShell,

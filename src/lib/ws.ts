@@ -38,7 +38,18 @@ export interface WsPingFrame {
   type: 'ping'
 }
 
-export type WsSendFrame = WsAuthFrame | WsMessageFrame | WsCancelFrame | WsExecApprovalResponseFrame | WsPingFrame
+export interface WsAttachSessionFrame {
+  type: 'attach_session'
+  session_id: string
+}
+
+export interface WsDevicePairingResponseFrame {
+  type: 'device_pairing_response'
+  device_id: string
+  decision: 'approve' | 'reject'
+}
+
+export type WsSendFrame = WsAuthFrame | WsMessageFrame | WsCancelFrame | WsExecApprovalResponseFrame | WsPingFrame | WsAttachSessionFrame | WsDevicePairingResponseFrame
 
 export interface WsTokenFrame {
   type: 'token'
@@ -80,6 +91,19 @@ export interface WsExecApprovalRequestFrame {
   matched_policy?: string
 }
 
+export interface WsTaskStatusChangedFrame {
+  type: 'task_status_changed'
+  task_id: string
+  status: string
+  agent_id?: string
+}
+
+export interface WsReplayMessageFrame {
+  type: 'replay_message'
+  content: string
+  role: string
+}
+
 export type WsReceiveFrame =
   | WsTokenFrame
   | WsDoneFrame
@@ -87,6 +111,8 @@ export type WsReceiveFrame =
   | WsToolCallStartFrame
   | WsToolCallResultFrame
   | WsExecApprovalRequestFrame
+  | WsTaskStatusChangedFrame
+  | WsReplayMessageFrame
 
 function isValidFrame(frame: unknown): frame is WsReceiveFrame {
   if (typeof frame !== 'object' || frame === null) return false
@@ -156,9 +182,10 @@ export class WsConnection {
 
     this.ws.onopen = () => {
       this.reconnectAttempts = 0
-      // Auth token is re-read from localStorage on every (re-)connect
-      // so changes after initial load take effect without a page refresh.
-      const token = localStorage.getItem('omnipus_auth_token')
+      // Auth token is re-read on every (re-)connect so changes after
+      // initial load take effect without a page refresh.
+      // Check sessionStorage first (XSS protection), fall back to localStorage.
+      const token = sessionStorage.getItem('omnipus_auth_token') ?? localStorage.getItem('omnipus_auth_token')
       if (token) {
         this.send({ type: 'auth', token })
       } else {

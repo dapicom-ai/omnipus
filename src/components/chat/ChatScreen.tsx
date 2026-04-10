@@ -9,7 +9,6 @@ import {
   ActionBarPrimitive,
   AuiIf,
   useComposerRuntime,
-  useMessageRuntime,
   useMessage,
 } from '@assistant-ui/react'
 import {
@@ -20,6 +19,10 @@ import {
   Stop,
   Copy,
   Check,
+  ListChecks,
+  Paperclip,
+  File,
+  X,
 } from '@phosphor-icons/react'
 import OmnipusAvatar from '@/assets/logo/omnipus-avatar.svg?url'
 import { SessionPanel } from './SessionPanel'
@@ -28,9 +31,10 @@ import { ExecApprovalBlock } from './ExecApprovalBlock'
 import { MarkdownText } from './markdown-text'
 import { Button } from '@/components/ui/button'
 import { useChatStore } from '@/store/chat'
+import { useConnectionStore } from '@/store/connection'
+import { useSessionStore } from '@/store/session'
 import { useUiStore } from '@/store/ui'
-import { fetchSessionMessages, createSession } from '@/lib/api'
-import type { ToolCall } from '@/lib/api'
+import { fetchAgents, fetchSessionMessages, createSession, uploadFiles } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 // ── Message components ────────────────────────────────────────────────────────
@@ -142,6 +146,41 @@ function FallbackToolUI(props: { toolCallId: string; toolName: string; args: unk
   )
 }
 
+function AssistantMessageRetryButton() {
+  const message = useMessage()
+  const sendMessage = useChatStore((s) => s.sendMessage)
+  const messages = useChatStore((s) => s.messages)
+  const isStreaming = useChatStore((s) => s.isStreaming)
+
+  const status = message.status?.type
+  // AssistantUI maps our store's 'error' and 'interrupted' statuses both to
+  // { type: 'incomplete' } via buildMessageStatus in omnipus-runtime.ts.
+  const isErrorOrIncomplete = status === 'incomplete'
+  const hasUserMessage = messages.some((m) => m.role === 'user')
+
+  if (!isErrorOrIncomplete || isStreaming || !hasUserMessage) return null
+
+  function handleRetry() {
+    const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user')
+    if (lastUserMsg) {
+      sendMessage(lastUserMsg.content)
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleRetry}
+      aria-label="Retry — resend the last user message"
+      className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-[var(--color-error)] hover:text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors"
+      title="Retry — resend the last user message"
+    >
+      <ArrowCounterClockwise size={11} />
+      <span>Retry</span>
+    </button>
+  )
+}
+
 function AssistantMessage() {
   return (
     <MessagePrimitive.Root className="group flex gap-3 px-4 py-3">
@@ -158,17 +197,18 @@ function AssistantMessage() {
             components={{
               Text: AssistantTextPart,
               tools: {
-                Fallback: FallbackToolUI,
+                Fallback: FallbackToolUI as unknown as import('@assistant-ui/react').ToolCallMessagePartComponent,
               },
             }}
           />
         </div>
 
-        {/* Action bar — Copy button, visible on hover */}
+        {/* Action bar — Copy + Retry buttons, visible on hover */}
         <ActionBarPrimitive.Root className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
           <ActionBarPrimitive.Copy asChild>
             <button
               type="button"
+              aria-label="Copy message"
               className="flex items-center gap-1 px-2 py-1 rounded text-[10px] text-[var(--color-muted)] hover:text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors"
               title="Copy message"
             >
@@ -182,6 +222,7 @@ function AssistantMessage() {
               </AuiIf>
             </button>
           </ActionBarPrimitive.Copy>
+          <AssistantMessageRetryButton />
         </ActionBarPrimitive.Root>
       </div>
     </MessagePrimitive.Root>
@@ -211,21 +252,48 @@ const HELP_TEXT = `**Omnipus commands:**
 **Tips:**
 - Press **Enter** to send, **Shift+Enter** for newline
 - Click tool call headers to expand/collapse details
-- Hover over messages to copy or pin them`
+- Hover over messages to copy them`
 
 // ── Composer ──────────────────────────────────────────────────────────────────
 
+function composerPlaceholder(isConnected: boolean, isStreaming: boolean, agentName: string): string {
+  if (!isConnected) return 'Connecting to gateway...'
+  if (isStreaming) return 'Waiting for response...'
+  return `Message ${agentName}…`
+}
+
+const HARMFUL_EXTENSIONS = ['.exe', '.bat', '.cmd', '.sh', '.ps1', '.dll', '.sys', '.msi', '.scr', '.com']
+
+/** Renders an image thumbnail for a pending file, revoking the object URL on unmount to prevent memory leaks. */
+function FilePreviewThumbnail({ file }: { file: File }) {
+  const [url, setUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    const objectUrl = URL.createObjectURL(file)
+    setUrl(objectUrl)
+    return () => URL.revokeObjectURL(objectUrl)
+  }, [file])
+
+  if (!url) return null
+  return <img src={url} className="w-8 h-8 rounded object-cover" alt={file.name} />
+}
+
 function OmnipusComposer() {
   const isStreaming = useChatStore((s) => s.isStreaming)
-  const isConnected = useChatStore((s) => s.isConnected)
+  const isConnected = useConnectionStore((s) => s.isConnected)
   const cancelStream = useChatStore((s) => s.cancelStream)
   const setMessages = useChatStore((s) => s.setMessages)
   const appendMessage = useChatStore((s) => s.appendMessage)
-  const setActiveSession = useChatStore((s) => s.setActiveSession)
-  const activeAgentId = useChatStore((s) => s.activeAgentId)
+  const setActiveSession = useSessionStore((s) => s.setActiveSession)
+  const activeAgentId = useSessionStore((s) => s.activeAgentId)
+  const activeSessionId = useSessionStore((s) => s.activeSessionId)
+  const sendMessage = useChatStore((s) => s.sendMessage)
   const addToast = useUiStore((s) => s.addToast)
   const composerRuntime = useComposerRuntime()
   const queryClient = useQueryClient()
+
+  const { data: agents = [] } = useQuery({ queryKey: ['agents'], queryFn: fetchAgents })
+  const activeAgentName = agents.find((a) => a.id === activeAgentId)?.name ?? 'Omnipus'
 
   const { mutate: doCreateSession, isPending: isCreatingSession } = useMutation({
     mutationFn: () => {
@@ -245,6 +313,13 @@ function OmnipusComposer() {
   const [inputValue, setInputValue] = useState('')
   const [slashOpen, setSlashOpen] = useState(false)
   const [slashHighlight, setSlashHighlight] = useState(0)
+  const [pendingFiles, setPendingFiles] = useState<File[]>([])
+  const [isUploading, setIsUploading] = useState(false)
+  const [isDragging, setIsDragging] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  // Tracks whether we already warned for the current large-input threshold crossing,
+  // so we only fire one toast per paste/input event that exceeds 1MB.
+  const hasWarnedLargeInput = useRef(false)
 
   // Show slash dropdown when input starts with "/"
   const shouldShowSlash = inputValue.startsWith('/') && !isStreaming && isConnected
@@ -261,7 +336,7 @@ function OmnipusComposer() {
 
     if (cmd === '/clear') {
       setMessages([])
-      const { activeSessionId: sid } = useChatStore.getState()
+      const { activeSessionId: sid } = useSessionStore.getState()
       if (sid) queryClient.removeQueries({ queryKey: ['messages', sid] })
       return
     }
@@ -283,6 +358,23 @@ function OmnipusComposer() {
     }
   }
 
+  function handleFilesSelected(files: File[]) {
+    const harmful = files.filter((f) =>
+      HARMFUL_EXTENSIONS.some((ext) => f.name.toLowerCase().endsWith(ext))
+    )
+    if (harmful.length > 0) {
+      const confirmed = window.confirm(
+        `Warning: ${harmful.map((f) => f.name).join(', ')} may be potentially harmful file(s).\n\nAre you sure you want to upload?`
+      )
+      if (!confirmed) return
+      const doubleConfirmed = window.confirm(
+        `Please confirm again: Upload ${harmful.length} potentially harmful file(s)?`
+      )
+      if (!doubleConfirmed) return
+    }
+    setPendingFiles((prev) => [...prev, ...files])
+  }
+
   function handleKeyDown(e: React.KeyboardEvent) {
     if (!shouldShowSlash) return
 
@@ -302,8 +394,49 @@ function OmnipusComposer() {
     }
   }
 
+  async function handleSendWithFiles(text: string) {
+    if (pendingFiles.length === 0) {
+      sendMessage(text)
+      return
+    }
+    if (!activeSessionId) {
+      addToast({ message: 'No active session — cannot upload files', variant: 'error' })
+      return
+    }
+    setIsUploading(true)
+    try {
+      const { files: uploaded } = await uploadFiles(activeSessionId, pendingFiles)
+      const fileList = uploaded.map((f) => `[${f.name}](${f.path})`).join(', ')
+      sendMessage(text ? `${text}\n\nAttached files: ${fileList}` : `Attached files: ${fileList}`)
+      setPendingFiles([])
+    } catch (err) {
+      addToast({
+        message: err instanceof Error ? err.message : 'Upload failed',
+        variant: 'error',
+      })
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
   return (
-    <div>
+    <div
+      className="relative"
+      onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }}
+      onDragLeave={() => setIsDragging(false)}
+      onDrop={(e) => {
+        e.preventDefault()
+        setIsDragging(false)
+        const droppedFiles = Array.from(e.dataTransfer.files)
+        if (droppedFiles.length > 0) handleFilesSelected(droppedFiles)
+      }}
+    >
+      {isDragging && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-[var(--color-primary)]/80 border-2 border-dashed border-[var(--color-accent)] rounded-lg">
+          <p className="text-[var(--color-accent)] font-medium">Drop files here</p>
+        </div>
+      )}
+
       {!isConnected && (
         <div className="mb-2 text-xs text-[var(--color-error)] flex items-center gap-1">
           <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-error)] inline-block" />
@@ -337,26 +470,79 @@ function OmnipusComposer() {
         </div>
       )}
 
+      {/* Pending file previews */}
+      {pendingFiles.length > 0 && (
+        <div className="flex flex-wrap gap-2 px-2 pb-2">
+          {pendingFiles.map((file, i) => (
+            <div
+              key={`${file.name}-${file.size}-${file.lastModified}`}
+              className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-[var(--color-surface-2)] border border-[var(--color-border)] text-xs"
+            >
+              {file.type.startsWith('image/') ? (
+                <FilePreviewThumbnail file={file} />
+              ) : (
+                <File size={14} className="text-[var(--color-muted)]" />
+              )}
+              <span className="truncate max-w-[120px]">{file.name}</span>
+              <button
+                type="button"
+                onClick={() => setPendingFiles((prev) => prev.filter((_, j) => j !== i))}
+                className="text-[var(--color-muted)] hover:text-[var(--color-error)]"
+                aria-label={`Remove ${file.name}`}
+              >
+                <X size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Hidden file input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? [])
+          if (files.length) handleFilesSelected(files)
+          e.target.value = ''
+        }}
+      />
+
+      <div className="flex items-end gap-2 px-2 py-2">
+        {/* Paperclip button */}
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={!isConnected || isStreaming || isUploading}
+          className="shrink-0 w-11 h-11 rounded-xl flex items-center justify-center text-[var(--color-muted)] hover:text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          aria-label="Attach file"
+          title="Attach file"
+        >
+          <Paperclip size={16} />
+        </button>
+
       <ComposerPrimitive.Root
-        className={cn(
-          'flex items-end gap-2 px-2 py-2',
-        )}
+        className="flex items-end gap-2 flex-1"
+        onSubmit={(e) => {
+          if (pendingFiles.length === 0) return // Let AssistantUI handle the standard send path
+          e.preventDefault()
+          const text = composerRuntime.getState().text.trim()
+          composerRuntime.setText('')
+          setInputValue('')
+          void handleSendWithFiles(text)
+        }}
       >
         <ComposerPrimitive.Input
-          placeholder={
-            !isConnected
-              ? 'Connecting to gateway...'
-              : isStreaming
-                ? 'Waiting for response...'
-                : 'Message Omnipus…'
-          }
-          disabled={!isConnected || isStreaming}
+          placeholder={composerPlaceholder(isConnected, isStreaming || isUploading, activeAgentName)}
+          disabled={!isConnected || isStreaming || isUploading}
           rows={1}
           className={cn(
             'flex-1 resize-none rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 py-2.5 text-sm text-[var(--color-secondary)] outline-none',
             'placeholder:text-[var(--color-muted)] min-h-[24px] max-h-[200px] leading-6 overflow-hidden',
             'focus:border-[var(--color-accent)]/50 focus:ring-1 focus:ring-[var(--color-accent)]/20',
-            (!isConnected || isStreaming) && 'opacity-60 cursor-not-allowed',
+            (!isConnected || isStreaming || isUploading) && 'opacity-60 cursor-not-allowed',
           )}
           aria-label="Message input"
           onChange={(e) => {
@@ -367,21 +553,51 @@ function OmnipusComposer() {
             } else {
               closeSlash()
             }
+            if (val.length > 1_000_000) {
+              if (!hasWarnedLargeInput.current) {
+                hasWarnedLargeInput.current = true
+                useUiStore.getState().addToast({
+                  message: `Large input (${(val.length / 1_000_000).toFixed(1)}MB). This may be slow to process.`,
+                  variant: 'default',
+                })
+              }
+            } else {
+              hasWarnedLargeInput.current = false
+            }
           }}
           onKeyDown={handleKeyDown}
           onBlur={() => {
             // Delay so mouseDown on slash item fires first
             setTimeout(closeSlash, 150)
           }}
+          onPaste={(e) => {
+            const items = Array.from(e.clipboardData?.items ?? [])
+            const imageItems = items.filter((item) => item.type.startsWith('image/'))
+            const imageFiles = imageItems.map((item) => item.getAsFile()).filter(Boolean) as File[]
+            if (imageFiles.length > 0) {
+              e.preventDefault()
+              handleFilesSelected(imageFiles)
+            } else if (imageItems.length > 0) {
+              // Images were in clipboard but couldn't be materialized as files
+              e.preventDefault()
+              addToast({ message: 'Could not paste image — try saving it to a file first', variant: 'error' })
+            }
+          }}
         />
 
-        {isStreaming ? (
+        {isStreaming || isUploading ? (
           <button
             type="button"
-            onClick={cancelStream}
-            className="shrink-0 w-8 h-8 rounded-lg bg-[var(--color-error)]/20 text-[var(--color-error)] hover:bg-[var(--color-error)]/30 flex items-center justify-center transition-colors"
-            aria-label="Stop generation"
-            title="Stop (Escape)"
+            onClick={isStreaming ? cancelStream : undefined}
+            disabled={isUploading}
+            className={cn(
+              'shrink-0 w-11 h-11 rounded-xl flex items-center justify-center transition-colors',
+              isStreaming
+                ? 'bg-[var(--color-error)]/20 text-[var(--color-error)] hover:bg-[var(--color-error)]/30'
+                : 'bg-[var(--color-surface-3)] text-[var(--color-muted)] cursor-wait',
+            )}
+            aria-label={isUploading ? 'Uploading...' : 'Stop generation'}
+            title={isUploading ? 'Uploading files...' : 'Stop (Escape)'}
           >
             <Stop size={15} weight="fill" />
           </button>
@@ -389,7 +605,7 @@ function OmnipusComposer() {
           <ComposerPrimitive.Send
             disabled={!isConnected}
             className={cn(
-              'shrink-0 w-8 h-8 rounded-lg flex items-center justify-center transition-colors',
+              'shrink-0 w-11 h-11 rounded-xl flex items-center justify-center transition-colors',
               isConnected
                 ? 'bg-[var(--color-accent)] text-[var(--color-primary)] hover:bg-[var(--color-accent-hover)] disabled:bg-[var(--color-surface-3)] disabled:text-[var(--color-muted)] disabled:cursor-not-allowed'
                 : 'bg-[var(--color-surface-3)] text-[var(--color-muted)] cursor-not-allowed',
@@ -400,6 +616,7 @@ function OmnipusComposer() {
           </ComposerPrimitive.Send>
         )}
       </ComposerPrimitive.Root>
+      </div>
 
       <p className="mt-1.5 text-[10px] text-[var(--color-muted)] text-center">
         Agents can make mistakes. Verify important information.
@@ -437,15 +654,29 @@ function WelcomeState({ hasAgent }: { hasAgent: boolean }) {
 // ── Main screen ───────────────────────────────────────────────────────────────
 
 export function ChatScreen() {
-  const connectionError = useChatStore((s) => s.connectionError)
-  const activeSessionId = useChatStore((s) => s.activeSessionId)
-  const activeAgentId = useChatStore((s) => s.activeAgentId)
+  const activeSessionId = useSessionStore((s) => s.activeSessionId)
+  const activeAgentId = useSessionStore((s) => s.activeAgentId)
   const pendingApprovals = useChatStore((s) => s.pendingApprovals)
   const setMessages = useChatStore((s) => s.setMessages)
-  const reconnect = useChatStore((s) => s.reconnect)
+  const attachedSessionType = useSessionStore((s) => s.attachedSessionType)
+  const attachedTaskTitle = useSessionStore((s) => s.attachedTaskTitle)
+  // For the ARIA live region: track the last assistant message id for screen reader announcements
+  const messages = useChatStore((s) => s.messages)
+  const lastAssistantMessage = [...messages].reverse().find((m) => m.role === 'assistant')
+  const lastAnnouncedIdRef = useRef<string | null>(null)
+  const shouldAnnounce = lastAssistantMessage?.id != null && lastAssistantMessage.id !== lastAnnouncedIdRef.current
+
+  useEffect(() => {
+    if (lastAssistantMessage?.id && lastAssistantMessage.status === 'done') {
+      lastAnnouncedIdRef.current = lastAssistantMessage.id
+    }
+  }, [lastAssistantMessage?.id, lastAssistantMessage?.status])
+
+  const { data: agentsForAria = [] } = useQuery({ queryKey: ['agents'], queryFn: fetchAgents })
+  const activeAgentName = agentsForAria.find((a) => a.id === activeAgentId)?.name ?? 'Omnipus'
 
   // Load message history when session changes
-  const isConnected = useChatStore((s) => s.isConnected)
+  const isConnected = useConnectionStore((s) => s.isConnected)
 
   const {
     data: historyData,
@@ -463,25 +694,25 @@ export function ChatScreen() {
   })
 
   useEffect(() => {
-    if (historyData) setMessages(historyData)
+    if (historyData) {
+      // Filter out tool_call entries that have no role — they crash AssistantUI's convertMessages.
+      // Tool calls are replayed via WebSocket frames instead.
+      const validMessages = historyData.filter((m: { role?: string }) => m.role === 'user' || m.role === 'assistant' || m.role === 'system')
+      setMessages(validMessages)
+    }
   }, [historyData, setMessages])
 
   const activePendingApprovals = pendingApprovals.filter((a) => a.status === 'pending')
 
   return (
-    <div className="flex flex-col h-full">
-      {/* Connection error banner */}
-      {connectionError && (
-        <div className="flex items-center justify-between gap-2 px-4 py-2 bg-[var(--color-error)]/10 border-b border-[var(--color-error)]/20 text-xs text-[var(--color-error)]">
-          <span>{connectionError}</span>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={reconnect}
-            className="h-6 px-2 text-xs text-[var(--color-error)] hover:bg-[var(--color-error)]/10 gap-1"
-          >
-            <ArrowCounterClockwise size={11} /> Retry
-          </Button>
+    <div className="flex flex-col absolute inset-0 overflow-hidden">
+      {/* Task session banner — shown when viewing a task execution transcript */}
+      {attachedSessionType === 'task' && (
+        <div className="px-4 py-2 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] flex items-center gap-2">
+          <ListChecks size={14} className="text-[var(--color-accent)] shrink-0" />
+          <span className="text-xs text-[var(--color-secondary)] flex-1 truncate">
+            Task: {attachedTaskTitle ?? 'Task Execution'}
+          </span>
         </div>
       )}
 
@@ -495,8 +726,16 @@ export function ChatScreen() {
         </div>
       ) : (
         <ThreadPrimitive.Root className="flex flex-col flex-1 min-h-0">
+          {/* ARIA live region: announces new assistant messages to screen readers.
+              Only fires when a genuinely new message ID arrives and is complete. */}
+          <div aria-live="polite" aria-atomic="true" className="sr-only">
+            {shouldAnnounce && lastAssistantMessage?.status === 'done' && (
+              <span>New response from {activeAgentName}</span>
+            )}
+          </div>
+
           {/* Message viewport */}
-          <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto pt-4 pb-8">
+          <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto pt-4 pb-2">
             <AuiIf condition={(s) => s.thread.isEmpty}>
               <WelcomeState hasAgent={!!activeAgentId} />
             </AuiIf>
@@ -510,7 +749,6 @@ export function ChatScreen() {
                 }}
               </ThreadPrimitive.Messages>
 
-              {/* Thinking indicator is now inside AssistantTextPart — no separate element needed */}
             </div>
           </ThreadPrimitive.Viewport>
 
@@ -527,7 +765,7 @@ export function ChatScreen() {
           <div className="relative w-full">
             {/* Gradient fade above composer */}
             <div className="absolute -top-8 left-0 right-0 h-8 bg-gradient-to-t from-[var(--color-primary)] to-transparent pointer-events-none" />
-            <div className="w-full max-w-3xl mx-auto px-4 pb-6 pt-2">
+            <div className="w-full max-w-3xl mx-auto px-4 pb-2 pt-2">
               <OmnipusComposer />
             </div>
           </div>

@@ -29,7 +29,7 @@ import type { ComponentPropsWithoutRef } from 'react'
 
 function PhosphorEmojiSpan({ 'data-phosphor-icon': iconName, children, ...props }: ComponentPropsWithoutRef<'span'> & { 'data-phosphor-icon'?: string }) {
   if (iconName && iconName in PhosphorIcons) {
-    const Icon = (PhosphorIcons as Record<string, React.ComponentType<{ size?: number; weight?: string; className?: string }>>)[iconName]
+    const Icon = (PhosphorIcons as unknown as Record<string, React.ComponentType<{ size?: number; weight?: string; className?: string }>>)[iconName]
     return <Icon size={14} weight="regular" className="inline-block align-middle text-[var(--color-accent)] mx-0.5" />
   }
   return <span {...props}>{children}</span>
