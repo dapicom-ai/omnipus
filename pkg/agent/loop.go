@@ -32,6 +32,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/routing"
 	"github.com/dapicom-ai/omnipus/pkg/sandbox"
+	"github.com/dapicom-ai/omnipus/pkg/security"
 	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/skills"
 	"github.com/dapicom-ai/omnipus/pkg/state"
@@ -90,6 +91,22 @@ type AgentLoop struct {
 	// 5.13+ (Landlock+seccomp), FallbackBackend elsewhere (cooperative env
 	// vars). Applied to every exec child via ExecTool.sandboxBackend.
 	sandboxBackend sandbox.SandboxBackend
+
+	// Wave 3: Prompt injection defense (SEC-25). Sanitizes untrusted tool
+	// results — web_search, web_fetch, browser_*, read_file — before they
+	// enter the LLM's context. Nil when the guard is misconfigured; callers
+	// must nil-check. Trusted tool results (exec, spawn, message, etc.) are
+	// NEVER sanitized so the LLM sees verbatim user and internal output.
+	promptGuard *security.PromptGuard
+
+	// Wave 3: SSRF proxy for exec child processes (SEC-28). Only started when
+	// cfg.Tools.Exec.EnableProxy is true. The proxy is idle-stop: it exits
+	// after DefaultIdleTimeout (30s) when no commands are active, and is
+	// automatically restarted by PrepareCmd() on the next exec command so
+	// long-lived agent loops continue to enforce SSRF protection. On initial
+	// bind failure this field is nil and exec children run without proxy env
+	// vars (degraded mode — LIM-02).
+	execProxy *security.ExecProxy
 }
 
 // processOptions configures how a message is processed
@@ -255,6 +272,35 @@ func NewAgentLoop(
 	al.sandboxBackend = backend
 	logger.InfoCF("agent", "Sandbox backend selected", map[string]any{"backend": backendName})
 
+	// SEC-25: Initialize the prompt-injection guard. NewPromptGuardFromConfig
+	// defaults to "medium" strictness when the field is empty. Construction
+	// is cheap and cannot fail, so we always build it — runTurn checks the
+	// untrusted-tool allowlist before invoking it, so trusted results are
+	// never sanitized even when the guard is non-nil.
+	al.promptGuard = security.NewPromptGuardFromConfig(policy.PromptGuardConfig{
+		Strictness: cfg.Sandbox.PromptInjectionLevel,
+	})
+	logger.InfoCF("agent", "Prompt guard initialized",
+		map[string]any{"strictness": string(al.promptGuard.Strictness())})
+
+	// SEC-28: Start the loopback SSRF proxy for exec child processes when
+	// enabled. On bind failure we log and fall back to degraded mode (child
+	// processes run without HTTP_PROXY env vars — LIM-02) rather than
+	// failing startup, because exec is a core tool and a proxy bind failure
+	// on a shared port should not take the whole agent loop down.
+	if cfg.Tools.Exec.EnableProxy {
+		ssrfChecker := security.NewSSRFChecker(nil)
+		proxy := security.NewExecProxy(ssrfChecker, nil)
+		if err := proxy.Start(); err != nil {
+			logger.ErrorCF("agent", "Failed to start exec SSRF proxy; child processes will run without proxy env vars",
+				map[string]any{"error": err.Error()})
+		} else {
+			al.execProxy = proxy
+			logger.InfoCF("agent", "Exec SSRF proxy started",
+				map[string]any{"addr": proxy.Addr()})
+		}
+	}
+
 	// Register shared tools to all agents (now that al is created)
 	registerSharedTools(al, cfg, msgBus, registry, provider)
 
@@ -273,6 +319,26 @@ func (al *AgentLoop) AuditLogger() *audit.Logger {
 		return nil
 	}
 	return al.auditLogger
+}
+
+// ExecProxy returns the SEC-28 SSRF proxy for exec child processes, or nil
+// when the proxy is disabled or failed to bind. Used by gateway handlers that
+// report the proxy status and by tests that exercise the proxy lifecycle.
+func (al *AgentLoop) ExecProxy() *security.ExecProxy {
+	if al == nil {
+		return nil
+	}
+	return al.execProxy
+}
+
+// PromptGuard returns the SEC-25 prompt-injection guard. Always non-nil after
+// NewAgentLoop — even when no config field is set, the factory returns a
+// medium-strictness guard. Used by runTurn and by gateway status handlers.
+func (al *AgentLoop) PromptGuard() *security.PromptGuard {
+	if al == nil {
+		return nil
+	}
+	return al.promptGuard
 }
 
 // wireExecToolDeps replaces each agent's exec tool with one constructed via
@@ -326,6 +392,12 @@ func (al *AgentLoop) wireExecToolDeps() {
 		}
 		if al.sandboxBackend != nil {
 			deps.SandboxBackend = al.sandboxBackend
+		}
+		// SEC-28: Hand the exec proxy to the tool so it can inject
+		// HTTP_PROXY env vars on every child. nil-guarded at assignment
+		// time to avoid the typed-nil-in-interface trap.
+		if al.execProxy != nil {
+			deps.ExecProxy = al.execProxy
 		}
 
 		restrict := cfg.Agents.Defaults.RestrictToWorkspace
@@ -1000,6 +1072,12 @@ func (al *AgentLoop) Close() {
 	}
 	if al.eventBus != nil {
 		al.eventBus.Close()
+	}
+
+	// SEC-28: Stop the exec SSRF proxy (idle auto-stop may have already
+	// stopped it, but Stop() is idempotent and safe to call either way).
+	if al.execProxy != nil {
+		al.execProxy.Stop()
 	}
 
 	// SEC-15: Log shutdown event and close audit logger.
@@ -3321,6 +3399,50 @@ turnLoop:
 			}
 
 			contentForLLM := toolResult.ContentForLLM()
+
+			// SEC-25: Sanitize tool results from untrusted sources (web fetch,
+			// web search, browser output, read_file) before they enter the
+			// LLM's context. Trusted tools (exec, spawn, message, task_*,
+			// file writes, etc.) are NEVER sanitized because their output is
+			// either user-authored or produced by a peer agent inside the
+			// same trust boundary.
+			//
+			// Order of operations: prompt guard FIRST, sensitive-data filter
+			// SECOND. Reversing the order would let an injection payload
+			// that mentions a secret pattern be partially redacted, leaving
+			// the injection prefix intact and feeding it to the LLM.
+			if al.promptGuard != nil && isUntrustedToolResult(toolName) {
+				original := contentForLLM
+				contentForLLM = al.promptGuard.Sanitize(contentForLLM, false)
+				// Log every actual mutation to the operator stream AND to the
+				// audit log (when enabled). Mutation is the signal the security
+				// team cares about; logging no-op passes would drown real
+				// events. The operator-stream log is unconditional so that
+				// disabling audit logging does NOT hide prompt-guard rewrites.
+				if contentForLLM != original {
+					details := map[string]any{
+						"action":          "prompt_guard_sanitise",
+						"strictness":      string(al.promptGuard.Strictness()),
+						"original_bytes":  len(original),
+						"sanitised_bytes": len(contentForLLM),
+						"tool":            toolName,
+						"agent_id":        ts.agent.ID,
+					}
+					logger.InfoCF("agent", "prompt guard sanitised tool result", details)
+					if al.auditLogger != nil {
+						if err := al.auditLogger.Log(&audit.Entry{
+							Event:    audit.EventPolicyEval,
+							Decision: audit.DecisionAllow,
+							AgentID:  ts.agent.ID,
+							Tool:     toolName,
+							Details:  details,
+						}); err != nil {
+							logger.WarnCF("agent", "failed to write prompt_guard audit entry",
+								map[string]any{"error": err.Error(), "tool": toolName})
+						}
+					}
+				}
+			}
 
 			// Filter sensitive data (API keys, tokens, secrets) before sending to LLM
 			if al.cfg.Tools.IsFilterSensitiveDataEnabled() {

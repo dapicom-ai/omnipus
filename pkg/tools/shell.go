@@ -46,6 +46,19 @@ type ExecSandboxBackend interface {
 	ApplyToCmd(cmd *exec.Cmd, policy sandbox.SandboxPolicy) error
 }
 
+// ExecChildProxy optionally routes a child process's HTTP(S) traffic through a
+// loopback SSRF proxy (SEC-28). Implemented by security.ExecProxy. The
+// interface is intentionally narrow so shell.go depends only on the two
+// methods it actually calls.
+//
+// PrepareCmd must be called before cmd.Start() and must be paired with exactly
+// one CmdDone() call once the process has exited so the proxy's active-cmd
+// counter stays balanced and its idle-shutdown logic can fire.
+type ExecChildProxy interface {
+	PrepareCmd(cmd *exec.Cmd)
+	CmdDone()
+}
+
 // ExecToolDeps bundles optional Wave 2 security dependencies for ExecTool.
 // All fields are optional — a nil PolicyAuditor disables binary allowlist
 // enforcement (useful when the policy layer is not configured), and a nil
@@ -66,6 +79,10 @@ type ExecToolDeps struct {
 	PolicyAuditor  ExecPolicyAuditor
 	SandboxBackend ExecSandboxBackend
 	SandboxPolicy  sandbox.SandboxPolicy
+	// ExecProxy optionally routes child-process HTTP(S) traffic through a
+	// loopback SSRF proxy (SEC-28). Nil disables proxy injection — the child
+	// receives no HTTP_PROXY env vars and traffic flows directly to the network.
+	ExecProxy ExecChildProxy
 }
 
 var (
@@ -101,6 +118,10 @@ type ExecTool struct {
 	policyAuditor  ExecPolicyAuditor
 	sandboxBackend ExecSandboxBackend
 	sandboxPolicy  sandbox.SandboxPolicy
+	// execProxy is the SEC-28 SSRF proxy for child processes. Nil = disabled.
+	// When non-nil, PrepareCmd injects HTTP_PROXY/HTTPS_PROXY env vars before
+	// Start() and CmdDone() is called exactly once after cmd.Wait() returns.
+	execProxy ExecChildProxy
 }
 
 var (
@@ -194,6 +215,7 @@ func NewExecToolWithDeps(
 	tool.policyAuditor = deps.PolicyAuditor
 	tool.sandboxBackend = deps.SandboxBackend
 	tool.sandboxPolicy = deps.SandboxPolicy
+	tool.execProxy = deps.ExecProxy
 	return tool, nil
 }
 
@@ -515,6 +537,16 @@ func (t *ExecTool) runSync(ctx context.Context, command, cwd string) *ToolResult
 		return ErrorResult(err.Error())
 	}
 
+	// SEC-28: Route child-process HTTP(S) traffic through the loopback SSRF
+	// proxy. PrepareCmd must run AFTER applySandboxToCmd so the sandbox env
+	// setup does not clobber the proxy vars, and BEFORE Start() so the child
+	// inherits them. CmdDone() balances the proxy's active-cmd counter once
+	// cmd.Wait() returns, regardless of exit path (success, error, timeout).
+	if t.execProxy != nil {
+		t.execProxy.PrepareCmd(cmd)
+		defer t.execProxy.CmdDone()
+	}
+
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -679,7 +711,26 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 		return ErrorResult(err.Error())
 	}
 
+	// SEC-28: Route child-process HTTP(S) traffic through the loopback SSRF
+	// proxy. Unlike runSync we cannot defer CmdDone() here because the command
+	// runs asynchronously; the paired CmdDone() call is made from the wait
+	// goroutine below (one for PTY mode, one for non-PTY mode). We use
+	// proxyActive to make the counter increment conditional on PrepareCmd
+	// actually having been called, and to avoid a double-decrement if Start()
+	// fails after PrepareCmd.
+	proxyActive := false
+	if t.execProxy != nil {
+		t.execProxy.PrepareCmd(cmd)
+		proxyActive = true
+	}
+
 	if err := cmd.Start(); err != nil {
+		// Start failed after PrepareCmd: balance the counter immediately so
+		// the proxy's idle watcher can still shut it down.
+		if proxyActive {
+			t.execProxy.CmdDone()
+			proxyActive = false
+		}
 		if session.ptyMaster != nil {
 			session.ptyMaster.Close()
 		}
@@ -703,6 +754,12 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 	if session.PTY && session.ptyMaster != nil {
 		go func() {
 			waitErr := cmd.Wait() // Wait for process to exit
+			// SEC-28: Balance the proxy's active-cmd counter. CmdDone()
+			// must run after cmd.Wait() (not before Start) so the child's
+			// network lifetime is fully covered by the proxy.
+			if proxyActive {
+				t.execProxy.CmdDone()
+			}
 			session.mu.Lock()
 			if cmd.ProcessState != nil {
 				session.ExitCode = cmd.ProcessState.ExitCode()
@@ -781,6 +838,11 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 				stdinWriter.Close()
 			}
 			waitErr := cmd.Wait()
+			// SEC-28: Balance the proxy's active-cmd counter after the
+			// process has fully exited and its pipes have drained.
+			if proxyActive {
+				t.execProxy.CmdDone()
+			}
 			session.mu.Lock()
 			if cmd.ProcessState != nil {
 				session.ExitCode = cmd.ProcessState.ExitCode()

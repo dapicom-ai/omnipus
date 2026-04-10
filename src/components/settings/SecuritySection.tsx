@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { AuditLogViewer } from './AuditLogViewer'
 import { ExecAllowlistSection } from './ExecAllowlistSection'
+import { PromptGuardSection } from './PromptGuardSection'
+import { ExecProxyStatusCard } from './ExecProxyStatusCard'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { FloppyDisk, Plus, Trash, Key } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
@@ -45,7 +47,6 @@ export function SecuritySection() {
 
   const [policyMode, setPolicyMode] = useState<'allow' | 'deny'>('deny')
   const [execApproval, setExecApproval] = useState<'auto' | 'ask' | 'deny'>('ask')
-  const [injectionLevel, setInjectionLevel] = useState<'off' | 'low' | 'medium' | 'high'>('medium')
   const [dailyCostCap, setDailyCostCap] = useState('')
   const [agentLlmCallsPerHour, setAgentLlmCallsPerHour] = useState('')
   const [agentToolCallsPerMin, setAgentToolCallsPerMin] = useState('')
@@ -67,7 +68,6 @@ export function SecuritySection() {
     if (isDirtyRef.current) return
     setPolicyMode(config.security.policy_mode)
     setExecApproval(config.security.exec_approval)
-    setInjectionLevel(config.security.prompt_injection_level)
     setDailyCostCap(config.security.daily_cost_cap?.toString() ?? '')
     setAgentLlmCallsPerHour(config.security.rate_limits.max_agent_llm_calls_per_hour?.toString() ?? '')
     setAgentToolCallsPerMin(config.security.rate_limits.max_agent_tool_calls_per_minute?.toString() ?? '')
@@ -82,7 +82,6 @@ export function SecuritySection() {
         security: {
           policy_mode: policyMode,
           exec_approval: execApproval,
-          prompt_injection_level: injectionLevel,
           daily_cost_cap: dailyCostCap ? parseFloat(dailyCostCap) : undefined,
           exec_timeout_seconds: execTimeoutSecs ? parseInt(execTimeoutSecs, 10) : undefined,
           max_background_seconds: maxBackgroundSecs ? parseInt(maxBackgroundSecs, 10) : undefined,
@@ -197,29 +196,8 @@ export function SecuritySection() {
         </div>
       </section>
 
-      {/* Prompt injection */}
-      <section className="space-y-3">
-        <h3 className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-wider">Prompt Injection Defense</h3>
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-[var(--color-secondary)]">Detection level</p>
-              <p className="text-xs text-[var(--color-muted)]">Sensitivity of prompt injection detection</p>
-            </div>
-            <SmartSelect
-              value={injectionLevel}
-              onValueChange={(v) => { markDirty(); setInjectionLevel(v as typeof injectionLevel) }}
-              triggerClassName="w-[120px] h-8 text-xs"
-              items={[
-                { value: 'off', label: 'Off' },
-                { value: 'low', label: 'Low' },
-                { value: 'medium', label: 'Medium' },
-                { value: 'high', label: 'High' },
-              ]}
-            />
-          </div>
-        </div>
-      </section>
+      {/* Prompt Injection Defense — dedicated section with per-level explanations */}
+      <PromptGuardSection />
 
       {/* Rate limits & cost */}
       <section className="space-y-3">
@@ -383,6 +361,10 @@ export function SecuritySection() {
       {/* ── Exec Binary Allowlist ──────────────────────────── */}
       <Separator className="my-6" />
       <ExecAllowlistSection />
+
+      {/* ── Exec HTTP Proxy Status ─────────────────────────── */}
+      <Separator className="my-6" />
+      <ExecProxyStatusCard />
 
       {/* ── Audit Log ─────────────────────────────────────── */}
       <Separator className="my-6" />

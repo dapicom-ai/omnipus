@@ -41,8 +41,16 @@ export function ExecAllowlistSection(): React.ReactElement {
       setIsDirty(false)
       setNewPattern('')
       setAddError('')
-      setRestartRequired(Boolean(serverResp.restart_required))
-      queryClient.invalidateQueries({ queryKey: ['exec-allowlist'] })
+      // restartRequired is sticky: only upgrade, never downgrade. The GET
+      // endpoint returns restart_required=false which would otherwise
+      // clobber the badge on the next refetch.
+      if (serverResp.restart_required) {
+        setRestartRequired(true)
+      }
+      // Seed the cache with the mutation response rather than invalidating;
+      // invalidation triggers a GET that returns restart_required=false and
+      // races with our local state.
+      queryClient.setQueryData(['exec-allowlist'], serverResp)
       addToast({
         message: serverResp.restart_required
           ? 'Allowlist saved — restart Omnipus for changes to take effect'

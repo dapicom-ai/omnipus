@@ -40,9 +40,13 @@ func (t *DoctorRunTool) Execute(_ context.Context, _ map[string]any) *tools.Tool
 	checksFailed := 0
 
 	// Check exec egress via the existing security.CheckExecEgress function.
+	// ExecProxyEnabled reflects the cfg.Tools.Exec.EnableProxy flag (SEC-28
+	// wiring, Wave 3). The agent loop starts/stops the proxy based on this
+	// field; diagnostics read the same field so the doctor output matches
+	// the enforcement state the operator configured.
 	execCfg := security.DiagnosticConfig{
 		ExecToolEnabled:     t.deps.Cfg.Tools.IsToolEnabled("exec"),
-		ExecProxyEnabled:    false, // TODO(exec-proxy): Wire when exec proxy is implemented. Currently returns stub data.
+		ExecProxyEnabled:    t.deps.Cfg.Tools.Exec.EnableProxy,
 		ExecAllowedBinaries: t.deps.Cfg.Tools.Exec.AllowedBinaries,
 	}
 	for _, w := range security.CheckExecEgress(execCfg) {

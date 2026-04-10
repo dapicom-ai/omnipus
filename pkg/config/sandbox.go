@@ -47,4 +47,10 @@ type OmnipusSandboxConfig struct {
 	// Valid values: SkillTrustBlockUnverified, SkillTrustWarnUnverified (default), SkillTrustAllowAll.
 	// SkillTrustAllowAll disables hash verification and triggers an omnipus doctor warning.
 	SkillTrust SkillTrustLevel `json:"skill_trust,omitempty"`
+
+	// PromptInjectionLevel controls how aggressively the prompt guard
+	// sanitizes untrusted tool results (SEC-25). Valid: "low", "medium"
+	// (default), "high". Affects web_search, web_fetch, browser_*, read_file
+	// results before they enter the LLM's context.
+	PromptInjectionLevel string `json:"prompt_injection_level,omitempty"`
 }

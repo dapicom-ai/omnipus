@@ -204,7 +204,10 @@ export interface Config {
   security: {
     policy_mode: 'allow' | 'deny'
     exec_approval: 'auto' | 'ask' | 'deny'
-    prompt_injection_level: 'off' | 'low' | 'medium' | 'high'
+    // Prompt guard strictness is owned by the dedicated /security/prompt-guard
+    // endpoint since Wave 3. This field is still populated on read for
+    // backward compatibility but must NOT be sent on updateConfig calls.
+    prompt_injection_level?: 'off' | 'low' | 'medium' | 'high'
     daily_cost_cap?: number
     exec_timeout_seconds?: number
     max_background_seconds?: number
@@ -808,4 +811,36 @@ export function updateExecAllowlist(patterns: string[]): Promise<ExecAllowlist> 
     method: 'PUT',
     body: JSON.stringify({ allowed_binaries: patterns }),
   })
+}
+
+// ── Prompt Guard ──────────────────────────────────────────────────────────────
+
+export type PromptGuardStrictness = 'low' | 'medium' | 'high'
+
+export interface PromptGuardConfig {
+  strictness: PromptGuardStrictness
+  restart_required?: boolean
+}
+
+export function fetchPromptGuard(): Promise<PromptGuardConfig> {
+  return request<PromptGuardConfig>('/security/prompt-guard')
+}
+
+export function updatePromptGuard(strictness: PromptGuardStrictness): Promise<PromptGuardConfig> {
+  return request<PromptGuardConfig>('/security/prompt-guard', {
+    method: 'PUT',
+    body: JSON.stringify({ strictness }),
+  })
+}
+
+// ── Exec Proxy ────────────────────────────────────────────────────────────────
+
+export interface ExecProxyStatus {
+  running: boolean
+  enabled: boolean
+  address?: string
+}
+
+export function fetchExecProxyStatus(): Promise<ExecProxyStatus> {
+  return request<ExecProxyStatus>('/security/exec-proxy-status')
 }
