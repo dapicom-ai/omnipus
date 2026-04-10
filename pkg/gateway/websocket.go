@@ -65,6 +65,12 @@ type wsServerFrame struct {
 	Fingerprint string `json:"fingerprint,omitempty"`
 	PairingCode string `json:"pairing_code,omitempty"`
 	DeviceName  string `json:"device_name,omitempty"`
+	// rate_limit fields (SEC-26)
+	Scope             string  `json:"scope,omitempty"`
+	Resource          string  `json:"resource,omitempty"`
+	PolicyRule        string  `json:"policy_rule,omitempty"`
+	RetryAfterSeconds float64 `json:"retry_after_seconds,omitempty"`
+	AgentID           string  `json:"agent_id,omitempty"`
 }
 
 // WSHandler handles the /api/v1/chat/ws WebSocket endpoint for bi-directional
@@ -859,6 +865,27 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 				Tool:       p.Tool,
 				Status:     status,
 				DurationMs: p.Duration.Milliseconds(),
+			})
+		case agent.EventKindRateLimit:
+			// SEC-26: forward rate-limit denials to the browser so the chat UI
+			// can display an inline indicator. Global-scope events (daily cost
+			// cap) are broadcast to every connection since they are not tied
+			// to a specific chatID.
+			p, ok := evt.Payload.(agent.RateLimitPayload)
+			if !ok {
+				continue
+			}
+			if p.Scope != "global" && !matchesChatID(p.ChatID) {
+				continue
+			}
+			sendConnFrame(wc, wsServerFrame{
+				Type:              "rate_limit",
+				Scope:             p.Scope,
+				Resource:          p.Resource,
+				PolicyRule:        p.PolicyRule,
+				RetryAfterSeconds: p.RetryAfterSeconds,
+				AgentID:           p.AgentID,
+				Tool:              p.Tool,
 			})
 		}
 	}

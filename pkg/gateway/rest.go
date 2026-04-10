@@ -1617,6 +1617,8 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	// Wave 3 security endpoints (SEC-25, SEC-28).
 	cm.RegisterHTTPHandler("/api/v1/security/exec-proxy-status", a.withAuth(a.HandleExecProxyStatus))
 	cm.RegisterHTTPHandler("/api/v1/security/prompt-guard", a.withAuth(a.HandlePromptGuard))
+	// Wave 4 security endpoints (SEC-26).
+	cm.RegisterHTTPHandler("/api/v1/security/rate-limits", a.withAuth(a.HandleRateLimits))
 	cm.RegisterHTTPHandler("/api/v1/credentials", a.withAuth(a.HandleCredentials))
 	cm.RegisterHTTPHandler("/api/v1/credentials/", a.withAuth(a.HandleCredentials))
 	cm.RegisterHTTPHandler("/api/v1/backup", a.withAuth(a.HandleCreateBackup))

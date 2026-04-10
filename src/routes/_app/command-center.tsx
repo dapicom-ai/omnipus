@@ -7,6 +7,7 @@ import { TaskList } from '@/components/command-center/TaskList'
 import { TaskDetailPanel } from '@/components/command-center/TaskDetailPanel'
 import { AgentSummarySection } from '@/components/command-center/AgentSummarySection'
 import { ActivityFeed } from '@/components/command-center/ActivityFeed'
+import { RateLimitStatusCard } from '@/components/command-center/RateLimitStatusCard'
 import { fetchTasks } from '@/lib/api'
 import type { Task } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -41,7 +42,10 @@ export function CommandCenterScreen() {
       {/* 1. Status bar */}
       <StatusBar />
 
-      {/* 2. Attention section */}
+      {/* 2. Rate limit status */}
+      <RateLimitStatusCard />
+
+      {/* 3. Attention section */}
       <AttentionSection />
 
       {/* Tasks error */}
@@ -51,10 +55,10 @@ export function CommandCenterScreen() {
         </div>
       )}
 
-      {/* 3. Agent summary — compact card row */}
+      {/* 4. Agent summary — compact card row */}
       <AgentSummarySection />
 
-      {/* 4. Filter tabs */}
+      {/* 5. Filter tabs */}
       <div className="flex items-center gap-0.5 px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] overflow-x-auto">
         {FILTER_TABS.map((tab) => {
           const count = countFor(tab.value)
@@ -89,13 +93,13 @@ export function CommandCenterScreen() {
         })}
       </div>
 
-      {/* 5. Task list */}
+      {/* 6. Task list */}
       <TaskList
         statusFilter={statusFilter}
         onTaskSelect={setSelectedTask}
       />
 
-      {/* 6. Activity feed — collapsed by default, at the bottom */}
+      {/* 7. Activity feed — collapsed by default, at the bottom */}
       <div className="border-t border-[var(--color-border)]">
         <ActivityFeed />
       </div>

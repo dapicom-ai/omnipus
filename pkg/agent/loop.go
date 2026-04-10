@@ -107,27 +107,36 @@ type AgentLoop struct {
 	// bind failure this field is nil and exec children run without proxy env
 	// vars (degraded mode — LIM-02).
 	execProxy *security.ExecProxy
+
+	// Wave 4: Per-agent rate limiting and global daily cost cap (SEC-26).
+	// rateLimiter manages sliding-window counters; costTracker persists the
+	// daily cost accumulator across restarts. Both are always non-nil after
+	// NewAgentLoop — the registry exists even when no limits are configured
+	// so it can record costs for observability. The per-call sites check
+	// cfg.Sandbox.RateLimits.* > 0 to decide whether to enforce.
+	rateLimiter *security.RateLimiterRegistry
+	costTracker *security.CostTracker
 }
 
 // processOptions configures how a message is processed
 type processOptions struct {
-	SessionKey              string              // Session identifier for history/context
-	Channel                 string              // Target channel for tool execution
-	ChatID                  string              // Target chat ID for tool execution
-	SenderID                string              // Current sender ID for dynamic context
-	SenderDisplayName       string              // Current sender display name for dynamic context
-	UserMessage             string              // User message content (may include prefix)
-	ForcedSkills            []string            // Skills explicitly requested for this message
-	SystemPromptOverride    string              // Override the default system prompt (Used by SubTurns)
-	Media                   []string            // media:// refs from inbound message
-	InitialSteeringMessages []providers.Message // Steering messages from refactor/agent
-	DefaultResponse         string              // Response when LLM returns empty
-	EnableSummary           bool                // Whether to trigger summarization
-	SendResponse            bool                // Whether to send response via bus
-	SuppressToolFeedback    bool                // Whether to suppress inline tool feedback messages
-	NoHistory               bool                // If true, don't load session history (for heartbeat)
-	SkipInitialSteeringPoll bool                // If true, skip the steering poll at loop start (used by Continue)
-	TranscriptSessionID     string              // Session ID for transcript tool call recording (empty = disabled)
+	SessionKey              string                // Session identifier for history/context
+	Channel                 string                // Target channel for tool execution
+	ChatID                  string                // Target chat ID for tool execution
+	SenderID                string                // Current sender ID for dynamic context
+	SenderDisplayName       string                // Current sender display name for dynamic context
+	UserMessage             string                // User message content (may include prefix)
+	ForcedSkills            []string              // Skills explicitly requested for this message
+	SystemPromptOverride    string                // Override the default system prompt (Used by SubTurns)
+	Media                   []string              // media:// refs from inbound message
+	InitialSteeringMessages []providers.Message   // Steering messages from refactor/agent
+	DefaultResponse         string                // Response when LLM returns empty
+	EnableSummary           bool                  // Whether to trigger summarization
+	SendResponse            bool                  // Whether to send response via bus
+	SuppressToolFeedback    bool                  // Whether to suppress inline tool feedback messages
+	NoHistory               bool                  // If true, don't load session history (for heartbeat)
+	SkipInitialSteeringPoll bool                  // If true, skip the steering poll at loop start (used by Continue)
+	TranscriptSessionID     string                // Session ID for transcript tool call recording (empty = disabled)
 	TranscriptStore         *session.UnifiedStore // Store for transcript tool call recording (nil = disabled)
 }
 
@@ -301,6 +310,21 @@ func NewAgentLoop(
 		}
 	}
 
+	// SEC-26: Initialize rate limiter registry and persistent cost tracker.
+	// The registry always exists so per-agent windows can be created even when
+	// no cap is configured; SetDailyCostCap(0) disables cost-cap enforcement.
+	al.rateLimiter = security.NewRateLimiterRegistry()
+	al.rateLimiter.SetDailyCostCap(cfg.Sandbox.RateLimits.DailyCostCapUSD)
+	costPath := filepath.Join(homePath, "system", "cost.json")
+	al.costTracker = security.NewCostTracker(costPath)
+	al.costTracker.LoadIntoRegistry(al.rateLimiter)
+	logger.InfoCF("agent", "Rate limiter initialized",
+		map[string]any{
+			"daily_cost_cap_usd":              cfg.Sandbox.RateLimits.DailyCostCapUSD,
+			"max_agent_llm_calls_per_hour":    cfg.Sandbox.RateLimits.MaxAgentLLMCallsPerHour,
+			"max_agent_tool_calls_per_minute": cfg.Sandbox.RateLimits.MaxAgentToolCallsPerMinute,
+		})
+
 	// Register shared tools to all agents (now that al is created)
 	registerSharedTools(al, cfg, msgBus, registry, provider)
 
@@ -339,6 +363,54 @@ func (al *AgentLoop) PromptGuard() *security.PromptGuard {
 		return nil
 	}
 	return al.promptGuard
+}
+
+// RateLimiter returns the SEC-26 rate limiter registry. Always non-nil after
+// NewAgentLoop. Used by runTurn for per-agent limit checks and by gateway
+// handlers that report the current rate limit / cost status.
+func (al *AgentLoop) RateLimiter() *security.RateLimiterRegistry {
+	if al == nil {
+		return nil
+	}
+	return al.rateLimiter
+}
+
+// recordRateLimitDenial writes an audit entry and emits a RateLimit event for
+// a denied rate-limit or cost-cap check (SEC-26). Centralising this avoids
+// repeating the same audit + emit boilerplate for each of the three checks
+// (LLM calls, tool calls, global cost cap). extraDetails is merged into the
+// audit entry's Details map under a "limit_type" key and caller-supplied
+// fields. Audit failures are logged at warn level and swallowed — a rate-limit
+// denial must still be reported to the caller even when the audit logger is
+// unhealthy.
+func (al *AgentLoop) recordRateLimitDenial(
+	ts *turnState,
+	limitType string,
+	payload RateLimitPayload,
+	extraDetails map[string]any,
+) {
+	if al.auditLogger != nil {
+		details := map[string]any{"limit_type": limitType}
+		for k, v := range extraDetails {
+			details[k] = v
+		}
+		if err := al.auditLogger.Log(&audit.Entry{
+			Event:      audit.EventRateLimit,
+			Decision:   audit.DecisionDeny,
+			AgentID:    ts.agent.ID,
+			Tool:       payload.Tool,
+			PolicyRule: payload.PolicyRule,
+			Details:    details,
+		}); err != nil {
+			logger.WarnCF("agent", "failed to write rate-limit audit entry",
+				map[string]any{"limit_type": limitType, "error": err.Error()})
+		}
+	}
+	al.emitEvent(
+		EventKindRateLimit,
+		ts.eventMeta("runTurn", "turn.rate_limit"),
+		payload,
+	)
 }
 
 // wireExecToolDeps replaces each agent's exec tool with one constructed via
@@ -571,9 +643,9 @@ func registerSharedTools(
 					// Fallback: If no turnState exists in context, create an isolated ad-hoc root turn state
 					// so that the tool can still function outside of an agent loop (e.g. tests, raw invocations).
 					// M2: log a warning when no real turnState is in context — this usually
-				// means spawn was called outside of an agent loop (e.g. tests or raw
-				// invocations). The ad-hoc state is functional but has no session.
-				logger.WarnCF("agent", "Spawn callback using ad-hoc turnState: no parent turnState in context", nil)
+					// means spawn was called outside of an agent loop (e.g. tests or raw
+					// invocations). The ad-hoc state is functional but has no session.
+					logger.WarnCF("agent", "Spawn callback using ad-hoc turnState: no parent turnState in context", nil)
 					parentTS = &turnState{
 						ctx:            ctx,
 						turnID:         "adhoc-root",
@@ -1078,6 +1150,21 @@ func (al *AgentLoop) Close() {
 	// stopped it, but Stop() is idempotent and safe to call either way).
 	if al.execProxy != nil {
 		al.execProxy.Stop()
+	}
+
+	// SEC-26: Persist the accumulated daily cost so the next startup can
+	// restore it via LoadIntoRegistry, preventing double-counting on restarts.
+	// A save failure here means the cap will under-count after the next
+	// restart — worth an Error-level log plus the daily total so operators
+	// can reconcile manually.
+	if al.costTracker != nil && al.rateLimiter != nil {
+		if err := al.costTracker.SaveFromRegistry(al.rateLimiter); err != nil {
+			logger.ErrorCF("agent", "SEC-26: failed to persist daily cost on shutdown — cap may under-count after restart",
+				map[string]any{
+					"error":          err.Error(),
+					"daily_cost_usd": al.rateLimiter.GetDailyCost(),
+				})
+		}
 	}
 
 	// SEC-15: Log shutdown event and close audit logger.
@@ -2336,16 +2423,74 @@ turnLoop:
 		if hardCeiling := 2 * ts.agent.MaxIterations; iteration > hardCeiling {
 			logger.WarnCF("agent", "Turn exceeded hard iteration ceiling, breaking unconditionally",
 				map[string]any{
-					"agent_id":    ts.agentID,
-					"turn_id":     ts.turnID,
-					"iteration":   iteration,
-					"max_iter":    ts.agent.MaxIterations,
+					"agent_id":     ts.agentID,
+					"turn_id":      ts.turnID,
+					"iteration":    iteration,
+					"max_iter":     ts.agent.MaxIterations,
 					"hard_ceiling": hardCeiling,
 				})
 			break turnLoop
 		}
 
 		ts.setPhase(TurnPhaseRunning)
+
+		// SEC-26: Per-agent LLM call rate limit check. Runs once per turn
+		// iteration, before the actual LLM call. The system agent is exempt.
+		if al.rateLimiter != nil && cfg.Sandbox.RateLimits.MaxAgentLLMCallsPerHour > 0 &&
+			!security.IsSystemAgent(ts.agent.ID) {
+			window := al.rateLimiter.GetOrCreate(
+				"agent:"+ts.agent.ID+":llm_call",
+				cfg.Sandbox.RateLimits.MaxAgentLLMCallsPerHour,
+				time.Hour,
+				security.ScopeAgent,
+				ts.agent.ID,
+				"llm_call",
+			)
+			if result := window.Allow(); !result.Allowed {
+				al.recordRateLimitDenial(
+					ts,
+					"agent_llm_calls_per_hour",
+					RateLimitPayload{
+						Scope:             string(security.ScopeAgent),
+						Resource:          "llm_call",
+						PolicyRule:        result.PolicyRule,
+						RetryAfterSeconds: result.RetryAfterSeconds,
+						AgentID:           ts.agent.ID,
+						ChatID:            ts.chatID,
+					},
+					map[string]any{"retry_after_seconds": result.RetryAfterSeconds},
+				)
+				turnStatus = TurnEndStatusError
+				return turnResult{}, fmt.Errorf("rate limit: %s (retry after %.0fs)",
+					result.PolicyRule, result.RetryAfterSeconds)
+			}
+		}
+
+		// SEC-26: Global daily cost cap pre-check. Deny if the accumulated cost
+		// for today already meets or exceeds the cap. The system agent is exempt.
+		if al.rateLimiter != nil && cfg.Sandbox.RateLimits.DailyCostCapUSD > 0 &&
+			!security.IsSystemAgent(ts.agent.ID) {
+			if currentCost := al.rateLimiter.GetDailyCost(); currentCost >= cfg.Sandbox.RateLimits.DailyCostCapUSD {
+				capRule := fmt.Sprintf("global daily cost cap exceeded ($%.2f)", cfg.Sandbox.RateLimits.DailyCostCapUSD)
+				al.recordRateLimitDenial(
+					ts,
+					"daily_cost_cap_usd",
+					RateLimitPayload{
+						Scope:      string(security.ScopeGlobal),
+						Resource:   "daily_cost_usd",
+						PolicyRule: capRule,
+						AgentID:    ts.agent.ID,
+						ChatID:     ts.chatID,
+					},
+					map[string]any{
+						"daily_cost_usd": currentCost,
+						"daily_cost_cap": cfg.Sandbox.RateLimits.DailyCostCapUSD,
+					},
+				)
+				turnStatus = TurnEndStatusError
+				return turnResult{}, fmt.Errorf("rate limit: %s", capRule)
+			}
+		}
 
 		if iteration > 1 {
 			if steerMsgs := al.dequeueSteeringMessagesForScope(ts.sessionKey); len(steerMsgs) > 0 {
@@ -2942,6 +3087,30 @@ turnLoop:
 		}
 		logger.DebugCF("agent", "LLM response", llmResponseFields)
 
+		// SEC-26: Record the cost of this completed LLM call in the daily
+		// accumulator. We MUST use RecordSpend (not CheckGlobalCostCap) here:
+		// the call already happened, so the spend must be recorded even if it
+		// pushes the total past the cap — the next turn's pre-check will deny
+		// further calls. CheckGlobalCostCap silently skipped the increment on
+		// denials, which caused the accumulator to stick below the cap and let
+		// every subsequent call sneak through.
+		if al.rateLimiter != nil && response != nil && response.Usage != nil {
+			callCost := estimateLLMCallCost(llmModel, response.Usage)
+			al.rateLimiter.RecordSpend(callCost, ts.agent.ID)
+			if al.costTracker != nil {
+				if saveErr := al.costTracker.SaveFromRegistry(al.rateLimiter); saveErr != nil {
+					logger.ErrorCF("agent", "SEC-26: failed to persist daily cost after LLM call — cap may under-count on restart",
+						map[string]any{
+							"error":          saveErr.Error(),
+							"agent_id":       ts.agent.ID,
+							"call_cost_usd":  callCost,
+							"daily_cost_usd": al.rateLimiter.GetDailyCost(),
+							"model":          llmModel,
+						})
+				}
+			}
+		}
+
 		if len(response.ToolCalls) == 0 || gracefulTerminal {
 			responseContent := response.Content
 			if responseContent == "" && response.ReasoningContent != "" {
@@ -3281,6 +3450,62 @@ turnLoop:
 				}); pubErr != nil {
 					logger.ErrorCF("agent", "Failed to publish async tool result; result permanently lost",
 						map[string]any{"tool": asyncToolName, "channel": ts.channel, "error": pubErr.Error()})
+				}
+			}
+
+			// SEC-26: Per-agent tool call rate limit check. The system agent is exempt.
+			if al.rateLimiter != nil && cfg.Sandbox.RateLimits.MaxAgentToolCallsPerMinute > 0 &&
+				!security.IsSystemAgent(ts.agent.ID) {
+				toolWindow := al.rateLimiter.GetOrCreate(
+					"agent:"+ts.agent.ID+":tool_call",
+					cfg.Sandbox.RateLimits.MaxAgentToolCallsPerMinute,
+					time.Minute,
+					security.ScopeAgent,
+					ts.agent.ID,
+					"tool_call",
+				)
+				if toolRLResult := toolWindow.Allow(); !toolRLResult.Allowed {
+					al.recordRateLimitDenial(
+						ts,
+						"agent_tool_calls_per_minute",
+						RateLimitPayload{
+							Scope:             string(security.ScopeAgent),
+							Resource:          "tool_call",
+							PolicyRule:        toolRLResult.PolicyRule,
+							RetryAfterSeconds: toolRLResult.RetryAfterSeconds,
+							AgentID:           ts.agent.ID,
+							ChatID:            ts.chatID,
+							Tool:              toolName,
+						},
+						map[string]any{"retry_after_seconds": toolRLResult.RetryAfterSeconds},
+					)
+					// Soft denial: the tool call is rejected (fail closed — the tool
+					// does not execute) but the denial is surfaced as a tool-result
+					// error rather than aborting the turn, so the LLM can react
+					// (e.g. inform the user, back off). Contrast with the LLM-call
+					// rate limit above, which aborts the turn entirely.
+					errMsg := fmt.Sprintf("Rate limited: %s (retry after %.0fs)",
+						toolRLResult.PolicyRule, toolRLResult.RetryAfterSeconds)
+					deniedMsg := providers.Message{
+						Role:       "tool",
+						Content:    errMsg,
+						ToolCallID: tc.ID,
+					}
+					messages = append(messages, deniedMsg)
+					if !ts.opts.NoHistory {
+						ts.agent.Sessions.AddFullMessage(ts.sessionKey, deniedMsg)
+						ts.recordPersistedMessage(deniedMsg)
+					}
+					allResponsesHandled = false
+					al.emitEvent(
+						EventKindToolExecSkipped,
+						ts.eventMeta("runTurn", "turn.tool.skipped"),
+						ToolExecSkippedPayload{
+							Tool:   toolName,
+							Reason: errMsg,
+						},
+					)
+					continue
 				}
 			}
 
@@ -4579,4 +4804,66 @@ func extractProvider(registry *AgentRegistry) (providers.LLMProvider, bool) {
 		return nil, false
 	}
 	return defaultAgent.Provider, true
+}
+
+// llmRate holds approximate per-1K-token pricing for a model family.
+type llmRate struct {
+	inputPer1K, outputPer1K float64
+}
+
+// llmRateFallback is used when no prefix in llmRateTable matches. It is
+// deliberately conservative so unknown models over-count rather than silently
+// escape the cost cap.
+var llmRateFallback = llmRate{inputPer1K: 0.003, outputPer1K: 0.015}
+
+// llmRateTable is an ordered prefix lookup — first match wins. Longer/more
+// specific prefixes must appear before shorter ones. Rates are approximations
+// for budgeting only and will not match provider invoices exactly.
+var llmRateTable = []struct {
+	prefix string
+	rate   llmRate
+}{
+	// Anthropic Claude 3.x
+	{"claude-3-5-haiku", llmRate{0.0008, 0.004}},
+	{"claude-3-5-sonnet", llmRate{0.003, 0.015}},
+	{"claude-3-haiku", llmRate{0.00025, 0.00125}},
+	{"claude-3-sonnet", llmRate{0.003, 0.015}},
+	{"claude-3-opus", llmRate{0.015, 0.075}},
+	// Anthropic Claude 4.x
+	{"claude-opus-4", llmRate{0.015, 0.075}},
+	{"claude-sonnet-4", llmRate{0.003, 0.015}},
+	{"claude-haiku-4", llmRate{0.0008, 0.004}},
+	// OpenAI GPT-4 family
+	{"gpt-4o-mini", llmRate{0.00015, 0.0006}},
+	{"gpt-4o", llmRate{0.005, 0.015}},
+	{"gpt-4-turbo", llmRate{0.01, 0.03}},
+	{"gpt-4", llmRate{0.03, 0.06}},
+	{"gpt-3.5-turbo", llmRate{0.0005, 0.0015}},
+	// Google Gemini
+	{"gemini-1.5-flash", llmRate{0.000075, 0.0003}},
+	{"gemini-1.5-pro", llmRate{0.00125, 0.005}},
+	{"gemini-2.0-flash", llmRate{0.0001, 0.0004}},
+	{"gemini-2.5-pro", llmRate{0.00125, 0.01}},
+}
+
+// estimateLLMCallCost returns a conservative cost estimate in USD for a single
+// LLM call given the model name and token usage (SEC-26). Unknown models fall
+// back to llmRateFallback so the cost accumulator never under-counts.
+func estimateLLMCallCost(model string, usage *providers.UsageInfo) float64 {
+	if usage == nil {
+		return 0
+	}
+
+	lowerModel := strings.ToLower(model)
+	rate := llmRateFallback
+	for _, entry := range llmRateTable {
+		if strings.HasPrefix(lowerModel, entry.prefix) {
+			rate = entry.rate
+			break
+		}
+	}
+
+	inputCost := float64(usage.PromptTokens) / 1000.0 * rate.inputPer1K
+	outputCost := float64(usage.CompletionTokens) / 1000.0 * rate.outputPer1K
+	return inputCost + outputCost
 }

@@ -844,3 +844,17 @@ export interface ExecProxyStatus {
 export function fetchExecProxyStatus(): Promise<ExecProxyStatus> {
   return request<ExecProxyStatus>('/security/exec-proxy-status')
 }
+
+// ── Rate Limits ───────────────────────────────────────────────────────────────
+
+export interface RateLimitStatus {
+  enabled: boolean
+  daily_cost_usd: number
+  daily_cost_cap: number
+  max_agent_llm_calls_per_hour: number
+  max_agent_tool_calls_per_minute: number
+}
+
+export function fetchRateLimits(): Promise<RateLimitStatus> {
+  return request<RateLimitStatus>('/security/rate-limits')
+}

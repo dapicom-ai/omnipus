@@ -5,11 +5,20 @@ import { useConnectionStore } from '@/store/connection'
 import { useSessionStore, registerChatResetSession } from '@/store/session'
 import { queryClient } from '@/lib/queryClient'
 import type { Message, ToolCall } from '@/lib/api'
-import type { WsReceiveFrame, WsExecApprovalRequestFrame, WsReplayMessageFrame } from '@/lib/ws'
+import type { WsReceiveFrame, WsExecApprovalRequestFrame, WsReplayMessageFrame, WsRateLimitFrame } from '@/lib/ws'
 
 export interface ChatMessage extends Message {
   isStreaming?: boolean
   streamCursor?: boolean
+}
+
+export interface RateLimitEventData {
+  scope: 'agent' | 'channel' | 'global'
+  resource: string
+  policyRule: string
+  retryAfterSeconds: number
+  agentId?: string
+  tool?: string
 }
 
 export interface ExecApprovalRequest {
@@ -47,6 +56,11 @@ interface ChatStore {
   sessionCost: number
   updateSessionStats: (tokens: number, cost: number) => void
 
+  // Rate limit event (set by WS rate_limit frame, auto-cleared after 60s)
+  rateLimitEvent: RateLimitEventData | null
+  setRateLimitEvent: (event: RateLimitEventData) => void
+  clearRateLimitEvent: () => void
+
   // Reset all session-scoped state (called by sessionStore on session switch)
   resetSession: () => void
 
@@ -60,6 +74,11 @@ interface ChatStore {
   handleFrame: (frame: WsReceiveFrame) => void
 }
 
+// Module-scoped handle for the 60s auto-clear timer on rate-limit events.
+// Kept outside the zustand store because it is ephemeral (not state) and must
+// be cancellable across calls without retrieving it through the store.
+let rateLimitClearTimer: ReturnType<typeof setTimeout> | null = null
+
 /** State reset applied whenever switching or attaching to a session. */
 const CLEAN_SESSION_STATE = {
   messages: [] as ChatMessage[],
@@ -70,6 +89,7 @@ const CLEAN_SESSION_STATE = {
   sessionTokens: 0,
   sessionCost: 0,
   isStreaming: false,
+  rateLimitEvent: null as RateLimitEventData | null,
 } as const
 
 export const useChatStore = create<ChatStore>((set, get) => ({
@@ -188,6 +208,37 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   sessionTokens: 0,
   sessionCost: 0,
   updateSessionStats: (tokens, cost) => set({ sessionTokens: tokens, sessionCost: cost }),
+
+  rateLimitEvent: null,
+  setRateLimitEvent: (event) => {
+    // Cancel the previous auto-clear timer if one is pending. Without this,
+    // a burst of rate-limit events would leak setTimeouts; each closure
+    // holds a reference to the old event object until it fires.
+    if (rateLimitClearTimer !== null) {
+      clearTimeout(rateLimitClearTimer)
+      rateLimitClearTimer = null
+    }
+    set({ rateLimitEvent: event })
+    // Auto-clear after 60s so stale banners don't linger. This is a UX cap
+    // independent of `retry_after_seconds` — longer retry windows (hourly
+    // LLM limits, daily cost caps) would leave a banner up for impractical
+    // durations; the underlying limit remains enforced by the backend.
+    rateLimitClearTimer = setTimeout(() => {
+      rateLimitClearTimer = null
+      set((state) => {
+        // Only clear if this is still the same event (avoids clobbering a newer one)
+        if (state.rateLimitEvent === event) return { rateLimitEvent: null }
+        return {}
+      })
+    }, 60_000)
+  },
+  clearRateLimitEvent: () => {
+    if (rateLimitClearTimer !== null) {
+      clearTimeout(rateLimitClearTimer)
+      rateLimitClearTimer = null
+    }
+    set({ rateLimitEvent: null })
+  },
 
   resetSession: () => set(CLEAN_SESSION_STATE),
 
@@ -406,6 +457,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             },
           ],
         }))
+        break
+      }
+
+      case 'rate_limit': {
+        const rlFrame = frame as WsRateLimitFrame
+        get().setRateLimitEvent({
+          scope: rlFrame.scope,
+          resource: rlFrame.resource,
+          policyRule: rlFrame.policy_rule,
+          retryAfterSeconds: rlFrame.retry_after_seconds,
+          agentId: rlFrame.agent_id,
+          tool: rlFrame.tool,
+        })
         break
       }
 

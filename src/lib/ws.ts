@@ -104,6 +104,16 @@ export interface WsReplayMessageFrame {
   role: string
 }
 
+export interface WsRateLimitFrame {
+  type: 'rate_limit'
+  scope: 'agent' | 'channel' | 'global'
+  resource: string
+  policy_rule: string
+  retry_after_seconds: number
+  agent_id?: string
+  tool?: string
+}
+
 export type WsReceiveFrame =
   | WsTokenFrame
   | WsDoneFrame
@@ -113,6 +123,7 @@ export type WsReceiveFrame =
   | WsExecApprovalRequestFrame
   | WsTaskStatusChangedFrame
   | WsReplayMessageFrame
+  | WsRateLimitFrame
 
 function isValidFrame(frame: unknown): frame is WsReceiveFrame {
   if (typeof frame !== 'object' || frame === null) return false
