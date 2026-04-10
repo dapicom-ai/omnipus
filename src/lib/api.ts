@@ -707,17 +707,24 @@ export function fetchAboutInfo(): Promise<AboutInfo> {
 
 // ── Audit Log ─────────────────────────────────────────────────────────────────
 
+export type AuditEventType = 'tool_call' | 'exec' | 'file_op' | 'llm_call' | 'policy_eval' | 'rate_limit' | 'ssrf' | 'startup' | 'shutdown'
+export type AuditDecision = 'allow' | 'deny' | 'error'
+
 export interface AuditEntry {
-  id: string
   timestamp: string
-  action: string
-  actor?: string
-  target?: string
-  result: 'allow' | 'deny' | 'error'
+  event: AuditEventType | (string & {})
+  decision?: AuditDecision | (string & {})
+  agent_id?: string
+  session_id?: string
+  tool?: string
+  command?: string
+  parameters?: Record<string, unknown>
+  policy_rule?: string
+  details?: Record<string, unknown>
 }
 
 export function fetchAuditLog(): Promise<AuditEntry[]> {
-  return request<AuditEntry[]>('/audit')
+  return request<AuditEntry[]>('/audit-log')
 }
 
 // ── User Context (USER.md) ────────────────────────────────────────────────────

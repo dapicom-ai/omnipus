@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/commands"
@@ -27,6 +28,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/constants"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/media"
+	"github.com/dapicom-ai/omnipus/pkg/policy"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/routing"
 	"github.com/dapicom-ai/omnipus/pkg/session"
@@ -76,6 +78,11 @@ type AgentLoop struct {
 	// Task management
 	taskStore    *taskstore.TaskStore
 	taskExecutor *TaskExecutor
+
+	// Security (SEC-15, SEC-17): audit logging and policy evaluation.
+	// Initialized in NewAgentLoop when sandbox.audit_log is enabled.
+	auditLogger   *audit.Logger
+	policyAuditor *policy.PolicyAuditor
 }
 
 // processOptions configures how a message is processed
@@ -155,6 +162,49 @@ func NewAgentLoop(
 	homePath := filepath.Dir(cfg.WorkspacePath())
 	al.taskStore = taskstore.New(filepath.Join(homePath, "tasks"))
 	al.taskExecutor = newTaskExecutor(al, al.taskStore)
+
+	// SEC-15: Initialize structured audit logging and policy evaluation.
+	// Audit directory is ~/.omnipus/system/ (sibling of workspace).
+	if cfg.Sandbox.AuditLog {
+		auditDir := filepath.Join(homePath, "system")
+		auditLogger, auditErr := audit.NewLogger(audit.LoggerConfig{
+			Dir:           auditDir,
+			RetentionDays: 90,
+		})
+		if auditErr != nil {
+			logger.ErrorCF("agent", "Failed to initialize audit logger; audit logging disabled",
+				map[string]any{"error": auditErr.Error(), "dir": auditDir})
+		} else {
+			al.auditLogger = auditLogger
+
+			// Create policy evaluator and wrap with PolicyAuditor (ADR W-3).
+			// The PolicyAuditor auto-logs every policy decision to the audit log.
+			policyEval := policy.NewEvaluator(nil) // deny-by-default when no security config
+			bridge := newAuditBridge(auditLogger)
+			// TODO(wave-2): Wire policyAuditor into ToolCompositor once
+			// ComposeAndRegister is called from the agent loop.
+			al.policyAuditor = policy.NewPolicyAuditor(policyEval, bridge, "")
+
+			// Log startup event.
+			if err := auditLogger.Log(&audit.Entry{
+				Event:    audit.EventStartup,
+				Decision: "allow",
+				Details: map[string]any{
+					"audit_dir": auditDir,
+				},
+			}); err != nil {
+				logger.ErrorCF("agent", "Failed to write audit startup entry — audit logging may be non-functional",
+					map[string]any{"error": err.Error()})
+			}
+
+			// Wire audit logger into all agent tool registries.
+			for _, agentID := range registry.ListAgentIDs() {
+				if agent, ok := registry.GetAgent(agentID); ok {
+					agent.Tools.SetAuditLogger(auditLogger)
+				}
+			}
+		}
+	}
 
 	// Register shared tools to all agents (now that al is created)
 	registerSharedTools(al, cfg, msgBus, registry, provider)
@@ -819,6 +869,21 @@ func (al *AgentLoop) Close() {
 	}
 	if al.eventBus != nil {
 		al.eventBus.Close()
+	}
+
+	// SEC-15: Log shutdown event and close audit logger.
+	if al.auditLogger != nil {
+		if err := al.auditLogger.Log(&audit.Entry{
+			Event:    audit.EventShutdown,
+			Decision: "allow",
+		}); err != nil {
+			logger.WarnCF("agent", "Failed to write audit shutdown entry",
+				map[string]any{"error": err.Error()})
+		}
+		if err := al.auditLogger.Close(); err != nil {
+			logger.ErrorCF("agent", "Failed to close audit logger",
+				map[string]any{"error": err.Error()})
+		}
 	}
 }
 
@@ -1932,6 +1997,8 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 	// Inject turnState and AgentLoop into context so tools (e.g. spawn) can retrieve them.
 	turnCtx = withTurnState(turnCtx, ts)
 	turnCtx = WithAgentLoop(turnCtx, al)
+	// SEC-15: Inject agent ID so audit entries carry the agent identity.
+	turnCtx = tools.WithAgentID(turnCtx, ts.agent.ID)
 
 	al.registerActiveTurn(ts)
 	defer al.clearActiveTurn(ts)

@@ -35,6 +35,13 @@ const (
 	EventShutdown   = "shutdown"
 )
 
+// Decision values for audit entries.
+const (
+	DecisionAllow = "allow"
+	DecisionDeny  = "deny"
+	DecisionError = "error"
+)
+
 // Entry is a single audit log record.
 type Entry struct {
 	Timestamp  time.Time      `json:"timestamp"`

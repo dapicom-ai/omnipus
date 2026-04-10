@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { AuditLogViewer } from './AuditLogViewer'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { FloppyDisk, Plus, Trash, Key } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
@@ -50,6 +51,9 @@ export function SecuritySection() {
   const [execTimeoutSecs, setExecTimeoutSecs] = useState('')
   const [maxBackgroundSecs, setMaxBackgroundSecs] = useState('')
   const [enableDenyPatterns, setEnableDenyPatterns] = useState(false)
+
+  // Audit log dialog state
+  const [auditLogOpen, setAuditLogOpen] = useState(false)
 
   // Credential vault modal state
   const [credModalOpen, setCredModalOpen] = useState(false)
@@ -374,6 +378,21 @@ export function SecuritySection() {
           ))}
         </div>
       </section>
+
+      {/* ── Audit Log ─────────────────────────────────────── */}
+      <Separator className="my-6" />
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-medium text-[var(--color-secondary)]">Audit Log</h3>
+          <p className="text-xs text-[var(--color-muted)] mt-1">
+            Security events, policy decisions, and tool executions
+          </p>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => setAuditLogOpen(true)}>
+          View Audit Log
+        </Button>
+      </div>
+      <AuditLogViewer open={auditLogOpen} onOpenChange={setAuditLogOpen} />
 
       <Separator />
 

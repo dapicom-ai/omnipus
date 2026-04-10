@@ -35,13 +35,32 @@ type MCPCaller interface {
 type ToolCompositor struct {
 	loader    *skills.SkillsLoader
 	mcpCaller MCPCaller       // may be nil — MCP discovery is skipped when nil
-	evaluator *policy.Evaluator
+	auditor   *policy.PolicyAuditor // wraps Evaluator + audit logging (ADR W-3)
+	evaluator *policy.Evaluator     // direct evaluator fallback when auditor is nil
 	registry  *ToolRegistry
 }
 
-// NewToolCompositor creates a ToolCompositor.
-// loader, evaluator and registry are required; mcpCaller may be nil.
+// NewToolCompositor creates a ToolCompositor with a PolicyAuditor that
+// automatically logs every policy evaluation to the audit log (ADR W-3).
+// loader, auditor and registry are required; mcpCaller may be nil.
 func NewToolCompositor(
+	loader *skills.SkillsLoader,
+	mcpCaller MCPCaller,
+	auditor *policy.PolicyAuditor,
+	registry *ToolRegistry,
+) *ToolCompositor {
+	return &ToolCompositor{
+		loader:    loader,
+		mcpCaller: mcpCaller,
+		auditor:   auditor,
+		registry:  registry,
+	}
+}
+
+// NewToolCompositorWithEvaluator creates a ToolCompositor with a direct policy
+// evaluator (no audit logging). Use NewToolCompositor for production wiring.
+// This constructor exists for backward compatibility and testing.
+func NewToolCompositorWithEvaluator(
 	loader *skills.SkillsLoader,
 	mcpCaller MCPCaller,
 	evaluator *policy.Evaluator,
@@ -113,9 +132,19 @@ func (tc *ToolCompositor) ComposeAndRegister(agentID string) int {
 	}
 
 	// Step 3: evaluate policy and register/promote approved tools.
+	// Use PolicyAuditor (which auto-logs decisions) when available; fall back to
+	// direct Evaluator for backward compatibility.
 	registered := 0
 	for _, dt := range candidates {
-		decision := tc.evaluator.EvaluateTool(agentID, dt.ToolName)
+		var decision policy.Decision
+		if tc.auditor != nil {
+			decision = tc.auditor.EvaluateTool(agentID, dt.ToolName)
+		} else if tc.evaluator != nil {
+			decision = tc.evaluator.EvaluateTool(agentID, dt.ToolName)
+		} else {
+			// No evaluator configured — deny by default (fail closed).
+			decision = policy.Decision{Allowed: false, PolicyRule: "no policy evaluator configured (deny by default)"}
+		}
 		if !decision.Allowed {
 			slog.Debug("tool compositor: tool blocked by policy",
 				"agent", agentID,
