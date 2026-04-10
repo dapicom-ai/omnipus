@@ -14,6 +14,14 @@ import { FileTreeViewUI, FileListAliasDotUI } from "./tools/FileTreeView";
 import { WebSearchResultUI } from "./tools/WebSearchResult";
 import { WebFetchPreviewUI } from "./tools/WebFetchPreview";
 import { BrowserNavigateUI, BrowserNavigateUnderscoreUI } from "./tools/BrowserNavigate";
+import {
+  BrowserClickUI, BrowserClickUnderscoreUI,
+  BrowserTypeUI, BrowserTypeUnderscoreUI,
+  BrowserScreenshotUI, BrowserScreenshotUnderscoreUI,
+  BrowserGetTextUI, BrowserGetTextUnderscoreUI,
+  BrowserWaitUI, BrowserWaitUnderscoreUI,
+  BrowserEvaluateUI, BrowserEvaluateUnderscoreUI,
+} from "./tools/BrowserTool";
 
 // Manages WebSocket connection lifecycle — renders nothing, only side effects.
 function WsLifecycle() {
@@ -72,6 +80,18 @@ export function OmnipusRuntimeProvider({ children }: { children: React.ReactNode
        *   web_fetch         → WebFetchPreviewUI         (fetch a URL)
        *   browser.navigate  → BrowserNavigateUI         (browser navigation + screenshot)
        *   browser_navigate  → BrowserNavigateUnderscoreUI (underscore variant)
+       *   browser.click     → BrowserClickUI             (click element by selector)
+       *   browser_click     → BrowserClickUnderscoreUI
+       *   browser.type      → BrowserTypeUI              (type text into input)
+       *   browser_type      → BrowserTypeUnderscoreUI
+       *   browser.screenshot → BrowserScreenshotUI       (capture full-page PNG)
+       *   browser_screenshot → BrowserScreenshotUnderscoreUI
+       *   browser.get_text  → BrowserGetTextUI           (extract inner text)
+       *   browser_get_text  → BrowserGetTextUnderscoreUI
+       *   browser.wait      → BrowserWaitUI              (wait for element)
+       *   browser_wait      → BrowserWaitUnderscoreUI
+       *   browser.evaluate  → BrowserEvaluateUI          (run JS, return result)
+       *   browser_evaluate  → BrowserEvaluateUnderscoreUI
        */}
       <TerminalOutputUI />
       <FileReadPreviewUI />
@@ -86,6 +106,18 @@ export function OmnipusRuntimeProvider({ children }: { children: React.ReactNode
       <WebFetchPreviewUI />
       <BrowserNavigateUI />
       <BrowserNavigateUnderscoreUI />
+      <BrowserClickUI />
+      <BrowserClickUnderscoreUI />
+      <BrowserTypeUI />
+      <BrowserTypeUnderscoreUI />
+      <BrowserScreenshotUI />
+      <BrowserScreenshotUnderscoreUI />
+      <BrowserGetTextUI />
+      <BrowserGetTextUnderscoreUI />
+      <BrowserWaitUI />
+      <BrowserWaitUnderscoreUI />
+      <BrowserEvaluateUI />
+      <BrowserEvaluateUnderscoreUI />
       <WsLifecycle />
       {children}
     </AssistantRuntimeProvider>

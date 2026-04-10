@@ -858,3 +858,25 @@ export interface RateLimitStatus {
 export function fetchRateLimits(): Promise<RateLimitStatus> {
   return request<RateLimitStatus>('/security/rate-limits')
 }
+
+// ── Sandbox Status ────────────────────────────────────────────────────────────
+
+export interface SandboxStatus {
+  backend: string
+  available: boolean
+  // kernel_level reports the CAPABILITY — the backend can enforce at the
+  // kernel level if Apply() is called. policy_applied reports whether the
+  // enforcement is actually live on this process. A kernel-capable backend
+  // without policy_applied has status notes explaining the gap.
+  kernel_level: boolean
+  policy_applied: boolean
+  abi_version?: number
+  blocked_syscalls?: string[]
+  seccomp_enabled: boolean
+  landlock_features?: string[]
+  notes?: string[]
+}
+
+export function fetchSandboxStatus(): Promise<SandboxStatus> {
+  return request<SandboxStatus>('/security/sandbox-status')
+}

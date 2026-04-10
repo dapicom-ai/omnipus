@@ -375,6 +375,15 @@ func (al *AgentLoop) RateLimiter() *security.RateLimiterRegistry {
 	return al.rateLimiter
 }
 
+// SandboxBackend returns the active sandbox backend, or nil if sandboxing is
+// disabled. Used by gateway handlers that report sandbox status.
+func (al *AgentLoop) SandboxBackend() sandbox.SandboxBackend {
+	if al == nil {
+		return nil
+	}
+	return al.sandboxBackend
+}
+
 // recordRateLimitDenial writes an audit entry and emits a RateLimit event for
 // a denied rate-limit or cost-cap check (SEC-26). Centralising this avoids
 // repeating the same audit + emit boilerplate for each of the three checks

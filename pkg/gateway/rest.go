@@ -1619,6 +1619,8 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	cm.RegisterHTTPHandler("/api/v1/security/prompt-guard", a.withAuth(a.HandlePromptGuard))
 	// Wave 4 security endpoints (SEC-26).
 	cm.RegisterHTTPHandler("/api/v1/security/rate-limits", a.withAuth(a.HandleRateLimits))
+	// Wave 5 security endpoints (SEC-01/02/03).
+	cm.RegisterHTTPHandler("/api/v1/security/sandbox-status", a.withAuth(a.HandleSandboxStatus))
 	cm.RegisterHTTPHandler("/api/v1/credentials", a.withAuth(a.HandleCredentials))
 	cm.RegisterHTTPHandler("/api/v1/credentials/", a.withAuth(a.HandleCredentials))
 	cm.RegisterHTTPHandler("/api/v1/backup", a.withAuth(a.HandleCreateBackup))

@@ -21,6 +21,7 @@ import { Separator } from '@/components/ui/separator'
 import { fetchConfig, updateConfig, fetchGatewayStatus, fetchCredentials, addCredential, deleteCredential } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { DiagnosticsSection } from './DiagnosticsSection'
+import { SandboxSection } from './SandboxSection'
 
 export function SecuritySection() {
   const { addToast } = useUiStore()
@@ -195,6 +196,10 @@ export function SecuritySection() {
           </div>
         </div>
       </section>
+
+      {/* ── Process Sandbox — most fundamental security feature, shown first ── */}
+      <Separator className="my-6" />
+      <SandboxSection />
 
       {/* Prompt Injection Defense — dedicated section with per-level explanations */}
       <PromptGuardSection />
