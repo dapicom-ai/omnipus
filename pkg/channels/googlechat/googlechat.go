@@ -255,6 +255,7 @@ func (c *GoogleChatChannel) sendBotMessage(ctx context.Context, msg bus.Outbound
 // callWithRetry executes an HTTP request with retry and backoff per spec.
 func (c *GoogleChatChannel) callWithRetry(ctx context.Context, req *http.Request) (*http.Response, error) {
 	var lastErr error
+	var lastStatusCode int
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		resp, err := c.client.Do(req.WithContext(ctx))
 		if err != nil {
@@ -266,16 +267,23 @@ func (c *GoogleChatChannel) callWithRetry(ctx context.Context, req *http.Request
 		case http.StatusTooManyRequests:
 			resp.Body.Close()
 			time.Sleep(parseRetryAfter(resp))
+			lastStatusCode = resp.StatusCode
 			continue
 		case 500, 502, 503, 504:
 			resp.Body.Close()
 			time.Sleep(backoff(attempt))
+			lastStatusCode = resp.StatusCode
 			continue
 		case 400, 401, 403, 404:
 			return resp, nil
 		default:
 			return resp, nil
 		}
+	}
+
+	// All retries exhausted — classify the failure
+	if lastStatusCode == http.StatusTooManyRequests {
+		return nil, channels.ErrRateLimit
 	}
 	return nil, fmt.Errorf("max retries exceeded: %w", lastErr)
 }
@@ -696,8 +704,13 @@ func (c *GoogleChatChannel) StartTyping(ctx context.Context, chatID string) (fun
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	if _, err := c.client.Do(req); err != nil {
+	resp, err := c.client.Do(req)
+	if err != nil {
 		return func() {}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return func() {}, fmt.Errorf("typing start returned %d", resp.StatusCode)
 	}
 
 	typingCtx, cancel := context.WithCancel(ctx)
@@ -719,8 +732,14 @@ func (c *GoogleChatChannel) StartTyping(ctx context.Context, chatID string) (fun
 				}
 				req2.Header.Set("Authorization", "Bearer "+token)
 				req2.Header.Set("Content-Type", "application/json")
-				if _, err := c.client.Do(req2); err != nil {
+				resp2, err := c.client.Do(req2)
+				if err != nil {
 					logger.WarnCF("google-chat", "Failed to refresh typing indicator", map[string]any{"error": err.Error()})
+					continue
+				}
+				resp2.Body.Close()
+				if resp2.StatusCode >= 400 {
+					logger.WarnCF("google-chat", "Typing refresh rejected", map[string]any{"status": resp2.StatusCode})
 				}
 			}
 		}
