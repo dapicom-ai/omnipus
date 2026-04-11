@@ -2,10 +2,9 @@
 // License: MIT
 // Copyright (c) 2026 Omnipus contributors
 
-// Package security provides network security controls for Omnipus.
-//
 // This file implements US-13 rate limiting (per-agent, per-channel, global cost cap)
 // from the Wave 2 security spec.
+
 package security
 
 import (

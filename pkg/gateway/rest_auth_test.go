@@ -127,17 +127,25 @@ func TestHandleLogin_Success(t *testing.T) {
 	assert.Equal(t, "testuser", resp["username"])
 }
 
-// TestHandleLogin_WrongPassword verifies that POST /api/v1/auth/login with a valid
-// username but wrong password returns 401 Unauthorized.
-// BDD: Given a user "testuser" with password "correctpassword" in config.json,
-// When POST /api/v1/auth/login {"username":"testuser","password":"wrongpassword"} is called,
-// Then 401 with {"error":"invalid credentials"}.
-func TestHandleLogin_WrongPassword(t *testing.T) {
-	tmpDir := t.TempDir()
-	hash, err := bcrypt.GenerateFromPassword([]byte("correctpassword"), bcrypt.DefaultCost)
-	require.NoError(t, err)
-	createTestConfigWithUser(t, tmpDir, "testuser", string(hash))
+// assertLoginUnauthorized is a helper that POSTs a login body and asserts
+// the response is 401 with {"error":"invalid credentials"}.
+func assertLoginUnauthorized(t *testing.T, api *restAPI, body string) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	api.HandleLogin(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "invalid credentials", resp["error"])
+}
 
+// newRestAPIWithSingleUser creates a minimal restAPI with one configured user.
+func newRestAPIWithSingleUser(t *testing.T, username, passwordHash string) *restAPI {
+	t.Helper()
+	tmpDir := t.TempDir()
+	createTestConfigWithUser(t, tmpDir, username, passwordHash)
 	cfg := &config.Config{
 		Gateway: config.GatewayConfig{Host: "127.0.0.1", Port: 8080},
 		Agents: config.AgentsConfig{
@@ -150,25 +158,25 @@ func TestHandleLogin_WrongPassword(t *testing.T) {
 	}
 	msgBus := bus.NewMessageBus()
 	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
-	api := &restAPI{
+	return &restAPI{
 		agentLoop:     al,
 		homePath:      tmpDir,
 		allowedOrigin: "http://localhost:3000",
 		onboardingMgr: onboarding.NewManager(tmpDir),
 		taskStore:     taskstore.New(tmpDir + "/tasks"),
 	}
+}
 
-	body := `{"username":"testuser","password":"wrongpassword"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	api.HandleLogin(w, req)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-	var resp map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "invalid credentials", resp["error"])
+// TestHandleLogin_WrongPassword verifies that POST /api/v1/auth/login with a valid
+// username but wrong password returns 401 Unauthorized.
+// BDD: Given a user "testuser" with password "correctpassword" in config.json,
+// When POST /api/v1/auth/login {"username":"testuser","password":"wrongpassword"} is called,
+// Then 401 with {"error":"invalid credentials"}.
+func TestHandleLogin_WrongPassword(t *testing.T) {
+	hash, err := bcrypt.GenerateFromPassword([]byte("correctpassword"), bcrypt.DefaultCost)
+	require.NoError(t, err)
+	api := newRestAPIWithSingleUser(t, "testuser", string(hash))
+	assertLoginUnauthorized(t, api, `{"username":"testuser","password":"wrongpassword"}`)
 }
 
 // TestHandleLogin_UserNotFound verifies that POST /api/v1/auth/login with a
@@ -177,43 +185,11 @@ func TestHandleLogin_WrongPassword(t *testing.T) {
 // When POST /api/v1/auth/login {"username":"ghost","password":"anypassword"} is called,
 // Then 401 with {"error":"invalid credentials"}.
 func TestHandleLogin_UserNotFound(t *testing.T) {
-	tmpDir := t.TempDir()
-	// Create config with one user but not "ghost"
 	hash, err := bcrypt.GenerateFromPassword([]byte("somepassword"), bcrypt.DefaultCost)
 	require.NoError(t, err)
-	createTestConfigWithUser(t, tmpDir, "realuser", string(hash))
-
-	cfg := &config.Config{
-		Gateway: config.GatewayConfig{Host: "127.0.0.1", Port: 8080},
-		Agents: config.AgentsConfig{
-			Defaults: config.AgentDefaults{
-				Workspace: tmpDir,
-				ModelName: "test-model",
-				MaxTokens: 4096,
-			},
-		},
-	}
-	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
-	api := &restAPI{
-		agentLoop:     al,
-		homePath:      tmpDir,
-		allowedOrigin: "http://localhost:3000",
-		onboardingMgr: onboarding.NewManager(tmpDir),
-		taskStore:     taskstore.New(tmpDir + "/tasks"),
-	}
-
-	body := `{"username":"ghost","password":"anypassword"}`
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	api.HandleLogin(w, req)
-
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-	var resp map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "invalid credentials", resp["error"])
+	// Create config with "realuser" but the request uses "ghost"
+	api := newRestAPIWithSingleUser(t, "realuser", string(hash))
+	assertLoginUnauthorized(t, api, `{"username":"ghost","password":"anypassword"}`)
 }
 
 // TestHandleLogin_EmptyUsername verifies that POST /api/v1/auth/login with empty

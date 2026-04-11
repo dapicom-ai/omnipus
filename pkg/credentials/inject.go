@@ -78,7 +78,7 @@ type channelRef struct {
 
 // InjectChannelsFromConfig resolves all channel *Ref credential fields in cfg and injects
 // them into the process environment so that channel constructors can read them via os.Getenv.
-// Missing credentials (ErrNotFound) are logged at Warn and returned in the error slice so that
+// Missing credentials (NotFoundError) are logged at Warn and returned in the error slice so that
 // callers (boot path, reload) can decide whether the missing credential is fatal based on whether
 // the channel is enabled. All errors are collected and returned.
 func InjectChannelsFromConfig(cfg *config.Config, store *Store) []error {
@@ -130,7 +130,7 @@ func InjectChannelsFromConfig(cfg *config.Config, store *Store) []error {
 		}
 		value, err := store.Get(cr.ref)
 		if err != nil {
-			var notFound *ErrNotFound
+			var notFound *NotFoundError
 			if errors.As(err, &notFound) {
 				// Credential not stored — warn and return so the caller can decide
 				// whether the missing credential is fatal (enabled channel) or safe

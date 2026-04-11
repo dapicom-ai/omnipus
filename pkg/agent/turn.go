@@ -106,9 +106,8 @@ type turnState struct {
 
 	// Accumulated turn-level stats across all LLM iterations in this turn.
 	// Used to populate the "done" WS frame for the session UI (issue #12).
-	turnTokens   int64
-	turnCostUSD  float64
-	turnDuration time.Duration
+	turnTokens  int64
+	turnCostUSD float64
 
 	// Back-reference to the owning AgentLoop (set for SubTurns only, used for hard abort cascade)
 	al *AgentLoop

@@ -238,6 +238,7 @@ func (p *Provider) ChatStream(
 	// the entire request lifecycle including body reads, which would kill long streams.
 	// Context cancellation from the caller (turn timeout) provides the safety net.
 	streamClient := &http.Client{Transport: p.httpClient.Transport}
+	//nolint:bodyclose // body is closed via defer resp.Body.Close() below; goroutine also closes to unblock scanner on ctx cancel
 	resp, err := streamClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)

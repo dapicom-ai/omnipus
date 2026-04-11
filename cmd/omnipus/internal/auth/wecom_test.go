@@ -282,7 +282,7 @@ func TestAuthWeComCmdWithScanner_SaveConfigFailureRollsBackStore(t *testing.T) {
 	store := credentials.NewStore(storePath)
 	require.NoError(t, credentials.Unlock(store))
 	_, getErr := store.Get(wecomSecretCredRef)
-	var notFound *credentials.ErrNotFound
+	var notFound *credentials.NotFoundError
 	assert.ErrorAs(t, getErr, &notFound,
 		"store must not contain the secret after SaveConfig rollback")
 }
@@ -308,7 +308,6 @@ func TestAuthWeComCmdWithScanner_ConcurrentRunsDontWipeEachOther(t *testing.T) {
 	errs := make([]error, 2)
 
 	for i, secret := range []string{secretA, secretB} {
-		i, secret := i, secret
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

@@ -44,12 +44,6 @@ func (c *webchatChannel) markStreamed(chatID string) {
 	c.mu.Unlock()
 }
 
-func (c *webchatChannel) clearStreamed(chatID string) {
-	c.mu.Lock()
-	delete(c.streamed, chatID)
-	c.mu.Unlock()
-}
-
 func (c *webchatChannel) Name() string { return "webchat" }
 
 func (c *webchatChannel) Start(_ context.Context) error         { return nil }

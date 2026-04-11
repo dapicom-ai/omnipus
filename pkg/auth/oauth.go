@@ -57,14 +57,6 @@ func GoogleAntigravityOAuthConfig() OAuthProviderConfig {
 	}
 }
 
-func decodeBase64(s string) string {
-	data, err := base64.StdEncoding.DecodeString(s)
-	if err != nil {
-		return s
-	}
-	return string(data)
-}
-
 // GenerateState generates a random state string for OAuth CSRF protection.
 func GenerateState() (string, error) {
 	buf := make([]byte, 32)

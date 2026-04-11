@@ -82,6 +82,11 @@ type WSHandler struct {
 	agentLoop     *agent.AgentLoop
 	allowedOrigin string
 
+	// activeConns tracks in-flight ServeHTTP goroutines so Wait() can block
+	// until all connections have fully torn down (used by tests to avoid
+	// tempdir cleanup races).
+	activeConns sync.WaitGroup
+
 	mu          sync.Mutex
 	sessions    map[string]*wsConn // chatID → connection
 	sessionIDs  map[string]string  // chatID → sessionID (for transcript recording)
@@ -216,8 +221,18 @@ func (h *WSHandler) resolveSessionStore(sessionID string) *session.UnifiedStore 
 	return h.agentLoop.ResolveSessionStore(sessionID)
 }
 
+// Wait blocks until all active ServeHTTP goroutines have fully exited.
+// Call this in test cleanup (after srv.Close()) to prevent tempdir removal
+// races with background session writes.
+func (h *WSHandler) Wait() {
+	h.activeConns.Wait()
+}
+
 // ServeHTTP handles the WebSocket upgrade and full connection lifecycle.
 func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.activeConns.Add(1)
+	defer h.activeConns.Done()
+
 	origin := h.allowedOrigin
 	if origin == "" {
 		origin = "http://localhost:3000"

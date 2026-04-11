@@ -150,8 +150,8 @@ func (lb *LinuxBackend) Apply(policy SandboxPolicy) error {
 	}
 
 	// Set no_new_privs then restrict self
-	if _, _, errno := unix.RawSyscall(unix.SYS_PRCTL, unix.PR_SET_NO_NEW_PRIVS, 1, 0); errno != 0 {
-		return fmt.Errorf("landlock: prctl(PR_SET_NO_NEW_PRIVS) failed: %w", errno)
+	if _, _, prctlErrno := unix.RawSyscall(unix.SYS_PRCTL, unix.PR_SET_NO_NEW_PRIVS, 1, 0); prctlErrno != 0 {
+		return fmt.Errorf("landlock: prctl(PR_SET_NO_NEW_PRIVS) failed: %w", prctlErrno)
 	}
 
 	_, _, errno = unix.Syscall(sysLandlockRestrictSelf, rulesetFd, 0, 0)

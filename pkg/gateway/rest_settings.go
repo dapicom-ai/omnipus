@@ -179,7 +179,7 @@ func (a *restAPI) deleteCredential(w http.ResponseWriter, key string) {
 		}
 	}
 	if err := store.Delete(key); err != nil {
-		var notFound *credentials.ErrNotFound
+		var notFound *credentials.NotFoundError
 		if errors.As(err, &notFound) {
 			jsonErr(w, http.StatusNotFound, fmt.Sprintf("credential %q not found", key))
 			return
@@ -432,8 +432,8 @@ func extractTarGz(archivePath, destDir string) error {
 			slog.Warn("rest: restore: skipping tar entry escaping destination", "name", hdr.Name)
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(destPath), 0o700); err != nil {
-			return fmt.Errorf("mkdir for %q: %w", clean, err)
+		if mkdirErr := os.MkdirAll(filepath.Dir(destPath), 0o700); mkdirErr != nil {
+			return fmt.Errorf("mkdir for %q: %w", clean, mkdirErr)
 		}
 		if hdr.Typeflag == tar.TypeDir {
 			continue

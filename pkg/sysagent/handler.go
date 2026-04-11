@@ -71,7 +71,7 @@ func (h *SystemToolHandler) Handle(
 			"device_id", deviceID,
 		)
 		h.logAudit(toolName, deviceID, string(callerRole), args, "denied", start)
-		if denied, ok := err.(*ErrPermissionDenied); ok {
+		if denied, ok := err.(*PermissionDeniedError); ok {
 			return tools.ErrorResult(FriendlyDenialMessage(denied))
 		}
 		return tools.ErrorResult(err.Error())
@@ -81,7 +81,7 @@ func (h *SystemToolHandler) Handle(
 	if err := h.rateLimiter.Check(toolName); err != nil {
 		slog.Warn("System tool rate-limited", "tool", toolName)
 		h.logAudit(toolName, deviceID, string(callerRole), args, "rate_limited", start)
-		if rlErr, ok := err.(*ErrRateLimited); ok {
+		if rlErr, ok := err.(*RateLimitedError); ok {
 			return tools.ErrorResult(fmt.Sprintf(
 				"RATE_LIMITED: too many %s operations — please wait %.0f seconds before trying again.",
 				rlErr.Category, rlErr.RetryAfterSeconds,

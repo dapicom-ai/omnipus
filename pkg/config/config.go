@@ -1,10 +1,9 @@
 package config
 
 import (
-	cryptorand "crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	mathrand "math/rand"
 	"os"
 	"path/filepath"
@@ -288,8 +287,10 @@ func (c *Config) MarshalJSON() ([]byte, error) {
 		return data, nil
 	}
 	var m map[string]json.RawMessage
-	if err := json.Unmarshal(data, &m); err != nil {
-		return data, nil // best-effort: return without merging
+	if unmarshalErr := json.Unmarshal(data, &m); unmarshalErr != nil {
+		// best-effort: log and return original data without merging unknown fields.
+		slog.Debug("config: MarshalJSON: could not parse for unknown-field merge", "error", unmarshalErr)
+		return data, nil
 	}
 	for k, v := range c.UnknownFields {
 		if _, exists := m[k]; !exists {
@@ -1283,18 +1284,6 @@ func makeBackup(path string) error {
 	return nil
 }
 
-func toNameIndex(list []*ModelConfig) []string {
-	nameList := make([]string, 0, len(list))
-	countMap := make(map[string]int)
-	for _, model := range list {
-		name := model.ModelName
-		index := countMap[name]
-		nameList = append(nameList, fmt.Sprintf("%s:%d", name, index))
-		countMap[name]++
-	}
-	return nameList
-}
-
 func (c *Config) migrateChannelConfigs() {
 	// Discord: mention_only -> group_trigger.mention_only
 	if c.Channels.Discord.MentionOnly && !c.Channels.Discord.GroupTrigger.MentionOnly {
@@ -1420,15 +1409,6 @@ func bcryptHash(input string) (string, error) {
 		return "", err
 	}
 	return string(hash), nil
-}
-
-// generateToken generates a cryptographically random token string.
-func generateToken() (string, error) {
-	b := make([]byte, 32)
-	if _, err := cryptorand.Read(b); err != nil {
-		return "", fmt.Errorf("crypto/rand failed: %w", err)
-	}
-	return hex.EncodeToString(b), nil
 }
 
 func MergeAPIKeys(apiKey string, apiKeys []string) []string {

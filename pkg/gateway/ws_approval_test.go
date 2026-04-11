@@ -48,14 +48,6 @@ func unmarshalWSServerFrame(b []byte, f *wsServerFrame) error {
 	return json.Unmarshal(b, f)
 }
 
-// newIntegrationTestServer wraps httptest.NewServer and registers cleanup.
-func newIntegrationTestServer(t *testing.T, handler *WSHandler) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(handler)
-	t.Cleanup(srv.Close)
-	return srv
-}
-
 // writeWSClientFrame marshals and sends a wsClientFrame over the WebSocket connection.
 func writeWSClientFrame(t *testing.T, conn *websocket.Conn, frame wsClientFrame) {
 	t.Helper()

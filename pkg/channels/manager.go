@@ -519,7 +519,7 @@ func (m *Manager) initChannels(channels *config.ChannelsConfig) error {
 
 	// If any enabled channel failed to construct, abort boot per deny-by-default policy.
 	if len(m.failedChannels) > 0 {
-		var joinedErrs []error
+		joinedErrs := make([]error, 0, len(m.failedChannels))
 		for i := range m.failedChannels {
 			joinedErrs = append(joinedErrs, &m.failedChannels[i])
 		}

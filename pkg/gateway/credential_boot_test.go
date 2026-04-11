@@ -199,7 +199,7 @@ func TestInjectChannelsFromConfig_MissingCredReturnsError(t *testing.T) {
 	require.NotEmpty(t, errs, "missing credential must produce an error so the caller can decide if it's fatal")
 
 	// The error must be or wrap ErrNotFound.
-	var notFound *credentials.ErrNotFound
+	var notFound *credentials.NotFoundError
 	found := false
 	for _, e := range errs {
 		if errors.As(e, &notFound) {

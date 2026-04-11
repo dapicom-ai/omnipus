@@ -151,10 +151,10 @@ func (l *Logger) Log(entry *Entry) error {
 	// Check rotation
 	today := time.Now().UTC().Format("2006-01-02")
 	if today != l.currentDate || l.currentSize >= l.maxSize {
-		if err := l.rotate(); err != nil {
-			slog.Error("Audit: rotation failed, entering degraded mode", "error", err)
+		if rotateErr := l.rotate(); rotateErr != nil {
+			slog.Error("Audit: rotation failed, entering degraded mode", "error", rotateErr)
 			l.degraded = true
-			return fmt.Errorf("audit: rotation failed: %w", err)
+			return fmt.Errorf("audit: rotation failed: %w", rotateErr)
 		}
 	}
 

@@ -10,6 +10,13 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 )
 
+// newAL is a helper for turn tests that only need the AgentLoop and cleanup.
+func newAL(t *testing.T) (*AgentLoop, func()) {
+	t.Helper()
+	al, _, _, _, cleanup := newTestAgentLoop(t) //nolint:dogsled
+	return al, cleanup
+}
+
 // TestGetActiveAgentIDs_Empty verifies that GetActiveAgentIDs returns an empty (or nil)
 // slice when no turns are active.
 // BDD: Given an AgentLoop with no active turns,
@@ -17,7 +24,7 @@ import (
 // Then it returns an empty (zero-length) slice.
 // Traces to: vivid-roaming-planet.md line 162
 func TestGetActiveAgentIDs_Empty(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
+	al, cleanup := newAL(t)
 	defer cleanup()
 
 	ids := al.GetActiveAgentIDs()
@@ -31,7 +38,7 @@ func TestGetActiveAgentIDs_Empty(t *testing.T) {
 // Then it returns a slice containing "test-agent".
 // Traces to: vivid-roaming-planet.md line 163
 func TestGetActiveAgentIDs_SingleTurn(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
+	al, cleanup := newAL(t)
 	defer cleanup()
 
 	ts := &turnState{agentID: "test-agent"}
@@ -50,7 +57,7 @@ func TestGetActiveAgentIDs_SingleTurn(t *testing.T) {
 // Then it returns a slice with exactly one entry "shared-agent".
 // Traces to: vivid-roaming-planet.md line 164
 func TestGetActiveAgentIDs_MultipleTurnsSameAgent(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
+	al, cleanup := newAL(t)
 	defer cleanup()
 
 	ts1 := &turnState{agentID: "shared-agent"}
@@ -79,7 +86,7 @@ func TestGetActiveAgentIDs_MultipleTurnsSameAgent(t *testing.T) {
 // Then it returns a slice containing both "agent-a" and "agent-b".
 // Traces to: vivid-roaming-planet.md line 165
 func TestGetActiveAgentIDs_MultipleDifferentAgents(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
+	al, cleanup := newAL(t)
 	defer cleanup()
 
 	tsA := &turnState{agentID: "agent-a"}

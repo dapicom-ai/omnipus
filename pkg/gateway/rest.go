@@ -1329,11 +1329,11 @@ func (a *restAPI) safeUpdateConfigJSON(mutate func(m map[string]any) error) erro
 		return fmt.Errorf("read config: %w", err)
 	}
 	var m map[string]any
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return fmt.Errorf("parse config: %w", err)
+	if unmarshalErr := json.Unmarshal(raw, &m); unmarshalErr != nil {
+		return fmt.Errorf("parse config: %w", unmarshalErr)
 	}
-	if err := mutate(m); err != nil {
-		return err
+	if mutateErr := mutate(m); mutateErr != nil {
+		return mutateErr
 	}
 	out, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {

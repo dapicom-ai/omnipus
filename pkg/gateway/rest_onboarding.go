@@ -143,8 +143,8 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 		// Check if provider already exists; update or append.
 		found := false
 		for i, entry := range providerList {
-			entryMap, ok := entry.(map[string]any)
-			if !ok {
+			entryMap, isMap := entry.(map[string]any)
+			if !isMap {
 				continue
 			}
 			if entryMap["model_name"] == body.Provider.ID || entryMap["model"] == body.Provider.ID {
@@ -202,7 +202,7 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 		if !ok {
 			return fmt.Errorf("gateway config is not a map")
 		}
-		var users []any
+		users := make([]any, 0, 1)
 		if raw, exists := gatewayMap["users"]; exists {
 			var ok bool
 			users, ok = raw.([]any)

@@ -1,8 +1,7 @@
-// Package security provides network security controls for Omnipus.
-//
 // This file implements SEC-24 (SSRF protection) from the Omnipus BRD:
 // blocking outbound HTTP requests to private/internal IP ranges, cloud metadata
 // endpoints, and providing DNS rebinding protection.
+
 package security
 
 import (

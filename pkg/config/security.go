@@ -91,7 +91,7 @@ func collectSensitive(v reflect.Value, values *[]string) {
 
 	// SecureString: collect via String() method (defined on *SecureString)
 	if t == reflect.TypeOf(SecureString{}) {
-		addr := v
+		var addr reflect.Value
 		if v.CanAddr() {
 			addr = v.Addr()
 		} else {

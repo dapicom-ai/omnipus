@@ -164,8 +164,8 @@ func dotSet(cfg *config.Config, key string, value any) error {
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
-	if err := setDot(m, strings.Split(key, "."), value); err != nil {
-		return err
+	if setErr := setDot(m, strings.Split(key, "."), value); setErr != nil {
+		return setErr
 	}
 	data, err := json.Marshal(m)
 	if err != nil {

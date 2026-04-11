@@ -63,7 +63,7 @@ func runDoctor() error {
 
 // checkConfig runs all doctor checks against cfg and returns any warnings found.
 func checkConfig(cfg *config.Config) []warning {
-	var warnings []warning
+	warnings := make([]warning, 0, 8)
 	warnings = append(warnings, checkDMPolicies(cfg)...)
 	warnings = append(warnings, checkExecEgress(cfg)...)
 	return warnings

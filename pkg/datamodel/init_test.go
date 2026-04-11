@@ -42,9 +42,9 @@ func TestDirectoryInitialization(t *testing.T) {
 	}
 	for _, dir := range expectedDirs {
 		path := filepath.Join(omnipusHome, dir)
-		info, err := os.Stat(path)
-		require.NoError(t, err, "directory %q must exist", dir)
-		assert.True(t, info.IsDir(), "%q must be a directory", dir)
+		dirInfo, statErr := os.Stat(path)
+		require.NoError(t, statErr, "directory %q must exist", dir)
+		assert.True(t, dirInfo.IsDir(), "%q must be a directory", dir)
 	}
 
 	// Verify config.json exists.
@@ -92,9 +92,9 @@ func TestDirectoryInitPartialExists(t *testing.T) {
 	// Verify previously missing directories are now present.
 	for _, dir := range []string{"tasks", "backups", "pins", "skills", "channels", "logs"} {
 		path := filepath.Join(omnipusHome, dir)
-		info, err := os.Stat(path)
-		require.NoError(t, err, "directory %q must be created", dir)
-		assert.True(t, info.IsDir(), "%q must be a directory", dir)
+		dirInfo, statErr := os.Stat(path)
+		require.NoError(t, statErr, "directory %q must be created", dir)
+		assert.True(t, dirInfo.IsDir(), "%q must be a directory", dir)
 	}
 
 	// Verify config.json was NOT overwritten.

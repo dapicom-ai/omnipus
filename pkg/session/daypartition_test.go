@@ -219,8 +219,8 @@ func TestSessionMultiPartition(t *testing.T) {
 		"2026-03-29.jsonl",
 	}
 	for _, partition := range expectedPartitions {
-		_, err := os.Stat(filepath.Join(sessionDir, partition))
-		assert.NoError(t, err, "partition %q must exist", partition)
+		_, statErr := os.Stat(filepath.Join(sessionDir, partition))
+		assert.NoError(t, statErr, "partition %q must exist", partition)
 	}
 
 	// Verify meta lists all partitions.

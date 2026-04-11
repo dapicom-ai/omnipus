@@ -83,13 +83,13 @@ func toChannelConfig(cfg *config.Config, list []string) (*config.ChannelsConfig,
 		return nil, fmt.Errorf("toChannelConfig: marshal: %w", err)
 	}
 	var channelConfig map[string]map[string]any
-	if err := json.Unmarshal(marshal, &channelConfig); err != nil {
+	if unmarshalErr := json.Unmarshal(marshal, &channelConfig); unmarshalErr != nil {
 		logger.ErrorCF(
 			"channels",
 			"toChannelConfig: failed to unmarshal channel config",
-			map[string]any{"error": err.Error()},
+			map[string]any{"error": unmarshalErr.Error()},
 		)
-		return nil, fmt.Errorf("toChannelConfig: unmarshal: %w", err)
+		return nil, fmt.Errorf("toChannelConfig: unmarshal: %w", unmarshalErr)
 	}
 	temp := make(map[string]map[string]any, 0)
 

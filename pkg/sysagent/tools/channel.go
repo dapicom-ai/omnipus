@@ -73,8 +73,8 @@ func (t *ChannelEnableTool) Execute(_ context.Context, args map[string]any) *too
 			"Use system.channel.list to see available channels",
 		))
 	}
-	ch.Enabled = true
-	slog.Info("sysagent: stub tool invoked", "tool", "system.channel.enable", "id", id)
+	slog.Info("sysagent: stub tool invoked", "tool", "system.channel.enable", "id", id,
+		"channel_tier", ch.Tier, "channel_impl", ch.Implementation)
 	return tools.NewToolResult(successJSON(map[string]any{
 		"id":             id,
 		"tier":           ch.Tier,

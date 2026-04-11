@@ -40,11 +40,6 @@ type TaskEntity struct {
 	CreatedAt     time.Time  `json:"created_at"`
 	StartedAt     *time.Time `json:"started_at,omitempty"`
 	CompletedAt   *time.Time `json:"completed_at,omitempty"`
-
-	// Legacy GTD fields — read-only, used only during lazy migration.
-	legacyName        string
-	legacyDescription string
-	legacyUpdatedAt   time.Time
 }
 
 // legacyRaw is used only to detect and migrate old GTD-format task files.

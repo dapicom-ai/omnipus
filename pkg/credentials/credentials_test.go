@@ -326,7 +326,7 @@ func TestCredentialStoreIntegration(t *testing.T) {
 	assert.Equal(t, []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY"}, names)
 }
 
-// TestCredentialMissingRef verifies missing credential returns ErrNotFound.
+// TestCredentialMissingRef verifies missing credential returns NotFoundError.
 // Traces to: wave1-core-foundation-spec.md Scenario: Missing credential ref fails provider init (US-11 AC2)
 func TestCredentialMissingRef(t *testing.T) {
 	dir := t.TempDir()
@@ -339,8 +339,8 @@ func TestCredentialMissingRef(t *testing.T) {
 	_, err := store.Get("NONEXISTENT_KEY")
 	require.Error(t, err)
 
-	var notFound *ErrNotFound
-	assert.ErrorAs(t, err, &notFound, "missing credential must return ErrNotFound")
+	var notFound *NotFoundError
+	assert.ErrorAs(t, err, &notFound, "missing credential must return NotFoundError")
 	assert.Equal(t, "NONEXISTENT_KEY", notFound.Name)
 }
 

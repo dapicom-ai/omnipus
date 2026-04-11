@@ -12,11 +12,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	runtimedebug "runtime/debug"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -118,8 +120,8 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	// v0→v1 migration (MigrateWithStore) can persist legacy plaintext secrets.
 	// Implements BRD SEC-22/SEC-23 deny-by-default behavior.
 	credStore := credentials.NewStore(filepath.Join(homePath, "credentials.json"))
-	if err := credentials.Unlock(credStore); err != nil {
-		return fmt.Errorf("credential store: %w", err)
+	if unlockErr := credentials.Unlock(credStore); unlockErr != nil {
+		return fmt.Errorf("credential store: %w", unlockErr)
 	}
 
 	cfg, err := config.LoadConfigWithStore(configPath, credStore)
@@ -144,7 +146,7 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 		// channel is logged at Info and skipped.
 		var fatalErrs []error
 		for _, e := range errs {
-			var notFound *credentials.ErrNotFound
+			var notFound *credentials.NotFoundError
 			if errors.As(e, &notFound) {
 				// Log at Warn — the gateway boot path has already decided below
 				// whether to treat this as fatal based on channel enabled state.
@@ -310,7 +312,7 @@ func executeReload(
 		if errs := credentials.InjectChannelsFromConfig(newCfg, cs); len(errs) > 0 {
 			var fatalErrs []error
 			for _, e := range errs {
-				var notFound *credentials.ErrNotFound
+				var notFound *credentials.NotFoundError
 				if errors.As(e, &notFound) {
 					slog.Info("reload: channel credential not found (channel may be disabled)", "error", e)
 					continue
@@ -421,7 +423,7 @@ func setupAndStartServices(
 	runningServices.HealthServer = health.NewServer(cfg.Gateway.Host, cfg.Gateway.Port)
 	runningServices.ChannelManager.SetupHTTPServer(addr, runningServices.HealthServer)
 
-	allowedOrigin := fmt.Sprintf("http://%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
+	allowedOrigin := "http://" + net.JoinHostPort(cfg.Gateway.Host, strconv.Itoa(cfg.Gateway.Port))
 
 	// SSE chat endpoint — kept for backward compatibility; streaming tokens now route through WebSocket.
 	sseHandler := newSSEHandler(msgBus, nil, allowedOrigin, func() *config.Config { return cfg })

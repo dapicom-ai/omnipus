@@ -266,7 +266,7 @@ func TestExecTool_SandboxBackend_AppliedBeforeStart(t *testing.T) {
 // error is surfaced to the caller.
 func TestExecTool_SandboxBackend_FailurePreventsStart(t *testing.T) {
 	mock := &mockSandboxBackend{
-		failWith: assertErr{"sandbox unavailable"},
+		failWith: assertError{"sandbox unavailable"},
 	}
 	tool, err := NewExecToolWithDeps("", false, nil, ExecToolDeps{
 		SandboxBackend: mock,
@@ -309,7 +309,7 @@ func TestExecTool_NoDeps_BackwardCompatible(t *testing.T) {
 	assert.True(t, strings.Contains(result.ForLLM, "legacy"))
 }
 
-// assertErr is a tiny error type for tests.
-type assertErr struct{ msg string }
+// assertError is a tiny error type for tests.
+type assertError struct{ msg string }
 
-func (e assertErr) Error() string { return e.msg }
+func (e assertError) Error() string { return e.msg }
