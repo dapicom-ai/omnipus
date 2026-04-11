@@ -67,13 +67,43 @@ func NewFeishuChannel(
 	if cfg.IsLark {
 		opts = append(opts, lark.WithOpenBaseUrl(lark.LarkBaseUrl))
 	}
+	// AppSecret is mandatory — it authenticates every Feishu API call.
+	// EncryptKey and VerificationToken are optional: they are only used when
+	// the app is configured for encrypted webhook mode. Webhook mode is not
+	// the primary path (WebSocket mode is used here), so both fields remain
+	// optional and are only validated when a non-empty ref is provided.
 	appSecret := secrets.GetString(cfg.AppSecretRef)
+	if cfg.AppSecretRef == "" {
+		return nil, fmt.Errorf(
+			"feishu: app_secret_ref is required (set channels.feishu.app_secret_ref to a credential name)",
+		)
+	}
+	if appSecret == "" {
+		return nil, fmt.Errorf(
+			"feishu: app_secret not resolved (app_secret_ref=%q): check credential store",
+			cfg.AppSecretRef,
+		)
+	}
+	encryptKey := secrets.GetString(cfg.EncryptKeyRef)
+	if cfg.EncryptKeyRef != "" && encryptKey == "" {
+		return nil, fmt.Errorf(
+			"feishu: encrypt_key not resolved (encrypt_key_ref=%q): check credential store",
+			cfg.EncryptKeyRef,
+		)
+	}
+	verificationToken := secrets.GetString(cfg.VerificationTokenRef)
+	if cfg.VerificationTokenRef != "" && verificationToken == "" {
+		return nil, fmt.Errorf(
+			"feishu: verification_token not resolved (verification_token_ref=%q): check credential store",
+			cfg.VerificationTokenRef,
+		)
+	}
 	ch := &FeishuChannel{
 		BaseChannel:       base,
 		config:            cfg,
 		appSecret:         appSecret,
-		verificationToken: secrets.GetString(cfg.VerificationTokenRef),
-		encryptKey:        secrets.GetString(cfg.EncryptKeyRef),
+		verificationToken: verificationToken,
+		encryptKey:        encryptKey,
 		tokenCache:        tc,
 		client:            lark.NewClient(cfg.AppID, appSecret, opts...),
 	}
@@ -82,8 +112,8 @@ func NewFeishuChannel(
 }
 
 func (c *FeishuChannel) Start(ctx context.Context) error {
-	if c.config.AppID == "" || c.appSecret == "" {
-		return fmt.Errorf("feishu app_id or app_secret is empty")
+	if c.config.AppID == "" {
+		return fmt.Errorf("feishu: app_id is required")
 	}
 
 	// Fetch bot open_id via API for reliable @mention detection.

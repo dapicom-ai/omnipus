@@ -15,6 +15,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/providers"
 )
 
 // HandleCompleteOnboarding handles POST /api/v1/onboarding/complete.
@@ -58,6 +59,12 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 	// Validate provider.
 	if body.Provider.ID == "" {
 		jsonErr(w, http.StatusBadRequest, "provider.id is required")
+		return
+	}
+	// Reject unknown protocols at the boundary so the gateway does not persist
+	// a config that will fail the post-save rewire and flip to degraded.
+	if !providers.IsKnownProtocol(body.Provider.ID) {
+		jsonErr(w, http.StatusBadRequest, fmt.Sprintf("provider.id %q is not a known protocol", body.Provider.ID))
 		return
 	}
 	if body.Provider.APIKey == "" {

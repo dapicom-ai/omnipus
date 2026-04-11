@@ -370,7 +370,7 @@ func TestProviders_BackwardCompatPlaintextAPIKey(t *testing.T) {
 				MaxTokens: 4096,
 			},
 		},
-		Providers: config.SecureModelList{
+		Providers: []*config.ModelConfig{
 			{ModelName: "openai", Provider: "openai", Model: "gpt-4o", APIKeyRef: "OPENAI_API_KEY"},
 		},
 	}
@@ -654,7 +654,7 @@ func TestProviderGET_ResolvesAPIKeyRefFromCredStore(t *testing.T) {
 				MaxTokens: 4096,
 			},
 		},
-		Providers: config.SecureModelList{
+		Providers: []*config.ModelConfig{
 			{ModelName: "openai", Provider: "openai", Model: "gpt-4o", APIKeyRef: credRef},
 		},
 	}

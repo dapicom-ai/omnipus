@@ -71,13 +71,28 @@ type services struct {
 	CronService      *cron.CronService
 	HeartbeatService *heartbeat.HeartbeatService
 	MediaStore       media.MediaStore
+	// ChannelManager is read-only to HTTP handlers (they access it via the
+	// agent loop's GetChannelManager). It is written only during executeReload,
+	// which is single-flighted by the reloading atomic.Bool. No handler reads
+	// this field directly, so no additional lock is required for read access.
 	ChannelManager   *channels.Manager
 	DeviceService    *devices.Service
 	HealthServer     *health.Server
 	manualReloadChan chan struct{}
 	reloading        atomic.Bool
 	credStore        *credentials.Store
-	bundle           credentials.SecretBundle // resolved channel secrets — never written to env
+	// bundle is read-only to HTTP handlers (channels receive secrets at
+	// construction time via SecretBundle; handlers do not access bundle
+	// directly). Written only during executeReload under the reloading
+	// single-flight guard. No additional lock is required for read access.
+	bundle credentials.SecretBundle
+
+	// reloadDegraded is set to true when a config reload fails and the service
+	// is running on the last successfully loaded config. Cleared on next
+	// successful reload. Protected by reloadMu.
+	reloadMu       sync.Mutex
+	reloadDegraded bool
+	reloadError    error
 }
 
 type startupBlockedProvider struct {
@@ -301,6 +316,14 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	}
 	runningServices.HealthServer.SetReloadFunc(reloadTrigger)
 	agentLoop.SetReloadFunc(reloadTrigger)
+	runningServices.HealthServer.SetDegradedFunc(func() (bool, string) {
+		runningServices.reloadMu.Lock()
+		defer runningServices.reloadMu.Unlock()
+		if runningServices.reloadDegraded {
+			return true, fmt.Sprintf("config reload failed: %v", runningServices.reloadError)
+		}
+		return false, ""
+	})
 
 	fmt.Printf("✓ Gateway started on %s:%d\n", cfg.Gateway.Host, cfg.Gateway.Port)
 	fmt.Println("Press Ctrl+C to stop")
@@ -367,6 +390,37 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	}
 }
 
+// servicesSnapshot captures all fields that restartServices and executeReload
+// mutate, so they can be atomically restored on reload failure.
+type servicesSnapshot struct {
+	bundle           credentials.SecretBundle
+	ChannelManager   *channels.Manager
+	CronService      *cron.CronService
+	HeartbeatService *heartbeat.HeartbeatService
+	MediaStore       media.MediaStore
+	DeviceService    *devices.Service
+}
+
+func snapshotServices(svc *services) servicesSnapshot {
+	return servicesSnapshot{
+		bundle:           svc.bundle,
+		ChannelManager:   svc.ChannelManager,
+		CronService:      svc.CronService,
+		HeartbeatService: svc.HeartbeatService,
+		MediaStore:       svc.MediaStore,
+		DeviceService:    svc.DeviceService,
+	}
+}
+
+func restoreServices(svc *services, snap servicesSnapshot) {
+	svc.bundle = snap.bundle
+	svc.ChannelManager = snap.ChannelManager
+	svc.CronService = snap.CronService
+	svc.HeartbeatService = snap.HeartbeatService
+	svc.MediaStore = snap.MediaStore
+	svc.DeviceService = snap.DeviceService
+}
+
 func executeReload(
 	ctx context.Context,
 	agentLoop *agent.AgentLoop,
@@ -377,6 +431,28 @@ func executeReload(
 	allowEmptyStartup bool,
 ) error {
 	defer runningServices.reloading.Store(false)
+
+	// Snapshot all service fields that restartServices mutates so they can be
+	// restored atomically if the reload fails. bundle and ChannelManager are
+	// mutated here in executeReload itself; the rest are mutated in
+	// restartServices (CronService, HeartbeatService, MediaStore, DeviceService).
+	snap := snapshotServices(runningServices)
+
+	markDegraded := func(err error) {
+		slog.Error("config reload failed — rolling back to previous in-memory state", "error", err)
+		restoreServices(runningServices, snap)
+		runningServices.reloadMu.Lock()
+		runningServices.reloadDegraded = true
+		runningServices.reloadError = err
+		runningServices.reloadMu.Unlock()
+	}
+	clearDegraded := func() {
+		runningServices.reloadMu.Lock()
+		runningServices.reloadDegraded = false
+		runningServices.reloadError = nil
+		runningServices.reloadMu.Unlock()
+	}
+
 	// Re-inject provider credentials for the new config so LLM SDK clients
 	// receive their secrets. If injection fails, reject the reload.
 	if cs := runningServices.credStore; cs != nil {
@@ -384,7 +460,9 @@ func executeReload(
 			for _, e := range errs {
 				slog.Error("reload: provider credential injection failed — rejecting reload", "error", e)
 			}
-			return fmt.Errorf("reload rejected: provider credential injection failed")
+			reloadErr := fmt.Errorf("reload rejected: provider credential injection failed")
+			markDegraded(reloadErr)
+			return reloadErr
 		}
 
 		// Re-resolve the SecretBundle for channels (no os.Setenv for channel creds).
@@ -410,7 +488,20 @@ func executeReload(
 			newCfg.RegisterSensitiveValues(reloadValues)
 		}
 	}
-	return handleConfigReload(ctx, agentLoop, newCfg, provider, runningServices, msgBus, allowEmptyStartup)
+	if err := handleConfigReload(
+		ctx,
+		agentLoop,
+		newCfg,
+		provider,
+		runningServices,
+		msgBus,
+		allowEmptyStartup,
+	); err != nil {
+		markDegraded(err)
+		return err
+	}
+	clearDegraded()
+	return nil
 }
 
 func createStartupProvider(
@@ -603,8 +694,21 @@ func setupAndStartServices(
 		MonitorUSB: cfg.Devices.MonitorUSB,
 	}, stateManager)
 	runningServices.DeviceService.SetBus(msgBus)
+	// Invariant: when cfg.Devices.Enabled==true, a Start failure is fatal and
+	// propagated to the caller (Run returns the error). When disabled, Start
+	// failures are only warnings. A unit test for this path is not included
+	// because devices.Service is a concrete struct (not an interface) and
+	// mocking it would require invasive refactoring; the behavior is exercised
+	// by integration tests that configure a real USB monitor on supported hosts.
 	if err = runningServices.DeviceService.Start(context.Background()); err != nil {
-		logger.ErrorCF("device", "Error starting device service", map[string]any{"error": err.Error()})
+		if cfg.Devices.Enabled {
+			return nil, fmt.Errorf("device service: %w", err)
+		}
+		logger.WarnCF(
+			"device",
+			"device service start failed (devices disabled, continuing)",
+			map[string]any{"error": err.Error()},
+		)
 	} else if cfg.Devices.Enabled {
 		fmt.Println("✓ Device event service started")
 	}
@@ -759,6 +863,12 @@ func restartServices(
 		fmt.Println("  ⚠ Warning: No channels enabled")
 	}
 
+	// Stop the previous DeviceService before replacing it to avoid goroutine
+	// leaks: the old service's goroutine would keep running with a dangling
+	// pointer if we only overwrite the field.
+	if oldDS := runningServices.DeviceService; oldDS != nil {
+		oldDS.Stop()
+	}
 	stateManager := state.NewManager(cfg.WorkspacePath())
 	runningServices.DeviceService = devices.NewService(devices.Config{
 		Enabled:    cfg.Devices.Enabled,
@@ -766,7 +876,14 @@ func restartServices(
 	}, stateManager)
 	runningServices.DeviceService.SetBus(msgBus)
 	if err := runningServices.DeviceService.Start(context.Background()); err != nil {
-		logger.WarnCF("device", "Failed to restart device service", map[string]any{"error": err.Error()})
+		if cfg.Devices.Enabled {
+			return fmt.Errorf("device service: %w", err)
+		}
+		logger.WarnCF(
+			"device",
+			"device service start failed (devices disabled, continuing)",
+			map[string]any{"error": err.Error()},
+		)
 	} else if cfg.Devices.Enabled {
 		fmt.Println("  ✓ Device event service restarted")
 	}

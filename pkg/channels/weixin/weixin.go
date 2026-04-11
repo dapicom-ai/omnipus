@@ -53,10 +53,7 @@ func NewWeixinChannel(
 ) (*WeixinChannel, error) {
 	token := secrets.GetString(cfg.TokenRef)
 	if token == "" {
-		return nil, fmt.Errorf(
-			"weixin: token_ref %q not resolved — check credential store",
-			cfg.TokenRef,
-		)
+		return nil, fmt.Errorf("weixin: token not resolved (token_ref=%q): check credential store", cfg.TokenRef)
 	}
 	api, err := NewApiClient(cfg.BaseURL, token, cfg.Proxy)
 	if err != nil {

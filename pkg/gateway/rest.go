@@ -239,15 +239,26 @@ func (a *restAPI) HandleSessions(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// sanitizePartialError extracts only the agent ID from a ListAllSessions partial
+// error and returns an opaque failure token. ListAllSessions wraps errors as
+// "agent=<id>: <underlying>". We keep only the agent prefix so that filesystem
+// paths, syscall messages, and permission strings are never leaked to REST clients.
+// The full error is always logged server-side before calling this function.
+func sanitizePartialError(pe error) string {
+	msg := pe.Error()
+	if idx := strings.Index(msg, ": "); idx > 0 {
+		return msg[:idx] + ": session_list_failed"
+	}
+	return "session_list_failed"
+}
+
 func (a *restAPI) listSessions(w http.ResponseWriter, r *http.Request) {
 	agentFilter := r.URL.Query().Get("agent_id")
 	typeFilter := r.URL.Query().Get("type")
 
-	metas, err := a.agentLoop.ListAllSessions()
-	if err != nil {
-		slog.Error("rest: list sessions", "error", err)
-		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not list sessions: %v", err))
-		return
+	metas, partialErrs := a.agentLoop.ListAllSessions()
+	for _, pe := range partialErrs {
+		slog.Warn("rest: list sessions: partial error", "error", pe)
 	}
 
 	// Apply filters.
@@ -261,7 +272,21 @@ func (a *restAPI) listSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		filtered = append(filtered, m)
 	}
-	jsonOK(w, filtered)
+
+	if len(partialErrs) == 0 {
+		jsonOK(w, filtered)
+		return
+	}
+	sanitized := make([]string, len(partialErrs))
+	for i, pe := range partialErrs {
+		sanitized[i] = sanitizePartialError(pe)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]any{
+		"sessions":       filtered,
+		"partial_errors": sanitized,
+	})
 }
 
 func (a *restAPI) getSession(w http.ResponseWriter, _ *http.Request, id string) {
@@ -2177,11 +2202,23 @@ func (a *restAPI) HandleActivity(w http.ResponseWriter, r *http.Request) {
 
 	// Collect session_start events from all agent stores (last 24h).
 	{
-		metas, err := a.agentLoop.ListAllSessions()
-		if err != nil {
-			slog.Error("rest: activity: list sessions", "error", err)
-			sessionWarning = fmt.Sprintf("could not load session history: %v", err)
-		} else {
+		metas, partialErrs := a.agentLoop.ListAllSessions()
+		if len(partialErrs) > 0 {
+			agentIDs := make([]string, 0, len(partialErrs))
+			for _, pe := range partialErrs {
+				sanitized := sanitizePartialError(pe)
+				// Extract the "agent=<id>" prefix for the summary message.
+				agentLabel := sanitized
+				if idx := strings.Index(sanitized, ":"); idx > 0 {
+					agentLabel = sanitized[:idx]
+				}
+				agentIDs = append(agentIDs, agentLabel)
+				slog.Warn("rest: activity: session listing failed", "error", pe)
+			}
+			sessionWarning = fmt.Sprintf("could not load session history for %d agents: %s (see gateway logs)",
+				len(agentIDs), strings.Join(agentIDs, ", "))
+		}
+		{
 			for _, m := range metas {
 				if m.CreatedAt.After(cutoff) {
 					summary := m.Title
@@ -3033,9 +3070,12 @@ func (a *restAPI) HandleStorageStats(w http.ResponseWriter, r *http.Request) {
 	var sessionCount int
 	var workspaceSize int64
 	var warnings []string
-	if metas, err := a.agentLoop.ListAllSessions(); err != nil {
-		slog.Warn("rest: storage stats: list sessions failed", "error", err)
-		warnings = append(warnings, fmt.Sprintf("session count unavailable: %v", err))
+	if metas, partialErrs := a.agentLoop.ListAllSessions(); len(partialErrs) > 0 {
+		for _, pe := range partialErrs {
+			slog.Warn("rest: storage stats: list sessions partial error", "error", pe)
+			warnings = append(warnings, sanitizePartialError(pe))
+		}
+		sessionCount = len(metas)
 	} else {
 		sessionCount = len(metas)
 	}

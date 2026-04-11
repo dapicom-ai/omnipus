@@ -86,11 +86,53 @@ When `LoadConfigWithStore` encounters a v0 config file:
 
 ---
 
+## Failure Modes and Recovery
+
+### Boot-time failures (fatal)
+
+Any failure in the boot sequence (Unlock, LoadConfigWithStore, InjectFromConfig,
+ResolveBundle, NewManager) aborts the process with a descriptive error. The
+operator must fix the root cause and restart.
+
+### Reload-time failures (rollback + degraded)
+
+When `POST /reload` or the hot-reload watcher triggers `executeReload`, any
+failure in `InjectFromConfig`, `ResolveBundle`, `handleConfigReload`, or
+`restartServices` is caught:
+
+1. `executeReload` snapshots the pre-reload `services` state via
+   `snapshotServices` (captures bundle, ChannelManager, CronService,
+   HeartbeatService, MediaStore, DeviceService).
+2. On failure, `markDegraded` calls `restoreServices` to restore the snapshot
+   and sets:
+   - `services.reloadDegraded = true`
+   - `services.reloadError = <wrapped error>`
+3. `/health` returns HTTP 503 with:
+   ```json
+   {"status": "degraded", "reason": "config reload failed: <error>"}
+   ```
+4. Load balancers (k8s readiness probes, nginx, envoy) remove the pod from
+   rotation automatically.
+5. Old channels + services continue serving requests from the snapshotted
+   state — no traffic interruption.
+
+**Recovery:** fix `config.json`, POST `/reload` again. On success,
+`clearDegraded` is called and `/health` returns 200.
+
+**Partial rollback scope:** only the fields listed in `servicesSnapshot` are
+restored (bundle, ChannelManager, CronService, HeartbeatService, MediaStore,
+DeviceService). Cron task state, agent loop state, audit log, and other
+side-effects that `stopAndCleanupServices` triggers are NOT rolled back.
+Operators should prefer a full process restart for reloads that touch
+cron/heartbeat/MCP state.
+
+---
+
 ## Consequences
 
 - Gateway always starts with a fully resolved environment or not at all.
 - Operators get a clear error message when OMNIPUS_MASTER_KEY is missing.
 - v0 → v1 migration is automatic and preserves all secrets.
 - Hot-reload and REST config writes re-arm sensitive-data scrubbing so newly-added credentials are immediately scrubbed from LLM output and audit logs.
-- Hot-reload failures are non-destructive: the old config continues serving.
-- See also: `pkg/credentials/inject.go`, `pkg/config/config_old.go` (`MigrateWithStore`), `pkg/gateway/gateway.go` (`bootCredentials`, `Run`, `executeReload`), `pkg/gateway/rest.go` (`refreshConfigAndRewireServices`, `safeUpdateConfigJSON`).
+- Hot-reload failures roll back the in-memory service graph and set the process degraded. The old config continues serving while the operator fixes the new config.
+- See also: `pkg/credentials/inject.go`, `pkg/config/config_old.go` (`MigrateWithStore`), `pkg/gateway/gateway.go` (`bootCredentials`, `Run`, `executeReload`, `snapshotServices`, `restoreServices`), `pkg/gateway/rest.go` (`refreshConfigAndRewireServices`, `safeUpdateConfigJSON`).

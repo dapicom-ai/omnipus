@@ -18,7 +18,6 @@ import (
 //     LLM responses and logs (used throughout the agent loop)
 //   - SecureString / SecureStrings: typed wrappers for credential values that
 //     are redacted on JSON serialization
-//   - SecureModelList: type alias for []*ModelConfig used by the Providers field
 //
 // The old PicoClaw ".security.yml" credential-separation mechanism has been
 // removed. Credential separation is now handled exclusively by the Omnipus
@@ -296,11 +295,3 @@ func (s *SecureString) UnmarshalText(text []byte) error {
 	s.resolved = string(text)
 	return nil
 }
-
-// SecureModelList is the type used by Config.Providers. It is a plain slice of
-// *ModelConfig; the credential-separation custom UnmarshalYAML that used to
-// live here has been removed along with the .security.yml mechanism.
-//
-// Note: this is a named alias for []*ModelConfig and can be replaced with that
-// type directly in a future size-hygiene PR.
-type SecureModelList []*ModelConfig

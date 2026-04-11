@@ -39,7 +39,7 @@ func TestSensitiveDataReplacer_ReducesResolvedKey(t *testing.T) {
 	require.NoError(t, store.Set("ANTHROPIC_API_KEY", "sk-fake-supersecret"))
 
 	cfg := &config.Config{
-		Providers: config.SecureModelList{
+		Providers: []*config.ModelConfig{
 			{
 				ModelName: "c",
 				APIKeyRef: "ANTHROPIC_API_KEY",
@@ -105,7 +105,7 @@ func TestRefreshConfigAfterSave_PreservesRedaction(t *testing.T) {
 				MaxTokens: 4096,
 			},
 		},
-		Providers: config.SecureModelList{
+		Providers: []*config.ModelConfig{
 			{
 				ModelName: "anthropic",
 				APIKeyRef: "ANTHROPIC_API_KEY",

@@ -213,7 +213,7 @@ func NewMatrixChannel(
 		return nil, fmt.Errorf("matrix user_id is required")
 	}
 	if accessToken == "" {
-		return nil, fmt.Errorf("matrix access_token is required")
+		return nil, fmt.Errorf("matrix: access_token not resolved (access_token_ref=%q): check credential store", cfg.AccessTokenRef)
 	}
 
 	client, err := mautrix.NewClient(homeserver, id.UserID(userID), accessToken)
@@ -227,6 +227,11 @@ func NewMatrixChannel(
 	syncer, ok := client.Syncer.(*mautrix.DefaultSyncer)
 	if !ok {
 		return nil, fmt.Errorf("matrix syncer is not *mautrix.DefaultSyncer")
+	}
+
+	cryptoPassphrase := secrets.GetString(cfg.CryptoPassphraseRef)
+	if cfg.CryptoPassphraseRef != "" && cryptoPassphrase == "" {
+		return nil, fmt.Errorf("matrix: crypto_passphrase not resolved (crypto_passphrase_ref=%q): check credential store", cfg.CryptoPassphraseRef)
 	}
 
 	base := channels.NewBaseChannel(
@@ -252,7 +257,7 @@ func NewMatrixChannel(
 		cryptoDbPath:      cryptoDatabasePath,
 		// Resolve the passphrase once at construction from the SecretBundle so
 		// Start/initCrypto do not re-read from any source on every invocation.
-		cryptoPassphrase: secrets.GetString(cfg.CryptoPassphraseRef),
+		cryptoPassphrase: cryptoPassphrase,
 	}, nil
 }
 

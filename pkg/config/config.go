@@ -113,7 +113,7 @@ type Config struct {
 	Bindings  []AgentBinding  `json:"bindings,omitempty" yaml:"-"`
 	Session   SessionConfig   `json:"session,omitempty"  yaml:"-"`
 	Channels  ChannelsConfig  `json:"channels"           yaml:"channels"`
-	Providers SecureModelList `json:"providers"          yaml:"providers"` // Configured providers with credentials
+	Providers []*ModelConfig  `json:"providers"          yaml:"providers"` // Configured providers with credentials
 	Gateway   GatewayConfig   `json:"gateway"            yaml:"-"`
 	Hooks     HooksConfig     `json:"hooks,omitempty"    yaml:"-"`
 	Tools     ToolsConfig     `json:"tools"              yaml:",inline"`

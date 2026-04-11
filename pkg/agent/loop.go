@@ -1612,8 +1612,12 @@ func (al *AgentLoop) ResolveSessionStore(sessionID string) *session.UnifiedStore
 }
 
 // ListAllSessions returns sessions from all agent stores merged and sorted by UpdatedAt descending.
-func (al *AgentLoop) ListAllSessions() ([]*session.UnifiedMeta, error) {
+// The second return value collects per-agent errors so callers can distinguish
+// "no sessions" from "all agents failed". Callers should surface partial errors
+// as warnings rather than treating the entire response as a failure.
+func (al *AgentLoop) ListAllSessions() ([]*session.UnifiedMeta, []error) {
 	var all []*session.UnifiedMeta
+	var errs []error
 	for _, id := range al.GetRegistry().ListAgentIDs() {
 		store := al.GetAgentStore(id)
 		if store == nil {
@@ -1623,6 +1627,7 @@ func (al *AgentLoop) ListAllSessions() ([]*session.UnifiedMeta, error) {
 		if err != nil {
 			logger.WarnCF("agent", "ListAllSessions: could not list sessions for agent",
 				map[string]any{"agent_id": id, "error": err.Error()})
+			errs = append(errs, fmt.Errorf("agent=%s: %w", id, err))
 			continue
 		}
 		all = append(all, sessions...)
@@ -1630,7 +1635,7 @@ func (al *AgentLoop) ListAllSessions() ([]*session.UnifiedMeta, error) {
 	sort.Slice(all, func(i, j int) bool {
 		return all[i].UpdatedAt.After(all[j].UpdatedAt)
 	})
-	return all, nil
+	return all, errs
 }
 
 // processTaskDirect runs the agent loop for a task, dispatching to the given agent.
