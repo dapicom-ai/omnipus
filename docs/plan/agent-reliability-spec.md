@@ -2,7 +2,7 @@
 
 **Created**: 2026-03-31
 **Status**: Revised (post-grill-spec review)
-**Input**: PicoClaw community stability analysis, OpenClaw agent loop reverse-engineering, Omnipus codebase audit, adversarial review findings
+**Input**: Omnipus community stability analysis, OpenClaw agent loop reverse-engineering, Omnipus codebase audit, adversarial review findings
 
 ---
 
@@ -73,7 +73,7 @@ A user wants every response the agent generates to be delivered, even when post-
 
 Currently, there are 4 early-return paths in post-turn processing (loop.go:445-525) that exit without publishing the response.
 
-**Why this priority**: This directly causes the most-reported PicoClaw issue.
+**Why this priority**: This directly causes the most-reported Omnipus issue.
 
 **Implementation approach**: Use a `defer` pattern at the top of the `Run()` goroutine that publishes `finalResponse` if it's non-empty and hasn't been published yet. This catches ALL return paths automatically (current and future). A `published` boolean flag prevents double-publish. The `defer` checks `HasSentInRound()` — if a tool already sent a message via `MessageTool`, the defer does NOT publish (the tool's message IS the response).
 

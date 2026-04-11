@@ -18,7 +18,7 @@ import (
 )
 
 type mcpRuntime struct {
-	// initMu serialises concurrent calls to ensureMCPInitialized.
+	// initMu serializes concurrent calls to ensureMCPInitialized.
 	// Unlike sync.Once, this allows retrying after a transient failure.
 	initMu  sync.Mutex
 	mu      sync.Mutex

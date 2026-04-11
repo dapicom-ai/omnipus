@@ -133,7 +133,7 @@ export const FileTreeViewUI = makeAssistantToolUI<ListDirArgs, unknown>({
   ),
 })
 
-// BRD C.6.1.4 tool name (dot-notation). Backend uses PicoClaw convention (list_dir); both registered.
+// BRD C.6.1.4 tool name (dot-notation). Backend uses Omnipus convention (list_dir); both registered.
 export const FileListAliasDotUI = makeAssistantToolUI<ListDirArgs, unknown>({
   toolName: 'file.list',
   render: ({ args, result, status }) => (

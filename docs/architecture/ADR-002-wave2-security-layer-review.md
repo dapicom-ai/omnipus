@@ -1,7 +1,7 @@
 # ADR-002: Wave 2 Security Layer Architecture Review
 
-**Status:** Proposed
-**Date:** 2026-03-29
+**Status:** Accepted
+**Date:** 2026-03-29 (updated 2026-04-10)
 **Deciders:** architect, backend-lead, security-lead, qa-lead
 
 ## Context
@@ -143,6 +143,90 @@ If the last line of `audit.jsonl` exceeds 4096 bytes (e.g., large `parameters` m
 - **Backend:** `pkg/sandbox/` (seccomp fix), `pkg/policy/` (type unification, interceptor), `pkg/audit/` (schema prep), `pkg/security/` (dedup, SSRF URL parsing)
 - **Frontend:** None
 - **Variants:** All three variants affected by policy engine changes; sandbox changes are Linux-only (open source/SaaS) with fallback improvements helping Desktop (Electron on macOS/Windows)
+
+## Resolution Status (as of 2026-04-10)
+
+Most findings have been addressed across Waves 1-4. Two items are **partially
+resolved** — the code for kernel-level enforcement exists and is tested in
+isolation, but the runtime wiring that installs it on the Omnipus process is
+still missing. These gaps are tracked as follow-up work; the sandbox status
+endpoint (added in Wave 5) surfaces them to operators via a `policy_applied`
+flag and an explanatory note.
+
+**Blockers — Partially resolved**
+- **B-1 (Seccomp BPF install)**: Assembly code landed in pre-wave prep.
+  `pkg/sandbox/seccomp_linux.go` assembles a real BPF program via
+  `unix.SockFilter`/`unix.SockFprog` and has an `Install()` method that calls
+  `unix.Syscall(SYS_SECCOMP, ...)` with `SECCOMP_FILTER_FLAG_TSYNC`. **Gap:**
+  `Install()` has no production callers — the seccomp filter is never
+  installed on the running process. The status endpoint reports
+  `seccomp_enabled: false` and `policy_applied: false` until this is wired.
+  Follow-up: wire `SeccompProgram.Install()` into `LinuxBackend.Apply()` and
+  call `Apply()` at agent loop startup.
+- **B-2 (Duplicated glob/firstToken)**: Fully resolved in pre-wave prep.
+  `execapproval.go` delegates to `policy.MatchGlob()` and `policy.FirstToken()`.
+
+**Warnings — Resolved and partially resolved**
+- **W-1 (FallbackBackend access-flag handling + ApplyToCmd no-op)**:
+  *Partially resolved* in Wave 2. `ApplyToCmd` now injects
+  `OMNIPUS_SANDBOX_MODE=fallback` and `OMNIPUS_SANDBOX_PATHS` env vars so
+  cooperative child processes can self-enforce. **Gap:** `CheckPath` still
+  ignores access flags (the comment explicitly says so); a new
+  `CheckPathAccess` method was added as an opt-in API but has no production
+  callers. Follow-up: migrate callers to `CheckPathAccess` or make
+  `CheckPath` a fail-closed alias that requires all access flags.
+- **W-2 (Duplicated SecurityConfig / AuditConfig / SSRFConfig / ExecConfig
+  types)**: Resolved. The legacy `*ConfigFile`/`*Config` shadow types were
+  removed; `pkg/policy/policy.go` now defines a single canonical
+  `SecurityConfig` with nested `AuditPolicy`, `SSRFPolicy`, `ExecPolicy`,
+  `FilesystemPolicy`, `RateLimitsPolicy`, `PromptGuardConfig`, and
+  `SkillTrustPolicy` — each present once.
+- **W-3 (No automatic audit logging from evaluator)**: Fixed in Wave 1. New
+  `PolicyAuditor` wraps `Evaluator` and auto-logs every decision.
+- **W-4 (Global cost cap RetryAfterSeconds: 0)**: Verified resolved —
+  `ratelimit.go` computes `time.Until(nextMidnightUTC).Seconds()` correctly.
+  Wave 4 additionally added `RecordSpend()` which fixes the related bug where
+  `CheckGlobalCostCap` stalled the accumulator at cap-epsilon.
+
+**Notes — Resolved or deferred**
+- **N-1 (SEC-10 two-layer enforcement)**: Deferred to Phase 2 per BRD scope.
+- **N-2 (extractHost hand-rolled parsing)**: Not addressed — works correctly
+  for current SSRF use cases.
+- **N-3 (audit readLastLine 4096-byte buffer)**: Not addressed — acceptable
+  for current audit entry sizes.
+- **N-4 (audit retention uses ModTime)**: Not addressed — acceptable for
+  daily rotation.
+- **N-5 (strings.Title deprecation)**: Not addressed — pre-existing,
+  non-security-critical.
+- **N-6 (Tamper-evident log chain prep)**: Deferred to Phase 2 per SEC-18 scope.
+
+## Known gaps for follow-up
+
+Two items from the resolution status above need runtime wiring before the
+Wave 2 kernel enforcement layer is truly active:
+
+1. **Wire `LinuxBackend.Apply()` at agent loop startup.** Currently the backend
+   is selected and stored but `Apply()` is never called, so no Landlock
+   restrictions are installed on the Omnipus process. Without this, the
+   `ExecTool.ApplyToCmd` comment ("Landlock inherits to children natively")
+   is correct in theory but vacuous in practice — there is nothing to inherit
+   from. The sandbox status endpoint surfaces this as
+   `policy_applied: false` with a note.
+2. **Wire `SeccompProgram.Install()` into `LinuxBackend.Apply()`.** The BPF
+   program is assembled but never installed. Until this is wired, seccomp
+   syscall filtering is not active.
+
+Both are pre-existing gaps that predate the Wave 1-4 security wiring work.
+They were discovered during Wave 5's sandbox status UI review — the UI was
+originally going to claim "seccomp enabled" unconditionally based on
+capability, which the Wave 5 review correctly flagged as misleading.
+
+**Status: Accepted (with known gaps)** — 2026-04-10. The policy engine,
+audit logging, rate limiting, prompt guard, exec allowlist, and exec proxy
+layers are in production. Kernel-level sandbox enforcement (Landlock +
+seccomp) has the code landed but needs a runtime wiring step documented
+above. The sandbox status endpoint honestly reports this state via
+`policy_applied: false` rather than misrepresenting capability as enforcement.
 
 ## Wave 3 Readiness Assessment
 

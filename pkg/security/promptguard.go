@@ -6,8 +6,8 @@
 //   - Low    — wraps untrusted content in [UNTRUSTED_CONTENT] delimiters.
 //   - Medium — additionally escapes known injection patterns; default.
 //   - High   — replaces untrusted content with a static placeholder; the
-//               caller is responsible for summarising via a separate LLM
-//               call before passing to the main agent.
+//     caller is responsible for summarizing via a separate LLM
+//     call before passing to the main agent.
 package security
 
 import (
@@ -62,7 +62,7 @@ type PromptGuard struct {
 }
 
 // NewPromptGuard creates a PromptGuard with the given strictness.
-// An empty or unrecognised value defaults to Medium.
+// An empty or unrecognized value defaults to Medium.
 func NewPromptGuard(s Strictness) *PromptGuard {
 	switch s {
 	case StrictnessLow, StrictnessMedium, StrictnessHigh:

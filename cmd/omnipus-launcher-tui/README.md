@@ -1,7 +1,7 @@
-# Picoclaw Launcher TUI
+# Omnipus Launcher TUI
 
-This directory contains the terminal-based TUI launcher for `picoclaw`.
-It provides a lightweight, terminal-native user interface for managing, configuring, and interacting with the core `picoclaw` engine, without requiring a web browser or graphical environment.
+This directory contains the terminal-based TUI launcher for `omnipus`.
+It provides a lightweight, terminal-native user interface for managing, configuring, and interacting with the core `omnipus` engine, without requiring a web browser or graphical environment.
 
 ## Architecture
 
@@ -12,10 +12,10 @@ The TUI launcher is implemented purely in Go with no external runtime dependenci
   - `schemes.go`: AI model scheme management
   - `users.go`: User and API key management for model providers
   - `channels.go`: Communication channel (Telegram/Discord/WeChat etc.) configuration editor
-  - `gateway.go`: PicoClaw gateway daemon lifecycle management (start/stop/status)
+  - `gateway.go`: Omnipus gateway daemon lifecycle management (start/stop/status)
   - `app.go`: Core TUI application framework and navigation logic
   - `models.go`: Data structures and state management
-* **`config/`**: Configuration management layer, integrates with the core picoclaw configuration system
+* **`config/`**: Configuration management layer, integrates with the core omnipus configuration system
 
 ## Getting Started
 
@@ -30,7 +30,7 @@ Run the TUI launcher directly in development mode:
 
 ```bash
 # From project root
-go run ./cmd/picoclaw-launcher-tui
+go run ./cmd/omnipus-launcher-tui
 
 # Or from this directory
 go run .
@@ -45,11 +45,11 @@ Build the standalone TUI launcher binary:
 make build-launcher-tui
 
 # Output will be at:
-# build/picoclaw-launcher-tui-<platform>-<arch>
-# with symlink build/picoclaw-launcher-tui
+# build/omnipus-launcher-tui-<platform>-<arch>
+# with symlink build/omnipus-launcher-tui
 
 # Or build directly from this directory
-go build -o picoclaw-launcher-tui .
+go build -o omnipus-launcher-tui .
 ```
 
 ### Key Features
@@ -57,7 +57,7 @@ go build -o picoclaw-launcher-tui .
 * 🖥️ Terminal-native interface - works over SSH, on headless servers, and in low-resource environments
 * ⚙️ AI model scheme and API key management
 * 📱 Communication channel configuration editor (Telegram/Discord/WeChat etc.)
-* 🔄 PicoClaw gateway daemon management (start/stop/status monitoring)
+* 🔄 Omnipus gateway daemon management (start/stop/status monitoring)
 * 💬 One-click launch of interactive AI chat session
 * 🎯 Keyboard-first design with intuitive shortcuts
 

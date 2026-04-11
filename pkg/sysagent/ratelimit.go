@@ -39,13 +39,13 @@ var toolCategory = map[string]rateLimitCategory{
 	"system.mcp.remove":     rateCategoryDelete,
 	"system.pin.delete":     rateCategoryDelete,
 
-	"system.config.set":          rateCategoryConfig,
-	"system.provider.configure":  rateCategoryConfig,
-	"system.agent.update":        rateCategoryConfig,
-	"system.project.update":      rateCategoryConfig,
-	"system.task.update":         rateCategoryConfig,
+	"system.config.set":         rateCategoryConfig,
+	"system.provider.configure": rateCategoryConfig,
+	"system.agent.update":       rateCategoryConfig,
+	"system.project.update":     rateCategoryConfig,
+	"system.task.update":        rateCategoryConfig,
 
-	"system.agent.list":    rateCategoryList,
+	"system.agent.list":       rateCategoryList,
 	"system.agent.activate":   rateCategoryList,
 	"system.agent.deactivate": rateCategoryList,
 	"system.project.list":     rateCategoryList,
@@ -86,13 +86,13 @@ var categoryLimits = map[rateLimitCategory]categoryLimit{
 	rateCategoryBackup:  {maxCalls: 1, window: 5 * time.Minute},
 }
 
-// ErrRateLimited is returned when a tool call is rate-limited.
-type ErrRateLimited struct {
-	Category         rateLimitCategory
+// RateLimitedError is returned when a tool call is rate-limited.
+type RateLimitedError struct {
+	Category          rateLimitCategory
 	RetryAfterSeconds float64
 }
 
-func (e *ErrRateLimited) Error() string {
+func (e *RateLimitedError) Error() string {
 	return fmt.Sprintf("RATE_LIMITED: too many %s operations, retry in %.0f seconds",
 		e.Category, e.RetryAfterSeconds)
 }
@@ -111,7 +111,7 @@ func newSlidingWindow(limit categoryLimit) *slidingWindow {
 	}
 }
 
-// allow returns nil if the call is permitted, or ErrRateLimited.
+// allow returns nil if the call is permitted, or RateLimitedError.
 func (w *slidingWindow) allow() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -132,7 +132,7 @@ func (w *slidingWindow) allow() error {
 	if len(w.events) >= w.limit.maxCalls {
 		oldest := w.events[0]
 		retryAt := oldest.Add(w.limit.window)
-		return &ErrRateLimited{
+		return &RateLimitedError{
 			RetryAfterSeconds: retryAt.Sub(now).Seconds(),
 		}
 	}
@@ -157,7 +157,7 @@ func NewSystemRateLimiter() *SystemRateLimiter {
 	return rl
 }
 
-// Check returns nil if toolName is within its rate limit, ErrRateLimited otherwise.
+// Check returns nil if toolName is within its rate limit, RateLimitedError otherwise.
 func (rl *SystemRateLimiter) Check(toolName string) error {
 	cat, ok := toolCategory[toolName]
 	if !ok {
@@ -168,7 +168,7 @@ func (rl *SystemRateLimiter) Check(toolName string) error {
 		return nil
 	}
 	if err := w.allow(); err != nil {
-		if rlErr, ok := err.(*ErrRateLimited); ok {
+		if rlErr, ok := err.(*RateLimitedError); ok {
 			rlErr.Category = cat
 		}
 		return err

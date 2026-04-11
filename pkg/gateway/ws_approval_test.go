@@ -48,14 +48,6 @@ func unmarshalWSServerFrame(b []byte, f *wsServerFrame) error {
 	return json.Unmarshal(b, f)
 }
 
-// newIntegrationTestServer wraps httptest.NewServer and registers cleanup.
-func newIntegrationTestServer(t *testing.T, handler *WSHandler) *httptest.Server {
-	t.Helper()
-	srv := httptest.NewServer(handler)
-	t.Cleanup(srv.Close)
-	return srv
-}
-
 // writeWSClientFrame marshals and sends a wsClientFrame over the WebSocket connection.
 func writeWSClientFrame(t *testing.T, conn *websocket.Conn, frame wsClientFrame) {
 	t.Helper()
@@ -289,10 +281,10 @@ func TestApprovalHook_Timeout(t *testing.T) {
 }
 
 // TestApprovalHook_ContextCancelled verifies that ApproveTool returns immediately when
-// the parent context is cancelled, returning denial + ctx.Err().
-// BDD: Given a wsApprovalHook and a context cancelled after 50ms,
+// the parent context is canceled, returning denial + ctx.Err().
+// BDD: Given a wsApprovalHook and a context canceled after 50ms,
 // When ApproveTool is called,
-// Then it returns denial with reason "context cancelled" and err == context.Canceled.
+// Then it returns denial with reason "context canceled" and err == context.Canceled.
 // Traces to: vivid-roaming-planet.md line 148
 func TestApprovalHook_ContextCancelled(t *testing.T) {
 	conn := makeTestConn()
@@ -315,8 +307,8 @@ func TestApprovalHook_ContextCancelled(t *testing.T) {
 	decision, err := hook.ApproveTool(ctx, req)
 
 	assert.ErrorIs(t, err, context.Canceled, "context cancellation must return context.Canceled")
-	assert.False(t, decision.IsApproved(), "cancelled context must result in denial")
-	assert.Contains(t, decision.Reason, "context cancelled")
+	assert.False(t, decision.IsApproved(), "canceled context must result in denial")
+	assert.Contains(t, decision.Reason, "context canceled")
 }
 
 // TestApprovalHook_NilConn verifies that a hook with conn=nil returns an immediate denial.
@@ -500,7 +492,7 @@ func TestAutoApproveSafeTool_AllSafeTools(t *testing.T) {
 	}
 
 	for _, tool := range safeTools {
-		tool := tool // capture loop variable
+		// capture loop variable
 		t.Run(tool, func(t *testing.T) {
 			if !autoApproveSafeTool(tool) {
 				t.Errorf("autoApproveSafeTool(%q) = false, want true", tool)

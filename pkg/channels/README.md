@@ -1,6 +1,6 @@
-# PicoClaw Channel System: Complete Development Guide
+# Omnipus Channel System: Complete Development Guide
 
-> **Scope**: `pkg/channels/`, `pkg/bus/`, `pkg/media/`, `pkg/identity/`, `cmd/picoclaw/internal/gateway/`
+> **Scope**: `pkg/channels/`, `pkg/bus/`, `pkg/media/`, `pkg/identity/`, `cmd/omnipus/internal/gateway/`
 
 ---
 
@@ -162,19 +162,19 @@ Using Telegram as an example, the main changes are:
 package channels
 
 import (
-    "github.com/sipeed/picoclaw/pkg/bus"
-    "github.com/sipeed/picoclaw/pkg/config"
+    "github.com/sipeed/omnipus/pkg/bus"
+    "github.com/sipeed/omnipus/pkg/config"
 )
 
 // New code (refactored branch)
 package telegram
 
 import (
-    "github.com/sipeed/picoclaw/pkg/bus"
-    "github.com/sipeed/picoclaw/pkg/channels"     // Reference parent package
-    "github.com/sipeed/picoclaw/pkg/config"
-    "github.com/sipeed/picoclaw/pkg/identity"      // New
-    "github.com/sipeed/picoclaw/pkg/media"          // New (if media support needed)
+    "github.com/sipeed/omnipus/pkg/bus"
+    "github.com/sipeed/omnipus/pkg/channels"     // Reference parent package
+    "github.com/sipeed/omnipus/pkg/config"
+    "github.com/sipeed/omnipus/pkg/identity"      // New
+    "github.com/sipeed/omnipus/pkg/media"          // New (if media support needed)
 )
 ```
 
@@ -321,9 +321,9 @@ Create `init.go` for your channel:
 package telegram
 
 import (
-    "github.com/sipeed/picoclaw/pkg/bus"
-    "github.com/sipeed/picoclaw/pkg/channels"
-    "github.com/sipeed/picoclaw/pkg/config"
+    "github.com/sipeed/omnipus/pkg/bus"
+    "github.com/sipeed/omnipus/pkg/channels"
+    "github.com/sipeed/omnipus/pkg/config"
 )
 
 func init() {
@@ -336,11 +336,11 @@ func init() {
 **3h. Import sub-package in Gateway**
 
 ```go
-// cmd/picoclaw/internal/gateway/helpers.go
+// cmd/omnipus/internal/gateway/helpers.go
 import (
-    _ "github.com/sipeed/picoclaw/pkg/channels/telegram"   // Triggers init() registration
-    _ "github.com/sipeed/picoclaw/pkg/channels/discord"
-    _ "github.com/sipeed/picoclaw/pkg/channels/your_new_channel"  // New addition
+    _ "github.com/sipeed/omnipus/pkg/channels/telegram"   // Triggers init() registration
+    _ "github.com/sipeed/omnipus/pkg/channels/discord"
+    _ "github.com/sipeed/omnipus/pkg/channels/your_new_channel"  // New addition
 )
 ```
 
@@ -421,9 +421,9 @@ To add a new chat platform (e.g., `matrix`), you need to:
 package matrix
 
 import (
-    "github.com/sipeed/picoclaw/pkg/bus"
-    "github.com/sipeed/picoclaw/pkg/channels"
-    "github.com/sipeed/picoclaw/pkg/config"
+    "github.com/sipeed/omnipus/pkg/bus"
+    "github.com/sipeed/omnipus/pkg/channels"
+    "github.com/sipeed/omnipus/pkg/config"
 )
 
 func init() {
@@ -442,11 +442,11 @@ import (
     "context"
     "fmt"
 
-    "github.com/sipeed/picoclaw/pkg/bus"
-    "github.com/sipeed/picoclaw/pkg/channels"
-    "github.com/sipeed/picoclaw/pkg/config"
-    "github.com/sipeed/picoclaw/pkg/identity"
-    "github.com/sipeed/picoclaw/pkg/logger"
+    "github.com/sipeed/omnipus/pkg/bus"
+    "github.com/sipeed/omnipus/pkg/channels"
+    "github.com/sipeed/omnipus/pkg/config"
+    "github.com/sipeed/omnipus/pkg/identity"
+    "github.com/sipeed/omnipus/pkg/logger"
 )
 
 // MatrixChannel implements channels.Channel for the Matrix protocol.
@@ -810,9 +810,9 @@ if m.config.Channels.Matrix.Enabled && m.config.Channels.Matrix.Token != "" {
 #### Add blank import in Gateway
 
 ```go
-// cmd/picoclaw/internal/gateway/helpers.go
+// cmd/omnipus/internal/gateway/helpers.go
 import (
-    _ "github.com/sipeed/picoclaw/pkg/channels/matrix"
+    _ "github.com/sipeed/omnipus/pkg/channels/matrix"
 )
 ```
 
@@ -1372,7 +1372,7 @@ agentLoop.Stop()               // Stop Agent
 
 3. **WeCom is now a single channel**: `"wecom"` is implemented as a WebSocket-based AI Bot channel with route persistence. Access control uses the shared channel allowlist mechanism. It no longer exposes the legacy webhook/app split.
 
-4. **Pico Protocol**: `pkg/channels/pico/` implements a custom PicoClaw native protocol channel that receives messages via WebSocket webhook (`/pico/ws`).
+4. **Pico Protocol**: `pkg/channels/pico/` implements a custom Omnipus native protocol channel that receives messages via WebSocket webhook (`/pico/ws`).
 
 5. **WhatsApp has two modes**: `"whatsapp"` (Bridge mode, communicates via external bridge URL) and `"whatsapp_native"` (native whatsmeow mode, connects directly to WhatsApp). Manager selects which to initialize based on `WhatsAppConfig.UseNative`.
 

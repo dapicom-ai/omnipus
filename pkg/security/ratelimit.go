@@ -2,10 +2,9 @@
 // License: MIT
 // Copyright (c) 2026 Omnipus contributors
 
-// Package security provides network security controls for Omnipus.
-//
 // This file implements US-13 rate limiting (per-agent, per-channel, global cost cap)
 // from the Wave 2 security spec.
+
 package security
 
 import (
@@ -17,6 +16,18 @@ import (
 
 // systemAgentID is exempt from all rate limits per US-13 (FR-025).
 const systemAgentID = "omnipus-system"
+
+// IsSystemAgent reports whether agentID is the Omnipus system agent, which is
+// exempt from all per-agent rate limits and cost caps per SEC-26.
+func IsSystemAgent(agentID string) bool {
+	return agentID == systemAgentID
+}
+
+// TodayUTCDate returns the current date in "YYYY-MM-DD" UTC format. Exported
+// for test helpers that need to seed daily cost state with the current date.
+func TodayUTCDate() string {
+	return time.Now().UTC().Format("2006-01-02")
+}
 
 // RateLimitScope identifies the scope of a rate limit.
 type RateLimitScope string
@@ -150,7 +161,13 @@ func (r *RateLimiterRegistry) SetDailyCostCap(capUSD float64) {
 
 // GetOrCreate returns the SlidingWindow for the given key, creating it with
 // the supplied limit and window duration if it does not yet exist.
-func (r *RateLimiterRegistry) GetOrCreate(key string, limit int, window time.Duration, scope RateLimitScope, scopeID, resource string) *SlidingWindow {
+func (r *RateLimiterRegistry) GetOrCreate(
+	key string,
+	limit int,
+	window time.Duration,
+	scope RateLimitScope,
+	scopeID, resource string,
+) *SlidingWindow {
 	r.mu.RLock()
 	sw, ok := r.windows[key]
 	r.mu.RUnlock()
@@ -237,3 +254,29 @@ func (r *RateLimiterRegistry) LoadDailyCost(costUSD float64, date string) {
 	r.costMu.Unlock()
 }
 
+// RecordSpend unconditionally adds costUSD to the daily accumulator, regardless
+// of whether it exceeds the cap. This is the correct method to use AFTER an LLM
+// call has completed — the call has already been made, so the spend must be
+// recorded even if it pushes the accumulator over the cap. The next turn's
+// pre-check will then deny further calls.
+//
+// CheckGlobalCostCap vs RecordSpend: CheckGlobalCostCap is a gate (records only
+// when allowed, so a denied call leaves the accumulator stale — using it as a
+// recorder after a completed call causes the "never catches up" bug). Use
+// RecordSpend after calls that already happened.
+//
+// The system agent is exempt and its spend is not counted.
+// The accumulator resets automatically at UTC midnight.
+func (r *RateLimiterRegistry) RecordSpend(costUSD float64, agentID string) {
+	if agentID == systemAgentID || costUSD <= 0 {
+		return
+	}
+	r.costMu.Lock()
+	defer r.costMu.Unlock()
+	today := time.Now().UTC().Format("2006-01-02")
+	if r.costDay != today {
+		r.costDay = today
+		r.dailyCostUSD = 0
+	}
+	r.dailyCostUSD += costUSD
+}

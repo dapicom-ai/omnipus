@@ -5,11 +5,14 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 )
 
-// ChannelFactory is a constructor function that creates a Channel from config and message bus.
+// ChannelFactory is a constructor function that creates a Channel from config,
+// a resolved SecretBundle, and a message bus. The bundle supplies all plaintext
+// secrets without touching the process environment.
 // Each channel subpackage registers one or more factories via init().
-type ChannelFactory func(cfg *config.Config, bus *bus.MessageBus) (Channel, error)
+type ChannelFactory func(cfg *config.Config, secrets credentials.SecretBundle, bus *bus.MessageBus) (Channel, error)
 
 var (
 	factoriesMu sync.RWMutex

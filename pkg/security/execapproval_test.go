@@ -97,7 +97,7 @@ func TestExecApprovalManager_ModeOff(t *testing.T) {
 
 	commands := []string{
 		"git status",
-		"rm -rf /",        // even dangerous commands
+		"rm -rf /", // even dangerous commands
 		"curl http://x.com",
 		"python3 evil.py",
 	}
@@ -168,7 +168,9 @@ func TestExecApprovalManager_AllowlistFilePersistence(t *testing.T) {
 	data, err := os.ReadFile(allowlistPath)
 	require.NoError(t, err, "exec-allowlist.json should be created after PersistPattern")
 
-	var af struct{ Patterns []string }
+	var af struct {
+		Patterns []string `json:"patterns"`
+	}
 	require.NoError(t, json.Unmarshal(data, &af))
 	assert.Contains(t, af.Patterns, "npm run *",
 		"persisted pattern should appear in the allowlist file")

@@ -9,13 +9,16 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	runtimedebug "runtime/debug"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -23,8 +26,6 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
-	"github.com/dapicom-ai/omnipus/pkg/datamodel"
-	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/dingtalk"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/discord"
@@ -33,7 +34,6 @@ import (
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/line"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/maixcam"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/onebot"
-	_ "github.com/dapicom-ai/omnipus/pkg/channels/pico"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/qq"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/slack"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/telegram"
@@ -42,12 +42,15 @@ import (
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/whatsapp"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/whatsapp_native"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/cron"
+	"github.com/dapicom-ai/omnipus/pkg/datamodel"
 	"github.com/dapicom-ai/omnipus/pkg/devices"
 	"github.com/dapicom-ai/omnipus/pkg/health"
 	"github.com/dapicom-ai/omnipus/pkg/heartbeat"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/media"
+	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/state"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
@@ -68,11 +71,28 @@ type services struct {
 	CronService      *cron.CronService
 	HeartbeatService *heartbeat.HeartbeatService
 	MediaStore       media.MediaStore
+	// ChannelManager is read-only to HTTP handlers (they access it via the
+	// agent loop's GetChannelManager). It is written only during executeReload,
+	// which is single-flighted by the reloading atomic.Bool. No handler reads
+	// this field directly, so no additional lock is required for read access.
 	ChannelManager   *channels.Manager
 	DeviceService    *devices.Service
 	HealthServer     *health.Server
 	manualReloadChan chan struct{}
 	reloading        atomic.Bool
+	credStore        *credentials.Store
+	// bundle is read-only to HTTP handlers (channels receive secrets at
+	// construction time via SecretBundle; handlers do not access bundle
+	// directly). Written only during executeReload under the reloading
+	// single-flight guard. No additional lock is required for read access.
+	bundle credentials.SecretBundle
+
+	// reloadDegraded is set to true when a config reload fails and the service
+	// is running on the last successfully loaded config. Cleared on next
+	// successful reload. Protected by reloadMu.
+	reloadMu       sync.Mutex
+	reloadDegraded bool
+	reloadError    error
 }
 
 type startupBlockedProvider struct {
@@ -91,6 +111,120 @@ func (p *startupBlockedProvider) Chat(
 
 func (p *startupBlockedProvider) GetDefaultModel() string {
 	return ""
+}
+
+// buildEnabledRefMap returns a set of credential ref names that belong to
+// channels that are currently enabled. Used by bootCredentials to distinguish
+// a missing credential on an enabled channel (fatal) from one on a disabled
+// channel (Info + continue). Only channel refs are included — provider
+// APIKeyRef misses are already fatal via InjectFromConfig.
+func buildEnabledRefMap(cfg *config.Config) map[string]bool {
+	m := make(map[string]bool)
+	ch := cfg.Channels
+
+	type channelRef struct {
+		enabled bool
+		refs    []string
+	}
+	entries := []channelRef{
+		{ch.Telegram.Enabled, []string{ch.Telegram.TokenRef}},
+		{ch.Discord.Enabled, []string{ch.Discord.TokenRef}},
+		{ch.Slack.Enabled, []string{ch.Slack.BotTokenRef, ch.Slack.AppTokenRef}},
+		{ch.Feishu.Enabled, []string{ch.Feishu.AppSecretRef, ch.Feishu.EncryptKeyRef, ch.Feishu.VerificationTokenRef}},
+		{ch.QQ.Enabled, []string{ch.QQ.AppSecretRef}},
+		{ch.DingTalk.Enabled, []string{ch.DingTalk.ClientSecretRef}},
+		{ch.Matrix.Enabled, []string{ch.Matrix.AccessTokenRef, ch.Matrix.CryptoPassphraseRef}},
+		{ch.LINE.Enabled, []string{ch.LINE.ChannelSecretRef, ch.LINE.ChannelAccessTokenRef}},
+		{ch.OneBot.Enabled, []string{ch.OneBot.AccessTokenRef}},
+		{ch.WeCom.Enabled, []string{ch.WeCom.SecretRef}},
+		{ch.Weixin.Enabled, []string{ch.Weixin.TokenRef}},
+		{ch.IRC.Enabled, []string{ch.IRC.PasswordRef, ch.IRC.NickServPasswordRef, ch.IRC.SASLPasswordRef}},
+	}
+	for _, e := range entries {
+		if !e.enabled {
+			continue
+		}
+		for _, ref := range e.refs {
+			if ref != "" {
+				m[ref] = true
+			}
+		}
+	}
+	return m
+}
+
+// bootCredentials runs the canonical credential + config boot sequence and
+// returns the initialized config, secret bundle, and store.
+//
+// Sequence (matches ADR-004 §Boot Order Contract):
+//  1. NewStore → Unlock (fatal on failure)
+//  2. LoadConfigWithStore (fatal on failure)
+//  3. InjectFromConfig for provider env-vars (fatal on failure)
+//  4. ResolveBundle for channel secrets (NotFoundError for disabled channels is Info, rest Warn)
+//  5. cfg.RegisterSensitiveValues with all resolved plaintexts
+//
+// Both Run and boot_order_test.go call this helper so that a refactor of one
+// cannot silently drift from the other.
+func bootCredentials(
+	homePath, configPath string,
+) (*config.Config, credentials.SecretBundle, *credentials.Store, error) {
+	credStore := credentials.NewStore(filepath.Join(homePath, "credentials.json"))
+	if unlockErr := credentials.Unlock(credStore); unlockErr != nil {
+		return nil, nil, nil, fmt.Errorf("credential store: %w", unlockErr)
+	}
+
+	cfg, err := config.LoadConfigWithStore(configPath, credStore)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("error loading config: %w", err)
+	}
+
+	// Inject provider API keys into the process environment so LLM SDK clients
+	// can read them via os.Getenv. Channels use SecretBundle instead (no env injection).
+	if errs := credentials.InjectFromConfig(cfg, credStore); len(errs) > 0 {
+		for _, e := range errs {
+			slog.Error("provider credential injection failed", "error", e)
+		}
+		return nil, nil, nil, fmt.Errorf(
+			"fatal: provider credential injection failed — ensure OMNIPUS_MASTER_KEY is set and all referenced credentials exist",
+		)
+	}
+
+	// Build a ref→enabled map so we can distinguish a missing credential on an
+	// enabled channel (fatal) from one on a disabled channel (Info + continue).
+	enabledRefs := buildEnabledRefMap(cfg)
+
+	// Resolve all credential refs into a SecretBundle. Channels receive secrets
+	// via the bundle — no os.Setenv for channel credentials (B1 fix).
+	bundle, bundleErrs := credentials.ResolveBundle(cfg, credStore)
+	for _, e := range bundleErrs {
+		var notFound *credentials.NotFoundError
+		if errors.As(e, &notFound) {
+			if enabledRefs[notFound.Name] {
+				// Missing credential on an enabled channel is fatal at boot.
+				return nil, nil, nil, fmt.Errorf(
+					"fatal: enabled channel credential %q not found in store — "+
+						"ensure the credential is stored before starting: %w",
+					notFound.Name, e,
+				)
+			}
+			slog.Info("channel credential not found (channel is disabled)", "ref", notFound.Name)
+			continue
+		}
+		slog.Warn("credential bundle resolution error", "error", e)
+	}
+
+	// Register all resolved plaintext credentials with the config's sensitive-data
+	// replacer so they are scrubbed from LLM output and audit logs (A1 fix).
+	// Semantics are "replace", so every call installs the complete current set.
+	values := make([]string, 0, len(bundle))
+	for _, v := range bundle {
+		if v != "" {
+			values = append(values, v)
+		}
+	}
+	cfg.RegisterSensitiveValues(values)
+
+	return cfg, bundle, credStore, nil
 }
 
 // Run starts the gateway runtime using the configuration loaded from configPath.
@@ -112,9 +246,12 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	}
 	defer logger.DisableFileLogging()
 
-	cfg, err := config.LoadConfig(configPath)
+	// Construct and unlock the credential store BEFORE loading config so that
+	// v0→v1 migration (MigrateWithStore) can persist legacy plaintext secrets.
+	// Implements BRD SEC-22/SEC-23 deny-by-default behavior.
+	cfg, bundle, credStore, err := bootCredentials(homePath, configPath)
 	if err != nil {
-		return fmt.Errorf("error loading config: %w", err)
+		return err
 	}
 
 	logger.SetLevelFromString(cfg.Gateway.LogLevel)
@@ -156,7 +293,7 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 			"skills_available": skillsInfo["available"],
 		})
 
-	runningServices, err := setupAndStartServices(cfg, agentLoop, msgBus, homePath)
+	runningServices, err := setupAndStartServices(cfg, bundle, agentLoop, msgBus, homePath, credStore)
 	if err != nil {
 		return err
 	}
@@ -179,6 +316,14 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	}
 	runningServices.HealthServer.SetReloadFunc(reloadTrigger)
 	agentLoop.SetReloadFunc(reloadTrigger)
+	runningServices.HealthServer.SetDegradedFunc(func() (bool, string) {
+		runningServices.reloadMu.Lock()
+		defer runningServices.reloadMu.Unlock()
+		if runningServices.reloadDegraded {
+			return true, fmt.Sprintf("config reload failed: %v", runningServices.reloadError)
+		}
+		return false, ""
+	})
 
 	fmt.Printf("✓ Gateway started on %s:%d\n", cfg.Gateway.Host, cfg.Gateway.Port)
 	fmt.Println("Press Ctrl+C to stop")
@@ -199,7 +344,7 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	var configReloadChan <-chan *config.Config
 	stopWatch := func() {}
 	if cfg.Gateway.HotReload {
-		configReloadChan, stopWatch = setupConfigWatcherPolling(configPath, debug)
+		configReloadChan, stopWatch = setupConfigWatcherPolling(configPath, debug, credStore)
 		logger.Info("Config hot reload enabled")
 	}
 	defer stopWatch()
@@ -224,7 +369,7 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 			}
 		case <-manualReloadChan:
 			logger.Info("Manual reload triggered via /reload endpoint")
-			newCfg, err := config.LoadConfig(configPath)
+			newCfg, err := config.LoadConfigWithStore(configPath, credStore)
 			if err != nil {
 				logger.Errorf("Error loading config for manual reload: %v", err)
 				runningServices.reloading.Store(false)
@@ -245,6 +390,37 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	}
 }
 
+// servicesSnapshot captures all fields that restartServices and executeReload
+// mutate, so they can be atomically restored on reload failure.
+type servicesSnapshot struct {
+	bundle           credentials.SecretBundle
+	ChannelManager   *channels.Manager
+	CronService      *cron.CronService
+	HeartbeatService *heartbeat.HeartbeatService
+	MediaStore       media.MediaStore
+	DeviceService    *devices.Service
+}
+
+func snapshotServices(svc *services) servicesSnapshot {
+	return servicesSnapshot{
+		bundle:           svc.bundle,
+		ChannelManager:   svc.ChannelManager,
+		CronService:      svc.CronService,
+		HeartbeatService: svc.HeartbeatService,
+		MediaStore:       svc.MediaStore,
+		DeviceService:    svc.DeviceService,
+	}
+}
+
+func restoreServices(svc *services, snap servicesSnapshot) {
+	svc.bundle = snap.bundle
+	svc.ChannelManager = snap.ChannelManager
+	svc.CronService = snap.CronService
+	svc.HeartbeatService = snap.HeartbeatService
+	svc.MediaStore = snap.MediaStore
+	svc.DeviceService = snap.DeviceService
+}
+
 func executeReload(
 	ctx context.Context,
 	agentLoop *agent.AgentLoop,
@@ -255,7 +431,77 @@ func executeReload(
 	allowEmptyStartup bool,
 ) error {
 	defer runningServices.reloading.Store(false)
-	return handleConfigReload(ctx, agentLoop, newCfg, provider, runningServices, msgBus, allowEmptyStartup)
+
+	// Snapshot all service fields that restartServices mutates so they can be
+	// restored atomically if the reload fails. bundle and ChannelManager are
+	// mutated here in executeReload itself; the rest are mutated in
+	// restartServices (CronService, HeartbeatService, MediaStore, DeviceService).
+	snap := snapshotServices(runningServices)
+
+	markDegraded := func(err error) {
+		slog.Error("config reload failed — rolling back to previous in-memory state", "error", err)
+		restoreServices(runningServices, snap)
+		runningServices.reloadMu.Lock()
+		runningServices.reloadDegraded = true
+		runningServices.reloadError = err
+		runningServices.reloadMu.Unlock()
+	}
+	clearDegraded := func() {
+		runningServices.reloadMu.Lock()
+		runningServices.reloadDegraded = false
+		runningServices.reloadError = nil
+		runningServices.reloadMu.Unlock()
+	}
+
+	// Re-inject provider credentials for the new config so LLM SDK clients
+	// receive their secrets. If injection fails, reject the reload.
+	if cs := runningServices.credStore; cs != nil {
+		if errs := credentials.InjectFromConfig(newCfg, cs); len(errs) > 0 {
+			for _, e := range errs {
+				slog.Error("reload: provider credential injection failed — rejecting reload", "error", e)
+			}
+			reloadErr := fmt.Errorf("reload rejected: provider credential injection failed")
+			markDegraded(reloadErr)
+			return reloadErr
+		}
+
+		// Re-resolve the SecretBundle for channels (no os.Setenv for channel creds).
+		newBundle, bundleErrs := credentials.ResolveBundle(newCfg, cs)
+		for _, e := range bundleErrs {
+			var notFound *credentials.NotFoundError
+			if errors.As(e, &notFound) {
+				slog.Info("reload: channel credential not found (channel may be disabled)", "error", e)
+				continue
+			}
+			slog.Warn("reload: credential bundle resolution error", "error", e)
+		}
+		runningServices.bundle = newBundle
+
+		// Re-register resolved plaintexts so the scrubber stays current after reload.
+		reloadValues := make([]string, 0, len(newBundle))
+		for _, v := range newBundle {
+			if v != "" {
+				reloadValues = append(reloadValues, v)
+			}
+		}
+		if len(reloadValues) > 0 {
+			newCfg.RegisterSensitiveValues(reloadValues)
+		}
+	}
+	if err := handleConfigReload(
+		ctx,
+		agentLoop,
+		newCfg,
+		provider,
+		runningServices,
+		msgBus,
+		allowEmptyStartup,
+	); err != nil {
+		markDegraded(err)
+		return err
+	}
+	clearDegraded()
+	return nil
 }
 
 func createStartupProvider(
@@ -277,11 +523,13 @@ func createStartupProvider(
 
 func setupAndStartServices(
 	cfg *config.Config,
+	bundle credentials.SecretBundle,
 	agentLoop *agent.AgentLoop,
 	msgBus *bus.MessageBus,
 	homePath string,
+	credStore *credentials.Store,
 ) (*services, error) {
-	runningServices := &services{}
+	runningServices := &services{credStore: credStore, bundle: bundle}
 
 	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
 	var err error
@@ -325,7 +573,12 @@ func setupAndStartServices(
 		fms.Start()
 	}
 
-	runningServices.ChannelManager, err = channels.NewManager(cfg, msgBus, runningServices.MediaStore)
+	runningServices.ChannelManager, err = channels.NewManager(
+		cfg,
+		runningServices.bundle,
+		msgBus,
+		runningServices.MediaStore,
+	)
 	if err != nil {
 		if fms, ok := runningServices.MediaStore.(*media.FileMediaStore); ok {
 			fms.Stop()
@@ -336,7 +589,7 @@ func setupAndStartServices(
 	agentLoop.SetChannelManager(runningServices.ChannelManager)
 	agentLoop.SetMediaStore(runningServices.MediaStore)
 
-	if transcriber := voice.DetectTranscriber(cfg); transcriber != nil {
+	if transcriber := voice.DetectTranscriber(cfg, runningServices.bundle); transcriber != nil {
 		agentLoop.SetTranscriber(transcriber)
 		logger.InfoCF("voice", "Transcription enabled (agent-level)", map[string]any{"provider": transcriber.Name()})
 	}
@@ -352,7 +605,7 @@ func setupAndStartServices(
 	runningServices.HealthServer = health.NewServer(cfg.Gateway.Host, cfg.Gateway.Port)
 	runningServices.ChannelManager.SetupHTTPServer(addr, runningServices.HealthServer)
 
-	allowedOrigin := fmt.Sprintf("http://%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
+	allowedOrigin := "http://" + net.JoinHostPort(cfg.Gateway.Host, strconv.Itoa(cfg.Gateway.Port))
 
 	// SSE chat endpoint — kept for backward compatibility; streaming tokens now route through WebSocket.
 	sseHandler := newSSEHandler(msgBus, nil, allowedOrigin, func() *config.Config { return cfg })
@@ -380,12 +633,16 @@ func setupAndStartServices(
 		homePath:      homePath,
 		taskStore:     tStore,
 		taskExecutor:  tExecutor,
+		credStore:     credStore,
 	}
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions", api.withAuth(api.HandleSessions))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions/", api.withAuth(api.HandleSessions))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/agents", api.withAuth(api.HandleAgents))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/agents/", api.withAuth(api.HandleAgents))
-	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/config", api.withAuth(withRateLimit(configLimiter, api.HandleConfig)))
+	runningServices.ChannelManager.RegisterHTTPHandler(
+		"/api/v1/config",
+		api.withAuth(withRateLimit(configLimiter, api.HandleConfig)),
+	)
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/skills", api.withAuth(api.HandleSkills))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/skills/", api.withAuth(api.HandleSkills))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/doctor", api.withAuth(api.HandleDoctor))
@@ -397,11 +654,14 @@ func setupAndStartServices(
 
 	// Catch-all for any /api/ path not registered — returns JSON 404 instead of SPA HTML.
 	// Do not echo r.URL.Path in the response; that leaks internal routing details.
-	runningServices.ChannelManager.RegisterHTTPHandler("/api/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "endpoint not found"})
-	}))
+	runningServices.ChannelManager.RegisterHTTPHandler(
+		"/api/",
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{"error": "endpoint not found"})
+		}),
+	)
 
 	// Serve the embedded SPA (Sovereign Deep UI) as the default handler.
 	// API routes registered above take priority; anything else serves the SPA.
@@ -434,8 +694,21 @@ func setupAndStartServices(
 		MonitorUSB: cfg.Devices.MonitorUSB,
 	}, stateManager)
 	runningServices.DeviceService.SetBus(msgBus)
+	// Invariant: when cfg.Devices.Enabled==true, a Start failure is fatal and
+	// propagated to the caller (Run returns the error). When disabled, Start
+	// failures are only warnings. A unit test for this path is not included
+	// because devices.Service is a concrete struct (not an interface) and
+	// mocking it would require invasive refactoring; the behavior is exercised
+	// by integration tests that configure a real USB monitor on supported hosts.
 	if err = runningServices.DeviceService.Start(context.Background()); err != nil {
-		logger.ErrorCF("device", "Error starting device service", map[string]any{"error": err.Error()})
+		if cfg.Devices.Enabled {
+			return nil, fmt.Errorf("device service: %w", err)
+		}
+		logger.WarnCF(
+			"device",
+			"device service start failed (devices disabled, continuing)",
+			map[string]any{"error": err.Error()},
+		)
 	} else if cfg.Devices.Enabled {
 		fmt.Println("✓ Device event service started")
 	}
@@ -578,7 +851,7 @@ func restartServices(
 
 	al.SetChannelManager(runningServices.ChannelManager)
 
-	if err = runningServices.ChannelManager.Reload(context.Background(), cfg); err != nil {
+	if err = runningServices.ChannelManager.Reload(context.Background(), cfg, runningServices.bundle); err != nil {
 		return fmt.Errorf("error reload channels: %w", err)
 	}
 	fmt.Println("  ✓ Channels restarted.")
@@ -590,6 +863,12 @@ func restartServices(
 		fmt.Println("  ⚠ Warning: No channels enabled")
 	}
 
+	// Stop the previous DeviceService before replacing it to avoid goroutine
+	// leaks: the old service's goroutine would keep running with a dangling
+	// pointer if we only overwrite the field.
+	if oldDS := runningServices.DeviceService; oldDS != nil {
+		oldDS.Stop()
+	}
 	stateManager := state.NewManager(cfg.WorkspacePath())
 	runningServices.DeviceService = devices.NewService(devices.Config{
 		Enabled:    cfg.Devices.Enabled,
@@ -597,12 +876,19 @@ func restartServices(
 	}, stateManager)
 	runningServices.DeviceService.SetBus(msgBus)
 	if err := runningServices.DeviceService.Start(context.Background()); err != nil {
-		logger.WarnCF("device", "Failed to restart device service", map[string]any{"error": err.Error()})
+		if cfg.Devices.Enabled {
+			return fmt.Errorf("device service: %w", err)
+		}
+		logger.WarnCF(
+			"device",
+			"device service start failed (devices disabled, continuing)",
+			map[string]any{"error": err.Error()},
+		)
 	} else if cfg.Devices.Enabled {
 		fmt.Println("  ✓ Device event service restarted")
 	}
 
-	transcriber := voice.DetectTranscriber(cfg)
+	transcriber := voice.DetectTranscriber(cfg, runningServices.bundle)
 	al.SetTranscriber(transcriber)
 	if transcriber != nil {
 		logger.InfoCF("voice", "Transcription re-enabled (agent-level)", map[string]any{"provider": transcriber.Name()})
@@ -613,7 +899,11 @@ func restartServices(
 	return nil
 }
 
-func setupConfigWatcherPolling(configPath string, debug bool) (chan *config.Config, func()) {
+func setupConfigWatcherPolling(
+	configPath string,
+	debug bool,
+	credStore *credentials.Store,
+) (chan *config.Config, func()) {
 	configChan := make(chan *config.Config, 1)
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
@@ -644,7 +934,7 @@ func setupConfigWatcherPolling(configPath string, debug bool) (chan *config.Conf
 					lastModTime = currentModTime
 					lastSize = currentSize
 
-					newCfg, err := config.LoadConfig(configPath)
+					newCfg, err := config.LoadConfigWithStore(configPath, credStore)
 					if err != nil {
 						logger.Errorf("⚠ Error loading new config: %v", err)
 						logger.Warn("  Using previous valid config")

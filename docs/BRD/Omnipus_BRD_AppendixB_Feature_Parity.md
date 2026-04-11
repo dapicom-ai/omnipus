@@ -14,20 +14,20 @@
 
 This appendix extends the Omnipus BRD to define requirements for achieving and exceeding feature parity with OpenClaw. The main BRD (v1.0) focuses on security, governance, and policy enforcement. Appendix A covers Windows kernel-level security. This appendix covers the remaining functional gaps identified through competitive analysis: agent capabilities, channel integrations, skill ecosystem, and operational tooling.
 
-These requirements are derived from a side-by-side comparison of OpenClaw (v2026.3.22, ~250K GitHub stars, 22+ channels, 13K+ ClawHub skills) and PicoClaw (v0.2.3, ~25K stars, ~10 channels, no skill registry). The analysis identified 27 feature gaps. This appendix specifies each gap, its priority, implementation approach, and integration with the main BRD's security architecture.
+These requirements are derived from a side-by-side comparison of OpenClaw (v2026.3.22, ~250K GitHub stars, 22+ channels, 13K+ ClawHub skills) and Omnipus (v0.2.3, ~25K stars, ~10 channels, no skill registry). The analysis identified 27 feature gaps. This appendix specifies each gap, its priority, implementation approach, and integration with the main BRD's security architecture.
 
-**Design decision:** Omnipus is built on PicoClaw (Go), not OpenClaw (Node.js). The rationale: (1) the main BRD's security architecture (Landlock, seccomp, Job Objects) is designed for Go and `golang.org/x/sys`; (2) PicoClaw meets the BRD's core constraints (single binary, <10MB RAM overhead, zero runtime dependencies, $10 hardware); (3) OpenClaw's Node.js runtime violates all four constraints. Features will be built on PicoClaw's Go codebase, not ported from OpenClaw's TypeScript.
+**Design decision:** Omnipus is built on Omnipus (Go), not OpenClaw (Node.js). The rationale: (1) the main BRD's security architecture (Landlock, seccomp, Job Objects) is designed for Go and `golang.org/x/sys`; (2) Omnipus meets the BRD's core constraints (single binary, <10MB RAM overhead, zero runtime dependencies, $10 hardware); (3) OpenClaw's Node.js runtime violates all four constraints. Features will be built on Omnipus's Go codebase, not ported from OpenClaw's TypeScript.
 
 -----
 
-## B.2 Existing PicoClaw Capabilities (Confirmed)
+## B.2 Existing Omnipus Capabilities (Confirmed)
 
-Before specifying gaps, the following capabilities are confirmed present in PicoClaw v0.2.3 and do NOT require implementation:
+Before specifying gaps, the following capabilities are confirmed present in Omnipus v0.2.3 and do NOT require implementation:
 
-| Capability | PicoClaw Version | Notes |
+| Capability | Omnipus Version | Notes |
 |---|---|---|
 | Heartbeat / proactive agent | v0.1.x+ | HEARTBEAT.md + configurable interval + spawn for async tasks. Responds HEARTBEAT_OK when nothing needs attention. |
-| Headless server mode | v0.1.x+ | `picoclaw gateway` is the native headless mode. Runs as systemd service on VPS, Raspberry Pi, Docker. |
+| Headless server mode | v0.1.x+ | `omnipus gateway` is the native headless mode. Runs as systemd service on VPS, Raspberry Pi, Docker. |
 | Cron / scheduled tasks | v0.1.x+ | One-time reminders, recurring tasks, cron expressions. Security gating added in v0.2.3. |
 | MCP protocol support | v0.2.1 | Native Model Context Protocol integration via stdio, SSE, HTTP transports. |
 | Smart model routing | v0.2.1 | Rule-based routing — simple queries to lightweight models, complex to frontier models. |
@@ -38,7 +38,7 @@ Before specifying gaps, the following capabilities are confirmed present in Pico
 | System tray UI | v0.2.3 | Windows and Linux. |
 | Channels: Telegram, Discord, Slack, QQ, DingTalk, LINE, WeCom, Matrix, IRC | v0.2.1 | 10 channels operational. |
 | Web search | v0.1.x+ | Brave, DuckDuckGo, Exa providers. |
-| Hardware I/O (I2C/SPI) | v0.2.1 | Unique to PicoClaw — IoT/embedded integration. |
+| Hardware I/O (I2C/SPI) | v0.2.1 | Unique to Omnipus — IoT/embedded integration. |
 | WhatsApp (bridge) | Config exists | Via external bridge at `ws://localhost:3001`. Not native — external dependency required. |
 | Feishu / Lark | Config exists | Present in config but disabled/incomplete. |
 | Gateway hot-reload | v0.2.3 | Experimental. |
@@ -54,7 +54,7 @@ These features must ship before Omnipus can credibly compete with OpenClaw. With
 | ID | Requirement | Priority | Effort | Details |
 |---|---|---|---|---|
 | FUNC-12a | ClawHub skill protocol implementation | P0 | Moderate | Implement the ClawHub registry protocol in Go: search skills by keyword/tag, retrieve skill metadata (name, description, author, version, hash), download skill packages. The protocol communicates with ClawHub's REST API. Omnipus consumes the existing 13,729+ skill ecosystem — it does not build a competing registry. |
-| FUNC-12b | SKILL.md parser and loader | P0 | Easy | Parse OpenClaw's SKILL.md format — a Markdown file containing metadata frontmatter and instruction text. Skills are directories containing a SKILL.md plus optional supporting files. PicoClaw already has a basic skills system; this extends it to be format-compatible with ClawHub skills. |
+| FUNC-12b | SKILL.md parser and loader | P0 | Easy | Parse OpenClaw's SKILL.md format — a Markdown file containing metadata frontmatter and instruction text. Skills are directories containing a SKILL.md plus optional supporting files. Omnipus already has a basic skills system; this extends it to be format-compatible with ClawHub skills. |
 | FUNC-12c | Skill hash verification on install | P0 | Easy | When installing a skill from ClawHub, verify its SHA-256 hash against the registry manifest before loading. Integrates with SEC-09 (Skill trust verification) from the main BRD. Unverified skills trigger a configurable warning or block. |
 | FUNC-12d | Skill install/update/remove CLI | P0 | Easy | CLI commands: `omnipus skill install <name>`, `omnipus skill update <name>`, `omnipus skill remove <name>`, `omnipus skill search <query>`, `omnipus skill list`. Skills install to `~/.omnipus/workspace/skills/<name>/`. |
 | FUNC-12e | ClawHub compatibility testing | P0 | Moderate | Automated test suite that installs the top 50 most popular ClawHub skills, verifies they load correctly, and validates tool registration. Run as part of CI on every release. Document any incompatibilities. |
@@ -99,7 +99,7 @@ These features must ship before Omnipus can credibly compete with OpenClaw. With
 | ID | Requirement | Priority | Effort | Details |
 |---|---|---|---|---|
 | FUNC-10 | Channel-to-agent routing | P0 | Moderate | Route inbound messages from specific channels, accounts, users, or groups to specific agent instances. Configuration maps patterns to agent IDs. Example: all Telegram messages from user `@boss` route to the `work` agent; Discord messages route to the `personal` agent. Defined in config under `routing.rules[]`. |
-| FUNC-11 | Per-agent isolated workspaces | P0 | Easy | Each agent gets its own workspace directory with independent MEMORY.md, sessions, skills, cron jobs, and HEARTBEAT.md. Agents cannot access each other's workspaces. PicoClaw partially implements this; Omnipus formalizes it with config-level support and filesystem enforcement via SEC-01 (Landlock). Already specified as FUNC-11 in main BRD — this formalizes the implementation. |
+| FUNC-11 | Per-agent isolated workspaces | P0 | Easy | Each agent gets its own workspace directory with independent MEMORY.md, sessions, skills, cron jobs, and HEARTBEAT.md. Agents cannot access each other's workspaces. Omnipus partially implements this; Omnipus formalizes it with config-level support and filesystem enforcement via SEC-01 (Landlock). Already specified as FUNC-11 in main BRD — this formalizes the implementation. |
 | FUNC-10a | Agent selection in gateway | P0 | Easy | The gateway supports multiple simultaneous agents, each with its own model config, tools, and permissions. The `agents.list[]` config array defines agents. Default agent handles unrouted messages. Matches main BRD FUNC-10. |
 
 ### B.3.5 Core Agent Experience
@@ -136,9 +136,9 @@ These features are needed for Omnipus to be credible in enterprise environments.
 | ID | Requirement | Priority | Effort | Details |
 |---|---|---|---|---|
 | FUNC-13 | Skill auto-discovery (detailed) | P1 | Moderate | At runtime, scan installed skills directories and connected MCP servers to automatically discover and register tool definitions. Eliminates manual tool registration in config. New tools discovered via MCP are subject to policy (SEC-04, SEC-07) — discovery does not imply permission. Matches main BRD FUNC-13. |
-| FUNC-27 | Sub-agent supervisor/worker patterns | P1 | Moderate | Extend PicoClaw's existing async spawn with structured orchestration patterns. Supervisor agent can: assign tasks to worker sub-agents, track their status, aggregate results, handle worker failures with retry/fallback. Workers inherit the parent's security policy but can have further restrictions. Communication via internal message passing (not filesystem). |
+| FUNC-27 | Sub-agent supervisor/worker patterns | P1 | Moderate | Extend Omnipus's existing async spawn with structured orchestration patterns. Supervisor agent can: assign tasks to worker sub-agents, track their status, aggregate results, handle worker failures with retry/fallback. Workers inherit the parent's security policy but can have further restrictions. Communication via internal message passing (not filesystem). |
 | FUNC-28 | Canvas / visual workspace | P1 | High | Agent-driven interactive HTML rendering surface. The agent can generate and push HTML/CSS/JS content to a canvas panel in the WebUI, macOS app, or companion app. Use cases: dashboards, data visualizations, reports, interactive forms. Simpler than OpenClaw's A2UI — Omnipus uses standard HTML served via the gateway, pushed over WebSocket. No custom component library required initially. |
-| FUNC-29 | Intermediate tool output streaming | P1 | Moderate | During multi-step tool execution (builds, searches, file operations), stream partial results to the UI in real time. Collapsible output blocks in the chat showing: tool name, current status, intermediate output lines. Prevents the "stuck" feeling both OpenClaw and PicoClaw users report. Requires WebSocket event for tool progress (`tool.progress`). |
+| FUNC-29 | Intermediate tool output streaming | P1 | Moderate | During multi-step tool execution (builds, searches, file operations), stream partial results to the UI in real time. Collapsible output blocks in the chat showing: tool name, current status, intermediate output lines. Prevents the "stuck" feeling both OpenClaw and Omnipus users report. Requires WebSocket event for tool progress (`tool.progress`). |
 | FUNC-30 | iMessage / BlueBubbles channel | P1 | Moderate | Integration via BlueBubbles REST API for iMessage on macOS. Supports send/receive text, images, group messages. Requires BlueBubbles server running on a Mac. Configuration under `channels.imessage`. High-value for Apple ecosystem enterprise users. |
 
 -----
@@ -151,7 +151,7 @@ These features differentiate Omnipus from competitors and build ecosystem comple
 |---|---|---|---|---|
 | FUNC-31 | Voice Wake / Talk Mode | P2 | High | Wake word detection ("Hey Omnipus" or configurable) + continuous voice conversation with TTS. Speech-to-text via Whisper (Groq free tier or local). Text-to-speech via ElevenLabs or system TTS. Platform-specific: macOS (CoreAudio), Linux (PulseAudio/ALSA), Windows (WASAPI). Configurable under `voice`. |
 | FUNC-17 | Tailscale integration (detailed) | P2 | Easy | Built-in Tailscale Serve/Funnel support for secure remote access to the gateway without port forwarding or VPN setup. Uses Tailscale Go SDK (`tailscale.com/tsnet`). Configuration: `gateway.tailscale.mode: "serve"` or `"funnel"`. Funnel requires password auth. Matches main BRD FUNC-17. |
-| FUNC-16 | Backup and restore (detailed) | P1 | Easy | `omnipus backup create` archives workspace, config, credentials (encrypted), and policy files into a single tarball. `omnipus backup restore` recovers from archive. Supports `--encrypt` flag for AES-256 encryption of the archive. Neither OpenClaw nor PicoClaw has this — opportunity to lead. Matches main BRD FUNC-16. |
+| FUNC-16 | Backup and restore (detailed) | P1 | Easy | `omnipus backup create` archives workspace, config, credentials (encrypted), and policy files into a single tarball. `omnipus backup restore` recovers from archive. Supports `--encrypt` flag for AES-256 encryption of the archive. Neither OpenClaw nor Omnipus has this — opportunity to lead. Matches main BRD FUNC-16. |
 | FUNC-32 | macOS menu bar app | P2 | Moderate | Native macOS companion app for gateway lifecycle management (start/stop/restart), status indicator (connected/disconnected/error), quick actions (open WebUI, view logs, run doctor). Built with Go + systray library or native Swift. Lives in the macOS menu bar. |
 | FUNC-33 | iOS/Android node companion | P2 | High | Turn mobile devices into agent peripherals. Capabilities: camera snap/video, GPS location, push notifications, canvas rendering. Connects to gateway via WebSocket with device pairing (SEC-20/21). All node invocations are logged (SEC-15) and subject to RBAC (SEC-19). **Enterprise consideration:** Remotely triggering phone cameras and SMS raises compliance concerns. Requires explicit per-capability consent, audit trail, and operator-level approval policy. |
 
@@ -167,7 +167,7 @@ These channels close the remaining gap with OpenClaw's 22+ channel count. All ar
 | FUNC-07 | Nostr channel (detailed) | P3 | Easy | Decentralized relay integration using `go-nostr` library. Lightweight protocol, good fit for edge/privacy use cases. Configuration under `channels.nostr` with `relay_urls[]`, `private_key`. Matches main BRD FUNC-07. |
 | FUNC-09 | Twitch channel (detailed) | P3 | Easy | IRC-based chat integration. Reuses IRC channel adapter code with Twitch-specific auth (OAuth). Configuration under `channels.twitch` with `token`, `channel_name`. Matches main BRD FUNC-09. |
 | FUNC-34 | Zalo channel | P3 | Easy | Zalo API integration for Vietnamese market. REST API. Configuration under `channels.zalo` with `app_id`, `secret_key`. |
-| FUNC-35 | Feishu / Lark (full implementation) | P3 | Moderate | PicoClaw has Feishu in config but it's disabled/incomplete. Complete the implementation: event subscription, message send/receive, rich text cards, group support. Configuration already exists under `channels.feishu`. |
+| FUNC-35 | Feishu / Lark (full implementation) | P3 | Moderate | Omnipus has Feishu in config but it's disabled/incomplete. Complete the implementation: event subscription, message send/receive, rich text cards, group support. Configuration already exists under `channels.feishu`. |
 
 -----
 
@@ -255,7 +255,7 @@ These features integrate into the main BRD delivery phases. The phasing accounts
 | Use `whatsmeow` + `modernc.org/sqlite` for WhatsApp | Most actively maintained Go library for WhatsApp Web multi-device protocol. Used by production Matrix bridges. Compiled into the binary using `modernc.org/sqlite` (pure Go) to avoid CGo. Adds ~10-15MB to binary size. Alternative: WhatsApp Business API, but requires Meta approval and doesn't support personal accounts. |
 | Chromium is not bundled | Would add 100-300MB to the binary/deployment, violating the lightweight constraint. Browser is an optional tool. Remote CDP provides full capability without local Chromium. |
 | Elevate WhatsApp to P0 from P3 | WhatsApp is the #1 messaging platform globally (2B+ users) and the most popular channel for OpenClaw users. A bridge-only solution is not competitive. First-class provider support is table stakes for market credibility. |
-| Hybrid channel architecture (compiled-in Go + bridge for non-Go) | Go channels are compiled into the binary, inheriting PicoClaw's proven architecture (both PicoClaw and OpenClaw keep channels in-process). This preserves single-binary deployment, minimizes RAM overhead on $10 hardware, and avoids the complexity of IPC for 90%+ of channels. Non-Go channels (Signal/Java, Teams/Node.js) and community extensions use the bridge protocol as external processes. CGo avoided via `modernc.org/sqlite` instead of process isolation. |
+| Hybrid channel architecture (compiled-in Go + bridge for non-Go) | Go channels are compiled into the binary, inheriting Omnipus's proven architecture (both Omnipus and OpenClaw keep channels in-process). This preserves single-binary deployment, minimizes RAM overhead on $10 hardware, and avoids the complexity of IPC for 90%+ of channels. Non-Go channels (Signal/Java, Teams/Node.js) and community extensions use the bridge protocol as external processes. CGo avoided via `modernc.org/sqlite` instead of process isolation. |
 | P3 channels (Mattermost, Nostr, Twitch, Zalo, Feishu) are last priority | Each serves a niche audience. Core enterprise channels (Teams, Google Chat, Signal) and mass-market channels (WhatsApp, Telegram, Discord) cover 90%+ of the target market. Niche channels can be added incrementally without blocking adoption. |
 | Canvas uses standard HTML, not a custom component library | OpenClaw's A2UI is a custom component system with learning curve and maintenance overhead. Standard HTML/CSS/JS pushed via WebSocket is simpler, more flexible, and leverages existing web skills. Can evolve toward structured components later if needed. |
 

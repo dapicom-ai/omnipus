@@ -13,6 +13,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/identity"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/media"
@@ -22,6 +23,7 @@ import (
 type SlackChannel struct {
 	*channels.BaseChannel
 	config       config.SlackConfig
+	botToken     string
 	api          *slack.Client
 	socketClient *socketmode.Client
 	botUserID    string
@@ -36,14 +38,24 @@ type slackMessageRef struct {
 	Timestamp string
 }
 
-func NewSlackChannel(cfg config.SlackConfig, messageBus *bus.MessageBus) (*SlackChannel, error) {
-	if cfg.BotToken.String() == "" || cfg.AppToken.String() == "" {
-		return nil, fmt.Errorf("slack bot_token and app_token are required")
+func NewSlackChannel(
+	cfg config.SlackConfig,
+	secrets credentials.SecretBundle,
+	messageBus *bus.MessageBus,
+) (*SlackChannel, error) {
+	botToken := secrets.GetString(cfg.BotTokenRef)
+	appToken := secrets.GetString(cfg.AppTokenRef)
+	if botToken == "" || appToken == "" {
+		return nil, fmt.Errorf(
+			"slack: bot_token and app_token are required (bot_token_ref=%q, app_token_ref=%q): check credential store",
+			cfg.BotTokenRef,
+			cfg.AppTokenRef,
+		)
 	}
 
 	api := slack.New(
-		cfg.BotToken.String(),
-		slack.OptionAppLevelToken(cfg.AppToken.String()),
+		botToken,
+		slack.OptionAppLevelToken(appToken),
 	)
 
 	socketClient := socketmode.New(api)
@@ -57,6 +69,7 @@ func NewSlackChannel(cfg config.SlackConfig, messageBus *bus.MessageBus) (*Slack
 	return &SlackChannel{
 		BaseChannel:  base,
 		config:       cfg,
+		botToken:     botToken,
 		api:          api,
 		socketClient: socketClient,
 	}, nil
@@ -141,7 +154,11 @@ func (c *SlackChannel) Send(ctx context.Context, msg bus.OutboundMessage) error 
 			Channel:   msgRef.ChannelID,
 			Timestamp: msgRef.Timestamp,
 		}); err != nil {
-			logger.DebugCF("slack", "Failed to add ack reaction", map[string]any{"channel_id": msgRef.ChannelID, "error": err.Error()})
+			logger.DebugCF(
+				"slack",
+				"Failed to add ack reaction",
+				map[string]any{"channel_id": msgRef.ChannelID, "error": err.Error()},
+			)
 		}
 	}
 
@@ -227,7 +244,11 @@ func (c *SlackChannel) ReactToMessage(ctx context.Context, chatID, messageID str
 
 	return func() {
 		if err := c.api.RemoveReaction("eyes", slack.ItemRef{Channel: channelID, Timestamp: messageID}); err != nil {
-			logger.DebugCF("slack", "Failed to remove reaction", map[string]any{"channel_id": channelID, "error": err.Error()})
+			logger.DebugCF(
+				"slack",
+				"Failed to remove reaction",
+				map[string]any{"channel_id": channelID, "error": err.Error()},
+			)
 		}
 	}, nil
 }
@@ -337,7 +358,11 @@ func (c *SlackChannel) handleMessageEvent(ev *slackevents.MessageEvent) {
 				CleanupPolicy: media.CleanupPolicyDeleteOnCleanup,
 			}, scope)
 			if err != nil {
-				logger.ErrorCF("slack", "Failed to store media", map[string]any{"filename": filename, "error": err.Error()})
+				logger.ErrorCF(
+					"slack",
+					"Failed to store media",
+					map[string]any{"filename": filename, "error": err.Error()},
+				)
 			} else {
 				return ref
 			}
@@ -523,7 +548,7 @@ func (c *SlackChannel) downloadSlackFile(file slack.File) string {
 	return utils.DownloadFile(downloadURL, file.Name, utils.DownloadOptions{
 		LoggerPrefix: "slack",
 		ExtraHeaders: map[string]string{
-			"Authorization": "Bearer " + c.config.BotToken.String(),
+			"Authorization": "Bearer " + c.botToken,
 		},
 	})
 }

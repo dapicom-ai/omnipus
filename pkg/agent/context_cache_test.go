@@ -512,7 +512,7 @@ func TestBuiltinSkillFileContentChange(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	builtinRoot := t.TempDir()
-	t.Setenv("PICOCLAW_BUILTIN_SKILLS", builtinRoot)
+	t.Setenv("OMNIPUS_BUILTIN_SKILLS", builtinRoot)
 
 	builtinSkillPath := filepath.Join(builtinRoot, "builtin-skill", "SKILL.md")
 	if err := os.MkdirAll(filepath.Dir(builtinSkillPath), 0o755); err != nil {

@@ -143,7 +143,7 @@ Pour désactiver complètement l'outil `exec`, définissez `enabled` à `false` 
 
 **Via la variable d'environnement :**
 ```bash
-PICOCLAW_TOOLS_EXEC_ENABLED=false
+OMNIPUS_TOOLS_EXEC_ENABLED=false
 ```
 
 > **Note :** Lorsqu'il est désactivé, l'agent ne pourra pas exécuter de commandes shell. Cela affecte également la capacité de l'outil Cron à exécuter des commandes shell planifiées.
@@ -399,14 +399,14 @@ L'outil skills configure la découverte et l'installation de compétences via de
 
 ## Variables d'environnement
 
-Toutes les options de configuration peuvent être remplacées via des variables d'environnement au format `PICOCLAW_TOOLS_<SECTION>_<KEY>` :
+Toutes les options de configuration peuvent être remplacées via des variables d'environnement au format `OMNIPUS_TOOLS_<SECTION>_<KEY>` :
 
 Par exemple :
 
-- `PICOCLAW_TOOLS_WEB_BRAVE_ENABLED=true`
-- `PICOCLAW_TOOLS_EXEC_ENABLED=false`
-- `PICOCLAW_TOOLS_EXEC_ENABLE_DENY_PATTERNS=false`
-- `PICOCLAW_TOOLS_CRON_EXEC_TIMEOUT_MINUTES=10`
-- `PICOCLAW_TOOLS_MCP_ENABLED=true`
+- `OMNIPUS_TOOLS_WEB_BRAVE_ENABLED=true`
+- `OMNIPUS_TOOLS_EXEC_ENABLED=false`
+- `OMNIPUS_TOOLS_EXEC_ENABLE_DENY_PATTERNS=false`
+- `OMNIPUS_TOOLS_CRON_EXEC_TIMEOUT_MINUTES=10`
+- `OMNIPUS_TOOLS_MCP_ENABLED=true`
 
 Note : La configuration de type map imbriquée (par exemple `tools.mcp.servers.<name>.*`) est configurée dans `config.json` plutôt que via des variables d'environnement.

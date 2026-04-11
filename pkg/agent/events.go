@@ -55,6 +55,8 @@ const (
 	EventKindCompactionRetry
 	// EventKindBackgroundProcessKill is emitted when a background process is force-killed after exceeding its timeout.
 	EventKindBackgroundProcessKill
+	// EventKindRateLimit is emitted when an agent LLM or tool call is denied by a rate limit (SEC-26).
+	EventKindRateLimit
 
 	eventKindCount
 )
@@ -86,6 +88,7 @@ var eventKindNames = [...]string{
 	"empty_response_retry",
 	"compaction_retry",
 	"background_process_kill",
+	"rate_limit",
 }
 
 // String returns the stable string form of an EventKind.
@@ -310,7 +313,21 @@ type CompactionRetryPayload struct {
 
 // BackgroundProcessKillPayload describes a background process that was force-killed.
 type BackgroundProcessKillPayload struct {
-	PID              int
-	MaxSeconds       int
-	TerminatedClean  bool
+	PID             int
+	MaxSeconds      int
+	TerminatedClean bool
+}
+
+// RateLimitPayload describes a rate-limit denial for an LLM or tool call (SEC-26).
+// ChatID is required so the WebSocket event forwarder can route the frame to
+// the correct connection via matchesChatID — a rate-limit denial is meaningless
+// without the chat context it applies to.
+type RateLimitPayload struct {
+	Scope             string  `json:"scope"`
+	Resource          string  `json:"resource"` // "llm_call" or "tool_call"
+	PolicyRule        string  `json:"policy_rule"`
+	RetryAfterSeconds float64 `json:"retry_after_seconds"`
+	AgentID           string  `json:"agent_id,omitempty"`
+	ChatID            string  `json:"chat_id,omitempty"`
+	Tool              string  `json:"tool,omitempty"`
 }

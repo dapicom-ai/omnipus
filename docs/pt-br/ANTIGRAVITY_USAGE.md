@@ -50,7 +50,7 @@ omnipus agent -m "Hello" --model claude-opus-4-6-thinking
 Se você está implantando via Coolify ou Docker, siga estas etapas para testar:
 
 1.  **Variáveis de ambiente**:
-    *   `PICOCLAW_AGENTS_DEFAULTS_MODEL=gemini-flash`
+    *   `OMNIPUS_AGENTS_DEFAULTS_MODEL=gemini-flash`
 2.  **Persistência da autenticação**:
     Se você já fez login localmente, pode copiar suas credenciais para o servidor:
     ```bash

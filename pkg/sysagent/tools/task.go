@@ -9,8 +9,9 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/dapicom-ai/omnipus/pkg/tools"
 	"github.com/oklog/ulid/v2"
+
+	"github.com/dapicom-ai/omnipus/pkg/tools"
 )
 
 type task struct {
@@ -40,10 +41,11 @@ func validTaskStatus(s string) bool {
 type TaskCreateTool struct{ deps *Deps }
 
 func NewTaskCreateTool(d *Deps) *TaskCreateTool { return &TaskCreateTool{deps: d} }
-func (t *TaskCreateTool) Name() string           { return "system.task.create" }
+func (t *TaskCreateTool) Name() string          { return "system.task.create" }
 func (t *TaskCreateTool) Description() string {
 	return "Create a task on the GTD board.\nParameters: name (required), description, project_id, agent_id, status (inbox/next/active/waiting/done)."
 }
+
 func (t *TaskCreateTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -57,6 +59,7 @@ func (t *TaskCreateTool) Parameters() map[string]any {
 		"required": []string{"name"},
 	}
 }
+
 func (t *TaskCreateTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	name, _ := args["name"].(string)
 	if name == "" {
@@ -97,10 +100,11 @@ func (t *TaskCreateTool) Execute(_ context.Context, args map[string]any) *tools.
 type TaskUpdateTool struct{ deps *Deps }
 
 func NewTaskUpdateTool(d *Deps) *TaskUpdateTool { return &TaskUpdateTool{deps: d} }
-func (t *TaskUpdateTool) Name() string           { return "system.task.update" }
+func (t *TaskUpdateTool) Name() string          { return "system.task.update" }
 func (t *TaskUpdateTool) Description() string {
 	return "Update a task's status, assignment, or details.\nParameters: id (required), name, description, status, agent_id, project_id."
 }
+
 func (t *TaskUpdateTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -115,6 +119,7 @@ func (t *TaskUpdateTool) Parameters() map[string]any {
 		"required": []string{"id"},
 	}
 }
+
 func (t *TaskUpdateTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	id, _ := args["id"].(string)
 	if id == "" {
@@ -158,10 +163,11 @@ func (t *TaskUpdateTool) Execute(_ context.Context, args map[string]any) *tools.
 type TaskDeleteTool struct{ deps *Deps }
 
 func NewTaskDeleteTool(d *Deps) *TaskDeleteTool { return &TaskDeleteTool{deps: d} }
-func (t *TaskDeleteTool) Name() string           { return "system.task.delete" }
+func (t *TaskDeleteTool) Name() string          { return "system.task.delete" }
 func (t *TaskDeleteTool) Description() string {
 	return "Delete a task. Parameters: id (required), confirm (bool, must be true)."
 }
+
 func (t *TaskDeleteTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -172,6 +178,7 @@ func (t *TaskDeleteTool) Parameters() map[string]any {
 		"required": []string{"id", "confirm"},
 	}
 }
+
 func (t *TaskDeleteTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	id, _ := args["id"].(string)
 	confirm, _ := args["confirm"].(bool)
@@ -194,10 +201,11 @@ func (t *TaskDeleteTool) Execute(_ context.Context, args map[string]any) *tools.
 type TaskListTool struct{ deps *Deps }
 
 func NewTaskListTool(d *Deps) *TaskListTool { return &TaskListTool{deps: d} }
-func (t *TaskListTool) Name() string         { return "system.task.list" }
+func (t *TaskListTool) Name() string        { return "system.task.list" }
 func (t *TaskListTool) Description() string {
 	return "List tasks with optional filters.\nParameters: project_id, agent_id, status (all optional)."
 }
+
 func (t *TaskListTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -208,6 +216,7 @@ func (t *TaskListTool) Parameters() map[string]any {
 		},
 	}
 }
+
 func (t *TaskListTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	all, err := listEntities[task](tasksDir(t.deps.Home))
 	if err != nil {

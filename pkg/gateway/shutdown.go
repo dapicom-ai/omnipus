@@ -78,15 +78,15 @@ func omnipusGracefulShutdown(
 	case <-activeTurnsDone:
 		slog.Info("shutdown: all active turns completed before shutdown")
 	case <-time.After(time.Duration(activeTurnTimeout) * time.Second):
-		slog.Warn("shutdown: timeout waiting for active turns — force-cancelling",
+		slog.Warn("shutdown: timeout waiting for active turns — force-canceling",
 			"timeout_seconds", activeTurnTimeout)
 	}
 
 	// Now close the agent loop resources.
 	// SH5: After the active-turn wait (or timeout), Close() is called. If any turns
-	// are still in-flight at this point, their context will have been cancelled by the
+	// are still in-flight at this point, their context will have been canceled by the
 	// overall ctx timeout propagation. Session stores use atomic writes so partial-write
-	// corruption is not possible. This is documented behaviour per FUNC-36.
+	// corruption is not possible. This is documented behavior per FUNC-36.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)

@@ -2,6 +2,7 @@ package skills
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -31,7 +32,7 @@ func NewSkillsCommand() *cobra.Command {
 			d.workspace = cfg.WorkspacePath()
 			installer, err := skills.NewSkillInstaller(
 				d.workspace,
-				cfg.Tools.Skills.Github.Token.String(),
+				os.Getenv(cfg.Tools.Skills.Github.TokenRef),
 				cfg.Tools.Skills.Github.Proxy,
 			)
 			if err != nil {

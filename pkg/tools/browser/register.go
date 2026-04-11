@@ -17,7 +17,11 @@ import (
 //   - browser.get_text  — extract inner text from an element
 //   - browser.wait      — wait for an element to appear
 //   - browser.evaluate  — execute JS (policy-gated, denied by default)
-func RegisterTools(registry *tools.ToolRegistry, cfg BrowserConfig, ssrf *security.SSRFChecker) (*BrowserManager, error) {
+func RegisterTools(
+	registry *tools.ToolRegistry,
+	cfg BrowserConfig,
+	ssrf *security.SSRFChecker,
+) (*BrowserManager, error) {
 	mgr, err := NewBrowserManager(cfg, ssrf)
 	if err != nil {
 		return nil, err

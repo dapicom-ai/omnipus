@@ -261,7 +261,7 @@ func resolveAgentWorkspace(agentCfg *config.AgentConfig, defaults *config.AgentD
 	if agentCfg != nil && strings.TrimSpace(agentCfg.Workspace) != "" {
 		return expandHome(strings.TrimSpace(agentCfg.Workspace))
 	}
-	// Use the configured default workspace (respects PICOCLAW_HOME)
+	// Use the configured default workspace (respects OMNIPUS_HOME)
 	if agentCfg == nil || agentCfg.Default || agentCfg.ID == "" || routing.NormalizeAgentID(agentCfg.ID) == "main" {
 		return expandHome(defaults.Workspace)
 	}
@@ -287,7 +287,11 @@ func resolveAgentWorkspace(agentCfg *config.AgentConfig, defaults *config.AgentD
 		if !strings.HasPrefix(filepath.Clean(resolved), safeBase) {
 			logger.WarnCF("agent", "Agent workspace path escapes base directory; using fallback",
 				map[string]any{"agent_id": agentCfg.ID, "resolved": resolved})
-			return filepath.Join(expandHome(defaults.Workspace), "..", "workspace-"+routing.NormalizeAgentID(agentCfg.ID))
+			return filepath.Join(
+				expandHome(defaults.Workspace),
+				"..",
+				"workspace-"+routing.NormalizeAgentID(agentCfg.ID),
+			)
 		}
 		return resolved
 	}

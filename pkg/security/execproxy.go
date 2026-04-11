@@ -66,12 +66,18 @@ func (p *ExecProxy) Start() error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", p.handleProxy)
-	p.server = &http.Server{Handler: mux}
+	srv := &http.Server{Handler: mux}
+	p.server = srv
 	p.running.Store(true)
 	p.mu.Unlock()
 
+	// Capture `srv` by value into the goroutine so a concurrent Stop()
+	// that sets p.server = nil does not cause a nil-pointer dereference
+	// inside http.Server.Serve. The Server.Close() call in Stop() will
+	// unblock Serve() with http.ErrServerClosed regardless of whether
+	// p.server is still set on the parent struct.
 	go func() {
-		if err := p.server.Serve(ln); err != nil && err != http.ErrServerClosed {
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			slog.Warn("execproxy: server exited", "error", err)
 		}
 	}()
@@ -108,7 +114,24 @@ func (p *ExecProxy) Addr() string {
 // PrepareCmd sets HTTP_PROXY and HTTPS_PROXY env vars on the command so child
 // process traffic is routed through this proxy. Also increments the active
 // command counter and cancels any pending idle shutdown.
+//
+// If the proxy was stopped by the idle watcher since the last PrepareCmd call,
+// it is transparently restarted so subsequent exec commands do not silently
+// bypass SSRF protection. Restart failures leave the counter un-incremented
+// and the cmd env unchanged — the caller's nil-check on Addr() or on the
+// returned cmd.Env should detect that the proxy is unavailable.
 func (p *ExecProxy) PrepareCmd(cmd *exec.Cmd) {
+	// Restart if the idle watcher stopped us since the last use. Without this,
+	// once the 30s idle timeout fires, every subsequent exec command runs
+	// without SSRF protection with no visible signal.
+	if !p.running.Load() {
+		if err := p.Start(); err != nil {
+			slog.Warn("execproxy: restart after idle stop failed — exec command will run without proxy",
+				"error", err)
+			return
+		}
+	}
+
 	// Cancel any pending idle watcher
 	p.mu.Lock()
 	if p.idleStop != nil {

@@ -38,7 +38,7 @@ type MessageBus struct {
 	closeOnce      sync.Once
 	done           chan struct{}
 	closed         atomic.Bool
-	publishMu      sync.Mutex  // guards closed+wg.Add to prevent TOCTOU race with Close()
+	publishMu      sync.Mutex // guards closed+wg.Add to prevent TOCTOU race with Close()
 	wg             sync.WaitGroup
 	streamDelegate atomic.Pointer[StreamDelegate] // type-safe; avoids atomic.Value mixed-type panic
 }

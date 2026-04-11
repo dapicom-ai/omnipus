@@ -50,7 +50,7 @@ omnipus agent -m "Hello" --model claude-opus-4-6-thinking
 Nếu bạn đang triển khai qua Coolify hoặc Docker, hãy làm theo các bước sau để kiểm tra:
 
 1.  **Biến môi trường**:
-    *   `PICOCLAW_AGENTS_DEFAULTS_MODEL=gemini-flash`
+    *   `OMNIPUS_AGENTS_DEFAULTS_MODEL=gemini-flash`
 2.  **Lưu trữ xác thực**:
     Nếu bạn đã đăng nhập cục bộ, bạn có thể sao chép thông tin xác thực lên máy chủ:
     ```bash

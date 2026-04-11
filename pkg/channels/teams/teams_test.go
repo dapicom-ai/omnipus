@@ -18,11 +18,14 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 )
 
-// newTestSecureString is a helper that wraps config.NewSecureString for test use.
-func newTestSecureString(val string) config.SecureString {
-	return *config.NewSecureString(val)
+// testSecretsBundle returns a SecretBundle for Teams channel tests.
+func testSecretsBundle() credentials.SecretBundle {
+	return credentials.SecretBundle{
+		"TEAMS_APP_PASSWORD_REF": "secret-password",
+	}
 }
 
 // -- Test getChatKind --------------------------------------------------------
@@ -122,11 +125,12 @@ func TestGetChatKindFromActivity_EmptyID(t *testing.T) {
 // -- Test NewTeamsChannel -----------------------------------------------------
 
 func TestNewTeamsChannel_MissingAppID(t *testing.T) {
+	bundle := testSecretsBundle()
 	cfg := config.TeamsConfig{
-		AppID:       "",
-		AppPassword: newTestSecureString("secret"),
+		AppID:          "",
+		AppPasswordRef: "TEAMS_APP_PASSWORD_REF",
 	}
-	ch, err := NewTeamsChannel(cfg, nil)
+	ch, err := NewTeamsChannel(cfg, bundle, nil)
 	if ch != nil {
 		t.Error("expected nil channel when AppID is empty")
 	}
@@ -136,11 +140,13 @@ func TestNewTeamsChannel_MissingAppID(t *testing.T) {
 }
 
 func TestNewTeamsChannel_MissingAppPassword(t *testing.T) {
+	// Empty bundle means missing ref → appPassword will be ""
+	bundle := credentials.SecretBundle{}
 	cfg := config.TeamsConfig{
-		AppID:       "app-id-123",
-		AppPassword: newTestSecureString(""),
+		AppID:          "app-id-123",
+		AppPasswordRef: "MISSING_REF",
 	}
-	ch, err := NewTeamsChannel(cfg, nil)
+	ch, err := NewTeamsChannel(cfg, bundle, nil)
 	if ch != nil {
 		t.Error("expected nil channel when AppPassword is empty")
 	}
@@ -150,11 +156,12 @@ func TestNewTeamsChannel_MissingAppPassword(t *testing.T) {
 }
 
 func TestNewTeamsChannel_ValidConfig(t *testing.T) {
+	bundle := testSecretsBundle()
 	cfg := config.TeamsConfig{
-		AppID:       "app-id-123",
-		AppPassword: newTestSecureString("secret-password"),
+		AppID:          "app-id-123",
+		AppPasswordRef: "TEAMS_APP_PASSWORD_REF",
 	}
-	ch, err := NewTeamsChannel(cfg, nil)
+	ch, err := NewTeamsChannel(cfg, bundle, nil)
 	if err != nil {
 		t.Fatalf("NewTeamsChannel() error = %v", err)
 	}
@@ -164,12 +171,13 @@ func TestNewTeamsChannel_ValidConfig(t *testing.T) {
 }
 
 func TestNewTeamsChannel_DefaultMaxMessageLength(t *testing.T) {
+	bundle := testSecretsBundle()
 	cfg := config.TeamsConfig{
-		AppID:       "app-id-123",
-		AppPassword: newTestSecureString("secret-password"),
+		AppID:          "app-id-123",
+		AppPasswordRef: "TEAMS_APP_PASSWORD_REF",
 		// MaxMessageLength not set → should default to 4000
 	}
-	ch, err := NewTeamsChannel(cfg, nil)
+	ch, err := NewTeamsChannel(cfg, bundle, nil)
 	if err != nil {
 		t.Fatalf("NewTeamsChannel() error = %v", err)
 	}
@@ -180,12 +188,13 @@ func TestNewTeamsChannel_DefaultMaxMessageLength(t *testing.T) {
 }
 
 func TestNewTeamsChannel_CustomMaxMessageLength(t *testing.T) {
+	bundle := testSecretsBundle()
 	cfg := config.TeamsConfig{
 		AppID:             "app-id-123",
-		AppPassword:       newTestSecureString("secret-password"),
+		AppPasswordRef:    "TEAMS_APP_PASSWORD_REF",
 		MaxMessageLength:  5000,
 	}
-	ch, err := NewTeamsChannel(cfg, nil)
+	ch, err := NewTeamsChannel(cfg, bundle, nil)
 	if err != nil {
 		t.Fatalf("NewTeamsChannel() error = %v", err)
 	}
@@ -235,8 +244,8 @@ func TestStart_SetsRunningTrue(t *testing.T) {
 	ch := &TeamsChannel{
 		BaseChannel: channels.NewBaseChannel("teams", nil, nil, nil),
 		config: config.TeamsConfig{
-			AppID:       "app-id-123",
-			AppPassword: newTestSecureString("secret-password"),
+			AppID:          "app-id-123",
+			AppPasswordRef: "dummy-ref", // satisfies field requirement
 		},
 		ctx: context.Background(),
 	}
@@ -251,8 +260,8 @@ func TestStop_SetsRunningFalse(t *testing.T) {
 	ch := &TeamsChannel{
 		BaseChannel: channels.NewBaseChannel("teams", nil, nil, nil),
 		config: config.TeamsConfig{
-			AppID:       "app-id-123",
-			AppPassword: newTestSecureString("secret-password"),
+			AppID:          "app-id-123",
+			AppPasswordRef: "dummy-ref",
 		},
 	}
 	ch.SetRunning(true)
@@ -267,7 +276,7 @@ func TestStart_PreregistersReasoningChannelID(t *testing.T) {
 	// in the chatType map before Start completes.
 	cfg := config.TeamsConfig{
 		AppID:              "app-id-123",
-		AppPassword:        newTestSecureString("secret-password"),
+		AppPasswordRef:     "dummy-ref",
 		ReasoningChannelID: "reasoning-chat-id",
 	}
 	ch := &TeamsChannel{

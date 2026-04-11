@@ -87,12 +87,14 @@ func TestExtractProtocol(t *testing.T) {
 }
 
 func TestCreateProviderFromConfig_OpenAI(t *testing.T) {
+	const keyRef = "FACTORY_PROVIDER_TEST_KEY"
+	t.Setenv(keyRef, "test-key")
 	cfg := &config.ModelConfig{
 		ModelName: "test-openai",
 		Model:     "openai/gpt-4o",
 		APIBase:   "https://api.example.com/v1",
+		APIKeyRef: keyRef,
 	}
-	cfg.SetAPIKey("test-key")
 
 	provider, modelID, err := CreateProviderFromConfig(cfg)
 	if err != nil {
@@ -128,11 +130,13 @@ func TestCreateProviderFromConfig_DefaultAPIBase(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			const keyRef = "FACTORY_PROVIDER_PROTOCOL_TEST_KEY"
+			t.Setenv(keyRef, "test-key")
 			cfg := &config.ModelConfig{
 				ModelName: "test-" + tt.protocol,
 				Model:     tt.protocol + "/test-model",
+				APIKeyRef: keyRef,
 			}
-			cfg.SetAPIKey("test-key")
 
 			provider, _, err := CreateProviderFromConfig(cfg)
 			if err != nil {
@@ -154,12 +158,14 @@ func TestGetDefaultAPIBase_LiteLLM(t *testing.T) {
 }
 
 func TestCreateProviderFromConfig_LiteLLM(t *testing.T) {
+	const keyRef = "FACTORY_PROVIDER_LITELLM_TEST_KEY"
+	t.Setenv(keyRef, "test-key")
 	cfg := &config.ModelConfig{
 		ModelName: "test-litellm",
 		Model:     "litellm/my-proxy-alias",
 		APIBase:   "http://localhost:4000/v1",
+		APIKeyRef: keyRef,
 	}
-	cfg.SetAPIKey("test-key")
 
 	provider, modelID, err := CreateProviderFromConfig(cfg)
 	if err != nil {
@@ -174,12 +180,14 @@ func TestCreateProviderFromConfig_LiteLLM(t *testing.T) {
 }
 
 func TestCreateProviderFromConfig_LongCat(t *testing.T) {
+	const keyRef = "FACTORY_PROVIDER_LONGCAT_TEST_KEY"
+	t.Setenv(keyRef, "test-key")
 	cfg := &config.ModelConfig{
 		ModelName: "test-longcat",
 		Model:     "longcat/LongCat-Flash-Thinking",
 		APIBase:   "https://api.longcat.chat/openai",
+		APIKeyRef: keyRef,
 	}
-	cfg.SetAPIKey("test-key")
 
 	provider, modelID, err := CreateProviderFromConfig(cfg)
 	if err != nil {
@@ -197,12 +205,14 @@ func TestCreateProviderFromConfig_LongCat(t *testing.T) {
 }
 
 func TestCreateProviderFromConfig_ModelScope(t *testing.T) {
+	const keyRef = "FACTORY_PROVIDER_MODELSCOPE_TEST_KEY"
+	t.Setenv(keyRef, "test-key")
 	cfg := &config.ModelConfig{
 		ModelName: "test-modelscope",
 		Model:     "modelscope/Qwen/Qwen3-235B-A22B-Instruct-2507",
 		APIBase:   "https://api-inference.modelscope.cn/v1",
+		APIKeyRef: keyRef,
 	}
-	cfg.SetAPIKey("test-key")
 
 	provider, modelID, err := CreateProviderFromConfig(cfg)
 	if err != nil {
@@ -226,11 +236,13 @@ func TestGetDefaultAPIBase_ModelScope(t *testing.T) {
 }
 
 func TestCreateProviderFromConfig_Novita(t *testing.T) {
+	const keyRef = "FACTORY_PROVIDER_NOVITA_TEST_KEY"
+	t.Setenv(keyRef, "test-key")
 	cfg := &config.ModelConfig{
 		ModelName: "test-novita",
 		Model:     "novita/deepseek/deepseek-v3.2",
+		APIKeyRef: keyRef,
 	}
-	cfg.SetAPIKey("test-key")
 
 	provider, modelID, err := CreateProviderFromConfig(cfg)
 	if err != nil {
@@ -254,12 +266,14 @@ func TestGetDefaultAPIBase_Novita(t *testing.T) {
 }
 
 func TestCreateProviderFromConfig_Mimo(t *testing.T) {
+	const keyRef = "FACTORY_PROVIDER_MIMO_TEST_KEY"
+	t.Setenv(keyRef, "test-key")
 	cfg := &config.ModelConfig{
 		ModelName: "test-mimo",
 		Model:     "mimo/mimo-v2-pro",
 		APIBase:   "https://api.xiaomimimo.com/v1",
+		APIKeyRef: keyRef,
 	}
-	cfg.SetAPIKey("test-key")
 
 	provider, modelID, err := CreateProviderFromConfig(cfg)
 	if err != nil {
@@ -283,11 +297,13 @@ func TestGetDefaultAPIBase_Mimo(t *testing.T) {
 }
 
 func TestCreateProviderFromConfig_Anthropic(t *testing.T) {
+	const keyRef = "FACTORY_PROVIDER_ANTHROPIC_TEST_KEY"
+	t.Setenv(keyRef, "test-key")
 	cfg := &config.ModelConfig{
 		ModelName: "test-anthropic",
 		Model:     "anthropic/claude-sonnet-4.6",
+		APIKeyRef: keyRef,
 	}
-	cfg.SetAPIKey("test-key")
 
 	provider, modelID, err := CreateProviderFromConfig(cfg)
 	if err != nil {
@@ -368,11 +384,13 @@ func TestCreateProviderFromConfig_MissingAPIKey(t *testing.T) {
 }
 
 func TestCreateProviderFromConfig_UnknownProtocol(t *testing.T) {
+	const keyRef = "FACTORY_PROVIDER_UNKNOWN_TEST_KEY"
+	t.Setenv(keyRef, "test-key")
 	cfg := &config.ModelConfig{
 		ModelName: "test-unknown",
 		Model:     "unknown-protocol/model",
+		APIKeyRef: keyRef,
 	}
-	cfg.SetAPIKey("test-key")
 
 	_, _, err := CreateProviderFromConfig(cfg)
 	if err == nil {
@@ -407,13 +425,15 @@ func TestCreateProviderFromConfig_RequestTimeoutPropagation(t *testing.T) {
 	}))
 	defer server.Close()
 
+	const keyRef = "FACTORY_PROVIDER_TIMEOUT_TEST_KEY"
+	t.Setenv(keyRef, "test-key")
 	cfg := &config.ModelConfig{
 		ModelName:      "test-timeout",
 		Model:          "openai/gpt-4o",
 		APIBase:        server.URL,
 		RequestTimeout: 1,
+		APIKeyRef:      keyRef,
 	}
-	cfg.SetAPIKey("test-key")
 
 	provider, modelID, err := CreateProviderFromConfig(cfg)
 	if err != nil {
@@ -440,12 +460,14 @@ func TestCreateProviderFromConfig_RequestTimeoutPropagation(t *testing.T) {
 }
 
 func TestCreateProviderFromConfig_Azure(t *testing.T) {
+	const keyRef = "FACTORY_PROVIDER_AZURE_TEST_KEY"
+	t.Setenv(keyRef, "test-azure-key")
 	cfg := &config.ModelConfig{
 		ModelName: "azure-gpt5",
 		Model:     "azure/my-gpt5-deployment",
 		APIBase:   "https://my-resource.openai.azure.com",
+		APIKeyRef: keyRef,
 	}
-	cfg.SetAPIKey("test-azure-key")
 
 	provider, modelID, err := CreateProviderFromConfig(cfg)
 	if err != nil {
@@ -460,12 +482,14 @@ func TestCreateProviderFromConfig_Azure(t *testing.T) {
 }
 
 func TestCreateProviderFromConfig_AzureOpenAIAlias(t *testing.T) {
+	const keyRef = "FACTORY_PROVIDER_AZURE_OPENAI_TEST_KEY"
+	t.Setenv(keyRef, "test-azure-key")
 	cfg := &config.ModelConfig{
 		ModelName: "azure-gpt4",
 		Model:     "azure-openai/my-deployment",
 		APIBase:   "https://my-resource.openai.azure.com",
+		APIKeyRef: keyRef,
 	}
-	cfg.SetAPIKey("test-azure-key")
 
 	provider, modelID, err := CreateProviderFromConfig(cfg)
 	if err != nil {
@@ -493,11 +517,13 @@ func TestCreateProviderFromConfig_AzureMissingAPIKey(t *testing.T) {
 }
 
 func TestCreateProviderFromConfig_AzureMissingAPIBase(t *testing.T) {
+	const keyRef = "FACTORY_PROVIDER_AZURE_BASE_TEST_KEY"
+	t.Setenv(keyRef, "test-azure-key")
 	cfg := &config.ModelConfig{
 		ModelName: "azure-gpt5",
 		Model:     "azure/my-gpt5-deployment",
+		APIKeyRef: keyRef,
 	}
-	cfg.SetAPIKey("test-azure-key")
 
 	_, _, err := CreateProviderFromConfig(cfg)
 	if err == nil {
@@ -506,6 +532,9 @@ func TestCreateProviderFromConfig_AzureMissingAPIBase(t *testing.T) {
 }
 
 func TestCreateProviderFromConfig_QwenInternationalAlias(t *testing.T) {
+	const keyRef = "FACTORY_PROVIDER_QWEN_INTL_TEST_KEY"
+	t.Setenv(keyRef, "test-key")
+
 	tests := []struct {
 		name     string
 		protocol string
@@ -520,8 +549,8 @@ func TestCreateProviderFromConfig_QwenInternationalAlias(t *testing.T) {
 			cfg := &config.ModelConfig{
 				ModelName: "test-" + tt.protocol,
 				Model:     tt.protocol + "/qwen-max",
+				APIKeyRef: keyRef,
 			}
-			cfg.SetAPIKey("test-key")
 
 			provider, modelID, err := CreateProviderFromConfig(cfg)
 			if err != nil {
@@ -541,6 +570,9 @@ func TestCreateProviderFromConfig_QwenInternationalAlias(t *testing.T) {
 }
 
 func TestCreateProviderFromConfig_QwenUSAlias(t *testing.T) {
+	const keyRef = "FACTORY_PROVIDER_QWEN_US_TEST_KEY"
+	t.Setenv(keyRef, "test-key")
+
 	tests := []struct {
 		name     string
 		protocol string
@@ -554,8 +586,8 @@ func TestCreateProviderFromConfig_QwenUSAlias(t *testing.T) {
 			cfg := &config.ModelConfig{
 				ModelName: "test-" + tt.protocol,
 				Model:     tt.protocol + "/qwen-max",
+				APIKeyRef: keyRef,
 			}
-			cfg.SetAPIKey("test-key")
 
 			provider, modelID, err := CreateProviderFromConfig(cfg)
 			if err != nil {
@@ -575,6 +607,9 @@ func TestCreateProviderFromConfig_QwenUSAlias(t *testing.T) {
 }
 
 func TestCreateProviderFromConfig_CodingPlanAnthropic(t *testing.T) {
+	const keyRef = "FACTORY_PROVIDER_CODING_PLAN_TEST_KEY"
+	t.Setenv(keyRef, "test-key")
+
 	tests := []struct {
 		name     string
 		protocol string
@@ -588,8 +623,8 @@ func TestCreateProviderFromConfig_CodingPlanAnthropic(t *testing.T) {
 			cfg := &config.ModelConfig{
 				ModelName: "test-" + tt.protocol,
 				Model:     tt.protocol + "/claude-sonnet-4-20250514",
+				APIKeyRef: keyRef,
 			}
-			cfg.SetAPIKey("test-key")
 
 			provider, modelID, err := CreateProviderFromConfig(cfg)
 			if err != nil {
@@ -649,12 +684,14 @@ func TestCreateProviderFromConfig_MinimaxInjectsReasoningSplit(t *testing.T) {
 	}))
 	defer server.Close()
 
+	const keyRef = "FACTORY_PROVIDER_MINIMAX_TEST_KEY"
+	t.Setenv(keyRef, "test-key")
 	cfg := &config.ModelConfig{
 		ModelName: "test-minimax",
 		Model:     "minimax/MiniMax-M2.5",
 		APIBase:   server.URL,
+		APIKeyRef: keyRef,
 	}
-	cfg.SetAPIKey("test-key")
 
 	provider, modelID, err := CreateProviderFromConfig(cfg)
 	if err != nil {
@@ -697,13 +734,15 @@ func TestCreateProviderFromConfig_MinimaxPreservesUserExtraBody(t *testing.T) {
 	}))
 	defer server.Close()
 
+	const keyRef2 = "FACTORY_PROVIDER_MINIMAX_CUSTOM_TEST_KEY"
+	t.Setenv(keyRef2, "test-key")
 	cfg := &config.ModelConfig{
 		ModelName: "test-minimax-custom",
 		Model:     "minimax/MiniMax-M2.5",
 		APIBase:   server.URL,
 		ExtraBody: map[string]any{"custom_field": "test"},
+		APIKeyRef: keyRef2,
 	}
-	cfg.SetAPIKey("test-key")
 
 	provider, modelID, err := CreateProviderFromConfig(cfg)
 	if err != nil {

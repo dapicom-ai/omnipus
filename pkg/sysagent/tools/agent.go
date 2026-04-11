@@ -43,6 +43,7 @@ func (t *AgentCreateTool) Name() string { return "system.agent.create" }
 func (t *AgentCreateTool) Description() string {
 	return "Create a new custom agent.\nParameters: name (required), description, model, provider, color, icon."
 }
+
 func (t *AgentCreateTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -57,6 +58,7 @@ func (t *AgentCreateTool) Parameters() map[string]any {
 		"required": []string{"name"},
 	}
 }
+
 func (t *AgentCreateTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	name, _ := args["name"].(string)
 	if strings.TrimSpace(name) == "" {
@@ -81,7 +83,9 @@ func (t *AgentCreateTool) Execute(_ context.Context, args map[string]any) *tools
 	}
 	t.deps.Cfg.Agents.List = append(t.deps.Cfg.Agents.List, newAgent)
 	if err := t.deps.SaveConfig(); err != nil {
-		return tools.ErrorResult(errorJSON("SAVE_FAILED", "Failed to save config: "+err.Error(), "Check disk space and permissions"))
+		return tools.ErrorResult(
+			errorJSON("SAVE_FAILED", "Failed to save config: "+err.Error(), "Check disk space and permissions"),
+		)
 	}
 	// Create agent workspace directory (non-fatal: config entry persisted above).
 	if err := datamodel.InitAgentWorkspace(t.deps.Home, id); err != nil {
@@ -106,6 +110,7 @@ func (t *AgentUpdateTool) Name() string { return "system.agent.update" }
 func (t *AgentUpdateTool) Description() string {
 	return "Update an existing agent's configuration.\nParameters: id (required), name, description, model, provider, color, icon."
 }
+
 func (t *AgentUpdateTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -121,6 +126,7 @@ func (t *AgentUpdateTool) Parameters() map[string]any {
 		"required": []string{"id"},
 	}
 }
+
 func (t *AgentUpdateTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	id, _ := args["id"].(string)
 	if id == "" {
@@ -164,6 +170,7 @@ func (t *AgentDeleteTool) Name() string { return "system.agent.delete" }
 func (t *AgentDeleteTool) Description() string {
 	return "Delete an agent and all its data (sessions, memory, workspace).\nParameters: id (required), confirm (bool, must be true)."
 }
+
 func (t *AgentDeleteTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -174,6 +181,7 @@ func (t *AgentDeleteTool) Parameters() map[string]any {
 		"required": []string{"id", "confirm"},
 	}
 }
+
 func (t *AgentDeleteTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	id, _ := args["id"].(string)
 	confirm, _ := args["confirm"].(bool)
@@ -226,6 +234,7 @@ func (t *AgentListTool) Name() string { return "system.agent.list" }
 func (t *AgentListTool) Description() string {
 	return "List all agents with their status, model, and task count.\nParameters: status (optional: active/inactive/all, default all)."
 }
+
 func (t *AgentListTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -234,6 +243,7 @@ func (t *AgentListTool) Parameters() map[string]any {
 		},
 	}
 }
+
 func (t *AgentListTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	filter, _ := args["status"].(string)
 	if filter == "" {
@@ -278,6 +288,7 @@ func (t *AgentActivateTool) Name() string { return "system.agent.activate" }
 func (t *AgentActivateTool) Description() string {
 	return "Activate a core or custom agent.\nParameters: id (required)."
 }
+
 func (t *AgentActivateTool) Parameters() map[string]any {
 	return map[string]any{
 		"type":       "object",
@@ -285,6 +296,7 @@ func (t *AgentActivateTool) Parameters() map[string]any {
 		"required":   []string{"id"},
 	}
 }
+
 func (t *AgentActivateTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	id, _ := args["id"].(string)
 	if id == "" {
@@ -317,6 +329,7 @@ func (t *AgentDeactivateTool) Name() string { return "system.agent.deactivate" }
 func (t *AgentDeactivateTool) Description() string {
 	return "Deactivate an agent (makes it unavailable for new sessions).\nParameters: id (required)."
 }
+
 func (t *AgentDeactivateTool) Parameters() map[string]any {
 	return map[string]any{
 		"type":       "object",
@@ -324,6 +337,7 @@ func (t *AgentDeactivateTool) Parameters() map[string]any {
 		"required":   []string{"id"},
 	}
 }
+
 func (t *AgentDeactivateTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	id, _ := args["id"].(string)
 	if id == "" {

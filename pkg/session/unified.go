@@ -256,7 +256,13 @@ func (us *UnifiedStore) AppendTranscript(sessionID string, entry TranscriptEntry
 	}
 	meta.UpdatedAt = entry.Timestamp
 	if writeErr := writeUnifiedMeta(sessionDir, meta); writeErr != nil {
-		slog.Warn("unified_store: could not write meta after transcript append", "session_id", sessionID, "error", writeErr)
+		slog.Warn(
+			"unified_store: could not write meta after transcript append",
+			"session_id",
+			sessionID,
+			"error",
+			writeErr,
+		)
 	}
 	return nil
 }

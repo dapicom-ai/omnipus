@@ -29,23 +29,6 @@ func newDevicePairingRegistry() *devicePairingRegistry {
 	}
 }
 
-func (r *devicePairingRegistry) register(id string) chan pairing.PairingDecision {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if existing, ok := r.pending[id]; ok {
-		return existing
-	}
-	ch := make(chan pairing.PairingDecision, 1)
-	r.pending[id] = ch
-	return ch
-}
-
-func (r *devicePairingRegistry) unregister(id string) {
-	r.mu.Lock()
-	delete(r.pending, id)
-	r.mu.Unlock()
-}
-
 func (r *devicePairingRegistry) resolve(id string, decision pairing.PairingDecision) bool {
 	r.mu.Lock()
 	ch, ok := r.pending[id]
@@ -60,19 +43,6 @@ func (r *devicePairingRegistry) resolve(id string, decision pairing.PairingDecis
 		slog.Warn("ws: device pairing registry: duplicate resolve", "id", id)
 		return false
 	}
-}
-
-// sendPairingRequestToAdmin sends a device pairing request frame to the admin's WebSocket.
-func (h *WSHandler) sendPairingRequestToAdmin(wc *wsConn, pending pairing.PendingDevice) {
-	sendConnFrame(wc, wsServerFrame{
-		Type:       "device_pairing_request",
-		DeviceID:   pending.DeviceID,
-		Fingerprint: pending.Fingerprint,
-		PairingCode: pending.PairingCode,
-		DeviceName: pending.DeviceName,
-		Message:    "New device pairing request",
-	})
-	slog.Info("ws: device_pairing_request sent to admin", "device_id", pending.DeviceID, "device_name", pending.DeviceName)
 }
 
 // handleDevicePairingResponse processes an admin's decision on a pending pairing request.

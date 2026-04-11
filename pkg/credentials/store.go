@@ -55,15 +55,17 @@ const (
 )
 
 // ErrStoreLocked is returned when the credential store is not unlocked.
-var ErrStoreLocked = errors.New("credentials: store is locked — provide master key via OMNIPUS_MASTER_KEY, OMNIPUS_KEY_FILE, or interactive passphrase")
+var ErrStoreLocked = errors.New(
+	"credentials: store is locked — provide master key via OMNIPUS_MASTER_KEY, OMNIPUS_KEY_FILE, or interactive passphrase",
+)
 
 // ErrWrongKey is returned when AES-GCM authentication fails (wrong key).
 var ErrWrongKey = errors.New("credentials: decryption failed — wrong master key?")
 
-// ErrNotFound is returned when a credential name is not in the store.
-type ErrNotFound struct{ Name string }
+// NotFoundError is returned when a credential name is not in the store.
+type NotFoundError struct{ Name string }
 
-func (e *ErrNotFound) Error() string {
+func (e *NotFoundError) Error() string {
 	return fmt.Sprintf("credentials: %q not found in credential store", e.Name)
 }
 
@@ -90,6 +92,19 @@ type Store struct {
 // Call Unlock (or UnlockWithKey) before reading or writing credentials.
 func NewStore(path string) *Store {
 	return &Store{path: path}
+}
+
+// Path returns the on-disk path of the credentials.json file.
+func (s *Store) Path() string {
+	return s.path
+}
+
+// Exists reports whether the credentials.json file currently exists on disk.
+// Used by the auto-generate path in Unlock to determine whether this is a
+// fresh install (no existing encrypted data) and thus safe to mint a new key.
+func (s *Store) Exists() bool {
+	_, err := os.Stat(s.path)
+	return err == nil
 }
 
 // IsLocked reports whether the store is currently locked.
@@ -156,7 +171,7 @@ func (s *Store) Set(name, value string) error {
 }
 
 // Get decrypts and returns the credential named name.
-// Returns ErrNotFound if the name is not present, ErrWrongKey on auth failure.
+// Returns NotFoundError if the name is not present, ErrWrongKey on auth failure.
 // Implements US-3 AC2, US-3 AC3.
 func (s *Store) Get(name string) (string, error) {
 	s.mu.RLock()
@@ -172,7 +187,7 @@ func (s *Store) Get(name string) (string, error) {
 
 	entry, ok := sf.Credentials[name]
 	if !ok {
-		return "", &ErrNotFound{Name: name}
+		return "", &NotFoundError{Name: name}
 	}
 
 	plain, err := decrypt(s.key, entry)
@@ -216,7 +231,7 @@ func (s *Store) Delete(name string) error {
 	}
 
 	if _, ok := sf.Credentials[name]; !ok {
-		return &ErrNotFound{Name: name}
+		return &NotFoundError{Name: name}
 	}
 	delete(sf.Credentials, name)
 
@@ -301,8 +316,8 @@ func (s *Store) loadFileInternal() (*storeFile, error) {
 	if os.IsNotExist(err) {
 		// Create empty store with fresh salt on first use.
 		salt := make([]byte, saltLen)
-		if _, err := io.ReadFull(rand.Reader, salt); err != nil {
-			return nil, fmt.Errorf("credentials: generate initial salt: %w", err)
+		if _, saltErr := io.ReadFull(rand.Reader, salt); saltErr != nil {
+			return nil, fmt.Errorf("credentials: generate initial salt: %w", saltErr)
 		}
 		return &storeFile{
 			Version:     storeVersion,
@@ -315,11 +330,11 @@ func (s *Store) loadFileInternal() (*storeFile, error) {
 	}
 
 	var sf storeFile
-	if err := json.Unmarshal(data, &sf); err != nil {
+	if unmarshalErr := json.Unmarshal(data, &sf); unmarshalErr != nil {
 		// Corrupted file: log and refuse to overwrite.
 		slog.Error("credentials: store file is corrupted — fix or delete it manually",
-			"path", s.path, "error", err)
-		return nil, fmt.Errorf("credentials: store file corrupted (manual fix required): %w", err)
+			"path", s.path, "error", unmarshalErr)
+		return nil, fmt.Errorf("credentials: store file corrupted (manual fix required): %w", unmarshalErr)
 	}
 	if sf.Credentials == nil {
 		sf.Credentials = make(map[string]encEntry)
@@ -350,8 +365,8 @@ func (s *Store) loadOrCreateSalt() ([]byte, error) {
 	data, err := os.ReadFile(s.path)
 	if os.IsNotExist(err) {
 		salt := make([]byte, saltLen)
-		if _, err := io.ReadFull(rand.Reader, salt); err != nil {
-			return nil, fmt.Errorf("credentials: generate salt: %w", err)
+		if _, saltErr := io.ReadFull(rand.Reader, salt); saltErr != nil {
+			return nil, fmt.Errorf("credentials: generate salt: %w", saltErr)
 		}
 		// Persist the salt so subsequent unlocks use the same KDF output.
 		sf := &storeFile{
@@ -359,15 +374,15 @@ func (s *Store) loadOrCreateSalt() ([]byte, error) {
 			Salt:        base64.StdEncoding.EncodeToString(salt),
 			Credentials: make(map[string]encEntry),
 		}
-		raw, err := json.MarshalIndent(sf, "", "  ")
-		if err != nil {
-			return nil, fmt.Errorf("credentials: marshal initial store: %w", err)
+		raw, marshalErr := json.MarshalIndent(sf, "", "  ")
+		if marshalErr != nil {
+			return nil, fmt.Errorf("credentials: marshal initial store: %w", marshalErr)
 		}
-		if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-			return nil, fmt.Errorf("credentials: create store dir: %w", err)
+		if mkdirErr := os.MkdirAll(filepath.Dir(s.path), 0o700); mkdirErr != nil {
+			return nil, fmt.Errorf("credentials: create store dir: %w", mkdirErr)
 		}
-		if err := fileutil.WriteFileAtomic(s.path, raw, 0o600); err != nil {
-			return nil, fmt.Errorf("credentials: persist salt: %w", err)
+		if writeErr := fileutil.WriteFileAtomic(s.path, raw, 0o600); writeErr != nil {
+			return nil, fmt.Errorf("credentials: persist salt: %w", writeErr)
 		}
 		return salt, nil
 	}
@@ -376,12 +391,12 @@ func (s *Store) loadOrCreateSalt() ([]byte, error) {
 	}
 
 	var sf storeFile
-	if err := json.Unmarshal(data, &sf); err != nil {
-		return nil, fmt.Errorf("credentials: parse store for salt: %w", err)
+	if unmarshalErr := json.Unmarshal(data, &sf); unmarshalErr != nil {
+		return nil, fmt.Errorf("credentials: parse store for salt: %w", unmarshalErr)
 	}
-	salt, err := base64.StdEncoding.DecodeString(sf.Salt)
-	if err != nil {
-		return nil, fmt.Errorf("credentials: decode salt: %w", err)
+	salt, decodeErr := base64.StdEncoding.DecodeString(sf.Salt)
+	if decodeErr != nil {
+		return nil, fmt.Errorf("credentials: decode salt: %w", decodeErr)
 	}
 	return salt, nil
 }

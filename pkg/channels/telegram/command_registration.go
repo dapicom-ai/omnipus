@@ -72,7 +72,9 @@ func (c *TelegramChannel) startCommandRegistration(ctx context.Context, defs []c
 
 	// Registration runs asynchronously so Telegram message intake is never blocked
 	// by temporary upstream API failures. Retry stops on success or channel shutdown.
+	c.commandRegWG.Add(1)
 	go func() {
+		defer c.commandRegWG.Done()
 		attempt := 0
 		timer := time.NewTimer(0)
 		if !timer.Stop() {
@@ -113,4 +115,12 @@ func (c *TelegramChannel) startCommandRegistration(ctx context.Context, defs []c
 			}
 		}
 	}()
+}
+
+// WaitCommandRegistrationDone blocks until the background command-registration
+// goroutine has exited. Call this after canceling commandRegCancel in tests (and
+// in Stop) to eliminate the race between goroutine exit and the caller's
+// subsequent assertions.
+func (c *TelegramChannel) WaitCommandRegistrationDone() {
+	c.commandRegWG.Wait()
 }

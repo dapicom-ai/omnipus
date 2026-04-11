@@ -66,8 +66,12 @@ func (e *Evaluator) evaluateWithPolicy(agentID, toolName string, ap *AgentPolicy
 			for _, allowed := range allow {
 				if allowed == toolName {
 					return Decision{
-						Allowed:    false,
-						PolicyRule: fmt.Sprintf("tool '%s' in tools.deny for agent '%s' (deny takes precedence over allow)", toolName, agentID),
+						Allowed: false,
+						PolicyRule: fmt.Sprintf(
+							"tool '%s' in tools.deny for agent '%s' (deny takes precedence over allow)",
+							toolName,
+							agentID,
+						),
 					}
 				}
 			}
@@ -139,8 +143,12 @@ func (e *Evaluator) EvaluateExec(agentID, command string) Decision {
 func (e *Evaluator) evaluateDefault(agentID, toolName string) Decision {
 	if e.defaultPolicy == PolicyDeny {
 		return Decision{
-			Allowed:    false,
-			PolicyRule: fmt.Sprintf("default_policy is 'deny', no allow rule for tool '%s' (agent '%s')", toolName, agentID),
+			Allowed: false,
+			PolicyRule: fmt.Sprintf(
+				"default_policy is 'deny', no allow rule for tool '%s' (agent '%s')",
+				toolName,
+				agentID,
+			),
 		}
 	}
 

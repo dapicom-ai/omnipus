@@ -179,7 +179,10 @@ func validateConfig(cfg *SecurityConfig) error {
 	case "", PolicyAllow, PolicyDeny:
 		// valid
 	default:
-		return fmt.Errorf("security.default_policy: invalid value %q (must be \"allow\" or \"deny\")", cfg.DefaultPolicy)
+		return fmt.Errorf(
+			"security.default_policy: invalid value %q (must be \"allow\" or \"deny\")",
+			cfg.DefaultPolicy,
+		)
 	}
 
 	switch cfg.Audit.Output {
@@ -200,14 +203,20 @@ func validateConfig(cfg *SecurityConfig) error {
 	case "", SkillTrustBlockUnverified, SkillTrustWarnUnverified, SkillTrustAllowAll:
 		// valid
 	default:
-		return fmt.Errorf("security.skill_trust: invalid value %q (must be \"block_unverified\", \"warn_unverified\", or \"allow_all\")", cfg.SkillTrust)
+		return fmt.Errorf(
+			"security.skill_trust: invalid value %q (must be \"block_unverified\", \"warn_unverified\", or \"allow_all\")",
+			cfg.SkillTrust,
+		)
 	}
 
 	switch cfg.PromptGuard.Strictness {
 	case "", "low", "medium", "high":
 		// valid
 	default:
-		return fmt.Errorf("security.prompt_guard.strictness: invalid value %q (must be \"low\", \"medium\", or \"high\")", cfg.PromptGuard.Strictness)
+		return fmt.Errorf(
+			"security.prompt_guard.strictness: invalid value %q (must be \"low\", \"medium\", or \"high\")",
+			cfg.PromptGuard.Strictness,
+		)
 	}
 
 	// Validate filesystem paths are absolute or start with ~
@@ -248,4 +257,3 @@ func CheckDMSafety(channels []ChannelConfig) []string {
 	}
 	return warnings
 }
-

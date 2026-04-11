@@ -271,7 +271,7 @@ func (a *App) buildShell(pageID string, content tview.Primitive, hint string) tv
 	}
 
 	headerLeft := tview.NewTextView().
-		SetText(" [#ff00ff::b]///[#00f0ff] PICOCLAW LAUNCHER [#ff00ff]///").
+		SetText(" [#ff00ff::b]///[#00f0ff] OMNIPUS LAUNCHER [#ff00ff]///").
 		SetDynamicColors(true).
 		SetBackgroundColor(tcell.NewHexColor(0x050510))
 

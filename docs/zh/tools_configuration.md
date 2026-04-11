@@ -169,7 +169,7 @@ Exec 工具用于执行 shell 命令。
 
 **通过环境变量：**
 ```bash
-PICOCLAW_TOOLS_EXEC_ENABLED=false
+OMNIPUS_TOOLS_EXEC_ENABLED=false
 ```
 
 > **注意：** 禁用后，代理将无法执行 shell 命令。这也会影响 Cron 工具运行计划 shell 命令的能力。
@@ -450,14 +450,14 @@ Skills 工具配置通过 ClawHub 等注册表进行技能发现和安装。
 
 ## 环境变量
 
-所有配置选项都可以通过格式为 `PICOCLAW_TOOLS_<SECTION>_<KEY>` 的环境变量覆盖：
+所有配置选项都可以通过格式为 `OMNIPUS_TOOLS_<SECTION>_<KEY>` 的环境变量覆盖：
 
 例如：
 
-- `PICOCLAW_TOOLS_WEB_BRAVE_ENABLED=true`
-- `PICOCLAW_TOOLS_EXEC_ENABLED=false`
-- `PICOCLAW_TOOLS_EXEC_ENABLE_DENY_PATTERNS=false`
-- `PICOCLAW_TOOLS_CRON_EXEC_TIMEOUT_MINUTES=10`
-- `PICOCLAW_TOOLS_MCP_ENABLED=true`
+- `OMNIPUS_TOOLS_WEB_BRAVE_ENABLED=true`
+- `OMNIPUS_TOOLS_EXEC_ENABLED=false`
+- `OMNIPUS_TOOLS_EXEC_ENABLE_DENY_PATTERNS=false`
+- `OMNIPUS_TOOLS_CRON_EXEC_TIMEOUT_MINUTES=10`
+- `OMNIPUS_TOOLS_MCP_ENABLED=true`
 
 注意：嵌套的映射式配置（例如 `tools.mcp.servers.<name>.*`）在 `config.json` 中配置，而非通过环境变量。

@@ -12,8 +12,10 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/dapicom-ai/omnipus/pkg/config"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/providers"
 )
 
 // HandleCompleteOnboarding handles POST /api/v1/onboarding/complete.
@@ -59,6 +61,12 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 		jsonErr(w, http.StatusBadRequest, "provider.id is required")
 		return
 	}
+	// Reject unknown protocols at the boundary so the gateway does not persist
+	// a config that will fail the post-save rewire and flip to degraded.
+	if !providers.IsKnownProtocol(body.Provider.ID) {
+		jsonErr(w, http.StatusBadRequest, fmt.Sprintf("provider.id %q is not a known protocol", body.Provider.ID))
+		return
+	}
 	if body.Provider.APIKey == "" {
 		jsonErr(w, http.StatusBadRequest, "provider.api_key is required")
 		return
@@ -78,23 +86,39 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Store the API key in the encrypted credentials store (AES-256-GCM)
-	// instead of plaintext in config.json. The config entry references the
-	// credential by name via api_key_ref. Falls back to plaintext if the
-	// credential store is unavailable (e.g., no master key set yet).
-	credRefName := a.storeCredential(body.Provider.ID+"_API_KEY", body.Provider.APIKey)
+	// Store the API key in the encrypted credentials store (AES-256-GCM).
+	// Refuses the operation if the store is locked (SEC-23: no plaintext fallback).
+	credRefName, credErr := a.storeCredential(body.Provider.ID+"_API_KEY", body.Provider.APIKey)
+	if credErr != nil {
+		slog.Error("rest: credential store unavailable during onboarding", "error", credErr)
+		jsonErr(
+			w,
+			http.StatusServiceUnavailable,
+			"credential store locked: set OMNIPUS_MASTER_KEY or unlock before saving secrets",
+		)
+		return
+	}
 
 	// Build the provider entry as a JSON object to inject into providers array.
-	newProviderEntry := map[string]any{
-		"model_name": body.Provider.ID,
-		"provider":   body.Provider.ID,
-		"model":      body.Provider.Model,
+	// model defaults per provider when not specified in the onboarding request.
+	providerModel := body.Provider.Model
+	if providerModel == "" {
+		switch body.Provider.ID {
+		case "anthropic":
+			providerModel = "claude-sonnet-4-6"
+		case "gemini", "google":
+			providerModel = "gemini-2.0-flash"
+		case "openrouter":
+			providerModel = "openai/gpt-4o"
+		default: // openai and any other provider
+			providerModel = "gpt-4o"
+		}
 	}
-	if credRefName != "" {
-		newProviderEntry["api_key_ref"] = credRefName
-	} else {
-		// Fallback: store plaintext if credentials store is unavailable.
-		newProviderEntry["api_key"] = body.Provider.APIKey
+	newProviderEntry := map[string]any{
+		"model_name":  body.Provider.ID,
+		"provider":    body.Provider.ID,
+		"model":       providerModel,
+		"api_key_ref": credRefName,
 	}
 
 	// Pre-compute all expensive crypto operations outside the config lock to
@@ -140,8 +164,8 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 		// Check if provider already exists; update or append.
 		found := false
 		for i, entry := range providerList {
-			entryMap, ok := entry.(map[string]any)
-			if !ok {
+			entryMap, isMap := entry.(map[string]any)
+			if !isMap {
 				continue
 			}
 			if entryMap["model_name"] == body.Provider.ID || entryMap["model"] == body.Provider.ID {
@@ -199,7 +223,7 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 		if !ok {
 			return fmt.Errorf("gateway config is not a map")
 		}
-		var users []any
+		users := make([]any, 0, 1)
 		if raw, exists := gatewayMap["users"]; exists {
 			var ok bool
 			users, ok = raw.([]any)

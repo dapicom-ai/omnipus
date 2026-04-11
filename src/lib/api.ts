@@ -204,7 +204,10 @@ export interface Config {
   security: {
     policy_mode: 'allow' | 'deny'
     exec_approval: 'auto' | 'ask' | 'deny'
-    prompt_injection_level: 'off' | 'low' | 'medium' | 'high'
+    // Prompt guard strictness is owned by the dedicated /security/prompt-guard
+    // endpoint since Wave 3. This field is still populated on read for
+    // backward compatibility but must NOT be sent on updateConfig calls.
+    prompt_injection_level?: 'off' | 'low' | 'medium' | 'high'
     daily_cost_cap?: number
     exec_timeout_seconds?: number
     max_background_seconds?: number
@@ -707,17 +710,24 @@ export function fetchAboutInfo(): Promise<AboutInfo> {
 
 // ── Audit Log ─────────────────────────────────────────────────────────────────
 
+export type AuditEventType = 'tool_call' | 'exec' | 'file_op' | 'llm_call' | 'policy_eval' | 'rate_limit' | 'ssrf' | 'startup' | 'shutdown'
+export type AuditDecision = 'allow' | 'deny' | 'error'
+
 export interface AuditEntry {
-  id: string
   timestamp: string
-  action: string
-  actor?: string
-  target?: string
-  result: 'allow' | 'deny' | 'error'
+  event: AuditEventType | (string & {})
+  decision?: AuditDecision | (string & {})
+  agent_id?: string
+  session_id?: string
+  tool?: string
+  command?: string
+  parameters?: Record<string, unknown>
+  policy_rule?: string
+  details?: Record<string, unknown>
 }
 
 export function fetchAuditLog(): Promise<AuditEntry[]> {
-  return request<AuditEntry[]>('/audit')
+  return request<AuditEntry[]>('/audit-log')
 }
 
 // ── User Context (USER.md) ────────────────────────────────────────────────────
@@ -780,4 +790,93 @@ export function changePassword(currentPassword: string, newPassword: string): Pr
     method: 'POST',
     body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
   })
+}
+
+// ── Exec Allowlist ────────────────────────────────────────────────────────────
+
+export interface ExecAllowlist {
+  allowed_binaries: string[]
+  // restart_required is true on a successful PUT: the in-memory agent loop
+  // still uses the previous allowlist until Omnipus restarts (SEC-12). The UI
+  // surfaces this via a "Restart required" badge in ExecAllowlistSection.
+  restart_required?: boolean
+}
+
+export function fetchExecAllowlist(): Promise<ExecAllowlist> {
+  return request<ExecAllowlist>('/security/exec-allowlist')
+}
+
+export function updateExecAllowlist(patterns: string[]): Promise<ExecAllowlist> {
+  return request<ExecAllowlist>('/security/exec-allowlist', {
+    method: 'PUT',
+    body: JSON.stringify({ allowed_binaries: patterns }),
+  })
+}
+
+// ── Prompt Guard ──────────────────────────────────────────────────────────────
+
+export type PromptGuardStrictness = 'low' | 'medium' | 'high'
+
+export interface PromptGuardConfig {
+  strictness: PromptGuardStrictness
+  restart_required?: boolean
+}
+
+export function fetchPromptGuard(): Promise<PromptGuardConfig> {
+  return request<PromptGuardConfig>('/security/prompt-guard')
+}
+
+export function updatePromptGuard(strictness: PromptGuardStrictness): Promise<PromptGuardConfig> {
+  return request<PromptGuardConfig>('/security/prompt-guard', {
+    method: 'PUT',
+    body: JSON.stringify({ strictness }),
+  })
+}
+
+// ── Exec Proxy ────────────────────────────────────────────────────────────────
+
+export interface ExecProxyStatus {
+  running: boolean
+  enabled: boolean
+  address?: string
+}
+
+export function fetchExecProxyStatus(): Promise<ExecProxyStatus> {
+  return request<ExecProxyStatus>('/security/exec-proxy-status')
+}
+
+// ── Rate Limits ───────────────────────────────────────────────────────────────
+
+export interface RateLimitStatus {
+  enabled: boolean
+  daily_cost_usd: number
+  daily_cost_cap: number
+  max_agent_llm_calls_per_hour: number
+  max_agent_tool_calls_per_minute: number
+}
+
+export function fetchRateLimits(): Promise<RateLimitStatus> {
+  return request<RateLimitStatus>('/security/rate-limits')
+}
+
+// ── Sandbox Status ────────────────────────────────────────────────────────────
+
+export interface SandboxStatus {
+  backend: string
+  available: boolean
+  // kernel_level reports the CAPABILITY — the backend can enforce at the
+  // kernel level if Apply() is called. policy_applied reports whether the
+  // enforcement is actually live on this process. A kernel-capable backend
+  // without policy_applied has status notes explaining the gap.
+  kernel_level: boolean
+  policy_applied: boolean
+  abi_version?: number
+  blocked_syscalls?: string[]
+  seccomp_enabled: boolean
+  landlock_features?: string[]
+  notes?: string[]
+}
+
+export function fetchSandboxStatus(): Promise<SandboxStatus> {
+  return request<SandboxStatus>('/security/sandbox-status')
 }

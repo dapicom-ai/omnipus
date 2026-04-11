@@ -8,31 +8,31 @@ package config
 // Runtime environment variable keys for the omnipus process.
 // These control the location of files and binaries at runtime and are read
 // directly via os.Getenv / os.LookupEnv. All omnipus-specific keys use the
-// PICOCLAW_ prefix. Reference these constants instead of inline string
+// OMNIPUS_ prefix. Reference these constants instead of inline string
 // literals to keep all supported knobs visible in one place and to prevent
 // typos.
 const (
 	// EnvHome overrides the base directory for all omnipus data
 	// (config, workspace, skills, auth store, …).
 	// Default: ~/.omnipus
-	// EnvHome uses PICOCLAW_HOME for backward compatibility with PicoClaw ecosystem. Omnipus inherits this convention per CLAUDE.md ecosystem compatibility constraint.
-	EnvHome = "PICOCLAW_HOME"
+	// EnvHome uses OMNIPUS_HOME for backward compatibility with Omnipus ecosystem. Omnipus inherits this convention per CLAUDE.md ecosystem compatibility constraint.
+	EnvHome = "OMNIPUS_HOME"
 
 	// EnvConfig overrides the full path to the JSON config file.
-	// Default: $PICOCLAW_HOME/config.json
-	EnvConfig = "PICOCLAW_CONFIG"
+	// Default: $OMNIPUS_HOME/config.json
+	EnvConfig = "OMNIPUS_CONFIG"
 
 	// EnvBuiltinSkills overrides the directory from which built-in
 	// skills are loaded.
 	// Default: <cwd>/skills
-	EnvBuiltinSkills = "PICOCLAW_BUILTIN_SKILLS"
+	EnvBuiltinSkills = "OMNIPUS_BUILTIN_SKILLS"
 
 	// EnvBinary overrides the path to the omnipus executable.
 	// Used by the web launcher when spawning the gateway subprocess.
 	// Default: resolved from the same directory as the current executable.
-	EnvBinary = "PICOCLAW_BINARY"
+	EnvBinary = "OMNIPUS_BINARY"
 
 	// EnvGatewayHost overrides the host address for the gateway server.
 	// Default: "127.0.0.1"
-	EnvGatewayHost = "PICOCLAW_GATEWAY_HOST"
+	EnvGatewayHost = "OMNIPUS_GATEWAY_HOST"
 )

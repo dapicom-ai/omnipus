@@ -288,7 +288,7 @@ flowchart TD
 
 | Field | Type | Default | Env var |
 |-------|------|---------|---------|
-| `steering_mode` | `string` | `"one-at-a-time"` | `PICOCLAW_AGENTS_DEFAULTS_STEERING_MODE` |
+| `steering_mode` | `string` | `"one-at-a-time"` | `OMNIPUS_AGENTS_DEFAULTS_STEERING_MODE` |
 
 
 ## Design decisions and trade-offs

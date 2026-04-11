@@ -60,9 +60,9 @@ func TestEffectiveSkillTrust_AllowAll(t *testing.T) {
 
 func TestParseSecurityConfig_SkillTrust(t *testing.T) {
 	tests := []struct {
-		name        string
-		json        string
-		wantTrust   SkillTrustPolicy
+		name      string
+		json      string
+		wantTrust SkillTrustPolicy
 	}{
 		{
 			name:      "block_unverified",

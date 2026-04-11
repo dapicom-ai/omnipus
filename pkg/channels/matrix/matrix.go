@@ -30,6 +30,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/identity"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/media"
@@ -191,18 +192,20 @@ type MatrixChannel struct {
 	roomKindCache     *roomKindCache
 	localpartMentionR *regexp.Regexp
 
-	cryptoHelper *cryptohelper.CryptoHelper
-	cryptoDbPath string
+	cryptoHelper     *cryptohelper.CryptoHelper
+	cryptoDbPath     string
+	cryptoPassphrase string // resolved once at construction from CryptoPassphraseRef
 }
 
 func NewMatrixChannel(
 	cfg config.MatrixConfig,
+	secrets credentials.SecretBundle,
 	messageBus *bus.MessageBus,
 	cryptoDatabasePath string,
 ) (*MatrixChannel, error) {
 	homeserver := strings.TrimSpace(cfg.Homeserver)
 	userID := strings.TrimSpace(cfg.UserID)
-	accessToken := strings.TrimSpace(cfg.AccessToken.String())
+	accessToken := strings.TrimSpace(secrets.GetString(cfg.AccessTokenRef))
 	if homeserver == "" {
 		return nil, fmt.Errorf("matrix homeserver is required")
 	}
@@ -210,7 +213,7 @@ func NewMatrixChannel(
 		return nil, fmt.Errorf("matrix user_id is required")
 	}
 	if accessToken == "" {
-		return nil, fmt.Errorf("matrix access_token is required")
+		return nil, fmt.Errorf("matrix: access_token not resolved (access_token_ref=%q): check credential store", cfg.AccessTokenRef)
 	}
 
 	client, err := mautrix.NewClient(homeserver, id.UserID(userID), accessToken)
@@ -224,6 +227,11 @@ func NewMatrixChannel(
 	syncer, ok := client.Syncer.(*mautrix.DefaultSyncer)
 	if !ok {
 		return nil, fmt.Errorf("matrix syncer is not *mautrix.DefaultSyncer")
+	}
+
+	cryptoPassphrase := secrets.GetString(cfg.CryptoPassphraseRef)
+	if cfg.CryptoPassphraseRef != "" && cryptoPassphrase == "" {
+		return nil, fmt.Errorf("matrix: crypto_passphrase not resolved (crypto_passphrase_ref=%q): check credential store", cfg.CryptoPassphraseRef)
 	}
 
 	base := channels.NewBaseChannel(
@@ -247,6 +255,9 @@ func NewMatrixChannel(
 		localpartMentionR: localpartMentionRegexp(matrixLocalpart(client.UserID)),
 		typingMu:          sync.Mutex{},
 		cryptoDbPath:      cryptoDatabasePath,
+		// Resolve the passphrase once at construction from the SecretBundle so
+		// Start/initCrypto do not re-read from any source on every invocation.
+		cryptoPassphrase: cryptoPassphrase,
 	}, nil
 }
 
@@ -257,7 +268,7 @@ func (c *MatrixChannel) Start(ctx context.Context) error {
 	c.startTime = time.Now()
 
 	// Initialize crypto helper if database and passphrase are configured
-	if c.cryptoDbPath != "" && c.config.CryptoPassphrase.String() != "" {
+	if c.cryptoDbPath != "" && c.config.CryptoPassphraseRef != "" {
 		if err := c.initCrypto(ctx); err != nil {
 			logger.WarnCF(
 				"matrix",
@@ -349,7 +360,7 @@ func (c *MatrixChannel) initCrypto(ctx context.Context) error {
 		return fmt.Errorf("wrap database: %w", err)
 	}
 
-	cryptoHelper, err := cryptohelper.NewCryptoHelper(c.client, []byte(c.config.CryptoPassphrase.String()), wrappedDB)
+	cryptoHelper, err := cryptohelper.NewCryptoHelper(c.client, []byte(c.cryptoPassphrase), wrappedDB)
 	if err != nil {
 		return fmt.Errorf("create crypto helper: %w", err)
 	}

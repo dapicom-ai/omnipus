@@ -1,15 +1,14 @@
 package config
 
 import (
-	cryptorand "crypto/rand"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"log/slog"
 	mathrand "math/rand"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/caarlos0/env/v11"
@@ -114,7 +113,7 @@ type Config struct {
 	Bindings  []AgentBinding  `json:"bindings,omitempty" yaml:"-"`
 	Session   SessionConfig   `json:"session,omitempty"  yaml:"-"`
 	Channels  ChannelsConfig  `json:"channels"           yaml:"channels"`
-	Providers SecureModelList `json:"providers"          yaml:"providers"` // Configured providers with credentials
+	Providers []*ModelConfig  `json:"providers"          yaml:"providers"` // Configured providers with credentials
 	Gateway   GatewayConfig   `json:"gateway"            yaml:"-"`
 	Hooks     HooksConfig     `json:"hooks,omitempty"    yaml:"-"`
 	Tools     ToolsConfig     `json:"tools"              yaml:",inline"`
@@ -124,7 +123,7 @@ type Config struct {
 	// BuildInfo contains build-time version information
 	BuildInfo BuildInfo `json:"build_info,omitempty" yaml:"-"`
 
-	// Omnipus-specific sections (additive, does not break PicoClaw compatibility).
+	// Omnipus-specific sections (additive, does not break Omnipus compatibility).
 	Storage         OmnipusStorageConfig            `json:"storage,omitempty"          yaml:"-"`
 	ChannelPolicies map[string]OmnipusChannelPolicy `json:"channel_policies,omitempty" yaml:"-"`
 	// Sandbox holds Wave 2 kernel sandboxing settings (SEC-01–SEC-20).
@@ -138,6 +137,16 @@ type Config struct {
 
 	// cache for sensitive values and compiled regex (computed once)
 	sensitiveCache *SensitiveDataCache
+
+	// sensitiveMu guards registeredSensitive and sensitiveCache to prevent data
+	// races between the agent-loop log scrubber (reads) and config reloads (writes).
+	sensitiveMu sync.RWMutex
+
+	// registeredSensitive holds plaintext secrets registered at runtime via
+	// RegisterSensitiveValues (e.g., resolved credential store values). These
+	// supplement the reflection-walked SecureString fields so that *Ref-based
+	// credentials are also scrubbed from LLM output and audit logs.
+	registeredSensitive []string
 }
 
 // OmnipusStorageConfig holds storage-related settings per Appendix E §E.5.4.
@@ -289,8 +298,10 @@ func (c *Config) MarshalJSON() ([]byte, error) {
 		return data, nil
 	}
 	var m map[string]json.RawMessage
-	if err := json.Unmarshal(data, &m); err != nil {
-		return data, nil // best-effort: return without merging
+	if unmarshalErr := json.Unmarshal(data, &m); unmarshalErr != nil {
+		// best-effort: log and return original data without merging unknown fields.
+		slog.Debug("config: MarshalJSON: could not parse for unknown-field merge", "error", unmarshalErr)
+		return data, nil
 	}
 	for k, v := range c.UnknownFields {
 		if _, exists := m[k]; !exists {
@@ -345,14 +356,15 @@ func (m AgentModelConfig) MarshalJSON() ([]byte, error) {
 }
 
 type AgentConfig struct {
-	ID             string            `json:"id"`
-	Default        bool              `json:"default,omitempty"`
-	Name           string            `json:"name,omitempty"`
-	Workspace      string            `json:"workspace,omitempty"`
-	Model          *AgentModelConfig `json:"model,omitempty"`
-	Skills         []string          `json:"skills,omitempty"`
-	Subagents      *SubagentsConfig  `json:"subagents,omitempty"`
-	CanDelegateTo  []string          `json:"can_delegate_to,omitempty"`
+	ID            string            `json:"id"`
+	Default       bool              `json:"default,omitempty"`
+	Name          string            `json:"name,omitempty"`
+	Description   string            `json:"description,omitempty"`
+	Workspace     string            `json:"workspace,omitempty"`
+	Model         *AgentModelConfig `json:"model,omitempty"`
+	Skills        []string          `json:"skills,omitempty"`
+	Subagents     *SubagentsConfig  `json:"subagents,omitempty"`
+	CanDelegateTo []string          `json:"can_delegate_to,omitempty"`
 }
 
 type SubagentsConfig struct {
@@ -397,40 +409,40 @@ type RoutingConfig struct {
 
 // SubTurnConfig configures the SubTurn execution system.
 type SubTurnConfig struct {
-	MaxDepth              int `json:"max_depth"               env:"PICOCLAW_AGENTS_DEFAULTS_SUBTURN_MAX_DEPTH"`
-	MaxConcurrent         int `json:"max_concurrent"          env:"PICOCLAW_AGENTS_DEFAULTS_SUBTURN_MAX_CONCURRENT"`
-	DefaultTimeoutMinutes int `json:"default_timeout_minutes" env:"PICOCLAW_AGENTS_DEFAULTS_SUBTURN_DEFAULT_TIMEOUT_MINUTES"`
-	DefaultTokenBudget    int `json:"default_token_budget"    env:"PICOCLAW_AGENTS_DEFAULTS_SUBTURN_DEFAULT_TOKEN_BUDGET"`
-	ConcurrencyTimeoutSec int `json:"concurrency_timeout_sec" env:"PICOCLAW_AGENTS_DEFAULTS_SUBTURN_CONCURRENCY_TIMEOUT_SEC"`
+	MaxDepth              int `json:"max_depth"               env:"OMNIPUS_AGENTS_DEFAULTS_SUBTURN_MAX_DEPTH"`
+	MaxConcurrent         int `json:"max_concurrent"          env:"OMNIPUS_AGENTS_DEFAULTS_SUBTURN_MAX_CONCURRENT"`
+	DefaultTimeoutMinutes int `json:"default_timeout_minutes" env:"OMNIPUS_AGENTS_DEFAULTS_SUBTURN_DEFAULT_TIMEOUT_MINUTES"`
+	DefaultTokenBudget    int `json:"default_token_budget"    env:"OMNIPUS_AGENTS_DEFAULTS_SUBTURN_DEFAULT_TOKEN_BUDGET"`
+	ConcurrencyTimeoutSec int `json:"concurrency_timeout_sec" env:"OMNIPUS_AGENTS_DEFAULTS_SUBTURN_CONCURRENCY_TIMEOUT_SEC"`
 }
 
 type ToolFeedbackConfig struct {
-	Enabled       bool `json:"enabled"         env:"PICOCLAW_AGENTS_DEFAULTS_TOOL_FEEDBACK_ENABLED"`
-	MaxArgsLength int  `json:"max_args_length" env:"PICOCLAW_AGENTS_DEFAULTS_TOOL_FEEDBACK_MAX_ARGS_LENGTH"`
+	Enabled       bool `json:"enabled"         env:"OMNIPUS_AGENTS_DEFAULTS_TOOL_FEEDBACK_ENABLED"`
+	MaxArgsLength int  `json:"max_args_length" env:"OMNIPUS_AGENTS_DEFAULTS_TOOL_FEEDBACK_MAX_ARGS_LENGTH"`
 }
 
 type AgentDefaults struct {
-	Workspace                 string             `json:"workspace"                       env:"PICOCLAW_AGENTS_DEFAULTS_WORKSPACE"`
-	RestrictToWorkspace       bool               `json:"restrict_to_workspace"           env:"PICOCLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
-	AllowReadOutsideWorkspace bool               `json:"allow_read_outside_workspace"    env:"PICOCLAW_AGENTS_DEFAULTS_ALLOW_READ_OUTSIDE_WORKSPACE"`
-	Provider                  string             `json:"provider"                        env:"PICOCLAW_AGENTS_DEFAULTS_PROVIDER"`
-	ModelName                 string             `json:"model_name"                      env:"PICOCLAW_AGENTS_DEFAULTS_MODEL_NAME"`
+	Workspace                 string             `json:"workspace"                       env:"OMNIPUS_AGENTS_DEFAULTS_WORKSPACE"`
+	RestrictToWorkspace       bool               `json:"restrict_to_workspace"           env:"OMNIPUS_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
+	AllowReadOutsideWorkspace bool               `json:"allow_read_outside_workspace"    env:"OMNIPUS_AGENTS_DEFAULTS_ALLOW_READ_OUTSIDE_WORKSPACE"`
+	Provider                  string             `json:"provider"                        env:"OMNIPUS_AGENTS_DEFAULTS_PROVIDER"`
+	ModelName                 string             `json:"model_name"                      env:"OMNIPUS_AGENTS_DEFAULTS_MODEL_NAME"`
 	ModelFallbacks            []string           `json:"model_fallbacks,omitempty"`
-	ImageModel                string             `json:"image_model,omitempty"           env:"PICOCLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
+	ImageModel                string             `json:"image_model,omitempty"           env:"OMNIPUS_AGENTS_DEFAULTS_IMAGE_MODEL"`
 	ImageModelFallbacks       []string           `json:"image_model_fallbacks,omitempty"`
-	MaxTokens                 int                `json:"max_tokens"                      env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
-	ContextWindow             int                `json:"context_window,omitempty"        env:"PICOCLAW_AGENTS_DEFAULTS_CONTEXT_WINDOW"`
-	Temperature               *float64           `json:"temperature,omitempty"           env:"PICOCLAW_AGENTS_DEFAULTS_TEMPERATURE"`
-	MaxToolIterations         int                `json:"max_tool_iterations"             env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
-	SummarizeMessageThreshold int                `json:"summarize_message_threshold"     env:"PICOCLAW_AGENTS_DEFAULTS_SUMMARIZE_MESSAGE_THRESHOLD"`
-	SummarizeTokenPercent     int                `json:"summarize_token_percent"         env:"PICOCLAW_AGENTS_DEFAULTS_SUMMARIZE_TOKEN_PERCENT"`
-	MaxMediaSize              int                `json:"max_media_size,omitempty"        env:"PICOCLAW_AGENTS_DEFAULTS_MAX_MEDIA_SIZE"`
+	MaxTokens                 int                `json:"max_tokens"                      env:"OMNIPUS_AGENTS_DEFAULTS_MAX_TOKENS"`
+	ContextWindow             int                `json:"context_window,omitempty"        env:"OMNIPUS_AGENTS_DEFAULTS_CONTEXT_WINDOW"`
+	Temperature               *float64           `json:"temperature,omitempty"           env:"OMNIPUS_AGENTS_DEFAULTS_TEMPERATURE"`
+	MaxToolIterations         int                `json:"max_tool_iterations"             env:"OMNIPUS_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
+	SummarizeMessageThreshold int                `json:"summarize_message_threshold"     env:"OMNIPUS_AGENTS_DEFAULTS_SUMMARIZE_MESSAGE_THRESHOLD"`
+	SummarizeTokenPercent     int                `json:"summarize_token_percent"         env:"OMNIPUS_AGENTS_DEFAULTS_SUMMARIZE_TOKEN_PERCENT"`
+	MaxMediaSize              int                `json:"max_media_size,omitempty"        env:"OMNIPUS_AGENTS_DEFAULTS_MAX_MEDIA_SIZE"`
 	Routing                   *RoutingConfig     `json:"routing,omitempty"`
-	SteeringMode              string             `json:"steering_mode,omitempty"         env:"PICOCLAW_AGENTS_DEFAULTS_STEERING_MODE"` // "one-at-a-time" (default) or "all"
-	SubTurn                   SubTurnConfig      `json:"subturn"                                                                                     envPrefix:"PICOCLAW_AGENTS_DEFAULTS_SUBTURN_"`
+	SteeringMode              string             `json:"steering_mode,omitempty"         env:"OMNIPUS_AGENTS_DEFAULTS_STEERING_MODE"` // "one-at-a-time" (default) or "all"
+	SubTurn                   SubTurnConfig      `json:"subturn"                                                                                    envPrefix:"OMNIPUS_AGENTS_DEFAULTS_SUBTURN_"`
 	ToolFeedback              ToolFeedbackConfig `json:"tool_feedback,omitempty"`
-	SplitOnMarker             bool               `json:"split_on_marker"                 env:"PICOCLAW_AGENTS_DEFAULTS_SPLIT_ON_MARKER"` // split messages on <|[SPLIT]|> marker
-	TimeoutSeconds            int                `json:"timeout_seconds"                 env:"PICOCLAW_AGENTS_DEFAULTS_TIMEOUT_SECONDS"`  // per-turn timeout in seconds; 0 = disabled
+	SplitOnMarker             bool               `json:"split_on_marker"                 env:"OMNIPUS_AGENTS_DEFAULTS_SPLIT_ON_MARKER"` // split messages on <|[SPLIT]|> marker
+	TimeoutSeconds            int                `json:"timeout_seconds"                 env:"OMNIPUS_AGENTS_DEFAULTS_TIMEOUT_SECONDS"` // per-turn timeout in seconds; 0 = disabled
 	CanDelegateTo             []string           `json:"can_delegate_to,omitempty"`
 }
 
@@ -474,10 +486,8 @@ type ChannelsConfig struct {
 	Matrix     MatrixConfig     `json:"matrix"      yaml:"matrix,omitempty"`
 	LINE       LINEConfig       `json:"line"        yaml:"line,omitempty"`
 	OneBot     OneBotConfig     `json:"onebot"      yaml:"onebot,omitempty"`
-	WeCom      WeComConfig      `json:"wecom"       yaml:"wecom,omitempty"       envPrefix:"PICOCLAW_CHANNELS_WECOM_"`
+	WeCom      WeComConfig      `json:"wecom"       yaml:"wecom,omitempty"       envPrefix:"OMNIPUS_CHANNELS_WECOM_"`
 	Weixin     WeixinConfig     `json:"weixin"      yaml:"weixin,omitempty"`
-	Pico       PicoConfig       `json:"pico"        yaml:"pico,omitempty"`
-	PicoClient PicoClientConfig `json:"pico_client" yaml:"pico_client,omitempty"`
 	IRC        IRCConfig        `json:"irc"         yaml:"irc,omitempty"`
 	Teams      TeamsConfig      `json:"teams"       yaml:"teams,omitempty"`
 }
@@ -512,146 +522,142 @@ func (p *PlaceholderConfig) GetRandomText() string {
 }
 
 type StreamingConfig struct {
-	Enabled         bool `json:"enabled,omitempty"          env:"PICOCLAW_CHANNELS_TELEGRAM_STREAMING_ENABLED"`
-	ThrottleSeconds int  `json:"throttle_seconds,omitempty" env:"PICOCLAW_CHANNELS_TELEGRAM_STREAMING_THROTTLE_SECONDS"`
-	MinGrowthChars  int  `json:"min_growth_chars,omitempty" env:"PICOCLAW_CHANNELS_TELEGRAM_STREAMING_MIN_GROWTH_CHARS"`
+	Enabled         bool `json:"enabled,omitempty"          env:"OMNIPUS_CHANNELS_TELEGRAM_STREAMING_ENABLED"`
+	ThrottleSeconds int  `json:"throttle_seconds,omitempty" env:"OMNIPUS_CHANNELS_TELEGRAM_STREAMING_THROTTLE_SECONDS"`
+	MinGrowthChars  int  `json:"min_growth_chars,omitempty" env:"OMNIPUS_CHANNELS_TELEGRAM_STREAMING_MIN_GROWTH_CHARS"`
 }
 
 type WhatsAppConfig struct {
-	Enabled            bool                `json:"enabled"                  yaml:"-" env:"PICOCLAW_CHANNELS_WHATSAPP_ENABLED"`
-	BridgeURL          string              `json:"bridge_url"               yaml:"-" env:"PICOCLAW_CHANNELS_WHATSAPP_BRIDGE_URL"`
-	UseNative          bool                `json:"use_native"               yaml:"-" env:"PICOCLAW_CHANNELS_WHATSAPP_USE_NATIVE"`
-	SessionStorePath   string              `json:"session_store_path"       yaml:"-" env:"PICOCLAW_CHANNELS_WHATSAPP_SESSION_STORE_PATH"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"               yaml:"-" env:"PICOCLAW_CHANNELS_WHATSAPP_ALLOW_FROM"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"     yaml:"-" env:"PICOCLAW_CHANNELS_WHATSAPP_REASONING_CHANNEL_ID"`
-	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"  yaml:"-"`
+	Enabled            bool                `json:"enabled"                 yaml:"-" env:"OMNIPUS_CHANNELS_WHATSAPP_ENABLED"`
+	BridgeURL          string              `json:"bridge_url"              yaml:"-" env:"OMNIPUS_CHANNELS_WHATSAPP_BRIDGE_URL"`
+	UseNative          bool                `json:"use_native"              yaml:"-" env:"OMNIPUS_CHANNELS_WHATSAPP_USE_NATIVE"`
+	SessionStorePath   string              `json:"session_store_path"      yaml:"-" env:"OMNIPUS_CHANNELS_WHATSAPP_SESSION_STORE_PATH"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"              yaml:"-" env:"OMNIPUS_CHANNELS_WHATSAPP_ALLOW_FROM"`
+	ReasoningChannelID string              `json:"reasoning_channel_id"    yaml:"-" env:"OMNIPUS_CHANNELS_WHATSAPP_REASONING_CHANNEL_ID"`
+	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty" yaml:"-"`
 }
 
 type TelegramConfig struct {
-	Enabled            bool                `json:"enabled"                 yaml:"-"               env:"PICOCLAW_CHANNELS_TELEGRAM_ENABLED"`
-	Token              SecureString        `json:"token,omitzero"          yaml:"token,omitempty" env:"PICOCLAW_CHANNELS_TELEGRAM_TOKEN"`
-	BaseURL            string              `json:"base_url"                yaml:"-"               env:"PICOCLAW_CHANNELS_TELEGRAM_BASE_URL"`
-	Proxy              string              `json:"proxy"                   yaml:"-"               env:"PICOCLAW_CHANNELS_TELEGRAM_PROXY"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"              yaml:"-"               env:"PICOCLAW_CHANNELS_TELEGRAM_ALLOW_FROM"`
+	Enabled            bool                `json:"enabled"                 yaml:"-" env:"OMNIPUS_CHANNELS_TELEGRAM_ENABLED"`
+	TokenRef           string              `json:"token_ref,omitempty"     yaml:"-" env:"OMNIPUS_CHANNELS_TELEGRAM_TOKEN_REF"`
+	BaseURL            string              `json:"base_url"                yaml:"-" env:"OMNIPUS_CHANNELS_TELEGRAM_BASE_URL"`
+	Proxy              string              `json:"proxy"                   yaml:"-" env:"OMNIPUS_CHANNELS_TELEGRAM_PROXY"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"              yaml:"-" env:"OMNIPUS_CHANNELS_TELEGRAM_ALLOW_FROM"`
 	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty" yaml:"-"`
 	Typing             TypingConfig        `json:"typing,omitempty"        yaml:"-"`
 	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"   yaml:"-"`
 	Streaming          StreamingConfig     `json:"streaming,omitempty"     yaml:"-"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"    yaml:"-"               env:"PICOCLAW_CHANNELS_TELEGRAM_REASONING_CHANNEL_ID"`
-	UseMarkdownV2      bool                `json:"use_markdown_v2"         yaml:"-"               env:"PICOCLAW_CHANNELS_TELEGRAM_USE_MARKDOWN_V2"`
-}
-
-func (c *TelegramConfig) SetToken(token string) {
-	c.Token = *NewSecureString(token)
+	ReasoningChannelID string              `json:"reasoning_channel_id"    yaml:"-" env:"OMNIPUS_CHANNELS_TELEGRAM_REASONING_CHANNEL_ID"`
+	UseMarkdownV2      bool                `json:"use_markdown_v2"         yaml:"-" env:"OMNIPUS_CHANNELS_TELEGRAM_USE_MARKDOWN_V2"`
 }
 
 type FeishuConfig struct {
-	Enabled             bool                `json:"enabled"                     yaml:"-"                            env:"PICOCLAW_CHANNELS_FEISHU_ENABLED"`
-	AppID               string              `json:"app_id"                      yaml:"-"                            env:"PICOCLAW_CHANNELS_FEISHU_APP_ID"`
-	AppSecret           SecureString        `json:"app_secret,omitzero"         yaml:"app_secret,omitempty"         env:"PICOCLAW_CHANNELS_FEISHU_APP_SECRET"`
-	EncryptKey          SecureString        `json:"encrypt_key,omitzero"        yaml:"encrypt_key,omitempty"        env:"PICOCLAW_CHANNELS_FEISHU_ENCRYPT_KEY"`
-	VerificationToken   SecureString        `json:"verification_token,omitzero" yaml:"verification_token,omitempty" env:"PICOCLAW_CHANNELS_FEISHU_VERIFICATION_TOKEN"`
-	AllowFrom           FlexibleStringSlice `json:"allow_from"                  yaml:"-"                            env:"PICOCLAW_CHANNELS_FEISHU_ALLOW_FROM"`
-	GroupTrigger        GroupTriggerConfig  `json:"group_trigger,omitempty"     yaml:"-"`
-	Placeholder         PlaceholderConfig   `json:"placeholder,omitempty"       yaml:"-"`
-	ReasoningChannelID  string              `json:"reasoning_channel_id"        yaml:"-"                            env:"PICOCLAW_CHANNELS_FEISHU_REASONING_CHANNEL_ID"`
-	RandomReactionEmoji FlexibleStringSlice `json:"random_reaction_emoji"       yaml:"-"                            env:"PICOCLAW_CHANNELS_FEISHU_RANDOM_REACTION_EMOJI"`
-	IsLark              bool                `json:"is_lark"                     yaml:"-"                            env:"PICOCLAW_CHANNELS_FEISHU_IS_LARK"`
+	Enabled              bool                `json:"enabled"                          yaml:"-" env:"OMNIPUS_CHANNELS_FEISHU_ENABLED"`
+	AppID                string              `json:"app_id"                           yaml:"-" env:"OMNIPUS_CHANNELS_FEISHU_APP_ID"`
+	AppSecretRef         string              `json:"app_secret_ref,omitempty"         yaml:"-" env:"OMNIPUS_CHANNELS_FEISHU_APP_SECRET_REF"`
+	EncryptKeyRef        string              `json:"encrypt_key_ref,omitempty"        yaml:"-" env:"OMNIPUS_CHANNELS_FEISHU_ENCRYPT_KEY_REF"`
+	VerificationTokenRef string              `json:"verification_token_ref,omitempty" yaml:"-" env:"OMNIPUS_CHANNELS_FEISHU_VERIFICATION_TOKEN_REF"`
+	AllowFrom            FlexibleStringSlice `json:"allow_from"                       yaml:"-" env:"OMNIPUS_CHANNELS_FEISHU_ALLOW_FROM"`
+	GroupTrigger         GroupTriggerConfig  `json:"group_trigger,omitempty"          yaml:"-"`
+	Placeholder          PlaceholderConfig   `json:"placeholder,omitempty"            yaml:"-"`
+	ReasoningChannelID   string              `json:"reasoning_channel_id"             yaml:"-" env:"OMNIPUS_CHANNELS_FEISHU_REASONING_CHANNEL_ID"`
+	RandomReactionEmoji  FlexibleStringSlice `json:"random_reaction_emoji"            yaml:"-" env:"OMNIPUS_CHANNELS_FEISHU_RANDOM_REACTION_EMOJI"`
+	IsLark               bool                `json:"is_lark"                          yaml:"-" env:"OMNIPUS_CHANNELS_FEISHU_IS_LARK"`
 }
 
 type DiscordConfig struct {
-	Enabled            bool                `json:"enabled"                 yaml:"-"               env:"PICOCLAW_CHANNELS_DISCORD_ENABLED"`
-	Token              SecureString        `json:"token,omitzero"          yaml:"token,omitempty" env:"PICOCLAW_CHANNELS_DISCORD_TOKEN"`
-	Proxy              string              `json:"proxy"                   yaml:"-"               env:"PICOCLAW_CHANNELS_DISCORD_PROXY"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"              yaml:"-"               env:"PICOCLAW_CHANNELS_DISCORD_ALLOW_FROM"`
-	MentionOnly        bool                `json:"mention_only"            yaml:"-"               env:"PICOCLAW_CHANNELS_DISCORD_MENTION_ONLY"`
+	Enabled            bool                `json:"enabled"                 yaml:"-" env:"OMNIPUS_CHANNELS_DISCORD_ENABLED"`
+	TokenRef           string              `json:"token_ref,omitempty"     yaml:"-" env:"OMNIPUS_CHANNELS_DISCORD_TOKEN_REF"`
+	Proxy              string              `json:"proxy"                   yaml:"-" env:"OMNIPUS_CHANNELS_DISCORD_PROXY"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"              yaml:"-" env:"OMNIPUS_CHANNELS_DISCORD_ALLOW_FROM"`
+	MentionOnly        bool                `json:"mention_only"            yaml:"-" env:"OMNIPUS_CHANNELS_DISCORD_MENTION_ONLY"`
 	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty" yaml:"-"`
 	Typing             TypingConfig        `json:"typing,omitempty"        yaml:"-"`
 	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"   yaml:"-"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"    yaml:"-"               env:"PICOCLAW_CHANNELS_DISCORD_REASONING_CHANNEL_ID"`
+	ReasoningChannelID string              `json:"reasoning_channel_id"    yaml:"-" env:"OMNIPUS_CHANNELS_DISCORD_REASONING_CHANNEL_ID"`
 }
 
 type MaixCamConfig struct {
-	Enabled            bool                `json:"enabled"              env:"PICOCLAW_CHANNELS_MAIXCAM_ENABLED"`
-	Host               string              `json:"host"                 env:"PICOCLAW_CHANNELS_MAIXCAM_HOST"`
-	Port               int                 `json:"port"                 env:"PICOCLAW_CHANNELS_MAIXCAM_PORT"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"           env:"PICOCLAW_CHANNELS_MAIXCAM_ALLOW_FROM"`
-	ReasoningChannelID string              `json:"reasoning_channel_id" env:"PICOCLAW_CHANNELS_MAIXCAM_REASONING_CHANNEL_ID"`
+	Enabled            bool                `json:"enabled"              env:"OMNIPUS_CHANNELS_MAIXCAM_ENABLED"`
+	Host               string              `json:"host"                 env:"OMNIPUS_CHANNELS_MAIXCAM_HOST"`
+	Port               int                 `json:"port"                 env:"OMNIPUS_CHANNELS_MAIXCAM_PORT"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"           env:"OMNIPUS_CHANNELS_MAIXCAM_ALLOW_FROM"`
+	ReasoningChannelID string              `json:"reasoning_channel_id" env:"OMNIPUS_CHANNELS_MAIXCAM_REASONING_CHANNEL_ID"`
 }
 
 type QQConfig struct {
-	Enabled              bool                `json:"enabled"                  yaml:"-"                    env:"PICOCLAW_CHANNELS_QQ_ENABLED"`
-	AppID                string              `json:"app_id"                   yaml:"-"                    env:"PICOCLAW_CHANNELS_QQ_APP_ID"`
-	AppSecret            SecureString        `json:"app_secret,omitzero"      yaml:"app_secret,omitempty" env:"PICOCLAW_CHANNELS_QQ_APP_SECRET"`
-	AllowFrom            FlexibleStringSlice `json:"allow_from"               yaml:"-"                    env:"PICOCLAW_CHANNELS_QQ_ALLOW_FROM"`
+	Enabled              bool                `json:"enabled"                  yaml:"-" env:"OMNIPUS_CHANNELS_QQ_ENABLED"`
+	AppID                string              `json:"app_id"                   yaml:"-" env:"OMNIPUS_CHANNELS_QQ_APP_ID"`
+	AppSecretRef         string              `json:"app_secret_ref,omitempty" yaml:"-" env:"OMNIPUS_CHANNELS_QQ_APP_SECRET_REF"`
+	AllowFrom            FlexibleStringSlice `json:"allow_from"               yaml:"-" env:"OMNIPUS_CHANNELS_QQ_ALLOW_FROM"`
 	GroupTrigger         GroupTriggerConfig  `json:"group_trigger,omitempty"  yaml:"-"`
-	MaxMessageLength     int                 `json:"max_message_length"       yaml:"-"                    env:"PICOCLAW_CHANNELS_QQ_MAX_MESSAGE_LENGTH"`
-	MaxBase64FileSizeMiB int64               `json:"max_base64_file_size_mib" yaml:"-"                    env:"PICOCLAW_CHANNELS_QQ_MAX_BASE64_FILE_SIZE_MIB"`
-	SendMarkdown         bool                `json:"send_markdown"            yaml:"-"                    env:"PICOCLAW_CHANNELS_QQ_SEND_MARKDOWN"`
-	ReasoningChannelID   string              `json:"reasoning_channel_id"     yaml:"-"                    env:"PICOCLAW_CHANNELS_QQ_REASONING_CHANNEL_ID"`
+	MaxMessageLength     int                 `json:"max_message_length"       yaml:"-" env:"OMNIPUS_CHANNELS_QQ_MAX_MESSAGE_LENGTH"`
+	MaxBase64FileSizeMiB int64               `json:"max_base64_file_size_mib" yaml:"-" env:"OMNIPUS_CHANNELS_QQ_MAX_BASE64_FILE_SIZE_MIB"`
+	SendMarkdown         bool                `json:"send_markdown"            yaml:"-" env:"OMNIPUS_CHANNELS_QQ_SEND_MARKDOWN"`
+	ReasoningChannelID   string              `json:"reasoning_channel_id"     yaml:"-" env:"OMNIPUS_CHANNELS_QQ_REASONING_CHANNEL_ID"`
 }
 
 type DingTalkConfig struct {
-	Enabled            bool                `json:"enabled"                 yaml:"-"                       env:"PICOCLAW_CHANNELS_DINGTALK_ENABLED"`
-	ClientID           string              `json:"client_id"               yaml:"-"                       env:"PICOCLAW_CHANNELS_DINGTALK_CLIENT_ID"`
-	ClientSecret       SecureString        `json:"client_secret,omitzero"  yaml:"client_secret,omitempty" env:"PICOCLAW_CHANNELS_DINGTALK_CLIENT_SECRET"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"              yaml:"-"                       env:"PICOCLAW_CHANNELS_DINGTALK_ALLOW_FROM"`
-	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty" yaml:"-"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"    yaml:"-"                       env:"PICOCLAW_CHANNELS_DINGTALK_REASONING_CHANNEL_ID"`
+	Enabled            bool                `json:"enabled"                     yaml:"-" env:"OMNIPUS_CHANNELS_DINGTALK_ENABLED"`
+	ClientID           string              `json:"client_id"                   yaml:"-" env:"OMNIPUS_CHANNELS_DINGTALK_CLIENT_ID"`
+	ClientSecretRef    string              `json:"client_secret_ref,omitempty" yaml:"-" env:"OMNIPUS_CHANNELS_DINGTALK_CLIENT_SECRET_REF"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"                  yaml:"-" env:"OMNIPUS_CHANNELS_DINGTALK_ALLOW_FROM"`
+	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"     yaml:"-"`
+	ReasoningChannelID string              `json:"reasoning_channel_id"        yaml:"-" env:"OMNIPUS_CHANNELS_DINGTALK_REASONING_CHANNEL_ID"`
 }
 
 type SlackConfig struct {
-	Enabled            bool                `json:"enabled"                 yaml:"-"                   env:"PICOCLAW_CHANNELS_SLACK_ENABLED"`
-	BotToken           SecureString        `json:"bot_token,omitzero"      yaml:"bot_token,omitempty" env:"PICOCLAW_CHANNELS_SLACK_BOT_TOKEN"`
-	AppToken           SecureString        `json:"app_token,omitzero"      yaml:"app_token,omitempty" env:"PICOCLAW_CHANNELS_SLACK_APP_TOKEN"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"              yaml:"-"                   env:"PICOCLAW_CHANNELS_SLACK_ALLOW_FROM"`
+	Enabled            bool                `json:"enabled"                 yaml:"-" env:"OMNIPUS_CHANNELS_SLACK_ENABLED"`
+	BotTokenRef        string              `json:"bot_token_ref,omitempty" yaml:"-" env:"OMNIPUS_CHANNELS_SLACK_BOT_TOKEN_REF"`
+	AppTokenRef        string              `json:"app_token_ref,omitempty" yaml:"-" env:"OMNIPUS_CHANNELS_SLACK_APP_TOKEN_REF"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"              yaml:"-" env:"OMNIPUS_CHANNELS_SLACK_ALLOW_FROM"`
 	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty" yaml:"-"`
 	Typing             TypingConfig        `json:"typing,omitempty"        yaml:"-"`
 	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"   yaml:"-"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"    yaml:"-"                   env:"PICOCLAW_CHANNELS_SLACK_REASONING_CHANNEL_ID"`
+	ReasoningChannelID string              `json:"reasoning_channel_id"    yaml:"-" env:"OMNIPUS_CHANNELS_SLACK_REASONING_CHANNEL_ID"`
 }
 
 type MatrixConfig struct {
-	Enabled            bool                `json:"enabled"                        yaml:"-"                      env:"PICOCLAW_CHANNELS_MATRIX_ENABLED"`
-	Homeserver         string              `json:"homeserver"                     yaml:"-"                      env:"PICOCLAW_CHANNELS_MATRIX_HOMESERVER"`
-	UserID             string              `json:"user_id"                        yaml:"-"                      env:"PICOCLAW_CHANNELS_MATRIX_USER_ID"`
-	AccessToken        SecureString        `json:"access_token,omitzero"          yaml:"access_token,omitempty" env:"PICOCLAW_CHANNELS_MATRIX_ACCESS_TOKEN"`
-	DeviceID           string              `json:"device_id,omitempty"            yaml:"-"`
-	JoinOnInvite       bool                `json:"join_on_invite"                 yaml:"-"`
-	MessageFormat      string              `json:"message_format,omitempty"       yaml:"-"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"                     yaml:"-"`
-	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"        yaml:"-"`
-	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"          yaml:"-"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"           yaml:"-"`
-	CryptoDatabasePath string              `json:"crypto_database_path,omitempty" yaml:"-"`
-	CryptoPassphrase   SecureString        `json:"crypto_passphrase,omitzero"     yaml:"-"`
+	Enabled             bool                `json:"enabled"                         yaml:"-" env:"OMNIPUS_CHANNELS_MATRIX_ENABLED"`
+	Homeserver          string              `json:"homeserver"                      yaml:"-" env:"OMNIPUS_CHANNELS_MATRIX_HOMESERVER"`
+	UserID              string              `json:"user_id"                         yaml:"-" env:"OMNIPUS_CHANNELS_MATRIX_USER_ID"`
+	AccessTokenRef      string              `json:"access_token_ref,omitempty"      yaml:"-" env:"OMNIPUS_CHANNELS_MATRIX_ACCESS_TOKEN_REF"`
+	DeviceID            string              `json:"device_id,omitempty"             yaml:"-"`
+	JoinOnInvite        bool                `json:"join_on_invite"                  yaml:"-"`
+	MessageFormat       string              `json:"message_format,omitempty"        yaml:"-"`
+	AllowFrom           FlexibleStringSlice `json:"allow_from"                      yaml:"-"`
+	GroupTrigger        GroupTriggerConfig  `json:"group_trigger,omitempty"         yaml:"-"`
+	Placeholder         PlaceholderConfig   `json:"placeholder,omitempty"           yaml:"-"`
+	ReasoningChannelID  string              `json:"reasoning_channel_id"            yaml:"-"`
+	CryptoDatabasePath  string              `json:"crypto_database_path,omitempty"  yaml:"-"`
+	CryptoPassphraseRef string              `json:"crypto_passphrase_ref,omitempty" yaml:"-"`
 }
 
 type LINEConfig struct {
-	Enabled            bool                `json:"enabled"                       yaml:"-"                              env:"PICOCLAW_CHANNELS_LINE_ENABLED"`
-	ChannelSecret      SecureString        `json:"channel_secret,omitzero"       yaml:"channel_secret,omitempty"       env:"PICOCLAW_CHANNELS_LINE_CHANNEL_SECRET"`
-	ChannelAccessToken SecureString        `json:"channel_access_token,omitzero" yaml:"channel_access_token,omitempty" env:"PICOCLAW_CHANNELS_LINE_CHANNEL_ACCESS_TOKEN"`
-	WebhookHost        string              `json:"webhook_host"                  yaml:"-"                              env:"PICOCLAW_CHANNELS_LINE_WEBHOOK_HOST"`
-	WebhookPort        int                 `json:"webhook_port"                  yaml:"-"                              env:"PICOCLAW_CHANNELS_LINE_WEBHOOK_PORT"`
-	WebhookPath        string              `json:"webhook_path"                  yaml:"-"                              env:"PICOCLAW_CHANNELS_LINE_WEBHOOK_PATH"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"                    yaml:"-"                              env:"PICOCLAW_CHANNELS_LINE_ALLOW_FROM"`
-	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"       yaml:"-"`
-	Typing             TypingConfig        `json:"typing,omitempty"              yaml:"-"`
-	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"         yaml:"-"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"          yaml:"-"`
+	Enabled               bool                `json:"enabled"                            yaml:"-" env:"OMNIPUS_CHANNELS_LINE_ENABLED"`
+	ChannelSecretRef      string              `json:"channel_secret_ref,omitempty"       yaml:"-" env:"OMNIPUS_CHANNELS_LINE_CHANNEL_SECRET_REF"`
+	ChannelAccessTokenRef string              `json:"channel_access_token_ref,omitempty" yaml:"-" env:"OMNIPUS_CHANNELS_LINE_CHANNEL_ACCESS_TOKEN_REF"`
+	WebhookHost           string              `json:"webhook_host"                       yaml:"-" env:"OMNIPUS_CHANNELS_LINE_WEBHOOK_HOST"`
+	WebhookPort           int                 `json:"webhook_port"                       yaml:"-" env:"OMNIPUS_CHANNELS_LINE_WEBHOOK_PORT"`
+	WebhookPath           string              `json:"webhook_path"                       yaml:"-" env:"OMNIPUS_CHANNELS_LINE_WEBHOOK_PATH"`
+	AllowFrom             FlexibleStringSlice `json:"allow_from"                         yaml:"-" env:"OMNIPUS_CHANNELS_LINE_ALLOW_FROM"`
+	GroupTrigger          GroupTriggerConfig  `json:"group_trigger,omitempty"            yaml:"-"`
+	Typing                TypingConfig        `json:"typing,omitempty"                   yaml:"-"`
+	Placeholder           PlaceholderConfig   `json:"placeholder,omitempty"              yaml:"-"`
+	ReasoningChannelID    string              `json:"reasoning_channel_id"               yaml:"-"`
 }
 
 type OneBotConfig struct {
-	Enabled            bool                `json:"enabled"                 yaml:"-"                      env:"PICOCLAW_CHANNELS_ONEBOT_ENABLED"`
-	WSUrl              string              `json:"ws_url"                  yaml:"-"                      env:"PICOCLAW_CHANNELS_ONEBOT_WS_URL"`
-	AccessToken        SecureString        `json:"access_token,omitzero"   yaml:"access_token,omitempty" env:"PICOCLAW_CHANNELS_ONEBOT_ACCESS_TOKEN"`
-	ReconnectInterval  int                 `json:"reconnect_interval"      yaml:"-"                      env:"PICOCLAW_CHANNELS_ONEBOT_RECONNECT_INTERVAL"`
-	GroupTriggerPrefix []string            `json:"group_trigger_prefix"    yaml:"-"                      env:"PICOCLAW_CHANNELS_ONEBOT_GROUP_TRIGGER_PREFIX"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"              yaml:"-"                      env:"PICOCLAW_CHANNELS_ONEBOT_ALLOW_FROM"`
-	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty" yaml:"-"`
-	Typing             TypingConfig        `json:"typing,omitempty"        yaml:"-"`
-	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"   yaml:"-"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"    yaml:"-"`
+	Enabled            bool                `json:"enabled"                    yaml:"-" env:"OMNIPUS_CHANNELS_ONEBOT_ENABLED"`
+	WSUrl              string              `json:"ws_url"                     yaml:"-" env:"OMNIPUS_CHANNELS_ONEBOT_WS_URL"`
+	AccessTokenRef     string              `json:"access_token_ref,omitempty" yaml:"-" env:"OMNIPUS_CHANNELS_ONEBOT_ACCESS_TOKEN_REF"`
+	ReconnectInterval  int                 `json:"reconnect_interval"         yaml:"-" env:"OMNIPUS_CHANNELS_ONEBOT_RECONNECT_INTERVAL"`
+	GroupTriggerPrefix []string            `json:"group_trigger_prefix"       yaml:"-" env:"OMNIPUS_CHANNELS_ONEBOT_GROUP_TRIGGER_PREFIX"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"                 yaml:"-" env:"OMNIPUS_CHANNELS_ONEBOT_ALLOW_FROM"`
+	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"    yaml:"-"`
+	Typing             TypingConfig        `json:"typing,omitempty"           yaml:"-"`
+	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"      yaml:"-"`
+	ReasoningChannelID string              `json:"reasoning_channel_id"       yaml:"-"`
 }
 
 type WeComGroupConfig struct {
@@ -659,109 +665,74 @@ type WeComGroupConfig struct {
 }
 
 type WeComConfig struct {
-	Enabled             bool                `json:"enabled"                 yaml:"-"                env:"ENABLED"`
-	BotID               string              `json:"bot_id"                  yaml:"-"                env:"BOT_ID"`
-	Secret              SecureString        `json:"secret,omitzero"         yaml:"secret,omitempty" env:"SECRET"`
-	WebSocketURL        string              `json:"websocket_url,omitempty" yaml:"-"                env:"WEBSOCKET_URL"`
-	SendThinkingMessage bool                `json:"send_thinking_message"   yaml:"-"                env:"SEND_THINKING_MESSAGE"`
-	AllowFrom           FlexibleStringSlice `json:"allow_from"              yaml:"-"                env:"ALLOW_FROM"`
-	ReasoningChannelID  string              `json:"reasoning_channel_id"    yaml:"-"                env:"REASONING_CHANNEL_ID"`
-}
-
-func (c *WeComConfig) SetSecret(secret string) {
-	c.Secret = *NewSecureString(secret)
+	Enabled             bool                `json:"enabled"                 yaml:"-" env:"ENABLED"`
+	BotID               string              `json:"bot_id"                  yaml:"-" env:"BOT_ID"`
+	SecretRef           string              `json:"secret_ref,omitempty"    yaml:"-" env:"SECRET_REF"`
+	WebSocketURL        string              `json:"websocket_url,omitempty" yaml:"-" env:"WEBSOCKET_URL"`
+	SendThinkingMessage bool                `json:"send_thinking_message"   yaml:"-" env:"SEND_THINKING_MESSAGE"`
+	AllowFrom           FlexibleStringSlice `json:"allow_from"              yaml:"-" env:"ALLOW_FROM"`
+	ReasoningChannelID  string              `json:"reasoning_channel_id"    yaml:"-" env:"REASONING_CHANNEL_ID"`
 }
 
 type WeixinConfig struct {
-	Enabled            bool                `json:"enabled"              yaml:"-"               env:"PICOCLAW_CHANNELS_WEIXIN_ENABLED"`
-	Token              SecureString        `json:"token,omitzero"       yaml:"token,omitempty" env:"PICOCLAW_CHANNELS_WEIXIN_TOKEN"`
-	AccountID          string              `json:"account_id,omitempty" yaml:"-"               env:"PICOCLAW_CHANNELS_WEIXIN_ACCOUNT_ID"`
-	BaseURL            string              `json:"base_url"             yaml:"-"               env:"PICOCLAW_CHANNELS_WEIXIN_BASE_URL"`
-	CDNBaseURL         string              `json:"cdn_base_url"         yaml:"-"               env:"PICOCLAW_CHANNELS_WEIXIN_CDN_BASE_URL"`
-	Proxy              string              `json:"proxy"                yaml:"-"               env:"PICOCLAW_CHANNELS_WEIXIN_PROXY"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"           yaml:"-"               env:"PICOCLAW_CHANNELS_WEIXIN_ALLOW_FROM"`
-	ReasoningChannelID string              `json:"reasoning_channel_id" yaml:"-"               env:"PICOCLAW_CHANNELS_WEIXIN_REASONING_CHANNEL_ID"`
-}
-
-// SetToken sets the Weixin token and marks it as dirty for security saving
-func (c *WeixinConfig) SetToken(token string) {
-	c.Token = *NewSecureString(token)
-}
-
-type PicoConfig struct {
-	Enabled         bool                `json:"enabled"                     yaml:"-"               env:"PICOCLAW_CHANNELS_PICO_ENABLED"`
-	Token           SecureString        `json:"token,omitzero"              yaml:"token,omitempty" env:"PICOCLAW_CHANNELS_PICO_TOKEN"`
-	AllowTokenQuery bool                `json:"allow_token_query,omitempty" yaml:"-"`
-	AllowOrigins    []string            `json:"allow_origins,omitempty"     yaml:"-"`
-	PingInterval    int                 `json:"ping_interval,omitempty"     yaml:"-"`
-	ReadTimeout     int                 `json:"read_timeout,omitempty"      yaml:"-"`
-	WriteTimeout    int                 `json:"write_timeout,omitempty"     yaml:"-"`
-	MaxConnections  int                 `json:"max_connections,omitempty"   yaml:"-"`
-	AllowFrom       FlexibleStringSlice `json:"allow_from"                  yaml:"-"               env:"PICOCLAW_CHANNELS_PICO_ALLOW_FROM"`
-	Placeholder     PlaceholderConfig   `json:"placeholder,omitempty"       yaml:"-"`
-}
-
-// SetToken sets the Pico token and marks it as dirty for security saving
-func (c *PicoConfig) SetToken(token string) {
-	c.Token = *NewSecureString(token)
-}
-
-type PicoClientConfig struct {
-	Enabled      bool                `json:"enabled"                 yaml:"-"               env:"PICOCLAW_CHANNELS_PICO_CLIENT_ENABLED"`
-	URL          string              `json:"url"                     yaml:"-"               env:"PICOCLAW_CHANNELS_PICO_CLIENT_URL"`
-	Token        SecureString        `json:"token,omitzero"          yaml:"token,omitempty" env:"PICOCLAW_CHANNELS_PICO_CLIENT_TOKEN"`
-	SessionID    string              `json:"session_id,omitempty"    yaml:"-"`
-	PingInterval int                 `json:"ping_interval,omitempty" yaml:"-"`
-	ReadTimeout  int                 `json:"read_timeout,omitempty"  yaml:"-"`
-	AllowFrom    FlexibleStringSlice `json:"allow_from"              yaml:"-"               env:"PICOCLAW_CHANNELS_PICO_CLIENT_ALLOW_FROM"`
+	Enabled            bool                `json:"enabled"              yaml:"-" env:"OMNIPUS_CHANNELS_WEIXIN_ENABLED"`
+	TokenRef           string              `json:"token_ref,omitempty"  yaml:"-" env:"OMNIPUS_CHANNELS_WEIXIN_TOKEN_REF"`
+	AccountID          string              `json:"account_id,omitempty" yaml:"-" env:"OMNIPUS_CHANNELS_WEIXIN_ACCOUNT_ID"`
+	BaseURL            string              `json:"base_url"             yaml:"-" env:"OMNIPUS_CHANNELS_WEIXIN_BASE_URL"`
+	CDNBaseURL         string              `json:"cdn_base_url"         yaml:"-" env:"OMNIPUS_CHANNELS_WEIXIN_CDN_BASE_URL"`
+	Proxy              string              `json:"proxy"                yaml:"-" env:"OMNIPUS_CHANNELS_WEIXIN_PROXY"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"           yaml:"-" env:"OMNIPUS_CHANNELS_WEIXIN_ALLOW_FROM"`
+	ReasoningChannelID string              `json:"reasoning_channel_id" yaml:"-" env:"OMNIPUS_CHANNELS_WEIXIN_REASONING_CHANNEL_ID"`
 }
 
 type IRCConfig struct {
-	Enabled            bool                `json:"enabled"                    yaml:"-"                           env:"PICOCLAW_CHANNELS_IRC_ENABLED"`
-	Server             string              `json:"server"                     yaml:"-"                           env:"PICOCLAW_CHANNELS_IRC_SERVER"`
-	TLS                bool                `json:"tls"                        yaml:"-"                           env:"PICOCLAW_CHANNELS_IRC_TLS"`
-	Nick               string              `json:"nick"                       yaml:"-"                           env:"PICOCLAW_CHANNELS_IRC_NICK"`
-	User               string              `json:"user,omitempty"             yaml:"-"                           env:"PICOCLAW_CHANNELS_IRC_USER"`
-	RealName           string              `json:"real_name,omitempty"        yaml:"-"`
-	Password           SecureString        `json:"password,omitzero"          yaml:"password,omitempty"          env:"PICOCLAW_CHANNELS_IRC_PASSWORD"`
-	NickServPassword   SecureString        `json:"nickserv_password,omitzero" yaml:"nickserv_password,omitempty" env:"PICOCLAW_CHANNELS_IRC_NICKSERV_PASSWORD"`
-	SASLUser           string              `json:"sasl_user"                  yaml:"-"                           env:"PICOCLAW_CHANNELS_IRC_SASL_USER"`
-	SASLPassword       SecureString        `json:"sasl_password,omitzero"     yaml:"sasl_password,omitempty"     env:"PICOCLAW_CHANNELS_IRC_SASL_PASSWORD"`
-	Channels           FlexibleStringSlice `json:"channels"                   yaml:"-"                           env:"PICOCLAW_CHANNELS_IRC_CHANNELS"`
-	RequestCaps        FlexibleStringSlice `json:"request_caps,omitempty"     yaml:"-"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"                 yaml:"-"                           env:"PICOCLAW_CHANNELS_IRC_ALLOW_FROM"`
-	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"    yaml:"-"`
-	Typing             TypingConfig        `json:"typing,omitempty"           yaml:"-"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"       yaml:"-"`
+	Enabled             bool                `json:"enabled"                         yaml:"-" env:"OMNIPUS_CHANNELS_IRC_ENABLED"`
+	Server              string              `json:"server"                          yaml:"-" env:"OMNIPUS_CHANNELS_IRC_SERVER"`
+	TLS                 bool                `json:"tls"                             yaml:"-" env:"OMNIPUS_CHANNELS_IRC_TLS"`
+	Nick                string              `json:"nick"                            yaml:"-" env:"OMNIPUS_CHANNELS_IRC_NICK"`
+	User                string              `json:"user,omitempty"                  yaml:"-" env:"OMNIPUS_CHANNELS_IRC_USER"`
+	RealName            string              `json:"real_name,omitempty"             yaml:"-"`
+	PasswordRef         string              `json:"password_ref,omitempty"          yaml:"-" env:"OMNIPUS_CHANNELS_IRC_PASSWORD_REF"`
+	NickServPasswordRef string              `json:"nickserv_password_ref,omitempty" yaml:"-" env:"OMNIPUS_CHANNELS_IRC_NICKSERV_PASSWORD_REF"`
+	SASLUser            string              `json:"sasl_user"                       yaml:"-" env:"OMNIPUS_CHANNELS_IRC_SASL_USER"`
+	SASLPasswordRef     string              `json:"sasl_password_ref,omitempty"     yaml:"-" env:"OMNIPUS_CHANNELS_IRC_SASL_PASSWORD_REF"`
+	Channels            FlexibleStringSlice `json:"channels"                        yaml:"-" env:"OMNIPUS_CHANNELS_IRC_CHANNELS"`
+	RequestCaps         FlexibleStringSlice `json:"request_caps,omitempty"          yaml:"-"`
+	AllowFrom           FlexibleStringSlice `json:"allow_from"                      yaml:"-" env:"OMNIPUS_CHANNELS_IRC_ALLOW_FROM"`
+	GroupTrigger        GroupTriggerConfig  `json:"group_trigger,omitempty"         yaml:"-"`
+	Typing              TypingConfig        `json:"typing,omitempty"                yaml:"-"`
+	ReasoningChannelID  string              `json:"reasoning_channel_id"            yaml:"-"`
 }
 
 type TeamsConfig struct {
-	Enabled            bool                `json:"enabled"                 yaml:"-"                           env:"PICOCLAW_CHANNELS_TEAMS_ENABLED"`
-	AppID              string              `json:"app_id"                  yaml:"-"                           env:"PICOCLAW_CHANNELS_TEAMS_APP_ID"`
-	AppPassword        SecureString        `json:"app_password,omitzero"   yaml:"app_password,omitempty"       env:"PICOCLAW_CHANNELS_TEAMS_APP_PASSWORD"`
-	TenantID           string              `json:"tenant_id"               yaml:"-"                           env:"PICOCLAW_CHANNELS_TEAMS_TENANT_ID"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"              yaml:"-"                           env:"PICOCLAW_CHANNELS_TEAMS_ALLOW_FROM"`
+	Enabled            bool                `json:"enabled"                 yaml:"-" env:"OMNIPUS_CHANNELS_TEAMS_ENABLED"`
+	AppID              string              `json:"app_id"                  yaml:"-" env:"OMNIPUS_CHANNELS_TEAMS_APP_ID"`
+	AppPasswordRef     string              `json:"app_password_ref,omitempty" yaml:"-" env:"OMNIPUS_CHANNELS_TEAMS_APP_PASSWORD_REF"`
+	TenantID           string              `json:"tenant_id"               yaml:"-" env:"OMNIPUS_CHANNELS_TEAMS_TENANT_ID"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"              yaml:"-" env:"OMNIPUS_CHANNELS_TEAMS_ALLOW_FROM"`
 	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty" yaml:"-"`
 	Typing             TypingConfig        `json:"typing,omitempty"        yaml:"-"`
 	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"   yaml:"-"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"    yaml:"-"                           env:"PICOCLAW_CHANNELS_TEAMS_REASONING_CHANNEL_ID"`
-	MaxMessageLength   int                 `json:"max_message_length"      yaml:"-"                           env:"PICOCLAW_CHANNELS_TEAMS_MAX_MESSAGE_LENGTH"`
+	ReasoningChannelID string              `json:"reasoning_channel_id"    yaml:"-" env:"OMNIPUS_CHANNELS_TEAMS_REASONING_CHANNEL_ID"`
+	MaxMessageLength   int                 `json:"max_message_length"      yaml:"-" env:"OMNIPUS_CHANNELS_TEAMS_MAX_MESSAGE_LENGTH"`
 }
 
 type HeartbeatConfig struct {
-	Enabled  bool `json:"enabled"  env:"PICOCLAW_HEARTBEAT_ENABLED"`
-	Interval int  `json:"interval" env:"PICOCLAW_HEARTBEAT_INTERVAL"` // minutes, min 5
+	Enabled  bool `json:"enabled"  env:"OMNIPUS_HEARTBEAT_ENABLED"`
+	Interval int  `json:"interval" env:"OMNIPUS_HEARTBEAT_INTERVAL"` // minutes, min 5
 }
 
 type DevicesConfig struct {
-	Enabled    bool `json:"enabled"     env:"PICOCLAW_DEVICES_ENABLED"`
-	MonitorUSB bool `json:"monitor_usb" env:"PICOCLAW_DEVICES_MONITOR_USB"`
+	Enabled    bool `json:"enabled"     env:"OMNIPUS_DEVICES_ENABLED"`
+	MonitorUSB bool `json:"monitor_usb" env:"OMNIPUS_DEVICES_MONITOR_USB"`
 }
 
 type VoiceConfig struct {
-	ModelName         string `json:"model_name,omitempty"         env:"PICOCLAW_VOICE_MODEL_NAME"`
-	EchoTranscription bool   `json:"echo_transcription"           env:"PICOCLAW_VOICE_ECHO_TRANSCRIPTION"`
-	ElevenLabsAPIKey  SecureString `json:"elevenlabs_api_key,omitzero" env:"PICOCLAW_VOICE_ELEVENLABS_API_KEY"`
+	ModelName         string `json:"model_name,omitempty" env:"OMNIPUS_VOICE_MODEL_NAME"`
+	EchoTranscription bool   `json:"echo_transcription"   env:"OMNIPUS_VOICE_ECHO_TRANSCRIPTION"`
+	// ElevenLabsAPIKeyRef is the env-var name whose value holds the ElevenLabs API key.
+	// Resolved at boot via credentials.InjectFromConfig; never store the key value here.
+	ElevenLabsAPIKeyRef string `json:"elevenlabs_api_key_ref,omitempty" env:"OMNIPUS_VOICE_ELEVENLABS_API_KEY_REF"`
 }
 
 // ModelConfig represents a model-centric provider configuration.
@@ -773,8 +744,8 @@ type VoiceConfig struct {
 // Default protocol is "openai" if no prefix is specified.
 type ModelConfig struct {
 	// Required fields
-	ModelName string `json:"model_name"` // User-facing alias for the model
-	Model     string `json:"model"`      // Protocol/model-identifier (e.g., "openai/gpt-4o", "anthropic/claude-sonnet-4.6")
+	ModelName string `json:"model_name"`         // User-facing alias for the model
+	Model     string `json:"model"`              // Protocol/model-identifier (e.g., "openai/gpt-4o", "anthropic/claude-sonnet-4.6")
 	Provider  string `json:"provider,omitempty"` // Routing key — determines which API endpoint to use (e.g. "openrouter", "anthropic")
 
 	// HTTP-based providers
@@ -794,12 +765,9 @@ type ModelConfig struct {
 	ThinkingLevel  string         `json:"thinking_level,omitempty"` // Extended thinking: off|low|medium|high|xhigh|adaptive
 	ExtraBody      map[string]any `json:"extra_body,omitempty"`     // Additional fields to inject into request body
 
-	APIKeys SecureStrings `json:"api_keys,omitzero" yaml:"api_keys,omitempty"` // API authentication keys (multiple keys for failover)
-
-	// APIKeyRef is an Omnipus-specific field that references a named credential in
-	// credentials.json (e.g. "ANTHROPIC_API_KEY"). At runtime the system resolves the
-	// reference, decrypts the value, and injects it via the process environment (SEC-22).
-	// Raw values must never appear here — use APIKeys for plaintext keys.
+	// APIKeyRef references a named credential in credentials.json (e.g. "ANTHROPIC_API_KEY").
+	// At runtime the system resolves the reference, decrypts the value, and injects it
+	// via the process environment (SEC-22). Raw values must never appear in config files.
 	APIKeyRef string `json:"api_key_ref,omitempty" yaml:"api_key_ref,omitempty"`
 
 	// Name is an alias for ModelName used in some display contexts.
@@ -810,17 +778,19 @@ type ModelConfig struct {
 	isVirtual bool
 }
 
-// APIKey returns the first API key from apiKeys
-func (c *ModelConfig) APIKey() string {
-	if len(c.APIKeys) > 0 {
-		return c.APIKeys[0].String()
-	}
-	return ""
-}
-
 // IsVirtual returns true if this model was generated from multi-key expansion.
 func (c *ModelConfig) IsVirtual() bool {
 	return c.isVirtual
+}
+
+// APIKey returns the resolved API key for this model. After InjectFromConfig runs,
+// the ref value is available as an environment variable. Returns "" if no ref is set
+// or the env var is unset.
+func (c *ModelConfig) APIKey() string {
+	if c.APIKeyRef == "" {
+		return ""
+	}
+	return os.Getenv(c.APIKeyRef)
 }
 
 // Validate checks if the ModelConfig has all required fields.
@@ -832,14 +802,6 @@ func (c *ModelConfig) Validate() error {
 		return fmt.Errorf("model is required")
 	}
 	return nil
-}
-
-func (c *ModelConfig) SetAPIKey(value string) {
-	if len(c.APIKeys) > 0 {
-		c.APIKeys[0].Set(value)
-	} else {
-		c.APIKeys = append(c.APIKeys, NewSecureString(value))
-	}
 }
 
 // UserRole represents a human user's role in the system.
@@ -878,21 +840,21 @@ type UserConfig struct {
 }
 
 type GatewayConfig struct {
-	Host           string `json:"host"                env:"PICOCLAW_GATEWAY_HOST"`
-	Port           int    `json:"port"                env:"PICOCLAW_GATEWAY_PORT"`
-	HotReload      bool   `json:"hot_reload"          env:"PICOCLAW_GATEWAY_HOT_RELOAD"`
-	LogLevel       string `json:"log_level,omitempty" env:"PICOCLAW_LOG_LEVEL"`
-	Token          string `json:"token,omitempty"     env:"-"`  // Bearer token stored for reference; runtime auth uses OMNIPUS_BEARER_TOKEN env var
-	Users          []UserConfig `json:"users,omitempty" env:"-"` // Per-user RBAC user list
-	DevModeBypass  bool   `json:"dev_mode_bypass,omitempty" env:"-"` // Opt-in flag to allow unauthenticated access in development. NEVER set to true in production.
+	Host          string       `json:"host"                      env:"OMNIPUS_GATEWAY_HOST"`
+	Port          int          `json:"port"                      env:"OMNIPUS_GATEWAY_PORT"`
+	HotReload     bool         `json:"hot_reload"                env:"OMNIPUS_GATEWAY_HOT_RELOAD"`
+	LogLevel      string       `json:"log_level,omitempty"       env:"OMNIPUS_LOG_LEVEL"`
+	Token         string       `json:"token,omitempty"           env:"-"` // Bearer token stored for reference; runtime auth uses OMNIPUS_BEARER_TOKEN env var
+	Users         []UserConfig `json:"users,omitempty"           env:"-"` // Per-user RBAC user list
+	DevModeBypass bool         `json:"dev_mode_bypass,omitempty" env:"-"` // Opt-in flag to allow unauthenticated access in development. NEVER set to true in production.
 }
 
 type ToolDiscoveryConfig struct {
-	Enabled          bool `json:"enabled"            env:"PICOCLAW_TOOLS_DISCOVERY_ENABLED"`
-	TTL              int  `json:"ttl"                env:"PICOCLAW_TOOLS_DISCOVERY_TTL"`
-	MaxSearchResults int  `json:"max_search_results" env:"PICOCLAW_MAX_SEARCH_RESULTS"`
-	UseBM25          bool `json:"use_bm25"           env:"PICOCLAW_TOOLS_DISCOVERY_USE_BM25"`
-	UseRegex         bool `json:"use_regex"          env:"PICOCLAW_TOOLS_DISCOVERY_USE_REGEX"`
+	Enabled          bool `json:"enabled"            env:"OMNIPUS_TOOLS_DISCOVERY_ENABLED"`
+	TTL              int  `json:"ttl"                env:"OMNIPUS_TOOLS_DISCOVERY_TTL"`
+	MaxSearchResults int  `json:"max_search_results" env:"OMNIPUS_MAX_SEARCH_RESULTS"`
+	UseBM25          bool `json:"use_bm25"           env:"OMNIPUS_TOOLS_DISCOVERY_USE_BM25"`
+	UseRegex         bool `json:"use_regex"          env:"OMNIPUS_TOOLS_DISCOVERY_USE_REGEX"`
 }
 
 type ToolConfig struct {
@@ -900,170 +862,174 @@ type ToolConfig struct {
 }
 
 type BraveConfig struct {
-	Enabled    bool          `json:"enabled"           yaml:"-"                  env:"PICOCLAW_TOOLS_WEB_BRAVE_ENABLED"`
-	APIKeys    SecureStrings `json:"api_keys,omitzero" yaml:"api_keys,omitempty" env:"PICOCLAW_TOOLS_WEB_BRAVE_API_KEYS"`
-	MaxResults int           `json:"max_results"       yaml:"-"                  env:"PICOCLAW_TOOLS_WEB_BRAVE_MAX_RESULTS"`
+	Enabled bool `json:"enabled" yaml:"-" env:"OMNIPUS_TOOLS_WEB_BRAVE_ENABLED"`
+	// APIKeyRef references a named credential in credentials.json (e.g. "BRAVE_API_KEY").
+	// At runtime the system resolves the reference, decrypts the value, and injects it
+	// via the process environment (SEC-22). Raw values must never appear in config files.
+	APIKeyRef  string `json:"api_key_ref,omitempty" yaml:"api_key_ref,omitempty" env:"OMNIPUS_TOOLS_WEB_BRAVE_API_KEY_REF"`
+	MaxResults int    `json:"max_results"           yaml:"-"                     env:"OMNIPUS_TOOLS_WEB_BRAVE_MAX_RESULTS"`
 }
 
-// APIKey returns the Brave API key
+// APIKey returns the resolved Brave API key from the process environment.
 func (c *BraveConfig) APIKey() string {
-	if len(c.APIKeys) == 0 {
+	if c.APIKeyRef == "" {
 		return ""
 	}
-	return c.APIKeys[0].String()
-}
-
-// SetAPIKey sets the Brave API key
-func (c *BraveConfig) SetAPIKey(key string) {
-	c.APIKeys = SimpleSecureStrings(key)
-}
-
-func (c *BraveConfig) SetAPIKeys(keys []string) {
-	c.APIKeys = SimpleSecureStrings(keys...)
+	return os.Getenv(c.APIKeyRef)
 }
 
 type TavilyConfig struct {
-	Enabled    bool          `json:"enabled"           yaml:"-"                  env:"PICOCLAW_TOOLS_WEB_TAVILY_ENABLED"`
-	APIKeys    SecureStrings `json:"api_keys,omitzero" yaml:"api_keys,omitempty" env:"PICOCLAW_TOOLS_WEB_TAVILY_API_KEYS"`
-	BaseURL    string        `json:"base_url"          yaml:"-"                  env:"PICOCLAW_TOOLS_WEB_TAVILY_BASE_URL"`
-	MaxResults int           `json:"max_results"       yaml:"-"                  env:"PICOCLAW_TOOLS_WEB_TAVILY_MAX_RESULTS"`
+	Enabled bool `json:"enabled" yaml:"-" env:"OMNIPUS_TOOLS_WEB_TAVILY_ENABLED"`
+	// APIKeyRef references a named credential in credentials.json (e.g. "TAVILY_API_KEY").
+	// At runtime the system resolves the reference, decrypts the value, and injects it
+	// via the process environment (SEC-22). Raw values must never appear in config files.
+	APIKeyRef  string `json:"api_key_ref,omitempty" yaml:"api_key_ref,omitempty" env:"OMNIPUS_TOOLS_WEB_TAVILY_API_KEY_REF"`
+	BaseURL    string `json:"base_url"              yaml:"-"                     env:"OMNIPUS_TOOLS_WEB_TAVILY_BASE_URL"`
+	MaxResults int    `json:"max_results"           yaml:"-"                     env:"OMNIPUS_TOOLS_WEB_TAVILY_MAX_RESULTS"`
 }
 
-// APIKey returns the Tavily API key
+// APIKey returns the resolved Tavily API key from the process environment.
 func (c *TavilyConfig) APIKey() string {
-	if len(c.APIKeys) == 0 {
+	if c.APIKeyRef == "" {
 		return ""
 	}
-	return c.APIKeys[0].String()
-}
-
-// SetAPIKey sets the Tavily API key
-func (c *TavilyConfig) SetAPIKey(key string) {
-	c.APIKeys = SimpleSecureStrings(key)
-}
-
-// SetAPIKeys sets the Tavily API keys
-func (c *TavilyConfig) SetAPIKeys(keys []string) {
-	c.APIKeys = make(SecureStrings, len(keys))
-	for i, k := range keys {
-		c.APIKeys[i] = NewSecureString(k)
-	}
+	return os.Getenv(c.APIKeyRef)
 }
 
 type DuckDuckGoConfig struct {
-	Enabled    bool `json:"enabled"     env:"PICOCLAW_TOOLS_WEB_DUCKDUCKGO_ENABLED"`
-	MaxResults int  `json:"max_results" env:"PICOCLAW_TOOLS_WEB_DUCKDUCKGO_MAX_RESULTS"`
+	Enabled    bool `json:"enabled"     env:"OMNIPUS_TOOLS_WEB_DUCKDUCKGO_ENABLED"`
+	MaxResults int  `json:"max_results" env:"OMNIPUS_TOOLS_WEB_DUCKDUCKGO_MAX_RESULTS"`
 }
 
 type PerplexityConfig struct {
-	Enabled    bool          `json:"enabled"           yaml:"-"                  env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_ENABLED"`
-	APIKeys    SecureStrings `json:"api_keys,omitzero" yaml:"api_keys,omitempty" env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_API_KEYS"`
-	MaxResults int           `json:"max_results"       yaml:"-"                  env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_MAX_RESULTS"`
+	Enabled bool `json:"enabled" yaml:"-" env:"OMNIPUS_TOOLS_WEB_PERPLEXITY_ENABLED"`
+	// APIKeyRef references a named credential in credentials.json (e.g. "PERPLEXITY_API_KEY").
+	// At runtime the system resolves the reference, decrypts the value, and injects it
+	// via the process environment (SEC-22). Raw values must never appear in config files.
+	APIKeyRef  string `json:"api_key_ref,omitempty" yaml:"api_key_ref,omitempty" env:"OMNIPUS_TOOLS_WEB_PERPLEXITY_API_KEY_REF"`
+	MaxResults int    `json:"max_results"           yaml:"-"                     env:"OMNIPUS_TOOLS_WEB_PERPLEXITY_MAX_RESULTS"`
 }
 
-// APIKey returns the Perplexity API key
+// APIKey returns the resolved Perplexity API key from the process environment.
 func (c *PerplexityConfig) APIKey() string {
-	if len(c.APIKeys) == 0 {
+	if c.APIKeyRef == "" {
 		return ""
 	}
-	return c.APIKeys[0].String()
-}
-
-// SetAPIKey sets the Perplexity API key
-func (c *PerplexityConfig) SetAPIKey(key string) {
-	c.APIKeys = SimpleSecureStrings(key)
+	return os.Getenv(c.APIKeyRef)
 }
 
 type SearXNGConfig struct {
-	Enabled    bool   `json:"enabled"     env:"PICOCLAW_TOOLS_WEB_SEARXNG_ENABLED"`
-	BaseURL    string `json:"base_url"    env:"PICOCLAW_TOOLS_WEB_SEARXNG_BASE_URL"`
-	MaxResults int    `json:"max_results" env:"PICOCLAW_TOOLS_WEB_SEARXNG_MAX_RESULTS"`
+	Enabled    bool   `json:"enabled"     env:"OMNIPUS_TOOLS_WEB_SEARXNG_ENABLED"`
+	BaseURL    string `json:"base_url"    env:"OMNIPUS_TOOLS_WEB_SEARXNG_BASE_URL"`
+	MaxResults int    `json:"max_results" env:"OMNIPUS_TOOLS_WEB_SEARXNG_MAX_RESULTS"`
 }
 
 type GLMSearchConfig struct {
-	Enabled bool         `json:"enabled"          yaml:"-"                 env:"PICOCLAW_TOOLS_WEB_GLM_ENABLED"`
-	APIKey  SecureString `json:"api_key,omitzero" yaml:"api_key,omitempty" env:"PICOCLAW_TOOLS_WEB_GLM_API_KEY"`
-	BaseURL string       `json:"base_url"         yaml:"-"                 env:"PICOCLAW_TOOLS_WEB_GLM_BASE_URL"`
+	Enabled bool `json:"enabled" yaml:"-" env:"OMNIPUS_TOOLS_WEB_GLM_ENABLED"`
+	// APIKeyRef references a named credential in credentials.json (e.g. "GLM_API_KEY").
+	// At runtime the system resolves the reference, decrypts the value, and injects it
+	// via the process environment (SEC-22). Raw values must never appear in config files.
+	APIKeyRef string `json:"api_key_ref,omitempty" yaml:"api_key_ref,omitempty" env:"OMNIPUS_TOOLS_WEB_GLM_API_KEY_REF"`
+	BaseURL   string `json:"base_url"              yaml:"-"                     env:"OMNIPUS_TOOLS_WEB_GLM_BASE_URL"`
 	// SearchEngine specifies the search backend: "search_std" (default),
 	// "search_pro", "search_pro_sogou", or "search_pro_quark".
-	SearchEngine string `json:"search_engine" yaml:"-" env:"PICOCLAW_TOOLS_WEB_GLM_SEARCH_ENGINE"`
-	MaxResults   int    `json:"max_results"   yaml:"-" env:"PICOCLAW_TOOLS_WEB_GLM_MAX_RESULTS"`
+	SearchEngine string `json:"search_engine" yaml:"-" env:"OMNIPUS_TOOLS_WEB_GLM_SEARCH_ENGINE"`
+	MaxResults   int    `json:"max_results"   yaml:"-" env:"OMNIPUS_TOOLS_WEB_GLM_MAX_RESULTS"`
+}
+
+// APIKey returns the resolved GLM API key from the process environment.
+func (c *GLMSearchConfig) APIKey() string {
+	if c.APIKeyRef == "" {
+		return ""
+	}
+	return os.Getenv(c.APIKeyRef)
 }
 
 type BaiduSearchConfig struct {
-	Enabled    bool         `json:"enabled"          yaml:"-"                 env:"PICOCLAW_TOOLS_WEB_BAIDU_ENABLED"`
-	APIKey     SecureString `json:"api_key,omitzero" yaml:"api_key,omitempty" env:"PICOCLAW_TOOLS_WEB_BAIDU_API_KEY"`
-	BaseURL    string       `json:"base_url"         yaml:"-"                 env:"PICOCLAW_TOOLS_WEB_BAIDU_BASE_URL"`
-	MaxResults int          `json:"max_results"      yaml:"-"                 env:"PICOCLAW_TOOLS_WEB_BAIDU_MAX_RESULTS"`
+	Enabled bool `json:"enabled" yaml:"-" env:"OMNIPUS_TOOLS_WEB_BAIDU_ENABLED"`
+	// APIKeyRef references a named credential in credentials.json (e.g. "BAIDU_API_KEY").
+	// At runtime the system resolves the reference, decrypts the value, and injects it
+	// via the process environment (SEC-22). Raw values must never appear in config files.
+	APIKeyRef  string `json:"api_key_ref,omitempty" yaml:"api_key_ref,omitempty" env:"OMNIPUS_TOOLS_WEB_BAIDU_API_KEY_REF"`
+	BaseURL    string `json:"base_url"              yaml:"-"                     env:"OMNIPUS_TOOLS_WEB_BAIDU_BASE_URL"`
+	MaxResults int    `json:"max_results"           yaml:"-"                     env:"OMNIPUS_TOOLS_WEB_BAIDU_MAX_RESULTS"`
+}
+
+// APIKey returns the resolved Baidu API key from the process environment.
+func (c *BaiduSearchConfig) APIKey() string {
+	if c.APIKeyRef == "" {
+		return ""
+	}
+	return os.Getenv(c.APIKeyRef)
 }
 
 type WebToolsConfig struct {
-	ToolConfig  `                  yaml:"-"                      envPrefix:"PICOCLAW_TOOLS_WEB_"`
-	Brave       BraveConfig       `yaml:"brave,omitempty"                                        json:"brave"`
-	Tavily      TavilyConfig      `yaml:"tavily,omitempty"                                       json:"tavily"`
-	DuckDuckGo  DuckDuckGoConfig  `yaml:"-"                                                      json:"duckduckgo"`
-	Perplexity  PerplexityConfig  `yaml:"perplexity,omitempty"                                   json:"perplexity"`
-	SearXNG     SearXNGConfig     `yaml:"-"                                                      json:"searxng"`
-	GLMSearch   GLMSearchConfig   `yaml:"glm_search,omitempty"                                   json:"glm_search"`
-	BaiduSearch BaiduSearchConfig `yaml:"baidu_search,omitempty"                                 json:"baidu_search"`
+	ToolConfig  `                  yaml:"-"                      envPrefix:"OMNIPUS_TOOLS_WEB_"`
+	Brave       BraveConfig       `yaml:"brave,omitempty"                                       json:"brave"`
+	Tavily      TavilyConfig      `yaml:"tavily,omitempty"                                      json:"tavily"`
+	DuckDuckGo  DuckDuckGoConfig  `yaml:"-"                                                     json:"duckduckgo"`
+	Perplexity  PerplexityConfig  `yaml:"perplexity,omitempty"                                  json:"perplexity"`
+	SearXNG     SearXNGConfig     `yaml:"-"                                                     json:"searxng"`
+	GLMSearch   GLMSearchConfig   `yaml:"glm_search,omitempty"                                  json:"glm_search"`
+	BaiduSearch BaiduSearchConfig `yaml:"baidu_search,omitempty"                                json:"baidu_search"`
 	// PreferNative controls whether to use provider-native web search when
 	// the active LLM supports it (e.g. OpenAI web_search_preview). When true,
 	// the client-side web_search tool is hidden to avoid duplicate search surfaces,
 	// and the provider's built-in search is used instead. Falls back to client-side
 	// search when the provider does not support native search.
-	PreferNative bool `json:"prefer_native" yaml:"-" env:"PICOCLAW_TOOLS_WEB_PREFER_NATIVE"`
+	PreferNative bool `json:"prefer_native" yaml:"-" env:"OMNIPUS_TOOLS_WEB_PREFER_NATIVE"`
 	// Proxy is an optional proxy URL for web tools (http/https/socks5/socks5h).
 	// For authenticated proxies, prefer HTTP_PROXY/HTTPS_PROXY env vars instead of embedding credentials in config.
-	Proxy                string              `json:"proxy,omitempty"                  yaml:"-" env:"PICOCLAW_TOOLS_WEB_PROXY"`
-	FetchLimitBytes      int64               `json:"fetch_limit_bytes,omitempty"      yaml:"-" env:"PICOCLAW_TOOLS_WEB_FETCH_LIMIT_BYTES"`
-	Format               string              `json:"format,omitempty"                 yaml:"-" env:"PICOCLAW_TOOLS_WEB_FORMAT"`
-	PrivateHostWhitelist FlexibleStringSlice `json:"private_host_whitelist,omitempty" yaml:"-" env:"PICOCLAW_TOOLS_WEB_PRIVATE_HOST_WHITELIST"`
+	Proxy                string              `json:"proxy,omitempty"                  yaml:"-" env:"OMNIPUS_TOOLS_WEB_PROXY"`
+	FetchLimitBytes      int64               `json:"fetch_limit_bytes,omitempty"      yaml:"-" env:"OMNIPUS_TOOLS_WEB_FETCH_LIMIT_BYTES"`
+	Format               string              `json:"format,omitempty"                 yaml:"-" env:"OMNIPUS_TOOLS_WEB_FORMAT"`
+	PrivateHostWhitelist FlexibleStringSlice `json:"private_host_whitelist,omitempty" yaml:"-" env:"OMNIPUS_TOOLS_WEB_PRIVATE_HOST_WHITELIST"`
 }
 
 type CronToolsConfig struct {
-	ToolConfig         `     envPrefix:"PICOCLAW_TOOLS_CRON_"`
-	ExecTimeoutMinutes int  `                                 json:"exec_timeout_minutes" env:"PICOCLAW_TOOLS_CRON_EXEC_TIMEOUT_MINUTES"` // 0 means no timeout
-	AllowCommand       bool `                                 json:"allow_command"        env:"PICOCLAW_TOOLS_CRON_ALLOW_COMMAND"`
+	ToolConfig         `     envPrefix:"OMNIPUS_TOOLS_CRON_"`
+	ExecTimeoutMinutes int  `                                json:"exec_timeout_minutes" env:"OMNIPUS_TOOLS_CRON_EXEC_TIMEOUT_MINUTES"` // 0 means no timeout
+	AllowCommand       bool `                                json:"allow_command"        env:"OMNIPUS_TOOLS_CRON_ALLOW_COMMAND"`
 }
 
 type ExecConfig struct {
-	ToolConfig          `         envPrefix:"PICOCLAW_TOOLS_EXEC_"`
-	EnableDenyPatterns  bool     `                                 json:"enable_deny_patterns"  env:"PICOCLAW_TOOLS_EXEC_ENABLE_DENY_PATTERNS"`
-	AllowRemote         bool     `                                 json:"allow_remote"          env:"PICOCLAW_TOOLS_EXEC_ALLOW_REMOTE"`
-	CustomDenyPatterns  []string `                                 json:"custom_deny_patterns"  env:"PICOCLAW_TOOLS_EXEC_CUSTOM_DENY_PATTERNS"`
-	CustomAllowPatterns []string `                                 json:"custom_allow_patterns" env:"PICOCLAW_TOOLS_EXEC_CUSTOM_ALLOW_PATTERNS"`
-	TimeoutSeconds      int      `                                 json:"timeout_seconds"       env:"PICOCLAW_TOOLS_EXEC_TIMEOUT_SECONDS"` // 0 means use default (60s)
+	ToolConfig          `         envPrefix:"OMNIPUS_TOOLS_EXEC_"`
+	EnableDenyPatterns  bool     `                                json:"enable_deny_patterns"  env:"OMNIPUS_TOOLS_EXEC_ENABLE_DENY_PATTERNS"`
+	AllowRemote         bool     `                                json:"allow_remote"          env:"OMNIPUS_TOOLS_EXEC_ALLOW_REMOTE"`
+	CustomDenyPatterns  []string `                                json:"custom_deny_patterns"  env:"OMNIPUS_TOOLS_EXEC_CUSTOM_DENY_PATTERNS"`
+	CustomAllowPatterns []string `                                json:"custom_allow_patterns" env:"OMNIPUS_TOOLS_EXEC_CUSTOM_ALLOW_PATTERNS"`
+	TimeoutSeconds      int      `                                json:"timeout_seconds"       env:"OMNIPUS_TOOLS_EXEC_TIMEOUT_SECONDS"` // 0 means use default (60s)
 
 	// US-7: Interactive approval before exec commands.
 	// "ask" (default) prompts the user; "off" skips the prompt.
-	Approval string `json:"approval,omitempty" env:"PICOCLAW_TOOLS_EXEC_APPROVAL"`
+	Approval string `json:"approval,omitempty" env:"OMNIPUS_TOOLS_EXEC_APPROVAL"`
 
 	// US-7/US-5: Glob patterns for binaries the exec tool is allowed to run.
 	// Non-empty list acts as an allowlist; all other commands are denied.
-	AllowedBinaries []string `json:"allowed_binaries,omitempty" env:"PICOCLAW_TOOLS_EXEC_ALLOWED_BINARIES"`
+	AllowedBinaries []string `json:"allowed_binaries,omitempty" env:"OMNIPUS_TOOLS_EXEC_ALLOWED_BINARIES"`
 
 	// US-14: Route exec child process HTTP traffic through the local SSRF proxy.
 	// When true (default), HTTP_PROXY and HTTPS_PROXY are set on child processes.
-	EnableProxy bool `json:"enable_proxy,omitempty" env:"PICOCLAW_TOOLS_EXEC_ENABLE_PROXY"`
+	EnableProxy bool `json:"enable_proxy,omitempty" env:"OMNIPUS_TOOLS_EXEC_ENABLE_PROXY"`
 
 	// MaxBackgroundSeconds is the hard-kill timeout for background sessions.
 	// After this duration, the process receives SIGTERM, then SIGKILL 5s later.
 	// 0 = disabled (no timeout enforced).
-	MaxBackgroundSeconds int `json:"max_background_seconds" env:"PICOCLAW_TOOLS_EXEC_MAX_BACKGROUND_SECONDS"`
+	MaxBackgroundSeconds int `json:"max_background_seconds" env:"OMNIPUS_TOOLS_EXEC_MAX_BACKGROUND_SECONDS"`
 }
 
 type SkillsToolsConfig struct {
-	ToolConfig            `                       yaml:"-"                 envPrefix:"PICOCLAW_TOOLS_SKILLS_"`
-	Registries            SkillsRegistriesConfig `yaml:",inline,omitempty"                                    json:"registries"`
-	Github                SkillsGithubConfig     `yaml:"github,omitempty"                                     json:"github"`
-	MaxConcurrentSearches int                    `yaml:"-"                                                    json:"max_concurrent_searches" env:"PICOCLAW_TOOLS_SKILLS_MAX_CONCURRENT_SEARCHES"`
-	SearchCache           SearchCacheConfig      `yaml:"-"                                                    json:"search_cache"`
+	ToolConfig            `                       yaml:"-"                 envPrefix:"OMNIPUS_TOOLS_SKILLS_"`
+	Registries            SkillsRegistriesConfig `yaml:",inline,omitempty"                                   json:"registries"`
+	Github                SkillsGithubConfig     `yaml:"github,omitempty"                                    json:"github"`
+	MaxConcurrentSearches int                    `yaml:"-"                                                   json:"max_concurrent_searches" env:"OMNIPUS_TOOLS_SKILLS_MAX_CONCURRENT_SEARCHES"`
+	SearchCache           SearchCacheConfig      `yaml:"-"                                                   json:"search_cache"`
 }
 
 type MediaCleanupConfig struct {
-	ToolConfig `    envPrefix:"PICOCLAW_MEDIA_CLEANUP_"`
-	MaxAge     int `                                    json:"max_age_minutes"  env:"PICOCLAW_MEDIA_CLEANUP_MAX_AGE"`
-	Interval   int `                                    json:"interval_minutes" env:"PICOCLAW_MEDIA_CLEANUP_INTERVAL"`
+	ToolConfig `    envPrefix:"OMNIPUS_MEDIA_CLEANUP_"`
+	MaxAge     int `                                   json:"max_age_minutes"  env:"OMNIPUS_MEDIA_CLEANUP_MAX_AGE"`
+	Interval   int `                                   json:"interval_minutes" env:"OMNIPUS_MEDIA_CLEANUP_INTERVAL"`
 }
 
 type ReadFileToolConfig struct {
@@ -1072,40 +1038,40 @@ type ReadFileToolConfig struct {
 }
 
 type ToolsConfig struct {
-	AllowReadPaths  []string `json:"allow_read_paths"  yaml:"-" env:"PICOCLAW_TOOLS_ALLOW_READ_PATHS"`
-	AllowWritePaths []string `json:"allow_write_paths" yaml:"-" env:"PICOCLAW_TOOLS_ALLOW_WRITE_PATHS"`
+	AllowReadPaths  []string `json:"allow_read_paths"  yaml:"-" env:"OMNIPUS_TOOLS_ALLOW_READ_PATHS"`
+	AllowWritePaths []string `json:"allow_write_paths" yaml:"-" env:"OMNIPUS_TOOLS_ALLOW_WRITE_PATHS"`
 	// FilterSensitiveData controls whether to filter sensitive values (API keys,
 	// tokens, secrets) from tool results before sending to the LLM.
 	// Default: true (enabled)
-	FilterSensitiveData bool `json:"filter_sensitive_data" yaml:"-" env:"PICOCLAW_TOOLS_FILTER_SENSITIVE_DATA"`
+	FilterSensitiveData bool `json:"filter_sensitive_data" yaml:"-" env:"OMNIPUS_TOOLS_FILTER_SENSITIVE_DATA"`
 	// FilterMinLength is the minimum content length required for filtering.
 	// Content shorter than this will be returned unchanged for performance.
 	// Default: 8
-	FilterMinLength int                `json:"filter_min_length" yaml:"-"                env:"PICOCLAW_TOOLS_FILTER_MIN_LENGTH"`
+	FilterMinLength int                `json:"filter_min_length" yaml:"-"                env:"OMNIPUS_TOOLS_FILTER_MIN_LENGTH"`
 	Web             WebToolsConfig     `json:"web"               yaml:"web,omitempty"`
 	Cron            CronToolsConfig    `json:"cron"              yaml:"-"`
 	Exec            ExecConfig         `json:"exec"              yaml:"-"`
 	Skills          SkillsToolsConfig  `json:"skills"            yaml:"skills,omitempty"`
 	MediaCleanup    MediaCleanupConfig `json:"media_cleanup"     yaml:"-"`
 	MCP             MCPConfig          `json:"mcp"               yaml:"-"`
-	AppendFile      ToolConfig         `json:"append_file"       yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_APPEND_FILE_"`
-	EditFile        ToolConfig         `json:"edit_file"         yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_EDIT_FILE_"`
-	TaskList        ToolConfig         `json:"task_list"         yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_TASK_LIST_"`
-	TaskCreate      ToolConfig         `json:"task_create"       yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_TASK_CREATE_"`
-	TaskUpdate      ToolConfig         `json:"task_update"       yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_TASK_UPDATE_"`
-	FindSkills      ToolConfig         `json:"find_skills"       yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_FIND_SKILLS_"`
-	I2C             ToolConfig         `json:"i2c"               yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_I2C_"`
-	InstallSkill    ToolConfig         `json:"install_skill"     yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_INSTALL_SKILL_"`
-	ListDir         ToolConfig         `json:"list_dir"          yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_LIST_DIR_"`
-	Message         ToolConfig         `json:"message"           yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_MESSAGE_"`
-	ReadFile        ReadFileToolConfig `json:"read_file"         yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_READ_FILE_"`
-	SendFile        ToolConfig         `json:"send_file"         yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_SEND_FILE_"`
-	Spawn           ToolConfig         `json:"spawn"             yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_SPAWN_"`
-	SpawnStatus     ToolConfig         `json:"spawn_status"      yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_SPAWN_STATUS_"`
-	SPI             ToolConfig         `json:"spi"               yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_SPI_"`
-	Subagent        ToolConfig         `json:"subagent"          yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_SUBAGENT_"`
-	WebFetch        ToolConfig         `json:"web_fetch"         yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_WEB_FETCH_"`
-	WriteFile       ToolConfig         `json:"write_file"        yaml:"-"                                                       envPrefix:"PICOCLAW_TOOLS_WRITE_FILE_"`
+	AppendFile      ToolConfig         `json:"append_file"       yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_APPEND_FILE_"`
+	EditFile        ToolConfig         `json:"edit_file"         yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_EDIT_FILE_"`
+	TaskList        ToolConfig         `json:"task_list"         yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_TASK_LIST_"`
+	TaskCreate      ToolConfig         `json:"task_create"       yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_TASK_CREATE_"`
+	TaskUpdate      ToolConfig         `json:"task_update"       yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_TASK_UPDATE_"`
+	FindSkills      ToolConfig         `json:"find_skills"       yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_FIND_SKILLS_"`
+	I2C             ToolConfig         `json:"i2c"               yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_I2C_"`
+	InstallSkill    ToolConfig         `json:"install_skill"     yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_INSTALL_SKILL_"`
+	ListDir         ToolConfig         `json:"list_dir"          yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_LIST_DIR_"`
+	Message         ToolConfig         `json:"message"           yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_MESSAGE_"`
+	ReadFile        ReadFileToolConfig `json:"read_file"         yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_READ_FILE_"`
+	SendFile        ToolConfig         `json:"send_file"         yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_SEND_FILE_"`
+	Spawn           ToolConfig         `json:"spawn"             yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_SPAWN_"`
+	SpawnStatus     ToolConfig         `json:"spawn_status"      yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_SPAWN_STATUS_"`
+	SPI             ToolConfig         `json:"spi"               yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_SPI_"`
+	Subagent        ToolConfig         `json:"subagent"          yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_SUBAGENT_"`
+	WebFetch        ToolConfig         `json:"web_fetch"         yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_WEB_FETCH_"`
+	WriteFile       ToolConfig         `json:"write_file"        yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_WRITE_FILE_"`
 }
 
 // IsFilterSensitiveDataEnabled returns true if sensitive data filtering is enabled
@@ -1122,8 +1088,8 @@ func (c *ToolsConfig) GetFilterMinLength() int {
 }
 
 type SearchCacheConfig struct {
-	MaxSize    int `json:"max_size"    env:"PICOCLAW_SKILLS_SEARCH_CACHE_MAX_SIZE"`
-	TTLSeconds int `json:"ttl_seconds" env:"PICOCLAW_SKILLS_SEARCH_CACHE_TTL_SECONDS"`
+	MaxSize    int `json:"max_size"    env:"OMNIPUS_SKILLS_SEARCH_CACHE_MAX_SIZE"`
+	TTLSeconds int `json:"ttl_seconds" env:"OMNIPUS_SKILLS_SEARCH_CACHE_TTL_SECONDS"`
 }
 
 type SkillsRegistriesConfig struct {
@@ -1131,20 +1097,24 @@ type SkillsRegistriesConfig struct {
 }
 
 type SkillsGithubConfig struct {
-	Token SecureString `json:"token,omitzero"  yaml:"token,omitempty" env:"PICOCLAW_TOOLS_SKILLS_GITHUB_TOKEN"`
-	Proxy string       `json:"proxy,omitempty" yaml:"-"               env:"PICOCLAW_TOOLS_SKILLS_GITHUB_PROXY"`
+	// TokenRef is the env-var name whose value holds the GitHub personal access token.
+	// Resolved at boot via credentials.InjectFromConfig; never store the token value here.
+	TokenRef string `json:"token_ref,omitempty" yaml:"-" env:"OMNIPUS_TOOLS_SKILLS_GITHUB_TOKEN_REF"`
+	Proxy    string `json:"proxy,omitempty"     yaml:"-" env:"OMNIPUS_TOOLS_SKILLS_GITHUB_PROXY"`
 }
 
 type ClawHubRegistryConfig struct {
-	Enabled         bool         `json:"enabled"             yaml:"-"                    env:"PICOCLAW_SKILLS_REGISTRIES_CLAWHUB_ENABLED"`
-	BaseURL         string       `json:"base_url"            yaml:"-"                    env:"PICOCLAW_SKILLS_REGISTRIES_CLAWHUB_BASE_URL"`
-	AuthToken       SecureString `json:"auth_token,omitzero" yaml:"auth_token,omitempty" env:"PICOCLAW_SKILLS_REGISTRIES_CLAWHUB_AUTH_TOKEN"`
-	SearchPath      string       `json:"search_path"         yaml:"-"                    env:"PICOCLAW_SKILLS_REGISTRIES_CLAWHUB_SEARCH_PATH"`
-	SkillsPath      string       `json:"skills_path"         yaml:"-"                    env:"PICOCLAW_SKILLS_REGISTRIES_CLAWHUB_SKILLS_PATH"`
-	DownloadPath    string       `json:"download_path"       yaml:"-"                    env:"PICOCLAW_SKILLS_REGISTRIES_CLAWHUB_DOWNLOAD_PATH"`
-	Timeout         int          `json:"timeout"             yaml:"-"                    env:"PICOCLAW_SKILLS_REGISTRIES_CLAWHUB_TIMEOUT"`
-	MaxZipSize      int          `json:"max_zip_size"        yaml:"-"                    env:"PICOCLAW_SKILLS_REGISTRIES_CLAWHUB_MAX_ZIP_SIZE"`
-	MaxResponseSize int          `json:"max_response_size"   yaml:"-"                    env:"PICOCLAW_SKILLS_REGISTRIES_CLAWHUB_MAX_RESPONSE_SIZE"`
+	Enabled bool   `json:"enabled"  yaml:"-" env:"OMNIPUS_SKILLS_REGISTRIES_CLAWHUB_ENABLED"`
+	BaseURL string `json:"base_url" yaml:"-" env:"OMNIPUS_SKILLS_REGISTRIES_CLAWHUB_BASE_URL"`
+	// AuthTokenRef is the env-var name whose value holds the ClawHub authentication token.
+	// Resolved at boot via credentials.InjectFromConfig; never store the token value here.
+	AuthTokenRef    string `json:"auth_token_ref,omitempty" yaml:"-" env:"OMNIPUS_SKILLS_REGISTRIES_CLAWHUB_AUTH_TOKEN_REF"`
+	SearchPath      string `json:"search_path"              yaml:"-" env:"OMNIPUS_SKILLS_REGISTRIES_CLAWHUB_SEARCH_PATH"`
+	SkillsPath      string `json:"skills_path"              yaml:"-" env:"OMNIPUS_SKILLS_REGISTRIES_CLAWHUB_SKILLS_PATH"`
+	DownloadPath    string `json:"download_path"            yaml:"-" env:"OMNIPUS_SKILLS_REGISTRIES_CLAWHUB_DOWNLOAD_PATH"`
+	Timeout         int    `json:"timeout"                  yaml:"-" env:"OMNIPUS_SKILLS_REGISTRIES_CLAWHUB_TIMEOUT"`
+	MaxZipSize      int    `json:"max_zip_size"             yaml:"-" env:"OMNIPUS_SKILLS_REGISTRIES_CLAWHUB_MAX_ZIP_SIZE"`
+	MaxResponseSize int    `json:"max_response_size"        yaml:"-" env:"OMNIPUS_SKILLS_REGISTRIES_CLAWHUB_MAX_RESPONSE_SIZE"`
 }
 
 // MCPServerConfig defines configuration for a single MCP server
@@ -1173,16 +1143,25 @@ type MCPServerConfig struct {
 
 // MCPConfig defines configuration for all MCP servers
 type MCPConfig struct {
-	ToolConfig `                    envPrefix:"PICOCLAW_TOOLS_MCP_"`
-	Discovery  ToolDiscoveryConfig `                                json:"discovery"`
+	ToolConfig `                    envPrefix:"OMNIPUS_TOOLS_MCP_"`
+	Discovery  ToolDiscoveryConfig `                               json:"discovery"`
 	// Servers is a map of server name to server configuration
 	Servers map[string]MCPServerConfig `json:"servers,omitempty"`
 }
 
-func LoadConfig(path string) (*Config, error) {
-	logger.Debugf("loading config from %s", path)
+// LoadConfigWithStore loads a config and, for v0 configs, migrates legacy
+// plaintext secrets into the provided store. If store is nil and a v0 config
+// with plaintext secrets is found, an error is returned.
+func LoadConfigWithStore(path string, store CredentialStore) (*Config, error) {
+	return loadConfigInternal(path, store)
+}
 
-	updateResolver(filepath.Dir(path))
+func LoadConfig(path string) (*Config, error) {
+	return loadConfigInternal(path, nil)
+}
+
+func loadConfigInternal(path string, store CredentialStore) (*Config, error) {
+	logger.Debugf("loading config from %s", path)
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -1216,7 +1195,20 @@ func LoadConfig(path string) (*Config, error) {
 		if e != nil {
 			return nil, e
 		}
-		cfg, e = v.Migrate()
+		// Use MigrateWithStore when a store is available so legacy plaintext
+		// secrets are moved to the encrypted credential store. When store is nil,
+		// refuse to migrate if the v0 config contains any plaintext secrets to
+		// prevent silent data loss. If there are no secrets, plain Migrate is safe.
+		if store != nil {
+			cfg, e = v.(*configV0).MigrateWithStore(store)
+		} else if v.(*configV0).hasLegacySecrets() {
+			return nil, fmt.Errorf(
+				"config migration: v0 config contains plaintext secrets but no credential store was provided; " +
+					"use LoadConfigWithStore and ensure OMNIPUS_MASTER_KEY is set",
+			)
+		} else {
+			cfg, e = v.Migrate()
+		}
 		if e != nil {
 			logger.ErrorF("config migrate fail", map[string]any{"from": versionInfo.Version, "to": CurrentVersion})
 			return nil, e
@@ -1226,12 +1218,6 @@ func LoadConfig(path string) (*Config, error) {
 		if err != nil {
 			return nil, err
 		}
-		// Load existing security config and merge with migrated one to prevent data loss
-		secErr := loadSecurityConfig(cfg, securityPath(path))
-		if secErr != nil && !os.IsNotExist(secErr) {
-			logger.WarnF("failed to load existing security config during migration", map[string]any{"error": secErr})
-			return nil, fmt.Errorf("failed to load existing security config: %w", secErr)
-		}
 		defer func(cfg *Config) {
 			_ = SaveConfig(path, cfg)
 		}(cfg)
@@ -1240,12 +1226,6 @@ func LoadConfig(path string) (*Config, error) {
 		cfg, err = loadConfig(data)
 		if err != nil {
 			return nil, err
-		}
-		// Load security configuration
-		secPath := securityPath(path)
-		err = loadSecurityConfig(cfg, secPath)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("failed to load security config: %w", err)
 		}
 
 	default:
@@ -1329,18 +1309,6 @@ func makeBackup(path string) error {
 	return nil
 }
 
-func toNameIndex(list []*ModelConfig) []string {
-	nameList := make([]string, 0, len(list))
-	countMap := make(map[string]int)
-	for _, model := range list {
-		name := model.ModelName
-		index := countMap[name]
-		nameList = append(nameList, fmt.Sprintf("%s:%d", name, index))
-		countMap[name]++
-	}
-	return nameList
-}
-
 func (c *Config) migrateChannelConfigs() {
 	// Discord: mention_only -> group_trigger.mention_only
 	if c.Channels.Discord.MentionOnly && !c.Channels.Discord.GroupTrigger.MentionOnly {
@@ -1377,13 +1345,6 @@ func SaveConfig(path string, cfg *Config) error {
 	}
 	logger.Infof("saving config to %s", path)
 	if err := fileutil.WriteFileAtomic(path, data, 0o600); err != nil {
-		return err
-	}
-
-	// Only persist security config after config.json succeeds, so we never
-	// have a state where security was saved but config.json was not.
-	if err := saveSecurityConfig(securityPath(path), cfg); err != nil {
-		logger.ErrorCF("config", "cannot save .security.yml", map[string]any{"error": err})
 		return err
 	}
 	return nil
@@ -1451,10 +1412,6 @@ func (c *Config) ValidateProviders() error {
 	return nil
 }
 
-func (c *Config) SecurityCopyFrom(path string) error {
-	return loadSecurityConfig(c, securityPath(path))
-}
-
 // SetUserTokenHash sets the token hash for a user identified by username.
 func (c *Config) SetUserTokenHash(username, token string) error {
 	for i := range c.Gateway.Users {
@@ -1470,7 +1427,6 @@ func (c *Config) SetUserTokenHash(username, token string) error {
 	return fmt.Errorf("user %q not found", username)
 }
 
-
 // bcryptHash creates a bcrypt hash of the input string.
 func bcryptHash(input string) (string, error) {
 	hash, err := bcrypt.GenerateFromPassword([]byte(input), bcrypt.DefaultCost)
@@ -1478,15 +1434,6 @@ func bcryptHash(input string) (string, error) {
 		return "", err
 	}
 	return string(hash), nil
-}
-
-// generateToken generates a cryptographically random token string.
-func generateToken() (string, error) {
-	b := make([]byte, 32)
-	if _, err := cryptorand.Read(b); err != nil {
-		return "", fmt.Errorf("crypto/rand failed: %w", err)
-	}
-	return hex.EncodeToString(b), nil
 }
 
 func MergeAPIKeys(apiKey string, apiKeys []string) []string {
@@ -1512,88 +1459,10 @@ func MergeAPIKeys(apiKey string, apiKeys []string) []string {
 	return all
 }
 
-// expandMultiKeyModels expands ModelConfig entries with multiple API keys into
-// separate entries for key-level failover. Each key gets its own ModelConfig entry,
-// and the original entry's fallbacks are set up to chain through the expanded entries.
-//
-// Example: {"model_name": "gpt-4", "api_keys": ["k1", "k2", "k3"]}
-// Becomes:
-//   - {"model_name": "gpt-4", "api_keys": ["k1"], "fallbacks": ["gpt-4__key_1", "gpt-4__key_2"]}
-//   - {"model_name": "gpt-4__key_1", "api_keys": {"k2"}}
-//   - {"model_name": "gpt-4__key_2", "api_keys": {"k3"}}
+// expandMultiKeyModels is retained for call-site compatibility.
+// Multi-key failover via APIKeys was removed; APIKeyRef is the credential pattern.
 func expandMultiKeyModels(models []*ModelConfig) []*ModelConfig {
-	var expanded []*ModelConfig
-
-	for _, m := range models {
-		keys := m.APIKeys.Values()
-
-		// Single key or no keys: keep as-is
-		if len(keys) <= 1 {
-			expanded = append(expanded, m)
-			continue
-		}
-
-		// Multiple keys: expand
-		originalName := m.ModelName
-
-		// Create entries for additional keys (key_1, key_2, ...)
-		var fallbackNames []string
-		var additionalEntries []*ModelConfig
-		for i := 1; i < len(keys); i++ {
-			suffix := fmt.Sprintf("__key_%d", i)
-			expandedName := originalName + suffix
-
-			// Create a copy for the additional key
-			additionalEntry := &ModelConfig{
-				ModelName:      expandedName,
-				Model:          m.Model,
-				APIBase:        m.APIBase,
-				APIKeys:        SimpleSecureStrings(keys[i]),
-				Proxy:          m.Proxy,
-				AuthMethod:     m.AuthMethod,
-				ConnectMode:    m.ConnectMode,
-				Workspace:      m.Workspace,
-				RPM:            m.RPM,
-				MaxTokensField: m.MaxTokensField,
-				RequestTimeout: m.RequestTimeout,
-				ThinkingLevel:  m.ThinkingLevel,
-				ExtraBody:      m.ExtraBody,
-				isVirtual:      true,
-			}
-			additionalEntries = append(additionalEntries, additionalEntry)
-			fallbackNames = append(fallbackNames, expandedName)
-		}
-
-		// Create the primary entry with first key and fallbacks
-		primaryEntry := &ModelConfig{
-			ModelName:      originalName,
-			Model:          m.Model,
-			APIBase:        m.APIBase,
-			Proxy:          m.Proxy,
-			AuthMethod:     m.AuthMethod,
-			ConnectMode:    m.ConnectMode,
-			Workspace:      m.Workspace,
-			RPM:            m.RPM,
-			MaxTokensField: m.MaxTokensField,
-			RequestTimeout: m.RequestTimeout,
-			ThinkingLevel:  m.ThinkingLevel,
-			ExtraBody:      m.ExtraBody,
-			APIKeys:        SimpleSecureStrings(keys[0]),
-		}
-
-		// Prepend new fallbacks to existing ones
-		if len(fallbackNames) > 0 {
-			primaryEntry.Fallbacks = append(fallbackNames, m.Fallbacks...)
-		} else if len(m.Fallbacks) > 0 {
-			primaryEntry.Fallbacks = m.Fallbacks
-		}
-
-		// Primary entry first, then virtual fallback entries.
-		expanded = append(expanded, primaryEntry)
-		expanded = append(expanded, additionalEntries...)
-	}
-
-	return expanded
+	return models
 }
 
 func (t *ToolsConfig) IsToolEnabled(name string) bool {

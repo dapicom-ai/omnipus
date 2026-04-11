@@ -5,6 +5,7 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 )
 
 func TestParseSlackChatID(t *testing.T) {
@@ -98,22 +99,29 @@ func TestStripBotMention(t *testing.T) {
 	}
 }
 
+func testSlackBundle() credentials.SecretBundle {
+	return credentials.SecretBundle{
+		"SLACK_TEST_BOT_TOKEN": "xoxb-test",
+		"SLACK_TEST_APP_TOKEN": "xapp-test",
+	}
+}
+
 func TestNewSlackChannel(t *testing.T) {
 	msgBus := bus.NewMessageBus()
 
 	t.Run("missing bot token", func(t *testing.T) {
-		cfg := config.SlackConfig{}
-		cfg.AppToken = *config.NewSecureString("xapp-test")
-		_, err := NewSlackChannel(cfg, msgBus)
+		bundle := credentials.SecretBundle{"SLACK_TEST_APP_TOKEN": "xapp-test"}
+		cfg := config.SlackConfig{AppTokenRef: "SLACK_TEST_APP_TOKEN"}
+		_, err := NewSlackChannel(cfg, bundle, msgBus)
 		if err == nil {
 			t.Error("expected error for missing bot_token, got nil")
 		}
 	})
 
 	t.Run("missing app token", func(t *testing.T) {
-		cfg := config.SlackConfig{}
-		cfg.BotToken = *config.NewSecureString("xoxb-test")
-		_, err := NewSlackChannel(cfg, msgBus)
+		bundle := credentials.SecretBundle{"SLACK_TEST_BOT_TOKEN": "xoxb-test"}
+		cfg := config.SlackConfig{BotTokenRef: "SLACK_TEST_BOT_TOKEN"}
+		_, err := NewSlackChannel(cfg, bundle, msgBus)
 		if err == nil {
 			t.Error("expected error for missing app_token, got nil")
 		}
@@ -121,11 +129,11 @@ func TestNewSlackChannel(t *testing.T) {
 
 	t.Run("valid config", func(t *testing.T) {
 		cfg := config.SlackConfig{
-			AllowFrom: []string{"U123"},
+			BotTokenRef: "SLACK_TEST_BOT_TOKEN",
+			AppTokenRef: "SLACK_TEST_APP_TOKEN",
+			AllowFrom:   []string{"U123"},
 		}
-		cfg.BotToken = *config.NewSecureString("xoxb-test")
-		cfg.AppToken = *config.NewSecureString("xapp-test")
-		ch, err := NewSlackChannel(cfg, msgBus)
+		ch, err := NewSlackChannel(cfg, testSlackBundle(), msgBus)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -143,11 +151,11 @@ func TestSlackChannelIsAllowed(t *testing.T) {
 
 	t.Run("empty allowlist allows all", func(t *testing.T) {
 		cfg := config.SlackConfig{
-			AllowFrom: []string{},
+			BotTokenRef: "SLACK_TEST_BOT_TOKEN",
+			AppTokenRef: "SLACK_TEST_APP_TOKEN",
+			AllowFrom:   []string{},
 		}
-		cfg.BotToken = *config.NewSecureString("xoxb-test")
-		cfg.AppToken = *config.NewSecureString("xapp-test")
-		ch, _ := NewSlackChannel(cfg, msgBus)
+		ch, _ := NewSlackChannel(cfg, testSlackBundle(), msgBus)
 		if !ch.IsAllowed("U_ANYONE") {
 			t.Error("empty allowlist should allow all users")
 		}
@@ -155,11 +163,11 @@ func TestSlackChannelIsAllowed(t *testing.T) {
 
 	t.Run("allowlist restricts users", func(t *testing.T) {
 		cfg := config.SlackConfig{
-			AllowFrom: []string{"U_ALLOWED"},
+			BotTokenRef: "SLACK_TEST_BOT_TOKEN",
+			AppTokenRef: "SLACK_TEST_APP_TOKEN",
+			AllowFrom:   []string{"U_ALLOWED"},
 		}
-		cfg.BotToken = *config.NewSecureString("xoxb-test")
-		cfg.AppToken = *config.NewSecureString("xapp-test")
-		ch, _ := NewSlackChannel(cfg, msgBus)
+		ch, _ := NewSlackChannel(cfg, testSlackBundle(), msgBus)
 		if !ch.IsAllowed("U_ALLOWED") {
 			t.Error("allowed user should pass allowlist check")
 		}

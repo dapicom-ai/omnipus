@@ -12,23 +12,23 @@ Vous pouvez remplacer les chemins par défaut à l'aide de variables d'environne
 
 | Variable          | Description                                                                                                                             | Chemin par défaut         |
 |-------------------|-----------------------------------------------------------------------------------------------------------------------------------------|---------------------------|
-| `PICOCLAW_CONFIG` | Remplace le chemin vers le fichier de configuration. Indique directement à Omnipus quel `config.json` charger, en ignorant tous les autres emplacements. | `~/.omnipus/config.json` |
-| `PICOCLAW_HOME`   | Remplace le répertoire racine des données Omnipus. Change l'emplacement par défaut du `workspace` et des autres répertoires de données. | `~/.omnipus`             |
+| `OMNIPUS_CONFIG` | Remplace le chemin vers le fichier de configuration. Indique directement à Omnipus quel `config.json` charger, en ignorant tous les autres emplacements. | `~/.omnipus/config.json` |
+| `OMNIPUS_HOME`   | Remplace le répertoire racine des données Omnipus. Change l'emplacement par défaut du `workspace` et des autres répertoires de données. | `~/.omnipus`             |
 
 **Exemples :**
 
 ```bash
 # Run omnipus using a specific config file
 # The workspace path will be read from within that config file
-PICOCLAW_CONFIG=/etc/omnipus/production.json omnipus gateway
+OMNIPUS_CONFIG=/etc/omnipus/production.json omnipus gateway
 
 # Run omnipus with all its data stored in /opt/omnipus
 # Config will be loaded from the default ~/.omnipus/config.json
 # Workspace will be created at /opt/omnipus/workspace
-PICOCLAW_HOME=/opt/omnipus omnipus agent
+OMNIPUS_HOME=/opt/omnipus omnipus agent
 
 # Use both for a fully customized setup
-PICOCLAW_HOME=/srv/omnipus PICOCLAW_CONFIG=/srv/omnipus/main.json omnipus gateway
+OMNIPUS_HOME=/srv/omnipus OMNIPUS_CONFIG=/srv/omnipus/main.json omnipus gateway
 ```
 
 ### Structure du Workspace
@@ -61,7 +61,7 @@ Par défaut, les compétences sont chargées depuis :
 Pour les configurations avancées/de test, vous pouvez remplacer la racine des compétences builtin avec :
 
 ```bash
-export PICOCLAW_BUILTIN_SKILLS=/path/to/skills
+export OMNIPUS_BUILTIN_SKILLS=/path/to/skills
 ```
 
 ### Politique Unifiée d'Exécution des Commandes
@@ -178,7 +178,7 @@ Si vous avez besoin que l'agent accède à des chemins en dehors du workspace :
 **Méthode 2 : Variable d'environnement**
 
 ```bash
-export PICOCLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE=false
+export OMNIPUS_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE=false
 ```
 
 > ⚠️ **Avertissement** : Désactiver cette restriction permet à l'agent d'accéder à n'importe quel chemin sur votre système. À utiliser avec précaution dans des environnements contrôlés uniquement.
@@ -269,8 +269,8 @@ Répond HEARTBEAT_OK        Utilisateur reçoit le résultat
 
 **Variables d'environnement :**
 
-* `PICOCLAW_HEARTBEAT_ENABLED=false` pour désactiver
-* `PICOCLAW_HEARTBEAT_INTERVAL=60` pour changer l'intervalle
+* `OMNIPUS_HEARTBEAT_ENABLED=false` pour désactiver
+* `OMNIPUS_HEARTBEAT_INTERVAL=60` pour changer l'intervalle
 
 ### Providers
 

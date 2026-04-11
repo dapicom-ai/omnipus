@@ -69,7 +69,11 @@ func MigrateFromJSON(
 
 		var sess jsonSession
 		if parseErr := json.Unmarshal(data, &sess); parseErr != nil {
-			logger.WarnCF("memory", "migrate: skipping unparseable file", map[string]any{"file": name, "error": parseErr.Error()})
+			logger.WarnCF(
+				"memory",
+				"migrate: skipping unparseable file",
+				map[string]any{"file": name, "error": parseErr.Error()},
+			)
 			continue
 		}
 
@@ -104,7 +108,11 @@ func MigrateFromJSON(
 		// Rename to .migrated as backup (not delete).
 		renameErr := os.Rename(srcPath, srcPath+".migrated")
 		if renameErr != nil {
-			logger.WarnCF("memory", "migrate: failed to rename migrated file", map[string]any{"file": name, "error": renameErr.Error()})
+			logger.WarnCF(
+				"memory",
+				"migrate: failed to rename migrated file",
+				map[string]any{"file": name, "error": renameErr.Error()},
+			)
 		}
 
 		migrated++

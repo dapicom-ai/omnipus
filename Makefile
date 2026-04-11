@@ -64,8 +64,8 @@ INSTALL_MAN_DIR=$(INSTALL_PREFIX)/share/man/man1
 INSTALL_TMP_SUFFIX=.new
 
 # Workspace and Skills
-PICOCLAW_HOME?=$(HOME)/.omnipus
-WORKSPACE_DIR?=$(PICOCLAW_HOME)/workspace
+OMNIPUS_HOME?=$(HOME)/.omnipus
+WORKSPACE_DIR?=$(OMNIPUS_HOME)/workspace
 WORKSPACE_SKILLS_DIR=$(WORKSPACE_DIR)/skills
 BUILTIN_SKILLS_DIR=$(CURDIR)/skills
 
@@ -231,8 +231,8 @@ uninstall:
 ## uninstall-all: Remove omnipus and all data
 uninstall-all:
 	@echo "Removing workspace and skills..."
-	@rm -rf $(PICOCLAW_HOME)
-	@echo "Removed workspace: $(PICOCLAW_HOME)"
+	@rm -rf $(OMNIPUS_HOME)
+	@echo "Removed workspace: $(OMNIPUS_HOME)"
 	@echo "Complete uninstallation done!"
 
 ## clean: Remove build artifacts

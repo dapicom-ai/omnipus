@@ -38,7 +38,11 @@ func buildCLIToolsPrompt(tools []ToolDefinition) string {
 		if len(tool.Function.Parameters) > 0 {
 			paramsJSON, err := json.Marshal(tool.Function.Parameters)
 			if err != nil {
-				logger.WarnCF("providers", "failed to marshal tool parameters", map[string]any{"tool": tool.Function.Name, "error": err.Error()})
+				logger.WarnCF(
+					"providers",
+					"failed to marshal tool parameters",
+					map[string]any{"tool": tool.Function.Name, "error": err.Error()},
+				)
 			} else {
 				sb.WriteString(fmt.Sprintf("Parameters:\n```json\n%s\n```\n", string(paramsJSON)))
 			}
@@ -76,7 +80,11 @@ func NormalizeToolCall(tc ToolCall) ToolCall {
 	// Ensure Function is populated with consistent values
 	argsJSON, err := json.Marshal(normalized.Arguments)
 	if err != nil {
-		logger.WarnCF("providers", "failed to marshal normalized tool arguments", map[string]any{"tool": normalized.Name, "error": err.Error()})
+		logger.WarnCF(
+			"providers",
+			"failed to marshal normalized tool arguments",
+			map[string]any{"tool": normalized.Name, "error": err.Error()},
+		)
 		argsJSON = []byte("{}")
 	}
 	if normalized.Function == nil {

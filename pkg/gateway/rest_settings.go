@@ -106,7 +106,10 @@ func (a *restAPI) HandleCredentials(w http.ResponseWriter, r *http.Request) {
 
 // listCredentials lists all credential key names without values.
 func (a *restAPI) listCredentials(w http.ResponseWriter) {
-	store := credentials.NewStore(a.credentialsStorePath())
+	store := a.credStore
+	if store == nil {
+		store = credentials.NewStore(a.credentialsStorePath())
+	}
 	keys, err := store.List()
 	if err != nil {
 		slog.Error("rest: list credentials", "error", err)
@@ -133,11 +136,19 @@ func (a *restAPI) setCredential(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusUnprocessableEntity, "key is required")
 		return
 	}
-	store := credentials.NewStore(a.credentialsStorePath())
-	if err := credentials.Unlock(store); err != nil {
-		slog.Warn("rest: credential store locked for set", "error", err)
-		jsonErr(w, http.StatusServiceUnavailable, "credential store is locked — set OMNIPUS_MASTER_KEY or OMNIPUS_KEY_FILE")
-		return
+	store := a.credStore
+	if store == nil || store.IsLocked() {
+		// Fall back to creating and unlocking a store if no shared store is available
+		store = credentials.NewStore(a.credentialsStorePath())
+		if err := credentials.Unlock(store); err != nil {
+			slog.Warn("rest: credential store locked for set", "error", err)
+			jsonErr(
+				w,
+				http.StatusServiceUnavailable,
+				"credential store is locked — set OMNIPUS_MASTER_KEY or OMNIPUS_KEY_FILE",
+			)
+			return
+		}
 	}
 	if err := store.Set(req.Key, req.Value); err != nil {
 		slog.Error("rest: set credential", "key", req.Key, "error", err)
@@ -154,14 +165,21 @@ func (a *restAPI) deleteCredential(w http.ResponseWriter, key string) {
 		jsonErr(w, http.StatusBadRequest, "invalid credential key")
 		return
 	}
-	store := credentials.NewStore(a.credentialsStorePath())
-	if err := credentials.Unlock(store); err != nil {
-		slog.Warn("rest: credential store locked for delete", "error", err)
-		jsonErr(w, http.StatusServiceUnavailable, "credential store is locked — set OMNIPUS_MASTER_KEY or OMNIPUS_KEY_FILE")
-		return
+	store := a.credStore
+	if store == nil || store.IsLocked() {
+		store = credentials.NewStore(a.credentialsStorePath())
+		if err := credentials.Unlock(store); err != nil {
+			slog.Warn("rest: credential store locked for delete", "error", err)
+			jsonErr(
+				w,
+				http.StatusServiceUnavailable,
+				"credential store is locked — set OMNIPUS_MASTER_KEY or OMNIPUS_KEY_FILE",
+			)
+			return
+		}
 	}
 	if err := store.Delete(key); err != nil {
-		var notFound *credentials.ErrNotFound
+		var notFound *credentials.NotFoundError
 		if errors.As(err, &notFound) {
 			jsonErr(w, http.StatusNotFound, fmt.Sprintf("credential %q not found", key))
 			return
@@ -414,8 +432,8 @@ func extractTarGz(archivePath, destDir string) error {
 			slog.Warn("rest: restore: skipping tar entry escaping destination", "name", hdr.Name)
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(destPath), 0o700); err != nil {
-			return fmt.Errorf("mkdir for %q: %w", clean, err)
+		if mkdirErr := os.MkdirAll(filepath.Dir(destPath), 0o700); mkdirErr != nil {
+			return fmt.Errorf("mkdir for %q: %w", clean, mkdirErr)
 		}
 		if hdr.Typeflag == tar.TypeDir {
 			continue

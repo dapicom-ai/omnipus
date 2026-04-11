@@ -33,7 +33,11 @@ type PolicyAuditor struct {
 }
 
 // NewPolicyAuditor creates a PolicyAuditor that wraps eval and logs decisions to logger.
+// Panics if eval is nil (wiring-time error). Logger may be nil (audit logging silently skipped).
 func NewPolicyAuditor(eval *Evaluator, logger AuditLogger, sessionID string) *PolicyAuditor {
+	if eval == nil {
+		panic("PolicyAuditor: nil Evaluator")
+	}
 	return &PolicyAuditor{eval: eval, logger: logger, sessionID: sessionID}
 }
 

@@ -18,9 +18,32 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	"github.com/dapicom-ai/omnipus/pkg/taskstore"
 )
+
+// testMasterKey is a deterministic hex master key used only in tests.
+const testMasterKey = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+
+// newOnboardingTestAPI creates a restAPI wired with an unlocked credential store
+// for onboarding tests that submit api_key values (SEC-23: no plaintext fallback).
+func newOnboardingTestAPI(t *testing.T, tmpDir string, al *agent.AgentLoop) *restAPI {
+	t.Helper()
+	t.Setenv("OMNIPUS_MASTER_KEY", testMasterKey)
+	credStore := credentials.NewStore(tmpDir + "/credentials.json")
+	if err := credentials.Unlock(credStore); err != nil {
+		t.Fatalf("unlock credential store: %v", err)
+	}
+	return &restAPI{
+		agentLoop:     al,
+		homePath:      tmpDir,
+		allowedOrigin: "http://localhost:3000",
+		onboardingMgr: onboarding.NewManager(tmpDir),
+		taskStore:     taskstore.New(tmpDir + "/tasks"),
+		credStore:     credStore,
+	}
+}
 
 // --- HandleCompleteOnboarding tests ---
 
@@ -31,7 +54,7 @@ import (
 // Then 200 with {"token":"<token>","role":"admin","username":"admin"}.
 func TestHandleCompleteOnboarding_Success(t *testing.T) {
 	tmpDir := t.TempDir()
-	minimalCfg := []byte(`{"agents":{"defaults":{},"list":[]},"providers":[]}`)
+	minimalCfg := []byte(`{"version":1,"agents":{"defaults":{},"list":[]},"providers":[]}`)
 	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
 
 	cfg := &config.Config{
@@ -46,13 +69,7 @@ func TestHandleCompleteOnboarding_Success(t *testing.T) {
 	}
 	msgBus := bus.NewMessageBus()
 	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
-	api := &restAPI{
-		agentLoop:     al,
-		homePath:      tmpDir,
-		allowedOrigin: "http://localhost:3000",
-		onboardingMgr: onboarding.NewManager(tmpDir),
-		taskStore:     taskstore.New(tmpDir + "/tasks"),
-	}
+	api := newOnboardingTestAPI(t, tmpDir, al)
 
 	// Verify onboarding is not complete yet
 	require.False(t, api.onboardingMgr.IsComplete(), "onboarding should not be complete initially")
@@ -79,7 +96,7 @@ func TestHandleCompleteOnboarding_Success(t *testing.T) {
 // Then 409 Conflict with {"error":"onboarding already complete"}.
 func TestHandleCompleteOnboarding_AlreadyComplete(t *testing.T) {
 	tmpDir := t.TempDir()
-	minimalCfg := []byte(`{"agents":{"defaults":{},"list":[]},"providers":[]}`)
+	minimalCfg := []byte(`{"version":1,"agents":{"defaults":{},"list":[]},"providers":[]}`)
 	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
 
 	cfg := &config.Config{
@@ -251,7 +268,7 @@ func TestHandleCompleteOnboarding_MethodNotAllowed(t *testing.T) {
 // Then login succeeds and the returned token validates successfully.
 func TestHandleCompleteOnboarding_ThenLogin(t *testing.T) {
 	tmpDir := t.TempDir()
-	minimalCfg := []byte(`{"agents":{"defaults":{},"list":[]},"providers":[]}`)
+	minimalCfg := []byte(`{"version":1,"agents":{"defaults":{},"list":[]},"providers":[]}`)
 	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
 
 	cfg := &config.Config{
@@ -266,17 +283,15 @@ func TestHandleCompleteOnboarding_ThenLogin(t *testing.T) {
 	}
 	msgBus := bus.NewMessageBus()
 	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
-	api := &restAPI{
-		agentLoop:     al,
-		homePath:      tmpDir,
-		allowedOrigin: "http://localhost:3000",
-		onboardingMgr: onboarding.NewManager(tmpDir),
-		taskStore:     taskstore.New(tmpDir + "/tasks"),
-	}
+	api := newOnboardingTestAPI(t, tmpDir, al)
 
 	// Step 1: Complete onboarding
 	onboardingBody := `{"provider":{"id":"openai","api_key":"sk-test"},"admin":{"username":"admin","password":"secret123"}}`
-	onboardingReq := httptest.NewRequest(http.MethodPost, "/api/v1/onboarding/complete", strings.NewReader(onboardingBody))
+	onboardingReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/onboarding/complete",
+		strings.NewReader(onboardingBody),
+	)
 	onboardingReq.Header.Set("Content-Type", "application/json")
 	onboardingW := httptest.NewRecorder()
 	api.HandleCompleteOnboarding(onboardingW, onboardingReq)
@@ -330,7 +345,7 @@ func TestHandleCompleteOnboarding_ThenLogin(t *testing.T) {
 // Then it contains the admin user with a password_hash and token_hash.
 func TestHandleCompleteOnboarding_PersistsAdmin(t *testing.T) {
 	tmpDir := t.TempDir()
-	minimalCfg := []byte(`{"agents":{"defaults":{},"list":[]},"providers":[]}`)
+	minimalCfg := []byte(`{"version":1,"agents":{"defaults":{},"list":[]},"providers":[]}`)
 	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
 
 	cfg := &config.Config{
@@ -345,13 +360,7 @@ func TestHandleCompleteOnboarding_PersistsAdmin(t *testing.T) {
 	}
 	msgBus := bus.NewMessageBus()
 	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
-	api := &restAPI{
-		agentLoop:     al,
-		homePath:      tmpDir,
-		allowedOrigin: "http://localhost:3000",
-		onboardingMgr: onboarding.NewManager(tmpDir),
-		taskStore:     taskstore.New(tmpDir + "/tasks"),
-	}
+	api := newOnboardingTestAPI(t, tmpDir, al)
 
 	// Complete onboarding
 	body := `{"provider":{"id":"openai","api_key":"sk-test"},"admin":{"username":"admin","password":"secret123"}}`
@@ -392,8 +401,14 @@ func TestHandleCompleteOnboarding_PersistsAdmin(t *testing.T) {
 // is not corrupted (has exactly one admin user).
 func TestHandleCompleteOnboarding_Concurrent(t *testing.T) {
 	tmpDir := t.TempDir()
-	minimalCfg := []byte(`{"agents":{"defaults":{},"list":[]},"providers":[]}`)
+	minimalCfg := []byte(`{"version":1,"agents":{"defaults":{},"list":[]},"providers":[]}`)
 	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
+
+	// Set up a credential store so the onboarding can persist API keys (SEC-23).
+	masterKey := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	t.Setenv("OMNIPUS_MASTER_KEY", masterKey)
+	credStore := credentials.NewStore(tmpDir + "/credentials.json")
+	require.NoError(t, credentials.Unlock(credStore))
 
 	cfg := &config.Config{
 		Gateway: config.GatewayConfig{Host: "127.0.0.1", Port: 8080},
@@ -414,6 +429,7 @@ func TestHandleCompleteOnboarding_Concurrent(t *testing.T) {
 		allowedOrigin: "http://localhost:3000",
 		onboardingMgr: onboardingMgr,
 		taskStore:     taskstore.New(tmpDir + "/tasks"),
+		credStore:     credStore,
 	}
 
 	const n = 5
@@ -459,8 +475,14 @@ func TestHandleCompleteOnboarding_Concurrent(t *testing.T) {
 // (the one that acquires the lock first) and the others get 409 or 500.
 func TestHandleCompleteOnboarding_ConcurrentDifferentUsers(t *testing.T) {
 	tmpDir := t.TempDir()
-	minimalCfg := []byte(`{"agents":{"defaults":{},"list":[]},"providers":[]}`)
+	minimalCfg := []byte(`{"version":1,"agents":{"defaults":{},"list":[]},"providers":[]}`)
 	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
+
+	// Set up a credential store so the onboarding can persist API keys (SEC-23).
+	masterKey := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	t.Setenv("OMNIPUS_MASTER_KEY", masterKey)
+	credStore := credentials.NewStore(tmpDir + "/credentials.json")
+	require.NoError(t, credentials.Unlock(credStore))
 
 	cfg := &config.Config{
 		Gateway: config.GatewayConfig{Host: "127.0.0.1", Port: 8080},
@@ -480,6 +502,7 @@ func TestHandleCompleteOnboarding_ConcurrentDifferentUsers(t *testing.T) {
 		allowedOrigin: "http://localhost:3000",
 		onboardingMgr: onboarding.NewManager(tmpDir),
 		taskStore:     taskstore.New(tmpDir + "/tasks"),
+		credStore:     credStore,
 	}
 
 	const n = 5
@@ -489,7 +512,11 @@ func TestHandleCompleteOnboarding_ConcurrentDifferentUsers(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			body := `{"provider":{"id":"openai","api_key":"sk-test-` + string(rune('0'+idx)) + `"},"admin":{"username":"admin` + string(rune('0'+idx)) + `","password":"secret123"}}`
+			body := `{"provider":{"id":"openai","api_key":"sk-test-` + string(
+				rune('0'+idx),
+			) + `"},"admin":{"username":"admin` + string(
+				rune('0'+idx),
+			) + `","password":"secret123"}}`
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/onboarding/complete", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()

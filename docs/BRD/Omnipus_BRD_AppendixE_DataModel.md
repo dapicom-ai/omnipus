@@ -12,7 +12,7 @@
 
 ## E.1 Purpose
 
-This appendix defines the complete data model for Omnipus: all entities, their relationships, storage format, and directory structure. Omnipus uses a file-based storage approach — JSON and JSONL files on disk, no database — consistent with PicoClaw's zero-dependency philosophy.
+This appendix defines the complete data model for Omnipus: all entities, their relationships, storage format, and directory structure. Omnipus uses a file-based storage approach — JSON and JSONL files on disk, no database — consistent with Omnipus's zero-dependency philosophy.
 
 -----
 
@@ -271,7 +271,7 @@ Transcript entries can be one of three types:
 
 ### E.5.3 Context Window Compression
 
-Omnipus manages the LLM context window using a two-layer approach inherited from and improving on PicoClaw's dynamic context compression:
+Omnipus manages the LLM context window using a two-layer approach inherited from and improving on Omnipus's dynamic context compression:
 
 **Layer 1 — Tool result pruning (in-memory only):**
 When the context window is filling up, older tool call results are truncated to summaries in the prompt sent to the LLM. The full results remain in the transcript on disk. This is transparent and does not modify stored data.
@@ -294,7 +294,7 @@ When pruning is insufficient and `contextTokens > contextWindow - reserveTokens`
 | `compaction.preserve_recent` | `10` | Number of recent messages always kept intact (never compacted). |
 | `compaction.memory_flush` | `true` | Flush important facts to memory before compacting. |
 
-**Error handling:** If the model returns a context length error, Omnipus retries with aggressive pruning first, then compaction. Context errors are distinguished from network errors by checking the error response structure (not substring matching — avoiding PicoClaw bug #683).
+**Error handling:** If the model returns a context length error, Omnipus retries with aggressive pruning first, then compaction. Context errors are distinguished from network errors by checking the error response structure (not substring matching — avoiding Omnipus bug #683).
 
 ### E.5.4 Session Retention
 
@@ -552,9 +552,9 @@ Pins are the cross-cutting bookmark system. Memory is what the agent remembers. 
 
 ### E.10.1 Channel Architecture
 
-Omnipus uses a **hybrid in-process/bridge channel architecture** inheriting PicoClaw's design. Go channels are compiled into the binary for maximum efficiency and minimal deployment complexity. Non-Go channels and community extensions use an external bridge protocol.
+Omnipus uses a **hybrid in-process/bridge channel architecture** inheriting Omnipus's design. Go channels are compiled into the binary for maximum efficiency and minimal deployment complexity. Non-Go channels and community extensions use an external bridge protocol.
 
-**Design rationale:** PicoClaw and OpenClaw both keep channels in-process, validating this approach at scale (250K+ stars for OpenClaw, 25K+ for PicoClaw). Compiling Go channels into the binary preserves the single-binary deployment, keeps RAM overhead minimal (critical for $10 hardware), and inherits PicoClaw's working channel code. The bridge protocol exists for channels that genuinely cannot be Go (Java, Node.js runtimes) and for community extensions in any language. WhatsApp's SQLite dependency is handled via `modernc.org/sqlite` (pure Go), avoiding CGo without needing process isolation.
+**Design rationale:** Omnipus and OpenClaw both keep channels in-process, validating this approach at scale (250K+ stars for OpenClaw, 25K+ for Omnipus). Compiling Go channels into the binary preserves the single-binary deployment, keeps RAM overhead minimal (critical for $10 hardware), and inherits Omnipus's working channel code. The bridge protocol exists for channels that genuinely cannot be Go (Java, Node.js runtimes) and for community extensions in any language. WhatsApp's SQLite dependency is handled via `modernc.org/sqlite` (pure Go), avoiding CGo without needing process isolation.
 
 | Tier | Channels | Process model |
 |---|---|---|
@@ -602,7 +602,7 @@ type ChannelProvider interface {
 }
 ```
 
-Compiled-in Go channels implement this interface directly within the gateway process (same as PicoClaw's architecture). External channels (non-Go and community) are represented by a `BridgeAdapter` that implements `ChannelProvider` by translating to/from the stdin/stdout JSON bridge protocol. From the gateway's perspective, all channels look the same regardless of whether they are compiled-in or external.
+Compiled-in Go channels implement this interface directly within the gateway process (same as Omnipus's architecture). External channels (non-Go and community) are represented by a `BridgeAdapter` that implements `ChannelProvider` by translating to/from the stdin/stdout JSON bridge protocol. From the gateway's perspective, all channels look the same regardless of whether they are compiled-in or external.
 
 ### E.10.4 Channel Implementation Matrix
 

@@ -1,5 +1,5 @@
 // Omnipus - Ultra-lightweight personal AI agent
-// Built on PicoClaw's foundation. See CLAUDE.md for project lineage.
+// Built on Omnipus's foundation. See CLAUDE.md for project lineage.
 // License: MIT
 //
 // Copyright (c) 2026 Omnipus contributors
@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -20,6 +21,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/commands"
@@ -27,8 +29,11 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/constants"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/media"
+	"github.com/dapicom-ai/omnipus/pkg/policy"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/routing"
+	"github.com/dapicom-ai/omnipus/pkg/sandbox"
+	"github.com/dapicom-ai/omnipus/pkg/security"
 	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/skills"
 	"github.com/dapicom-ai/omnipus/pkg/state"
@@ -76,27 +81,63 @@ type AgentLoop struct {
 	// Task management
 	taskStore    *taskstore.TaskStore
 	taskExecutor *TaskExecutor
+
+	// Security (SEC-15, SEC-17): audit logging and policy evaluation.
+	// Initialized in NewAgentLoop when sandbox.audit_log is enabled.
+	auditLogger   *audit.Logger
+	policyAuditor *policy.PolicyAuditor
+
+	// Wave 2: Kernel-level sandbox backend (SEC-01, SEC-02, SEC-03).
+	// Selected at startup via sandbox.SelectBackend: LinuxBackend on Linux
+	// 5.13+ (Landlock+seccomp), FallbackBackend elsewhere (cooperative env
+	// vars). Applied to every exec child via ExecTool.sandboxBackend.
+	sandboxBackend sandbox.SandboxBackend
+
+	// Wave 3: Prompt injection defense (SEC-25). Sanitizes untrusted tool
+	// results — web_search, web_fetch, browser_*, read_file — before they
+	// enter the LLM's context. Nil when the guard is misconfigured; callers
+	// must nil-check. Trusted tool results (exec, spawn, message, etc.) are
+	// NEVER sanitized so the LLM sees verbatim user and internal output.
+	promptGuard *security.PromptGuard
+
+	// Wave 3: SSRF proxy for exec child processes (SEC-28). Only started when
+	// cfg.Tools.Exec.EnableProxy is true. The proxy is idle-stop: it exits
+	// after DefaultIdleTimeout (30s) when no commands are active, and is
+	// automatically restarted by PrepareCmd() on the next exec command so
+	// long-lived agent loops continue to enforce SSRF protection. On initial
+	// bind failure this field is nil and exec children run without proxy env
+	// vars (degraded mode — LIM-02).
+	execProxy *security.ExecProxy
+
+	// Wave 4: Per-agent rate limiting and global daily cost cap (SEC-26).
+	// rateLimiter manages sliding-window counters; costTracker persists the
+	// daily cost accumulator across restarts. Both are always non-nil after
+	// NewAgentLoop — the registry exists even when no limits are configured
+	// so it can record costs for observability. The per-call sites check
+	// cfg.Sandbox.RateLimits.* > 0 to decide whether to enforce.
+	rateLimiter *security.RateLimiterRegistry
+	costTracker *security.CostTracker
 }
 
 // processOptions configures how a message is processed
 type processOptions struct {
-	SessionKey              string              // Session identifier for history/context
-	Channel                 string              // Target channel for tool execution
-	ChatID                  string              // Target chat ID for tool execution
-	SenderID                string              // Current sender ID for dynamic context
-	SenderDisplayName       string              // Current sender display name for dynamic context
-	UserMessage             string              // User message content (may include prefix)
-	ForcedSkills            []string            // Skills explicitly requested for this message
-	SystemPromptOverride    string              // Override the default system prompt (Used by SubTurns)
-	Media                   []string            // media:// refs from inbound message
-	InitialSteeringMessages []providers.Message // Steering messages from refactor/agent
-	DefaultResponse         string              // Response when LLM returns empty
-	EnableSummary           bool                // Whether to trigger summarization
-	SendResponse            bool                // Whether to send response via bus
-	SuppressToolFeedback    bool                // Whether to suppress inline tool feedback messages
-	NoHistory               bool                // If true, don't load session history (for heartbeat)
-	SkipInitialSteeringPoll bool                // If true, skip the steering poll at loop start (used by Continue)
-	TranscriptSessionID     string              // Session ID for transcript tool call recording (empty = disabled)
+	SessionKey              string                // Session identifier for history/context
+	Channel                 string                // Target channel for tool execution
+	ChatID                  string                // Target chat ID for tool execution
+	SenderID                string                // Current sender ID for dynamic context
+	SenderDisplayName       string                // Current sender display name for dynamic context
+	UserMessage             string                // User message content (may include prefix)
+	ForcedSkills            []string              // Skills explicitly requested for this message
+	SystemPromptOverride    string                // Override the default system prompt (Used by SubTurns)
+	Media                   []string              // media:// refs from inbound message
+	InitialSteeringMessages []providers.Message   // Steering messages from refactor/agent
+	DefaultResponse         string                // Response when LLM returns empty
+	EnableSummary           bool                  // Whether to trigger summarization
+	SendResponse            bool                  // Whether to send response via bus
+	SuppressToolFeedback    bool                  // Whether to suppress inline tool feedback messages
+	NoHistory               bool                  // If true, don't load session history (for heartbeat)
+	SkipInitialSteeringPoll bool                  // If true, skip the steering poll at loop start (used by Continue)
+	TranscriptSessionID     string                // Session ID for transcript tool call recording (empty = disabled)
 	TranscriptStore         *session.UnifiedStore // Store for transcript tool call recording (nil = disabled)
 }
 
@@ -156,10 +197,304 @@ func NewAgentLoop(
 	al.taskStore = taskstore.New(filepath.Join(homePath, "tasks"))
 	al.taskExecutor = newTaskExecutor(al, al.taskStore)
 
+	// SEC-15: Initialize structured audit logging (optional) and policy
+	// evaluation (always on). Audit directory is ~/.omnipus/system/ (sibling of
+	// workspace). The audit logger and the policy evaluator are decoupled:
+	// disabling audit logging must NOT disable enforcement.
+	if cfg.Sandbox.AuditLog {
+		auditDir := filepath.Join(homePath, "system")
+		auditLogger, auditErr := audit.NewLogger(audit.LoggerConfig{
+			Dir:           auditDir,
+			RetentionDays: 90,
+		})
+		if auditErr != nil {
+			logger.ErrorCF("agent", "Failed to initialize audit logger; audit logging disabled",
+				map[string]any{"error": auditErr.Error(), "dir": auditDir})
+		} else {
+			al.auditLogger = auditLogger
+
+			// Log startup event.
+			if err := auditLogger.Log(&audit.Entry{
+				Event:    audit.EventStartup,
+				Decision: audit.DecisionAllow,
+				Details: map[string]any{
+					"audit_dir": auditDir,
+				},
+			}); err != nil {
+				logger.ErrorCF("agent", "Failed to write audit startup entry — audit logging may be non-functional",
+					map[string]any{"error": err.Error()})
+			}
+
+			// Wire audit logger into all agent tool registries.
+			for _, agentID := range registry.ListAgentIDs() {
+				if agent, ok := registry.GetAgent(agentID); ok {
+					agent.Tools.SetAuditLogger(auditLogger)
+				}
+			}
+		}
+	}
+
+	// SEC-05/SEC-07: Build the policy evaluator from the live config.
+	// `cfg.Tools.Exec.AllowedBinaries` is the single source of truth for the
+	// exec allowlist (the same field the UI writes to via
+	// /api/v1/security/exec-allowlist). Constructing with an explicit
+	// SecurityConfig avoids the deny-everything trap of `NewEvaluator(nil)`.
+	//
+	// Default policy derivation:
+	//   - A non-empty allowlist means the operator opted into SEC-05 binary
+	//     restriction — default_policy is "deny" so unlisted binaries are blocked.
+	//   - An empty allowlist means no opt-in — default_policy is "allow" so
+	//     the existing guardCommand() checks remain the only exec restriction.
+	// This preserves backward compatibility for agents that never touched the
+	// allowlist, while honoring fail-closed semantics for agents that did.
+	defaultPolicy := policy.PolicyAllow
+	if len(cfg.Tools.Exec.AllowedBinaries) > 0 {
+		defaultPolicy = policy.PolicyDeny
+	}
+	secCfg := &policy.SecurityConfig{
+		DefaultPolicy: defaultPolicy,
+		Policy: policy.PolicySection{
+			Exec: policy.ExecPolicy{
+				AllowedBinaries: cfg.Tools.Exec.AllowedBinaries,
+				Approval:        cfg.Tools.Exec.Approval,
+			},
+		},
+	}
+	policyEval := policy.NewEvaluator(secCfg)
+
+	// Wrap the evaluator in a PolicyAuditor so every decision is audit-logged
+	// (ADR-002 §W-3). When audit logging is disabled the bridge is nil; the
+	// PolicyAuditor tolerates a nil logger and still enforces — enforcement
+	// must NOT depend on audit logging being enabled.
+	var auditBridgeImpl *auditBridge
+	if al.auditLogger != nil {
+		auditBridgeImpl = newAuditBridge(al.auditLogger)
+	}
+	var policyAuditorLogger policy.AuditLogger
+	if auditBridgeImpl != nil {
+		policyAuditorLogger = auditBridgeImpl
+	}
+	al.policyAuditor = policy.NewPolicyAuditor(policyEval, policyAuditorLogger, "")
+
+	// SEC-01/02/03: Select the best-available sandbox backend. This never
+	// fails: on unsupported kernels SelectBackend returns a FallbackBackend.
+	backend, backendName := sandbox.SelectBackend()
+	al.sandboxBackend = backend
+	logger.InfoCF("agent", "Sandbox backend selected", map[string]any{"backend": backendName})
+
+	// SEC-25: Initialize the prompt-injection guard. NewPromptGuardFromConfig
+	// defaults to "medium" strictness when the field is empty. Construction
+	// is cheap and cannot fail, so we always build it — runTurn checks the
+	// untrusted-tool allowlist before invoking it, so trusted results are
+	// never sanitized even when the guard is non-nil.
+	al.promptGuard = security.NewPromptGuardFromConfig(policy.PromptGuardConfig{
+		Strictness: cfg.Sandbox.PromptInjectionLevel,
+	})
+	logger.InfoCF("agent", "Prompt guard initialized",
+		map[string]any{"strictness": string(al.promptGuard.Strictness())})
+
+	// SEC-28: Start the loopback SSRF proxy for exec child processes when
+	// enabled. On bind failure we log and fall back to degraded mode (child
+	// processes run without HTTP_PROXY env vars — LIM-02) rather than
+	// failing startup, because exec is a core tool and a proxy bind failure
+	// on a shared port should not take the whole agent loop down.
+	if cfg.Tools.Exec.EnableProxy {
+		ssrfChecker := security.NewSSRFChecker(nil)
+		proxy := security.NewExecProxy(ssrfChecker, nil)
+		if err := proxy.Start(); err != nil {
+			logger.ErrorCF("agent", "Failed to start exec SSRF proxy; child processes will run without proxy env vars",
+				map[string]any{"error": err.Error()})
+		} else {
+			al.execProxy = proxy
+			logger.InfoCF("agent", "Exec SSRF proxy started",
+				map[string]any{"addr": proxy.Addr()})
+		}
+	}
+
+	// SEC-26: Initialize rate limiter registry and persistent cost tracker.
+	// The registry always exists so per-agent windows can be created even when
+	// no cap is configured; SetDailyCostCap(0) disables cost-cap enforcement.
+	al.rateLimiter = security.NewRateLimiterRegistry()
+	al.rateLimiter.SetDailyCostCap(cfg.Sandbox.RateLimits.DailyCostCapUSD)
+	costPath := filepath.Join(homePath, "system", "cost.json")
+	al.costTracker = security.NewCostTracker(costPath)
+	al.costTracker.LoadIntoRegistry(al.rateLimiter)
+	logger.InfoCF("agent", "Rate limiter initialized",
+		map[string]any{
+			"daily_cost_cap_usd":              cfg.Sandbox.RateLimits.DailyCostCapUSD,
+			"max_agent_llm_calls_per_hour":    cfg.Sandbox.RateLimits.MaxAgentLLMCallsPerHour,
+			"max_agent_tool_calls_per_minute": cfg.Sandbox.RateLimits.MaxAgentToolCallsPerMinute,
+		})
+
 	// Register shared tools to all agents (now that al is created)
 	registerSharedTools(al, cfg, msgBus, registry, provider)
 
+	// Wave 2: replace the exec tool in each agent's registry with a version
+	// that has the policy auditor and sandbox backend wired in. Registering
+	// the same tool name overwrites the previous entry (see ToolRegistry.Register).
+	al.wireExecToolDeps()
+
 	return al
+}
+
+// AuditLogger returns the audit logger, or nil if audit logging is disabled.
+// Used by gateway handlers that need to log policy changes.
+func (al *AgentLoop) AuditLogger() *audit.Logger {
+	if al == nil {
+		return nil
+	}
+	return al.auditLogger
+}
+
+// ExecProxy returns the SEC-28 SSRF proxy for exec child processes, or nil
+// when the proxy is disabled or failed to bind. Used by gateway handlers that
+// report the proxy status and by tests that exercise the proxy lifecycle.
+func (al *AgentLoop) ExecProxy() *security.ExecProxy {
+	if al == nil {
+		return nil
+	}
+	return al.execProxy
+}
+
+// PromptGuard returns the SEC-25 prompt-injection guard. Always non-nil after
+// NewAgentLoop — even when no config field is set, the factory returns a
+// medium-strictness guard. Used by runTurn and by gateway status handlers.
+func (al *AgentLoop) PromptGuard() *security.PromptGuard {
+	if al == nil {
+		return nil
+	}
+	return al.promptGuard
+}
+
+// RateLimiter returns the SEC-26 rate limiter registry. Always non-nil after
+// NewAgentLoop. Used by runTurn for per-agent limit checks and by gateway
+// handlers that report the current rate limit / cost status.
+func (al *AgentLoop) RateLimiter() *security.RateLimiterRegistry {
+	if al == nil {
+		return nil
+	}
+	return al.rateLimiter
+}
+
+// SandboxBackend returns the active sandbox backend, or nil if sandboxing is
+// disabled. Used by gateway handlers that report sandbox status.
+func (al *AgentLoop) SandboxBackend() sandbox.SandboxBackend {
+	if al == nil {
+		return nil
+	}
+	return al.sandboxBackend
+}
+
+// recordRateLimitDenial writes an audit entry and emits a RateLimit event for
+// a denied rate-limit or cost-cap check (SEC-26). Centralizing this avoids
+// repeating the same audit + emit boilerplate for each of the three checks
+// (LLM calls, tool calls, global cost cap). extraDetails is merged into the
+// audit entry's Details map under a "limit_type" key and caller-supplied
+// fields. Audit failures are logged at warn level and swallowed — a rate-limit
+// denial must still be reported to the caller even when the audit logger is
+// unhealthy.
+func (al *AgentLoop) recordRateLimitDenial(
+	ts *turnState,
+	limitType string,
+	payload RateLimitPayload,
+	extraDetails map[string]any,
+) {
+	if al.auditLogger != nil {
+		details := map[string]any{"limit_type": limitType}
+		for k, v := range extraDetails {
+			details[k] = v
+		}
+		if err := al.auditLogger.Log(&audit.Entry{
+			Event:      audit.EventRateLimit,
+			Decision:   audit.DecisionDeny,
+			AgentID:    ts.agent.ID,
+			Tool:       payload.Tool,
+			PolicyRule: payload.PolicyRule,
+			Details:    details,
+		}); err != nil {
+			logger.WarnCF("agent", "failed to write rate-limit audit entry",
+				map[string]any{"limit_type": limitType, "error": err.Error()})
+		}
+	}
+	al.emitEvent(
+		EventKindRateLimit,
+		ts.eventMeta("runTurn", "turn.rate_limit"),
+		payload,
+	)
+}
+
+// wireExecToolDeps replaces each agent's exec tool with one constructed via
+// NewExecToolWithDeps, injecting the policy auditor (SEC-05) and the sandbox
+// backend (SEC-01/02/03). This runs after NewAgentInstance has created the
+// default exec tool so that all other tool setup (deny patterns, allow paths,
+// timeouts) is preserved — we only add the Wave 2 security deps on top.
+//
+// No-op when the agent has exec disabled or when the registry lookup fails.
+func (al *AgentLoop) wireExecToolDeps() {
+	if al.registry == nil {
+		return
+	}
+	cfg := al.cfg
+	if cfg == nil || !cfg.Tools.IsToolEnabled("exec") {
+		return
+	}
+	allowReadPaths := buildAllowReadPatterns(cfg)
+
+	for _, agentID := range al.registry.ListAgentIDs() {
+		agent, ok := al.registry.GetAgent(agentID)
+		if !ok || agent == nil || agent.Tools == nil {
+			continue
+		}
+
+		// Workspace-scoped sandbox policy: allow read/write/execute under
+		// the agent's workspace. Landlock inherits to children natively on
+		// Linux 5.13+, so no per-child application is actually required
+		// there — the fallback backend still uses this to emit
+		// OMNIPUS_SANDBOX_PATHS for cooperative scripts.
+		policy := sandbox.SandboxPolicy{
+			FilesystemRules: []sandbox.PathRule{
+				{
+					Path:   agent.Workspace,
+					Access: sandbox.AccessRead | sandbox.AccessWrite | sandbox.AccessExecute,
+				},
+			},
+			InheritToChildren: true,
+		}
+
+		deps := tools.ExecToolDeps{
+			SandboxPolicy: policy,
+		}
+		// Both dependency fields use interfaces, so we must nil-guard at
+		// assignment time to avoid typed-nil traps: storing a nil
+		// *policy.PolicyAuditor or nil sandbox.SandboxBackend in an interface
+		// field would create a non-nil interface holding a nil pointer,
+		// defeating downstream `!= nil` checks and causing nil-pointer panics.
+		if al.policyAuditor != nil {
+			deps.PolicyAuditor = al.policyAuditor
+		}
+		if al.sandboxBackend != nil {
+			deps.SandboxBackend = al.sandboxBackend
+		}
+		// SEC-28: Hand the exec proxy to the tool so it can inject
+		// HTTP_PROXY env vars on every child. nil-guarded at assignment
+		// time to avoid the typed-nil-in-interface trap.
+		if al.execProxy != nil {
+			deps.ExecProxy = al.execProxy
+		}
+
+		restrict := cfg.Agents.Defaults.RestrictToWorkspace
+		execTool, err := tools.NewExecToolWithDeps(agent.Workspace, restrict, cfg, deps, allowReadPaths)
+		if err != nil {
+			// Fail closed: if Wave 2 security wiring fails, remove the exec
+			// tool from the registry entirely. The agent will lose exec
+			// capability but cannot run commands without the security layer.
+			logger.ErrorCF("agent", "Failed to wire exec tool deps; removing exec tool (fail closed)",
+				map[string]any{"agent_id": agentID, "error": err.Error()})
+			agent.Tools.Unregister("exec")
+			continue
+		}
+		agent.Tools.Register(execTool)
+	}
 }
 
 // registerSharedTools registers tools that are shared across all agents.
@@ -180,27 +515,27 @@ func registerSharedTools(
 
 		if cfg.Tools.IsToolEnabled("web") {
 			searchTool, err := tools.NewWebSearchTool(tools.WebSearchToolOptions{
-				BraveAPIKeys:          cfg.Tools.Web.Brave.APIKeys.Values(),
+				BraveAPIKeys:          braveKeys(cfg.Tools.Web.Brave.APIKey()),
 				BraveMaxResults:       cfg.Tools.Web.Brave.MaxResults,
 				BraveEnabled:          cfg.Tools.Web.Brave.Enabled,
-				TavilyAPIKeys:         cfg.Tools.Web.Tavily.APIKeys.Values(),
+				TavilyAPIKeys:         tavilyKeys(cfg.Tools.Web.Tavily.APIKey()),
 				TavilyBaseURL:         cfg.Tools.Web.Tavily.BaseURL,
 				TavilyMaxResults:      cfg.Tools.Web.Tavily.MaxResults,
 				TavilyEnabled:         cfg.Tools.Web.Tavily.Enabled,
 				DuckDuckGoMaxResults:  cfg.Tools.Web.DuckDuckGo.MaxResults,
 				DuckDuckGoEnabled:     cfg.Tools.Web.DuckDuckGo.Enabled,
-				PerplexityAPIKeys:     cfg.Tools.Web.Perplexity.APIKeys.Values(),
+				PerplexityAPIKeys:     perplexityKeys(cfg.Tools.Web.Perplexity.APIKey()),
 				PerplexityMaxResults:  cfg.Tools.Web.Perplexity.MaxResults,
 				PerplexityEnabled:     cfg.Tools.Web.Perplexity.Enabled,
 				SearXNGBaseURL:        cfg.Tools.Web.SearXNG.BaseURL,
 				SearXNGMaxResults:     cfg.Tools.Web.SearXNG.MaxResults,
 				SearXNGEnabled:        cfg.Tools.Web.SearXNG.Enabled,
-				GLMSearchAPIKey:       cfg.Tools.Web.GLMSearch.APIKey.String(),
+				GLMSearchAPIKey:       cfg.Tools.Web.GLMSearch.APIKey(),
 				GLMSearchBaseURL:      cfg.Tools.Web.GLMSearch.BaseURL,
 				GLMSearchEngine:       cfg.Tools.Web.GLMSearch.SearchEngine,
 				GLMSearchMaxResults:   cfg.Tools.Web.GLMSearch.MaxResults,
 				GLMSearchEnabled:      cfg.Tools.Web.GLMSearch.Enabled,
-				BaiduSearchAPIKey:     cfg.Tools.Web.BaiduSearch.APIKey.String(),
+				BaiduSearchAPIKey:     cfg.Tools.Web.BaiduSearch.APIKey(),
 				BaiduSearchBaseURL:    cfg.Tools.Web.BaiduSearch.BaseURL,
 				BaiduSearchMaxResults: cfg.Tools.Web.BaiduSearch.MaxResults,
 				BaiduSearchEnabled:    cfg.Tools.Web.BaiduSearch.Enabled,
@@ -272,7 +607,7 @@ func registerSharedTools(
 				ClawHub: skills.ClawHubConfig{
 					Enabled:         clawHubConfig.Enabled,
 					BaseURL:         clawHubConfig.BaseURL,
-					AuthToken:       clawHubConfig.AuthToken.String(),
+					AuthToken:       os.Getenv(clawHubConfig.AuthTokenRef),
 					SearchPath:      clawHubConfig.SearchPath,
 					SkillsPath:      clawHubConfig.SkillsPath,
 					DownloadPath:    clawHubConfig.DownloadPath,
@@ -318,9 +653,9 @@ func registerSharedTools(
 					// Fallback: If no turnState exists in context, create an isolated ad-hoc root turn state
 					// so that the tool can still function outside of an agent loop (e.g. tests, raw invocations).
 					// M2: log a warning when no real turnState is in context — this usually
-				// means spawn was called outside of an agent loop (e.g. tests or raw
-				// invocations). The ad-hoc state is functional but has no session.
-				logger.WarnCF("agent", "Spawn callback using ad-hoc turnState: no parent turnState in context", nil)
+					// means spawn was called outside of an agent loop (e.g. tests or raw
+					// invocations). The ad-hoc state is functional but has no session.
+					logger.WarnCF("agent", "Spawn callback using ad-hoc turnState: no parent turnState in context", nil)
 					parentTS = &turnState{
 						ctx:            ctx,
 						turnID:         "adhoc-root",
@@ -820,6 +1155,45 @@ func (al *AgentLoop) Close() {
 	if al.eventBus != nil {
 		al.eventBus.Close()
 	}
+
+	// SEC-28: Stop the exec SSRF proxy (idle auto-stop may have already
+	// stopped it, but Stop() is idempotent and safe to call either way).
+	if al.execProxy != nil {
+		al.execProxy.Stop()
+	}
+
+	// SEC-26: Persist the accumulated daily cost so the next startup can
+	// restore it via LoadIntoRegistry, preventing double-counting on restarts.
+	// A save failure here means the cap will under-count after the next
+	// restart — worth an Error-level log plus the daily total so operators
+	// can reconcile manually.
+	if al.costTracker != nil && al.rateLimiter != nil {
+		if err := al.costTracker.SaveFromRegistry(al.rateLimiter); err != nil {
+			logger.ErrorCF(
+				"agent",
+				"SEC-26: failed to persist daily cost on shutdown — cap may under-count after restart",
+				map[string]any{
+					"error":          err.Error(),
+					"daily_cost_usd": al.rateLimiter.GetDailyCost(),
+				},
+			)
+		}
+	}
+
+	// SEC-15: Log shutdown event and close audit logger.
+	if al.auditLogger != nil {
+		if err := al.auditLogger.Log(&audit.Entry{
+			Event:    audit.EventShutdown,
+			Decision: "allow",
+		}); err != nil {
+			logger.WarnCF("agent", "Failed to write audit shutdown entry",
+				map[string]any{"error": err.Error()})
+		}
+		if err := al.auditLogger.Close(); err != nil {
+			logger.ErrorCF("agent", "Failed to close audit logger",
+				map[string]any{"error": err.Error()})
+		}
+	}
 }
 
 // MountHook registers an in-process hook on the agent loop.
@@ -1174,6 +1548,17 @@ func (al *AgentLoop) GetConfig() *config.Config {
 	return al.cfg
 }
 
+// SwapConfig atomically replaces the in-memory config with the supplied,
+// fully-initialized *config.Config (credentials resolved, sensitive values
+// registered). Callers are responsible for calling credentials.ResolveBundle
+// and cfg.RegisterSensitiveValues before SwapConfig — this method only does
+// the atomic pointer swap.
+func (al *AgentLoop) SwapConfig(newCfg *config.Config) {
+	al.mu.Lock()
+	al.cfg = newCfg
+	al.mu.Unlock()
+}
+
 // GetTaskStore returns the shared TaskStore (may be nil in tests).
 func GetTaskStore(al *AgentLoop) *taskstore.TaskStore {
 	return al.taskStore
@@ -1227,8 +1612,12 @@ func (al *AgentLoop) ResolveSessionStore(sessionID string) *session.UnifiedStore
 }
 
 // ListAllSessions returns sessions from all agent stores merged and sorted by UpdatedAt descending.
-func (al *AgentLoop) ListAllSessions() ([]*session.UnifiedMeta, error) {
+// The second return value collects per-agent errors so callers can distinguish
+// "no sessions" from "all agents failed". Callers should surface partial errors
+// as warnings rather than treating the entire response as a failure.
+func (al *AgentLoop) ListAllSessions() ([]*session.UnifiedMeta, []error) {
 	var all []*session.UnifiedMeta
+	var errs []error
 	for _, id := range al.GetRegistry().ListAgentIDs() {
 		store := al.GetAgentStore(id)
 		if store == nil {
@@ -1238,6 +1627,7 @@ func (al *AgentLoop) ListAllSessions() ([]*session.UnifiedMeta, error) {
 		if err != nil {
 			logger.WarnCF("agent", "ListAllSessions: could not list sessions for agent",
 				map[string]any{"agent_id": id, "error": err.Error()})
+			errs = append(errs, fmt.Errorf("agent=%s: %w", id, err))
 			continue
 		}
 		all = append(all, sessions...)
@@ -1245,13 +1635,16 @@ func (al *AgentLoop) ListAllSessions() ([]*session.UnifiedMeta, error) {
 	sort.Slice(all, func(i, j int) bool {
 		return all[i].UpdatedAt.After(all[j].UpdatedAt)
 	})
-	return all, nil
+	return all, errs
 }
 
 // processTaskDirect runs the agent loop for a task, dispatching to the given agent.
 // taskChatID identifies the WebSocket chat for event forwarding (defaults to "task:" + sessionKey).
 // Channel is "webchat" for streaming; tool context is "system" so exec/cron tools are permitted.
-func (al *AgentLoop) processTaskDirect(ctx context.Context, agentID, prompt, sessionKey, taskChatID string) (string, error) {
+func (al *AgentLoop) processTaskDirect(
+	ctx context.Context,
+	agentID, prompt, sessionKey, taskChatID string,
+) (string, error) {
 	if err := al.ensureHooksInitialized(ctx); err != nil {
 		return "", fmt.Errorf("processTaskDirect: hooks: %w", err)
 	}
@@ -1262,7 +1655,11 @@ func (al *AgentLoop) processTaskDirect(ctx context.Context, agentID, prompt, ses
 	registry := al.GetRegistry()
 	ag, ok := registry.GetAgent(agentID)
 	if !ok {
-		logger.WarnCF("agent", "processTaskDirect: agent not found, using default", map[string]any{"requested": agentID})
+		logger.WarnCF(
+			"agent",
+			"processTaskDirect: agent not found, using default",
+			map[string]any{"requested": agentID},
+		)
 		ag = registry.GetDefaultAgent()
 	}
 	if ag == nil {
@@ -1319,7 +1716,7 @@ func (al *AgentLoop) SetReloadFunc(fn func() error) {
 // after persisting config changes (agent create/update, token rotate, etc.).
 //
 // Concurrency: the underlying reloadFunc (set in gateway.go) is guarded by
-// an atomic CompareAndSwap that serialises concurrent calls — only one reload
+// an atomic CompareAndSwap that serializes concurrent calls — only one reload
 // can be in flight at a time. A second concurrent call returns an error
 // ("reload already in progress") rather than queuing a second reload.
 func (al *AgentLoop) TriggerReload() error {
@@ -1601,8 +1998,11 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		transcriptSessionID = tsid
 		transcriptStore = al.ResolveSessionStore(tsid)
 		if transcriptStore == nil {
-			logger.WarnCF("agent", "transcript_session_id present but store not found — tool calls will not be recorded",
-				map[string]any{"transcript_session_id": tsid})
+			logger.WarnCF(
+				"agent",
+				"transcript_session_id present but store not found — tool calls will not be recorded",
+				map[string]any{"transcript_session_id": tsid},
+			)
 		}
 	}
 
@@ -1908,7 +2308,7 @@ func (al *AgentLoop) handleReasoning(
 }
 
 func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, error) {
-	// H1: guard against an already-cancelled or timed-out context before doing any work.
+	// H1: guard against an already-canceled or timed-out context before doing any work.
 	if ctx.Err() != nil {
 		return turnResult{}, fmt.Errorf("turn not started: %w", ctx.Err())
 	}
@@ -1932,6 +2332,8 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 	// Inject turnState and AgentLoop into context so tools (e.g. spawn) can retrieve them.
 	turnCtx = withTurnState(turnCtx, ts)
 	turnCtx = WithAgentLoop(turnCtx, al)
+	// SEC-15: Inject agent ID so audit entries carry the agent identity.
+	turnCtx = tools.WithAgentID(turnCtx, ts.agent.ID)
 
 	al.registerActiveTurn(ts)
 	defer al.clearActiveTurn(ts)
@@ -2060,16 +2462,74 @@ turnLoop:
 		if hardCeiling := 2 * ts.agent.MaxIterations; iteration > hardCeiling {
 			logger.WarnCF("agent", "Turn exceeded hard iteration ceiling, breaking unconditionally",
 				map[string]any{
-					"agent_id":    ts.agentID,
-					"turn_id":     ts.turnID,
-					"iteration":   iteration,
-					"max_iter":    ts.agent.MaxIterations,
+					"agent_id":     ts.agentID,
+					"turn_id":      ts.turnID,
+					"iteration":    iteration,
+					"max_iter":     ts.agent.MaxIterations,
 					"hard_ceiling": hardCeiling,
 				})
 			break turnLoop
 		}
 
 		ts.setPhase(TurnPhaseRunning)
+
+		// SEC-26: Per-agent LLM call rate limit check. Runs once per turn
+		// iteration, before the actual LLM call. The system agent is exempt.
+		if al.rateLimiter != nil && cfg.Sandbox.RateLimits.MaxAgentLLMCallsPerHour > 0 &&
+			!security.IsSystemAgent(ts.agent.ID) {
+			window := al.rateLimiter.GetOrCreate(
+				"agent:"+ts.agent.ID+":llm_call",
+				cfg.Sandbox.RateLimits.MaxAgentLLMCallsPerHour,
+				time.Hour,
+				security.ScopeAgent,
+				ts.agent.ID,
+				"llm_call",
+			)
+			if result := window.Allow(); !result.Allowed {
+				al.recordRateLimitDenial(
+					ts,
+					"agent_llm_calls_per_hour",
+					RateLimitPayload{
+						Scope:             string(security.ScopeAgent),
+						Resource:          "llm_call",
+						PolicyRule:        result.PolicyRule,
+						RetryAfterSeconds: result.RetryAfterSeconds,
+						AgentID:           ts.agent.ID,
+						ChatID:            ts.chatID,
+					},
+					map[string]any{"retry_after_seconds": result.RetryAfterSeconds},
+				)
+				turnStatus = TurnEndStatusError
+				return turnResult{}, fmt.Errorf("rate limit: %s (retry after %.0fs)",
+					result.PolicyRule, result.RetryAfterSeconds)
+			}
+		}
+
+		// SEC-26: Global daily cost cap pre-check. Deny if the accumulated cost
+		// for today already meets or exceeds the cap. The system agent is exempt.
+		if al.rateLimiter != nil && cfg.Sandbox.RateLimits.DailyCostCapUSD > 0 &&
+			!security.IsSystemAgent(ts.agent.ID) {
+			if currentCost := al.rateLimiter.GetDailyCost(); currentCost >= cfg.Sandbox.RateLimits.DailyCostCapUSD {
+				capRule := fmt.Sprintf("global daily cost cap exceeded ($%.2f)", cfg.Sandbox.RateLimits.DailyCostCapUSD)
+				al.recordRateLimitDenial(
+					ts,
+					"daily_cost_cap_usd",
+					RateLimitPayload{
+						Scope:      string(security.ScopeGlobal),
+						Resource:   "daily_cost_usd",
+						PolicyRule: capRule,
+						AgentID:    ts.agent.ID,
+						ChatID:     ts.chatID,
+					},
+					map[string]any{
+						"daily_cost_usd": currentCost,
+						"daily_cost_cap": cfg.Sandbox.RateLimits.DailyCostCapUSD,
+					},
+				)
+				turnStatus = TurnEndStatusError
+				return turnResult{}, fmt.Errorf("rate limit: %s", capRule)
+			}
+		}
 
 		if iteration > 1 {
 			if steerMsgs := al.dequeueSteeringMessagesForScope(ts.sessionKey); len(steerMsgs) > 0 {
@@ -2572,7 +3032,7 @@ turnLoop:
 			// C2: check for context cancellation/timeout before reporting a generic
 			// "LLM call failed" error — these are user/system actions, not LLM failures.
 			if errors.Is(err, context.Canceled) {
-				return turnResult{}, fmt.Errorf("turn cancelled")
+				return turnResult{}, fmt.Errorf("turn canceled")
 			}
 			if errors.Is(err, context.DeadlineExceeded) {
 				return turnResult{}, fmt.Errorf("turn timed out")
@@ -2666,6 +3126,33 @@ turnLoop:
 		}
 		logger.DebugCF("agent", "LLM response", llmResponseFields)
 
+		// SEC-26: Record the cost of this completed LLM call in the daily
+		// accumulator. We MUST use RecordSpend (not CheckGlobalCostCap) here:
+		// the call already happened, so the spend must be recorded even if it
+		// pushes the total past the cap — the next turn's pre-check will deny
+		// further calls. CheckGlobalCostCap silently skipped the increment on
+		// denials, which caused the accumulator to stick below the cap and let
+		// every subsequent call sneak through.
+		if al.rateLimiter != nil && response != nil && response.Usage != nil {
+			callCost := estimateLLMCallCost(llmModel, response.Usage)
+			al.rateLimiter.RecordSpend(callCost, ts.agent.ID)
+			// Accumulate turn-level stats so the "done" WS frame can surface
+			// real token counts and cost to the chat UI (issue #12).
+			ts.AddTurnStats(int64(response.Usage.TotalTokens), callCost)
+			if al.costTracker != nil {
+				if saveErr := al.costTracker.SaveFromRegistry(al.rateLimiter); saveErr != nil {
+					logger.ErrorCF("agent", "SEC-26: failed to persist daily cost after LLM call — cap may under-count on restart",
+						map[string]any{
+							"error":          saveErr.Error(),
+							"agent_id":       ts.agent.ID,
+							"call_cost_usd":  callCost,
+							"daily_cost_usd": al.rateLimiter.GetDailyCost(),
+							"model":          llmModel,
+						})
+				}
+			}
+		}
+
 		if len(response.ToolCalls) == 0 || gracefulTerminal {
 			responseContent := response.Content
 			if responseContent == "" && response.ReasoningContent != "" {
@@ -2704,7 +3191,7 @@ turnLoop:
 					},
 				)
 				// I1: also emit the dedicated EventKindEmptyResponseRetry for subscribers
-				// that specifically track empty-response retry behaviour.
+				// that specifically track empty-response retry behavior.
 				al.emitEvent(
 					EventKindEmptyResponseRetry,
 					ts.eventMeta("runTurn", "turn.empty_response_retry"),
@@ -2731,7 +3218,7 @@ turnLoop:
 			// If the inner retry loop set an error, surface it via the outer error path.
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
-					return turnResult{}, fmt.Errorf("turn cancelled")
+					return turnResult{}, fmt.Errorf("turn canceled")
 				}
 				if errors.Is(err, context.DeadlineExceeded) {
 					return turnResult{}, fmt.Errorf("turn timed out")
@@ -3008,6 +3495,62 @@ turnLoop:
 				}
 			}
 
+			// SEC-26: Per-agent tool call rate limit check. The system agent is exempt.
+			if al.rateLimiter != nil && cfg.Sandbox.RateLimits.MaxAgentToolCallsPerMinute > 0 &&
+				!security.IsSystemAgent(ts.agent.ID) {
+				toolWindow := al.rateLimiter.GetOrCreate(
+					"agent:"+ts.agent.ID+":tool_call",
+					cfg.Sandbox.RateLimits.MaxAgentToolCallsPerMinute,
+					time.Minute,
+					security.ScopeAgent,
+					ts.agent.ID,
+					"tool_call",
+				)
+				if toolRLResult := toolWindow.Allow(); !toolRLResult.Allowed {
+					al.recordRateLimitDenial(
+						ts,
+						"agent_tool_calls_per_minute",
+						RateLimitPayload{
+							Scope:             string(security.ScopeAgent),
+							Resource:          "tool_call",
+							PolicyRule:        toolRLResult.PolicyRule,
+							RetryAfterSeconds: toolRLResult.RetryAfterSeconds,
+							AgentID:           ts.agent.ID,
+							ChatID:            ts.chatID,
+							Tool:              toolName,
+						},
+						map[string]any{"retry_after_seconds": toolRLResult.RetryAfterSeconds},
+					)
+					// Soft denial: the tool call is rejected (fail closed — the tool
+					// does not execute) but the denial is surfaced as a tool-result
+					// error rather than aborting the turn, so the LLM can react
+					// (e.g. inform the user, back off). Contrast with the LLM-call
+					// rate limit above, which aborts the turn entirely.
+					errMsg := fmt.Sprintf("Rate limited: %s (retry after %.0fs)",
+						toolRLResult.PolicyRule, toolRLResult.RetryAfterSeconds)
+					deniedMsg := providers.Message{
+						Role:       "tool",
+						Content:    errMsg,
+						ToolCallID: tc.ID,
+					}
+					messages = append(messages, deniedMsg)
+					if !ts.opts.NoHistory {
+						ts.agent.Sessions.AddFullMessage(ts.sessionKey, deniedMsg)
+						ts.recordPersistedMessage(deniedMsg)
+					}
+					allResponsesHandled = false
+					al.emitEvent(
+						EventKindToolExecSkipped,
+						ts.eventMeta("runTurn", "turn.tool.skipped"),
+						ToolExecSkippedPayload{
+							Tool:   toolName,
+							Reason: errMsg,
+						},
+					)
+					continue
+				}
+			}
+
 			toolStart := time.Now()
 			toolResult := ts.agent.Tools.ExecuteWithContext(
 				turnCtx,
@@ -3123,6 +3666,50 @@ turnLoop:
 			}
 
 			contentForLLM := toolResult.ContentForLLM()
+
+			// SEC-25: Sanitize tool results from untrusted sources (web fetch,
+			// web search, browser output, read_file) before they enter the
+			// LLM's context. Trusted tools (exec, spawn, message, task_*,
+			// file writes, etc.) are NEVER sanitized because their output is
+			// either user-authored or produced by a peer agent inside the
+			// same trust boundary.
+			//
+			// Order of operations: prompt guard FIRST, sensitive-data filter
+			// SECOND. Reversing the order would let an injection payload
+			// that mentions a secret pattern be partially redacted, leaving
+			// the injection prefix intact and feeding it to the LLM.
+			if al.promptGuard != nil && isUntrustedToolResult(toolName) {
+				original := contentForLLM
+				contentForLLM = al.promptGuard.Sanitize(contentForLLM, false)
+				// Log every actual mutation to the operator stream AND to the
+				// audit log (when enabled). Mutation is the signal the security
+				// team cares about; logging no-op passes would drown real
+				// events. The operator-stream log is unconditional so that
+				// disabling audit logging does NOT hide prompt-guard rewrites.
+				if contentForLLM != original {
+					details := map[string]any{
+						"action":          "prompt_guard_sanitize",
+						"strictness":      string(al.promptGuard.Strictness()),
+						"original_bytes":  len(original),
+						"sanitized_bytes": len(contentForLLM),
+						"tool":            toolName,
+						"agent_id":        ts.agent.ID,
+					}
+					logger.InfoCF("agent", "prompt guard sanitized tool result", details)
+					if al.auditLogger != nil {
+						if err := al.auditLogger.Log(&audit.Entry{
+							Event:    audit.EventPolicyEval,
+							Decision: audit.DecisionAllow,
+							AgentID:  ts.agent.ID,
+							Tool:     toolName,
+							Details:  details,
+						}); err != nil {
+							logger.WarnCF("agent", "failed to write prompt_guard audit entry",
+								map[string]any{"error": err.Error(), "tool": toolName})
+						}
+					}
+				}
+			}
 
 			// Filter sensitive data (API keys, tokens, secrets) before sending to LLM
 			if al.cfg.Tools.IsFilterSensitiveDataEnabled() {
@@ -4259,4 +4846,90 @@ func extractProvider(registry *AgentRegistry) (providers.LLMProvider, bool) {
 		return nil, false
 	}
 	return defaultAgent.Provider, true
+}
+
+// llmRate holds approximate per-1K-token pricing for a model family.
+type llmRate struct {
+	inputPer1K, outputPer1K float64
+}
+
+// llmRateFallback is used when no prefix in llmRateTable matches. It is
+// deliberately conservative so unknown models over-count rather than silently
+// escape the cost cap.
+var llmRateFallback = llmRate{inputPer1K: 0.003, outputPer1K: 0.015}
+
+// llmRateTable is an ordered prefix lookup — first match wins. Longer/more
+// specific prefixes must appear before shorter ones. Rates are approximations
+// for budgeting only and will not match provider invoices exactly.
+var llmRateTable = []struct {
+	prefix string
+	rate   llmRate
+}{
+	// Anthropic Claude 3.x
+	{"claude-3-5-haiku", llmRate{0.0008, 0.004}},
+	{"claude-3-5-sonnet", llmRate{0.003, 0.015}},
+	{"claude-3-haiku", llmRate{0.00025, 0.00125}},
+	{"claude-3-sonnet", llmRate{0.003, 0.015}},
+	{"claude-3-opus", llmRate{0.015, 0.075}},
+	// Anthropic Claude 4.x
+	{"claude-opus-4", llmRate{0.015, 0.075}},
+	{"claude-sonnet-4", llmRate{0.003, 0.015}},
+	{"claude-haiku-4", llmRate{0.0008, 0.004}},
+	// OpenAI GPT-4 family
+	{"gpt-4o-mini", llmRate{0.00015, 0.0006}},
+	{"gpt-4o", llmRate{0.005, 0.015}},
+	{"gpt-4-turbo", llmRate{0.01, 0.03}},
+	{"gpt-4", llmRate{0.03, 0.06}},
+	{"gpt-3.5-turbo", llmRate{0.0005, 0.0015}},
+	// Google Gemini
+	{"gemini-1.5-flash", llmRate{0.000075, 0.0003}},
+	{"gemini-1.5-pro", llmRate{0.00125, 0.005}},
+	{"gemini-2.0-flash", llmRate{0.0001, 0.0004}},
+	{"gemini-2.5-pro", llmRate{0.00125, 0.01}},
+}
+
+// estimateLLMCallCost returns a conservative cost estimate in USD for a single
+// LLM call given the model name and token usage (SEC-26). Unknown models fall
+// back to llmRateFallback so the cost accumulator never under-counts.
+func estimateLLMCallCost(model string, usage *providers.UsageInfo) float64 {
+	if usage == nil {
+		return 0
+	}
+
+	lowerModel := strings.ToLower(model)
+	rate := llmRateFallback
+	for _, entry := range llmRateTable {
+		if strings.HasPrefix(lowerModel, entry.prefix) {
+			rate = entry.rate
+			break
+		}
+	}
+
+	inputCost := float64(usage.PromptTokens) / 1000.0 * rate.inputPer1K
+	outputCost := float64(usage.CompletionTokens) / 1000.0 * rate.outputPer1K
+	return inputCost + outputCost
+}
+
+// braveKeys returns a []string for use as BraveAPIKeys. Returns nil if the key is empty.
+func braveKeys(key string) []string {
+	if key == "" {
+		return nil
+	}
+	return []string{key}
+}
+
+// tavilyKeys returns a []string for use as TavilyAPIKeys. Returns nil if the key is empty.
+func tavilyKeys(key string) []string {
+	if key == "" {
+		return nil
+	}
+	return []string{key}
+}
+
+// perplexityKeys returns a []string for use as PerplexityAPIKeys. Returns nil if the key is empty.
+func perplexityKeys(key string) []string {
+	if key == "" {
+		return nil
+	}
+	return []string{key}
 }

@@ -34,8 +34,8 @@ type mockSystemTool struct {
 	params      map[string]any
 }
 
-func (m *mockSystemTool) Name() string        { return m.name }
-func (m *mockSystemTool) Description() string { return m.description }
+func (m *mockSystemTool) Name() string               { return m.name }
+func (m *mockSystemTool) Description() string        { return m.description }
 func (m *mockSystemTool) Parameters() map[string]any { return m.params }
 func (m *mockSystemTool) Execute(_ context.Context, _ map[string]any) *tools.ToolResult {
 	return tools.NewToolResult(`{"success":true}`)
@@ -74,9 +74,9 @@ func TestSystemToolErrorContract(t *testing.T) {
 		err := sysagent.CheckRBAC(sysagent.RoleViewer, "system.agent.create")
 		require.Error(t, err, "viewer must be denied create operations")
 
-		var denied *sysagent.ErrPermissionDenied
+		var denied *sysagent.PermissionDeniedError
 		require.ErrorAs(t, err, &denied,
-			"denial must be of type *ErrPermissionDenied for consistent error contract")
+			"denial must be of type *PermissionDeniedError for consistent error contract")
 
 		msg := sysagent.FriendlyDenialMessage(denied)
 		assert.Contains(t, msg, "operator",
@@ -97,9 +97,9 @@ func TestSystemToolErrorContract(t *testing.T) {
 		err := rl.Check("system.agent.create")
 		require.Error(t, err, "31st create call must be rate-limited")
 
-		var rlErr *sysagent.ErrRateLimited
+		var rlErr *sysagent.RateLimitedError
 		require.ErrorAs(t, err, &rlErr,
-			"rate-limit error must be of type *ErrRateLimited")
+			"rate-limit error must be of type *RateLimitedError")
 		assert.Greater(t, rlErr.RetryAfterSeconds, 0.0,
 			"rate-limit error must include retry_after_seconds > 0")
 	})
@@ -156,15 +156,33 @@ func TestRBACEnforcement(t *testing.T) {
 		// Dataset row 3: operator + create → allowed
 		{"operator can create agents", sysagent.RoleOperator, "system.agent.create", false, "operators can create"},
 		// Dataset row 4: operator + delete → denied
-		{"operator cannot delete agents", sysagent.RoleOperator, "system.agent.delete", true, "operators cannot destroy"},
+		{
+			"operator cannot delete agents",
+			sysagent.RoleOperator,
+			"system.agent.delete",
+			true,
+			"operators cannot destroy",
+		},
 		// Dataset row 6: operator + config (security.*) → denied at operator level (admin required for delete)
-		{"operator cannot delete projects", sysagent.RoleOperator, "system.project.delete", true, "operators cannot delete projects"},
+		{
+			"operator cannot delete projects",
+			sysagent.RoleOperator,
+			"system.project.delete",
+			true,
+			"operators cannot delete projects",
+		},
 		// Dataset row 1: admin + delete → allowed
 		{"admin can delete agents", sysagent.RoleAdmin, "system.agent.delete", false, "admins have full access"},
 		// Dataset row 2: admin + config security → allowed
 		{"admin can set config", sysagent.RoleAdmin, "system.config.set", false, "admins can change config"},
 		// Dataset row 10: agent + list → denied
-		{"user agent has no system tool access", sysagent.RoleAgent, "system.agent.list", true, "agents never get system access"},
+		{
+			"user agent has no system tool access",
+			sysagent.RoleAgent,
+			"system.agent.list",
+			true,
+			"agents never get system access",
+		},
 	}
 
 	for _, tc := range tests {
@@ -174,9 +192,9 @@ func TestRBACEnforcement(t *testing.T) {
 				require.Error(t, err,
 					"%s (%s) should be denied for %s — %s", tc.tool, tc.role, tc.name, tc.description)
 
-				var denied *sysagent.ErrPermissionDenied
+				var denied *sysagent.PermissionDeniedError
 				assert.ErrorAs(t, err, &denied,
-					"denial must be *ErrPermissionDenied, not a generic error")
+					"denial must be *PermissionDeniedError, not a generic error")
 			} else {
 				assert.NoError(t, err,
 					"%s (%s) should be allowed for %s — %s", tc.tool, tc.role, tc.name, tc.description)
@@ -418,9 +436,9 @@ func TestSystemToolExclusivity(t *testing.T) {
 			require.Error(t, err,
 				"user agent must be denied %s — system tools exclusive to omnipus-system", tool)
 
-			var denied *sysagent.ErrPermissionDenied
+			var denied *sysagent.PermissionDeniedError
 			assert.ErrorAs(t, err, &denied,
-				"rejection must use *ErrPermissionDenied for consistent error format")
+				"rejection must use *PermissionDeniedError for consistent error format")
 		}
 	})
 }
@@ -564,9 +582,9 @@ func TestSystemRateLimiter_CreateCategory(t *testing.T) {
 	err := rl.Check("system.agent.create")
 	require.Error(t, err, "31st create call must be RATE_LIMITED")
 
-	var rlErr *sysagent.ErrRateLimited
+	var rlErr *sysagent.RateLimitedError
 	require.ErrorAs(t, err, &rlErr,
-		"rate limit error must be *ErrRateLimited")
+		"rate limit error must be *RateLimitedError")
 	assert.Greater(t, rlErr.RetryAfterSeconds, 0.0,
 		"RATE_LIMITED must include retry_after_seconds")
 }
@@ -741,7 +759,7 @@ func TestFriendlyDenialMessage(t *testing.T) {
 		{"system.agent.delete", sysagent.RoleOperator, sysagent.RoleAdmin},
 	}
 	for _, tc := range tests {
-		err := &sysagent.ErrPermissionDenied{Tool: tc.tool, Caller: tc.caller, Required: tc.required}
+		err := &sysagent.PermissionDeniedError{Tool: tc.tool, Caller: tc.caller, Required: tc.required}
 		msg := sysagent.FriendlyDenialMessage(err)
 
 		assert.Contains(t, msg, string(tc.required),

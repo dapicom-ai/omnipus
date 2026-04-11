@@ -17,6 +17,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/identity"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/media"
@@ -44,7 +45,11 @@ type DiscordChannel struct {
 	botUserID  string                   // stored for mention checking
 }
 
-func NewDiscordChannel(cfg config.DiscordConfig, bus *bus.MessageBus) (*DiscordChannel, error) {
+func NewDiscordChannel(
+	cfg config.DiscordConfig,
+	secrets credentials.SecretBundle,
+	bus *bus.MessageBus,
+) (*DiscordChannel, error) {
 	discordgo.Logger = logger.NewLogger("discord").
 		WithLevels(map[int]logger.LogLevel{
 			discordgo.LogError:         logger.ERROR,
@@ -53,7 +58,11 @@ func NewDiscordChannel(cfg config.DiscordConfig, bus *bus.MessageBus) (*DiscordC
 			discordgo.LogDebug:         logger.DEBUG,
 		}).Log
 
-	session, err := discordgo.New("Bot " + cfg.Token.String())
+	token := secrets.GetString(cfg.TokenRef)
+	if token == "" {
+		return nil, fmt.Errorf("discord: token not resolved (token_ref=%q): check credential store", cfg.TokenRef)
+	}
+	session, err := discordgo.New("Bot " + token)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create discord session: %w", err)
 	}

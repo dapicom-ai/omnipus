@@ -44,20 +44,14 @@ func (c *webchatChannel) markStreamed(chatID string) {
 	c.mu.Unlock()
 }
 
-func (c *webchatChannel) clearStreamed(chatID string) {
-	c.mu.Lock()
-	delete(c.streamed, chatID)
-	c.mu.Unlock()
-}
-
 func (c *webchatChannel) Name() string { return "webchat" }
 
-func (c *webchatChannel) Start(_ context.Context) error          { return nil }
-func (c *webchatChannel) Stop(_ context.Context) error           { return nil }
-func (c *webchatChannel) IsRunning() bool                        { return true }
-func (c *webchatChannel) IsAllowed(_ string) bool                { return true }
-func (c *webchatChannel) IsAllowedSender(_ bus.SenderInfo) bool  { return true }
-func (c *webchatChannel) ReasoningChannelID() string             { return "" }
+func (c *webchatChannel) Start(_ context.Context) error         { return nil }
+func (c *webchatChannel) Stop(_ context.Context) error          { return nil }
+func (c *webchatChannel) IsRunning() bool                       { return true }
+func (c *webchatChannel) IsAllowed(_ string) bool               { return true }
+func (c *webchatChannel) IsAllowedSender(_ bus.SenderInfo) bool { return true }
+func (c *webchatChannel) ReasoningChannelID() string            { return "" }
 
 // Send delivers an outbound message to the WebSocket client.
 // If the response was already delivered via streaming (wsStreamer), this is a no-op.

@@ -24,7 +24,7 @@ docker compose -f docker/docker-compose.yml --profile gateway up -d
 ```
 
 > [!TIP]
-> **Docker 用户**: 默认情况下, Gateway 监听 `127.0.0.1`，该端口不会暴露到容器外。如果需要通过端口映射访问健康检查接口，请在环境变量中设置 `PICOCLAW_GATEWAY_HOST=0.0.0.0` 或修改 `config.json`。
+> **Docker 用户**: 默认情况下, Gateway 监听 `127.0.0.1`，该端口不会暴露到容器外。如果需要通过端口映射访问健康检查接口，请在环境变量中设置 `OMNIPUS_GATEWAY_HOST=0.0.0.0` 或修改 `config.json`。
 
 ```bash
 # 5. 查看日志

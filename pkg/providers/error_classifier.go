@@ -96,7 +96,7 @@ var (
 		substr("prompt is too long"),
 		substr("request too large"),
 		// Vendor-specific patterns matching OpenClaw production classification.
-		substr("invalidparameter"),            // Azure/Qwen: total tokens exceed max
+		substr("invalidparameter"),                      // Azure/Qwen: total tokens exceed max
 		substr("total tokens of image and text exceed"), // Azure multi-modal context limit
 	}
 

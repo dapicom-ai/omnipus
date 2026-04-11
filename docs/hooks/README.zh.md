@@ -53,7 +53,7 @@ HookManager 的排序规则是：
 
 1. 打开 `hooks.enabled`
 2. 把下面文档里的 Python 示例保存到本地文件，例如 `/tmp/review_gate.py`
-3. 给它配置 `PICOCLAW_HOOK_LOG_FILE`
+3. 给它配置 `OMNIPUS_HOOK_LOG_FILE`
 4. 重启 gateway
 5. 用 `tail -f` 观察日志文件
 
@@ -82,7 +82,7 @@ HookManager 的排序规则是：
           "approve_tool"
         ],
         "env": {
-          "PICOCLAW_HOOK_LOG_FILE": "/tmp/omnipus-hook-review-gate.log"
+          "OMNIPUS_HOOK_LOG_FILE": "/tmp/omnipus-hook-review-gate.log"
         }
       }
     }
@@ -384,8 +384,8 @@ import sys
 from datetime import datetime, timezone
 from typing import Any
 
-LOG_EVENTS = os.getenv("PICOCLAW_HOOK_LOG_EVENTS", "1").lower() not in {"0", "false", "no"}
-LOG_FILE = os.getenv("PICOCLAW_HOOK_LOG_FILE", "").strip()
+LOG_EVENTS = os.getenv("OMNIPUS_HOOK_LOG_EVENTS", "1").lower() not in {"0", "false", "no"}
+LOG_FILE = os.getenv("OMNIPUS_HOOK_LOG_FILE", "").strip()
 
 
 def append_log(entry: dict[str, Any]) -> None:
@@ -552,7 +552,7 @@ if __name__ == "__main__":
           "approve_tool"
         ],
         "env": {
-          "PICOCLAW_HOOK_LOG_FILE": "/tmp/omnipus-hook-review-gate.log"
+          "OMNIPUS_HOOK_LOG_FILE": "/tmp/omnipus-hook-review-gate.log"
         }
       }
     }
@@ -562,12 +562,12 @@ if __name__ == "__main__":
 
 ### 环境变量
 
-- `PICOCLAW_HOOK_LOG_EVENTS`
+- `OMNIPUS_HOOK_LOG_EVENTS`
   是否把 `hook.event` 写到 `stderr`，默认开启
-- `PICOCLAW_HOOK_LOG_FILE`
+- `OMNIPUS_HOOK_LOG_FILE`
   外部日志文件路径。设置后，脚本会把收到的 hook 请求、notification 和返回结果按 JSON Lines 追加到该文件
 
-注意：`PICOCLAW_HOOK_LOG_FILE` 没有默认值。不设置时，脚本不会自动落盘日志。
+注意：`OMNIPUS_HOOK_LOG_FILE` 没有默认值。不设置时，脚本不会自动落盘日志。
 
 ### 如何确认它收到了 hook
 
@@ -575,7 +575,7 @@ if __name__ == "__main__":
 
 - gateway 日志
   用来观察宿主是否成功启动了外部进程，以及脚本写到 `stderr` 的事件摘要
-- `PICOCLAW_HOOK_LOG_FILE`
+- `OMNIPUS_HOOK_LOG_FILE`
   用来观察脚本实际收到了什么请求、返回了什么响应
 
 典型判断方式：

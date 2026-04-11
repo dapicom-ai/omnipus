@@ -12,6 +12,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/identity"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
@@ -36,14 +37,25 @@ type WeixinChannel struct {
 }
 
 func init() {
-	channels.RegisterFactory("weixin", func(cfg *config.Config, bus *bus.MessageBus) (channels.Channel, error) {
-		return NewWeixinChannel(cfg.Channels.Weixin, bus)
-	})
+	channels.RegisterFactory(
+		"weixin",
+		func(cfg *config.Config, secrets credentials.SecretBundle, bus *bus.MessageBus) (channels.Channel, error) {
+			return NewWeixinChannel(cfg.Channels.Weixin, secrets, bus)
+		},
+	)
 }
 
 // NewWeixinChannel creates a new WeixinChannel from config.
-func NewWeixinChannel(cfg config.WeixinConfig, messageBus *bus.MessageBus) (*WeixinChannel, error) {
-	api, err := NewApiClient(cfg.BaseURL, cfg.Token.String(), cfg.Proxy)
+func NewWeixinChannel(
+	cfg config.WeixinConfig,
+	secrets credentials.SecretBundle,
+	messageBus *bus.MessageBus,
+) (*WeixinChannel, error) {
+	token := secrets.GetString(cfg.TokenRef)
+	if token == "" {
+		return nil, fmt.Errorf("weixin: token not resolved (token_ref=%q): check credential store", cfg.TokenRef)
+	}
+	api, err := NewApiClient(cfg.BaseURL, token, cfg.Proxy)
 	if err != nil {
 		return nil, fmt.Errorf("weixin: failed to create API client: %w", err)
 	}

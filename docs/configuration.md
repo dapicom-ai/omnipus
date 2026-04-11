@@ -12,23 +12,23 @@ You can override default paths using environment variables. This is useful for p
 
 | Variable          | Description                                                                                                                             | Default Path              |
 |-------------------|-----------------------------------------------------------------------------------------------------------------------------------------|---------------------------|
-| `PICOCLAW_CONFIG` | Overrides the path to the configuration file. This directly tells omnipus which `config.json` to load, ignoring all other locations. | `~/.omnipus/config.json` |
-| `PICOCLAW_HOME`   | Overrides the root directory for omnipus data. This changes the default location of the `workspace` and other data directories.          | `~/.omnipus`             |
+| `OMNIPUS_CONFIG` | Overrides the path to the configuration file. This directly tells omnipus which `config.json` to load, ignoring all other locations. | `~/.omnipus/config.json` |
+| `OMNIPUS_HOME`   | Overrides the root directory for omnipus data. This changes the default location of the `workspace` and other data directories.          | `~/.omnipus`             |
 
 **Examples:**
 
 ```bash
 # Run omnipus using a specific config file
 # The workspace path will be read from within that config file
-PICOCLAW_CONFIG=/etc/omnipus/production.json omnipus gateway
+OMNIPUS_CONFIG=/etc/omnipus/production.json omnipus gateway
 
 # Run omnipus with all its data stored in /opt/omnipus
 # Config will be loaded from the default ~/.omnipus/config.json
 # Workspace will be created at /opt/omnipus/workspace
-PICOCLAW_HOME=/opt/omnipus omnipus agent
+OMNIPUS_HOME=/opt/omnipus omnipus agent
 
 # Use both for a fully customized setup
-PICOCLAW_HOME=/srv/omnipus PICOCLAW_CONFIG=/srv/omnipus/main.json omnipus gateway
+OMNIPUS_HOME=/srv/omnipus OMNIPUS_CONFIG=/srv/omnipus/main.json omnipus gateway
 ```
 
 ### Gateway Log Level
@@ -45,7 +45,7 @@ PICOCLAW_HOME=/srv/omnipus PICOCLAW_CONFIG=/srv/omnipus/main.json omnipus gatewa
 
 When omitted, the default is `fatal`. Supported values: `debug`, `info`, `warn`, `error`, `fatal`.
 
-You can also override this with the environment variable `PICOCLAW_LOG_LEVEL`.
+You can also override this with the environment variable `OMNIPUS_LOG_LEVEL`.
 
 ### Workspace Layout
 
@@ -78,7 +78,7 @@ By default, skills are loaded from:
 For advanced/test setups, you can override the builtin skills root with:
 
 ```bash
-export PICOCLAW_BUILTIN_SKILLS=/path/to/skills
+export OMNIPUS_BUILTIN_SKILLS=/path/to/skills
 ```
 
 ### Using Skills From Chat Channels
@@ -344,7 +344,7 @@ If you need the agent to access paths outside the workspace:
 **Method 2: Environment variable**
 
 ```bash
-export PICOCLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE=false
+export OMNIPUS_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE=false
 ```
 
 > ⚠️ **Warning**: Disabling this restriction allows the agent to access any path on your system. Use with caution in controlled environments only.
@@ -437,8 +437,8 @@ The subagent has access to tools (message, web_search, etc.) and can communicate
 
 **Environment variables:**
 
-* `PICOCLAW_HEARTBEAT_ENABLED=false` to disable
-* `PICOCLAW_HEARTBEAT_INTERVAL=60` to change interval
+* `OMNIPUS_HEARTBEAT_ENABLED=false` to disable
+* `OMNIPUS_HEARTBEAT_INTERVAL=60` to change interval
 
 ### Providers
 

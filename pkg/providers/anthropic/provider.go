@@ -278,13 +278,13 @@ func applyThinkingConfig(params *anthropic.MessageNewParams, level string) {
 	if budget >= params.MaxTokens {
 		logger.WarnCF("anthropic", "budget_tokens clamped to max_tokens-1", map[string]any{
 			"budget_tokens": budget,
-			"clamped_to":   params.MaxTokens - 1,
+			"clamped_to":    params.MaxTokens - 1,
 		})
 		budget = params.MaxTokens - 1
 	} else if budget > params.MaxTokens*80/100 {
 		logger.WarnCF("anthropic", "thinking budget exceeds 80% of max_tokens, output may be truncated", map[string]any{
 			"budget_tokens": budget,
-			"max_tokens":   params.MaxTokens,
+			"max_tokens":    params.MaxTokens,
 		})
 	}
 	params.Thinking = anthropic.ThinkingConfigParamOfEnabled(budget)

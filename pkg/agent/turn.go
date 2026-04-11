@@ -104,6 +104,11 @@ type turnState struct {
 	lastFinishReason string               // Last LLM finish_reason
 	lastUsage        *providers.UsageInfo // Last LLM usage info
 
+	// Accumulated turn-level stats across all LLM iterations in this turn.
+	// Used to populate the "done" WS frame for the session UI (issue #12).
+	turnTokens  int64
+	turnCostUSD float64
+
 	// Back-reference to the owning AgentLoop (set for SubTurns only, used for hard abort cascade)
 	al *AgentLoop
 
@@ -284,12 +289,26 @@ func (ts *turnState) setLastStreamer(s bus.Streamer) {
 	ts.lastStreamer = s
 }
 
+// streamerStatsSetter is an optional interface a Streamer may implement to
+// receive turn-end stats (tokens, cost, duration) before Finalize is called.
+// The ws streamer uses this to populate the "done" frame so the chat UI shows
+// real token counts and cost instead of zeros (issue #12).
+type streamerStatsSetter interface {
+	SetTurnStats(tokens int64, costUSD float64, duration time.Duration)
+}
+
 func (ts *turnState) finalizeStreamer(ctx context.Context) {
 	ts.mu.Lock()
 	s := ts.lastStreamer
+	tokens := ts.turnTokens
+	cost := ts.turnCostUSD
+	duration := time.Since(ts.startedAt)
 	ts.lastStreamer = nil
 	ts.mu.Unlock()
 	if s != nil {
+		if setter, ok := s.(streamerStatsSetter); ok {
+			setter.SetTurnStats(tokens, cost, duration)
+		}
 		if err := s.Finalize(ctx, ""); err != nil {
 			logger.WarnCF("agent", "Turn-end streaming finalize error", map[string]any{"error": err.Error()})
 		}
@@ -539,6 +558,23 @@ func (ts *turnState) SetLastUsage(usage *providers.UsageInfo) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 	ts.lastUsage = usage
+}
+
+// AddTurnStats accumulates per-iteration token counts and cost so the
+// turn-end "done" frame can surface the full cost of the turn to the UI.
+// Safe to call multiple times per turn (once per LLM iteration).
+func (ts *turnState) AddTurnStats(tokens int64, costUSD float64) {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	ts.turnTokens += tokens
+	ts.turnCostUSD += costUSD
+}
+
+// GetTurnStats returns the accumulated turn stats.
+func (ts *turnState) GetTurnStats() (tokens int64, costUSD float64) {
+	ts.mu.RLock()
+	defer ts.mu.RUnlock()
+	return ts.turnTokens, ts.turnCostUSD
 }
 
 // Context helper functions for SubTurn

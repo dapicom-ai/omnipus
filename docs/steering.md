@@ -54,7 +54,7 @@ In `config.json`, under `agents.defaults`:
 | `"one-at-a-time"` | **(default)** Dequeues only one message per polling cycle. If there are 3 messages in the queue, they are processed one at a time across 3 successive iterations. |
 | `"all"` | Drains the entire queue in a single poll. All pending messages are injected into the context together. |
 
-The environment variable `PICOCLAW_AGENTS_DEFAULTS_STEERING_MODE` can be used as an alternative.
+The environment variable `OMNIPUS_AGENTS_DEFAULTS_STEERING_MODE` can be used as an alternative.
 
 ## Go API
 

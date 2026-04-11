@@ -86,17 +86,17 @@ omnipus auth wecom --timeout 10m
 
 ### 环境变量
 
-所有字段均可通过 `PICOCLAW_CHANNELS_WECOM_` 前缀的环境变量覆盖：
+所有字段均可通过 `OMNIPUS_CHANNELS_WECOM_` 前缀的环境变量覆盖：
 
 | 环境变量 | 对应字段 |
 | -------- | -------- |
-| `PICOCLAW_CHANNELS_WECOM_ENABLED` | `enabled` |
-| `PICOCLAW_CHANNELS_WECOM_BOT_ID` | `bot_id` |
-| `PICOCLAW_CHANNELS_WECOM_SECRET` | `secret` |
-| `PICOCLAW_CHANNELS_WECOM_WEBSOCKET_URL` | `websocket_url` |
-| `PICOCLAW_CHANNELS_WECOM_SEND_THINKING_MESSAGE` | `send_thinking_message` |
-| `PICOCLAW_CHANNELS_WECOM_ALLOW_FROM` | `allow_from` |
-| `PICOCLAW_CHANNELS_WECOM_REASONING_CHANNEL_ID` | `reasoning_channel_id` |
+| `OMNIPUS_CHANNELS_WECOM_ENABLED` | `enabled` |
+| `OMNIPUS_CHANNELS_WECOM_BOT_ID` | `bot_id` |
+| `OMNIPUS_CHANNELS_WECOM_SECRET` | `secret` |
+| `OMNIPUS_CHANNELS_WECOM_WEBSOCKET_URL` | `websocket_url` |
+| `OMNIPUS_CHANNELS_WECOM_SEND_THINKING_MESSAGE` | `send_thinking_message` |
+| `OMNIPUS_CHANNELS_WECOM_ALLOW_FROM` | `allow_from` |
+| `OMNIPUS_CHANNELS_WECOM_REASONING_CHANNEL_ID` | `reasoning_channel_id` |
 
 ---
 

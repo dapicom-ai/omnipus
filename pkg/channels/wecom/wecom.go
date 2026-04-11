@@ -16,6 +16,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/identity"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
@@ -35,6 +36,7 @@ const (
 type WeComChannel struct {
 	*channels.BaseChannel
 	config config.WeComConfig
+	secret string
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -108,9 +110,17 @@ func (s *recentMessageSet) Mark(id string) bool {
 	return true
 }
 
-func NewChannel(cfg config.WeComConfig, messageBus *bus.MessageBus) (*WeComChannel, error) {
-	if cfg.BotID == "" || cfg.Secret.String() == "" {
-		return nil, fmt.Errorf("wecom bot_id and secret are required")
+func NewChannel(
+	cfg config.WeComConfig,
+	secrets credentials.SecretBundle,
+	messageBus *bus.MessageBus,
+) (*WeComChannel, error) {
+	secret := secrets.GetString(cfg.SecretRef)
+	if cfg.BotID == "" || secret == "" {
+		return nil, fmt.Errorf(
+			"wecom: bot_id and secret are required (secret_ref=%q): check credential store",
+			cfg.SecretRef,
+		)
 	}
 	if cfg.WebSocketURL == "" {
 		cfg.WebSocketURL = wecomDefaultWebSocketURL
@@ -127,6 +137,7 @@ func NewChannel(cfg config.WeComConfig, messageBus *bus.MessageBus) (*WeComChann
 	ch := &WeComChannel{
 		BaseChannel: base,
 		config:      cfg,
+		secret:      secret,
 		pending:     make(map[string]chan wecomEnvelope),
 		turns:       make(map[string][]wecomTurn),
 		recent:      newRecentMessageSet(wecomRecentMessageMax),
@@ -356,7 +367,7 @@ func (c *WeComChannel) runConnection() error {
 		Headers: wecomHeaders{ReqID: randomID(10)},
 		Body: map[string]string{
 			"bot_id": c.config.BotID,
-			"secret": c.config.Secret.String(),
+			"secret": c.secret,
 		},
 	}, wecomCommandTimeout); writeErr != nil {
 		return writeErr

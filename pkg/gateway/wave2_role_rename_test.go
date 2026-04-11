@@ -3,7 +3,7 @@
 // Wave 2 role-type rename tests.
 //
 // Verifies that:
-//   - config.UserRole serialises/deserialises correctly as JSON strings "admin" / "user"
+//   - config.UserRole serializes/deserialises correctly as JSON strings "admin" / "user"
 //   - config.UserRole.UnmarshalJSON rejects unknown role strings
 //   - MapUserRoleToPrincipal maps admin → "admin", user → "user", unknown → "user"
 //

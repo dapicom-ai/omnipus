@@ -368,7 +368,11 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 	if info, statErr := file.Stat(); statErr == nil {
 		totalSize = info.Size()
 	} else {
-		logger.WarnCF("filesystem", "could not stat file for size", map[string]any{"path": path, "error": statErr.Error()})
+		logger.WarnCF(
+			"filesystem",
+			"could not stat file for size",
+			map[string]any{"path": path, "error": statErr.Error()},
+		)
 	}
 
 	// sniff the first 512 bytes to detect binary content before loading
@@ -780,7 +784,11 @@ func (r *sandboxFs) WriteFile(path string, data []byte) error {
 		// Sync directory to ensure rename is durable
 		if dirFile, err := root.Open("."); err == nil {
 			if syncErr := dirFile.Sync(); syncErr != nil {
-				logger.WarnCF("filesystem", "directory sync failed after atomic write", map[string]any{"error": syncErr.Error()})
+				logger.WarnCF(
+					"filesystem",
+					"directory sync failed after atomic write",
+					map[string]any{"error": syncErr.Error()},
+				)
 			}
 			dirFile.Close()
 		}

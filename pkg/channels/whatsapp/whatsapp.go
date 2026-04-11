@@ -165,7 +165,7 @@ func (c *WhatsAppChannel) listen() {
 			_, message, err := conn.ReadMessage()
 			if err != nil {
 				if c.ctx.Err() != nil {
-					// Context cancelled — exit cleanly.
+					// Context canceled — exit cleanly.
 					return
 				}
 				logger.ErrorCF("whatsapp", "WhatsApp read error — attempting reconnect", map[string]any{

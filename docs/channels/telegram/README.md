@@ -36,7 +36,7 @@ The Telegram channel uses long polling via the Telegram Bot API for bot-based co
 
 ## Built-in Commands
 
-Telegram auto-registers PicoClaw's top-level bot commands at startup, including `/start`, `/help`, `/show`, `/list`, and `/use`.
+Telegram auto-registers Omnipus's top-level bot commands at startup, including `/start`, `/help`, `/show`, `/list`, and `/use`.
 
 Skill-related commands:
 

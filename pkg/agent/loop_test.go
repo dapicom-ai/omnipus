@@ -17,6 +17,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/media"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/routing"
@@ -53,7 +54,7 @@ func newStartedTestChannelManager(
 ) *channels.Manager {
 	t.Helper()
 
-	cm, err := channels.NewManager(&config.Config{}, msgBus, store)
+	cm, err := channels.NewManager(&config.Config{}, credentials.SecretBundle{}, msgBus, store)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
@@ -1507,13 +1508,13 @@ func TestProcessMessage_SwitchModelShowModelConsistency(t *testing.T) {
 				ModelName: "local",
 				Model:     "openai/local-model",
 				APIBase:   "https://local.example.invalid/v1",
-				APIKeys:   config.SimpleSecureStrings("test-key"),
+				APIKeyRef: "LOOP_TEST_LOCAL_KEY",
 			},
 			{
 				ModelName: "deepseek",
 				Model:     "openrouter/deepseek/deepseek-v3.2",
 				APIBase:   "https://openrouter.ai/api/v1",
-				APIKeys:   config.SimpleSecureStrings("test-key"),
+				APIKeyRef: "LOOP_TEST_DEEPSEEK_KEY",
 			},
 		},
 	}
@@ -1578,7 +1579,7 @@ func TestProcessMessage_SwitchModelRejectsUnknownAlias(t *testing.T) {
 				ModelName: "local",
 				Model:     "openai/local-model",
 				APIBase:   "https://local.example.invalid/v1",
-				APIKeys:   config.SimpleSecureStrings("test-key"),
+				APIKeyRef: "LOOP_TEST_LOCAL_KEY_2",
 			},
 		},
 	}
@@ -1622,6 +1623,11 @@ func TestProcessMessage_SwitchModelRejectsUnknownAlias(t *testing.T) {
 }
 
 func TestProcessMessage_SwitchModelRoutesSubsequentRequestsToSelectedProvider(t *testing.T) {
+	const localKeyRef = "LOOP_TEST_SWITCH_LOCAL_KEY"
+	const remoteKeyRef = "LOOP_TEST_SWITCH_REMOTE_KEY"
+	t.Setenv(localKeyRef, "local-key")
+	t.Setenv(remoteKeyRef, "remote-key")
+
 	tmpDir, err := os.MkdirTemp("", "agent-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -1653,13 +1659,13 @@ func TestProcessMessage_SwitchModelRoutesSubsequentRequestsToSelectedProvider(t 
 				ModelName: "local",
 				Model:     "openai/Qwen3.5-35B-A3B",
 				APIBase:   localServer.URL,
-				APIKeys:   config.SimpleSecureStrings("local-key"),
+				APIKeyRef: localKeyRef,
 			},
 			{
 				ModelName: "deepseek",
 				Model:     "openrouter/deepseek/deepseek-v3.2",
 				APIBase:   remoteServer.URL,
-				APIKeys:   config.SimpleSecureStrings("remote-key"),
+				APIKeyRef: remoteKeyRef,
 			},
 		},
 	}
@@ -1738,6 +1744,11 @@ func TestProcessMessage_SwitchModelRoutesSubsequentRequestsToSelectedProvider(t 
 }
 
 func TestProcessMessage_ModelRoutingUsesLightProvider(t *testing.T) {
+	const heavyKeyRef = "LOOP_TEST_ROUTING_HEAVY_KEY"
+	const lightKeyRef = "LOOP_TEST_ROUTING_LIGHT_KEY"
+	t.Setenv(heavyKeyRef, "heavy-key")
+	t.Setenv(lightKeyRef, "light-key")
+
 	tmpDir, err := os.MkdirTemp("", "agent-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
@@ -1783,13 +1794,13 @@ func TestProcessMessage_ModelRoutingUsesLightProvider(t *testing.T) {
 				ModelName: "gemini-main",
 				Model:     "gemini/gemini-2.5-flash",
 				APIBase:   heavyServer.URL,
-				APIKeys:   config.SimpleSecureStrings("heavy-key"),
+				APIKeyRef: heavyKeyRef,
 			},
 			{
 				ModelName: "qwen-light",
 				Model:     "ollama/qwen2.5:0.5b",
 				APIBase:   lightServer.URL,
-				APIKeys:   config.SimpleSecureStrings("light-key"),
+				APIKeyRef: lightKeyRef,
 			},
 		},
 	}
@@ -2176,7 +2187,7 @@ func TestTargetReasoningChannelID_AllChannels(t *testing.T) {
 	}
 
 	al := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{})
-	chManager, err := channels.NewManager(&config.Config{}, bus.NewMessageBus(), nil)
+	chManager, err := channels.NewManager(&config.Config{}, credentials.SecretBundle{}, bus.NewMessageBus(), nil)
 	if err != nil {
 		t.Fatalf("Failed to create channel manager: %v", err)
 	}
@@ -2416,7 +2427,7 @@ func TestProcessMessage_PublishesReasoningContentToReasoningChannel(t *testing.T
 	}
 	al := NewAgentLoop(cfg, msgBus, provider)
 
-	chManager, err := channels.NewManager(&config.Config{}, msgBus, nil)
+	chManager, err := channels.NewManager(&config.Config{}, credentials.SecretBundle{}, msgBus, nil)
 	if err != nil {
 		t.Fatalf("Failed to create channel manager: %v", err)
 	}

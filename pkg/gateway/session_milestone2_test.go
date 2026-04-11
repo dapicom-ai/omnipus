@@ -214,7 +214,7 @@ func TestHandleSessions_RenamePersistence(t *testing.T) {
 		"GET after rename must return 200; body=%s", wGet.Body.String())
 
 	var detail struct {
-		Session session.UnifiedMeta      `json:"session"`
+		Session  session.UnifiedMeta       `json:"session"`
 		Messages []session.TranscriptEntry `json:"messages"`
 	}
 	require.NoError(t, json.Unmarshal(wGet.Body.Bytes(), &detail))

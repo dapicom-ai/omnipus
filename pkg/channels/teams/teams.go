@@ -17,6 +17,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/identity"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
@@ -48,11 +49,12 @@ const (
 // TeamsChannel implements the channels.Channel interface for Microsoft Teams.
 type TeamsChannel struct {
 	*channels.BaseChannel
-	config  config.TeamsConfig
-	adapter core.Adapter
-	ctx     context.Context
-	cancel  context.CancelFunc
-	stopOnce sync.Once
+	config     config.TeamsConfig
+	appPassword string // plaintext password, not stored after construction
+	adapter    core.Adapter
+	ctx        context.Context
+	cancel     context.CancelFunc
+	stopOnce   sync.Once
 
 	// activeGoroutines tracks in-flight processActivity goroutines for graceful shutdown.
 	activeGoroutines sync.WaitGroup
@@ -73,8 +75,9 @@ type TeamsChannel struct {
 // NewTeamsChannel creates a new Teams channel with the given configuration.
 // Returns nil if AppID or AppPassword is empty. MaxMessageLength defaults to 4000
 // if not specified or set to a non-positive value.
-func NewTeamsChannel(cfg config.TeamsConfig, messageBus *bus.MessageBus) (*TeamsChannel, error) {
-	if cfg.AppID == "" || cfg.AppPassword.String() == "" {
+func NewTeamsChannel(cfg config.TeamsConfig, secrets credentials.SecretBundle, messageBus *bus.MessageBus) (*TeamsChannel, error) {
+	appPassword := secrets.GetString(cfg.AppPasswordRef)
+	if cfg.AppID == "" || appPassword == "" {
 		return nil, fmt.Errorf("teams app_id and app_password are required")
 	}
 
@@ -90,8 +93,9 @@ func NewTeamsChannel(cfg config.TeamsConfig, messageBus *bus.MessageBus) (*Teams
 	)
 
 	return &TeamsChannel{
-		BaseChannel: base,
+		BaseChannel:  base,
 		config:      cfg,
+		appPassword: appPassword,
 	}, nil
 }
 
@@ -117,7 +121,7 @@ func (c *TeamsChannel) Start(ctx context.Context) error {
 
 	adapterSetting := core.AdapterSetting{
 		AppID:       c.config.AppID,
-		AppPassword: c.config.AppPassword.String(),
+		AppPassword: c.appPassword,
 	}
 
 	if c.config.TenantID != "" {

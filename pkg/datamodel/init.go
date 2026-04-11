@@ -46,15 +46,15 @@ var defaultConfig = map[string]any{
 		"list":     []any{},
 	},
 	"providers": []any{},
-	"channels":   map[string]any{},
+	"channels":  map[string]any{},
 	"gateway": map[string]any{
 		"host": "localhost",
 		"port": 3000,
 	},
 	"storage": map[string]any{
 		"retention": map[string]any{
-			"session_days":           90,
-			"archive_before_delete":  true,
+			"session_days":            90,
+			"archive_before_delete":   true,
 			"keep_compaction_summary": true,
 		},
 	},
