@@ -466,6 +466,12 @@ func (m *Manager) SetupHTTPServer(addr string, healthServer *health.Server) {
 	// Register health endpoints
 	if healthServer != nil {
 		healthServer.RegisterOnMux(m.mux)
+		// RegisterOnMux only attaches handlers; it does NOT mark the server
+		// as ready the way Start()/StartContext() do. Without this explicit
+		// SetReady(true), /ready returns 503 forever in the embedded-mux
+		// path, which breaks k8s readiness probes and load balancer health
+		// checks.
+		healthServer.SetReady(true)
 	}
 
 	// Discover and register webhook handlers and health checkers
