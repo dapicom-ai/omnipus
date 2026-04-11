@@ -162,7 +162,13 @@ func (r *RateLimiterRegistry) SetDailyCostCap(capUSD float64) {
 
 // GetOrCreate returns the SlidingWindow for the given key, creating it with
 // the supplied limit and window duration if it does not yet exist.
-func (r *RateLimiterRegistry) GetOrCreate(key string, limit int, window time.Duration, scope RateLimitScope, scopeID, resource string) *SlidingWindow {
+func (r *RateLimiterRegistry) GetOrCreate(
+	key string,
+	limit int,
+	window time.Duration,
+	scope RateLimitScope,
+	scopeID, resource string,
+) *SlidingWindow {
 	r.mu.RLock()
 	sw, ok := r.windows[key]
 	r.mu.RUnlock()

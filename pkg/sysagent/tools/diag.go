@@ -21,13 +21,15 @@ import (
 type DoctorRunTool struct{ deps *Deps }
 
 func NewDoctorRunTool(d *Deps) *DoctorRunTool { return &DoctorRunTool{deps: d} }
-func (t *DoctorRunTool) Name() string          { return "system.doctor.run" }
+func (t *DoctorRunTool) Name() string         { return "system.doctor.run" }
 func (t *DoctorRunTool) Description() string {
 	return "Run security diagnostics and return a risk score (0-100) with actionable recommendations. No parameters required."
 }
+
 func (t *DoctorRunTool) Parameters() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{}}
 }
+
 func (t *DoctorRunTool) Execute(_ context.Context, _ map[string]any) *tools.ToolResult {
 	type issue struct {
 		Severity       string `json:"severity"`
@@ -107,11 +109,11 @@ func (t *DoctorRunTool) Execute(_ context.Context, _ map[string]any) *tools.Tool
 	riskScore := checksFailed * 100 / total
 
 	return tools.NewToolResult(successJSON(map[string]any{
-		"risk_score":     riskScore,
-		"issues":         issues,
-		"checks_passed":  checksPassed,
-		"checks_failed":  checksFailed,
-		"run_at":         time.Now().UTC().Format(time.RFC3339),
+		"risk_score":    riskScore,
+		"issues":        issues,
+		"checks_passed": checksPassed,
+		"checks_failed": checksFailed,
+		"run_at":        time.Now().UTC().Format(time.RFC3339),
 	}))
 }
 
@@ -120,16 +122,18 @@ func (t *DoctorRunTool) Execute(_ context.Context, _ map[string]any) *tools.Tool
 type BackupCreateTool struct{ deps *Deps }
 
 func NewBackupCreateTool(d *Deps) *BackupCreateTool { return &BackupCreateTool{deps: d} }
-func (t *BackupCreateTool) Name() string             { return "system.backup.create" }
+func (t *BackupCreateTool) Name() string            { return "system.backup.create" }
 func (t *BackupCreateTool) Description() string {
 	return "Create a backup of the Omnipus data directory. Parameters: encrypt (bool, default false)."
 }
+
 func (t *BackupCreateTool) Parameters() map[string]any {
 	return map[string]any{
 		"type":       "object",
 		"properties": map[string]any{"encrypt": map[string]any{"type": "boolean"}},
 	}
 }
+
 func (t *BackupCreateTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	encrypt, _ := args["encrypt"].(bool)
 	backupsDir := filepath.Join(t.deps.Home, "backups")
@@ -158,10 +162,11 @@ func (t *BackupCreateTool) Execute(_ context.Context, args map[string]any) *tool
 type CostQueryTool struct{ deps *Deps }
 
 func NewCostQueryTool(d *Deps) *CostQueryTool { return &CostQueryTool{deps: d} }
-func (t *CostQueryTool) Name() string          { return "system.cost.query" }
+func (t *CostQueryTool) Name() string         { return "system.cost.query" }
 func (t *CostQueryTool) Description() string {
 	return "Query LLM cost data by period. Parameters: period (today/week/month/custom), start_date, end_date, agent_id, group_by."
 }
+
 func (t *CostQueryTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -174,6 +179,7 @@ func (t *CostQueryTool) Parameters() map[string]any {
 		},
 	}
 }
+
 func (t *CostQueryTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	period, _ := args["period"].(string)
 	if period == "" {

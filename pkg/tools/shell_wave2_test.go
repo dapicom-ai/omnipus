@@ -75,7 +75,7 @@ func TestExecTool_BinaryAllowlist_Denies(t *testing.T) {
 
 	// Use a safe command so we isolate the allowlist path — dangerous
 	// commands are blocked earlier by guardCommand's deny patterns, which
-	// would mask the behaviour we want to verify here.
+	// would mask the behavior we want to verify here.
 	ctx := WithToolContext(context.Background(), "cli", "")
 	ctx = WithAgentID(ctx, "test-agent")
 	result := tool.Execute(ctx, map[string]any{
@@ -161,7 +161,7 @@ func TestExecTool_BinaryAllowlist_EmptyList_DelegatesToEvaluator(t *testing.T) {
 
 // TestExecTool_BinaryAllowlist_EmptyList_RealEvaluator_Allow is an integration
 // test that uses the real policy.Evaluator (not a mock) to verify the
-// empty-list case honours default_policy=allow by permitting all commands.
+// empty-list case honors default_policy=allow by permitting all commands.
 func TestExecTool_BinaryAllowlist_EmptyList_RealEvaluator_Allow(t *testing.T) {
 	eval := policy.NewEvaluator(&policy.SecurityConfig{
 		DefaultPolicy: policy.PolicyAllow,

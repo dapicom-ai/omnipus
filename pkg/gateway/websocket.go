@@ -34,14 +34,14 @@ import (
 
 // wsClientFrame is a message sent from the browser to the server over WebSocket.
 type wsClientFrame struct {
-	Type      string `json:"type"`                  // "auth" | "message" | "cancel" | "exec_approval_response" | "attach_session" | "device_pairing_response"
-	Token     string `json:"token,omitempty"`       // for "auth"
-	Content   string `json:"content,omitempty"`     // for "message"
-	SessionID string `json:"session_id,omitempty"`  // for "message" / "cancel" / "attach_session"
-	AgentID   string `json:"agent_id,omitempty"`    // for "message" — route to specific agent
-	ID        string `json:"id,omitempty"`           // for "exec_approval_response"
-	Decision  string `json:"decision,omitempty"`    // "allow" | "deny" | "always" for exec; "approve" | "reject" for device_pairing_response
-	DeviceID  string `json:"device_id,omitempty"`   // for "device_pairing_response"
+	Type      string `json:"type"`                 // "auth" | "message" | "cancel" | "exec_approval_response" | "attach_session" | "device_pairing_response"
+	Token     string `json:"token,omitempty"`      // for "auth"
+	Content   string `json:"content,omitempty"`    // for "message"
+	SessionID string `json:"session_id,omitempty"` // for "message" / "cancel" / "attach_session"
+	AgentID   string `json:"agent_id,omitempty"`   // for "message" — route to specific agent
+	ID        string `json:"id,omitempty"`         // for "exec_approval_response"
+	Decision  string `json:"decision,omitempty"`   // "allow" | "deny" | "always" for exec; "approve" | "reject" for device_pairing_response
+	DeviceID  string `json:"device_id,omitempty"`  // for "device_pairing_response"
 }
 
 // wsServerFrame is a message sent from the server to the browser over WebSocket.
@@ -82,11 +82,11 @@ type WSHandler struct {
 	agentLoop     *agent.AgentLoop
 	allowedOrigin string
 
-	mu           sync.Mutex
-	sessions     map[string]*wsConn // chatID → connection
-	sessionIDs   map[string]string  // chatID → sessionID (for transcript recording)
-	taskChatIDs  map[string]string  // browser chatID → task chatID for live event forwarding
-	webchatCh    *webchatChannel    // reference to mark streaming complete
+	mu          sync.Mutex
+	sessions    map[string]*wsConn // chatID → connection
+	sessionIDs  map[string]string  // chatID → sessionID (for transcript recording)
+	taskChatIDs map[string]string  // browser chatID → task chatID for live event forwarding
+	webchatCh   *webchatChannel    // reference to mark streaming complete
 
 	// approvalRegistry tracks in-flight exec approval requests sent to the browser.
 	// Shared across all connections on this handler; keyed by request UUID.
@@ -109,7 +109,7 @@ type wsConn struct {
 	doneCh        chan struct{}
 	closeOnce     sync.Once
 	droppedTokens atomic.Int32
-	droppedFrames atomic.Int32 // non-critical frames dropped due to backpressure
+	droppedFrames atomic.Int32    // non-critical frames dropped due to backpressure
 	role          config.UserRole // RBAC role resolved at auth time
 }
 
@@ -125,15 +125,15 @@ func newWSHandler(
 	allowedOrigin string,
 ) *WSHandler {
 	h := &WSHandler{
-		msgBus:           msgBus,
-		agentLoop:        agentLoop,
-		allowedOrigin:    allowedOrigin,
-		sessions:         make(map[string]*wsConn),
-		sessionIDs:       make(map[string]string),
-		taskChatIDs:      make(map[string]string),
-		approvalRegistry: newWSApprovalRegistry(),
+		msgBus:                msgBus,
+		agentLoop:             agentLoop,
+		allowedOrigin:         allowedOrigin,
+		sessions:              make(map[string]*wsConn),
+		sessionIDs:            make(map[string]string),
+		taskChatIDs:           make(map[string]string),
+		approvalRegistry:      newWSApprovalRegistry(),
 		devicePairingRegistry: newDevicePairingRegistry(),
-		pairingStore:     pairing.NewPairingStore(),
+		pairingStore:          pairing.NewPairingStore(),
 		upgrader: websocket.Upgrader{
 			// CheckOrigin: parses the Origin URL and compares hostname against the request
 			// Host to allow same-origin requests. Also allows localhost/127.0.0.1 for development.
@@ -226,7 +226,8 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Upgrade, Connection, Sec-WebSocket-Key, Sec-WebSocket-Version")
+		w.Header().
+			Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Upgrade, Connection, Sec-WebSocket-Key, Sec-WebSocket-Version")
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -273,7 +274,10 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	approvalHook := &wsApprovalHook{conn: wc, chatID: chatID, registry: h.approvalRegistry, timeout: wsApprovalTimeout}
 	if err := h.agentLoop.MountHook(agent.NamedHook(hookName, approvalHook)); err != nil {
 		slog.Error("ws: could not mount approval hook — closing connection", "chat_id", chatID, "error", err)
-		sendConnFrame(wc, wsServerFrame{Type: "error", Message: "failed to initialize tool approval — please reconnect"})
+		sendConnFrame(
+			wc,
+			wsServerFrame{Type: "error", Message: "failed to initialize tool approval — please reconnect"},
+		)
 		return
 	}
 
@@ -320,7 +324,10 @@ func (h *WSHandler) authenticateWS(conn *websocket.Conn, wc *wsConn) bool {
 
 	var frame wsClientFrame
 	if err := json.Unmarshal(data, &frame); err != nil || frame.Type != "auth" {
-		sendWSFrame(conn, wsServerFrame{Type: "error", Message: "first message must be {\"type\":\"auth\",\"token\":\"...\"}"})
+		sendWSFrame(
+			conn,
+			wsServerFrame{Type: "error", Message: "first message must be {\"type\":\"auth\",\"token\":\"...\"}"},
+		)
 		return false
 	}
 
@@ -338,7 +345,10 @@ func (h *WSHandler) authenticateWS(conn *websocket.Conn, wc *wsConn) bool {
 		}
 		// Token not in user list — reject.
 		sendWSFrame(conn, wsServerFrame{Type: "error", Message: "unauthorized: invalid token"})
-		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "authentication failed"))
+		conn.WriteMessage(
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "authentication failed"),
+		)
 		return false
 	}
 
@@ -353,12 +363,18 @@ func (h *WSHandler) authenticateWS(conn *websocket.Conn, wc *wsConn) bool {
 		}
 		// No auth configured — deny by default (fail closed), matching HTTP auth path.
 		sendWSFrame(conn, wsServerFrame{Type: "error", Message: "no users configured, complete onboarding first"})
-		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "authentication failed"))
+		conn.WriteMessage(
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "authentication failed"),
+		)
 		return false
 	}
 	if subtle.ConstantTimeCompare([]byte(rawToken), []byte(required)) != 1 {
 		sendWSFrame(conn, wsServerFrame{Type: "error", Message: "unauthorized: invalid token"})
-		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "authentication failed"))
+		conn.WriteMessage(
+			websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "authentication failed"),
+		)
 		return false
 	}
 	wc.role = config.UserRoleAdmin
@@ -386,7 +402,13 @@ func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsCo
 			// the connection is torn down (the write may silently fail if already closed,
 			// which is acceptable — we make a best-effort attempt).
 			if websocket.IsCloseError(err, websocket.CloseMessageTooBig) {
-				slog.Warn("ws: message too large, closing connection", "chat_id", chatID, "limit_bytes", wsMaxMessageBytes)
+				slog.Warn(
+					"ws: message too large, closing connection",
+					"chat_id",
+					chatID,
+					"limit_bytes",
+					wsMaxMessageBytes,
+				)
 				sendWSFrame(conn, wsServerFrame{Type: "error", Message: "message too large (max 5MB)"})
 				return
 			}
@@ -435,7 +457,14 @@ func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsCo
 // handleChatMessage creates a session on the first message, records every user message,
 // and publishes the message to the bus. If session creation fails, the client is warned
 // that the conversation will not be persisted (fix for silent persistence failure).
-func (h *WSHandler) handleChatMessage(ctx context.Context, chatID string, sessionID *string, content string, agentID string, wc *wsConn) {
+func (h *WSHandler) handleChatMessage(
+	ctx context.Context,
+	chatID string,
+	sessionID *string,
+	content string,
+	agentID string,
+	wc *wsConn,
+) {
 	// Resolve the agent store to use. If agentID is provided, use that agent's store;
 	// otherwise fall back to the main agent's store.
 	targetAgentID := agentID
@@ -524,7 +553,7 @@ func (h *WSHandler) handleChatMessage(ctx context.Context, chatID string, sessio
 
 // handleCancel gracefully interrupts the current agent turn and marks the session as interrupted.
 func (h *WSHandler) handleCancel(sessionID *string) {
-	if err := h.agentLoop.InterruptGraceful("user cancelled via WebSocket"); err != nil {
+	if err := h.agentLoop.InterruptGraceful("user canceled via WebSocket"); err != nil {
 		slog.Debug("ws: cancel — no active turn", "error", err)
 	}
 	if sessionID != nil && *sessionID != "" {
@@ -540,7 +569,13 @@ func (h *WSHandler) handleCancel(sessionID *string) {
 
 // handleAttachSession loads an existing session's transcript and replays it to the client,
 // then sets the connection's active session to the requested session.
-func (h *WSHandler) handleAttachSession(ctx context.Context, chatID string, sessionID *string, attachID string, wc *wsConn) {
+func (h *WSHandler) handleAttachSession(
+	ctx context.Context,
+	chatID string,
+	sessionID *string,
+	attachID string,
+	wc *wsConn,
+) {
 	if err := validateEntityID(attachID); err != nil {
 		sendConnFrame(wc, wsServerFrame{Type: "error", Message: "invalid session_id"})
 		return
@@ -565,7 +600,7 @@ func (h *WSHandler) handleAttachSession(ctx context.Context, chatID string, sess
 	// an active streaming turn where AssistantUI already has a message context.)
 
 	// flushToolCalls sends any accumulated tool call lines as a single assistant
-	// replay message, then resets the slice. Returns false if ctx was cancelled.
+	// replay message, then resets the slice. Returns false if ctx was canceled.
 	var pendingToolCalls []string
 	flushToolCalls := func() bool {
 		if len(pendingToolCalls) == 0 {
@@ -896,10 +931,10 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 type wsStreamer struct {
 	conn        *wsConn
 	chatID      string
-	sessionID   string                   // for recording assistant message
-	agentStore  *session.UnifiedStore    // for recording assistant message
-	channel     *webchatChannel          // to mark streaming complete and suppress duplicate Send()
-	accumulated strings.Builder          // accumulates full response text
+	sessionID   string                // for recording assistant message
+	agentStore  *session.UnifiedStore // for recording assistant message
+	channel     *webchatChannel       // to mark streaming complete and suppress duplicate Send()
+	accumulated strings.Builder       // accumulates full response text
 
 	// Turn-level stats set by the agent loop via SetTurnStats before Finalize.
 	// Populates the "done" frame so the chat UI shows real token counts and

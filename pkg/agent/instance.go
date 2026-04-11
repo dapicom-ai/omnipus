@@ -287,7 +287,11 @@ func resolveAgentWorkspace(agentCfg *config.AgentConfig, defaults *config.AgentD
 		if !strings.HasPrefix(filepath.Clean(resolved), safeBase) {
 			logger.WarnCF("agent", "Agent workspace path escapes base directory; using fallback",
 				map[string]any{"agent_id": agentCfg.ID, "resolved": resolved})
-			return filepath.Join(expandHome(defaults.Workspace), "..", "workspace-"+routing.NormalizeAgentID(agentCfg.ID))
+			return filepath.Join(
+				expandHome(defaults.Workspace),
+				"..",
+				"workspace-"+routing.NormalizeAgentID(agentCfg.ID),
+			)
 		}
 		return resolved
 	}

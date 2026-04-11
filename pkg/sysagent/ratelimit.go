@@ -39,13 +39,13 @@ var toolCategory = map[string]rateLimitCategory{
 	"system.mcp.remove":     rateCategoryDelete,
 	"system.pin.delete":     rateCategoryDelete,
 
-	"system.config.set":          rateCategoryConfig,
-	"system.provider.configure":  rateCategoryConfig,
-	"system.agent.update":        rateCategoryConfig,
-	"system.project.update":      rateCategoryConfig,
-	"system.task.update":         rateCategoryConfig,
+	"system.config.set":         rateCategoryConfig,
+	"system.provider.configure": rateCategoryConfig,
+	"system.agent.update":       rateCategoryConfig,
+	"system.project.update":     rateCategoryConfig,
+	"system.task.update":        rateCategoryConfig,
 
-	"system.agent.list":    rateCategoryList,
+	"system.agent.list":       rateCategoryList,
 	"system.agent.activate":   rateCategoryList,
 	"system.agent.deactivate": rateCategoryList,
 	"system.project.list":     rateCategoryList,
@@ -88,7 +88,7 @@ var categoryLimits = map[rateLimitCategory]categoryLimit{
 
 // ErrRateLimited is returned when a tool call is rate-limited.
 type ErrRateLimited struct {
-	Category         rateLimitCategory
+	Category          rateLimitCategory
 	RetryAfterSeconds float64
 }
 

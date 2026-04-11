@@ -77,21 +77,21 @@ type toolsConfigV0 struct {
 	Skills          skillsToolsConfigV0 `json:"skills"`
 	MediaCleanup    MediaCleanupConfig  `json:"media_cleanup"`
 	MCP             MCPConfig           `json:"mcp"`
-	AppendFile      ToolConfig          `json:"append_file"                                              envPrefix:"OMNIPUS_TOOLS_APPEND_FILE_"`
-	EditFile        ToolConfig          `json:"edit_file"                                                envPrefix:"OMNIPUS_TOOLS_EDIT_FILE_"`
-	FindSkills      ToolConfig          `json:"find_skills"                                              envPrefix:"OMNIPUS_TOOLS_FIND_SKILLS_"`
-	I2C             ToolConfig          `json:"i2c"                                                      envPrefix:"OMNIPUS_TOOLS_I2C_"`
-	InstallSkill    ToolConfig          `json:"install_skill"                                            envPrefix:"OMNIPUS_TOOLS_INSTALL_SKILL_"`
-	ListDir         ToolConfig          `json:"list_dir"                                                 envPrefix:"OMNIPUS_TOOLS_LIST_DIR_"`
-	Message         ToolConfig          `json:"message"                                                  envPrefix:"OMNIPUS_TOOLS_MESSAGE_"`
-	ReadFile        ReadFileToolConfig  `json:"read_file"                                                envPrefix:"OMNIPUS_TOOLS_READ_FILE_"`
-	SendFile        ToolConfig          `json:"send_file"                                                envPrefix:"OMNIPUS_TOOLS_SEND_FILE_"`
-	Spawn           ToolConfig          `json:"spawn"                                                    envPrefix:"OMNIPUS_TOOLS_SPAWN_"`
-	SpawnStatus     ToolConfig          `json:"spawn_status"                                             envPrefix:"OMNIPUS_TOOLS_SPAWN_STATUS_"`
-	SPI             ToolConfig          `json:"spi"                                                      envPrefix:"OMNIPUS_TOOLS_SPI_"`
-	Subagent        ToolConfig          `json:"subagent"                                                 envPrefix:"OMNIPUS_TOOLS_SUBAGENT_"`
-	WebFetch        ToolConfig          `json:"web_fetch"                                                envPrefix:"OMNIPUS_TOOLS_WEB_FETCH_"`
-	WriteFile       ToolConfig          `json:"write_file"                                               envPrefix:"OMNIPUS_TOOLS_WRITE_FILE_"`
+	AppendFile      ToolConfig          `json:"append_file"                                             envPrefix:"OMNIPUS_TOOLS_APPEND_FILE_"`
+	EditFile        ToolConfig          `json:"edit_file"                                               envPrefix:"OMNIPUS_TOOLS_EDIT_FILE_"`
+	FindSkills      ToolConfig          `json:"find_skills"                                             envPrefix:"OMNIPUS_TOOLS_FIND_SKILLS_"`
+	I2C             ToolConfig          `json:"i2c"                                                     envPrefix:"OMNIPUS_TOOLS_I2C_"`
+	InstallSkill    ToolConfig          `json:"install_skill"                                           envPrefix:"OMNIPUS_TOOLS_INSTALL_SKILL_"`
+	ListDir         ToolConfig          `json:"list_dir"                                                envPrefix:"OMNIPUS_TOOLS_LIST_DIR_"`
+	Message         ToolConfig          `json:"message"                                                 envPrefix:"OMNIPUS_TOOLS_MESSAGE_"`
+	ReadFile        ReadFileToolConfig  `json:"read_file"                                               envPrefix:"OMNIPUS_TOOLS_READ_FILE_"`
+	SendFile        ToolConfig          `json:"send_file"                                               envPrefix:"OMNIPUS_TOOLS_SEND_FILE_"`
+	Spawn           ToolConfig          `json:"spawn"                                                   envPrefix:"OMNIPUS_TOOLS_SPAWN_"`
+	SpawnStatus     ToolConfig          `json:"spawn_status"                                            envPrefix:"OMNIPUS_TOOLS_SPAWN_STATUS_"`
+	SPI             ToolConfig          `json:"spi"                                                     envPrefix:"OMNIPUS_TOOLS_SPI_"`
+	Subagent        ToolConfig          `json:"subagent"                                                envPrefix:"OMNIPUS_TOOLS_SUBAGENT_"`
+	WebFetch        ToolConfig          `json:"web_fetch"                                               envPrefix:"OMNIPUS_TOOLS_WEB_FETCH_"`
+	WriteFile       ToolConfig          `json:"write_file"                                              envPrefix:"OMNIPUS_TOOLS_WRITE_FILE_"`
 }
 
 type channelsConfigV0 struct {
@@ -107,8 +107,8 @@ type channelsConfigV0 struct {
 	Matrix   matrixConfigV0   `json:"matrix"`
 	LINE     lineConfigV0     `json:"line"`
 	OneBot   onebotConfigV0   `json:"onebot"`
-	WeCom wecomConfigV0 `json:"wecom" envPrefix:"OMNIPUS_CHANNELS_WECOM_"`
-	IRC   ircConfigV0   `json:"irc"`
+	WeCom    wecomConfigV0    `json:"wecom"    envPrefix:"OMNIPUS_CHANNELS_WECOM_"`
+	IRC      ircConfigV0      `json:"irc"`
 }
 
 func (v *channelsConfigV0) ToChannelsConfig() ChannelsConfig {
@@ -421,7 +421,6 @@ func (v *weixinConfigV0) ToWeiXinConfig() WeixinConfig {
 	}
 }
 
-
 type ircConfigV0 struct {
 	Enabled            bool                `json:"enabled"                 env:"OMNIPUS_CHANNELS_IRC_ENABLED"`
 	Server             string              `json:"server"                  env:"OMNIPUS_CHANNELS_IRC_SERVER"`
@@ -581,24 +580,60 @@ func (c *configV0) migrateChannelConfigs() {
 // hasLegacySecrets returns true if the v0 config contains any non-empty
 // plaintext secret fields that would be silently lost during a plain Migrate.
 func (c *configV0) hasLegacySecrets() bool {
-	if c.Channels.Telegram.Token != "" { return true }
-	if c.Channels.Discord.Token != "" { return true }
-	if c.Channels.WeCom.Secret != "" { return true }
-	if c.Channels.Slack.BotToken != "" { return true }
-	if c.Channels.Slack.AppToken != "" { return true }
-	if c.Channels.Feishu.AppSecret != "" { return true }
-	if c.Channels.Feishu.EncryptKey != "" { return true }
-	if c.Channels.Feishu.VerificationToken != "" { return true }
-	if c.Channels.QQ.AppSecret != "" { return true }
-	if c.Channels.DingTalk.ClientSecret != "" { return true }
-	if c.Channels.Matrix.AccessToken != "" { return true }
-	if c.Channels.LINE.ChannelSecret != "" { return true }
-	if c.Channels.LINE.ChannelAccessToken != "" { return true }
-	if c.Channels.OneBot.AccessToken != "" { return true }
-	if c.Channels.Weixin.Token != "" { return true }
-	if c.Channels.IRC.Password != "" { return true }
-	if c.Channels.IRC.NickServPassword != "" { return true }
-	if c.Channels.IRC.SASLPassword != "" { return true }
+	if c.Channels.Telegram.Token != "" {
+		return true
+	}
+	if c.Channels.Discord.Token != "" {
+		return true
+	}
+	if c.Channels.WeCom.Secret != "" {
+		return true
+	}
+	if c.Channels.Slack.BotToken != "" {
+		return true
+	}
+	if c.Channels.Slack.AppToken != "" {
+		return true
+	}
+	if c.Channels.Feishu.AppSecret != "" {
+		return true
+	}
+	if c.Channels.Feishu.EncryptKey != "" {
+		return true
+	}
+	if c.Channels.Feishu.VerificationToken != "" {
+		return true
+	}
+	if c.Channels.QQ.AppSecret != "" {
+		return true
+	}
+	if c.Channels.DingTalk.ClientSecret != "" {
+		return true
+	}
+	if c.Channels.Matrix.AccessToken != "" {
+		return true
+	}
+	if c.Channels.LINE.ChannelSecret != "" {
+		return true
+	}
+	if c.Channels.LINE.ChannelAccessToken != "" {
+		return true
+	}
+	if c.Channels.OneBot.AccessToken != "" {
+		return true
+	}
+	if c.Channels.Weixin.Token != "" {
+		return true
+	}
+	if c.Channels.IRC.Password != "" {
+		return true
+	}
+	if c.Channels.IRC.NickServPassword != "" {
+		return true
+	}
+	if c.Channels.IRC.SASLPassword != "" {
+		return true
+	}
 	for _, m := range c.ModelList {
 		if m.APIKey != "" {
 			return true
@@ -824,18 +859,18 @@ func (c *configV0) Migrate() (*Config, error) {
 
 type webToolsConfigV0 struct {
 	ToolConfig           `                    envPrefix:"OMNIPUS_TOOLS_WEB_"`
-	Brave                braveConfigV0       `                                json:"brave"`
-	Tavily               tavilyConfigV0      `                                json:"tavily"`
-	DuckDuckGo           DuckDuckGoConfig    `                                json:"duckduckgo"`
-	Perplexity           perplexityConfigV0  `                                json:"perplexity"`
-	SearXNG              SearXNGConfig       `                                json:"searxng"`
-	GLMSearch            glmSearchConfigV0   `                                json:"glm_search"`
-	BaiduSearch          baiduSearchConfigV0 `                                json:"baidu_search"`
-	PreferNative         bool                `                                json:"prefer_native"                    env:"OMNIPUS_TOOLS_WEB_PREFER_NATIVE"`
-	Proxy                string              `                                json:"proxy,omitempty"                  env:"OMNIPUS_TOOLS_WEB_PROXY"`
-	FetchLimitBytes      int64               `                                json:"fetch_limit_bytes,omitempty"      env:"OMNIPUS_TOOLS_WEB_FETCH_LIMIT_BYTES"`
-	Format               string              `                                json:"format,omitempty"                 env:"OMNIPUS_TOOLS_WEB_FORMAT"`
-	PrivateHostWhitelist FlexibleStringSlice `                                json:"private_host_whitelist,omitempty" env:"OMNIPUS_TOOLS_WEB_PRIVATE_HOST_WHITELIST"`
+	Brave                braveConfigV0       `                               json:"brave"`
+	Tavily               tavilyConfigV0      `                               json:"tavily"`
+	DuckDuckGo           DuckDuckGoConfig    `                               json:"duckduckgo"`
+	Perplexity           perplexityConfigV0  `                               json:"perplexity"`
+	SearXNG              SearXNGConfig       `                               json:"searxng"`
+	GLMSearch            glmSearchConfigV0   `                               json:"glm_search"`
+	BaiduSearch          baiduSearchConfigV0 `                               json:"baidu_search"`
+	PreferNative         bool                `                               json:"prefer_native"                    env:"OMNIPUS_TOOLS_WEB_PREFER_NATIVE"`
+	Proxy                string              `                               json:"proxy,omitempty"                  env:"OMNIPUS_TOOLS_WEB_PROXY"`
+	FetchLimitBytes      int64               `                               json:"fetch_limit_bytes,omitempty"      env:"OMNIPUS_TOOLS_WEB_FETCH_LIMIT_BYTES"`
+	Format               string              `                               json:"format,omitempty"                 env:"OMNIPUS_TOOLS_WEB_FORMAT"`
+	PrivateHostWhitelist FlexibleStringSlice `                               json:"private_host_whitelist,omitempty" env:"OMNIPUS_TOOLS_WEB_PRIVATE_HOST_WHITELIST"`
 }
 
 type braveConfigV0 struct {
@@ -938,10 +973,10 @@ func (v *webToolsConfigV0) ToWebToolsConfig() WebToolsConfig {
 
 type skillsToolsConfigV0 struct {
 	ToolConfig            `                         envPrefix:"OMNIPUS_TOOLS_SKILLS_"`
-	Registries            skillsRegistriesConfigV0 `                                   json:"registries"`
-	Github                skillsGithubConfigV0     `                                   json:"github"`
-	MaxConcurrentSearches int                      `                                   json:"max_concurrent_searches" env:"OMNIPUS_TOOLS_SKILLS_MAX_CONCURRENT_SEARCHES"`
-	SearchCache           SearchCacheConfig        `                                   json:"search_cache"`
+	Registries            skillsRegistriesConfigV0 `                                  json:"registries"`
+	Github                skillsGithubConfigV0     `                                  json:"github"`
+	MaxConcurrentSearches int                      `                                  json:"max_concurrent_searches" env:"OMNIPUS_TOOLS_SKILLS_MAX_CONCURRENT_SEARCHES"`
+	SearchCache           SearchCacheConfig        `                                  json:"search_cache"`
 }
 
 type skillsRegistriesConfigV0 struct {

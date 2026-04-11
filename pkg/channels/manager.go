@@ -98,13 +98,13 @@ type Manager struct {
 	mux            *dynamicServeMux
 	httpServer     *http.Server
 	mu             sync.RWMutex
-	placeholders   sync.Map            // "channel:chatID" → placeholderID (string)
-	typingStops    sync.Map            // "channel:chatID" → func()
-	reactionUndos  sync.Map            // "channel:chatID" → reactionEntry
-	streamActive   sync.Map            // "channel:chatID" → true (set when streamer.Finalize sent the message)
-	channelHashes  map[string]string   // channel name → config hash
-	streamFallback bus.StreamDelegate  // optional fallback for channels not in m.channels (e.g., webchat WebSocket)
-	failedChannels []ChannelInitError  // enabled channels that failed to start
+	placeholders   sync.Map           // "channel:chatID" → placeholderID (string)
+	typingStops    sync.Map           // "channel:chatID" → func()
+	reactionUndos  sync.Map           // "channel:chatID" → reactionEntry
+	streamActive   sync.Map           // "channel:chatID" → true (set when streamer.Finalize sent the message)
+	channelHashes  map[string]string  // channel name → config hash
+	streamFallback bus.StreamDelegate // optional fallback for channels not in m.channels (e.g., webchat WebSocket)
+	failedChannels []ChannelInitError // enabled channels that failed to start
 }
 
 type asyncTask struct {
@@ -218,8 +218,16 @@ func (m *Manager) preSend(ctx context.Context, name string, msg bus.OutboundMess
 				if err := editor.EditMessage(ctx, msg.ChatID, entry.id, msg.Content); err == nil {
 					return true // edited successfully, skip Send
 				} else {
-					logger.WarnCF("channels", "Placeholder edit failed, falling through to Send",
-						map[string]any{"channel": name, "chat_id": msg.ChatID, "placeholder_id": entry.id, "error": err.Error()})
+					logger.WarnCF(
+						"channels",
+						"Placeholder edit failed, falling through to Send",
+						map[string]any{
+							"channel":        name,
+							"chat_id":        msg.ChatID,
+							"placeholder_id": entry.id,
+							"error":          err.Error(),
+						},
+					)
 				}
 				// edit failed → fall through to normal Send
 			}
@@ -1245,12 +1253,12 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 	m.channelHashes = list
 
 	// Restart dispatch goroutines against the new dispatchCtx so outbound messages
-	// continue to be routed after the old context was cancelled above.
+	// continue to be routed after the old context was canceled above.
 	go m.dispatchOutbound(dispatchCtx)
 	go m.dispatchOutboundMedia(dispatchCtx)
 
 	// Restart workers for existing (unchanged) channels on the new dispatch context.
-	// Without this, unchanged channel workers retain the old (cancelled) context
+	// Without this, unchanged channel workers retain the old (canceled) context
 	// and stop routing messages after a Reload.
 	//
 	// We must wait for old worker goroutines to finish (they close w.done/w.mediaDone
@@ -1265,7 +1273,7 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 		if _, isNew := addedSet[name]; isNew {
 			continue // already started above
 		}
-		// Wait for old goroutines to finish (they were cancelled above).
+		// Wait for old goroutines to finish (they were canceled above).
 		<-w.done
 		<-w.mediaDone
 		// Reset done channels so the new goroutines can close them cleanly.

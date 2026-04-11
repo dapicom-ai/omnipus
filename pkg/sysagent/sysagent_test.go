@@ -34,8 +34,8 @@ type mockSystemTool struct {
 	params      map[string]any
 }
 
-func (m *mockSystemTool) Name() string        { return m.name }
-func (m *mockSystemTool) Description() string { return m.description }
+func (m *mockSystemTool) Name() string               { return m.name }
+func (m *mockSystemTool) Description() string        { return m.description }
 func (m *mockSystemTool) Parameters() map[string]any { return m.params }
 func (m *mockSystemTool) Execute(_ context.Context, _ map[string]any) *tools.ToolResult {
 	return tools.NewToolResult(`{"success":true}`)
@@ -156,15 +156,33 @@ func TestRBACEnforcement(t *testing.T) {
 		// Dataset row 3: operator + create → allowed
 		{"operator can create agents", sysagent.RoleOperator, "system.agent.create", false, "operators can create"},
 		// Dataset row 4: operator + delete → denied
-		{"operator cannot delete agents", sysagent.RoleOperator, "system.agent.delete", true, "operators cannot destroy"},
+		{
+			"operator cannot delete agents",
+			sysagent.RoleOperator,
+			"system.agent.delete",
+			true,
+			"operators cannot destroy",
+		},
 		// Dataset row 6: operator + config (security.*) → denied at operator level (admin required for delete)
-		{"operator cannot delete projects", sysagent.RoleOperator, "system.project.delete", true, "operators cannot delete projects"},
+		{
+			"operator cannot delete projects",
+			sysagent.RoleOperator,
+			"system.project.delete",
+			true,
+			"operators cannot delete projects",
+		},
 		// Dataset row 1: admin + delete → allowed
 		{"admin can delete agents", sysagent.RoleAdmin, "system.agent.delete", false, "admins have full access"},
 		// Dataset row 2: admin + config security → allowed
 		{"admin can set config", sysagent.RoleAdmin, "system.config.set", false, "admins can change config"},
 		// Dataset row 10: agent + list → denied
-		{"user agent has no system tool access", sysagent.RoleAgent, "system.agent.list", true, "agents never get system access"},
+		{
+			"user agent has no system tool access",
+			sysagent.RoleAgent,
+			"system.agent.list",
+			true,
+			"agents never get system access",
+		},
 	}
 
 	for _, tc := range tests {

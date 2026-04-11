@@ -34,7 +34,7 @@ type SkillMetadata struct {
 	Context      string   `json:"context"`       // ClawHub: context (workspace/global/builtin)
 	AllowedTools []string `json:"allowed_tools"` // ClawHub: allowed-tools
 	ModelHint    string   `json:"model_hint"`    // ClawHub: model-hint
-	// Extra holds unrecognised frontmatter keys for forward compatibility.
+	// Extra holds unrecognized frontmatter keys for forward compatibility.
 	Extra map[string]string `json:"extra,omitempty"`
 }
 
@@ -357,8 +357,8 @@ func nodeText(n ast.Node) string {
 }
 
 // parseSimpleYAML parses YAML frontmatter into a key→value map.
-// Recognises standard fields and ClawHub-extended fields (argument-hint,
-// context, allowed-tools, model-hint). Unrecognised keys are collected
+// Recognizes standard fields and ClawHub-extended fields (argument-hint,
+// context, allowed-tools, model-hint). Unrecognized keys are collected
 // under "extra:<key>" for forward compatibility.
 func (sl *SkillsLoader) parseSimpleYAML(content string) map[string]string {
 	result := make(map[string]string)

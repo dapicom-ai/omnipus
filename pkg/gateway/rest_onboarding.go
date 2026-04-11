@@ -12,8 +12,9 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/dapicom-ai/omnipus/pkg/config"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/dapicom-ai/omnipus/pkg/config"
 )
 
 // HandleCompleteOnboarding handles POST /api/v1/onboarding/complete.
@@ -83,7 +84,11 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 	credRefName, credErr := a.storeCredential(body.Provider.ID+"_API_KEY", body.Provider.APIKey)
 	if credErr != nil {
 		slog.Error("rest: credential store unavailable during onboarding", "error", credErr)
-		jsonErr(w, http.StatusServiceUnavailable, "credential store locked: set OMNIPUS_MASTER_KEY or unlock before saving secrets")
+		jsonErr(
+			w,
+			http.StatusServiceUnavailable,
+			"credential store locked: set OMNIPUS_MASTER_KEY or unlock before saving secrets",
+		)
 		return
 	}
 

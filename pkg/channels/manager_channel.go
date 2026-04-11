@@ -21,12 +21,20 @@ func toChannelHashes(cfg *config.Config) map[string]string {
 	ch := cfg.Channels
 	marshal, err := json.Marshal(ch)
 	if err != nil {
-		logger.ErrorCF("channels", "toChannelHashes: failed to marshal channel config", map[string]any{"error": err.Error()})
+		logger.ErrorCF(
+			"channels",
+			"toChannelHashes: failed to marshal channel config",
+			map[string]any{"error": err.Error()},
+		)
 		return result
 	}
 	var channelConfig map[string]map[string]any
 	if err := json.Unmarshal(marshal, &channelConfig); err != nil {
-		logger.ErrorCF("channels", "toChannelHashes: failed to unmarshal channel config", map[string]any{"error": err.Error()})
+		logger.ErrorCF(
+			"channels",
+			"toChannelHashes: failed to unmarshal channel config",
+			map[string]any{"error": err.Error()},
+		)
 		return result
 	}
 
@@ -67,12 +75,20 @@ func toChannelConfig(cfg *config.Config, list []string) (*config.ChannelsConfig,
 	ch := cfg.Channels
 	marshal, err := json.Marshal(ch)
 	if err != nil {
-		logger.ErrorCF("channels", "toChannelConfig: failed to marshal channel config", map[string]any{"error": err.Error()})
+		logger.ErrorCF(
+			"channels",
+			"toChannelConfig: failed to marshal channel config",
+			map[string]any{"error": err.Error()},
+		)
 		return nil, fmt.Errorf("toChannelConfig: marshal: %w", err)
 	}
 	var channelConfig map[string]map[string]any
 	if err := json.Unmarshal(marshal, &channelConfig); err != nil {
-		logger.ErrorCF("channels", "toChannelConfig: failed to unmarshal channel config", map[string]any{"error": err.Error()})
+		logger.ErrorCF(
+			"channels",
+			"toChannelConfig: failed to unmarshal channel config",
+			map[string]any{"error": err.Error()},
+		)
 		return nil, fmt.Errorf("toChannelConfig: unmarshal: %w", err)
 	}
 	temp := make(map[string]map[string]any, 0)

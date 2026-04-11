@@ -173,14 +173,14 @@ func (s *TaskStore) load(id string) (*TaskEntity, error) {
 
 	// Lazy migration from GTD format.
 	t := &TaskEntity{
-		ID:            raw.ID,
-		Title:         raw.Name,
-		Prompt:        raw.Description,
-		AgentID:       raw.AgentID,
-		CreatedBy:     "user",
-		Priority:      3,
-		TriggerType:   "manual",
-		CreatedAt:     raw.CreatedAt,
+		ID:          raw.ID,
+		Title:       raw.Name,
+		Prompt:      raw.Description,
+		AgentID:     raw.AgentID,
+		CreatedBy:   "user",
+		Priority:    3,
+		TriggerType: "manual",
+		CreatedAt:   raw.CreatedAt,
 		// Preserve new-format fields that may be present even in legacy files.
 		Result:        raw.Result,
 		Artifacts:     raw.Artifacts,

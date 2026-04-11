@@ -34,7 +34,7 @@ type MCPCaller interface {
 // Call ComposeAndRegister after skill installation or MCP server state changes.
 type ToolCompositor struct {
 	loader    *skills.SkillsLoader
-	mcpCaller MCPCaller       // may be nil — MCP discovery is skipped when nil
+	mcpCaller MCPCaller             // may be nil — MCP discovery is skipped when nil
 	auditor   *policy.PolicyAuditor // wraps Evaluator + audit logging (ADR W-3)
 	evaluator *policy.Evaluator     // direct evaluator fallback when auditor is nil
 	registry  *ToolRegistry

@@ -59,7 +59,7 @@ func (a *restAPI) HandleExecAllowlist(w http.ResponseWriter, r *http.Request) {
 		// Validate and normalise patterns: trim whitespace, reject empties,
 		// dedupe, enforce hard caps. The evaluator trusts these patterns so
 		// validation here is the enforcement boundary.
-		sanitised, validationErr := sanitiseAllowlist(body.AllowedBinaries)
+		sanitized, validationErr := sanitiseAllowlist(body.AllowedBinaries)
 		if validationErr != nil {
 			jsonErr(w, http.StatusBadRequest, validationErr.Error())
 			return
@@ -78,7 +78,7 @@ func (a *restAPI) HandleExecAllowlist(w http.ResponseWriter, r *http.Request) {
 			// json.Marshal natively handles []string inside map[string]any,
 			// and config.Config unmarshals it back to []string on reload —
 			// no need for a manual []any conversion.
-			execRaw["allowed_binaries"] = sanitised
+			execRaw["allowed_binaries"] = sanitized
 			return nil
 		}); err != nil {
 			slog.Error("rest: update exec allowlist", "error", err)
@@ -94,9 +94,9 @@ func (a *restAPI) HandleExecAllowlist(w http.ResponseWriter, r *http.Request) {
 					Event:    audit.EventPolicyEval,
 					Decision: audit.DecisionAllow,
 					Details: map[string]any{
-						"action":            "exec_allowlist_update",
-						"pattern_count":     len(sanitised),
-						"allowed_binaries":  sanitised,
+						"action":           "exec_allowlist_update",
+						"pattern_count":    len(sanitized),
+						"allowed_binaries": sanitized,
 					},
 				}); err != nil {
 					slog.Warn("rest: audit log exec allowlist update", "error", err)
@@ -104,14 +104,14 @@ func (a *restAPI) HandleExecAllowlist(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		slog.Info("rest: exec allowlist updated", "pattern_count", len(sanitised))
+		slog.Info("rest: exec allowlist updated", "pattern_count", len(sanitized))
 
-		// Echo the sanitised, persisted list directly. Note that the in-memory
+		// Echo the sanitized, persisted list directly. Note that the in-memory
 		// config is NOT hot-reloaded — changes take effect on next agent loop
 		// restart per SEC-12. `restart_required: true` tells the UI to surface
 		// a badge so operators are not confused about enforcement state.
 		jsonOK(w, map[string]any{
-			"allowed_binaries": sanitised,
+			"allowed_binaries": sanitized,
 			"restart_required": true,
 		})
 	default:
@@ -134,7 +134,12 @@ func sanitiseAllowlist(in []string) ([]string, error) {
 			return nil, fmt.Errorf("pattern at index %d is empty or whitespace-only", i)
 		}
 		if len(trimmed) > maxAllowlistPatternLn {
-			return nil, fmt.Errorf("pattern at index %d is too long: %d chars (max %d)", i, len(trimmed), maxAllowlistPatternLn)
+			return nil, fmt.Errorf(
+				"pattern at index %d is too long: %d chars (max %d)",
+				i,
+				len(trimmed),
+				maxAllowlistPatternLn,
+			)
 		}
 		if _, dup := seen[trimmed]; dup {
 			continue

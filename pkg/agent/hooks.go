@@ -20,8 +20,8 @@ const (
 	// Approval timeout must be longer than wsApprovalTimeout (90s) in ws_approval.go
 	// so the WebSocket approval hook has time to send the request, wait for user input,
 	// and receive the response before the HookManager kills it.
-	defaultHookApprovalTimeout    = 120 * time.Second
-	hookObserverBufferSize        = 64
+	defaultHookApprovalTimeout = 120 * time.Second
+	hookObserverBufferSize     = 64
 )
 
 type HookAction string

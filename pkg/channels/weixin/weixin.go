@@ -46,7 +46,10 @@ func init() {
 func NewWeixinChannel(cfg config.WeixinConfig, messageBus *bus.MessageBus) (*WeixinChannel, error) {
 	token := os.Getenv(cfg.TokenRef)
 	if token == "" {
-		return nil, fmt.Errorf("weixin: TokenRef %q resolved to empty string — set the env var before starting the channel", cfg.TokenRef)
+		return nil, fmt.Errorf(
+			"weixin: TokenRef %q resolved to empty string — set the env var before starting the channel",
+			cfg.TokenRef,
+		)
 	}
 	api, err := NewApiClient(cfg.BaseURL, token, cfg.Proxy)
 	if err != nil {

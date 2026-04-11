@@ -405,4 +405,3 @@ func TestAgentLoop_PromptGuardAuditTrail(t *testing.T) {
 		t.Fatal("prompt guard not initialized")
 	}
 }
-

@@ -10,8 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/dapicom-ai/omnipus/pkg/tools"
 	"github.com/oklog/ulid/v2"
+
+	"github.com/dapicom-ai/omnipus/pkg/tools"
 )
 
 type pin struct {
@@ -33,10 +34,11 @@ func pinsDir(home string) string { return filepath.Join(home, "pins") }
 type PinListTool struct{ deps *Deps }
 
 func NewPinListTool(d *Deps) *PinListTool { return &PinListTool{deps: d} }
-func (t *PinListTool) Name() string        { return "system.pin.list" }
+func (t *PinListTool) Name() string       { return "system.pin.list" }
 func (t *PinListTool) Description() string {
 	return "List pinned artifacts with optional filters.\nParameters: agent_id, project_id, tags, search (all optional)."
 }
+
 func (t *PinListTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -48,6 +50,7 @@ func (t *PinListTool) Parameters() map[string]any {
 		},
 	}
 }
+
 func (t *PinListTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	all, err := listEntities[pin](pinsDir(t.deps.Home))
 	if err != nil {
@@ -75,10 +78,11 @@ func (t *PinListTool) Execute(_ context.Context, args map[string]any) *tools.Too
 type PinCreateTool struct{ deps *Deps }
 
 func NewPinCreateTool(d *Deps) *PinCreateTool { return &PinCreateTool{deps: d} }
-func (t *PinCreateTool) Name() string          { return "system.pin.create" }
+func (t *PinCreateTool) Name() string         { return "system.pin.create" }
 func (t *PinCreateTool) Description() string {
 	return "Pin a chat response.\nParameters: session_id (required), message_id (required), title, tags, project_id."
 }
+
 func (t *PinCreateTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -92,6 +96,7 @@ func (t *PinCreateTool) Parameters() map[string]any {
 		"required": []string{"session_id", "message_id"},
 	}
 }
+
 func (t *PinCreateTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	sessionID, _ := args["session_id"].(string)
 	messageID, _ := args["message_id"].(string)
@@ -133,10 +138,11 @@ func (t *PinCreateTool) Execute(_ context.Context, args map[string]any) *tools.T
 type PinDeleteTool struct{ deps *Deps }
 
 func NewPinDeleteTool(d *Deps) *PinDeleteTool { return &PinDeleteTool{deps: d} }
-func (t *PinDeleteTool) Name() string          { return "system.pin.delete" }
+func (t *PinDeleteTool) Name() string         { return "system.pin.delete" }
 func (t *PinDeleteTool) Description() string {
 	return "Delete a pin. Parameters: id (required), confirm (bool, must be true)."
 }
+
 func (t *PinDeleteTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -147,6 +153,7 @@ func (t *PinDeleteTool) Parameters() map[string]any {
 		"required": []string{"id", "confirm"},
 	}
 }
+
 func (t *PinDeleteTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	id, _ := args["id"].(string)
 	confirm, _ := args["confirm"].(bool)

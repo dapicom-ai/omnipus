@@ -42,7 +42,11 @@ func NewSlackChannel(cfg config.SlackConfig, messageBus *bus.MessageBus) (*Slack
 	botToken := os.Getenv(cfg.BotTokenRef)
 	appToken := os.Getenv(cfg.AppTokenRef)
 	if botToken == "" || appToken == "" {
-		return nil, fmt.Errorf("slack: bot_token and app_token are required (bot_token_ref=%q, app_token_ref=%q): check credential store", cfg.BotTokenRef, cfg.AppTokenRef)
+		return nil, fmt.Errorf(
+			"slack: bot_token and app_token are required (bot_token_ref=%q, app_token_ref=%q): check credential store",
+			cfg.BotTokenRef,
+			cfg.AppTokenRef,
+		)
 	}
 
 	api := slack.New(
@@ -146,7 +150,11 @@ func (c *SlackChannel) Send(ctx context.Context, msg bus.OutboundMessage) error 
 			Channel:   msgRef.ChannelID,
 			Timestamp: msgRef.Timestamp,
 		}); err != nil {
-			logger.DebugCF("slack", "Failed to add ack reaction", map[string]any{"channel_id": msgRef.ChannelID, "error": err.Error()})
+			logger.DebugCF(
+				"slack",
+				"Failed to add ack reaction",
+				map[string]any{"channel_id": msgRef.ChannelID, "error": err.Error()},
+			)
 		}
 	}
 
@@ -232,7 +240,11 @@ func (c *SlackChannel) ReactToMessage(ctx context.Context, chatID, messageID str
 
 	return func() {
 		if err := c.api.RemoveReaction("eyes", slack.ItemRef{Channel: channelID, Timestamp: messageID}); err != nil {
-			logger.DebugCF("slack", "Failed to remove reaction", map[string]any{"channel_id": channelID, "error": err.Error()})
+			logger.DebugCF(
+				"slack",
+				"Failed to remove reaction",
+				map[string]any{"channel_id": channelID, "error": err.Error()},
+			)
 		}
 	}, nil
 }
@@ -342,7 +354,11 @@ func (c *SlackChannel) handleMessageEvent(ev *slackevents.MessageEvent) {
 				CleanupPolicy: media.CleanupPolicyDeleteOnCleanup,
 			}, scope)
 			if err != nil {
-				logger.ErrorCF("slack", "Failed to store media", map[string]any{"filename": filename, "error": err.Error()})
+				logger.ErrorCF(
+					"slack",
+					"Failed to store media",
+					map[string]any{"filename": filename, "error": err.Error()},
+				)
 			} else {
 				return ref
 			}

@@ -28,9 +28,9 @@ type SenderInfo struct {
 }
 
 type InboundMessage struct {
-	Channel  string `json:"channel"`
+	Channel string `json:"channel"`
 	// Deprecated: use Sender.CanonicalID instead. Retained for backward compatibility.
-	SenderID string `json:"sender_id"`
+	SenderID   string            `json:"sender_id"`
 	Sender     SenderInfo        `json:"sender"`
 	ChatID     string            `json:"chat_id"`
 	Content    string            `json:"content"`

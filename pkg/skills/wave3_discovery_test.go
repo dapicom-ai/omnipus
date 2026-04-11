@@ -142,8 +142,8 @@ func TestAutoDiscoveryFromMCP_NilTools(t *testing.T) {
 		tools: map[string][]*mcp.Tool{
 			"server-a": {
 				{Name: "valid-tool"},
-				nil,                // nil entry must be skipped
-				{Name: ""},        // empty name must be skipped
+				nil,        // nil entry must be skipped
+				{Name: ""}, // empty name must be skipped
 			},
 		},
 	}

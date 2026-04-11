@@ -109,7 +109,11 @@ func InjectChannelsFromConfig(cfg *config.Config, store *Store) []error {
 		{channel: "irc", field: "sasl_password_ref", ref: ch.IRC.SASLPasswordRef},
 		{channel: "voice.elevenlabs", field: "api_key_ref", ref: cfg.Voice.ElevenLabsAPIKeyRef},
 		{channel: "tools.skills_github", field: "token_ref", ref: cfg.Tools.Skills.Github.TokenRef},
-		{channel: "tools.skills_clawhub", field: "auth_token_ref", ref: cfg.Tools.Skills.Registries.ClawHub.AuthTokenRef},
+		{
+			channel: "tools.skills_clawhub",
+			field:   "auth_token_ref",
+			ref:     cfg.Tools.Skills.Registries.ClawHub.AuthTokenRef,
+		},
 		// Web tool credential refs (Brave, Tavily, Perplexity, GLM, Baidu).
 		{channel: "tools.web_brave", field: "api_key_ref", ref: cfg.Tools.Web.Brave.APIKeyRef},
 		{channel: "tools.web_tavily", field: "api_key_ref", ref: cfg.Tools.Web.Tavily.APIKeyRef},
@@ -136,14 +140,20 @@ func InjectChannelsFromConfig(cfg *config.Config, store *Store) []error {
 					"field", cr.field,
 					"ref", cr.ref,
 				)
-				errs = append(errs, fmt.Errorf("channel %q field %q credential %q: %w", cr.channel, cr.field, cr.ref, err))
+				errs = append(
+					errs,
+					fmt.Errorf("channel %q field %q credential %q: %w", cr.channel, cr.field, cr.ref, err),
+				)
 				continue
 			}
 			errs = append(errs, fmt.Errorf("channel %q field %q credential %q: %w", cr.channel, cr.field, cr.ref, err))
 			continue
 		}
 		if setErr := os.Setenv(cr.ref, value); setErr != nil {
-			errs = append(errs, fmt.Errorf("channel %q field %q credential %q: set env: %w", cr.channel, cr.field, cr.ref, setErr))
+			errs = append(
+				errs,
+				fmt.Errorf("channel %q field %q credential %q: set env: %w", cr.channel, cr.field, cr.ref, setErr),
+			)
 			continue
 		}
 		injected[cr.ref] = true

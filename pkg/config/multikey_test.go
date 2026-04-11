@@ -5,8 +5,8 @@ import (
 )
 
 // expandMultiKeyModels is a pass-through since multi-key expansion was removed
-// in favour of credential-store-backed APIKeyRef. These tests verify the
-// pass-through behaviour and that APIKey() resolves correctly from env.
+// in favor of credential-store-backed APIKeyRef. These tests verify the
+// pass-through behavior and that APIKey() resolves correctly from env.
 
 func TestExpandMultiKeyModels_SingleKey(t *testing.T) {
 	const keyRef = "MULTIKEY_TEST_SINGLE_KEY"

@@ -18,9 +18,9 @@ import (
 func TestWhatsAppConfigParsing(t *testing.T) {
 	// Traces to: wave4-whatsapp-browser-spec.md line 997 (Test #7)
 	tests := []struct {
-		name      string
-		json      string
-		wantCfg   WhatsAppConfig
+		name    string
+		json    string
+		wantCfg WhatsAppConfig
 	}{
 		{
 			name: "basic enabled config",
@@ -93,8 +93,18 @@ func TestWhatsAppConfigParsing(t *testing.T) {
 			assert.Equal(t, tc.wantCfg.UseNative, got.UseNative, "UseNative mismatch")
 			assert.Equal(t, tc.wantCfg.SessionStorePath, got.SessionStorePath, "SessionStorePath mismatch")
 			assert.Equal(t, tc.wantCfg.BridgeURL, got.BridgeURL, "BridgeURL mismatch")
-			assert.Equal(t, tc.wantCfg.GroupTrigger.MentionOnly, got.GroupTrigger.MentionOnly, "GroupTrigger.MentionOnly mismatch")
-			assert.Equal(t, tc.wantCfg.GroupTrigger.Prefixes, got.GroupTrigger.Prefixes, "GroupTrigger.Prefixes mismatch")
+			assert.Equal(
+				t,
+				tc.wantCfg.GroupTrigger.MentionOnly,
+				got.GroupTrigger.MentionOnly,
+				"GroupTrigger.MentionOnly mismatch",
+			)
+			assert.Equal(
+				t,
+				tc.wantCfg.GroupTrigger.Prefixes,
+				got.GroupTrigger.Prefixes,
+				"GroupTrigger.Prefixes mismatch",
+			)
 
 			if tc.wantCfg.AllowFrom != nil {
 				assert.Equal(t, []string(tc.wantCfg.AllowFrom), []string(got.AllowFrom), "AllowFrom mismatch")

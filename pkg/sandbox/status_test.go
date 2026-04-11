@@ -56,12 +56,12 @@ type mockABIBackend struct {
 	applied    bool
 }
 
-func (m *mockABIBackend) Name() string                                 { return "landlock-v3" }
-func (m *mockABIBackend) Available() bool                              { return true }
-func (m *mockABIBackend) Apply(_ SandboxPolicy) error                  { return nil }
+func (m *mockABIBackend) Name() string                                  { return "landlock-v3" }
+func (m *mockABIBackend) Available() bool                               { return true }
+func (m *mockABIBackend) Apply(_ SandboxPolicy) error                   { return nil }
 func (m *mockABIBackend) ApplyToCmd(_ *exec.Cmd, _ SandboxPolicy) error { return nil }
-func (m *mockABIBackend) ABIVersion() int                              { return m.abiVersion }
-func (m *mockABIBackend) PolicyApplied() bool                          { return m.applied }
+func (m *mockABIBackend) ABIVersion() int                               { return m.abiVersion }
+func (m *mockABIBackend) PolicyApplied() bool                           { return m.applied }
 
 // TestDescribeBackend_LinuxReportsABI_Enforcing verifies that a backend
 // implementing BOTH abiReporter and policyApplyReporter (with applied=true)

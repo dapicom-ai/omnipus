@@ -386,7 +386,7 @@ func (al *AgentLoop) SandboxBackend() sandbox.SandboxBackend {
 }
 
 // recordRateLimitDenial writes an audit entry and emits a RateLimit event for
-// a denied rate-limit or cost-cap check (SEC-26). Centralising this avoids
+// a denied rate-limit or cost-cap check (SEC-26). Centralizing this avoids
 // repeating the same audit + emit boilerplate for each of the three checks
 // (LLM calls, tool calls, global cost cap). extraDetails is merged into the
 // audit entry's Details map under a "limit_type" key and caller-supplied
@@ -1169,11 +1169,14 @@ func (al *AgentLoop) Close() {
 	// can reconcile manually.
 	if al.costTracker != nil && al.rateLimiter != nil {
 		if err := al.costTracker.SaveFromRegistry(al.rateLimiter); err != nil {
-			logger.ErrorCF("agent", "SEC-26: failed to persist daily cost on shutdown — cap may under-count after restart",
+			logger.ErrorCF(
+				"agent",
+				"SEC-26: failed to persist daily cost on shutdown — cap may under-count after restart",
 				map[string]any{
 					"error":          err.Error(),
 					"daily_cost_usd": al.rateLimiter.GetDailyCost(),
-				})
+				},
+			)
 		}
 	}
 
@@ -1622,7 +1625,10 @@ func (al *AgentLoop) ListAllSessions() ([]*session.UnifiedMeta, error) {
 // processTaskDirect runs the agent loop for a task, dispatching to the given agent.
 // taskChatID identifies the WebSocket chat for event forwarding (defaults to "task:" + sessionKey).
 // Channel is "webchat" for streaming; tool context is "system" so exec/cron tools are permitted.
-func (al *AgentLoop) processTaskDirect(ctx context.Context, agentID, prompt, sessionKey, taskChatID string) (string, error) {
+func (al *AgentLoop) processTaskDirect(
+	ctx context.Context,
+	agentID, prompt, sessionKey, taskChatID string,
+) (string, error) {
 	if err := al.ensureHooksInitialized(ctx); err != nil {
 		return "", fmt.Errorf("processTaskDirect: hooks: %w", err)
 	}
@@ -1633,7 +1639,11 @@ func (al *AgentLoop) processTaskDirect(ctx context.Context, agentID, prompt, ses
 	registry := al.GetRegistry()
 	ag, ok := registry.GetAgent(agentID)
 	if !ok {
-		logger.WarnCF("agent", "processTaskDirect: agent not found, using default", map[string]any{"requested": agentID})
+		logger.WarnCF(
+			"agent",
+			"processTaskDirect: agent not found, using default",
+			map[string]any{"requested": agentID},
+		)
 		ag = registry.GetDefaultAgent()
 	}
 	if ag == nil {
@@ -1690,7 +1700,7 @@ func (al *AgentLoop) SetReloadFunc(fn func() error) {
 // after persisting config changes (agent create/update, token rotate, etc.).
 //
 // Concurrency: the underlying reloadFunc (set in gateway.go) is guarded by
-// an atomic CompareAndSwap that serialises concurrent calls — only one reload
+// an atomic CompareAndSwap that serializes concurrent calls — only one reload
 // can be in flight at a time. A second concurrent call returns an error
 // ("reload already in progress") rather than queuing a second reload.
 func (al *AgentLoop) TriggerReload() error {
@@ -1972,8 +1982,11 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		transcriptSessionID = tsid
 		transcriptStore = al.ResolveSessionStore(tsid)
 		if transcriptStore == nil {
-			logger.WarnCF("agent", "transcript_session_id present but store not found — tool calls will not be recorded",
-				map[string]any{"transcript_session_id": tsid})
+			logger.WarnCF(
+				"agent",
+				"transcript_session_id present but store not found — tool calls will not be recorded",
+				map[string]any{"transcript_session_id": tsid},
+			)
 		}
 	}
 
@@ -2279,7 +2292,7 @@ func (al *AgentLoop) handleReasoning(
 }
 
 func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, error) {
-	// H1: guard against an already-cancelled or timed-out context before doing any work.
+	// H1: guard against an already-canceled or timed-out context before doing any work.
 	if ctx.Err() != nil {
 		return turnResult{}, fmt.Errorf("turn not started: %w", ctx.Err())
 	}
@@ -3003,7 +3016,7 @@ turnLoop:
 			// C2: check for context cancellation/timeout before reporting a generic
 			// "LLM call failed" error — these are user/system actions, not LLM failures.
 			if errors.Is(err, context.Canceled) {
-				return turnResult{}, fmt.Errorf("turn cancelled")
+				return turnResult{}, fmt.Errorf("turn canceled")
 			}
 			if errors.Is(err, context.DeadlineExceeded) {
 				return turnResult{}, fmt.Errorf("turn timed out")
@@ -3162,7 +3175,7 @@ turnLoop:
 					},
 				)
 				// I1: also emit the dedicated EventKindEmptyResponseRetry for subscribers
-				// that specifically track empty-response retry behaviour.
+				// that specifically track empty-response retry behavior.
 				al.emitEvent(
 					EventKindEmptyResponseRetry,
 					ts.eventMeta("runTurn", "turn.empty_response_retry"),
@@ -3189,7 +3202,7 @@ turnLoop:
 			// If the inner retry loop set an error, surface it via the outer error path.
 			if err != nil {
 				if errors.Is(err, context.Canceled) {
-					return turnResult{}, fmt.Errorf("turn cancelled")
+					return turnResult{}, fmt.Errorf("turn canceled")
 				}
 				if errors.Is(err, context.DeadlineExceeded) {
 					return turnResult{}, fmt.Errorf("turn timed out")
@@ -3659,14 +3672,14 @@ turnLoop:
 				// disabling audit logging does NOT hide prompt-guard rewrites.
 				if contentForLLM != original {
 					details := map[string]any{
-						"action":          "prompt_guard_sanitise",
+						"action":          "prompt_guard_sanitize",
 						"strictness":      string(al.promptGuard.Strictness()),
 						"original_bytes":  len(original),
-						"sanitised_bytes": len(contentForLLM),
+						"sanitized_bytes": len(contentForLLM),
 						"tool":            toolName,
 						"agent_id":        ts.agent.ID,
 					}
-					logger.InfoCF("agent", "prompt guard sanitised tool result", details)
+					logger.InfoCF("agent", "prompt guard sanitized tool result", details)
 					if al.auditLogger != nil {
 						if err := al.auditLogger.Log(&audit.Entry{
 							Event:    audit.EventPolicyEval,
@@ -4880,7 +4893,6 @@ func estimateLLMCallCost(model string, usage *providers.UsageInfo) float64 {
 	outputCost := float64(usage.CompletionTokens) / 1000.0 * rate.outputPer1K
 	return inputCost + outputCost
 }
-
 
 // braveKeys returns a []string for use as BraveAPIKeys. Returns nil if the key is empty.
 func braveKeys(key string) []string {

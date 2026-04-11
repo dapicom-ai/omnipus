@@ -48,10 +48,11 @@ func findChannel(id string) (channelEntry, bool) {
 type ChannelEnableTool struct{ deps *Deps }
 
 func NewChannelEnableTool(d *Deps) *ChannelEnableTool { return &ChannelEnableTool{deps: d} }
-func (t *ChannelEnableTool) Name() string              { return "system.channel.enable" }
+func (t *ChannelEnableTool) Name() string             { return "system.channel.enable" }
 func (t *ChannelEnableTool) Description() string {
 	return "Enable a channel so it can be configured and connected.\nParameters: id (required)."
 }
+
 func (t *ChannelEnableTool) Parameters() map[string]any {
 	return map[string]any{
 		"type":       "object",
@@ -59,6 +60,7 @@ func (t *ChannelEnableTool) Parameters() map[string]any {
 		"required":   []string{"id"},
 	}
 }
+
 func (t *ChannelEnableTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	id, _ := args["id"].(string)
 	if id == "" {
@@ -91,6 +93,7 @@ func (t *ChannelConfigureTool) Name() string                { return "system.cha
 func (t *ChannelConfigureTool) Description() string {
 	return "Configure an enabled channel with its credentials (token, phone_number, etc).\nParameters: id (required), plus channel-specific credentials."
 }
+
 func (t *ChannelConfigureTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -106,6 +109,7 @@ func (t *ChannelConfigureTool) Parameters() map[string]any {
 		"required": []string{"id"},
 	}
 }
+
 func (t *ChannelConfigureTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	id, _ := args["id"].(string)
 	if id == "" {
@@ -139,10 +143,11 @@ func (t *ChannelConfigureTool) Execute(_ context.Context, args map[string]any) *
 type ChannelDisableTool struct{ deps *Deps }
 
 func NewChannelDisableTool(d *Deps) *ChannelDisableTool { return &ChannelDisableTool{deps: d} }
-func (t *ChannelDisableTool) Name() string               { return "system.channel.disable" }
+func (t *ChannelDisableTool) Name() string              { return "system.channel.disable" }
 func (t *ChannelDisableTool) Description() string {
 	return "Disable a channel. Parameters: id (required)."
 }
+
 func (t *ChannelDisableTool) Parameters() map[string]any {
 	return map[string]any{
 		"type":       "object",
@@ -150,6 +155,7 @@ func (t *ChannelDisableTool) Parameters() map[string]any {
 		"required":   []string{"id"},
 	}
 }
+
 func (t *ChannelDisableTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	id, _ := args["id"].(string)
 	if id == "" {
@@ -172,13 +178,15 @@ func (t *ChannelDisableTool) Execute(_ context.Context, args map[string]any) *to
 type ChannelListTool struct{ deps *Deps }
 
 func NewChannelListTool(d *Deps) *ChannelListTool { return &ChannelListTool{deps: d} }
-func (t *ChannelListTool) Name() string            { return "system.channel.list" }
+func (t *ChannelListTool) Name() string           { return "system.channel.list" }
 func (t *ChannelListTool) Description() string {
 	return "List all channels with status and implementation tier. No parameters required."
 }
+
 func (t *ChannelListTool) Parameters() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{}}
 }
+
 func (t *ChannelListTool) Execute(_ context.Context, _ map[string]any) *tools.ToolResult {
 	return tools.NewToolResult(successJSON(map[string]any{"channels": knownChannels}))
 }
@@ -188,10 +196,11 @@ func (t *ChannelListTool) Execute(_ context.Context, _ map[string]any) *tools.To
 type ChannelTestTool struct{ deps *Deps }
 
 func NewChannelTestTool(d *Deps) *ChannelTestTool { return &ChannelTestTool{deps: d} }
-func (t *ChannelTestTool) Name() string            { return "system.channel.test" }
+func (t *ChannelTestTool) Name() string           { return "system.channel.test" }
 func (t *ChannelTestTool) Description() string {
 	return "Test a channel connection. Parameters: id (required)."
 }
+
 func (t *ChannelTestTool) Parameters() map[string]any {
 	return map[string]any{
 		"type":       "object",
@@ -199,6 +208,7 @@ func (t *ChannelTestTool) Parameters() map[string]any {
 		"required":   []string{"id"},
 	}
 }
+
 func (t *ChannelTestTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	id, _ := args["id"].(string)
 	if id == "" {

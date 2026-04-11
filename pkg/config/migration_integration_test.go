@@ -17,7 +17,7 @@ import (
 // package (which would create an import cycle).
 type memCredStore struct{ m map[string]string }
 
-func newMemCredStore() *memCredStore      { return &memCredStore{m: map[string]string{}} }
+func newMemCredStore() *memCredStore          { return &memCredStore{m: map[string]string{}} }
 func (s *memCredStore) Set(k, v string) error { s.m[k] = v; return nil }
 
 // TestMigration_Integration_LegacyConfigWithoutWorkspace tests the issue reported:
@@ -116,7 +116,11 @@ func TestMigration_Integration_LegacyConfigWithoutWorkspace(t *testing.T) {
 	// Telegram token was migrated from plaintext to the credential store.
 	// TokenRef should be set to the canonical ref name.
 	if cfg.Channels.Telegram.TokenRef != "TELEGRAM_TOKEN" {
-		t.Errorf("Telegram.TokenRef = %q, want %q (legacy token should be migrated to store)", cfg.Channels.Telegram.TokenRef, "TELEGRAM_TOKEN")
+		t.Errorf(
+			"Telegram.TokenRef = %q, want %q (legacy token should be migrated to store)",
+			cfg.Channels.Telegram.TokenRef,
+			"TELEGRAM_TOKEN",
+		)
 	}
 	if store.m["TELEGRAM_TOKEN"] != "test-token" {
 		t.Errorf("store[TELEGRAM_TOKEN] = %q, want %q", store.m["TELEGRAM_TOKEN"], "test-token")
@@ -582,4 +586,3 @@ func TestMigration_Integration_ModelNameField(t *testing.T) {
 		t.Errorf("ModelFallbacks[0] = %q, want %q", cfg.Agents.Defaults.ModelFallbacks[0], "deepseek-chat")
 	}
 }
-

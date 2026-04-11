@@ -80,7 +80,7 @@ func (r *wsApprovalRegistry) resolve(id string, decision agent.ApprovalDecision)
 //  1. Generates a unique request ID.
 //  2. Registers a pending channel in the registry.
 //  3. Sends an "exec_approval_request" frame to the browser via the connection.
-//  4. Blocks until the context is cancelled, the registry resolves the decision, or
+//  4. Blocks until the context is canceled, the registry resolves the decision, or
 //     the approval timeout fires.
 //
 // The WSHandler readLoop calls registry.resolve when it receives an
@@ -102,7 +102,10 @@ const wsApprovalTimeout = 90 * time.Second
 
 // ApproveTool sends the tool name and arguments to the connected browser and waits
 // for a human decision. It denies execution on timeout or context cancellation.
-func (h *wsApprovalHook) ApproveTool(ctx context.Context, req *agent.ToolApprovalRequest) (agent.ApprovalDecision, error) {
+func (h *wsApprovalHook) ApproveTool(
+	ctx context.Context,
+	req *agent.ToolApprovalRequest,
+) (agent.ApprovalDecision, error) {
 	if h == nil || h.conn == nil || h.registry == nil {
 		// No active WebSocket — deny by default rather than approving blindly.
 		return agent.Deny("no active WebSocket connection for interactive approval"), nil
@@ -112,7 +115,13 @@ func (h *wsApprovalHook) ApproveTool(ctx context.Context, req *agent.ToolApprova
 	// will handle their own requests. Returning Allow here means "I have no opinion"
 	// so the HookManager continues to the next hook (the one that owns the chatID).
 	if h.chatID != "" && req.ChatID != "" && h.chatID != req.ChatID {
-		slog.Debug("ws: approval hook skipped — chatID mismatch", "hook_chat_id", h.chatID, "request_chat_id", req.ChatID)
+		slog.Debug(
+			"ws: approval hook skipped — chatID mismatch",
+			"hook_chat_id",
+			h.chatID,
+			"request_chat_id",
+			req.ChatID,
+		)
 		return agent.ApprovalDecision{Verdict: agent.VerdictAllow}, nil
 	}
 
@@ -171,17 +180,33 @@ func (h *wsApprovalHook) ApproveTool(ctx context.Context, req *agent.ToolApprova
 		slog.Warn("ws: exec_approval_request timed out — denying tool execution", "id", id, "tool", req.Tool)
 		// Inform the browser the request expired.
 		sendConnFrame(h.conn, wsServerFrame{
-			Type:    "exec_approval_expired",
-			ID:      id,
-			Message: fmt.Sprintf("Approval request for %q timed out after %s — tool execution denied.", req.Tool, timeout),
+			Type: "exec_approval_expired",
+			ID:   id,
+			Message: fmt.Sprintf(
+				"Approval request for %q timed out after %s — tool execution denied.",
+				req.Tool,
+				timeout,
+			),
 		})
 		return agent.Deny("approval timed out"), nil
 	case <-h.conn.doneCh:
-		slog.Warn("ws: connection closed while waiting for approval — denying tool execution", "id", id, "tool", req.Tool)
+		slog.Warn(
+			"ws: connection closed while waiting for approval — denying tool execution",
+			"id",
+			id,
+			"tool",
+			req.Tool,
+		)
 		return agent.Deny("WebSocket connection closed during approval"), nil
 	case <-ctx.Done():
-		slog.Warn("ws: context cancelled while waiting for approval — denying tool execution", "id", id, "tool", req.Tool)
-		return agent.Deny("context cancelled"), ctx.Err()
+		slog.Warn(
+			"ws: context canceled while waiting for approval — denying tool execution",
+			"id",
+			id,
+			"tool",
+			req.Tool,
+		)
+		return agent.Deny("context canceled"), ctx.Err()
 	}
 }
 

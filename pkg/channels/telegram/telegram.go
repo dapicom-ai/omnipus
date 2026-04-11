@@ -85,7 +85,10 @@ func NewTelegramChannel(cfg *config.Config, bus *bus.MessageBus) (*TelegramChann
 
 	token := os.Getenv(telegramCfg.TokenRef)
 	if token == "" {
-		return nil, fmt.Errorf("telegram: token not resolved (token_ref=%q): check credential store", telegramCfg.TokenRef)
+		return nil, fmt.Errorf(
+			"telegram: token not resolved (token_ref=%q): check credential store",
+			telegramCfg.TokenRef,
+		)
 	}
 	bot, err := telego.NewBot(token, opts...)
 	if err != nil {

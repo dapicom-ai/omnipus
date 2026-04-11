@@ -24,17 +24,17 @@ import (
 
 // State holds the persistent onboarding and system status fields.
 type State struct {
-	Version           int       `json:"version"`
-	CreatedAt         time.Time `json:"created_at"`
-	OnboardingComplete bool     `json:"onboarding_complete"`
-	LastDoctorRun     *time.Time `json:"last_doctor_run,omitempty"`
-	LastDoctorScore   *int      `json:"last_doctor_score,omitempty"`
+	Version            int        `json:"version"`
+	CreatedAt          time.Time  `json:"created_at"`
+	OnboardingComplete bool       `json:"onboarding_complete"`
+	LastDoctorRun      *time.Time `json:"last_doctor_run,omitempty"`
+	LastDoctorScore    *int       `json:"last_doctor_score,omitempty"`
 }
 
 // Manager manages onboarding state with atomic saves.
 // It is safe for concurrent use.
 type Manager struct {
-	mu       sync.RWMutex
+	mu        sync.RWMutex
 	statePath string
 	state     State
 }
@@ -108,10 +108,10 @@ func (m *Manager) load() error {
 	// Nested format: {"onboarding": {"completed": true}}
 	// Flat format:   {"onboarding_complete": true}
 	var raw struct {
-		Version            int        `json:"version"`
-		CreatedAt          time.Time  `json:"created_at"`
-		OnboardingComplete bool       `json:"onboarding_complete"` // flat
-		Onboarding         *struct {                               // nested (nil when absent)
+		Version            int       `json:"version"`
+		CreatedAt          time.Time `json:"created_at"`
+		OnboardingComplete bool      `json:"onboarding_complete"` // flat
+		Onboarding         *struct { // nested (nil when absent)
 			Completed bool `json:"completed"`
 		} `json:"onboarding"`
 		LastDoctorRun   *time.Time `json:"last_doctor_run,omitempty"`

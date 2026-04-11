@@ -74,8 +74,8 @@ func (t *TaskListTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 
 // TaskCreateTool creates a task and delegates it to another agent.
 type TaskCreateTool struct {
-	store          *taskstore.TaskStore
-	delegateCheck  func(targetAgentID string) bool
+	store         *taskstore.TaskStore
+	delegateCheck func(targetAgentID string) bool
 }
 
 func NewTaskCreateTool(store *taskstore.TaskStore) *TaskCreateTool {
@@ -321,10 +321,11 @@ func NewTaskDeleteTool(store *taskstore.TaskStore) *TaskDeleteTool {
 	return &TaskDeleteTool{store: store}
 }
 
-func (t *TaskDeleteTool) Name() string        { return "task_delete" }
+func (t *TaskDeleteTool) Name() string { return "task_delete" }
 func (t *TaskDeleteTool) Description() string {
 	return "Delete a task by ID. Only use when explicitly asked to remove a task."
 }
+
 func (t *TaskDeleteTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -334,6 +335,7 @@ func (t *TaskDeleteTool) Parameters() map[string]any {
 		"required": []string{"task_id"},
 	}
 }
+
 func (t *TaskDeleteTool) Execute(ctx context.Context, args map[string]any) *ToolResult {
 	taskID, _ := args["task_id"].(string)
 	if taskID == "" {
@@ -364,16 +366,18 @@ func NewAgentListTool(lister func() []AgentInfo) *AgentListTool {
 	return &AgentListTool{listAgents: lister}
 }
 
-func (t *AgentListTool) Name() string        { return "agent_list" }
+func (t *AgentListTool) Name() string { return "agent_list" }
 func (t *AgentListTool) Description() string {
 	return "List all available agents with their IDs and names. Use this to resolve agent names to IDs before delegating tasks."
 }
+
 func (t *AgentListTool) Parameters() map[string]any {
 	return map[string]any{
 		"type":       "object",
 		"properties": map[string]any{},
 	}
 }
+
 func (t *AgentListTool) Execute(ctx context.Context, args map[string]any) *ToolResult {
 	agents := t.listAgents()
 	data, err := json.Marshal(agents)

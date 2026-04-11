@@ -16,7 +16,7 @@ import (
 
 // --- Wave 5b: System Agent Rate Limit Tests ---
 //
-// These tests cover the rate limiting behaviour required by the wave5b spec:
+// These tests cover the rate limiting behavior required by the wave5b spec:
 //   - System agent is exempt from the global cost-cap (already in ratelimit.go)
 //   - System tool categories have the correct per-category thresholds
 //

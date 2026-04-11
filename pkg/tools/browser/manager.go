@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
+
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/security"
 )
@@ -74,7 +75,9 @@ type BrowserManager struct {
 // the first tool invocation (lazy init).
 func NewBrowserManager(cfg BrowserConfig, ssrf *security.SSRFChecker) (*BrowserManager, error) {
 	if ssrf == nil {
-		return nil, fmt.Errorf("browser: SSRFChecker is required — cannot create browser manager without SSRF protection (SEC-24)")
+		return nil, fmt.Errorf(
+			"browser: SSRFChecker is required — cannot create browser manager without SSRF protection (SEC-24)",
+		)
 	}
 	return &BrowserManager{
 		cfg:      cfg,

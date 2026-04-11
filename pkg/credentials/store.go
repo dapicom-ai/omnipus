@@ -55,7 +55,9 @@ const (
 )
 
 // ErrStoreLocked is returned when the credential store is not unlocked.
-var ErrStoreLocked = errors.New("credentials: store is locked — provide master key via OMNIPUS_MASTER_KEY, OMNIPUS_KEY_FILE, or interactive passphrase")
+var ErrStoreLocked = errors.New(
+	"credentials: store is locked — provide master key via OMNIPUS_MASTER_KEY, OMNIPUS_KEY_FILE, or interactive passphrase",
+)
 
 // ErrWrongKey is returned when AES-GCM authentication fails (wrong key).
 var ErrWrongKey = errors.New("credentials: decryption failed — wrong master key?")

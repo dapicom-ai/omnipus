@@ -29,7 +29,7 @@ import (
 // containing one user with the given username and bcrypt password hash.
 func createTestConfigWithUser(t *testing.T, dir, username, passwordHash string) {
 	cfg := map[string]any{
-		"agents": map[string]any{"defaults": map[string]any{}, "list": []any{}},
+		"agents":    map[string]any{"defaults": map[string]any{}, "list": []any{}},
 		"providers": []any{},
 		"gateway": map[string]any{
 			"users": []any{
@@ -44,7 +44,7 @@ func createTestConfigWithUser(t *testing.T, dir, username, passwordHash string) 
 	}
 	data, err := json.Marshal(cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(dir+"/config.json", data, 0600))
+	require.NoError(t, os.WriteFile(dir+"/config.json", data, 0o600))
 }
 
 // newTestRestAPIWithHome creates a restAPI with homePath and onboardingMgr wired.
@@ -287,7 +287,7 @@ func TestHandleLogin_DifferentInputProducesDifferentToken(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := map[string]any{
-		"agents":   map[string]any{"defaults": map[string]any{}, "list": []any{}},
+		"agents":    map[string]any{"defaults": map[string]any{}, "list": []any{}},
 		"providers": []any{},
 		"gateway": map[string]any{
 			"users": []any{
@@ -307,7 +307,7 @@ func TestHandleLogin_DifferentInputProducesDifferentToken(t *testing.T) {
 		},
 	}
 	data, _ := json.Marshal(cfg)
-	require.NoError(t, os.WriteFile(tmpDir+"/config.json", data, 0600))
+	require.NoError(t, os.WriteFile(tmpDir+"/config.json", data, 0o600))
 
 	configObj := &config.Config{
 		Gateway: config.GatewayConfig{Host: "127.0.0.1", Port: 8080},
@@ -747,7 +747,7 @@ func TestHandleLogin_DevModeBypass_DenyByDefault(t *testing.T) {
 	tmpDir := t.TempDir()
 	// Write config with empty users array.
 	cfg := map[string]any{
-		"agents": map[string]any{"defaults": map[string]any{}, "list": []any{}},
+		"agents":    map[string]any{"defaults": map[string]any{}, "list": []any{}},
 		"providers": []any{},
 		"gateway": map[string]any{
 			"users": []any{},
@@ -755,7 +755,7 @@ func TestHandleLogin_DevModeBypass_DenyByDefault(t *testing.T) {
 	}
 	data, err := json.Marshal(cfg)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(tmpDir+"/config.json", data, 0600))
+	require.NoError(t, os.WriteFile(tmpDir+"/config.json", data, 0o600))
 
 	testCfg := &config.Config{
 		Gateway: config.GatewayConfig{Host: "127.0.0.1", Port: 8080},

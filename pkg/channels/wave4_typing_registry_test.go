@@ -24,13 +24,13 @@ func TestTypingIndicator_UnsupportedChannel(t *testing.T) {
 	ch := NewBaseChannel("irc-test", nil, nil, nil)
 
 	// A channel without TypingCapable owner must not satisfy the interface
-	_, ok := interface{}(ch.owner).(TypingCapable)
+	_, ok := any(ch.owner).(TypingCapable)
 	assert.False(t, ok,
 		"BaseChannel with nil owner must not implement TypingCapable — graceful no-op path")
 
 	// BaseChannel itself must not implement TypingCapable
 	// (only concrete owners do — validated at runtime per FR-026)
-	_, isTyping := interface{}(ch).(TypingCapable)
+	_, isTyping := any(ch).(TypingCapable)
 	assert.False(t, isTyping,
 		"BaseChannel itself must not implement TypingCapable — implementation is per concrete channel")
 }

@@ -48,14 +48,14 @@ var Version = "dev"
 // Note: do NOT cache *config.Config here — use a.agentLoop.GetConfig() for
 // the current config, since config can hot-reload.
 type restAPI struct {
-	agentLoop      *agent.AgentLoop
-	allowedOrigin  string
-	onboardingMgr  *onboarding.Manager  // manages first-launch + doctor state
-	homePath       string               // ~/.omnipus — root of the data directory
-	configMu       sync.Mutex           // guards safeUpdateConfigJSON (read-modify-write cycle)
-	taskStore      *taskstore.TaskStore // task persistence
-	taskExecutor   *agent.TaskExecutor  // task execution engine
-	credStore      *credentials.Store   // shared unlocked credential store (injected at boot)
+	agentLoop     *agent.AgentLoop
+	allowedOrigin string
+	onboardingMgr *onboarding.Manager  // manages first-launch + doctor state
+	homePath      string               // ~/.omnipus — root of the data directory
+	configMu      sync.Mutex           // guards safeUpdateConfigJSON (read-modify-write cycle)
+	taskStore     *taskstore.TaskStore // task persistence
+	taskExecutor  *agent.TaskExecutor  // task execution engine
+	credStore     *credentials.Store   // shared unlocked credential store (injected at boot)
 }
 
 // --- CORS / JSON helpers ---
@@ -521,7 +521,6 @@ func strVal(m map[string]any, key string) string {
 	return s
 }
 
-
 // inferProviderName returns the provider name from an explicit Provider field,
 // or infers it from the Model field's "provider/model" format. Falls back to "default".
 func inferProviderName(provider, model string) string {
@@ -545,7 +544,7 @@ func fetchUpstreamModels(baseURL, apiKey string) ([]string, error) {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("x-api-key", apiKey)
+	req.Header.Set("X-Api-Key", apiKey)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -589,22 +588,22 @@ func fetchUpstreamModels(baseURL, apiKey string) ([]string, error) {
 
 // agentResponse is the JSON shape returned for a single agent.
 type agentResponse struct {
-	ID                 string `json:"id"`
-	Name               string `json:"name"`
-	Type               string `json:"type"` // "system" | "core" | "custom"
-	Model              string `json:"model,omitempty"`
-	Description        string `json:"description,omitempty"`
-	Status             string `json:"status"` // "active" | "idle" | "draft"
-	Soul               string `json:"soul"`
-	Heartbeat          string `json:"heartbeat"`
-	Instructions       string `json:"instructions"`
-	Warning            string `json:"warning,omitempty"` // non-fatal warning (e.g., reload failed)
-	TimeoutSeconds     int    `json:"timeout_seconds"`
-	MaxToolIterations  int    `json:"max_tool_iterations"`
-	SteeringMode       string `json:"steering_mode"`
-	ToolFeedback       bool   `json:"tool_feedback"`
-	HeartbeatEnabled   bool   `json:"heartbeat_enabled"`
-	HeartbeatInterval  int    `json:"heartbeat_interval"`
+	ID                string `json:"id"`
+	Name              string `json:"name"`
+	Type              string `json:"type"` // "system" | "core" | "custom"
+	Model             string `json:"model,omitempty"`
+	Description       string `json:"description,omitempty"`
+	Status            string `json:"status"` // "active" | "idle" | "draft"
+	Soul              string `json:"soul"`
+	Heartbeat         string `json:"heartbeat"`
+	Instructions      string `json:"instructions"`
+	Warning           string `json:"warning,omitempty"` // non-fatal warning (e.g., reload failed)
+	TimeoutSeconds    int    `json:"timeout_seconds"`
+	MaxToolIterations int    `json:"max_tool_iterations"`
+	SteeringMode      string `json:"steering_mode"`
+	ToolFeedback      bool   `json:"tool_feedback"`
+	HeartbeatEnabled  bool   `json:"heartbeat_enabled"`
+	HeartbeatInterval int    `json:"heartbeat_interval"`
 }
 
 // agentWorkspacePath returns the expanded workspace directory for the named agent.
@@ -617,7 +616,8 @@ type agentResponse struct {
 // workspace could not be created and the returned path may be unusable.
 func agentWorkspacePath(cfg interface {
 	WorkspacePath() string
-}, agentID, agentWorkspace string) (string, error) {
+}, agentID, agentWorkspace string,
+) (string, error) {
 	if agentWorkspace != "" {
 		// AgentConfig.Workspace may contain "~"; expand it the same way config does.
 		if len(agentWorkspace) > 0 && agentWorkspace[0] == '~' {
@@ -986,18 +986,18 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 	var req struct {
-		Name               *string `json:"name"`
-		Description        *string `json:"description"`
-		Model              *string `json:"model"`
-		Soul               *string `json:"soul"`
-		Heartbeat          *string `json:"heartbeat"`
-		Instructions       *string `json:"instructions"`
-		TimeoutSeconds     *int    `json:"timeout_seconds"`
-		MaxToolIterations  *int    `json:"max_tool_iterations"`
-		SteeringMode       *string `json:"steering_mode"`
-		ToolFeedback       *bool   `json:"tool_feedback"`
-		HeartbeatEnabled   *bool   `json:"heartbeat_enabled"`
-		HeartbeatInterval  *int    `json:"heartbeat_interval"`
+		Name              *string `json:"name"`
+		Description       *string `json:"description"`
+		Model             *string `json:"model"`
+		Soul              *string `json:"soul"`
+		Heartbeat         *string `json:"heartbeat"`
+		Instructions      *string `json:"instructions"`
+		TimeoutSeconds    *int    `json:"timeout_seconds"`
+		MaxToolIterations *int    `json:"max_tool_iterations"`
+		SteeringMode      *string `json:"steering_mode"`
+		ToolFeedback      *bool   `json:"tool_feedback"`
+		HeartbeatEnabled  *bool   `json:"heartbeat_enabled"`
+		HeartbeatInterval *int    `json:"heartbeat_interval"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
@@ -1123,7 +1123,13 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		if data, err := os.ReadFile(agentMDPath); err == nil {
 			existingFrontmatter, _ = splitAgentMDFrontmatter(string(data))
 		} else if !os.IsNotExist(err) {
-			slog.Warn("rest: could not read existing AGENT.md for frontmatter preservation", "agent_id", id, "error", err)
+			slog.Warn(
+				"rest: could not read existing AGENT.md for frontmatter preservation",
+				"agent_id",
+				id,
+				"error",
+				err,
+			)
 		}
 		if existingFrontmatter == "" {
 			existingFrontmatter = "name: " + capturedName
@@ -1300,7 +1306,10 @@ func (a *restAPI) storeCredential(refName, apiKey string) (string, error) {
 	if store == nil {
 		store = credentials.NewStore(a.credentialsStorePath())
 		if err := credentials.Unlock(store); err != nil {
-			return "", fmt.Errorf("credential store locked: set OMNIPUS_MASTER_KEY or unlock before saving secrets: %w", err)
+			return "", fmt.Errorf(
+				"credential store locked: set OMNIPUS_MASTER_KEY or unlock before saving secrets: %w",
+				err,
+			)
 		}
 	}
 	if err := store.Set(refName, apiKey); err != nil {
@@ -1343,7 +1352,8 @@ func (a *restAPI) updateConfig(w http.ResponseWriter, r *http.Request) {
 	// Block credential fields and providers (credentials must use /providers endpoint)
 	for k := range updates {
 		kl := strings.ToLower(k)
-		if kl == "providers" || strings.Contains(kl, "api_key") || strings.Contains(kl, "secret") || strings.Contains(kl, "password") {
+		if kl == "providers" || strings.Contains(kl, "api_key") || strings.Contains(kl, "secret") ||
+			strings.Contains(kl, "password") {
 			jsonErr(w, http.StatusForbidden, fmt.Sprintf("credential field %q cannot be set via config endpoint", k))
 			return
 		}
@@ -1657,9 +1667,15 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	cm.RegisterHTTPHandler("/api/v1/sessions/all", a.withAuth(a.HandleClearSessions))
 	cm.RegisterHTTPHandler("/api/v1/about", a.withAuth(a.HandleAbout))
 	cm.RegisterHTTPHandler("/api/v1/user-context", a.withAuth(a.HandleUserContext))
-	cm.RegisterHTTPHandler("/api/v1/onboarding/complete", a.withOptionalAuth(withRateLimit(onboardingCompleteLimiter, a.HandleCompleteOnboarding)))
+	cm.RegisterHTTPHandler(
+		"/api/v1/onboarding/complete",
+		a.withOptionalAuth(withRateLimit(onboardingCompleteLimiter, a.HandleCompleteOnboarding)),
+	)
 	cm.RegisterHTTPHandler("/api/v1/auth/login", a.withOptionalAuth(a.HandleLogin))
-	cm.RegisterHTTPHandler("/api/v1/auth/register-admin", a.withOptionalAuth(withRateLimit(registerAdminLimiter, a.HandleRegisterAdmin)))
+	cm.RegisterHTTPHandler(
+		"/api/v1/auth/register-admin",
+		a.withOptionalAuth(withRateLimit(registerAdminLimiter, a.HandleRegisterAdmin)),
+	)
 	cm.RegisterHTTPHandler("/api/v1/auth/validate", a.withAuth(withRateLimit(validateLimiter, a.HandleValidateToken)))
 	cm.RegisterHTTPHandler("/api/v1/auth/logout", a.withAuth(a.HandleLogout))
 	cm.RegisterHTTPHandler("/api/v1/auth/change-password", a.withAuth(a.HandleChangePassword))
@@ -1776,7 +1792,7 @@ func (a *restAPI) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	cfg := a.agentLoop.GetConfig()
 	jsonOK(w, gatewayStatusResponse{
 		Online:       true,
-		AgentCount:   len(cfg.Agents.List) + 1, // +1 for system agent
+		AgentCount:   len(cfg.Agents.List) + 1,      // +1 for system agent
 		ChannelCount: countEnabledChannels(cfg) + 1, // +1 for webchat (always available)
 		DailyCost:    0,
 		Version:      Version,
@@ -1948,12 +1964,12 @@ func (a *restAPI) updateTask(w http.ResponseWriter, r *http.Request, id string) 
 		return
 	}
 	var req struct {
-		Status      *string   `json:"status"`
-		Result      *string   `json:"result"`
-		Artifacts   *[]string `json:"artifacts"`
-		Title       *string   `json:"title"`
-		AgentID     *string   `json:"agent_id"`
-		Priority    *int      `json:"priority"`
+		Status      *string    `json:"status"`
+		Result      *string    `json:"result"`
+		Artifacts   *[]string  `json:"artifacts"`
+		Title       *string    `json:"title"`
+		AgentID     *string    `json:"agent_id"`
+		Priority    *int       `json:"priority"`
 		StartedAt   *time.Time `json:"started_at"`
 		CompletedAt *time.Time `json:"completed_at"`
 		// Backward compat
@@ -2024,7 +2040,11 @@ func (a *restAPI) startTask(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	if t.Status != "queued" {
-		jsonErr(w, http.StatusUnprocessableEntity, fmt.Sprintf("task is %s, only queued tasks can be started", t.Status))
+		jsonErr(
+			w,
+			http.StatusUnprocessableEntity,
+			fmt.Sprintf("task is %s, only queued tasks can be started", t.Status),
+		)
 		return
 	}
 	if a.taskExecutor == nil {
@@ -2062,7 +2082,7 @@ func (a *restAPI) deleteTask(w http.ResponseWriter, id string) {
 // activityEvent is one item returned by GET /api/v1/activity.
 type activityEvent struct {
 	ID        string    `json:"id"`
-	Type      string    `json:"type"`              // "session_start" | "task_created" | "task_updated"
+	Type      string    `json:"type"` // "session_start" | "task_created" | "task_updated"
 	AgentID   string    `json:"agent_id,omitempty"`
 	AgentName string    `json:"agent_name,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
@@ -2278,8 +2298,18 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 		if req.APIKey != "" {
 			ref, err := a.storeCredential(providerID+"_API_KEY", req.APIKey)
 			if err != nil {
-				slog.Error("rest: credential store unavailable for provider update", "provider", providerID, "error", err)
-				jsonErr(w, http.StatusServiceUnavailable, "credential store locked: set OMNIPUS_MASTER_KEY or unlock before saving secrets")
+				slog.Error(
+					"rest: credential store unavailable for provider update",
+					"provider",
+					providerID,
+					"error",
+					err,
+				)
+				jsonErr(
+					w,
+					http.StatusServiceUnavailable,
+					"credential store locked: set OMNIPUS_MASTER_KEY or unlock before saving secrets",
+				)
 				return
 			}
 			credRefName = ref
@@ -2310,9 +2340,9 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 			if !updated {
 				// Provider not found — add a new entry.
 				newEntry := map[string]any{
-					"model_name": providerID,
-					"provider":   providerID,
-					"model":      req.Model,
+					"model_name":  providerID,
+					"provider":    providerID,
+					"model":       req.Model,
 					"api_key_ref": credRefName,
 				}
 				m["providers"] = append(providerList, newEntry)
@@ -2326,7 +2356,11 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 		// Trigger reload so the in-memory config picks up the new API key.
 		if err := a.agentLoop.TriggerReload(); err != nil {
 			slog.Error("config reload after provider update failed", "error", err)
-			jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("provider updated but config reload failed: %v", err))
+			jsonErr(
+				w,
+				http.StatusInternalServerError,
+				fmt.Sprintf("provider updated but config reload failed: %v", err),
+			)
 			return
 		}
 		jsonOK(w, providerResponse{
@@ -2641,20 +2675,80 @@ func (a *restAPI) HandleChannels(w http.ResponseWriter, r *http.Request) {
 	}
 	channels := []channelEntry{
 		{ID: "webchat", Name: "Web Chat", Transport: "websocket", Enabled: true, Description: "Built-in browser chat"},
-		{ID: "telegram", Name: "Telegram", Transport: "webhook", Enabled: ch.Telegram.Enabled, Description: "Telegram Bot API"},
-		{ID: "discord", Name: "Discord", Transport: "websocket", Enabled: ch.Discord.Enabled, Description: "Discord Gateway"},
-		{ID: "slack", Name: "Slack", Transport: "websocket", Enabled: ch.Slack.Enabled, Description: "Slack Socket Mode"},
-		{ID: "whatsapp", Name: "WhatsApp", Transport: "bridge", Enabled: ch.WhatsApp.Enabled, Description: "WhatsApp via bridge or native"},
-		{ID: "feishu", Name: "Feishu / Lark", Transport: "webhook", Enabled: ch.Feishu.Enabled, Description: "Feishu (Lark) Bot"},
-		{ID: "dingtalk", Name: "DingTalk", Transport: "webhook", Enabled: ch.DingTalk.Enabled, Description: "DingTalk Bot"},
-		{ID: "wecom", Name: "WeCom", Transport: "webhook", Enabled: ch.WeCom.Enabled, Description: "WeCom (WeChat Work) Bot"},
-		{ID: "weixin", Name: "Weixin", Transport: "webhook", Enabled: ch.Weixin.Enabled, Description: "Weixin (WeChat) Official Account"},
+		{
+			ID:          "telegram",
+			Name:        "Telegram",
+			Transport:   "webhook",
+			Enabled:     ch.Telegram.Enabled,
+			Description: "Telegram Bot API",
+		},
+		{
+			ID:          "discord",
+			Name:        "Discord",
+			Transport:   "websocket",
+			Enabled:     ch.Discord.Enabled,
+			Description: "Discord Gateway",
+		},
+		{
+			ID:          "slack",
+			Name:        "Slack",
+			Transport:   "websocket",
+			Enabled:     ch.Slack.Enabled,
+			Description: "Slack Socket Mode",
+		},
+		{
+			ID:          "whatsapp",
+			Name:        "WhatsApp",
+			Transport:   "bridge",
+			Enabled:     ch.WhatsApp.Enabled,
+			Description: "WhatsApp via bridge or native",
+		},
+		{
+			ID:          "feishu",
+			Name:        "Feishu / Lark",
+			Transport:   "webhook",
+			Enabled:     ch.Feishu.Enabled,
+			Description: "Feishu (Lark) Bot",
+		},
+		{
+			ID:          "dingtalk",
+			Name:        "DingTalk",
+			Transport:   "webhook",
+			Enabled:     ch.DingTalk.Enabled,
+			Description: "DingTalk Bot",
+		},
+		{
+			ID:          "wecom",
+			Name:        "WeCom",
+			Transport:   "webhook",
+			Enabled:     ch.WeCom.Enabled,
+			Description: "WeCom (WeChat Work) Bot",
+		},
+		{
+			ID:          "weixin",
+			Name:        "Weixin",
+			Transport:   "webhook",
+			Enabled:     ch.Weixin.Enabled,
+			Description: "Weixin (WeChat) Official Account",
+		},
 		{ID: "line", Name: "LINE", Transport: "webhook", Enabled: ch.LINE.Enabled, Description: "LINE Messaging API"},
 		{ID: "qq", Name: "QQ", Transport: "websocket", Enabled: ch.QQ.Enabled, Description: "QQ via napcat"},
-		{ID: "onebot", Name: "OneBot", Transport: "websocket", Enabled: ch.OneBot.Enabled, Description: "OneBot v11 protocol"},
+		{
+			ID:          "onebot",
+			Name:        "OneBot",
+			Transport:   "websocket",
+			Enabled:     ch.OneBot.Enabled,
+			Description: "OneBot v11 protocol",
+		},
 		{ID: "irc", Name: "IRC", Transport: "tcp", Enabled: ch.IRC.Enabled, Description: "Internet Relay Chat"},
 		{ID: "matrix", Name: "Matrix", Transport: "http", Enabled: ch.Matrix.Enabled, Description: "Matrix protocol"},
-		{ID: "maixcam", Name: "MaixCam", Transport: "serial", Enabled: ch.MaixCam.Enabled, Description: "MaixCam edge device"},
+		{
+			ID:          "maixcam",
+			Name:        "MaixCam",
+			Transport:   "serial",
+			Enabled:     ch.MaixCam.Enabled,
+			Description: "MaixCam edge device",
+		},
 	}
 	jsonOK(w, channels)
 }
@@ -2697,38 +2791,38 @@ func (a *restAPI) setChannelEnabled(w http.ResponseWriter, channelID string, ena
 // channelSensitiveFields maps channel IDs to their secret/credential field names.
 // These are redacted in GET responses (replaced with "[configured]" if set).
 var channelSensitiveFields = map[string][]string{
-	"telegram":   {"token"},
-	"discord":    {"token"},
-	"slack":      {"bot_token", "app_token"},
-	"feishu":     {"app_secret", "encrypt_key", "verification_token"},
-	"matrix":     {"access_token", "crypto_passphrase"},
-	"line":       {"channel_secret", "channel_access_token"},
-	"dingtalk":   {"client_secret"},
-	"qq":         {"app_secret"},
-	"wecom":      {"secret"},
-	"onebot":     {"access_token"},
-	"irc":        {"password", "nickserv_password", "sasl_password"},
-	"weixin":     {"token"},
-	"maixcam":    {},
-	"whatsapp":   {},
+	"telegram": {"token"},
+	"discord":  {"token"},
+	"slack":    {"bot_token", "app_token"},
+	"feishu":   {"app_secret", "encrypt_key", "verification_token"},
+	"matrix":   {"access_token", "crypto_passphrase"},
+	"line":     {"channel_secret", "channel_access_token"},
+	"dingtalk": {"client_secret"},
+	"qq":       {"app_secret"},
+	"wecom":    {"secret"},
+	"onebot":   {"access_token"},
+	"irc":      {"password", "nickserv_password", "sasl_password"},
+	"weixin":   {"token"},
+	"maixcam":  {},
+	"whatsapp": {},
 }
 
 // channelRequiredFields maps channel IDs to fields that must be non-empty for the channel to work.
 var channelRequiredFields = map[string][]string{
-	"telegram":  {"token"},
-	"discord":   {"token"},
-	"slack":     {"bot_token"},
-	"feishu":    {"app_id", "app_secret"},
-	"matrix":    {"homeserver", "user_id", "access_token"},
-	"line":      {"channel_secret", "channel_access_token"},
-	"dingtalk":  {"client_id", "client_secret"},
-	"qq":        {"app_id", "app_secret"},
-	"wecom":     {"bot_id", "secret"},
-	"onebot":    {"ws_url"},
-	"irc":       {"server", "nick"},
-	"weixin":    {"token"},
-	"maixcam":   {},
-	"whatsapp":  {},
+	"telegram": {"token"},
+	"discord":  {"token"},
+	"slack":    {"bot_token"},
+	"feishu":   {"app_id", "app_secret"},
+	"matrix":   {"homeserver", "user_id", "access_token"},
+	"line":     {"channel_secret", "channel_access_token"},
+	"dingtalk": {"client_id", "client_secret"},
+	"qq":       {"app_id", "app_secret"},
+	"wecom":    {"bot_id", "secret"},
+	"onebot":   {"ws_url"},
+	"irc":      {"server", "nick"},
+	"weixin":   {"token"},
+	"maixcam":  {},
+	"whatsapp": {},
 }
 
 // redactChannelConfig returns a copy of cfg with sensitive fields replaced by "[configured]"
@@ -2980,7 +3074,7 @@ func (a *restAPI) HandleUpload(w http.ResponseWriter, r *http.Request) {
 				}
 				sessionID = strings.TrimSpace(string(buf))
 			} else {
-				// Discard unrecognised non-file fields.
+				// Discard unrecognized non-file fields.
 				if _, discardErr := io.Copy(io.Discard, part); discardErr != nil {
 					slog.Warn("rest: upload: discard field failed", "field", formName, "error", discardErr)
 				}
@@ -3016,7 +3110,7 @@ func (a *restAPI) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		}
 
 		uploadDir := filepath.Join(a.homePath, "uploads", sessionID)
-		if mkErr := os.MkdirAll(uploadDir, 0700); mkErr != nil {
+		if mkErr := os.MkdirAll(uploadDir, 0o700); mkErr != nil {
 			part.Close()
 			slog.Error("rest: upload: mkdir failed", "dir", uploadDir, "error", mkErr)
 			jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not create upload directory: %v", mkErr))

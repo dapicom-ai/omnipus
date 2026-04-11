@@ -94,7 +94,12 @@ func (t *FindSkillsTool) Execute(ctx context.Context, args map[string]any) *Tool
 	return SilentResult(formatSearchResults(query, results, false, partialErr))
 }
 
-func formatSearchResults(query string, results []skills.SearchResult, cached bool, partial *skills.PartialSearchError) string {
+func formatSearchResults(
+	query string,
+	results []skills.SearchResult,
+	cached bool,
+	partial *skills.PartialSearchError,
+) string {
 	if len(results) == 0 {
 		return fmt.Sprintf("No skills found for query: %q", query)
 	}
@@ -106,7 +111,9 @@ func formatSearchResults(query string, results []skills.SearchResult, cached boo
 	}
 	sb.WriteString(fmt.Sprintf("Found %d skills for %q%s:\n\n", len(results), query, source))
 	if partial != nil {
-		sb.WriteString(fmt.Sprintf("⚠️  Note: results may be incomplete — one or more registries failed: %v\n\n", partial.Cause))
+		sb.WriteString(
+			fmt.Sprintf("⚠️  Note: results may be incomplete — one or more registries failed: %v\n\n", partial.Cause),
+		)
 	}
 
 	for i, r := range results {

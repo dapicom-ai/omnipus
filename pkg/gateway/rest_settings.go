@@ -142,7 +142,11 @@ func (a *restAPI) setCredential(w http.ResponseWriter, r *http.Request) {
 		store = credentials.NewStore(a.credentialsStorePath())
 		if err := credentials.Unlock(store); err != nil {
 			slog.Warn("rest: credential store locked for set", "error", err)
-			jsonErr(w, http.StatusServiceUnavailable, "credential store is locked — set OMNIPUS_MASTER_KEY or OMNIPUS_KEY_FILE")
+			jsonErr(
+				w,
+				http.StatusServiceUnavailable,
+				"credential store is locked — set OMNIPUS_MASTER_KEY or OMNIPUS_KEY_FILE",
+			)
 			return
 		}
 	}
@@ -166,7 +170,11 @@ func (a *restAPI) deleteCredential(w http.ResponseWriter, key string) {
 		store = credentials.NewStore(a.credentialsStorePath())
 		if err := credentials.Unlock(store); err != nil {
 			slog.Warn("rest: credential store locked for delete", "error", err)
-			jsonErr(w, http.StatusServiceUnavailable, "credential store is locked — set OMNIPUS_MASTER_KEY or OMNIPUS_KEY_FILE")
+			jsonErr(
+				w,
+				http.StatusServiceUnavailable,
+				"credential store is locked — set OMNIPUS_MASTER_KEY or OMNIPUS_KEY_FILE",
+			)
 			return
 		}
 	}

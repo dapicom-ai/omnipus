@@ -63,7 +63,11 @@ func (te *TaskExecutor) ExecuteTask(ctx context.Context, taskID string) error {
 		return fmt.Errorf("task_executor: list running tasks for agent %q: %w", task.AgentID, err)
 	}
 	if len(runningTasks) >= te.maxConcurrent {
-		return fmt.Errorf("task_executor: concurrency limit reached for agent %q (%d running)", task.AgentID, len(runningTasks))
+		return fmt.Errorf(
+			"task_executor: concurrency limit reached for agent %q (%d running)",
+			task.AgentID,
+			len(runningTasks),
+		)
 	}
 
 	// Transition to running.
@@ -120,7 +124,10 @@ func (te *TaskExecutor) runTask(ctx context.Context, task *taskstore.TaskEntity,
 					map[string]any{"task_id": task.ID, "error": setErr.Error()})
 			}
 			// Persist the session ID on the task entity so the UI can find it.
-			if _, updateErr := te.store.Update(task.ID, taskstore.TaskPatch{SessionID: &taskSessionID}); updateErr != nil {
+			if _, updateErr := te.store.Update(
+				task.ID,
+				taskstore.TaskPatch{SessionID: &taskSessionID},
+			); updateErr != nil {
 				logger.ErrorCF("task_executor", "Could not persist session_id on task",
 					map[string]any{"task_id": task.ID, "session_id": taskSessionID, "error": updateErr.Error()})
 			}

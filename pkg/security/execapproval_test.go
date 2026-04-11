@@ -97,7 +97,7 @@ func TestExecApprovalManager_ModeOff(t *testing.T) {
 
 	commands := []string{
 		"git status",
-		"rm -rf /",        // even dangerous commands
+		"rm -rf /", // even dangerous commands
 		"curl http://x.com",
 		"python3 evil.py",
 	}

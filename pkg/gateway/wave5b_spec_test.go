@@ -472,7 +472,9 @@ func TestConfirmationFlowIntegration(t *testing.T) {
 //
 // Traces to: wave5b-system-agent-spec.md line 730 (Scenario: Run doctor from Settings UI)
 func TestDoctorRunIntegration(t *testing.T) {
-	t.Skip("Blocked: pkg/sysagent.SystemToolHandler and state.json last_doctor_run/last_doctor_score fields not yet implemented")
+	t.Skip(
+		"Blocked: pkg/sysagent.SystemToolHandler and state.json last_doctor_run/last_doctor_score fields not yet implemented",
+	)
 }
 
 // --------------------------------------------------------------------------

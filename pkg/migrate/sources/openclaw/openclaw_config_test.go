@@ -716,7 +716,10 @@ func TestToStandardConfig(t *testing.T) {
 	// Secrets are not migrated from OpenClaw; users must re-enter them via
 	// `omnipus credentials set TELEGRAM_TOKEN <value>` and set token_ref in config.
 	if stdCfg.Channels.Telegram.TokenRef != "" {
-		t.Errorf("expected empty token_ref after migration (secrets not migrated), got %q", stdCfg.Channels.Telegram.TokenRef)
+		t.Errorf(
+			"expected empty token_ref after migration (secrets not migrated), got %q",
+			stdCfg.Channels.Telegram.TokenRef,
+		)
 	}
 
 	if stdCfg.Gateway.Port != 8080 {

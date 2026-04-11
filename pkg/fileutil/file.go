@@ -134,7 +134,7 @@ func CopyFile(src, dst string, perm os.FileMode) error {
 // JSONL file. The file is opened with O_APPEND|O_CREATE. On Linux, the kernel
 // sets the write offset atomically to end-of-file before each write when
 // O_APPEND is set, so concurrent goroutines writing to the same file will not
-// interleave as long as each write is a single syscall (which a marshalled JSON
+// interleave as long as each write is a single syscall (which a marshaled JSON
 // line always is).
 //
 // The directory is created if it does not exist.
@@ -171,7 +171,7 @@ func AppendJSONL(path string, record any) error {
 }
 
 // WithFlock acquires an OS-level advisory write lock on path before calling fn,
-// then releases it. This is defence-in-depth alongside single-writer goroutines
+// then releases it. This is defense-in-depth alongside single-writer goroutines
 // for shared files (config.json, credentials.json).
 //
 // On platforms where syscall.Flock is unavailable the fn is called without

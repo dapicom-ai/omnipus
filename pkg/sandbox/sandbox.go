@@ -160,8 +160,8 @@ func NewFallbackBackend() *FallbackBackend {
 	return &FallbackBackend{}
 }
 
-func (f *FallbackBackend) Name() string      { return "fallback" }
-func (f *FallbackBackend) Available() bool    { return true }
+func (f *FallbackBackend) Name() string    { return "fallback" }
+func (f *FallbackBackend) Available() bool { return true }
 
 // Apply records allowed paths and their access flags for application-level enforcement.
 func (f *FallbackBackend) Apply(policy SandboxPolicy) error {
@@ -316,6 +316,7 @@ type policyApplyReporter interface {
 // The returned Status distinguishes capability from enforcement:
 //   - KernelLevel=true means the backend CAN apply kernel policy.
 //   - PolicyApplied=true means Apply() has actually run on this process.
+//
 // When the backend is capable but Apply has not been called, PolicyApplied
 // is false and a note is added to Notes to surface the gap to operators.
 func DescribeBackend(backend SandboxBackend) Status {
@@ -346,8 +347,10 @@ func DescribeBackend(backend SandboxBackend) Status {
 	} else {
 		status.PolicyApplied = false
 		status.SeccompEnabled = false
-		status.Notes = append(status.Notes,
-			"sandbox backend is capable of kernel-level enforcement but Apply() has not been called on the Omnipus process; child processes are not currently restricted by Landlock or seccomp")
+		status.Notes = append(
+			status.Notes,
+			"sandbox backend is capable of kernel-level enforcement but Apply() has not been called on the Omnipus process; child processes are not currently restricted by Landlock or seccomp",
+		)
 	}
 	return status
 }

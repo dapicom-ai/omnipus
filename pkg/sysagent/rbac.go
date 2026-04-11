@@ -95,10 +95,10 @@ var toolPermissions = map[string]ToolPermission{
 	"system.config.set": {MinRole: RoleOperator},
 
 	// Diagnostics / utility.
-	"system.doctor.run":     {MinRole: RoleViewer},
-	"system.backup.create":  {MinRole: RoleOperator},
-	"system.cost.query":     {MinRole: RoleViewer},
-	"system.navigate":       {MinRole: RoleViewer},
+	"system.doctor.run":    {MinRole: RoleViewer},
+	"system.backup.create": {MinRole: RoleOperator},
+	"system.cost.query":    {MinRole: RoleViewer},
+	"system.navigate":      {MinRole: RoleViewer},
 }
 
 // roleWeight returns a numeric weight for ordering; higher = more privileged.

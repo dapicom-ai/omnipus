@@ -261,7 +261,11 @@ func NewExecToolWithConfig(
 		if enableDenyPatterns {
 			denyPatterns = append(denyPatterns, defaultDenyPatterns...)
 			if len(execConfig.CustomDenyPatterns) > 0 {
-				logger.InfoCF("shell", "Using custom deny patterns", map[string]any{"patterns": execConfig.CustomDenyPatterns})
+				logger.InfoCF(
+					"shell",
+					"Using custom deny patterns",
+					map[string]any{"patterns": execConfig.CustomDenyPatterns},
+				)
 				for _, pattern := range execConfig.CustomDenyPatterns {
 					re, err := regexp.Compile(pattern)
 					if err != nil {
@@ -458,7 +462,7 @@ func (t *ExecTool) executeRun(ctx context.Context, args map[string]any) *ToolRes
 	// to enforce based on its own default_policy + allowed_binaries state:
 	//   - empty allowlist + default_policy="allow" → always allows
 	//   - empty allowlist + default_policy="deny" → always denies
-	//   - non-empty allowlist → matches against patterns, honours default_policy on miss
+	//   - non-empty allowlist → matches against patterns, honors default_policy on miss
 	// This is the automated enforcement layer — the interactive approval
 	// prompt is handled separately by the agent loop's HookManager.ApproveTool
 	// which routes through the WebSocket approval channel, so we deliberately
@@ -484,11 +488,18 @@ func (t *ExecTool) executeRun(ctx context.Context, args map[string]any) *ToolRes
 		} else {
 			absWorkspace, absErr := filepath.Abs(t.workingDir)
 			if absErr != nil {
-				return ErrorResult(fmt.Sprintf("Command blocked by safety guard (workspace path resolution failed: %v)", absErr))
+				return ErrorResult(
+					fmt.Sprintf("Command blocked by safety guard (workspace path resolution failed: %v)", absErr),
+				)
 			}
 			wsResolved, symlinkErr := filepath.EvalSymlinks(absWorkspace)
 			if symlinkErr != nil {
-				return ErrorResult(fmt.Sprintf("Command blocked by safety guard (workspace symlink resolution failed: %v)", symlinkErr))
+				return ErrorResult(
+					fmt.Sprintf(
+						"Command blocked by safety guard (workspace symlink resolution failed: %v)",
+						symlinkErr,
+					),
+				)
 			}
 			if wsResolved == "" {
 				wsResolved = absWorkspace

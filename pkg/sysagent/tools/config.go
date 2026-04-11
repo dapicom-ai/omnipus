@@ -19,10 +19,11 @@ import (
 type ConfigGetTool struct{ deps *Deps }
 
 func NewConfigGetTool(d *Deps) *ConfigGetTool { return &ConfigGetTool{deps: d} }
-func (t *ConfigGetTool) Name() string          { return "system.config.get" }
+func (t *ConfigGetTool) Name() string         { return "system.config.get" }
 func (t *ConfigGetTool) Description() string {
 	return "Read a configuration value by dot-notation key.\nParameters: key (required, e.g. 'gateway.port')."
 }
+
 func (t *ConfigGetTool) Parameters() map[string]any {
 	return map[string]any{
 		"type":       "object",
@@ -30,6 +31,7 @@ func (t *ConfigGetTool) Parameters() map[string]any {
 		"required":   []string{"key"},
 	}
 }
+
 func (t *ConfigGetTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	key, _ := args["key"].(string)
 	if key == "" {
@@ -63,10 +65,11 @@ func (t *ConfigGetTool) Execute(_ context.Context, args map[string]any) *tools.T
 type ConfigSetTool struct{ deps *Deps }
 
 func NewConfigSetTool(d *Deps) *ConfigSetTool { return &ConfigSetTool{deps: d} }
-func (t *ConfigSetTool) Name() string          { return "system.config.set" }
+func (t *ConfigSetTool) Name() string         { return "system.config.set" }
 func (t *ConfigSetTool) Description() string {
 	return "Update a configuration value.\nParameters: key (required), value (required)."
 }
+
 func (t *ConfigSetTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -77,6 +80,7 @@ func (t *ConfigSetTool) Parameters() map[string]any {
 		"required": []string{"key", "value"},
 	}
 }
+
 func (t *ConfigSetTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	key, _ := args["key"].(string)
 	if key == "" {

@@ -27,7 +27,7 @@ import (
 func testConfig() *config.Config {
 	return &config.Config{
 		Gateway: config.GatewayConfig{
-			Users:         nil,  // no per-user list → falls back to env var
+			Users:         nil, // no per-user list → falls back to env var
 			Token:         "",
 			DevModeBypass: true, // allow unauthenticated access in test mode
 		},

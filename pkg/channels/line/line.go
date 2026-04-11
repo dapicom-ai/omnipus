@@ -68,7 +68,11 @@ func NewLINEChannel(cfg config.LINEConfig, messageBus *bus.MessageBus) (*LINECha
 	channelSecret := os.Getenv(cfg.ChannelSecretRef)
 	accessToken := os.Getenv(cfg.ChannelAccessTokenRef)
 	if channelSecret == "" || accessToken == "" {
-		return nil, fmt.Errorf("line: channel_secret and channel_access_token are required (channel_secret_ref=%q, channel_access_token_ref=%q): check credential store", cfg.ChannelSecretRef, cfg.ChannelAccessTokenRef)
+		return nil, fmt.Errorf(
+			"line: channel_secret and channel_access_token are required (channel_secret_ref=%q, channel_access_token_ref=%q): check credential store",
+			cfg.ChannelSecretRef,
+			cfg.ChannelAccessTokenRef,
+		)
 	}
 
 	base := channels.NewBaseChannel("line", cfg, messageBus, cfg.AllowFrom,
@@ -78,12 +82,12 @@ func NewLINEChannel(cfg config.LINEConfig, messageBus *bus.MessageBus) (*LINECha
 	)
 
 	return &LINEChannel{
-		BaseChannel:  base,
-		config:       cfg,
+		BaseChannel:   base,
+		config:        cfg,
 		channelSecret: channelSecret,
-		accessToken:  accessToken,
-		infoClient:   &http.Client{Timeout: 10 * time.Second},
-		apiClient:    &http.Client{Timeout: 30 * time.Second},
+		accessToken:   accessToken,
+		infoClient:    &http.Client{Timeout: 10 * time.Second},
+		apiClient:     &http.Client{Timeout: 30 * time.Second},
 	}, nil
 }
 

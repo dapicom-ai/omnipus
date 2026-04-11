@@ -8,5 +8,5 @@ const (
 	AppName = "Omnipus"
 
 	DefaultOmnipusHome = ".omnipus"
-	WorkspaceName       = "workspace"
+	WorkspaceName      = "workspace"
 )

@@ -27,7 +27,11 @@ func mustNewProvider(t *testing.T, apiKey, apiBase, proxy string, opts ...Option
 	return p
 }
 
-func mustNewProviderWithMaxTokensFieldAndTimeout(t *testing.T, apiKey, apiBase, proxy, maxTokensField string, requestTimeoutSeconds int) *Provider {
+func mustNewProviderWithMaxTokensFieldAndTimeout(
+	t *testing.T,
+	apiKey, apiBase, proxy, maxTokensField string,
+	requestTimeoutSeconds int,
+) *Provider {
 	t.Helper()
 	p, err := NewProviderWithMaxTokensFieldAndTimeout(apiKey, apiBase, proxy, maxTokensField, requestTimeoutSeconds)
 	if err != nil {
@@ -1263,8 +1267,8 @@ func TestParseStreamResponse_ToolCallDeltas(t *testing.T) {
 	// When parseStreamResponse is called
 	// Then the tool call has correct name and parsed arguments
 	type tcDelta struct {
-		Index    int     `json:"index"`
-		ID       string  `json:"id,omitempty"`
+		Index    int    `json:"index"`
+		ID       string `json:"id,omitempty"`
 		Function *struct {
 			Name      string `json:"name,omitempty"`
 			Arguments string `json:"arguments,omitempty"`
@@ -1411,11 +1415,11 @@ func TestParseStreamResponse_MalformedChunkSkipped(t *testing.T) {
 	}
 }
 
-// TestParseStreamResponse_ContextCancellation verifies that cancelling the context after
+// TestParseStreamResponse_ContextCancellation verifies that canceling the context after
 // the first chunk returns context.Canceled.
 // Traces to: inferred from parseStreamResponse implementation in provider.go
 func TestParseStreamResponse_ContextCancellation(t *testing.T) {
-	// BDD: Given a context that gets cancelled after the first chunk
+	// BDD: Given a context that gets canceled after the first chunk
 	// When parseStreamResponse processes the stream
 	// Then context.Canceled error is returned
 	// Build a stream that will block after the first chunk using a pipe.
@@ -1498,8 +1502,8 @@ func TestParseStreamResponse_UsageInFinalChunk(t *testing.T) {
 	// When parseStreamResponse is called
 	// Then usage is captured in the response
 	type choice struct {
-		Delta        struct{}    `json:"delta"`
-		FinishReason *string     `json:"finish_reason"`
+		Delta        struct{} `json:"delta"`
+		FinishReason *string  `json:"finish_reason"`
 	}
 	type usageT struct {
 		PromptTokens     int `json:"prompt_tokens"`

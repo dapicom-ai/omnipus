@@ -16,7 +16,7 @@ import (
 
 // ConfirmationFunc is called by the handler before executing a destructive tool.
 // It must return (true, nil) only when the user has clicked the UI confirmation button.
-// Returns (false, nil) when the user cancelled, or (false, err) on error.
+// Returns (false, nil) when the user canceled, or (false, err) on error.
 type ConfirmationFunc func(ctx context.Context, toolName string, args map[string]any) (confirmed bool, err error)
 
 // SystemToolHandler wraps the system tool registry with RBAC, rate limiting,
@@ -107,8 +107,10 @@ func (h *SystemToolHandler) Handle(
 				"CONFIRMATION_ERROR: failed to obtain confirmation: %v", err))
 		}
 		if !confirmed {
-			h.logAudit(toolName, deviceID, string(callerRole), args, "cancelled", start)
-			return tools.NewToolResult(`{"success":false,"status":"CONFIRMATION_REQUIRED","message":"Operation cancelled by user."}`)
+			h.logAudit(toolName, deviceID, string(callerRole), args, "canceled", start)
+			return tools.NewToolResult(
+				`{"success":false,"status":"CONFIRMATION_REQUIRED","message":"Operation canceled by user."}`,
+			)
 		}
 	}
 
@@ -136,11 +138,11 @@ func (h *SystemToolHandler) logAudit(
 		return
 	}
 	entry := &audit.Entry{
-		Timestamp: start,
-		Event:     audit.EventToolCall,
-		AgentID:   SystemAgentID,
-		Tool:      toolName,
-		Decision:  decision,
+		Timestamp:  start,
+		Event:      audit.EventToolCall,
+		AgentID:    SystemAgentID,
+		Tool:       toolName,
+		Decision:   decision,
 		Parameters: args,
 		Details: map[string]any{
 			"device_id":   deviceID,

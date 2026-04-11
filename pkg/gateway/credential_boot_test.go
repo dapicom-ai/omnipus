@@ -280,10 +280,10 @@ func TestInjectFromConfig_WebToolRefs(t *testing.T) {
 	cfg := &config.Config{
 		Tools: config.ToolsConfig{
 			Web: config.WebToolsConfig{
-				Brave:      config.BraveConfig{APIKeyRef: "TEST_BOOT_BRAVE_KEY"},
-				Tavily:     config.TavilyConfig{APIKeyRef: "TEST_BOOT_TAVILY_KEY"},
-				Perplexity: config.PerplexityConfig{APIKeyRef: "TEST_BOOT_PERPLEXITY_KEY"},
-				GLMSearch:  config.GLMSearchConfig{APIKeyRef: "TEST_BOOT_GLM_KEY"},
+				Brave:       config.BraveConfig{APIKeyRef: "TEST_BOOT_BRAVE_KEY"},
+				Tavily:      config.TavilyConfig{APIKeyRef: "TEST_BOOT_TAVILY_KEY"},
+				Perplexity:  config.PerplexityConfig{APIKeyRef: "TEST_BOOT_PERPLEXITY_KEY"},
+				GLMSearch:   config.GLMSearchConfig{APIKeyRef: "TEST_BOOT_GLM_KEY"},
 				BaiduSearch: config.BaiduSearchConfig{APIKeyRef: "TEST_BOOT_BAIDU_KEY"},
 			},
 		},
@@ -315,43 +315,122 @@ func TestInjectFromConfig_WebToolRefs(t *testing.T) {
 //	Then os.Getenv(R) == <expected-value>.
 func TestInjectChannelsFromConfig_AllChannelRefs(t *testing.T) {
 	type row struct {
-		name   string        // human-readable label
-		ref    string        // env-var / credential name
+		name   string                       // human-readable label
+		ref    string                       // env-var / credential name
 		setRef func(*config.Config, string) // patch cfg to use this ref
 	}
 
 	rows := []row{
 		{"Telegram.TokenRef", "TBT_TG_TOKEN", func(c *config.Config, r string) { c.Channels.Telegram.TokenRef = r }},
 		{"Discord.TokenRef", "TBT_DISCORD_TOKEN", func(c *config.Config, r string) { c.Channels.Discord.TokenRef = r }},
-		{"Slack.BotTokenRef", "TBT_SLACK_BOT_TOKEN", func(c *config.Config, r string) { c.Channels.Slack.BotTokenRef = r }},
-		{"Slack.AppTokenRef", "TBT_SLACK_APP_TOKEN", func(c *config.Config, r string) { c.Channels.Slack.AppTokenRef = r }},
-		{"Feishu.AppSecretRef", "TBT_FEISHU_APP_SECRET", func(c *config.Config, r string) { c.Channels.Feishu.AppSecretRef = r }},
-		{"Feishu.EncryptKeyRef", "TBT_FEISHU_ENCRYPT_KEY", func(c *config.Config, r string) { c.Channels.Feishu.EncryptKeyRef = r }},
-		{"Feishu.VerificationTokenRef", "TBT_FEISHU_VERIF_TOKEN", func(c *config.Config, r string) { c.Channels.Feishu.VerificationTokenRef = r }},
+		{
+			"Slack.BotTokenRef",
+			"TBT_SLACK_BOT_TOKEN",
+			func(c *config.Config, r string) { c.Channels.Slack.BotTokenRef = r },
+		},
+		{
+			"Slack.AppTokenRef",
+			"TBT_SLACK_APP_TOKEN",
+			func(c *config.Config, r string) { c.Channels.Slack.AppTokenRef = r },
+		},
+		{
+			"Feishu.AppSecretRef",
+			"TBT_FEISHU_APP_SECRET",
+			func(c *config.Config, r string) { c.Channels.Feishu.AppSecretRef = r },
+		},
+		{
+			"Feishu.EncryptKeyRef",
+			"TBT_FEISHU_ENCRYPT_KEY",
+			func(c *config.Config, r string) { c.Channels.Feishu.EncryptKeyRef = r },
+		},
+		{
+			"Feishu.VerificationTokenRef",
+			"TBT_FEISHU_VERIF_TOKEN",
+			func(c *config.Config, r string) { c.Channels.Feishu.VerificationTokenRef = r },
+		},
 		{"QQ.AppSecretRef", "TBT_QQ_APP_SECRET", func(c *config.Config, r string) { c.Channels.QQ.AppSecretRef = r }},
-		{"DingTalk.ClientSecretRef", "TBT_DINGTALK_CLIENT_SECRET", func(c *config.Config, r string) { c.Channels.DingTalk.ClientSecretRef = r }},
-		{"Matrix.AccessTokenRef", "TBT_MATRIX_ACCESS_TOKEN", func(c *config.Config, r string) { c.Channels.Matrix.AccessTokenRef = r }},
-		{"Matrix.CryptoPassphraseRef", "TBT_MATRIX_CRYPTO_PASS", func(c *config.Config, r string) { c.Channels.Matrix.CryptoPassphraseRef = r }},
-		{"LINE.ChannelSecretRef", "TBT_LINE_CHANNEL_SECRET", func(c *config.Config, r string) { c.Channels.LINE.ChannelSecretRef = r }},
-		{"LINE.ChannelAccessTokenRef", "TBT_LINE_CHANNEL_ACCESS_TOKEN", func(c *config.Config, r string) { c.Channels.LINE.ChannelAccessTokenRef = r }},
-		{"OneBot.AccessTokenRef", "TBT_ONEBOT_ACCESS_TOKEN", func(c *config.Config, r string) { c.Channels.OneBot.AccessTokenRef = r }},
+		{
+			"DingTalk.ClientSecretRef",
+			"TBT_DINGTALK_CLIENT_SECRET",
+			func(c *config.Config, r string) { c.Channels.DingTalk.ClientSecretRef = r },
+		},
+		{
+			"Matrix.AccessTokenRef",
+			"TBT_MATRIX_ACCESS_TOKEN",
+			func(c *config.Config, r string) { c.Channels.Matrix.AccessTokenRef = r },
+		},
+		{
+			"Matrix.CryptoPassphraseRef",
+			"TBT_MATRIX_CRYPTO_PASS",
+			func(c *config.Config, r string) { c.Channels.Matrix.CryptoPassphraseRef = r },
+		},
+		{
+			"LINE.ChannelSecretRef",
+			"TBT_LINE_CHANNEL_SECRET",
+			func(c *config.Config, r string) { c.Channels.LINE.ChannelSecretRef = r },
+		},
+		{
+			"LINE.ChannelAccessTokenRef",
+			"TBT_LINE_CHANNEL_ACCESS_TOKEN",
+			func(c *config.Config, r string) { c.Channels.LINE.ChannelAccessTokenRef = r },
+		},
+		{
+			"OneBot.AccessTokenRef",
+			"TBT_ONEBOT_ACCESS_TOKEN",
+			func(c *config.Config, r string) { c.Channels.OneBot.AccessTokenRef = r },
+		},
 		{"WeCom.SecretRef", "TBT_WECOM_SECRET", func(c *config.Config, r string) { c.Channels.WeCom.SecretRef = r }},
 		{"Weixin.TokenRef", "TBT_WEIXIN_TOKEN", func(c *config.Config, r string) { c.Channels.Weixin.TokenRef = r }},
 		{"IRC.PasswordRef", "TBT_IRC_PASSWORD", func(c *config.Config, r string) { c.Channels.IRC.PasswordRef = r }},
-		{"IRC.NickServPasswordRef", "TBT_IRC_NICKSERV_PASSWORD", func(c *config.Config, r string) { c.Channels.IRC.NickServPasswordRef = r }},
-		{"IRC.SASLPasswordRef", "TBT_IRC_SASL_PASSWORD", func(c *config.Config, r string) { c.Channels.IRC.SASLPasswordRef = r }},
-		{"Voice.ElevenLabsAPIKeyRef", "TBT_ELEVENLABS_KEY", func(c *config.Config, r string) { c.Voice.ElevenLabsAPIKeyRef = r }},
-		{"Skills.Github.TokenRef", "TBT_GITHUB_TOKEN", func(c *config.Config, r string) { c.Tools.Skills.Github.TokenRef = r }},
-		{"Skills.ClawHub.AuthTokenRef", "TBT_CLAWHUB_AUTH_TOKEN", func(c *config.Config, r string) { c.Tools.Skills.Registries.ClawHub.AuthTokenRef = r }},
+		{
+			"IRC.NickServPasswordRef",
+			"TBT_IRC_NICKSERV_PASSWORD",
+			func(c *config.Config, r string) { c.Channels.IRC.NickServPasswordRef = r },
+		},
+		{
+			"IRC.SASLPasswordRef",
+			"TBT_IRC_SASL_PASSWORD",
+			func(c *config.Config, r string) { c.Channels.IRC.SASLPasswordRef = r },
+		},
+		{
+			"Voice.ElevenLabsAPIKeyRef",
+			"TBT_ELEVENLABS_KEY",
+			func(c *config.Config, r string) { c.Voice.ElevenLabsAPIKeyRef = r },
+		},
+		{
+			"Skills.Github.TokenRef",
+			"TBT_GITHUB_TOKEN",
+			func(c *config.Config, r string) { c.Tools.Skills.Github.TokenRef = r },
+		},
+		{
+			"Skills.ClawHub.AuthTokenRef",
+			"TBT_CLAWHUB_AUTH_TOKEN",
+			func(c *config.Config, r string) { c.Tools.Skills.Registries.ClawHub.AuthTokenRef = r },
+		},
 		{"Web.Brave.APIKeyRef", "TBT_BRAVE_KEY", func(c *config.Config, r string) { c.Tools.Web.Brave.APIKeyRef = r }},
-		{"Web.Tavily.APIKeyRef", "TBT_TAVILY_KEY", func(c *config.Config, r string) { c.Tools.Web.Tavily.APIKeyRef = r }},
-		{"Web.Perplexity.APIKeyRef", "TBT_PERPLEXITY_KEY", func(c *config.Config, r string) { c.Tools.Web.Perplexity.APIKeyRef = r }},
-		{"Web.GLMSearch.APIKeyRef", "TBT_GLM_KEY", func(c *config.Config, r string) { c.Tools.Web.GLMSearch.APIKeyRef = r }},
-		{"Web.BaiduSearch.APIKeyRef", "TBT_BAIDU_KEY", func(c *config.Config, r string) { c.Tools.Web.BaiduSearch.APIKeyRef = r }},
+		{
+			"Web.Tavily.APIKeyRef",
+			"TBT_TAVILY_KEY",
+			func(c *config.Config, r string) { c.Tools.Web.Tavily.APIKeyRef = r },
+		},
+		{
+			"Web.Perplexity.APIKeyRef",
+			"TBT_PERPLEXITY_KEY",
+			func(c *config.Config, r string) { c.Tools.Web.Perplexity.APIKeyRef = r },
+		},
+		{
+			"Web.GLMSearch.APIKeyRef",
+			"TBT_GLM_KEY",
+			func(c *config.Config, r string) { c.Tools.Web.GLMSearch.APIKeyRef = r },
+		},
+		{
+			"Web.BaiduSearch.APIKeyRef",
+			"TBT_BAIDU_KEY",
+			func(c *config.Config, r string) { c.Tools.Web.BaiduSearch.APIKeyRef = r },
+		},
 	}
 
 	for _, tc := range rows {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			tmpDir := t.TempDir()
 			store := newUnlockedStore(t, tmpDir)

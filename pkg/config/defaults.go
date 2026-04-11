@@ -29,8 +29,11 @@ func DefaultConfig() *Config {
 			// and non-uniqueness problems of a PID-based name.
 			userTempDir, mkErr := os.MkdirTemp(os.TempDir(), "omnipus-")
 			if mkErr != nil {
-				logger.ErrorCF("config", "UserHomeDir failed and could not create secure temp dir; data isolation not guaranteed",
-					map[string]any{"error": homeErr.Error(), "mkdir_error": mkErr.Error()})
+				logger.ErrorCF(
+					"config",
+					"UserHomeDir failed and could not create secure temp dir; data isolation not guaranteed",
+					map[string]any{"error": homeErr.Error(), "mkdir_error": mkErr.Error()},
+				)
 				userTempDir = os.TempDir()
 			} else {
 				// MkdirTemp creates with 0700 on Unix; ensure correct permissions.

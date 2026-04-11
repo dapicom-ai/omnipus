@@ -45,7 +45,7 @@ const (
 	StatusActive SessionStatus = "active"
 	// StatusArchived is a session that has been intentionally closed.
 	StatusArchived SessionStatus = "archived"
-	// StatusInterrupted is a session that was terminated unexpectedly or cancelled.
+	// StatusInterrupted is a session that was terminated unexpectedly or canceled.
 	StatusInterrupted SessionStatus = "interrupted"
 )
 
@@ -66,19 +66,19 @@ func NewPartitionStore(agentWorkspaceDir, agentID string) *PartitionStore {
 
 // SessionMeta is the meta.json file per Appendix E §E.5.1.
 type SessionMeta struct {
-	ID         string       `json:"id"`
-	AgentID    string       `json:"agent_id"`
-	Title      string       `json:"title,omitempty"`
+	ID         string        `json:"id"`
+	AgentID    string        `json:"agent_id"`
+	Title      string        `json:"title,omitempty"`
 	Status     SessionStatus `json:"status"` // StatusActive | StatusArchived | StatusInterrupted
-	CreatedAt  time.Time    `json:"created_at"`
-	UpdatedAt  time.Time    `json:"updated_at"`
-	Model      string       `json:"model,omitempty"`
-	Provider   string       `json:"provider,omitempty"`
-	Stats      SessionStats `json:"stats"`
-	ProjectID  string       `json:"project_id,omitempty"`
-	TaskID     string       `json:"task_id,omitempty"`
-	Channel    string       `json:"channel"`
-	Partitions []string     `json:"partitions"`
+	CreatedAt  time.Time     `json:"created_at"`
+	UpdatedAt  time.Time     `json:"updated_at"`
+	Model      string        `json:"model,omitempty"`
+	Provider   string        `json:"provider,omitempty"`
+	Stats      SessionStats  `json:"stats"`
+	ProjectID  string        `json:"project_id,omitempty"`
+	TaskID     string        `json:"task_id,omitempty"`
+	Channel    string        `json:"channel"`
+	Partitions []string      `json:"partitions"`
 
 	LastCompactionSummary string `json:"last_compaction_summary,omitempty"`
 }
@@ -95,17 +95,17 @@ type SessionStats struct {
 
 // TranscriptEntry represents one line in a partition JSONL file.
 type TranscriptEntry struct {
-	ID          string        `json:"id"`
-	Type        EntryType     `json:"type,omitempty"` // EntryTypeMessage | EntryTypeCompaction | EntryTypeSystem; empty = message
-	Role        string        `json:"role,omitempty"` // "user" | "assistant" | "system"
-	Content     string        `json:"content,omitempty"`
-	Summary     string        `json:"summary,omitempty"` // for compaction entries
-	Timestamp   time.Time     `json:"timestamp"`
-	Tokens      int           `json:"tokens,omitempty"`
-	Cost        float64       `json:"cost,omitempty"`
-	Status      string        `json:"status,omitempty"` // "ok" | "error" | "interrupted"
-	Attachments []Attachment  `json:"attachments,omitempty"`
-	ToolCalls   []ToolCall    `json:"tool_calls,omitempty"`
+	ID          string       `json:"id"`
+	Type        EntryType    `json:"type,omitempty"` // EntryTypeMessage | EntryTypeCompaction | EntryTypeSystem; empty = message
+	Role        string       `json:"role,omitempty"` // "user" | "assistant" | "system"
+	Content     string       `json:"content,omitempty"`
+	Summary     string       `json:"summary,omitempty"` // for compaction entries
+	Timestamp   time.Time    `json:"timestamp"`
+	Tokens      int          `json:"tokens,omitempty"`
+	Cost        float64      `json:"cost,omitempty"`
+	Status      string       `json:"status,omitempty"` // "ok" | "error" | "interrupted"
+	Attachments []Attachment `json:"attachments,omitempty"`
+	ToolCalls   []ToolCall   `json:"tool_calls,omitempty"`
 
 	// For compaction entries.
 	MessagesCompacted int `json:"messages_compacted,omitempty"`
@@ -404,7 +404,15 @@ func (ps *PartitionStore) ReadMessages(sessionID string) ([]TranscriptEntry, err
 	for _, partition := range meta.Partitions {
 		entries, err := readPartition(filepath.Join(sessionDir, partition))
 		if err != nil {
-			slog.Warn("session: skipping unreadable partition", "session_id", sessionID, "partition", partition, "error", err)
+			slog.Warn(
+				"session: skipping unreadable partition",
+				"session_id",
+				sessionID,
+				"partition",
+				partition,
+				"error",
+				err,
+			)
 			continue
 		}
 		all = append(all, entries...)

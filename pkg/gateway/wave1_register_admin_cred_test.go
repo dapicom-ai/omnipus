@@ -404,7 +404,11 @@ func TestProviders_BackwardCompatPlaintextAPIKey(t *testing.T) {
 			break
 		}
 	}
-	assert.True(t, found, "openai provider must be present in GET /providers response with old plaintext api_key config")
+	assert.True(
+		t,
+		found,
+		"openai provider must be present in GET /providers response with old plaintext api_key config",
+	)
 }
 
 // TestOnboarding_CreatesAPIKeyRef verifies that HandleCompleteOnboarding stores

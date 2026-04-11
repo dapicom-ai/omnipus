@@ -70,7 +70,7 @@ type LinuxBackend struct {
 // where a refactor renames or removes ABIVersion()/PolicyApplied() and the
 // status endpoint silently misclassifies the backend as non-kernel.
 var (
-	_ interface{ ABIVersion() int }  = (*LinuxBackend)(nil)
+	_ interface{ ABIVersion() int }     = (*LinuxBackend)(nil)
 	_ interface{ PolicyApplied() bool } = (*LinuxBackend)(nil)
 )
 

@@ -40,7 +40,10 @@ type DingTalkChannel struct {
 func NewDingTalkChannel(cfg config.DingTalkConfig, messageBus *bus.MessageBus) (*DingTalkChannel, error) {
 	clientSecret := os.Getenv(cfg.ClientSecretRef)
 	if cfg.ClientID == "" || clientSecret == "" {
-		return nil, fmt.Errorf("dingtalk: client_id and client_secret are required (client_secret_ref=%q): check credential store", cfg.ClientSecretRef)
+		return nil, fmt.Errorf(
+			"dingtalk: client_id and client_secret are required (client_secret_ref=%q): check credential store",
+			cfg.ClientSecretRef,
+		)
 	}
 
 	// Set the logger for the Stream SDK

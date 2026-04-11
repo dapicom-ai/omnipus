@@ -40,7 +40,7 @@ var untrustedToolResults = map[string]struct{}{
 	"browser.evaluate":   {},
 	// File read — paths may point outside the workspace (allowed paths)
 	// and files on disk may have been written by prior web_fetch calls.
-	// Without per-path trust labelling we conservatively treat read_file
+	// Without per-path trust labeling we conservatively treat read_file
 	// output as untrusted. This is stricter than necessary for purely
 	// internal files but removes an entire class of indirect injection.
 	"read_file": {},

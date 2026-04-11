@@ -43,15 +43,15 @@ type TaskQueueChecker interface {
 
 // HeartbeatService manages periodic heartbeat checks
 type HeartbeatService struct {
-	workspace    string
-	bus          *bus.MessageBus
-	state        *state.Manager
-	handler      HeartbeatHandler
-	interval     time.Duration
-	enabled      bool
-	mu           sync.RWMutex
-	stopChan     chan struct{}
-	taskChecker  TaskQueueChecker
+	workspace   string
+	bus         *bus.MessageBus
+	state       *state.Manager
+	handler     HeartbeatHandler
+	interval    time.Duration
+	enabled     bool
+	mu          sync.RWMutex
+	stopChan    chan struct{}
+	taskChecker TaskQueueChecker
 }
 
 // NewHeartbeatService creates a new heartbeat service

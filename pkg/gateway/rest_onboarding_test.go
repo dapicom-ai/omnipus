@@ -287,7 +287,11 @@ func TestHandleCompleteOnboarding_ThenLogin(t *testing.T) {
 
 	// Step 1: Complete onboarding
 	onboardingBody := `{"provider":{"id":"openai","api_key":"sk-test"},"admin":{"username":"admin","password":"secret123"}}`
-	onboardingReq := httptest.NewRequest(http.MethodPost, "/api/v1/onboarding/complete", strings.NewReader(onboardingBody))
+	onboardingReq := httptest.NewRequest(
+		http.MethodPost,
+		"/api/v1/onboarding/complete",
+		strings.NewReader(onboardingBody),
+	)
 	onboardingReq.Header.Set("Content-Type", "application/json")
 	onboardingW := httptest.NewRecorder()
 	api.HandleCompleteOnboarding(onboardingW, onboardingReq)
@@ -508,7 +512,11 @@ func TestHandleCompleteOnboarding_ConcurrentDifferentUsers(t *testing.T) {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			body := `{"provider":{"id":"openai","api_key":"sk-test-` + string(rune('0'+idx)) + `"},"admin":{"username":"admin` + string(rune('0'+idx)) + `","password":"secret123"}}`
+			body := `{"provider":{"id":"openai","api_key":"sk-test-` + string(
+				rune('0'+idx),
+			) + `"},"admin":{"username":"admin` + string(
+				rune('0'+idx),
+			) + `","password":"secret123"}}`
 			req := httptest.NewRequest(http.MethodPost, "/api/v1/onboarding/complete", strings.NewReader(body))
 			req.Header.Set("Content-Type", "application/json")
 			w := httptest.NewRecorder()

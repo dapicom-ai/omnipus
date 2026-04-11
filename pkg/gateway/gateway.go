@@ -24,9 +24,6 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
-	"github.com/dapicom-ai/omnipus/pkg/credentials"
-	"github.com/dapicom-ai/omnipus/pkg/datamodel"
-	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/dingtalk"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/discord"
@@ -43,12 +40,15 @@ import (
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/whatsapp"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/whatsapp_native"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/cron"
+	"github.com/dapicom-ai/omnipus/pkg/datamodel"
 	"github.com/dapicom-ai/omnipus/pkg/devices"
 	"github.com/dapicom-ai/omnipus/pkg/health"
 	"github.com/dapicom-ai/omnipus/pkg/heartbeat"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/media"
+	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/state"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
@@ -116,7 +116,7 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 
 	// Construct and unlock the credential store BEFORE loading config so that
 	// v0→v1 migration (MigrateWithStore) can persist legacy plaintext secrets.
-	// Implements BRD SEC-22/SEC-23 deny-by-default behaviour.
+	// Implements BRD SEC-22/SEC-23 deny-by-default behavior.
 	credStore := credentials.NewStore(filepath.Join(homePath, "credentials.json"))
 	if err := credentials.Unlock(credStore); err != nil {
 		return fmt.Errorf("credential store: %w", err)
@@ -134,7 +134,9 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 		for _, e := range errs {
 			slog.Error("provider credential injection failed", "error", e)
 		}
-		return fmt.Errorf("fatal: provider credential injection failed — ensure OMNIPUS_MASTER_KEY is set and all referenced credentials exist")
+		return fmt.Errorf(
+			"fatal: provider credential injection failed — ensure OMNIPUS_MASTER_KEY is set and all referenced credentials exist",
+		)
 	}
 	if errs := credentials.InjectChannelsFromConfig(cfg, credStore); len(errs) > 0 {
 		// Distinguish: ErrStoreLocked or non-ErrNotFound errors are always fatal.
@@ -453,7 +455,10 @@ func setupAndStartServices(
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions/", api.withAuth(api.HandleSessions))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/agents", api.withAuth(api.HandleAgents))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/agents/", api.withAuth(api.HandleAgents))
-	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/config", api.withAuth(withRateLimit(configLimiter, api.HandleConfig)))
+	runningServices.ChannelManager.RegisterHTTPHandler(
+		"/api/v1/config",
+		api.withAuth(withRateLimit(configLimiter, api.HandleConfig)),
+	)
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/skills", api.withAuth(api.HandleSkills))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/skills/", api.withAuth(api.HandleSkills))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/doctor", api.withAuth(api.HandleDoctor))
@@ -465,11 +470,14 @@ func setupAndStartServices(
 
 	// Catch-all for any /api/ path not registered — returns JSON 404 instead of SPA HTML.
 	// Do not echo r.URL.Path in the response; that leaks internal routing details.
-	runningServices.ChannelManager.RegisterHTTPHandler("/api/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "endpoint not found"})
-	}))
+	runningServices.ChannelManager.RegisterHTTPHandler(
+		"/api/",
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]string{"error": "endpoint not found"})
+		}),
+	)
 
 	// Serve the embedded SPA (Sovereign Deep UI) as the default handler.
 	// API routes registered above take priority; anything else serves the SPA.
@@ -681,7 +689,11 @@ func restartServices(
 	return nil
 }
 
-func setupConfigWatcherPolling(configPath string, debug bool, credStore *credentials.Store) (chan *config.Config, func()) {
+func setupConfigWatcherPolling(
+	configPath string,
+	debug bool,
+	credStore *credentials.Store,
+) (chan *config.Config, func()) {
 	configChan := make(chan *config.Config, 1)
 	stop := make(chan struct{})
 	var wg sync.WaitGroup

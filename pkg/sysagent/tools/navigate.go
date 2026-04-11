@@ -30,6 +30,7 @@ func (t *NavigateTool) Name() string { return "system.navigate" }
 func (t *NavigateTool) Description() string {
 	return "Navigate the UI to a specific screen.\nParameters: screen (chat/command-center/agents/skills/settings), agent_id (optional), section (optional)."
 }
+
 func (t *NavigateTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",

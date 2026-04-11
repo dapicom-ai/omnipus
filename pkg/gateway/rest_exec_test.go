@@ -112,7 +112,7 @@ func TestHandleExecAllowlist_PUT_SanitisesInput(t *testing.T) {
 }
 
 // TestHandleExecAllowlist_PUT_TrimsAndDedupes verifies whitespace trimming
-// and duplicate removal. These are intentional normalisation behaviours so
+// and duplicate removal. These are intentional normalisation behaviors so
 // the frontend's add-pattern UX stays permissive.
 func TestHandleExecAllowlist_PUT_TrimsAndDedupes(t *testing.T) {
 	api := newTestRestAPIWithHome(t)
