@@ -106,6 +106,17 @@ func TestSandboxBackend_SelectBackend(t *testing.T) {
 	})
 
 	t.Run("Apply with minimal policy succeeds", func(t *testing.T) {
+		// Landlock's landlock_restrict_self is a per-process one-way ratchet —
+		// applying it from a shared test process permanently restricts every
+		// subsequent test in the same binary. Apply is therefore skipped for
+		// Landlock backends in unit tests.
+		//
+		// NOTE: subprocess-level Apply coverage (spawning a child process that
+		// calls Apply, then verifying filesystem restrictions are enforced) does
+		// not yet exist. It is tracked as a future integration-test gap.
+		if backend.Name() != "fallback" && backend.Name() != "seccomp" {
+			t.Skipf("skipping Apply for %q backend: would irreversibly sandbox the test process", backend.Name())
+		}
 		workspaceDir := t.TempDir()
 		policy := sandbox.SandboxPolicy{
 			FilesystemRules: []sandbox.PathRule{
@@ -113,13 +124,8 @@ func TestSandboxBackend_SelectBackend(t *testing.T) {
 			},
 		}
 		err := backend.Apply(policy)
-		// On non-Linux, this succeeds with fallback.
-		// On Linux without Landlock, also succeeds (graceful degradation).
-		// On Linux with Landlock, this restricts the test process — only run if safe.
-		if backend.Name() == "fallback" || backend.Name() == "seccomp" {
-			assert.NoError(t, err,
-				"SelectBackend().Apply must not hard-fail — graceful degradation required")
-		}
+		assert.NoError(t, err,
+			"SelectBackend().Apply must not hard-fail — graceful degradation required")
 	})
 }
 
