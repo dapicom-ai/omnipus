@@ -23,6 +23,21 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build SPA
+        # pkg/gateway/embed.go has //go:embed all:spa and pkg/gateway/spa/ is
+        # gitignored. Vite builds into dist/spa; we copy it into the embed
+        # target so go vet/build/lint can compile the !cgo gateway files.
+        run: |
+          npm ci
+          npm run build
+          rm -rf pkg/gateway/spa
+          cp -r dist/spa pkg/gateway/spa
+
       - name: Run go generate
         run: go generate ./...
 
@@ -50,6 +65,20 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build SPA
+        # govulncheck runs a build under the hood; the gateway embed target
+        # must exist for that build to succeed.
+        run: |
+          npm ci
+          npm run build
+          rm -rf pkg/gateway/spa
+          cp -r dist/spa pkg/gateway/spa
+
       - name: Run Govulncheck
         uses: golang/govulncheck-action@v1
         with:
@@ -69,6 +98,18 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build SPA
+        run: |
+          npm ci
+          npm run build
+          rm -rf pkg/gateway/spa
+          cp -r dist/spa pkg/gateway/spa
 
       - name: Run go generate
         run: go generate ./...
