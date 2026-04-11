@@ -46,10 +46,11 @@ func (t *DoctorRunTool) Execute(_ context.Context, _ map[string]any) *tools.Tool
 	// wiring, Wave 3). The agent loop starts/stops the proxy based on this
 	// field; diagnostics read the same field so the doctor output matches
 	// the enforcement state the operator configured.
+	currentCfg := t.deps.GetCfg()
 	execCfg := security.DiagnosticConfig{
-		ExecToolEnabled:     t.deps.Cfg.Tools.IsToolEnabled("exec"),
-		ExecProxyEnabled:    t.deps.Cfg.Tools.Exec.EnableProxy,
-		ExecAllowedBinaries: t.deps.Cfg.Tools.Exec.AllowedBinaries,
+		ExecToolEnabled:     currentCfg.Tools.IsToolEnabled("exec"),
+		ExecProxyEnabled:    currentCfg.Tools.Exec.EnableProxy,
+		ExecAllowedBinaries: currentCfg.Tools.Exec.AllowedBinaries,
 	}
 	for _, w := range security.CheckExecEgress(execCfg) {
 		issues = append(issues, issue{

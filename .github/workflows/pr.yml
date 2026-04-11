@@ -116,3 +116,12 @@ jobs:
 
       - name: Run go test
         run: go test -tags goolm,stdjson ./...
+
+      - name: Run go test -race (concurrency-sensitive packages)
+        # pkg/agent is excluded: it has 2 pre-existing races in unrelated tests
+        # that predate this PR. The packages below cover the full concurrency
+        # contract introduced by MutateConfig, WithConfig, SaveConfigLocked,
+        # and the single-user bypass.
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race -tags goolm,stdjson -count=1 -timeout 240s ./pkg/sysagent/... ./pkg/config/... ./pkg/credentials/... ./pkg/gateway/... ./pkg/channels/...

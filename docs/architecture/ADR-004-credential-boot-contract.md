@@ -23,7 +23,7 @@ Every production caller must follow this exact sequence, implemented in the shar
 ```
 NewStore → Unlock → LoadConfigWithStore → InjectFromConfig →
 ResolveBundle → cfg.RegisterSensitiveValues(plaintexts) →
-NewManager(cfg, bundle, bus) → Start
+NewAgentLoop → WireSystemTools → NewManager(cfg, bundle, bus) → Start
 ```
 
 1. **`credentials.NewStore(path)`** — construct the store (does not read disk, safe before any I/O)
@@ -32,8 +32,26 @@ NewManager(cfg, bundle, bus) → Start
 4. **`credentials.InjectFromConfig(cfg, store)`** — resolve each provider `APIKeyRef` from the store and inject into the process environment so LLM SDK clients can read them. Any error is fatal at boot; reject the reload on hot-reload.
 5. **`credentials.ResolveBundle(cfg, store)`** — resolve all channel `*Ref` fields into a `SecretBundle`. Channels receive secrets via the bundle — no `os.Setenv` for channel credentials. `ErrNotFound` for an **enabled** channel is fatal. `ErrNotFound` for a **disabled** channel is logged at Info and skipped.
 6. **`cfg.RegisterSensitiveValues(plaintexts)`** — register all resolved plaintext values with the config's sensitive-data replacer so they are scrubbed from LLM output and audit logs. Semantics are "replace not append" — every call must supply the complete current set so that rotated or removed secrets are evicted.
-7. **`channels.NewManager(cfg, bundle, bus, mediaStore)`** — channel constructors receive secrets via the `SecretBundle` parameter. If construction fails for an enabled channel, boot aborts.
-8. **`manager.Start()`** — begin receiving messages.
+7. **`agent.NewAgentLoop(cfg, msgBus, provider)`** — constructs the agent loop with the loaded config. Does NOT wire system tools (gateway-level concerns stay out of the constructor).
+8. **`agentLoop.WireSystemTools(sysToolDeps, navCb)`** — registers the 35 `system.*` tools as `GuardedTool`-wrapped entries on the system agent. Each `GuardedTool.Execute` routes through `SystemToolHandler.Handle`, which enforces RBAC (SEC-19), rate limiting, confirmation (with a single-user bypass when `callerRole == RoleSingleUser` and `args.confirm == true`), and audit logging (SEC-15). The audit entry's `Details` map includes a `confirmation_source` discriminator (`"not_required"` / `"llm_arg_single_user"` / `"ui_button"`) so forensic review can distinguish LLM-self-approved destructive ops from user-approved ones. `sysToolDeps.MutateConfig` is wired to `agentLoop.MutateConfig` — sysagent writes acquire the single `al.mu` write lock (see Concurrency Contract below). `sysToolDeps.GetCfg` is wired to `agentLoop.GetConfig` so hot-reloaded configs are visible without re-wiring. `sysToolDeps.SaveConfigLocked(cfg)` persists to disk assuming `al.mu` is already held by the caller (i.e. by the enclosing `MutateConfig` callback). This step is fatal: if the system agent is not found, boot aborts.
+9. **`channels.NewManager(cfg, bundle, bus, mediaStore)`** — channel constructors receive secrets via the `SecretBundle` parameter. If construction fails for an enabled channel, boot aborts.
+10. **`manager.Start()`** — begin receiving messages.
+
+**Hot-reload note:** `refreshConfigAndRewireServices` (called during `POST /reload` or hot-file-reload) calls `agentLoop.SwapConfig(newCfg)` but does NOT re-call `WireSystemTools`. This is correct because `sysToolDeps.GetCfg` delegates to `agentLoop.GetConfig()`, so system tools automatically see the new config after `SwapConfig` without requiring re-wiring.
+
+### Concurrency Contract
+
+Omnipus has exactly ONE write lock for the in-memory `*config.Config`: the agent loop's `al.mu` (`sync.RWMutex`). All config-write paths must go through `AgentLoop.MutateConfig(fn)`, which acquires `al.mu.Lock()`, calls `fn(al.cfg)`, and releases. Reads go through `AgentLoop.GetConfig()` which acquires `al.mu.RLock()`.
+
+Rules:
+
+1. **Sysagent writes** acquire `al.mu` only. `Deps.WithConfig(fn)` routes through `MutateConfig` and calls `SaveConfigLocked(cfg)` from inside the callback; `SaveConfigLocked` MUST NOT acquire any additional mutex — it only writes to disk.
+2. **REST writes** (`safeUpdateConfigJSON`) hold the REST-local `configMu` for read-modify-write cycles and then call through to `AgentLoop` methods that take `al.mu`. Lock order is always `configMu → al.mu`, never the reverse.
+3. **Never acquire two mutexes across the agent/config boundary in different orders.** The round-2 design introduced a `gatewayConfigMu` as a shared mutex between REST and sysagent; that produced a classic AB-BA deadlock (REST took `gatewayConfigMu → al.mu`; sysagent took `al.mu → gatewayConfigMu`). Round 3 deleted `gatewayConfigMu` and consolidated on `al.mu` as the single source of truth. Do not reintroduce a second boundary mutex.
+4. **`configMu` is REST-local.** It serializes concurrent REST handlers so two `PATCH /config` calls cannot trample each other's read-modify-write cycle. It is NOT shared with sysagent and sysagent code MUST NOT import or reference it.
+5. **Rollback on error.** `Deps.WithConfig` JSON-snapshots the config before calling `fn`; on either `fn` error or `SaveConfigLocked` error, it calls `restoreConfig` which uses a reflection-based `clearMaps` walker to zero map fields before `json.Unmarshal`-ing the snapshot back into `cfg` (because Go's stdlib `json.Unmarshal` extends maps rather than replacing them).
+
+Violations of rule 3 are invisible at compile time and often invisible in unit tests — they only manifest as production deadlocks under concurrent load. Reviewers should reject any PR that adds a second mutex on this boundary.
 
 ### Canonical Shared Helper
 

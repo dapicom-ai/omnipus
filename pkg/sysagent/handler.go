@@ -70,7 +70,7 @@ func (h *SystemToolHandler) Handle(
 			"caller_role", callerRole,
 			"device_id", deviceID,
 		)
-		h.logAudit(toolName, deviceID, string(callerRole), args, "denied", start)
+		h.logAuditWithSource(toolName, deviceID, string(callerRole), args, "denied", "not_required", start)
 		if denied, ok := err.(*PermissionDeniedError); ok {
 			return tools.ErrorResult(FriendlyDenialMessage(denied))
 		}
@@ -80,7 +80,7 @@ func (h *SystemToolHandler) Handle(
 	// 2. Rate limit check.
 	if err := h.rateLimiter.Check(toolName); err != nil {
 		slog.Warn("System tool rate-limited", "tool", toolName)
-		h.logAudit(toolName, deviceID, string(callerRole), args, "rate_limited", start)
+		h.logAuditWithSource(toolName, deviceID, string(callerRole), args, "rate_limited", "not_required", start)
 		if rlErr, ok := err.(*RateLimitedError); ok {
 			return tools.ErrorResult(fmt.Sprintf(
 				"RATE_LIMITED: too many %s operations — please wait %.0f seconds before trying again.",
@@ -91,26 +91,54 @@ func (h *SystemToolHandler) Handle(
 	}
 
 	// 3. UI confirmation for destructive operations.
+	// confirmationSource records how confirmation was obtained for the audit trail.
+	confirmationSource := "not_required"
 	if RequiresConfirmation(toolName) == ConfirmationUI {
-		if h.confirm == nil {
-			h.logAudit(toolName, deviceID, string(callerRole), args, "no_confirm_handler", start)
-			return tools.ErrorResult(
-				"CONFIRMATION_REQUIRED: this operation requires explicit confirmation but no " +
-					"confirmation handler is configured (headless mode). " +
-					"Operation denied.",
-			)
+		confirmed := false
+		confirmationSource = "ui_button" // default; overridden below for single-user bypass
+
+		// Single-user mode: if the LLM passes confirm:true in the tool arguments,
+		// treat it as pre-approved. This unblocks destructive tools in open-source
+		// single-user mode while preserving deny-by-default for multi-user deployments
+		// where a real confirm func must be wired regardless of the arg.
+		if callerRole == RoleSingleUser {
+			if c, ok := args["confirm"].(bool); ok && c {
+				confirmed = true
+				confirmationSource = "llm_arg_single_user"
+			}
 		}
-		confirmed, err := h.confirm(ctx, toolName, args)
-		if err != nil {
-			h.logAudit(toolName, deviceID, string(callerRole), args, "confirm_error", start)
-			return tools.ErrorResult(fmt.Sprintf(
-				"CONFIRMATION_ERROR: failed to obtain confirmation: %v", err))
-		}
+
 		if !confirmed {
-			h.logAudit(toolName, deviceID, string(callerRole), args, "canceled", start)
-			return tools.NewToolResult(
-				`{"success":false,"status":"CONFIRMATION_REQUIRED","message":"Operation canceled by user."}`,
-			)
+			if h.confirm == nil {
+				h.logAuditWithSource(
+					toolName, deviceID, string(callerRole), args,
+					"no_confirm_handler", confirmationSource, start,
+				)
+				return tools.ErrorResult(
+					"CONFIRMATION_REQUIRED: this operation requires explicit confirmation but no " +
+						"confirmation handler is configured (headless mode). " +
+						"Operation denied.",
+				)
+			}
+			ok, err := h.confirm(ctx, toolName, args)
+			if err != nil {
+				h.logAuditWithSource(
+					toolName, deviceID, string(callerRole), args,
+					"confirm_error", confirmationSource, start,
+				)
+				return tools.ErrorResult(fmt.Sprintf(
+					"CONFIRMATION_ERROR: failed to obtain confirmation: %v", err))
+			}
+			if !ok {
+				h.logAuditWithSource(
+					toolName, deviceID, string(callerRole), args,
+					"canceled", confirmationSource, start,
+				)
+				return tools.NewToolResult(
+					`{"success":false,"status":"CONFIRMATION_REQUIRED","message":"Operation canceled by user."}`,
+				)
+			}
+			// confirmed via real UI button — source stays "ui_button"
 		}
 	}
 
@@ -122,16 +150,20 @@ func (h *SystemToolHandler) Handle(
 	if result != nil && result.IsError {
 		decision = "error"
 	}
-	h.logAudit(toolName, deviceID, string(callerRole), args, decision, start)
+	h.logAuditWithSource(toolName, deviceID, string(callerRole), args, decision, confirmationSource, start)
 
 	return result
 }
 
-// logAudit writes a system tool invocation to the audit trail (SEC-15).
-func (h *SystemToolHandler) logAudit(
+// logAuditWithSource writes a system tool invocation to the audit trail
+// (SEC-15), including a confirmation_source discriminator that records whether
+// confirmation came from an LLM tool argument ("llm_arg_single_user"), a real
+// UI button click ("ui_button"), or was not required ("not_required").
+func (h *SystemToolHandler) logAuditWithSource(
 	toolName, deviceID, callerRole string,
 	args map[string]any,
 	decision string,
+	confirmationSource string,
 	start time.Time,
 ) {
 	if h.audit == nil {
@@ -145,8 +177,9 @@ func (h *SystemToolHandler) logAudit(
 		Decision:   decision,
 		Parameters: args,
 		Details: map[string]any{
-			"device_id":   deviceID,
-			"caller_role": callerRole,
+			"device_id":           deviceID,
+			"caller_role":         callerRole,
+			"confirmation_source": confirmationSource,
 		},
 	}
 	if err := h.audit.Log(entry); err != nil {

@@ -9,6 +9,44 @@ import (
 	"testing"
 )
 
+// TestAgentConfig_Clone_Independence verifies that Clone returns a fully
+// independent deep copy — mutations to the original do not affect the clone
+// and vice versa.
+//
+// Traces to: Blocker 2 — WithConfig uses Clone for full-config rollback.
+func TestAgentConfig_Clone_Independence(t *testing.T) {
+	orig := DefaultConfig()
+	orig.Agents.List = []AgentConfig{
+		{ID: "agent-1", Name: "Original"},
+	}
+
+	clone, err := orig.Clone()
+	if err != nil {
+		t.Fatalf("Clone() returned error: %v", err)
+	}
+	if clone == nil {
+		t.Fatal("Clone() returned nil")
+	}
+
+	// Mutation 1: append to orig.Agents.List — clone must not see it.
+	orig.Agents.List = append(orig.Agents.List, AgentConfig{ID: "agent-2", Name: "New"})
+	if len(clone.Agents.List) != 1 {
+		t.Errorf("clone.Agents.List length = %d after appending to original; want 1", len(clone.Agents.List))
+	}
+
+	// Mutation 2: change a string field on the original — clone must keep old value.
+	orig.Agents.List[0].Name = "Changed"
+	if clone.Agents.List[0].Name != "Original" {
+		t.Errorf("clone.Agents.List[0].Name = %q after mutating original; want Original", clone.Agents.List[0].Name)
+	}
+
+	// Mutation 3: mutate the clone — original must not be affected.
+	clone.Gateway.Port = 9999
+	if orig.Gateway.Port == 9999 {
+		t.Error("mutating clone.Gateway.Port affected the original")
+	}
+}
+
 func TestAgentModelConfig_UnmarshalString(t *testing.T) {
 	var m AgentModelConfig
 	if err := json.Unmarshal([]byte(`"gpt-4"`), &m); err != nil {
@@ -1176,6 +1214,34 @@ func TestFilterSensitiveData_AllTokenTypes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := cfg.FilterSensitiveData(tt.content); got != tt.want {
 				t.Errorf("got %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestAgentConfig_IsActive_NilDefaultsToTrue verifies the backward-compat
+// rule: an AgentConfig with no Enabled field (nil pointer) is treated as
+// active so existing configs without the field continue to work.
+//
+// Traces to: wave5b-system-agent-spec.md — BRD §D.4.2 enabled semantics
+func TestAgentConfig_IsActive_NilDefaultsToTrue(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	tests := []struct {
+		name    string
+		enabled *bool
+		want    bool
+	}{
+		{"nil pointer is active", nil, true},
+		{"explicit true is active", &trueVal, true},
+		{"explicit false is inactive", &falseVal, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := AgentConfig{ID: "test", Enabled: tt.enabled}
+			if got := a.IsActive(); got != tt.want {
+				t.Errorf("IsActive() = %v, want %v", got, tt.want)
 			}
 		})
 	}

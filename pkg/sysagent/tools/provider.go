@@ -111,7 +111,7 @@ func (t *ProviderListTool) Execute(_ context.Context, _ map[string]any) *tools.T
 	// Enumerate providers from config's model_list, redacting credentials.
 	var providers []providerSummary
 	seen := map[string]bool{}
-	for _, m := range t.deps.Cfg.Providers {
+	for _, m := range t.deps.GetCfg().Providers {
 		if m == nil {
 			continue
 		}

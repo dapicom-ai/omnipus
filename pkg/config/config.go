@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -198,6 +199,25 @@ type OmnipusChannelRoutingRule struct {
 	AgentID string `json:"agent_id"`
 }
 
+// Clone returns a deep copy of c via JSON round-trip. The clone is fully
+// independent: mutations to slice or map fields in the original do not affect
+// the clone and vice versa. Returns nil if marshaling or unmarshalling fails
+// (should never happen for a valid Config in practice).
+//
+// Clone does NOT copy the sensitiveCache or registeredSensitive fields — those
+// are runtime-only and must be re-registered on the clone if needed.
+func (c *Config) Clone() (*Config, error) {
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(c); err != nil {
+		return nil, fmt.Errorf("clone: marshal: %w", err)
+	}
+	clone := &Config{}
+	if err := json.NewDecoder(&buf).Decode(clone); err != nil {
+		return nil, fmt.Errorf("clone: unmarshal: %w", err)
+	}
+	return clone, nil
+}
+
 // MergeChannelPoliciesIntoBindings converts OmnipusChannelPolicy routing rules
 // into AgentBinding entries and appends them to Bindings (if not already present).
 // Called automatically after config load so the existing RouteResolver picks them up.
@@ -365,6 +385,23 @@ type AgentConfig struct {
 	Skills        []string          `json:"skills,omitempty"`
 	Subagents     *SubagentsConfig  `json:"subagents,omitempty"`
 	CanDelegateTo []string          `json:"can_delegate_to,omitempty"`
+	// Enabled controls whether the agent is active. A nil pointer means
+	// "treat as active" for backward compatibility with configs that predate
+	// this field. Agents with Enabled=false are inactive; Enabled=true are
+	// explicitly active. Use IsActive() to read the effective state.
+	Enabled *bool `json:"enabled,omitempty"`
+	// Color is the hex color code for this agent's avatar in the UI (e.g. "#22C55E").
+	Color string `json:"color,omitempty"`
+	// Icon is the Phosphor icon name for this agent's avatar in the UI (e.g. "robot").
+	Icon string `json:"icon,omitempty"`
+}
+
+// IsActive returns the effective active state of this agent.
+// Agents without an explicit Enabled field (nil) are treated as active for
+// backward compatibility with configs created before the Enabled field existed.
+// Agents with Enabled=false are inactive; Enabled=true are explicitly active.
+func (a AgentConfig) IsActive() bool {
+	return a.Enabled == nil || *a.Enabled
 }
 
 type SubagentsConfig struct {

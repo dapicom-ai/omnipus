@@ -1353,6 +1353,9 @@ func (a *restAPI) storeCredential(refName, apiKey string) (string, error) {
 // refresh fails the error is returned to the caller so the HTTP handler can surface
 // a 500 rather than silently serving stale state.
 func (a *restAPI) safeUpdateConfigJSON(mutate func(m map[string]any) error) error {
+	// configMu serializes concurrent REST config writes (read-modify-write cycles).
+	// Sysagent mutations go through MutateConfig (al.mu) with SaveConfigLocked,
+	// which does not acquire configMu — so there is no lock ordering conflict.
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
 	raw, err := os.ReadFile(a.configPath())

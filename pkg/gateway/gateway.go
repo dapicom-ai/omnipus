@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	runtimedebug "runtime/debug"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -53,6 +54,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/state"
+	systools "github.com/dapicom-ai/omnipus/pkg/sysagent/tools"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 	"github.com/dapicom-ai/omnipus/pkg/voice"
 )
@@ -272,6 +274,65 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 
 	msgBus := bus.NewMessageBus()
 	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider)
+
+	// Wire the 35 system.* tools into the system agent (omnipus-system / "main").
+	// GetCfg always delegates to agentLoop.GetConfig() so that hot-reloaded configs
+	// (via SwapConfig) are immediately visible to system tools without a restart.
+	//
+	// SaveConfigLocked is called from within MutateConfig's fn, so al.mu (write
+	// lock) is already held by the caller. It must NOT acquire any other mutex —
+	// doing so would create an AB-BA deadlock with the REST path:
+	//
+	//   REST path:     safeUpdateConfigJSON → refreshConfigAndRewireServices → SwapConfig → al.mu
+	//   Sysagent path: MutateConfig → al.mu (already held) → SaveConfigLocked (no extra lock)
+	//
+	// The old gatewayConfigMu approach produced:
+	//   REST:     gatewayConfigMu → al.mu
+	//   Sysagent: al.mu → gatewayConfigMu  ← deadlock
+	//
+	// WireSystemTools is deliberately separate from NewAgentLoop so that configPath
+	// and credStore (gateway-level concerns) do not leak into the core agent
+	// constructor. Callers that construct an AgentLoop in tests or non-gateway
+	// contexts can skip this wiring.
+	sysToolDeps := &systools.Deps{
+		Home:         homePath,
+		ConfigPath:   configPath,
+		GetCfg:       agentLoop.GetConfig,
+		MutateConfig: agentLoop.MutateConfig,
+		// SaveConfigLocked: al.mu is held by MutateConfig; no extra locking needed.
+		SaveConfigLocked: func(cfg *config.Config) error {
+			return config.SaveConfig(configPath, cfg)
+		},
+		CredStore: credStore,
+	}
+	wireErr := agentLoop.WireSystemTools(sysToolDeps, nil)
+	if wireErr != nil {
+		return fmt.Errorf("wire system tools: %w", wireErr)
+	}
+
+	// Boot-invariant: assert the system agent received all expected system.* tools.
+	// expectedSysTools derives the count from the canonical AllTools registry so it
+	// self-updates when new tools are added — no more hardcoded 30-tool threshold.
+	// This converts a silent misconfiguration into a loud boot failure.
+	{
+		expectedSysTools := len(systools.AllTools(sysToolDeps, nil))
+		sysReg := agentLoop.GetRegistry()
+		if sysAgent, ok := sysReg.GetAgent(agent.DefaultAgentID); ok && sysAgent != nil {
+			count := 0
+			for _, name := range sysAgent.Tools.List() {
+				if strings.HasPrefix(name, "system.") {
+					count++
+				}
+			}
+			if count < expectedSysTools {
+				return fmt.Errorf(
+					"sysagent wiring: expected at least %d system.* tools, got %d",
+					expectedSysTools,
+					count,
+				)
+			}
+		}
+	}
 
 	fmt.Println("\n📦 Agent Status:")
 	startupInfo := agentLoop.GetStartupInfo()

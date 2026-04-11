@@ -37,6 +37,8 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/skills"
 	"github.com/dapicom-ai/omnipus/pkg/state"
+	"github.com/dapicom-ai/omnipus/pkg/sysagent"
+	systools "github.com/dapicom-ai/omnipus/pkg/sysagent/tools"
 	"github.com/dapicom-ai/omnipus/pkg/taskstore"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 	"github.com/dapicom-ai/omnipus/pkg/utils"
@@ -1559,6 +1561,22 @@ func (al *AgentLoop) SwapConfig(newCfg *config.Config) {
 	al.mu.Unlock()
 }
 
+// MutateConfig acquires the agent loop write lock and calls fn with the
+// live *config.Config pointer. This serializes sysagent mutations with all
+// REST readers that go through GetConfig (which holds RLock). fn must not
+// call GetConfig or SwapConfig — deadlock would result.
+//
+// The caller (typically Deps.WithConfig) is responsible for snapshotting and
+// rolling back cfg fields if fn or the subsequent SaveConfig fails.
+func (al *AgentLoop) MutateConfig(fn func(*config.Config) error) error {
+	al.mu.Lock()
+	defer al.mu.Unlock()
+	if al.cfg == nil {
+		return fmt.Errorf("agent loop config is nil")
+	}
+	return fn(al.cfg)
+}
+
 // GetTaskStore returns the shared TaskStore (may be nil in tests).
 func GetTaskStore(al *AgentLoop) *taskstore.TaskStore {
 	return al.taskStore
@@ -1590,14 +1608,14 @@ func (al *AgentLoop) GetAgentStore(agentID string) *session.UnifiedStore {
 // Returns nil if the session cannot be found across any agent.
 func (al *AgentLoop) ResolveSessionStore(sessionID string) *session.UnifiedStore {
 	// Fast path: main agent owns most sessions.
-	if store := al.GetAgentStore("main"); store != nil {
+	if store := al.GetAgentStore(DefaultAgentID); store != nil {
 		if _, err := store.GetMeta(sessionID); err == nil {
 			return store
 		}
 	}
 	// Slow path: scan all agents.
 	for _, id := range al.GetRegistry().ListAgentIDs() {
-		if id == "main" {
+		if id == DefaultAgentID {
 			continue
 		}
 		store := al.GetAgentStore(id)
@@ -4932,4 +4950,63 @@ func perplexityKeys(key string) []string {
 		return nil
 	}
 	return []string{key}
+}
+
+// WireSystemTools registers the 35 system.* tools from BuildRegistry into the
+// system agent's tool registry (the "main"/"omnipus-system" agent). This must be
+// called by the gateway after NewAgentLoop for production use; non-system agents
+// do NOT receive system tools.
+//
+// WireSystemTools is deliberately separate from NewAgentLoop so that configPath
+// and credStore (gateway-level concerns) do not leak into the core agent constructor.
+// Callers that construct an AgentLoop in tests or non-gateway contexts can skip
+// this wiring.
+//
+// navCb may be nil in headless or test environments — the navigate tool
+// tolerates a nil callback and no-ops the navigation side-effect.
+//
+// WireSystemTools is idempotent: calling it multiple times overwrites any
+// previously registered system.* tools with the same names (ToolRegistry.Register
+// silently replaces existing entries).
+//
+// Returns an error if the system agent is not found in the registry — callers
+// should treat this as a fatal boot failure.
+func (al *AgentLoop) WireSystemTools(deps *systools.Deps, navCb systools.NavigateCallback) error {
+	reg := al.GetRegistry()
+	// The system agent is "omnipus-system", which the registry stores as "main".
+	agentInst, ok := reg.GetAgent(DefaultAgentID)
+	if !ok || agentInst == nil {
+		return fmt.Errorf(
+			"WireSystemTools: system agent %q not found in registry — agent loop may not have been initialized correctly",
+			DefaultAgentID,
+		)
+	}
+	sysRegistry := systools.BuildRegistry(deps, navCb)
+
+	// Build the handler that enforces BRD-required guards on every system.* tool call:
+	//   1. RBAC check (CheckRBAC) — SEC-19
+	//   2. Rate limit check (SystemRateLimiter.Check)
+	//   3. Confirmation requirement (RequiresConfirmation) — UI button gate
+	//   4. Audit log entry (audit.Logger.Log) — SEC-15
+	//
+	// In open-source single-user mode we use RoleSingleUser (bypasses RBAC checks)
+	// and a nil confirm func (destructive ops return CONFIRMATION_REQUIRED to the LLM,
+	// which is the correct headless posture until the WebSocket layer wires a real confirm).
+	handler := sysagent.NewSystemToolHandler(sysagent.HandlerConfig{
+		Registry: sysRegistry,
+		Audit:    al.auditLogger,
+		Confirm:  nil, // wired by gateway WebSocket handler when UI is available
+	})
+
+	for _, toolName := range sysRegistry.List() {
+		t, exists := sysRegistry.Get(toolName)
+		if !exists {
+			continue
+		}
+		guarded := sysagent.NewGuardedTool(t, handler, sysagent.RoleSingleUser, "gateway")
+		agentInst.Tools.Register(guarded)
+	}
+	logger.InfoCF("agent", "System tools wired into system agent (guarded)",
+		map[string]any{"agent_id": DefaultAgentID, "tool_count": len(sysRegistry.List())})
+	return nil
 }

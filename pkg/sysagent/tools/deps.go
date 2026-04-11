@@ -7,10 +7,12 @@
 package systools
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
+	"reflect"
 	"strings"
 	"time"
 
@@ -25,13 +27,141 @@ type Deps struct {
 	Home string
 	// ConfigPath is the path to config.json.
 	ConfigPath string
-	// Cfg is the in-memory config (pointer, mutated in place by config tools).
-	Cfg *config.Config
-	// SaveConfig persists Cfg to ConfigPath. Must be called with single-writer
-	// serialization by the caller (e.g., a channel or mutex in the gateway).
+	// GetCfg returns the current in-memory config. It is always called at
+	// invocation time so that hot-reloaded configs (via agentLoop.SwapConfig)
+	// are visible to system tools without restarting. The returned pointer must
+	// not be retained across calls.
+	//
+	// NOTE: callers must not mutate the returned config outside of WithConfig.
+	// All mutations must go through WithConfig to be serialized with al.mu.
+	GetCfg func() *config.Config
+	// MutateConfig acquires the agent loop write lock and calls fn with the
+	// live *config.Config pointer. This serializes sysagent mutations with
+	// REST readers that hold the agent loop RLock via GetConfig. The gateway
+	// wires this to AgentLoop.MutateConfig. In tests without an AgentLoop,
+	// provide a simple mutex-based implementation.
+	MutateConfig func(fn func(*config.Config) error) error
+	// SaveConfig persists the current config to ConfigPath.
+	//
+	// Deprecated: use SaveConfigLocked when called from within WithConfig.
+	// SaveConfig is kept for backward compatibility with existing tests that
+	// wire it directly. When both are set, WithConfig uses SaveConfigLocked.
 	SaveConfig func() error
+	// SaveConfigLocked persists cfg to disk. The caller MUST already hold
+	// al.mu via MutateConfig — this function does NOT acquire any mutex.
+	// Keeping it lock-free breaks the AB-BA deadlock:
+	//
+	//   REST path (old):     gatewayConfigMu → al.mu
+	//   Sysagent path (old): al.mu → gatewayConfigMu
+	//
+	// With SaveConfigLocked, the sysagent path never acquires gatewayConfigMu,
+	// so there is no second mutex and therefore no deadlock.
+	//
+	// The gateway wires this to a closure that calls config.SaveConfig directly.
+	// Tests that do not need real persistence can set it to a no-op or leave it
+	// nil (WithConfig falls back to SaveConfig in that case).
+	SaveConfigLocked func(cfg *config.Config) error
 	// CredStore is the encrypted credential store.
 	CredStore *credentials.Store
+}
+
+// clearMaps recursively walks v and zeros every map field it finds. Called
+// before json.Unmarshal in restoreConfig because Unmarshal into a non-nil map
+// merges rather than replaces — so a fn that added a map key would leave that
+// key present after rollback if the map were not cleared first.
+func clearMaps(v reflect.Value) {
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return
+		}
+		v = v.Elem()
+	}
+	switch v.Kind() {
+	case reflect.Struct:
+		t := v.Type()
+		for i := 0; i < v.NumField(); i++ {
+			if !t.Field(i).IsExported() {
+				continue
+			}
+			clearMaps(v.Field(i))
+		}
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < v.Len(); i++ {
+			clearMaps(v.Index(i))
+		}
+	case reflect.Map:
+		// Replace the map with a fresh empty one of the same type.
+		// Unmarshal will populate it from the snapshot.
+		v.Set(reflect.MakeMap(v.Type()))
+	}
+}
+
+// restoreConfig clears all map fields on cfg and then unmarshals snapshotJSON
+// into it. Clearing maps first ensures that map entries added by fn are fully
+// removed rather than leaving orphaned keys (stdlib json.Unmarshal into a
+// non-nil map merges, not replaces). Returns an error if unmarshal fails so
+// callers can surface the divergence rather than silently serving corrupt state.
+func restoreConfig(cfg *config.Config, snapshotJSON []byte) error {
+	clearMaps(reflect.ValueOf(cfg))
+	if err := json.Unmarshal(snapshotJSON, cfg); err != nil {
+		slog.Error("sysagent: restoreConfig failed — config in-memory may diverge from snapshot",
+			"error", err, "snapshot_bytes", len(snapshotJSON))
+		return fmt.Errorf("restore config from snapshot: %w", err)
+	}
+	return nil
+}
+
+// WithConfig acquires the agent loop write lock via MutateConfig, takes a
+// full-config snapshot, calls fn to apply the mutation, persists via
+// SaveConfigLocked (or SaveConfig as fallback), and rolls back the entire
+// config on either fn error or save error.
+//
+// Serialization: MutateConfig holds al.mu (write lock) for the duration of
+// the call. REST readers acquire al.mu as RLock via AgentLoop.GetConfig, so
+// reads and writes are never concurrent — eliminating the data race on
+// cfg.Agents.List reported in Blocker 1.
+//
+// Rollback: a JSON-encoded snapshot is taken before fn runs. On failure,
+// clearMaps zeroes all map fields before Unmarshal so that map entries added
+// by fn are fully removed rather than leaving orphaned keys.
+//
+// Use this for all sysagent tool paths that mutate any part of the config.
+func (d *Deps) WithConfig(fn func(*config.Config) error) error {
+	return d.MutateConfig(func(cfg *config.Config) error {
+		// Snapshot the JSON-serializable fields before mutation so any mutation
+		// can be rolled back without copying the sync.RWMutex field.
+		var snapshotBuf bytes.Buffer
+		if err := json.NewEncoder(&snapshotBuf).Encode(cfg); err != nil {
+			return fmt.Errorf("WithConfig: failed to snapshot config: %w", err)
+		}
+		snapshotJSON := snapshotBuf.Bytes()
+
+		if fnErr := fn(cfg); fnErr != nil {
+			// Roll back in-memory state to pre-mutation snapshot.
+			if restoreErr := restoreConfig(cfg, snapshotJSON); restoreErr != nil {
+				return fmt.Errorf("fn error: %w; also: restore failed: %v", fnErr, restoreErr)
+			}
+			return fnErr
+		}
+
+		// Persist. SaveConfigLocked is preferred (no mutex acquired — caller
+		// already holds al.mu). Fall back to SaveConfig for tests that only
+		// wire the legacy field.
+		var saveErr error
+		if d.SaveConfigLocked != nil {
+			saveErr = d.SaveConfigLocked(cfg)
+		} else if d.SaveConfig != nil {
+			saveErr = d.SaveConfig()
+		}
+		if saveErr != nil {
+			// Roll back in-memory state on disk write failure.
+			if restoreErr := restoreConfig(cfg, snapshotJSON); restoreErr != nil {
+				return fmt.Errorf("save error: %w; also: restore failed: %v", saveErr, restoreErr)
+			}
+			return saveErr
+		}
+		return nil
+	})
 }
 
 // validateID rejects entity IDs containing path separators, "..", or null bytes
