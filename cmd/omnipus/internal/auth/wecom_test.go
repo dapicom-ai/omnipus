@@ -177,7 +177,8 @@ func TestAuthWeComCmdWithScanner(t *testing.T) {
 }
 
 // TestAuthWeComCmdWithScanner_LockedStore verifies that when the credential store
-// cannot be unlocked (OMNIPUS_MASTER_KEY unset and no TTY), the command returns
+// cannot be unlocked (OMNIPUS_MASTER_KEY unset and no TTY, and an existing
+// credentials.json blocks the auto-generate fallback), the command returns
 // an error without modifying config or store.
 func TestAuthWeComCmdWithScanner_LockedStore(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -188,6 +189,16 @@ func TestAuthWeComCmdWithScanner_LockedStore(t *testing.T) {
 	t.Setenv("OMNIPUS_KEY_FILE", "")
 	t.Setenv(config.EnvHome, tmpDir)
 	t.Setenv(config.EnvConfig, configPath)
+
+	// Seed a credentials.json so Unlock's auto-generate path (mode 4) does
+	// NOT fire — this test pins the locked-existing-store semantic. The
+	// fresh-install auto-generate is covered by
+	// TestUnlock_AutoGeneratesOnFreshInstall in pkg/credentials.
+	require.NoError(t, os.WriteFile(
+		filepath.Join(tmpDir, "credentials.json"),
+		[]byte(`{"version":1,"salt":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","credentials":{}}`),
+		0o600,
+	))
 
 	var output bytes.Buffer
 	err := authWeComCmdWithScanner(

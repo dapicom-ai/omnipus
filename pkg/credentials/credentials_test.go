@@ -287,6 +287,90 @@ func TestKeyProvisioningOrder(t *testing.T) {
 	})
 }
 
+// TestUnlock_AutoGeneratesOnFreshInstall verifies that Unlock mints a fresh
+// master key and writes it to $OMNIPUS_HOME/master.key when:
+//   - no OMNIPUS_MASTER_KEY / OMNIPUS_KEY_FILE env is set
+//   - no default master.key file exists
+//   - no credentials.json exists (truly fresh install)
+//
+// This closes the headless first-run chicken-and-egg gap: a new user on a
+// cloud VPS can start the gateway with zero configuration and still end up
+// with a functioning encrypted credential store.
+//
+// Follow-up boots must also pick up the auto-generated key via the same
+// default-key-file probe (Unlock mode 3), without regenerating.
+func TestUnlock_AutoGeneratesOnFreshInstall(t *testing.T) {
+	dir := t.TempDir()
+	credPath := filepath.Join(dir, "credentials.json")
+	keyPath := filepath.Join(dir, DefaultKeyFileName)
+
+	t.Setenv(EnvMasterKey, "")
+	t.Setenv(EnvKeyFile, "")
+
+	store := NewStore(credPath)
+	require.NoError(t, Unlock(store), "Unlock on fresh install must auto-generate a master key")
+	assert.False(t, store.IsLocked(), "store must be unlocked after auto-generation")
+
+	// Key file must exist on disk with 0600 permissions.
+	info, err := os.Stat(keyPath)
+	require.NoError(t, err, "master.key must be written to $OMNIPUS_HOME")
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(),
+		"auto-generated master.key must have mode 0600")
+
+	// File contents must be 64 hex characters (32 bytes encoded).
+	keyBytes, err := os.ReadFile(keyPath)
+	require.NoError(t, err)
+	assert.Len(t, keyBytes, 64, "master.key must contain 64 hex characters")
+
+	// The store must be usable: we can Set + Get a credential immediately.
+	require.NoError(t, store.Set("TEST_KEY", "test-value"))
+	v, err := store.Get("TEST_KEY")
+	require.NoError(t, err)
+	assert.Equal(t, "test-value", v, "auto-generated key must round-trip a credential")
+
+	// A second Unlock call on the same store (e.g. on the next gateway boot)
+	// must pick up the existing master.key via mode 3, NOT regenerate.
+	store2 := NewStore(credPath)
+	require.NoError(t, Unlock(store2), "second Unlock must load existing master.key")
+	assert.False(t, store2.IsLocked())
+	v2, err := store2.Get("TEST_KEY")
+	require.NoError(t, err, "second unlock must decrypt entries written under the same key")
+	assert.Equal(t, "test-value", v2)
+
+	// Sanity: the key file content must not have changed.
+	keyBytes2, err := os.ReadFile(keyPath)
+	require.NoError(t, err)
+	assert.Equal(t, keyBytes, keyBytes2, "second boot must not regenerate master.key")
+}
+
+// TestUnlock_SkipsAutoGenerateWhenStoreExists verifies that auto-generate
+// does NOT fire when credentials.json already exists but no key is available.
+// This is the "operator lost their key" scenario: regenerating would strand
+// the encrypted data. Unlock must return an error so the operator notices.
+func TestUnlock_SkipsAutoGenerateWhenStoreExists(t *testing.T) {
+	dir := t.TempDir()
+	credPath := filepath.Join(dir, "credentials.json")
+
+	// Seed a fake credentials.json so Exists() returns true.
+	require.NoError(t, os.WriteFile(credPath,
+		[]byte(`{"version":1,"salt":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","credentials":{}}`),
+		0o600))
+
+	t.Setenv(EnvMasterKey, "")
+	t.Setenv(EnvKeyFile, "")
+
+	store := NewStore(credPath)
+	err := Unlock(store)
+	require.Error(t, err, "Unlock must not auto-generate when credentials.json already exists")
+	assert.Contains(t, err.Error(), "no master key")
+	assert.True(t, store.IsLocked())
+
+	// master.key must NOT have been created — we refuse to strand existing data.
+	_, statErr := os.Stat(filepath.Join(dir, DefaultKeyFileName))
+	assert.True(t, os.IsNotExist(statErr),
+		"master.key must not exist after refused auto-generate")
+}
+
 // TestCredentialStoreIntegration verifies full set-encrypt-persist-load-decrypt cycle.
 // Traces to: wave1-core-foundation-spec.md Scenario: Store and retrieve a credential (US-3 AC1, AC2)
 func TestCredentialStoreIntegration(t *testing.T) {

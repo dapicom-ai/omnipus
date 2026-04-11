@@ -63,15 +63,25 @@ func TestSaveWeixinConfig_Happy(t *testing.T) {
 }
 
 // TestSaveWeixinConfig_LockedStore verifies that when the credential store cannot
-// be unlocked (OMNIPUS_MASTER_KEY unset and no key file), saveWeixinConfig returns
-// an error without modifying config or store.
+// be unlocked and an existing credentials.json blocks the auto-generate fallback
+// path, saveWeixinConfig returns an error without modifying config.
 func TestSaveWeixinConfig_LockedStore(t *testing.T) {
 	tmpDir, configPath := newWeixinTestEnv(t)
 
-	// Unset the master key so the store cannot be unlocked.
+	// Unset the master key so the store cannot be unlocked via env/file.
 	t.Setenv(credentials.EnvMasterKey, "")
 	// Also clear key file path to ensure TTY prompt is not attempted.
 	t.Setenv("OMNIPUS_KEY_FILE", "")
+
+	// Seed a credentials.json so Unlock's auto-generate path (mode 4) does
+	// NOT fire — this test pins the locked-existing-store semantic, not the
+	// fresh-install semantic. Auto-generate is covered by
+	// TestUnlock_AutoGeneratesOnFreshInstall in pkg/credentials.
+	storePath := filepath.Join(tmpDir, "credentials.json")
+	require.NoError(t, os.WriteFile(storePath,
+		[]byte(`{"version":1,"salt":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","credentials":{}}`),
+		0o600,
+	))
 
 	err := saveWeixinConfig("weixin-tok-locked", "https://ilinkai.weixin.qq.com/", "")
 	require.Error(t, err, "saveWeixinConfig must fail when credential store is locked")
@@ -80,12 +90,6 @@ func TestSaveWeixinConfig_LockedStore(t *testing.T) {
 	_, statErr := os.Stat(configPath)
 	assert.True(t, os.IsNotExist(statErr),
 		"config.json must not be created when store is locked")
-
-	// Store file must not have been created either.
-	storePath := filepath.Join(tmpDir, "credentials.json")
-	_, statErr = os.Stat(storePath)
-	assert.True(t, os.IsNotExist(statErr),
-		"credentials.json must not be created when unlock fails")
 }
 
 // TestSaveWeixinConfig_Overwrite verifies that running saveWeixinConfig twice

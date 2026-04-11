@@ -94,6 +94,19 @@ func NewStore(path string) *Store {
 	return &Store{path: path}
 }
 
+// Path returns the on-disk path of the credentials.json file.
+func (s *Store) Path() string {
+	return s.path
+}
+
+// Exists reports whether the credentials.json file currently exists on disk.
+// Used by the auto-generate path in Unlock to determine whether this is a
+// fresh install (no existing encrypted data) and thus safe to mint a new key.
+func (s *Store) Exists() bool {
+	_, err := os.Stat(s.path)
+	return err == nil
+}
+
 // IsLocked reports whether the store is currently locked.
 func (s *Store) IsLocked() bool {
 	s.mu.RLock()

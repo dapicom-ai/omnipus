@@ -53,11 +53,13 @@ These are non-negotiable and apply to every decision:
 
 1. `OMNIPUS_MASTER_KEY` — 64-char hex-encoded 256-bit key in the environment. Use for CI/CD pipelines and container deployments where secrets are injected via env.
 2. `OMNIPUS_KEY_FILE` — path to a file (mode 0600) containing the hex key. Use for long-running server deployments where mounting a key file is more practical than env injection.
-3. **Interactive TTY prompt** — passphrase entered at the terminal. Only works when a TTY is attached; never use for headless/daemon mode.
+3. **Default key file** — if `$OMNIPUS_HOME/master.key` exists (mode 0600), it is loaded automatically. This is how auto-generated keys survive across reboots without any env configuration.
+4. **Auto-generate on fresh install** — if no key is configured and no `credentials.json` exists yet, the gateway mints a fresh 256-bit key, writes it to `$OMNIPUS_HOME/master.key` with 0600, and logs a prominent backup warning to stderr. This closes the headless first-run chicken-and-egg: a new user on a cloud VPS can start the gateway with zero configuration and still end up with a working encrypted credential store. Auto-generate **never** fires when an existing `credentials.json` is present — that would strand the encrypted data.
+5. **Interactive TTY prompt** — passphrase entered at the terminal. Only works when a TTY is attached; never use for headless/daemon mode.
 
-Headless operators MUST set `OMNIPUS_MASTER_KEY` or `OMNIPUS_KEY_FILE` before running `omnipus gateway`. If neither is set and no TTY is present, `credentials.Unlock` returns an error and boot aborts with an actionable message.
+**Critical — back up the master key file.** Whether you provide it via `OMNIPUS_KEY_FILE`, or it was auto-generated to `$OMNIPUS_HOME/master.key` on first boot, losing it makes every credential in `credentials.json` (API keys, channel tokens, etc.) permanently inaccessible. The auto-generate path prints a multi-line warning to stderr on first boot — watch for it in systemd journal / Docker logs.
 
-**Generating a key file:**
+**Generating a key file manually** (for operators who prefer explicit provisioning over auto-generate):
 
 ```bash
 openssl rand -hex 32 > /var/lib/omnipus/master.key
@@ -65,9 +67,9 @@ chmod 600 /var/lib/omnipus/master.key
 export OMNIPUS_KEY_FILE=/var/lib/omnipus/master.key
 ```
 
-**Key rotation:** Generate a new key, then re-encrypt using `omnipus credentials rotate` (checks `--old-key-file` and `--new-key-file`). The rotate command decrypts with the old key and re-encrypts every credential with the new key atomically. Update `OMNIPUS_KEY_FILE` to point at the new key before restarting the gateway. There is no zero-downtime rotation path in the current CLI — a brief restart is required.
+**Key rotation:** Generate a new key, then re-encrypt using `omnipus credentials rotate` (checks `--old-key-file` and `--new-key-file`). The rotate command decrypts with the old key and re-encrypts every credential with the new key atomically. Update `OMNIPUS_KEY_FILE` to point at the new key (or replace `$OMNIPUS_HOME/master.key`) before restarting the gateway. There is no zero-downtime rotation path in the current CLI — a brief restart is required.
 
-**Boot order:** `NewStore → Unlock → LoadConfigWithStore → InjectFromConfig → NewManager → Start` — any failure aborts boot. Channel secrets are now passed directly as a `credentials.SecretBundle` to channel constructors; they do not require environment injection.
+**Boot order:** `NewStore → Unlock → LoadConfigWithStore → InjectFromConfig → ResolveBundle → RegisterSensitiveValues → NewManager → Start` — any failure aborts boot. Channel secrets are passed directly as a `credentials.SecretBundle` to channel constructors; they do not require environment injection.
 
 ## Architecture Patterns
 

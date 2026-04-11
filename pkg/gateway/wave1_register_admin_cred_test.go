@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -483,12 +484,25 @@ func TestOnboarding_CreatesAPIKeyRef(t *testing.T) {
 // Traces to: pkg/gateway/rest_onboarding.go — HandleCompleteOnboarding fallback path
 func TestOnboarding_RefusesWhenNoMasterKey(t *testing.T) {
 	// After SEC-23 enforcement: no plaintext fallback — the credential store must be
-	// unlocked before onboarding can complete. When no master key is configured,
-	// HandleCompleteOnboarding must return 503 Service Unavailable.
-	api, _ := newTestAPIWithHome(t)
+	// unlocked before onboarding can complete. When the store exists on disk but the
+	// master key is unavailable (operator lost/rotated the key), HandleCompleteOnboarding
+	// must return 503 Service Unavailable.
+	//
+	// Note: on a truly fresh install (no credentials.json), the gateway now
+	// auto-generates a master key — that path is covered by
+	// TestUnlock_AutoGeneratesOnFreshInstall in pkg/credentials/credentials_test.go.
+	// This test pins the *locked existing store* semantic.
+	api, tmpDir := newTestAPIWithHome(t)
 	// Ensure no master key is available.
 	t.Setenv("OMNIPUS_MASTER_KEY", "")
 	t.Setenv("OMNIPUS_KEY_FILE", "")
+	// Seed a credentials.json so auto-generate (Unlock mode 4) does not fire —
+	// the store already exists and cannot be stranded by minting a fresh key.
+	require.NoError(t, os.WriteFile(
+		filepath.Join(tmpDir, "credentials.json"),
+		[]byte(`{"version":1,"salt":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","credentials":{}}`),
+		0o600,
+	))
 
 	body := `{"provider":{"id":"openai","api_key":"sk-fallback-test"},"admin":{"username":"bob","password":"bob12345"}}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/onboarding/complete", strings.NewReader(body))
@@ -584,10 +598,17 @@ func TestProviderPUT_StoresAPIKeyRef(t *testing.T) {
 //
 // Traces to: pkg/gateway/rest.go — HandleProviders PUT (refuse if locked, SEC-23)
 func TestProviderPUT_RefusesWhenNoMasterKey(t *testing.T) {
-	api, _ := newTestAPIWithHome(t)
-	// No master key — credentials store will be locked.
+	api, tmpDir := newTestAPIWithHome(t)
+	// No master key — credentials store will be locked. Seed a credentials.json
+	// so auto-generate (Unlock mode 4) does not fire — this test pins the
+	// locked-existing-store semantic, not the fresh-install semantic.
 	t.Setenv("OMNIPUS_MASTER_KEY", "")
 	t.Setenv("OMNIPUS_KEY_FILE", "")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(tmpDir, "credentials.json"),
+		[]byte(`{"version":1,"salt":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","credentials":{}}`),
+		0o600,
+	))
 
 	body := `{"api_key":"sk-plain","model":"gpt-4o"}`
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/providers/openai", strings.NewReader(body))

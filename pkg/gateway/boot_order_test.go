@@ -225,15 +225,25 @@ func TestGatewayBoot_MissingCredentialRefFailsFast(t *testing.T) {
 }
 
 // TestGatewayBoot_LockedStoreFailsBeforeConfig verifies that when
-// OMNIPUS_MASTER_KEY is unset and no TTY is available, bootCredentials
-// returns an error before any config is loaded. This pins the invariant that
-// Unlock is the FIRST step — no config loading can happen with a locked store.
+// OMNIPUS_MASTER_KEY is unset and an existing credentials.json blocks the
+// auto-generate fallback path, bootCredentials returns an error before any
+// config is loaded. This pins the invariant that Unlock is the FIRST step —
+// no config loading can happen with a locked store.
+//
+// Note: on a truly fresh install (no credentials.json), Unlock now
+// auto-generates a master key — that path is covered by
+// TestGatewayBoot_AutoGeneratesMasterKeyOnFreshInstall below.
 func TestGatewayBoot_LockedStoreFailsBeforeConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Ensure the env var is NOT set.
 	t.Setenv("OMNIPUS_MASTER_KEY", "")
 	t.Setenv("OMNIPUS_KEY_FILE", "")
+
+	// Seed a credentials.json so Unlock mode 4 (auto-generate) does NOT fire —
+	// this test pins the locked-existing-store semantic.
+	writeBootTestFile(t, filepath.Join(tmpDir, "credentials.json"),
+		`{"version":1,"salt":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","credentials":{}}`)
 
 	configPath := filepath.Join(tmpDir, "config.json")
 	writeBootTestFile(t, configPath, `{
@@ -244,10 +254,10 @@ func TestGatewayBoot_LockedStoreFailsBeforeConfig(t *testing.T) {
 	}`)
 
 	// bootCredentials must fail — Unlock returns an error when OMNIPUS_MASTER_KEY
-	// is unset and no TTY is available, which propagates through bootCredentials.
+	// is unset and auto-generate cannot fire because credentials.json exists.
 	_, _, _, bootErr := bootCredentials(tmpDir, configPath) //nolint:dogsled
 	if bootErr == nil {
-		t.Fatal("bootCredentials must fail when OMNIPUS_MASTER_KEY is unset and no TTY is available")
+		t.Fatal("bootCredentials must fail when OMNIPUS_MASTER_KEY is unset and credentials.json exists")
 	}
 
 	// Error must mention master key or OMNIPUS_MASTER_KEY.

@@ -47,9 +47,13 @@ The credential store is unlocked using the first available source (in priority o
 
 1. **`OMNIPUS_MASTER_KEY`** — 64-character hex-encoded 256-bit key set in the environment. Recommended for CI/CD and container deployments.
 2. **`OMNIPUS_KEY_FILE`** — path to a file containing the hex key, mode 0600. Recommended for server deployments where env injection is impractical.
-3. **Interactive TTY prompt** — passphrase entered at the terminal. Only available when a TTY is attached (not suitable for headless/daemon mode).
+3. **Default key file** — `$OMNIPUS_HOME/master.key` (mode 0600). Loaded automatically when neither env variable is set. This is where auto-generated keys live across reboots.
+4. **Auto-generate on fresh install** — when no env key is set, no default key file exists, **and** no `credentials.json` exists, the gateway mints a fresh 32-byte key via `crypto/rand`, writes it to `$OMNIPUS_HOME/master.key` with mode 0600 using `O_EXCL` (atomic against concurrent boots), logs a prominent backup warning to stderr, and continues boot. Auto-generate **never** fires when an existing `credentials.json` is present — doing so would strand the encrypted data.
+5. **Interactive TTY prompt** — passphrase entered at the terminal. Only available when a TTY is attached (not suitable for headless/daemon mode).
 
-To generate a key file:
+The auto-generate path (mode 4) closes the headless first-run chicken-and-egg: a new user on a cloud VPS can start the gateway with zero configuration and still end up with a working encrypted credential store. Subsequent boots pick up the same key via mode 3. Losing `$OMNIPUS_HOME/master.key` makes every credential in `credentials.json` permanently inaccessible, so the first-boot stderr warning is non-optional.
+
+To generate a key file manually (for operators who prefer explicit provisioning over auto-generate):
 
 ```bash
 openssl rand -hex 32 > /path/to/omnipus.key
@@ -57,7 +61,7 @@ chmod 600 /path/to/omnipus.key
 export OMNIPUS_KEY_FILE=/path/to/omnipus.key
 ```
 
-Headless deployments **must** set `OMNIPUS_MASTER_KEY` or `OMNIPUS_KEY_FILE`. If neither is set and no TTY is present, `credentials.Unlock` returns an error and boot aborts.
+Headless deployments that already have a `credentials.json` (e.g., because the key was lost or rotated out-of-band) **must** provide a valid key via mode 1, 2, or 3. If none of those resolve and no TTY is available, `credentials.Unlock` returns an error and boot aborts — auto-generate (mode 4) will refuse to clobber existing encrypted data.
 
 ### Failure Semantics
 
