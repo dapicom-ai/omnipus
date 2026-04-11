@@ -10,7 +10,7 @@ Encrypted keys are stored as `enc://<base64>` strings and decrypted automaticall
 **1. Set your passphrase**
 
 ```bash
-export PICOCLAW_KEY_PASSPHRASE="your-passphrase"
+export OMNIPUS_KEY_PASSPHRASE="your-passphrase"
 ```
 
 **2. Encrypt an API key**
@@ -46,7 +46,7 @@ enc://AAAA...base64...
 |--------|---------|-----------|
 | Plaintext | `sk-abc123` | Used as-is |
 | File reference | `file://openai.key` | Content read from the same directory as the config file |
-| Encrypted | `enc://<base64>` | Decrypted at startup using `PICOCLAW_KEY_PASSPHRASE` |
+| Encrypted | `enc://<base64>` | Decrypted at startup using `OMNIPUS_KEY_PASSPHRASE` |
 | Empty | `""` | Passed through unchanged (used with `auth_method: oauth`) |
 
 ---
@@ -97,7 +97,7 @@ The GCM authentication tag is appended to the ciphertext automatically. Any tamp
 
 When a SSH private key is provided, breaking the encryption requires **both**:
 
-1. The **passphrase** (`PICOCLAW_KEY_PASSPHRASE`)
+1. The **passphrase** (`OMNIPUS_KEY_PASSPHRASE`)
 2. The **SSH private key file**
 
 This means a leaked config file alone is not sufficient to recover the API key, even if the passphrase is weak. The SSH key contributes 256 bits of entropy (Ed25519) regardless of passphrase strength.
@@ -117,12 +117,12 @@ This means a leaked config file alone is not sufficient to recover the API key, 
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `PICOCLAW_KEY_PASSPHRASE` | Yes (for `enc://`) | Passphrase used for key derivation |
-| `PICOCLAW_SSH_KEY_PATH` | No | Path to SSH private key. If not set, auto-detects from `~/.ssh/omnipus_ed25519.key` |
+| `OMNIPUS_KEY_PASSPHRASE` | Yes (for `enc://`) | Passphrase used for key derivation |
+| `OMNIPUS_SSH_KEY_PATH` | No | Path to SSH private key. If not set, auto-detects from `~/.ssh/omnipus_ed25519.key` |
 
 ### SSH Key Auto-Detection
 
-If `PICOCLAW_SSH_KEY_PATH` is not set, Omnipus looks for the omnipus-specific key:
+If `OMNIPUS_SSH_KEY_PATH` is not set, Omnipus looks for the omnipus-specific key:
 
 ```
 ~/.ssh/omnipus_ed25519.key
@@ -133,17 +133,17 @@ Run `omnipus onboard` to generate it automatically.
 
 `os.UserHomeDir()` is used for cross-platform home directory resolution (reads `USERPROFILE` on Windows, `HOME` on Unix/macOS).
 
-> **Note:** An SSH key file is required for credential encryption. If no key is found and `PICOCLAW_SSH_KEY_PATH` is not set, encryption/decryption will fail. Run `omnipus onboard` to generate the key automatically.
+> **Note:** An SSH key file is required for credential encryption. If no key is found and `OMNIPUS_SSH_KEY_PATH` is not set, encryption/decryption will fail. Run `omnipus onboard` to generate the key automatically.
 
 ---
 
 ## Migration
 
-Because the only secret material is `PICOCLAW_KEY_PASSPHRASE` and the SSH private key file, migration is straightforward:
+Because the only secret material is `OMNIPUS_KEY_PASSPHRASE` and the SSH private key file, migration is straightforward:
 
 1. Copy the config file to the new machine.
-2. Set `PICOCLAW_KEY_PASSPHRASE` to the same value.
-3. Copy the SSH private key file to the same path (or set `PICOCLAW_SSH_KEY_PATH` to its new location).
+2. Set `OMNIPUS_KEY_PASSPHRASE` to the same value.
+3. Copy the SSH private key file to the same path (or set `OMNIPUS_SSH_KEY_PATH` to its new location).
 
 No re-encryption is needed.
 

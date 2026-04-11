@@ -18,6 +18,7 @@ type Server struct {
 	checks     map[string]Check
 	startTime  time.Time
 	reloadFunc func() error
+	degradedFn func() (bool, string) // optional; returns (isDegraded, reason)
 }
 
 type Check struct {
@@ -115,6 +116,16 @@ func (s *Server) SetReloadFunc(fn func() error) {
 	s.reloadFunc = fn
 }
 
+// SetDegradedFunc sets a function that the /health handler calls to determine
+// whether the service is in a degraded state (e.g., after a failed config
+// reload). When the function returns (true, reason), /health responds with
+// 503 and {"status":"degraded","reason":reason}.
+func (s *Server) SetDegradedFunc(fn func() (bool, string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.degradedFn = fn
+}
+
 func (s *Server) reloadHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Content-Type", "application/json")
@@ -147,16 +158,31 @@ func (s *Server) reloadHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	s.mu.RLock()
+	degradedFn := s.degradedFn
+	s.mu.RUnlock()
 
+	w.Header().Set("Content-Type", "application/json")
+
+	if degradedFn != nil {
+		if isDegraded, reason := degradedFn(); isDegraded {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]any{
+				"status": "degraded",
+				"reason": reason,
+				"pid":    os.Getpid(),
+			})
+			return
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
 	uptime := time.Since(s.startTime)
 	resp := StatusResponse{
 		Status: "ok",
 		Uptime: uptime.String(),
 		Pid:    os.Getpid(),
 	}
-
 	json.NewEncoder(w).Encode(resp)
 }
 

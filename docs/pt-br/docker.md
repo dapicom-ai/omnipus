@@ -24,7 +24,7 @@ docker compose -f docker/docker-compose.yml --profile gateway up -d
 ```
 
 > [!TIP]
-> **Usuários Docker**: Por padrão, o Gateway escuta em `127.0.0.1`, que não é acessível a partir do host. Se você precisar acessar os endpoints de saúde ou expor portas, defina `PICOCLAW_GATEWAY_HOST=0.0.0.0` no seu ambiente ou atualize o `config.json`.
+> **Usuários Docker**: Por padrão, o Gateway escuta em `127.0.0.1`, que não é acessível a partir do host. Se você precisar acessar os endpoints de saúde ou expor portas, defina `OMNIPUS_GATEWAY_HOST=0.0.0.0` no seu ambiente ou atualize o `config.json`.
 
 ```bash
 # 5. Verificar logs

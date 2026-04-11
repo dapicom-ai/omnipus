@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Omnipus is an agentic core built on PicoClaw's foundation, shipping as three product variants:
+Omnipus is an agentic core built on Omnipus's foundation, shipping as three product variants:
 
-1. **Omnipus Open Source** (primary, ships first) — Single Go binary with embedded web UI, similar to PicoClaw/OpenClaw. Community-facing, builds adoption.
+1. **Omnipus Open Source** (primary, ships first) — Single Go binary with embedded web UI, similar to Omnipus/OpenClaw. Community-facing, builds adoption.
 2. **Omnipus Desktop** (ships second) — Free polished Electron desktop app. Premium UX, auto-updates, native menus.
 3. **Omnipus Cloud/SaaS** (ships third) — Scalable hosted version with team features and managed infrastructure.
 
@@ -24,7 +24,7 @@ Pre-implementation. The `docs/BRD/` directory contains the complete specificatio
 - `Omnipus_BRD_AppendixC_UI_Spec.md` — Appendix C: Full UI/UX spec (React 19, Vite 6, shadcn/ui, Phosphor Icons)
 - `Omnipus_BRD_AppendixD_System_Agent.md` — Appendix D: System agent with 35 system tools, 3 core agents
 - `Omnipus_BRD_AppendixE_DataModel.md` — Appendix E: File-based data model (JSON/JSONL), directory structure, entity schemas
-- `OpenClaw_vs_PicoClaw_Comparison.md` — Competitive analysis informing UI/UX decisions
+- `OpenClaw_vs_Omnipus_Comparison.md` — Competitive analysis informing UI/UX decisions
 
 Always read the relevant BRD documents before implementing a feature. The specs are the source of truth.
 
@@ -36,7 +36,7 @@ These are non-negotiable and apply to every decision:
 2. **Pure Go** — no CGo, no external C libraries, no shelling out for security-critical paths. Use `golang.org/x/sys/unix` for kernel interfaces.
 3. **Minimal footprint** — total RAM overhead for all security features must stay under 10MB beyond baseline.
 4. **Graceful degradation** — features requiring Linux 5.13+ (Landlock, seccomp) must fall back to application-level enforcement on older kernels, non-Linux platforms, and Android/Termux.
-5. **Ecosystem compatibility** — follows PicoClaw/OpenClaw conventions (SKILL.md, HEARTBEAT.md, SOUL.md, AGENTS.md, JSON config patterns) for skill ecosystem and community compatibility. Omnipus has its own config format but adopts the same concepts.
+5. **Ecosystem compatibility** — follows Omnipus/OpenClaw conventions (SKILL.md, HEARTBEAT.md, SOUL.md, AGENTS.md, JSON config patterns) for skill ecosystem and community compatibility. Omnipus has its own config format but adopts the same concepts.
 6. **Deny-by-default for security, opt-in for features** — security policies default to most restrictive; functional features default to disabled.
 
 ## Tech Stack
@@ -47,11 +47,35 @@ These are non-negotiable and apply to every decision:
 
 **Storage:** File-based only (JSON/JSONL) for all Omnipus data. No PostgreSQL or Redis. Exception: WhatsApp session uses SQLite via whatsmeow with `modernc.org/sqlite` (pure Go, no CGo). SQLite is isolated to WhatsApp session storage only — never used for Omnipus's own data. Data directory: `~/.omnipus/`. Atomic writes (temp file + rename). Credentials in `credentials.json` (AES-256-GCM encrypted, Argon2id KDF), never in `config.json`. **Sessions:** Day-partitioned JSONL transcripts (`sessions/<id>/<YYYY-MM-DD>.jsonl`) with configurable retention (default 90 days). Two-layer context compression: tool result pruning (in-memory) + conversation compaction (persistent, with memory flush). **Concurrency:** Per-entity files for high-contention data (tasks, pins), single-writer goroutine for shared files (config, credentials), advisory `flock`/`LockFileEx` as defense-in-depth.
 
+**Credential provisioning:** All secrets are stored in `credentials.json` (AES-256-GCM, Argon2id KDF). See [ADR-004](docs/architecture/ADR-004-credential-boot-contract.md) for the full boot contract.
+
+**Unlock modes** (tried in priority order):
+
+1. `OMNIPUS_MASTER_KEY` — 64-char hex-encoded 256-bit key in the environment. Use for CI/CD pipelines and container deployments where secrets are injected via env.
+2. `OMNIPUS_KEY_FILE` — path to a file (mode 0600) containing the hex key. Use for long-running server deployments where mounting a key file is more practical than env injection.
+3. **Default key file** — if `$OMNIPUS_HOME/master.key` exists (mode 0600), it is loaded automatically. This is how auto-generated keys survive across reboots without any env configuration.
+4. **Auto-generate on fresh install** — if no key is configured and no `credentials.json` exists yet, the gateway mints a fresh 256-bit key, writes it to `$OMNIPUS_HOME/master.key` with 0600, and logs a prominent backup warning to stderr. This closes the headless first-run chicken-and-egg: a new user on a cloud VPS can start the gateway with zero configuration and still end up with a working encrypted credential store. Auto-generate **never** fires when an existing `credentials.json` is present — that would strand the encrypted data.
+5. **Interactive TTY prompt** — passphrase entered at the terminal. Only works when a TTY is attached; never use for headless/daemon mode.
+
+**Critical — back up the master key file.** Whether you provide it via `OMNIPUS_KEY_FILE`, or it was auto-generated to `$OMNIPUS_HOME/master.key` on first boot, losing it makes every credential in `credentials.json` (API keys, channel tokens, etc.) permanently inaccessible. The auto-generate path prints a multi-line warning to stderr on first boot — watch for it in systemd journal / Docker logs.
+
+**Generating a key file manually** (for operators who prefer explicit provisioning over auto-generate):
+
+```bash
+openssl rand -hex 32 > /var/lib/omnipus/master.key
+chmod 600 /var/lib/omnipus/master.key
+export OMNIPUS_KEY_FILE=/var/lib/omnipus/master.key
+```
+
+**Key rotation:** Generate a new key, then re-encrypt using `omnipus credentials rotate` (checks `--old-key-file` and `--new-key-file`). The rotate command decrypts with the old key and re-encrypts every credential with the new key atomically. Update `OMNIPUS_KEY_FILE` to point at the new key (or replace `$OMNIPUS_HOME/master.key`) before restarting the gateway. There is no zero-downtime rotation path in the current CLI — a brief restart is required.
+
+**Boot order:** `NewStore → Unlock → LoadConfigWithStore → InjectFromConfig → ResolveBundle → RegisterSensitiveValues → NewManager → Start` — any failure aborts boot. Channel secrets are passed directly as a `credentials.SecretBundle` to channel constructors; they do not require environment injection.
+
 ## Architecture Patterns
 
 **Platform abstraction for sandboxing:** `SandboxBackend` interface with Linux (Landlock+seccomp), Windows (Job Objects+Restricted Tokens+DACL), and Fallback (app-level) backends. Policy engine and audit logging are cross-platform; only enforcement backend varies.
 
-**Channel provider model:** Hybrid in-process/bridge architecture inheriting PicoClaw's design. Go channels are compiled into the binary and communicate via an internal `MessageBus` (zero IPC overhead, single process). Non-Go channels (Signal/Java, Teams/Node.js) and community channels run as external processes using a bridge protocol (JSON over stdin/stdout). All channels implement the same `ChannelProvider` Go interface — compiled-in channels implement it directly, external channels implement it via `BridgeAdapter`. Community channels are built with the Omnipus Channel SDK, installed locally at user's own risk.
+**Channel provider model:** Hybrid in-process/bridge architecture inheriting Omnipus's design. Go channels are compiled into the binary and communicate via an internal `MessageBus` (zero IPC overhead, single process). Non-Go channels (Signal/Java, Teams/Node.js) and community channels run as external processes using a bridge protocol (JSON over stdin/stdout). All channels implement the same `ChannelProvider` Go interface — compiled-in channels implement it directly, external channels implement it via `BridgeAdapter`. Community channels are built with the Omnipus Channel SDK, installed locally at user's own risk.
 
 **Agent types:** System (`omnipus-system`, hardcoded, always on, 35 exclusive `system.*` tools), Core (hardcoded prompts compiled into binary, user can toggle/configure), Custom (user-defined with SOUL.md + AGENTS.md).
 

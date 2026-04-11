@@ -1,5 +1,5 @@
 # ============================================================
-# Stage 1: Build the picoclaw binary
+# Stage 1: Build the omnipus binary
 # ============================================================
 FROM golang:1.26.0-alpine AS builder
 
@@ -35,10 +35,10 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
   uv --version
 
 # Copy binary
-COPY --from=builder /src/build/picoclaw /usr/local/bin/picoclaw
+COPY --from=builder /src/build/omnipus /usr/local/bin/omnipus
 
-# Create picoclaw home directory
-RUN /usr/local/bin/picoclaw onboard
+# Create omnipus home directory
+RUN /usr/local/bin/omnipus onboard
 
-ENTRYPOINT ["picoclaw"]
+ENTRYPOINT ["omnipus"]
 CMD ["gateway"]

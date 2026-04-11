@@ -12,23 +12,23 @@ Puoi sovrascrivere i percorsi predefiniti usando variabili d'ambiente. Questo è
 
 | Variabile         | Descrizione                                                                                                                             | Percorso Predefinito      |
 |-------------------|-----------------------------------------------------------------------------------------------------------------------------------------|---------------------------|
-| `PICOCLAW_CONFIG` | Sovrascrive il percorso al file di configurazione. Indica direttamente a omnipus quale `config.json` caricare, ignorando tutte le altre posizioni. | `~/.omnipus/config.json` |
-| `PICOCLAW_HOME`   | Sovrascrive la directory radice per i dati di omnipus. Modifica la posizione predefinita del `workspace` e delle altre directory dati.  | `~/.omnipus`             |
+| `OMNIPUS_CONFIG` | Sovrascrive il percorso al file di configurazione. Indica direttamente a omnipus quale `config.json` caricare, ignorando tutte le altre posizioni. | `~/.omnipus/config.json` |
+| `OMNIPUS_HOME`   | Sovrascrive la directory radice per i dati di omnipus. Modifica la posizione predefinita del `workspace` e delle altre directory dati.  | `~/.omnipus`             |
 
 **Esempi:**
 
 ```bash
 # Esegui omnipus usando un file di configurazione specifico
 # Il percorso del workspace verrà letto da quel file di configurazione
-PICOCLAW_CONFIG=/etc/omnipus/production.json omnipus gateway
+OMNIPUS_CONFIG=/etc/omnipus/production.json omnipus gateway
 
 # Esegui omnipus con tutti i dati salvati in /opt/omnipus
 # La configurazione verrà caricata dal percorso predefinito ~/.omnipus/config.json
 # Il workspace verrà creato in /opt/omnipus/workspace
-PICOCLAW_HOME=/opt/omnipus omnipus agent
+OMNIPUS_HOME=/opt/omnipus omnipus agent
 
 # Usa entrambi per un setup completamente personalizzato
-PICOCLAW_HOME=/srv/omnipus PICOCLAW_CONFIG=/srv/omnipus/main.json omnipus gateway
+OMNIPUS_HOME=/srv/omnipus OMNIPUS_CONFIG=/srv/omnipus/main.json omnipus gateway
 ```
 
 ### Struttura del Workspace
@@ -62,7 +62,7 @@ Per impostazione predefinita, le skill vengono caricate da:
 Per configurazioni avanzate/di test, puoi sovrascrivere la directory radice delle skill builtin con:
 
 ```bash
-export PICOCLAW_BUILTIN_SKILLS=/path/to/skills
+export OMNIPUS_BUILTIN_SKILLS=/path/to/skills
 ```
 
 ### Politica Unificata di Esecuzione dei Comandi
@@ -179,7 +179,7 @@ Se hai bisogno che l'agent acceda a percorsi al di fuori del workspace:
 **Metodo 2: Variabile d'ambiente**
 
 ```bash
-export PICOCLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE=false
+export OMNIPUS_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE=false
 ```
 
 > ⚠️ **Attenzione**: Disabilitare questa restrizione consente all'agent di accedere a qualsiasi percorso sul tuo sistema. Usare con cautela solo in ambienti controllati.

@@ -58,7 +58,21 @@ type landlockPathBeneathAttr struct {
 type LinuxBackend struct {
 	abiVersion int
 	allRights  uint64
+	// policyApplied is set to true once Apply() succeeds on this backend.
+	// It distinguishes "capability available" from "capability enforcing"
+	// for the sandbox status endpoint. Landlock Apply is one-shot per
+	// process so this flag is latching — it never resets to false.
+	policyApplied bool
 }
+
+// Compile-time assertion that LinuxBackend satisfies the capability
+// interfaces used by sandbox.DescribeBackend. These checks catch the case
+// where a refactor renames or removes ABIVersion()/PolicyApplied() and the
+// status endpoint silently misclassifies the backend as non-kernel.
+var (
+	_ interface{ ABIVersion() int }     = (*LinuxBackend)(nil)
+	_ interface{ PolicyApplied() bool } = (*LinuxBackend)(nil)
+)
 
 // NewLinuxBackend creates a Linux sandbox backend if Landlock is available.
 // Returns (backend, true) if available, (nil, false) if not.
@@ -95,6 +109,19 @@ func (lb *LinuxBackend) Name() string {
 
 func (lb *LinuxBackend) Available() bool { return true }
 
+// ABIVersion returns the detected Landlock ABI version (1-3).
+// Returns 0 if Landlock is not available.
+func (lb *LinuxBackend) ABIVersion() int {
+	return lb.abiVersion
+}
+
+// PolicyApplied reports whether Apply() has successfully run on this
+// backend. Used by sandbox.DescribeBackend to distinguish capability from
+// runtime enforcement in the status endpoint.
+func (lb *LinuxBackend) PolicyApplied() bool {
+	return lb.policyApplied
+}
+
 // Apply applies Landlock restrictions to the current process.
 func (lb *LinuxBackend) Apply(policy SandboxPolicy) error {
 	// Create ruleset
@@ -123,14 +150,19 @@ func (lb *LinuxBackend) Apply(policy SandboxPolicy) error {
 	}
 
 	// Set no_new_privs then restrict self
-	if _, _, errno := unix.RawSyscall(unix.SYS_PRCTL, unix.PR_SET_NO_NEW_PRIVS, 1, 0); errno != 0 {
-		return fmt.Errorf("landlock: prctl(PR_SET_NO_NEW_PRIVS) failed: %w", errno)
+	if _, _, prctlErrno := unix.RawSyscall(unix.SYS_PRCTL, unix.PR_SET_NO_NEW_PRIVS, 1, 0); prctlErrno != 0 {
+		return fmt.Errorf("landlock: prctl(PR_SET_NO_NEW_PRIVS) failed: %w", prctlErrno)
 	}
 
 	_, _, errno = unix.Syscall(sysLandlockRestrictSelf, rulesetFd, 0, 0)
 	if errno != 0 {
 		return fmt.Errorf("landlock: restrict_self failed: %w", errno)
 	}
+
+	// Latching flag: once Landlock has been applied to the process it cannot
+	// be removed, so this stays true for the rest of the process lifetime.
+	// DescribeBackend reads this to distinguish capability from enforcement.
+	lb.policyApplied = true
 
 	slog.Info("Landlock sandbox applied", "abi_version", lb.abiVersion, "rules", len(policy.FilesystemRules))
 	return nil

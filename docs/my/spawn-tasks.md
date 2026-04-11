@@ -57,5 +57,5 @@ Sub-agen mempunyai akses kepada tools (message, web_search, dan sebagainya) dan 
 
 **Pemboleh ubah persekitaran:**
 
-* `PICOCLAW_HEARTBEAT_ENABLED=false` untuk nyahaktifkan
-* `PICOCLAW_HEARTBEAT_INTERVAL=60` untuk menukar selang
+* `OMNIPUS_HEARTBEAT_ENABLED=false` untuk nyahaktifkan
+* `OMNIPUS_HEARTBEAT_INTERVAL=60` untuk menukar selang

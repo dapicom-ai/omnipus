@@ -240,7 +240,7 @@ docker compose -f docker/docker-compose.yml --profile launcher up -d
 # 打开 http://localhost:18800
 ```
 
-> **Docker / 虚拟机用户：** Gateway 默认监听 `127.0.0.1`。设置 `PICOCLAW_GATEWAY_HOST=0.0.0.0` 或使用 `-public` 参数以允许从宿主机访问。
+> **Docker / 虚拟机用户：** Gateway 默认监听 `127.0.0.1`。设置 `OMNIPUS_GATEWAY_HOST=0.0.0.0` 或使用 `-public` 参数以允许从宿主机访问。
 
 ```bash
 # 查看日志

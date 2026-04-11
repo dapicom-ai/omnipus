@@ -320,6 +320,67 @@ func CreateProviderFromConfig(cfg *config.ModelConfig) (LLMProvider, string, err
 	}
 }
 
+// knownProtocols mirrors the switch in CreateProviderFromConfig. Keep in sync
+// when adding or removing a protocol case above. Used by IsKnownProtocol for
+// early validation in REST/CLI paths that must reject unknown protocols before
+// persisting them to config.json.
+var knownProtocols = map[string]bool{
+	"openai":                   true,
+	"azure":                    true,
+	"azure-openai":             true,
+	"bedrock":                  true,
+	"litellm":                  true,
+	"openrouter":               true,
+	"groq":                     true,
+	"zhipu":                    true,
+	"gemini":                   true,
+	"google":                   true,
+	"nvidia":                   true,
+	"ollama":                   true,
+	"moonshot":                 true,
+	"shengsuanyun":             true,
+	"deepseek":                 true,
+	"cerebras":                 true,
+	"vivgrid":                  true,
+	"volcengine":               true,
+	"vllm":                     true,
+	"qwen":                     true,
+	"qwen-intl":                true,
+	"qwen-international":       true,
+	"dashscope-intl":           true,
+	"qwen-us":                  true,
+	"dashscope-us":             true,
+	"mistral":                  true,
+	"avian":                    true,
+	"longcat":                  true,
+	"modelscope":               true,
+	"novita":                   true,
+	"coding-plan":              true,
+	"alibaba-coding":           true,
+	"qwen-coding":              true,
+	"mimo":                     true,
+	"minimax":                  true,
+	"anthropic":                true,
+	"anthropic-messages":       true,
+	"coding-plan-anthropic":    true,
+	"alibaba-coding-anthropic": true,
+	"antigravity":              true,
+	"claude-cli":               true,
+	"claudecli":                true,
+	"codex-cli":                true,
+	"codexcli":                 true,
+	"github-copilot":           true,
+	"copilot":                  true,
+}
+
+// IsKnownProtocol reports whether the given protocol name is recognized by
+// CreateProviderFromConfig. Empty strings return false. Used for early
+// validation in REST/CLI paths that reject bad configs before they reach the
+// credential store or config.json.
+func IsKnownProtocol(protocol string) bool {
+	return knownProtocols[protocol]
+}
+
 // GetDefaultAPIBase returns the default API base URL for a given protocol.
 func GetDefaultAPIBase(protocol string) string {
 	switch protocol {

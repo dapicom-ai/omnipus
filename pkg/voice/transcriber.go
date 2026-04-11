@@ -2,9 +2,11 @@ package voice
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 )
 
@@ -43,10 +45,13 @@ func supportsAudioTranscription(model string) bool {
 
 // DetectTranscriber inspects cfg and returns the appropriate Transcriber, or
 // nil if no supported transcription provider is configured.
-func DetectTranscriber(cfg *config.Config) Transcriber {
+// secrets provides the resolved ElevenLabs API key without using os.Getenv.
+func DetectTranscriber(cfg *config.Config, secrets credentials.SecretBundle) Transcriber {
 	if modelName := strings.TrimSpace(cfg.Voice.ModelName); modelName != "" {
 		modelCfg, err := cfg.GetModelConfig(modelName)
 		if err != nil {
+			slog.Warn("voice: configured transcription model not found in providers — transcription unavailable",
+				"voice.model_name", modelName, "error", err)
 			return nil
 		}
 		if supportsAudioTranscription(modelCfg.Model) {
@@ -54,8 +59,9 @@ func DetectTranscriber(cfg *config.Config) Transcriber {
 		}
 	}
 
-	// ElevenLabs voice config (supports Scribe STT).
-	if key := strings.TrimSpace(cfg.Voice.ElevenLabsAPIKey.String()); key != "" {
+	// ElevenLabs voice config (supports Scribe STT). Key is resolved from the
+	// SecretBundle so child processes never see it via /proc/<pid>/environ.
+	if key := strings.TrimSpace(secrets.GetString(cfg.Voice.ElevenLabsAPIKeyRef)); key != "" {
 		return NewElevenLabsTranscriber(key)
 	}
 	// Fall back to any model-list entry that uses the groq/ protocol.

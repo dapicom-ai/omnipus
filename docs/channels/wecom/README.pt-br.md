@@ -86,17 +86,17 @@ Se você já possui um `bot_id` e `secret` da plataforma WeCom AI Bot, configure
 
 ### Variáveis de Ambiente
 
-Todos os campos podem ser substituídos via variáveis de ambiente com o prefixo `PICOCLAW_CHANNELS_WECOM_`:
+Todos os campos podem ser substituídos via variáveis de ambiente com o prefixo `OMNIPUS_CHANNELS_WECOM_`:
 
 | Variável de Ambiente | Campo Correspondente |
 | -------------------- | -------------------- |
-| `PICOCLAW_CHANNELS_WECOM_ENABLED` | `enabled` |
-| `PICOCLAW_CHANNELS_WECOM_BOT_ID` | `bot_id` |
-| `PICOCLAW_CHANNELS_WECOM_SECRET` | `secret` |
-| `PICOCLAW_CHANNELS_WECOM_WEBSOCKET_URL` | `websocket_url` |
-| `PICOCLAW_CHANNELS_WECOM_SEND_THINKING_MESSAGE` | `send_thinking_message` |
-| `PICOCLAW_CHANNELS_WECOM_ALLOW_FROM` | `allow_from` |
-| `PICOCLAW_CHANNELS_WECOM_REASONING_CHANNEL_ID` | `reasoning_channel_id` |
+| `OMNIPUS_CHANNELS_WECOM_ENABLED` | `enabled` |
+| `OMNIPUS_CHANNELS_WECOM_BOT_ID` | `bot_id` |
+| `OMNIPUS_CHANNELS_WECOM_SECRET` | `secret` |
+| `OMNIPUS_CHANNELS_WECOM_WEBSOCKET_URL` | `websocket_url` |
+| `OMNIPUS_CHANNELS_WECOM_SEND_THINKING_MESSAGE` | `send_thinking_message` |
+| `OMNIPUS_CHANNELS_WECOM_ALLOW_FROM` | `allow_from` |
+| `OMNIPUS_CHANNELS_WECOM_REASONING_CHANNEL_ID` | `reasoning_channel_id` |
 
 ---
 

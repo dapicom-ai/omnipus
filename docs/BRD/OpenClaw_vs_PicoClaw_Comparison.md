@@ -1,19 +1,19 @@
-# OpenClaw vs PicoClaw — Feature & UI/UX Comparison
+# OpenClaw vs Omnipus — Feature & UI/UX Comparison
 
 **Version:** 1.1 DRAFT
 **Date:** March 28, 2026
 **Purpose:** Research foundation for Omnipus UI/UX and feature requirements
 **Status:** Reviewed — requirements derived from this analysis have been accepted into the Omnipus BRD (Appendix B, Appendix C) as of March 28, 2026.
 
-**Note:** This is a research document, not a requirements specification. Findings have been validated against PicoClaw v0.2.3 source code and OpenClaw documentation. Corrections applied: PicoClaw heartbeat feature confirmed present (v0.1.x+).
+**Note:** This is a research document, not a requirements specification. Findings have been validated against Omnipus v0.2.3 source code and OpenClaw documentation. Corrections applied: Omnipus heartbeat feature confirmed present (v0.1.x+).
 
 ---
 
 ## 1. Executive Summary
 
-This document provides a structured comparison of OpenClaw and PicoClaw across two dimensions: (1) feature capabilities and (2) UI/UX maturity. The goal is to identify gaps, weaknesses, and opportunities that will inform the Omnipus UI/UX specification.
+This document provides a structured comparison of OpenClaw and Omnipus across two dimensions: (1) feature capabilities and (2) UI/UX maturity. The goal is to identify gaps, weaknesses, and opportunities that will inform the Omnipus UI/UX specification.
 
-**Key finding:** Both products have significant UI/UX weaknesses, confirming the hypothesis. OpenClaw has a broader feature set but its UI is buggy, developer-centric, and fragmented across multiple surfaces. PicoClaw's UI is minimal and immature — essentially a configuration launcher with basic chat bolted on. Neither product delivers a cohesive, polished experience suitable for both technical and non-technical users. This represents a clear opportunity for Omnipus.
+**Key finding:** Both products have significant UI/UX weaknesses, confirming the hypothesis. OpenClaw has a broader feature set but its UI is buggy, developer-centric, and fragmented across multiple surfaces. Omnipus's UI is minimal and immature — essentially a configuration launcher with basic chat bolted on. Neither product delivers a cohesive, polished experience suitable for both technical and non-technical users. This represents a clear opportunity for Omnipus.
 
 ---
 
@@ -27,7 +27,7 @@ This document provides a structured comparison of OpenClaw and PicoClaw across t
 - **Architecture:** Gateway (WebSocket control plane) → Agent Runtime → Tools. Hub-and-spoke model. Messaging platforms are the primary interface. Canvas (A2UI) is a secondary visual workspace.
 - **Deployment:** Mac Mini, VPS, Docker, Raspberry Pi. Requires Node.js runtime (~180MB+ memory).
 
-### 2.2 PicoClaw
+### 2.2 Omnipus
 
 - **Origin:** Created by Sipeed team (Feb 9, 2026). Inspired by nanobot project, rewritten in Go.
 - **Tech stack:** Pure Go, single binary. 95% AI-bootstrapped code.
@@ -41,7 +41,7 @@ This document provides a structured comparison of OpenClaw and PicoClaw across t
 
 ### 3.1 Channel Integrations
 
-| Channel | OpenClaw | PicoClaw |
+| Channel | OpenClaw | Omnipus |
 |---------|----------|----------|
 | WhatsApp | ✅ | ❌ |
 | Telegram | ✅ | ✅ |
@@ -66,11 +66,11 @@ This document provides a structured comparison of OpenClaw and PicoClaw across t
 | WebChat (built-in) | ✅ | ✅ (v0.2.0) |
 | **Total** | **~22+** | **~10** |
 
-**Assessment:** OpenClaw has roughly double the channel coverage. PicoClaw's strength is in Asian messaging platforms (QQ, DingTalk, WeCom). OpenClaw dominates Western enterprise channels (Teams, Google Chat, Signal, WhatsApp).
+**Assessment:** OpenClaw has roughly double the channel coverage. Omnipus's strength is in Asian messaging platforms (QQ, DingTalk, WeCom). OpenClaw dominates Western enterprise channels (Teams, Google Chat, Signal, WhatsApp).
 
 ### 3.2 Core Agent Capabilities
 
-| Capability | OpenClaw | PicoClaw |
+| Capability | OpenClaw | Omnipus |
 |------------|----------|----------|
 | File read/write | ✅ | ✅ |
 | Shell command execution | ✅ | ✅ |
@@ -89,11 +89,11 @@ This document provides a structured comparison of OpenClaw and PicoClaw across t
 | Web search | ✅ (Brave) | ✅ (Brave, DuckDuckGo, Exa) |
 | Hardware I/O (I2C/SPI) | ❌ | ✅ (v0.2.1) |
 
-**Assessment:** OpenClaw is more feature-rich in agent capabilities. Browser automation, Canvas/A2UI, and Voice Wake are major differentiators. Both have heartbeat/proactive agent support. PicoClaw's unique strengths are hardware I/O support (IoT use cases) and its web search provider diversity.
+**Assessment:** OpenClaw is more feature-rich in agent capabilities. Browser automation, Canvas/A2UI, and Voice Wake are major differentiators. Both have heartbeat/proactive agent support. Omnipus's unique strengths are hardware I/O support (IoT use cases) and its web search provider diversity.
 
 ### 3.3 Security & Governance
 
-| Feature | OpenClaw | PicoClaw |
+| Feature | OpenClaw | Omnipus |
 |---------|----------|----------|
 | Workspace isolation | ✅ | ✅ (basic) |
 | Tool allow/deny lists | ✅ (profiles + per-agent) | ✅ (v0.2.3, config-level) |
@@ -109,11 +109,11 @@ This document provides a structured comparison of OpenClaw and PicoClaw across t
 | DM policy checking (`doctor`) | ✅ | ❌ |
 | Security diagnostics | ✅ (`openclaw doctor`) | ❌ |
 
-**Assessment:** Neither product has the enterprise security features defined in the Omnipus BRD. OpenClaw is ahead with tool profiles, exec approvals, device pairing, and the `doctor` diagnostic. PicoClaw is catching up quickly (cron gating in v0.2.3, tool config in v0.2.1) but lacks the governance layer entirely. This is the primary gap Omnipus addresses.
+**Assessment:** Neither product has the enterprise security features defined in the Omnipus BRD. OpenClaw is ahead with tool profiles, exec approvals, device pairing, and the `doctor` diagnostic. Omnipus is catching up quickly (cron gating in v0.2.3, tool config in v0.2.1) but lacks the governance layer entirely. This is the primary gap Omnipus addresses.
 
 ### 3.4 Deployment & Operations
 
-| Feature | OpenClaw | PicoClaw |
+| Feature | OpenClaw | Omnipus |
 |---------|----------|----------|
 | Docker support | ✅ | ✅ (v0.2.0) |
 | Tailscale integration | ✅ (Serve/Funnel) | ❌ |
@@ -180,9 +180,9 @@ Based on GitHub issues, community feedback, and documentation analysis:
 - No cost/token tracking visible during conversation.
 - No progress indicators during multi-step tool execution.
 
-### 4.3 PicoClaw UI Architecture
+### 4.3 Omnipus UI Architecture
 
-PicoClaw's UI is simpler but less mature:
+Omnipus's UI is simpler but less mature:
 
 | Surface | Technology | Purpose |
 |---------|-----------|---------|
@@ -191,9 +191,9 @@ PicoClaw's UI is simpler but less mature:
 | System Tray | OS-native (v0.2.3) | Gateway status on Windows/Linux. |
 | CLI | Terminal | Full operational control. |
 
-**Key observation:** PicoClaw's Web UI was added in v0.2.0 (Feb 28, 2026) — less than one month old. It is primarily a **configuration launcher**, not a comprehensive agent management interface. The chat interface uses the "Pico Channel" protocol over WebSocket.
+**Key observation:** Omnipus's Web UI was added in v0.2.0 (Feb 28, 2026) — less than one month old. It is primarily a **configuration launcher**, not a comprehensive agent management interface. The chat interface uses the "Pico Channel" protocol over WebSocket.
 
-### 4.4 PicoClaw UI/UX Weaknesses
+### 4.4 Omnipus UI/UX Weaknesses
 
 Based on GitHub issues, roadmap, and documentation:
 
@@ -216,13 +216,13 @@ Based on GitHub issues, roadmap, and documentation:
 - No voice interface.
 
 **Architecture Concern:**
-- The Web Launcher is a separate binary (`picoclaw-launcher`) from the core (`picoclaw`). This two-process model adds deployment complexity. The proposal for `picoclaw_webui` as yet another separate repository would fragment this further.
+- The Web Launcher is a separate binary (`omnipus-launcher`) from the core (`omnipus`). This two-process model adds deployment complexity. The proposal for `omnipus_webui` as yet another separate repository would fragment this further.
 
 ### 4.5 Side-by-Side UI/UX Comparison
 
-| UX Dimension | OpenClaw | PicoClaw | Winner |
+| UX Dimension | OpenClaw | Omnipus | Winner |
 |-------------|----------|----------|--------|
-| **Onboarding** | CLI-guided (`openclaw onboard`), confusing for non-technical users. Many users report getting stuck. | Web-based setup wizard (double-click launcher). Simpler but still requires API key knowledge. | PicoClaw (slightly) |
+| **Onboarding** | CLI-guided (`openclaw onboard`), confusing for non-technical users. Many users report getting stuck. | Web-based setup wizard (double-click launcher). Simpler but still requires API key knowledge. | Omnipus (slightly) |
 | **Chat experience** | Functional but basic. No rich tool call rendering. Third-party UIs fill the gap. | Minimal. Basic text chat only. No streaming feedback during tool execution. | OpenClaw |
 | **Tool call visibility** | Minimal in built-in UI. PinchChat/Nerve needed for real-time tool badges and parameters. | None. Tools execute invisibly. | OpenClaw (barely) |
 | **Configuration** | Config panel exists but described as "nearly unusable." Unsafe to edit without CLI knowledge. | Config wizard exists. Clean but very basic. No advanced settings exposed. | Tie (both poor) |
@@ -266,7 +266,7 @@ The existence of third-party UIs for OpenClaw is itself a strong signal: the bui
 - Weak in-chat tool call visibility (the #1 community complaint)
 - No integrated security/governance UI
 
-**PicoClaw** has a minimal UI that is:
+**Omnipus** has a minimal UI that is:
 - Very new (< 1 month old)
 - Config-first, not experience-first
 - Missing most operational and monitoring capabilities
@@ -294,7 +294,7 @@ Based on this comparison, the following UX requirements emerge. These are **rese
 
 3. **Exec approval workflow in UI** — When the agent wants to run a command, present Allow/Deny/Always Allow directly in the chat or a side panel. Not just CLI prompts.
 
-4. **Progress indicators for multi-step operations** — Token streaming, tool execution progress, intermediate results. PicoClaw's own roadmap calls this out: users feel "stuck" without feedback.
+4. **Progress indicators for multi-step operations** — Token streaming, tool execution progress, intermediate results. Omnipus's own roadmap calls this out: users feel "stuck" without feedback.
 
 5. **Stable large-session handling** — Virtualized message rendering, lazy loading. OpenClaw's #1 crash cause is loading full chat history synchronously.
 
@@ -320,7 +320,7 @@ Based on this comparison, the following UX requirements emerge. These are **rese
 
 14. **Audit trail explorer** — Searchable, filterable log of all agent actions. Timeline view. This doesn't exist anywhere in the ecosystem.
 
-15. **Desktop-native shell (Electron)** — System tray, native notifications, keyboard shortcuts, offline status awareness. PicoClaw has system tray (v0.2.3); OpenClaw has a macOS menu bar app. Neither has a comprehensive desktop experience.
+15. **Desktop-native shell (Electron)** — System tray, native notifications, keyboard shortcuts, offline status awareness. Omnipus has system tray (v0.2.3); OpenClaw has a macOS menu bar app. Neither has a comprehensive desktop experience.
 
 ### 7.4 Anti-Requirements (What to explicitly avoid)
 
@@ -348,7 +348,7 @@ Based on this comparison, the following UX requirements emerge. These are **rese
 1. **Validate derived requirements** with Omnipus stakeholders. Are these the right priorities?
 2. **Define user personas** — The "technical operator" and "non-technical business user" need concrete profiles before screen-level design.
 3. **Decide deployment model** — Single-agent vs. multi-agent, single-user vs. multi-tenant. This affects every screen.
-4. **Choose UI technology** — The comparison suggests React (PicoClaw, Nerve, ZeroClaw all use it) is the ecosystem standard. Lit (OpenClaw) is an outlier.
+4. **Choose UI technology** — The comparison suggests React (Omnipus, Nerve, ZeroClaw all use it) is the ecosystem standard. Lit (OpenClaw) is an outlier.
 5. **Produce the standalone UX/UI design spec** with screen-by-screen wireframes based on validated requirements.
 
 ---

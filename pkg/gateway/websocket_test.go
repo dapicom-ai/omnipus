@@ -51,7 +51,10 @@ func dialTestWS(t *testing.T, srv *httptest.Server) *websocket.Conn {
 	t.Helper()
 	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/v1/chat/ws"
 	dialer := websocket.Dialer{HandshakeTimeout: 5 * time.Second}
-	conn, _, err := dialer.Dial(wsURL, nil)
+	conn, httpResp, err := dialer.Dial(wsURL, nil)
+	if httpResp != nil {
+		httpResp.Body.Close()
+	}
 	require.NoError(t, err, "WebSocket dial must succeed")
 	return conn
 }
@@ -101,6 +104,11 @@ func TestWSHandlerValidAuth(t *testing.T) {
 	handler, _, _ := newTestWSHandler(t)
 	// Override to require auth — t.Setenv restores on cleanup.
 	t.Setenv("OMNIPUS_BEARER_TOKEN", testToken)
+
+	// Register handler.Wait() BEFORE srv.Close so that in LIFO order
+	// srv.Close runs first, then handler.Wait() drains all goroutines,
+	// then the TempDir cleanup removes the directory safely.
+	t.Cleanup(handler.Wait)
 
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)

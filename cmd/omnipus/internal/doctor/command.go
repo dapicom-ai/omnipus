@@ -63,7 +63,7 @@ func runDoctor() error {
 
 // checkConfig runs all doctor checks against cfg and returns any warnings found.
 func checkConfig(cfg *config.Config) []warning {
-	var warnings []warning
+	warnings := make([]warning, 0, 8)
 	warnings = append(warnings, checkDMPolicies(cfg)...)
 	warnings = append(warnings, checkExecEgress(cfg)...)
 	return warnings
@@ -79,10 +79,12 @@ func checkExecEgress(cfg *config.Config) []warning {
 	if exec.EnableProxy {
 		return nil
 	}
-	return []warning{{
-		code:    "WARN-EXEC-001",
-		message: "Exec tool is enabled without an HTTP egress proxy. Child processes can make unrestricted outbound HTTP requests. Set tools.exec.enable_proxy=true to enforce SSRF controls (SEC-29).",
-	}}
+	return []warning{
+		{
+			code:    "WARN-EXEC-001",
+			message: "Exec tool is enabled without an HTTP egress proxy. Child processes can make unrestricted outbound HTTP requests. Set tools.exec.enable_proxy=true to enforce SSRF controls (SEC-29).",
+		},
+	}
 }
 
 // dmChannel pairs a channel's enabled/allowFrom state with its warning metadata.
@@ -113,8 +115,11 @@ func checkDMPolicies(cfg *config.Config) []warning {
 	for _, c := range channels {
 		if c.enabled && len(c.allowFrom) == 0 {
 			warnings = append(warnings, warning{
-				code:    c.code,
-				message: fmt.Sprintf("%s channel accepts messages from anyone. Set allow_from to restrict access.", c.name),
+				code: c.code,
+				message: fmt.Sprintf(
+					"%s channel accepts messages from anyone. Set allow_from to restrict access.",
+					c.name,
+				),
 			})
 		}
 	}

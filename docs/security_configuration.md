@@ -375,24 +375,24 @@ You can override any security value using environment variables:
 
 **For models:**
 ```bash
-export PICOCLAW_CHANNELS_TELEGRAM_TOKEN="token-from-env"
+export OMNIPUS_CHANNELS_TELEGRAM_TOKEN="token-from-env"
 ```
 
 **For channels:**
 ```bash
-export PICOCLAW_CHANNELS_TELEGRAM_TOKEN="token-from-env"
-export PICOCLAW_CHANNELS_FEISHU_APP_SECRET="secret-from-env"
+export OMNIPUS_CHANNELS_TELEGRAM_TOKEN="token-from-env"
+export OMNIPUS_CHANNELS_FEISHU_APP_SECRET="secret-from-env"
 ```
 
 **For web tools:**
 ```bash
-export PICOCLAW_TOOLS_WEB_BRAVE_API_KEY="key-from-env"
-export PICOCLAW_TOOLS_WEB_BAIDU_API_KEY="baidu-key-from-env"
+export OMNIPUS_TOOLS_WEB_BRAVE_API_KEY="key-from-env"
+export OMNIPUS_TOOLS_WEB_BAIDU_API_KEY="baidu-key-from-env"
 ```
 
 Environment variables have the highest priority and will override both `config.json` and `.security.yml` values.
 
-The pattern is: `PICOCLAW_<SECTION>_<KEY>_<FIELD>` with underscores separating path segments and converted to uppercase.
+The pattern is: `OMNIPUS_<SECTION>_<KEY>_<FIELD>` with underscores separating path segments and converted to uppercase.
 
 ## Security Best Practices
 
@@ -610,7 +610,7 @@ Omnipus supports encrypting API keys in the security file for additional protect
 
 1. Set a passphrase via environment variable:
 ```bash
-export PICOCLAW_CREDENTIAL_PASSPHRASE="your-secure-passphrase"
+export OMNIPUS_CREDENTIAL_PASSPHRASE="your-secure-passphrase"
 ```
 
 2. When saving config, API keys will be encrypted automatically:

@@ -7,13 +7,13 @@ import (
 
 // Default redaction patterns for SEC-16.
 var defaultPatterns = []string{
-	`sk-[a-zA-Z0-9\-]{20,}`,           // OpenAI API keys
-	`key-[a-zA-Z0-9]{20,}`,            // Generic API keys
-	`Bearer\s+[a-zA-Z0-9\-._~+/]+=*`, // Bearer tokens
-	`ghp_[a-zA-Z0-9]{36}`,             // GitHub personal access tokens
-	`gho_[a-zA-Z0-9]{36}`,             // GitHub OAuth tokens
-	`xoxb-[0-9]{10,}-[a-zA-Z0-9]+`,   // Slack bot tokens
-	`xoxp-[0-9]{10,}-[a-zA-Z0-9]+`,   // Slack user tokens
+	`sk-[a-zA-Z0-9\-]{20,}`,                            // OpenAI API keys
+	`key-[a-zA-Z0-9]{20,}`,                             // Generic API keys
+	`Bearer\s+[a-zA-Z0-9\-._~+/]+=*`,                   // Bearer tokens
+	`ghp_[a-zA-Z0-9]{36}`,                              // GitHub personal access tokens
+	`gho_[a-zA-Z0-9]{36}`,                              // GitHub OAuth tokens
+	`xoxb-[0-9]{10,}-[a-zA-Z0-9]+`,                     // Slack bot tokens
+	`xoxp-[0-9]{10,}-[a-zA-Z0-9]+`,                     // Slack user tokens
 	`[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`, // Email addresses
 }
 

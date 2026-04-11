@@ -26,7 +26,7 @@ An operator installs Omnipus for the first time and runs the binary. The system 
 
 ### User Story 2 -- Config File Loading and Validation (Priority: P0)
 
-An operator configures Omnipus by editing `~/.omnipus/config.json`. The system must load, validate, and apply this configuration at startup, providing clear error messages for malformed or invalid configs. Existing PicoClaw-style configs must be loadable (additive extension, not breaking change).
+An operator configures Omnipus by editing `~/.omnipus/config.json`. The system must load, validate, and apply this configuration at startup, providing clear error messages for malformed or invalid configs. Existing Omnipus-style configs must be loadable (additive extension, not breaking change).
 
 **Why this priority**: Configuration drives all runtime behavior -- agents, models, tools, channels.
 
@@ -261,7 +261,7 @@ An operator manages credentials via CLI commands: `omnipus credentials set`, `om
 - The system must not store raw credential values in `config.json`, log output, or any file other than the encrypted `credentials.json`, because credential leakage is a critical security violation (SEC-23d).
 - The system must not use SQLite, PostgreSQL, Redis, or any database for Omnipus's own data model, because the BRD mandates file-based storage only (Appendix E, E.2). Exception: WhatsApp session via whatsmeow (not in Wave 1).
 - The system must not use CGo or shell out to external programs for any security-critical path, because the BRD requires pure Go implementation (constraint 2).
-- The system must not modify existing PicoClaw config fields or break backward compatibility with PicoClaw config format, because new sections must be additive (constraint 5).
+- The system must not modify existing Omnipus config fields or break backward compatibility with Omnipus config format, because new sections must be additive (constraint 5).
 - The system must not implement Landlock or seccomp sandboxing in Wave 1, because kernel-level sandboxing is Phase 1 of the BRD delivery phases (separate from Wave 1 core foundation).
 - The system must not implement hot-reload of config files in Wave 1, because hot-reload is a Phase 3 feature (SEC-13).
 - The system must not queue or buffer undeliverable messages silently, because the BRD specifies explicit rejection with cooldown for rate-limited operations (SEC-26), and unroutable messages must be logged (FUNC-10).
@@ -288,13 +288,13 @@ An operator manages credentials via CLI commands: `omnipus credentials set`, `om
 - **On failure**: Disk full returns error on temp file creation; original file untouched. Permission denied returns error with path. Corrupt JSON returns parse error.
 - **Development**: Real filesystem. Tests use `t.TempDir()` for isolation.
 
-### PicoClaw Fork (source codebase)
+### Omnipus Fork (source codebase)
 
-- **Data in**: PicoClaw Go source code, existing config format, command patterns, channel implementations
+- **Data in**: Omnipus Go source code, existing config format, command patterns, channel implementations
 - **Data out**: Renamed binary (`omnipus`), extended config schema, new packages (credentials, datamodel, messagebus, streaming)
-- **Contract**: Fork and rename. `picoclaw` -> `omnipus` in module path, binary name, and user-facing strings. Existing PicoClaw config keys are preserved; Omnipus adds new top-level sections.
+- **Contract**: Fork and rename. `omnipus` -> `omnipus` in module path, binary name, and user-facing strings. Existing Omnipus config keys are preserved; Omnipus adds new top-level sections.
 - **On failure**: N/A (build-time dependency, not runtime)
-- **Development**: Git fork with rename script. CI validates that PicoClaw's existing test suite passes after rename.
+- **Development**: Git fork with rename script. CI validates that Omnipus's existing test suite passes after rename.
 
 ---
 
@@ -834,7 +834,7 @@ An operator manages credentials via CLI commands: `omnipus credentials set`, `om
 
 ### Regression Test Requirements
 
-> No regression impact -- new capability (greenfield project forked from PicoClaw). Integration seams protected by: PicoClaw's existing test suite validates that the rename/fork does not break existing behavior. New tests cover new functionality only.
+> No regression impact -- new capability (greenfield project forked from Omnipus). Integration seams protected by: Omnipus's existing test suite validates that the rename/fork does not break existing behavior. New tests cover new functionality only.
 
 ---
 
@@ -936,7 +936,7 @@ All ambiguities resolved on 2026-03-28:
 | 5 | Argon2id 64MB on Pi Zero | **Fixed at 64MB** per BRD. Runs once, frees after. Pi Zero users can use `OMNIPUS_MASTER_KEY` env var to skip KDF. |
 | 6 | JSONL append atomicity | **O_APPEND for JSONL** (sessions, memory, audit). Temp+rename for full-file rewrites (config, credentials, meta.json). |
 | 7 | Shutdown timeout config | **config.json** — `gateway.shutdown_timeout_seconds: 10`. |
-| 8 | PicoClaw fork version | **Latest tagged release** at implementation time (currently v0.2.3). |
+| 8 | Omnipus fork version | **Latest tagged release** at implementation time (currently v0.2.3). |
 
 ---
 
@@ -999,7 +999,7 @@ All ambiguities resolved on 2026-03-28:
 
 ## Assumptions
 
-- PicoClaw's Go source code is available for forking and the module path rename (`picoclaw` -> `omnipus`) is mechanically straightforward.
+- Omnipus's Go source code is available for forking and the module path rename (`omnipus` -> `omnipus`) is mechanically straightforward.
 - Go 1.21+ is the minimum supported version (required for `slog`).
 - The `golang.org/x/crypto/argon2` package provides a production-quality Argon2id implementation.
 - The target LLM providers (Anthropic, OpenRouter) support SSE-based streaming and return usage/cost data in the response.

@@ -40,11 +40,6 @@ type TaskEntity struct {
 	CreatedAt     time.Time  `json:"created_at"`
 	StartedAt     *time.Time `json:"started_at,omitempty"`
 	CompletedAt   *time.Time `json:"completed_at,omitempty"`
-
-	// Legacy GTD fields — read-only, used only during lazy migration.
-	legacyName        string
-	legacyDescription string
-	legacyUpdatedAt   time.Time
 }
 
 // legacyRaw is used only to detect and migrate old GTD-format task files.
@@ -173,14 +168,14 @@ func (s *TaskStore) load(id string) (*TaskEntity, error) {
 
 	// Lazy migration from GTD format.
 	t := &TaskEntity{
-		ID:            raw.ID,
-		Title:         raw.Name,
-		Prompt:        raw.Description,
-		AgentID:       raw.AgentID,
-		CreatedBy:     "user",
-		Priority:      3,
-		TriggerType:   "manual",
-		CreatedAt:     raw.CreatedAt,
+		ID:          raw.ID,
+		Title:       raw.Name,
+		Prompt:      raw.Description,
+		AgentID:     raw.AgentID,
+		CreatedBy:   "user",
+		Priority:    3,
+		TriggerType: "manual",
+		CreatedAt:   raw.CreatedAt,
 		// Preserve new-format fields that may be present even in legacy files.
 		Result:        raw.Result,
 		Artifacts:     raw.Artifacts,

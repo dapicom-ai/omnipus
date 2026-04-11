@@ -488,7 +488,12 @@ func TestAgentListStatus_CustomAgentIdle(t *testing.T) {
 
 	for _, ag := range agents {
 		if ag.ID == "my-agent" {
-			assert.Equal(t, "draft", ag.Status, "custom agent with no SOUL.md and no active turn must have status 'draft'")
+			assert.Equal(
+				t,
+				"draft",
+				ag.Status,
+				"custom agent with no SOUL.md and no active turn must have status 'draft'",
+			)
 			return
 		}
 	}

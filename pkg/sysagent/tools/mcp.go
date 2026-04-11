@@ -16,10 +16,11 @@ import (
 type MCPAddTool struct{ deps *Deps }
 
 func NewMCPAddTool(d *Deps) *MCPAddTool { return &MCPAddTool{deps: d} }
-func (t *MCPAddTool) Name() string       { return "system.mcp.add" }
+func (t *MCPAddTool) Name() string      { return "system.mcp.add" }
 func (t *MCPAddTool) Description() string {
 	return "Add an MCP server.\nParameters: name (required), transport (stdio/sse/http), command, args, url, env, agent_ids."
 }
+
 func (t *MCPAddTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -35,6 +36,7 @@ func (t *MCPAddTool) Parameters() map[string]any {
 		"required": []string{"name", "transport"},
 	}
 }
+
 func (t *MCPAddTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	name, _ := args["name"].(string)
 	transport, _ := args["transport"].(string)
@@ -54,10 +56,11 @@ func (t *MCPAddTool) Execute(_ context.Context, args map[string]any) *tools.Tool
 type MCPRemoveTool struct{ deps *Deps }
 
 func NewMCPRemoveTool(d *Deps) *MCPRemoveTool { return &MCPRemoveTool{deps: d} }
-func (t *MCPRemoveTool) Name() string          { return "system.mcp.remove" }
+func (t *MCPRemoveTool) Name() string         { return "system.mcp.remove" }
 func (t *MCPRemoveTool) Description() string {
 	return "Remove an MCP server. Parameters: name (required), confirm (bool, must be true)."
 }
+
 func (t *MCPRemoveTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -68,6 +71,7 @@ func (t *MCPRemoveTool) Parameters() map[string]any {
 		"required": []string{"name", "confirm"},
 	}
 }
+
 func (t *MCPRemoveTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	name, _ := args["name"].(string)
 	confirm, _ := args["confirm"].(bool)
@@ -92,13 +96,15 @@ func (t *MCPRemoveTool) Execute(_ context.Context, args map[string]any) *tools.T
 type MCPListTool struct{ deps *Deps }
 
 func NewMCPListTool(d *Deps) *MCPListTool { return &MCPListTool{deps: d} }
-func (t *MCPListTool) Name() string        { return "system.mcp.list" }
+func (t *MCPListTool) Name() string       { return "system.mcp.list" }
 func (t *MCPListTool) Description() string {
 	return "List all MCP servers with status and assigned agents. No parameters required."
 }
+
 func (t *MCPListTool) Parameters() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{}}
 }
+
 func (t *MCPListTool) Execute(_ context.Context, _ map[string]any) *tools.ToolResult {
 	slog.Info("sysagent: stub tool invoked", "tool", "system.mcp.list")
 	return tools.NewToolResult(successJSON(map[string]any{

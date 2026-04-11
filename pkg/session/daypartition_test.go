@@ -20,31 +20,31 @@ import (
 // Traces to: wave1-core-foundation-spec.md Scenario: New session creates partition and metadata (US-5 AC1, FR-011)
 func TestSessionPartitionNaming(t *testing.T) {
 	tests := []struct {
-		name             string
-		timestamp        time.Time
+		name              string
+		timestamp         time.Time
 		expectedPartition string
 	}{
 		// Dataset: Session File Edge Cases row 1
 		{
-			name:             "last millisecond of day",
-			timestamp:        time.Date(2026, 3, 28, 23, 59, 59, 999000000, time.UTC),
+			name:              "last millisecond of day",
+			timestamp:         time.Date(2026, 3, 28, 23, 59, 59, 999000000, time.UTC),
 			expectedPartition: "2026-03-28.jsonl",
 		},
 		// Dataset: Session File Edge Cases row 2
 		{
-			name:             "first millisecond of new day",
-			timestamp:        time.Date(2026, 3, 29, 0, 0, 0, 0, time.UTC),
+			name:              "first millisecond of new day",
+			timestamp:         time.Date(2026, 3, 29, 0, 0, 0, 0, time.UTC),
 			expectedPartition: "2026-03-29.jsonl",
 		},
 		// Dataset: Session File Edge Cases row 3
 		{
-			name:             "just after midnight",
-			timestamp:        time.Date(2026, 3, 29, 0, 0, 0, 1000000, time.UTC),
+			name:              "just after midnight",
+			timestamp:         time.Date(2026, 3, 29, 0, 0, 0, 1000000, time.UTC),
 			expectedPartition: "2026-03-29.jsonl",
 		},
 		{
-			name:             "noon on a date",
-			timestamp:        time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC),
+			name:              "noon on a date",
+			timestamp:         time.Date(2026, 1, 15, 12, 0, 0, 0, time.UTC),
 			expectedPartition: "2026-01-15.jsonl",
 		},
 	}
@@ -219,8 +219,8 @@ func TestSessionMultiPartition(t *testing.T) {
 		"2026-03-29.jsonl",
 	}
 	for _, partition := range expectedPartitions {
-		_, err := os.Stat(filepath.Join(sessionDir, partition))
-		assert.NoError(t, err, "partition %q must exist", partition)
+		_, statErr := os.Stat(filepath.Join(sessionDir, partition))
+		assert.NoError(t, statErr, "partition %q must exist", partition)
 	}
 
 	// Verify meta lists all partitions.
@@ -242,8 +242,10 @@ func TestSessionStatsAggregation(t *testing.T) {
 
 	messages := []TranscriptEntry{
 		{ID: "m1", Role: "user", Content: "msg1", Timestamp: now, Tokens: 10, Cost: 0.001},
-		{ID: "m2", Role: "assistant", Content: "reply1", Timestamp: now, Tokens: 50, Cost: 0.005,
-			ToolCalls: []ToolCall{{ID: "tc1", Tool: "shell", Status: "success"}}},
+		{
+			ID: "m2", Role: "assistant", Content: "reply1", Timestamp: now, Tokens: 50, Cost: 0.005,
+			ToolCalls: []ToolCall{{ID: "tc1", Tool: "shell", Status: "success"}},
+		},
 		{ID: "m3", Role: "user", Content: "msg2", Timestamp: now, Tokens: 20, Cost: 0.002},
 	}
 

@@ -178,7 +178,7 @@ func DisableFileLogging() {
 }
 
 func ConfigureFromEnv() {
-	if logFile := os.Getenv("PICOCLAW_LOG_FILE"); logFile != "" {
+	if logFile := os.Getenv("OMNIPUS_LOG_FILE"); logFile != "" {
 		if strings.HasPrefix(logFile, "~/") {
 			if home := os.Getenv("HOME"); home != "" {
 				logFile = filepath.Join(home, logFile[2:])

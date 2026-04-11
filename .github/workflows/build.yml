@@ -7,6 +7,11 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # pkg/gateway/*.go is tagged //go:build !cgo (pure-Go per CLAUDE.md hard
+      # constraint #2). Without CGO_ENABLED=0 the gateway package is excluded
+      # from the build and main.go fails to link.
+      CGO_ENABLED: "0"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -15,6 +20,21 @@ jobs:
         uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Build SPA
+        # pkg/gateway/embed.go has //go:embed all:spa and pkg/gateway/spa/ is
+        # gitignored. Vite builds into dist/spa; we copy it into the embed
+        # target before go build reads the directive.
+        run: |
+          npm ci
+          npm run build
+          rm -rf pkg/gateway/spa
+          cp -r dist/spa pkg/gateway/spa
 
       - name: Build
         run: make build-all

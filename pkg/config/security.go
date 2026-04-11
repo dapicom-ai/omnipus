@@ -6,109 +6,108 @@
 package config
 
 import (
-	"bytes"
 	"encoding/json"
-	"fmt"
-	"os"
-	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
-	"sync"
 
 	"gopkg.in/yaml.v3"
-
-	"github.com/dapicom-ai/omnipus/pkg/credential"
-	"github.com/dapicom-ai/omnipus/pkg/fileutil"
-	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
 
-const (
-	SecurityConfigFile = ".security.yml"
-)
+// This file provides:
+//   - SensitiveDataCache: runtime lookup for filtering credential values out of
+//     LLM responses and logs (used throughout the agent loop)
+//   - SecureString / SecureStrings: typed wrappers for credential values that
+//     are redacted on JSON serialization
+//
+// The old PicoClaw ".security.yml" credential-separation mechanism has been
+// removed. Credential separation is now handled exclusively by the Omnipus
+// encrypted credentials.json store (pkg/credentials) referenced via
+// ModelConfig.APIKeyRef — see pkg/gateway/rest.go and pkg/sysagent/tools/deps.go
+// for the resolution path. The credentials.json store uses AES-256-GCM +
+// Argon2id per CLAUDE.md and BRD SEC-23.
 
-// securityPath returns the path to security.yml relative to the config file
-func securityPath(configPath string) string {
-	configDir := filepath.Dir(configPath)
-	return filepath.Join(configDir, SecurityConfigFile)
-}
-
-// loadSecurityConfig loads the security configuration from security.yml
-// Returns an empty SecurityConfig if the file doesn't exist
-func loadSecurityConfig(cfg *Config, securityPath string) error {
-	if cfg == nil {
-		return fmt.Errorf("config is nil")
-	}
-	data, err := os.ReadFile(securityPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to read security config: %w", err)
-	}
-
-	if err := yaml.Unmarshal(data, cfg); err != nil {
-		return fmt.Errorf("failed to parse security config: %w", err)
-	}
-
-	return nil
-}
-
-// saveSecurityConfig saves the security configuration to security.yml
-func saveSecurityConfig(securityPath string, sec *Config) error {
-	var buf bytes.Buffer
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	err := enc.Encode(sec)
-	if err != nil {
-		return fmt.Errorf("failed to marshal security config: %w", err)
-	}
-	return fileutil.WriteFileAtomic(securityPath, buf.Bytes(), 0o600)
-}
-
-// SensitiveDataCache caches the compiled regex for filtering sensitive data.
-// SensitiveDataCache caches the strings.Replacer for filtering sensitive data.
-// Computed once on first access via sync.Once.
+// SensitiveDataCache holds the compiled strings.Replacer for filtering
+// sensitive data out of LLM responses and logs.
+//
+// Instances are built fully populated and then stored atomically under
+// Config.sensitiveMu; readers that obtain a non-nil cache pointer may call
+// replacer without holding any lock.
 type SensitiveDataCache struct {
 	replacer *strings.Replacer
-	once     sync.Once
 }
 
 // SensitiveDataReplacer returns the strings.Replacer for filtering sensitive data.
-// It is computed once on first access via sync.Once.
+// The replacer is built lazily on first call and rebuilt whenever
+// RegisterSensitiveValues invalidates the cache.
+//
+// Thread-safe: safe to call concurrently with RegisterSensitiveValues.
 func (sec *Config) SensitiveDataReplacer() *strings.Replacer {
-	sec.initSensitiveCache()
+	sec.sensitiveMu.RLock()
+	cache := sec.sensitiveCache
+	sec.sensitiveMu.RUnlock()
+	if cache != nil {
+		return cache.replacer
+	}
+	// Cache is nil — build it under the write lock.
+	sec.sensitiveMu.Lock()
+	defer sec.sensitiveMu.Unlock()
+	if sec.sensitiveCache != nil {
+		// Another goroutine already built it while we waited for the write lock.
+		return sec.sensitiveCache.replacer
+	}
+	sec.buildAndPopulateSensitiveCache()
 	return sec.sensitiveCache.replacer
 }
 
-// initSensitiveCache initializes the sensitive data cache if not already done.
-func (sec *Config) initSensitiveCache() {
-	if sec.sensitiveCache == nil {
-		sec.sensitiveCache = &SensitiveDataCache{}
-	}
-	sec.sensitiveCache.once.Do(func() {
-		values := sec.collectSensitiveValues()
-		if len(values) == 0 {
-			sec.sensitiveCache.replacer = strings.NewReplacer()
-			return
-		}
-
-		// Build old/new pairs for strings.Replacer
-		var pairs []string
-		for _, v := range values {
-			if len(v) > 3 {
-				pairs = append(pairs, v, "[FILTERED]")
-			}
-		}
-		if len(pairs) == 0 {
-			sec.sensitiveCache.replacer = strings.NewReplacer()
-			return
-		}
-		sec.sensitiveCache.replacer = strings.NewReplacer(pairs...)
-	})
+// RegisterSensitiveValues replaces the runtime sensitive-data list with the
+// supplied values and resets the compiled replacer cache so the next call to
+// SensitiveDataReplacer rebuilds with the new set. Semantics are "replace not
+// append" so that rotated or removed secrets are evicted on every reload; callers
+// must pass the COMPLETE current set of plaintexts each time.
+//
+// Thread-safe: safe to call concurrently with SensitiveDataReplacer.
+func (sec *Config) RegisterSensitiveValues(values []string) {
+	sec.sensitiveMu.Lock()
+	defer sec.sensitiveMu.Unlock()
+	// Replace (not append) so stale secrets from a prior config are evicted.
+	sec.registeredSensitive = append(sec.registeredSensitive[:0:0], values...)
+	sec.registeredSensitive = unique(sec.registeredSensitive)
+	// Invalidate the cache so the next SensitiveDataReplacer() call rebuilds.
+	sec.sensitiveCache = nil
 }
 
-// collectSensitiveValues collects all sensitive strings from SecurityConfig using reflection.
+// buildAndPopulateSensitiveCache constructs the replacer and stores it on
+// sec.sensitiveCache. Must be called with sensitiveMu write-locked.
+func (sec *Config) buildAndPopulateSensitiveCache() {
+	cache := &SensitiveDataCache{}
+
+	// (a) Reflection-walked SecureString fields (kept for backward compat).
+	values := sec.collectSensitiveValues()
+	// (b) Runtime-registered plaintexts — read under the already-held write lock.
+	values = unique(append(values, sec.registeredSensitive...))
+
+	if len(values) == 0 {
+		cache.replacer = strings.NewReplacer()
+		sec.sensitiveCache = cache
+		return
+	}
+
+	// Build old/new pairs for strings.Replacer.
+	var pairs []string
+	for _, v := range values {
+		if len(v) > 3 {
+			pairs = append(pairs, v, "[FILTERED]")
+		}
+	}
+	if len(pairs) == 0 {
+		cache.replacer = strings.NewReplacer()
+	} else {
+		cache.replacer = strings.NewReplacer(pairs...)
+	}
+	sec.sensitiveCache = cache
+}
+
+// collectSensitiveValues collects all sensitive strings from Config using reflection.
 func (sec *Config) collectSensitiveValues() []string {
 	var values []string
 	collectSensitive(reflect.ValueOf(sec), &values)
@@ -128,33 +127,19 @@ func collectSensitive(v reflect.Value, values *[]string) {
 
 	// SecureString: collect via String() method (defined on *SecureString)
 	if t == reflect.TypeOf(SecureString{}) {
-		result := v.Addr().MethodByName("String").Call(nil)
-		if len(result) > 0 {
-			if s := result[0].String(); s != "" {
-				*values = append(*values, s)
-			}
+		var addr reflect.Value
+		if v.CanAddr() {
+			addr = v.Addr()
+		} else {
+			tmp := reflect.New(t)
+			tmp.Elem().Set(v)
+			addr = tmp
 		}
-		return
-	}
-
-	// SecureStrings ([]*SecureString): iterate and collect each element
-	if t == reflect.TypeOf(SecureStrings{}) {
-		for i := 0; i < v.Len(); i++ {
-			elem := v.Index(i)
-			for elem.Kind() == reflect.Ptr || elem.Kind() == reflect.Interface {
-				if elem.IsNil() {
-					elem = reflect.Value{}
-					break
-				}
-				elem = elem.Elem()
-			}
-			if elem.IsValid() && elem.Type() == reflect.TypeOf(SecureString{}) {
-				result := elem.Addr().MethodByName("String").Call(nil)
-				if len(result) > 0 {
-					if s := result[0].String(); s != "" {
-						*values = append(*values, s)
-					}
-				}
+		ss, ok := addr.Interface().(*SecureString)
+		if ok && ss != nil {
+			s := ss.String()
+			if s != "" {
+				*values = append(*values, s)
 			}
 		}
 		return
@@ -163,18 +148,20 @@ func collectSensitive(v reflect.Value, values *[]string) {
 	switch v.Kind() {
 	case reflect.Struct:
 		for i := 0; i < v.NumField(); i++ {
-			if !t.Field(i).IsExported() {
+			field := t.Field(i)
+			if !field.IsExported() {
 				continue
 			}
 			collectSensitive(v.Field(i), values)
 		}
-	case reflect.Slice:
+	case reflect.Slice, reflect.Array:
 		for i := 0; i < v.Len(); i++ {
 			collectSensitive(v.Index(i), values)
 		}
 	case reflect.Map:
-		for _, key := range v.MapKeys() {
-			collectSensitive(v.MapIndex(key), values)
+		iter := v.MapRange()
+		for iter.Next() {
+			collectSensitive(iter.Value(), values)
 		}
 	}
 }
@@ -183,10 +170,10 @@ const (
 	notHere = `"[NOT_HERE]"`
 )
 
-// SecureStrings is a slice of SecureString
+// SecureStrings is a slice of SecureString.
 type SecureStrings []*SecureString
 
-// Values returns the decrypted/resolved values
+// Values returns the resolved values.
 func (s *SecureStrings) Values() []string {
 	if s == nil {
 		return nil
@@ -198,6 +185,8 @@ func (s *SecureStrings) Values() []string {
 	return unique(keys)
 }
 
+// SimpleSecureStrings builds a SecureStrings from plain string values.
+// Used by tests and by internal config construction.
 func SimpleSecureStrings(val ...string) SecureStrings {
 	val = unique(val)
 	vv := make(SecureStrings, len(val))
@@ -237,54 +226,31 @@ func (s *SecureStrings) UnmarshalJSON(value []byte) error {
 	return nil
 }
 
-// SecureString the string value that can be decrypted or resolved
+// SecureString wraps a credential value. It is redacted on JSON output
+// (MarshalJSON returns "[NOT_HERE]") so secrets never leak into API responses
+// or logged config. On UnmarshalJSON it reads the plaintext value verbatim.
+//
+// Callers that need to store credentials separately should use the encrypted
+// credentials.json store via ModelConfig.APIKeyRef instead of putting secrets
+// directly in config.json.
 //
 //nolint:recvcheck
 type SecureString struct {
-	resolved string // Decrypted/resolved value returned by String()
-	raw      string // Persisted raw value (enc://, file://, or plaintext)
+	resolved string
 }
 
-func callerFromYaml() bool {
-	_, file, _, ok := runtime.Caller(2)
-	if ok {
-		d := filepath.Dir(file)
-		// check the caller is from yaml.v
-		if !strings.Contains(d, "yaml.v") {
-			return true
-		}
-	}
-	return false
-}
-
-// IsZero implements the IsZero interface used by both encoding/json (omitzero)
-// and gopkg.in/yaml.v3 (omitempty) to decide whether to omit this field.
-//
-// Behaviour:
-//   - When called from the yaml.v3 library (YAML marshaling): returns false
-//     for non-empty values so secrets round-trip through YAML config files.
-//   - When called from any other caller (e.g. JSON marshaling via omitzero):
-//     always returns true, causing the field to be omitted from JSON output.
-//     JSON serialization uses MarshalJSON which returns "[NOT_HERE]" instead.
-//
-// The caller-detection approach is intentional: it is the only way to make a
-// single IsZero() method behave differently for two different encoding stacks
-// without changing the struct layout or tags.
+// IsZero reports whether this SecureString has no value. Used by JSON
+// `omitzero` to skip empty fields in serialized output.
 func (s SecureString) IsZero() bool {
-	if callerFromYaml() {
-		return true
-	}
 	return s.resolved == ""
 }
 
+// NewSecureString constructs a SecureString from a plaintext value.
 func NewSecureString(value string) *SecureString {
-	s := &SecureString{}
-	if err := s.fromRaw(value); err != nil {
-		logger.Warn(fmt.Sprintf("NewSecureString.fromRaw error: %s", err))
-	}
-	return s
+	return &SecureString{resolved: value}
 }
 
+// String returns the plaintext value.
 func (s *SecureString) String() string {
 	if s == nil {
 		return ""
@@ -292,12 +258,14 @@ func (s *SecureString) String() string {
 	return s.resolved
 }
 
+// Set replaces the stored value with a new plaintext.
 func (s *SecureString) Set(value string) *SecureString {
 	s.resolved = value
-	s.raw = ""
 	return s
 }
 
+// MarshalJSON redacts the value in JSON output. The credential should NEVER
+// be serialized to JSON — use credentials.json + APIKeyRef for persistence.
 func (s SecureString) MarshalJSON() ([]byte, error) {
 	return []byte(notHere), nil
 }
@@ -310,113 +278,20 @@ func (s *SecureString) UnmarshalJSON(value []byte) error {
 	if err := json.Unmarshal(value, &v); err != nil {
 		return err
 	}
-	return s.fromRaw(v)
+	s.resolved = v
+	return nil
 }
 
 func (s SecureString) MarshalYAML() (any, error) {
-	// Preserve raw value if it is already a reference (enc:// or file://)
-	if strings.HasPrefix(s.raw, credential.EncScheme) || strings.HasPrefix(s.raw, credential.FileScheme) {
-		return s.raw, nil
-	}
-	// If resolved is a reference format (e.g. set via Set), copy back to raw
-	if strings.HasPrefix(s.resolved, credential.EncScheme) || strings.HasPrefix(s.resolved, credential.FileScheme) {
-		s.raw = s.resolved
-		return s.raw, nil
-	}
-	// Try to encrypt the resolved value
-	if passphrase := credential.PassphraseProvider(); passphrase != "" {
-		encrypted, err := credential.Encrypt(passphrase, "", s.resolved)
-		if err != nil {
-			logger.Errorf("Encrypt error: %v", err)
-			return nil, err
-		}
-		s.raw = encrypted
-	} else {
-		s.raw = s.resolved
-	}
-	return s.raw, nil
+	return s.resolved, nil
 }
 
 func (s *SecureString) UnmarshalYAML(value *yaml.Node) error {
-	return s.fromRaw(value.Value)
-}
-
-func (s *SecureString) fromRaw(v string) error {
-	s.raw = v
-	vv, err := resolveKey(v)
-	if err != nil {
-		return err
-	}
-	s.resolved = vv
+	s.resolved = value.Value
 	return nil
-}
-
-var (
-	secResolverMu sync.RWMutex
-	secResolver   *credential.Resolver
-)
-
-func updateResolver(path string) {
-	secResolverMu.Lock()
-	defer secResolverMu.Unlock()
-	secResolver = credential.NewResolver(path)
-}
-
-func resolveKey(v string) (string, error) {
-	secResolverMu.RLock()
-	resolver := secResolver
-	secResolverMu.RUnlock()
-	if resolver == nil {
-		resolver = credential.NewResolver("")
-	}
-	if strings.HasPrefix(v, "enc://") || strings.HasPrefix(v, "file://") {
-		decrypted, err := resolver.Resolve(v)
-		if err != nil {
-			logger.Errorf("Resolve error: %v", err)
-			return "", err
-		}
-		return decrypted, nil
-	}
-	return v, nil
 }
 
 func (s *SecureString) UnmarshalText(text []byte) error {
-	v := string(text)
-	return s.fromRaw(v)
-}
-
-type SecureModelList []*ModelConfig
-
-func (v *SecureModelList) UnmarshalYAML(value *yaml.Node) error {
-	mm := make(map[string]*ModelConfig)
-	if err := value.Decode(&mm); err != nil {
-		logger.Errorf("Decode error: %v", err)
-		return err
-	}
-	nameList := toNameIndex(*v)
-	for i, m := range *v {
-		sec := mm[nameList[i]]
-		if sec == nil {
-			sec = mm[m.ModelName]
-		}
-		if sec != nil {
-			m.APIKeys = sec.APIKeys
-		}
-	}
+	s.resolved = string(text)
 	return nil
-}
-
-func (v SecureModelList) MarshalYAML() (any, error) {
-	type onlySecureData struct {
-		APIKeys SecureStrings `yaml:"api_keys,omitempty"`
-	}
-	mm := make(map[string]onlySecureData)
-	nameList := toNameIndex(v)
-	for i, m := range v {
-		mm[nameList[i]] = onlySecureData{
-			APIKeys: m.APIKeys,
-		}
-	}
-
-	return mm, nil
 }

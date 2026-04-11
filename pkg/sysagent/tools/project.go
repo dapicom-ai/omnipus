@@ -9,8 +9,9 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/dapicom-ai/omnipus/pkg/tools"
 	"github.com/oklog/ulid/v2"
+
+	"github.com/dapicom-ai/omnipus/pkg/tools"
 )
 
 type project struct {
@@ -31,10 +32,11 @@ func projectsDir(home string) string { return filepath.Join(home, "projects") }
 type ProjectCreateTool struct{ deps *Deps }
 
 func NewProjectCreateTool(d *Deps) *ProjectCreateTool { return &ProjectCreateTool{deps: d} }
-func (t *ProjectCreateTool) Name() string              { return "system.project.create" }
+func (t *ProjectCreateTool) Name() string             { return "system.project.create" }
 func (t *ProjectCreateTool) Description() string {
 	return "Create a new project.\nParameters: name (required), description, color, agent_ids."
 }
+
 func (t *ProjectCreateTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -47,6 +49,7 @@ func (t *ProjectCreateTool) Parameters() map[string]any {
 		"required": []string{"name"},
 	}
 }
+
 func (t *ProjectCreateTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	name, _ := args["name"].(string)
 	if name == "" {
@@ -86,10 +89,11 @@ func (t *ProjectCreateTool) Execute(_ context.Context, args map[string]any) *too
 type ProjectUpdateTool struct{ deps *Deps }
 
 func NewProjectUpdateTool(d *Deps) *ProjectUpdateTool { return &ProjectUpdateTool{deps: d} }
-func (t *ProjectUpdateTool) Name() string              { return "system.project.update" }
+func (t *ProjectUpdateTool) Name() string             { return "system.project.update" }
 func (t *ProjectUpdateTool) Description() string {
 	return "Update an existing project.\nParameters: id (required), name, description, color, agent_ids."
 }
+
 func (t *ProjectUpdateTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -103,6 +107,7 @@ func (t *ProjectUpdateTool) Parameters() map[string]any {
 		"required": []string{"id"},
 	}
 }
+
 func (t *ProjectUpdateTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	id, _ := args["id"].(string)
 	if id == "" {
@@ -138,10 +143,11 @@ func (t *ProjectUpdateTool) Execute(_ context.Context, args map[string]any) *too
 type ProjectDeleteTool struct{ deps *Deps }
 
 func NewProjectDeleteTool(d *Deps) *ProjectDeleteTool { return &ProjectDeleteTool{deps: d} }
-func (t *ProjectDeleteTool) Name() string              { return "system.project.delete" }
+func (t *ProjectDeleteTool) Name() string             { return "system.project.delete" }
 func (t *ProjectDeleteTool) Description() string {
 	return "Delete a project. Parameters: id (required), confirm (bool, must be true)."
 }
+
 func (t *ProjectDeleteTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -152,6 +158,7 @@ func (t *ProjectDeleteTool) Parameters() map[string]any {
 		"required": []string{"id", "confirm"},
 	}
 }
+
 func (t *ProjectDeleteTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	id, _ := args["id"].(string)
 	confirm, _ := args["confirm"].(bool)
@@ -176,13 +183,15 @@ func (t *ProjectDeleteTool) Execute(_ context.Context, args map[string]any) *too
 type ProjectListTool struct{ deps *Deps }
 
 func NewProjectListTool(d *Deps) *ProjectListTool { return &ProjectListTool{deps: d} }
-func (t *ProjectListTool) Name() string            { return "system.project.list" }
+func (t *ProjectListTool) Name() string           { return "system.project.list" }
 func (t *ProjectListTool) Description() string {
 	return "List all projects with task counts. No parameters required."
 }
+
 func (t *ProjectListTool) Parameters() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{}}
 }
+
 func (t *ProjectListTool) Execute(_ context.Context, _ map[string]any) *tools.ToolResult {
 	projects, err := listEntities[project](projectsDir(t.deps.Home))
 	if err != nil {

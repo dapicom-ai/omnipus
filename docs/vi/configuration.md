@@ -12,23 +12,23 @@ Bạn có thể ghi đè các đường dẫn mặc định bằng biến môi t
 
 | Biến              | Mô tả                                                                                                                             | Đường Dẫn Mặc Định       |
 |-------------------|-----------------------------------------------------------------------------------------------------------------------------------------|---------------------------|
-| `PICOCLAW_CONFIG` | Ghi đè đường dẫn đến file cấu hình. Chỉ định trực tiếp cho omnipus file `config.json` nào cần tải, bỏ qua tất cả vị trí khác. | `~/.omnipus/config.json` |
-| `PICOCLAW_HOME`   | Ghi đè thư mục gốc cho dữ liệu omnipus. Thay đổi vị trí mặc định của `workspace` và các thư mục dữ liệu khác.          | `~/.omnipus`             |
+| `OMNIPUS_CONFIG` | Ghi đè đường dẫn đến file cấu hình. Chỉ định trực tiếp cho omnipus file `config.json` nào cần tải, bỏ qua tất cả vị trí khác. | `~/.omnipus/config.json` |
+| `OMNIPUS_HOME`   | Ghi đè thư mục gốc cho dữ liệu omnipus. Thay đổi vị trí mặc định của `workspace` và các thư mục dữ liệu khác.          | `~/.omnipus`             |
 
 **Ví dụ:**
 
 ```bash
 # Chạy omnipus với file cấu hình cụ thể
 # Đường dẫn workspace sẽ được đọc từ trong file cấu hình đó
-PICOCLAW_CONFIG=/etc/omnipus/production.json omnipus gateway
+OMNIPUS_CONFIG=/etc/omnipus/production.json omnipus gateway
 
 # Chạy omnipus với tất cả dữ liệu lưu tại /opt/omnipus
 # Cấu hình sẽ được tải từ mặc định ~/.omnipus/config.json
 # Workspace sẽ được tạo tại /opt/omnipus/workspace
-PICOCLAW_HOME=/opt/omnipus omnipus agent
+OMNIPUS_HOME=/opt/omnipus omnipus agent
 
 # Sử dụng cả hai cho thiết lập tùy chỉnh hoàn toàn
-PICOCLAW_HOME=/srv/omnipus PICOCLAW_CONFIG=/srv/omnipus/main.json omnipus gateway
+OMNIPUS_HOME=/srv/omnipus OMNIPUS_CONFIG=/srv/omnipus/main.json omnipus gateway
 ```
 
 ### Bố Cục Workspace
@@ -62,7 +62,7 @@ Mặc định, skill được tải từ:
 Cho thiết lập nâng cao/test, bạn có thể ghi đè thư mục gốc skill builtin với:
 
 ```bash
-export PICOCLAW_BUILTIN_SKILLS=/path/to/skills
+export OMNIPUS_BUILTIN_SKILLS=/path/to/skills
 ```
 
 ### Chính Sách Thực Thi Lệnh Thống Nhất
@@ -179,7 +179,7 @@ Nếu bạn cần agent truy cập đường dẫn ngoài workspace:
 **Phương pháp 2: Biến môi trường**
 
 ```bash
-export PICOCLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE=false
+export OMNIPUS_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE=false
 ```
 
 > ⚠️ **Cảnh báo**: Tắt giới hạn này cho phép agent truy cập bất kỳ đường dẫn nào trên hệ thống. Chỉ sử dụng cẩn thận trong môi trường được kiểm soát.
@@ -270,8 +270,8 @@ Trả lời HEARTBEAT_OK        Người dùng nhận kết quả trực tiếp
 
 **Biến môi trường:**
 
-* `PICOCLAW_HEARTBEAT_ENABLED=false` để tắt
-* `PICOCLAW_HEARTBEAT_INTERVAL=60` để thay đổi khoảng thời gian
+* `OMNIPUS_HEARTBEAT_ENABLED=false` để tắt
+* `OMNIPUS_HEARTBEAT_INTERVAL=60` để thay đổi khoảng thời gian
 
 ### Providers
 

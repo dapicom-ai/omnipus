@@ -201,7 +201,7 @@ func TestPageTimeoutConfig(t *testing.T) {
 	m, err := NewBrowserManager(cfg, ssrf)
 	require.NoError(t, err)
 	assert.Equal(t, 10*time.Second, m.PageTimeout(),
-		"configured page timeout must be honoured")
+		"configured page timeout must be honored")
 }
 
 // --- TestBrowserConfigParsing ---

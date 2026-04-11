@@ -39,7 +39,7 @@ Sensitive data filtering is configured in the `tools` section of `config.json`:
 
 | Variable | Description |
 |----------|-------------|
-| `PICOCLAW_TOOLS_FILTER_SENSITIVE_DATA` | Set to `true` or `false` to override the config value |
+| `OMNIPUS_TOOLS_FILTER_SENSITIVE_DATA` | Set to `true` or `false` to override the config value |
 
 ---
 

@@ -240,7 +240,7 @@ docker compose -f docker/docker-compose.yml --profile launcher up -d
 # Abra http://localhost:18800
 ```
 
-> **Usuários de Docker / VM:** O Gateway escuta em `127.0.0.1` por padrão. Defina `PICOCLAW_GATEWAY_HOST=0.0.0.0` ou use a flag `-public` para torná-lo acessível pelo host.
+> **Usuários de Docker / VM:** O Gateway escuta em `127.0.0.1` por padrão. Defina `OMNIPUS_GATEWAY_HOST=0.0.0.0` ou use a flag `-public` para torná-lo acessível pelo host.
 
 ```bash
 # Verificar logs

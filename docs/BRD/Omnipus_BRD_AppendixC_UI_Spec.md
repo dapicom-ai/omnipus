@@ -12,7 +12,7 @@
 
 ## C.1 Purpose
 
-This appendix defines the complete user interface and experience design for Omnipus. It specifies every screen, interaction pattern, navigation flow, and design principle derived from competitive analysis of OpenClaw, PicoClaw, ChatGPT, Claude Artifacts, and Manus AI.
+This appendix defines the complete user interface and experience design for Omnipus. It specifies every screen, interaction pattern, navigation flow, and design principle derived from competitive analysis of OpenClaw, Omnipus, ChatGPT, Claude Artifacts, and Manus AI.
 
 **Design philosophy:** Chat-first, minimalist, inline-everything. No separate canvas panel. Sidebar defaults to overlay but can be pinned for power users. Rich content renders inline in chat and expands to fullscreen when needed. The app feels like a modern messaging client with superpowers, not an enterprise admin console.
 
@@ -75,7 +75,7 @@ Omnipus ships as three product variants, all sharing the same `@omnipus/ui` comp
 
 | Variant | Priority | Build tool | Shell | Gateway connection | Output |
 |---|---|---|---|---|---|
-| **Open source** (primary) | Ship first | Vite 6 | Browser | WebSocket to Go gateway on localhost | Static SPA → embedded in Go binary via `go:embed`. Community-facing. Similar to PicoClaw/OpenClaw distribution. |
+| **Open source** (primary) | Ship first | Vite 6 | Browser | WebSocket to Go gateway on localhost | Static SPA → embedded in Go binary via `go:embed`. Community-facing. Similar to Omnipus/OpenClaw distribution. |
 | **Desktop** | Ship second | Vite 6 + electron-builder | Electron v33+ | WebSocket to Go child process | DMG / EXE / AppImage. Polished, premium UX. Auto-updates. |
 | **Cloud** (SaaS) | Ship third | Consumer's bundler | Host app's shell | WebSocket to cloud gateway | `@omnipus/ui` npm package. Scalable, multi-tenant, expanded integrations. |
 

@@ -12,8 +12,8 @@ import "time"
 type PairingState string
 
 const (
-	StatePending PairingState = "pending"
-	StatePaired  PairingState = "paired"
+	StatePending  PairingState = "pending"
+	StatePaired   PairingState = "paired"
 	StateRejected PairingState = "rejected"
 	StateExpired  PairingState = "expired"
 	StateRevoked  PairingState = "revoked"
@@ -22,7 +22,7 @@ const (
 // PendingDevice represents a device that has requested pairing but has not yet been approved.
 type PendingDevice struct {
 	DeviceID    string    `json:"device_id"`
-	Fingerprint string    `json:"fingerprint"` // base64(SHA256(public key))
+	Fingerprint string    `json:"fingerprint"`  // base64(SHA256(public key))
 	PairingCode string    `json:"pairing_code"` // 6-digit display code
 	DeviceName  string    `json:"device_name"`
 	CreatedAt   time.Time `json:"created_at"`
@@ -31,13 +31,13 @@ type PendingDevice struct {
 
 // PairedDevice represents a device that has completed pairing and has an active session.
 type PairedDevice struct {
-	DeviceID   string    `json:"device_id"`
-	Fingerprint string   `json:"fingerprint"`
-	DeviceName string   `json:"device_name"`
-	Token      string   `json:"token,omitempty"` // stored encrypted in credentials.json, not serialized
-	PairedAt   time.Time `json:"paired_at"`
-	LastSeenAt time.Time `json:"last_seen_at"`
-	Status     string    `json:"status"` // "active" | "revoked"
+	DeviceID    string    `json:"device_id"`
+	Fingerprint string    `json:"fingerprint"`
+	DeviceName  string    `json:"device_name"`
+	Token       string    `json:"token,omitempty"` // stored encrypted in credentials.json, not serialized
+	PairedAt    time.Time `json:"paired_at"`
+	LastSeenAt  time.Time `json:"last_seen_at"`
+	Status      string    `json:"status"` // "active" | "revoked"
 }
 
 // PairingDecision is the result of a pairing decision (approved/rejected).
@@ -51,7 +51,7 @@ type PairingDecision struct {
 // Not thread-safe — must be accessed under its mutex from gateway.go.
 type PairingStore struct {
 	pending map[string]PendingDevice // deviceID → PendingDevice (in-memory only)
-	paired  map[string]PairedDevice    // deviceID → PairedDevice (persisted to devices.json)
+	paired  map[string]PairedDevice  // deviceID → PairedDevice (persisted to devices.json)
 }
 
 // NewPairingStore creates an empty pairing store.
@@ -103,13 +103,13 @@ func (s *PairingStore) Approve(deviceID, token string) (PairedDevice, error) {
 		return PairedDevice{}, nil // not found
 	}
 	paired := PairedDevice{
-		DeviceID:   pending.DeviceID,
+		DeviceID:    pending.DeviceID,
 		Fingerprint: pending.Fingerprint,
-		DeviceName: pending.DeviceName,
-		Token:      token,
-		PairedAt:   time.Now().UTC(),
-		LastSeenAt: time.Now().UTC(),
-		Status:     "active",
+		DeviceName:  pending.DeviceName,
+		Token:       token,
+		PairedAt:    time.Now().UTC(),
+		LastSeenAt:  time.Now().UTC(),
+		Status:      "active",
 	}
 	delete(s.pending, deviceID)
 	s.paired[deviceID] = paired

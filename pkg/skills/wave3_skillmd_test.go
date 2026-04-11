@@ -176,7 +176,12 @@ func TestSkillNameValidation(t *testing.T) {
 		// Dataset row 4 — Single character (valid, min length)
 		{name: "single-char", skillName: "a", desc: "valid description", wantValid: true},
 		// Dataset row 5 — 64 chars (valid, max length)
-		{name: "64-chars", skillName: string(make([]byte, 64)), desc: "valid description", wantValid: false}, // all zeros = invalid chars
+		{
+			name:      "64-chars",
+			skillName: string(make([]byte, 64)),
+			desc:      "valid description",
+			wantValid: false,
+		}, // all zeros = invalid chars
 		// Dataset row 7 — Path traversal (invalid, security)
 		{name: "path-traversal", skillName: "../../etc/passwd", desc: "valid description", wantValid: false},
 		// Dataset row 8 — Spaces (invalid)

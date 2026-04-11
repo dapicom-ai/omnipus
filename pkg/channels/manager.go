@@ -20,6 +20,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/constants"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/health"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/media"
@@ -76,22 +77,36 @@ type channelWorker struct {
 	limiter    *rate.Limiter
 }
 
+// ChannelInitError records an enabled channel that failed to construct.
+type ChannelInitError struct {
+	Channel string
+	Err     error
+}
+
+func (e *ChannelInitError) Error() string {
+	return fmt.Sprintf("channel %q: %v", e.Channel, e.Err)
+}
+
+func (e *ChannelInitError) Unwrap() error { return e.Err }
+
 type Manager struct {
-	channels      map[string]Channel
-	workers       map[string]*channelWorker
-	bus           *bus.MessageBus
-	config        *config.Config
-	mediaStore    media.MediaStore
-	dispatchTask  *asyncTask
-	mux           *dynamicServeMux
-	httpServer    *http.Server
-	mu            sync.RWMutex
-	placeholders  sync.Map          // "channel:chatID" → placeholderID (string)
-	typingStops   sync.Map          // "channel:chatID" → func()
-	reactionUndos sync.Map          // "channel:chatID" → reactionEntry
-	streamActive  sync.Map          // "channel:chatID" → true (set when streamer.Finalize sent the message)
-	channelHashes  map[string]string // channel name → config hash
+	channels       map[string]Channel
+	workers        map[string]*channelWorker
+	bus            *bus.MessageBus
+	config         *config.Config
+	secrets        credentials.SecretBundle // resolved plaintext secrets; never written to env
+	mediaStore     media.MediaStore
+	dispatchTask   *asyncTask
+	mux            *dynamicServeMux
+	httpServer     *http.Server
+	mu             sync.RWMutex
+	placeholders   sync.Map           // "channel:chatID" → placeholderID (string)
+	typingStops    sync.Map           // "channel:chatID" → func()
+	reactionUndos  sync.Map           // "channel:chatID" → reactionEntry
+	streamActive   sync.Map           // "channel:chatID" → true (set when streamer.Finalize sent the message)
+	channelHashes  map[string]string  // channel name → config hash
 	streamFallback bus.StreamDelegate // optional fallback for channels not in m.channels (e.g., webchat WebSocket)
+	failedChannels []ChannelInitError // enabled channels that failed to start
 }
 
 type asyncTask struct {
@@ -205,8 +220,16 @@ func (m *Manager) preSend(ctx context.Context, name string, msg bus.OutboundMess
 				if err := editor.EditMessage(ctx, msg.ChatID, entry.id, msg.Content); err == nil {
 					return true // edited successfully, skip Send
 				} else {
-					logger.WarnCF("channels", "Placeholder edit failed, falling through to Send",
-						map[string]any{"channel": name, "chat_id": msg.ChatID, "placeholder_id": entry.id, "error": err.Error()})
+					logger.WarnCF(
+						"channels",
+						"Placeholder edit failed, falling through to Send",
+						map[string]any{
+							"channel":        name,
+							"chat_id":        msg.ChatID,
+							"placeholder_id": entry.id,
+							"error":          err.Error(),
+						},
+					)
 				}
 				// edit failed → fall through to normal Send
 			}
@@ -250,12 +273,18 @@ func (m *Manager) preSendMedia(ctx context.Context, name string, msg bus.Outboun
 	}
 }
 
-func NewManager(cfg *config.Config, messageBus *bus.MessageBus, store media.MediaStore) (*Manager, error) {
+func NewManager(
+	cfg *config.Config,
+	secrets credentials.SecretBundle,
+	messageBus *bus.MessageBus,
+	store media.MediaStore,
+) (*Manager, error) {
 	m := &Manager{
 		channels:      make(map[string]Channel),
 		workers:       make(map[string]*channelWorker),
 		bus:           messageBus,
 		config:        cfg,
+		secrets:       secrets,
 		mediaStore:    store,
 		channelHashes: make(map[string]string),
 	}
@@ -336,124 +365,174 @@ func (s *finalizeHookStreamer) Finalize(ctx context.Context, content string) err
 }
 
 // initChannel is a helper that looks up a factory by name and creates the channel.
-func (m *Manager) initChannel(name, displayName string) {
+// It returns an error if the factory is not registered or construction fails.
+func (m *Manager) initChannel(name, displayName string) error {
 	f, ok := getFactory(name)
 	if !ok {
-		logger.WarnCF("channels", "Factory not registered", map[string]any{
-			"channel": displayName,
-		})
-		return
+		return fmt.Errorf("factory not registered for channel %q", displayName)
 	}
 	logger.DebugCF("channels", "Attempting to initialize channel", map[string]any{
 		"channel": displayName,
 	})
-	ch, err := f(m.config, m.bus)
+	ch, err := f(m.config, m.secrets, m.bus)
 	if err != nil {
 		logger.ErrorCF("channels", "Failed to initialize channel", map[string]any{
 			"channel": displayName,
 			"error":   err.Error(),
 		})
-	} else {
-		// Inject MediaStore if channel supports it
-		if m.mediaStore != nil {
-			if setter, ok := ch.(interface{ SetMediaStore(s media.MediaStore) }); ok {
-				setter.SetMediaStore(m.mediaStore)
-			}
-		}
-		// Inject PlaceholderRecorder if channel supports it
-		if setter, ok := ch.(interface{ SetPlaceholderRecorder(r PlaceholderRecorder) }); ok {
-			setter.SetPlaceholderRecorder(m)
-		}
-		// Inject owner reference so BaseChannel.HandleMessage can auto-trigger typing/reaction
-		if setter, ok := ch.(interface{ SetOwner(ch Channel) }); ok {
-			setter.SetOwner(ch)
-		}
-		m.channels[name] = ch
-		logger.InfoCF("channels", "Channel enabled successfully", map[string]any{
-			"channel": displayName,
-		})
+		return err
 	}
+	// Inject MediaStore if channel supports it
+	if m.mediaStore != nil {
+		if setter, ok := ch.(interface{ SetMediaStore(s media.MediaStore) }); ok {
+			setter.SetMediaStore(m.mediaStore)
+		}
+	}
+	// Inject PlaceholderRecorder if channel supports it
+	if setter, ok := ch.(interface{ SetPlaceholderRecorder(r PlaceholderRecorder) }); ok {
+		setter.SetPlaceholderRecorder(m)
+	}
+	// Inject owner reference so BaseChannel.HandleMessage can auto-trigger typing/reaction
+	if setter, ok := ch.(interface{ SetOwner(ch Channel) }); ok {
+		setter.SetOwner(ch)
+	}
+	m.channels[name] = ch
+	logger.InfoCF("channels", "Channel enabled successfully", map[string]any{
+		"channel": displayName,
+	})
+	return nil
+}
+
+// recordChannelFailure records a failed enabled-channel init and logs it.
+func (m *Manager) recordChannelFailure(name, displayName string, err error) {
+	m.failedChannels = append(m.failedChannels, ChannelInitError{Channel: displayName, Err: err})
+	logger.ErrorCF("channels", "Enabled channel failed to initialize", map[string]any{
+		"channel": displayName,
+		"error":   err.Error(),
+	})
+}
+
+// FailedChannels returns a copy of the list of enabled channels that failed to
+// start. A copy is returned so the caller cannot mutate internal state and so
+// that a concurrent Reload write does not race with the caller's iteration.
+func (m *Manager) FailedChannels() []ChannelInitError {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]ChannelInitError, len(m.failedChannels))
+	copy(out, m.failedChannels)
+	return out
 }
 
 func (m *Manager) initChannels(channels *config.ChannelsConfig) error {
 	logger.InfoC("channels", "Initializing channel manager")
 
-	if channels.Telegram.Enabled && channels.Telegram.Token.String() != "" {
-		m.initChannel("telegram", "Telegram")
+	if channels.Telegram.Enabled && channels.Telegram.TokenRef != "" {
+		if err := m.initChannel("telegram", "Telegram"); err != nil {
+			m.recordChannelFailure("telegram", "Telegram", err)
+		}
 	}
 
 	if channels.WhatsApp.Enabled {
 		waCfg := channels.WhatsApp
 		if waCfg.UseNative {
-			m.initChannel("whatsapp_native", "WhatsApp Native")
+			if err := m.initChannel("whatsapp_native", "WhatsApp Native"); err != nil {
+				m.recordChannelFailure("whatsapp_native", "WhatsApp Native", err)
+			}
 		} else if waCfg.BridgeURL != "" {
-			m.initChannel("whatsapp", "WhatsApp")
+			if err := m.initChannel("whatsapp", "WhatsApp"); err != nil {
+				m.recordChannelFailure("whatsapp", "WhatsApp", err)
+			}
 		}
 	}
 
 	if channels.Feishu.Enabled {
-		m.initChannel("feishu", "Feishu")
+		if err := m.initChannel("feishu", "Feishu"); err != nil {
+			m.recordChannelFailure("feishu", "Feishu", err)
+		}
 	}
 
-	if channels.Discord.Enabled && channels.Discord.Token.String() != "" {
-		m.initChannel("discord", "Discord")
+	if channels.Discord.Enabled && channels.Discord.TokenRef != "" {
+		if err := m.initChannel("discord", "Discord"); err != nil {
+			m.recordChannelFailure("discord", "Discord", err)
+		}
 	}
 
 	if channels.MaixCam.Enabled {
-		m.initChannel("maixcam", "MaixCam")
+		if err := m.initChannel("maixcam", "MaixCam"); err != nil {
+			m.recordChannelFailure("maixcam", "MaixCam", err)
+		}
 	}
 
 	if channels.QQ.Enabled {
-		m.initChannel("qq", "QQ")
+		if err := m.initChannel("qq", "QQ"); err != nil {
+			m.recordChannelFailure("qq", "QQ", err)
+		}
 	}
 
 	if channels.DingTalk.Enabled && channels.DingTalk.ClientID != "" {
-		m.initChannel("dingtalk", "DingTalk")
+		if err := m.initChannel("dingtalk", "DingTalk"); err != nil {
+			m.recordChannelFailure("dingtalk", "DingTalk", err)
+		}
 	}
 
-	if channels.Slack.Enabled && channels.Slack.BotToken.String() != "" {
-		m.initChannel("slack", "Slack")
+	if channels.Slack.Enabled && channels.Slack.BotTokenRef != "" {
+		if err := m.initChannel("slack", "Slack"); err != nil {
+			m.recordChannelFailure("slack", "Slack", err)
+		}
 	}
 
 	if channels.Matrix.Enabled &&
 		m.config.Channels.Matrix.Homeserver != "" &&
 		m.config.Channels.Matrix.UserID != "" &&
-		m.config.Channels.Matrix.AccessToken.String() != "" {
-		m.initChannel("matrix", "Matrix")
+		m.config.Channels.Matrix.AccessTokenRef != "" {
+		if err := m.initChannel("matrix", "Matrix"); err != nil {
+			m.recordChannelFailure("matrix", "Matrix", err)
+		}
 	}
 
-	if channels.LINE.Enabled && channels.LINE.ChannelAccessToken.String() != "" {
-		m.initChannel("line", "LINE")
+	if channels.LINE.Enabled && channels.LINE.ChannelAccessTokenRef != "" {
+		if err := m.initChannel("line", "LINE"); err != nil {
+			m.recordChannelFailure("line", "LINE", err)
+		}
 	}
 
 	if channels.OneBot.Enabled && channels.OneBot.WSUrl != "" {
-		m.initChannel("onebot", "OneBot")
+		if err := m.initChannel("onebot", "OneBot"); err != nil {
+			m.recordChannelFailure("onebot", "OneBot", err)
+		}
 	}
 
-	if channels.WeCom.Enabled && channels.WeCom.BotID != "" && channels.WeCom.Secret.String() != "" {
-		m.initChannel("wecom", "WeCom")
+	if channels.WeCom.Enabled && channels.WeCom.BotID != "" && channels.WeCom.SecretRef != "" {
+		if err := m.initChannel("wecom", "WeCom"); err != nil {
+			m.recordChannelFailure("wecom", "WeCom", err)
+		}
 	}
 
-	if channels.Weixin.Enabled && channels.Weixin.Token.String() != "" {
-		m.initChannel("weixin", "Weixin")
-	}
-
-	if channels.Pico.Enabled && channels.Pico.Token.String() != "" {
-		m.initChannel("pico", "Pico")
-	}
-
-	if channels.PicoClient.Enabled && channels.PicoClient.URL != "" {
-		m.initChannel("pico_client", "Pico Client")
+	if channels.Weixin.Enabled && channels.Weixin.TokenRef != "" {
+		if err := m.initChannel("weixin", "Weixin"); err != nil {
+			m.recordChannelFailure("weixin", "Weixin", err)
+		}
 	}
 
 	if channels.IRC.Enabled && channels.IRC.Server != "" {
-		m.initChannel("irc", "IRC")
+		if err := m.initChannel("irc", "IRC"); err != nil {
+			m.recordChannelFailure("irc", "IRC", err)
+		}
 	}
 
 	logger.InfoCF("channels", "Channel initialization completed", map[string]any{
 		"enabled_channels": len(m.channels),
+		"failed_channels":  len(m.failedChannels),
 	})
 
+	// If any enabled channel failed to construct, abort boot per deny-by-default policy.
+	if len(m.failedChannels) > 0 {
+		joinedErrs := make([]error, 0, len(m.failedChannels))
+		for i := range m.failedChannels {
+			joinedErrs = append(joinedErrs, &m.failedChannels[i])
+		}
+		return errors.Join(joinedErrs...)
+	}
 	return nil
 }
 
@@ -466,6 +545,12 @@ func (m *Manager) SetupHTTPServer(addr string, healthServer *health.Server) {
 	// Register health endpoints
 	if healthServer != nil {
 		healthServer.RegisterOnMux(m.mux)
+		// RegisterOnMux only attaches handlers; it does NOT mark the server
+		// as ready the way Start()/StartContext() do. Without this explicit
+		// SetReady(true), /ready returns 503 forever in the embedded-mux
+		// path, which breaks k8s readiness probes and load balancer health
+		// checks.
+		healthServer.SetReady(true)
 	}
 
 	// Discover and register webhook handlers and health checkers
@@ -1090,15 +1175,17 @@ func (m *Manager) GetEnabledChannels() []string {
 // channel config hashes to detect additions and removals: removed channels are
 // stopped, added channels are initialized and started, and existing (unchanged)
 // channel workers are restarted on a fresh context to ensure continued routing.
-func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
+func (m *Manager) Reload(ctx context.Context, cfg *config.Config, secrets credentials.SecretBundle) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Save old config so we can revert on error.
+	// Save old config and secrets so we can revert on error.
 	oldConfig := m.config
+	oldSecrets := m.secrets
 
-	// Update config early: initChannel uses m.config via factory(m.config, m.bus).
+	// Update config and secrets early: initChannel uses m.config and m.secrets via factory call.
 	m.config = cfg
+	m.secrets = secrets
 
 	list := toChannelHashes(cfg)
 	added, removed := compareChannels(m.channelHashes, list)
@@ -1133,13 +1220,18 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		logger.ErrorC("channels", fmt.Sprintf("toChannelConfig error: %v", err))
 		m.config = oldConfig
+		m.secrets = oldSecrets
 		cancel()
 		return err
 	}
+	// Clear failed channels before re-init so that channels that previously
+	// failed but now succeed are no longer reported as degraded.
+	m.failedChannels = m.failedChannels[:0]
 	err = m.initChannels(cc)
 	if err != nil {
 		logger.ErrorC("channels", fmt.Sprintf("initChannels error: %v", err))
 		m.config = oldConfig
+		m.secrets = oldSecrets
 		cancel()
 		return err
 	}
@@ -1173,12 +1265,12 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 	m.channelHashes = list
 
 	// Restart dispatch goroutines against the new dispatchCtx so outbound messages
-	// continue to be routed after the old context was cancelled above.
+	// continue to be routed after the old context was canceled above.
 	go m.dispatchOutbound(dispatchCtx)
 	go m.dispatchOutboundMedia(dispatchCtx)
 
 	// Restart workers for existing (unchanged) channels on the new dispatch context.
-	// Without this, unchanged channel workers retain the old (cancelled) context
+	// Without this, unchanged channel workers retain the old (canceled) context
 	// and stop routing messages after a Reload.
 	//
 	// We must wait for old worker goroutines to finish (they close w.done/w.mediaDone
@@ -1193,7 +1285,7 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 		if _, isNew := addedSet[name]; isNew {
 			continue // already started above
 		}
-		// Wait for old goroutines to finish (they were cancelled above).
+		// Wait for old goroutines to finish (they were canceled above).
 		<-w.done
 		<-w.mediaDone
 		// Reset done channels so the new goroutines can close them cleanly.

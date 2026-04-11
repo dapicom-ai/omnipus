@@ -28,6 +28,7 @@ import OmnipusAvatar from '@/assets/logo/omnipus-avatar.svg?url'
 import { SessionPanel } from './SessionPanel'
 import { GenericToolCall } from './tools/GenericToolCall'
 import { ExecApprovalBlock } from './ExecApprovalBlock'
+import { RateLimitIndicator } from './RateLimitIndicator'
 import { MarkdownText } from './markdown-text'
 import { Button } from '@/components/ui/button'
 import { useChatStore } from '@/store/chat'
@@ -657,6 +658,8 @@ export function ChatScreen() {
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
   const activeAgentId = useSessionStore((s) => s.activeAgentId)
   const pendingApprovals = useChatStore((s) => s.pendingApprovals)
+  const rateLimitEvent = useChatStore((s) => s.rateLimitEvent)
+  const clearRateLimitEvent = useChatStore((s) => s.clearRateLimitEvent)
   const setMessages = useChatStore((s) => s.setMessages)
   const attachedSessionType = useSessionStore((s) => s.attachedSessionType)
   const attachedTaskTitle = useSessionStore((s) => s.attachedTaskTitle)
@@ -753,8 +756,18 @@ export function ChatScreen() {
           </ThreadPrimitive.Viewport>
 
           {/* Pending exec approval blocks — shown above composer */}
-          {activePendingApprovals.length > 0 && (
+          {(activePendingApprovals.length > 0 || rateLimitEvent) && (
             <div className="px-4 space-y-2 pb-2">
+              {rateLimitEvent && (
+                <RateLimitIndicator
+                  scope={rateLimitEvent.scope}
+                  resource={rateLimitEvent.resource}
+                  policyRule={rateLimitEvent.policyRule}
+                  retryAfterSeconds={rateLimitEvent.retryAfterSeconds}
+                  tool={rateLimitEvent.tool}
+                  onDismiss={clearRateLimitEvent}
+                />
+              )}
               {activePendingApprovals.map((approval) => (
                 <ExecApprovalBlock key={approval.id} approval={approval} />
               ))}

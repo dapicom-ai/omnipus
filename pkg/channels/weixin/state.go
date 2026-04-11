@@ -48,12 +48,16 @@ func omnipusHomeDir() string {
 	return filepath.Join(userHome, ".omnipus")
 }
 
+// genWeixinAccountKey derives a stable, opaque file-path key for this Weixin account.
+// It is keyed on cfg.TokenRef (the env-var name) rather than the resolved token value,
+// so that rotating the token does not silently orphan the sync-buffer and context-token
+// files on disk.
 func genWeixinAccountKey(cfg config.WeixinConfig) string {
-	token := strings.TrimSpace(cfg.Token.String())
-	if token == "" {
+	ref := strings.TrimSpace(cfg.TokenRef)
+	if ref == "" {
 		return "default"
 	}
-	sum := sha256.Sum256([]byte(strings.TrimSpace(cfg.BaseURL) + "|" + token))
+	sum := sha256.Sum256([]byte(strings.TrimSpace(cfg.BaseURL) + "|" + ref))
 	return hex.EncodeToString(sum[:8])
 }
 

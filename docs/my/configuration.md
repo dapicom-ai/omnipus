@@ -12,23 +12,23 @@ Anda boleh menggantikan laluan lalai menggunakan pemboleh ubah persekitaran. Ini
 
 | Pemboleh Ubah     | Penerangan                                                                                                                                          | Laluan Lalai              |
 | ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| `PICOCLAW_CONFIG` | Menindih laluan ke fail konfigurasi. Ini memberitahu omnipus secara terus fail `config.json` yang perlu dimuatkan, dengan mengabaikan lokasi lain. | `~/.omnipus/config.json` |
-| `PICOCLAW_HOME`   | Menindih direktori root untuk data omnipus. Ini mengubah lokasi lalai bagi `workspace` dan direktori data lain.                                    | `~/.omnipus`             |
+| `OMNIPUS_CONFIG` | Menindih laluan ke fail konfigurasi. Ini memberitahu omnipus secara terus fail `config.json` yang perlu dimuatkan, dengan mengabaikan lokasi lain. | `~/.omnipus/config.json` |
+| `OMNIPUS_HOME`   | Menindih direktori root untuk data omnipus. Ini mengubah lokasi lalai bagi `workspace` dan direktori data lain.                                    | `~/.omnipus`             |
 
 **Contoh:**
 
 ```bash
 # Jalankan omnipus menggunakan fail config tertentu
 # Laluan workspace akan dibaca daripada fail config tersebut
-PICOCLAW_CONFIG=/etc/omnipus/production.json omnipus gateway
+OMNIPUS_CONFIG=/etc/omnipus/production.json omnipus gateway
 
 # Jalankan omnipus dengan semua data disimpan di /opt/omnipus
 # Config akan dimuatkan dari lalai ~/.omnipus/config.json
 # Workspace akan dicipta di /opt/omnipus/workspace
-PICOCLAW_HOME=/opt/omnipus omnipus agent
+OMNIPUS_HOME=/opt/omnipus omnipus agent
 
 # Gunakan kedua-duanya untuk setup yang disesuaikan sepenuhnya
-PICOCLAW_HOME=/srv/omnipus PICOCLAW_CONFIG=/srv/omnipus/main.json omnipus gateway
+OMNIPUS_HOME=/srv/omnipus OMNIPUS_CONFIG=/srv/omnipus/main.json omnipus gateway
 ```
 
 ### Susun Atur Workspace
@@ -60,7 +60,7 @@ Secara lalai, skill dimuatkan daripada:
 Untuk setup lanjutan/ujian, anda boleh menindih root builtin skills dengan:
 
 ```bash
-export PICOCLAW_BUILTIN_SKILLS=/path/to/skills
+export OMNIPUS_BUILTIN_SKILLS=/path/to/skills
 ```
 
 ### Polisi Pelaksanaan Arahan Bersepadu
@@ -177,7 +177,7 @@ Jika anda perlu membenarkan agen mengakses laluan di luar workspace:
 **Kaedah 2: Pemboleh ubah persekitaran**
 
 ```bash
-export PICOCLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE=false
+export OMNIPUS_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE=false
 ```
 
 > ⚠️ **Amaran**: Menyahaktifkan sekatan ini membenarkan agen mengakses mana-mana laluan pada sistem anda. Gunakan dengan berhati-hati hanya dalam persekitaran terkawal.

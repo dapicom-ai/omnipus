@@ -42,8 +42,11 @@ func openStore() (*credentials.Store, error) {
 		return nil, fmt.Errorf("credentials: %w", err)
 	}
 	if store.IsLocked() {
-		return nil, fmt.Errorf("credential store is locked — provide a master key via %s, %s, or interactive passphrase",
-			credentials.EnvMasterKey, credentials.EnvKeyFile)
+		return nil, fmt.Errorf(
+			"credential store is locked — provide a master key via %s, %s, or interactive passphrase",
+			credentials.EnvMasterKey,
+			credentials.EnvKeyFile,
+		)
 	}
 	return store, nil
 }

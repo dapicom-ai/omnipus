@@ -103,9 +103,8 @@ func TestRateLimiter_GlobalCostCap(t *testing.T) {
 		registry := security.NewRateLimiterRegistry()
 		registry.SetDailyCostCap(0.001) // non-zero but tiny to trigger the check
 		// First call of any positive amount should be blocked
-		result := registry.CheckGlobalCostCap(0.001, "researcher")
 		// The cap is 0.001, so 0.001 > 0.001 is false — try 0.002
-		result = registry.CheckGlobalCostCap(0.002, "researcher")
+		result := registry.CheckGlobalCostCap(0.002, "researcher")
 		assert.False(t, result.Allowed, "second call should exceed the tiny cost cap")
 	})
 

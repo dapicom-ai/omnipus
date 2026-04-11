@@ -2,7 +2,7 @@
 
 // M4 WebSocket resilience tests.
 //
-// Covers three new behaviours introduced in the M4 milestone:
+// Covers three new behaviors introduced in the M4 milestone:
 //   1. 5 MB read limit — frames exceeding wsMaxMessageBytes are rejected and
 //      the connection is closed by gorilla/websocket.
 //   2. Exponential-backoff send / droppedFrames counter — non-critical frames
@@ -165,7 +165,7 @@ func TestSendConnFrame_IncrementsDroppedFramesOnFullChannel(t *testing.T) {
 // TestSendConnFrame_CriticalFrameBypassesBackoff verifies that "error" frames use
 // the blocking critical path and do not increment droppedFrames.
 // This is the differentiation test: critical vs non-critical frame types must produce
-// different channel-send behaviour.
+// different channel-send behavior.
 // BDD: Given a wsConn with a drained sendCh,
 // When sendConnFrame is called with a critical "error" frame,
 // Then the frame is enqueued and droppedFrames remains 0.

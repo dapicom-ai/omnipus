@@ -265,8 +265,8 @@ func TestHandleServeUpload_Success(t *testing.T) {
 
 	// Plant a file directly in the uploads directory.
 	dir := filepath.Join(api.homePath, "uploads", sessionID)
-	require.NoError(t, os.MkdirAll(dir, 0700))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "doc.txt"), []byte(content), 0600))
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "doc.txt"), []byte(content), 0o600))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/uploads/"+sessionID+"/doc.txt", nil)
 	rr := httptest.NewRecorder()

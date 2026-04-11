@@ -45,6 +45,7 @@ func (t *ProviderConfigureTool) Name() string { return "system.provider.configur
 func (t *ProviderConfigureTool) Description() string {
 	return "Add or update an LLM provider with its API key.\nParameters: name (required), api_key (for cloud), api_base (optional)."
 }
+
 func (t *ProviderConfigureTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -56,6 +57,7 @@ func (t *ProviderConfigureTool) Parameters() map[string]any {
 		"required": []string{"name"},
 	}
 }
+
 func (t *ProviderConfigureTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	name, _ := args["name"].(string)
 	if name == "" {
@@ -91,13 +93,15 @@ func (t *ProviderConfigureTool) Execute(_ context.Context, args map[string]any) 
 type ProviderListTool struct{ deps *Deps }
 
 func NewProviderListTool(d *Deps) *ProviderListTool { return &ProviderListTool{deps: d} }
-func (t *ProviderListTool) Name() string             { return "system.provider.list" }
+func (t *ProviderListTool) Name() string            { return "system.provider.list" }
 func (t *ProviderListTool) Description() string {
 	return "List configured providers with connection status. API keys are never returned. No parameters required."
 }
+
 func (t *ProviderListTool) Parameters() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{}}
 }
+
 func (t *ProviderListTool) Execute(_ context.Context, _ map[string]any) *tools.ToolResult {
 	type providerSummary struct {
 		Name            string   `json:"name"`
@@ -132,10 +136,11 @@ func (t *ProviderListTool) Execute(_ context.Context, _ map[string]any) *tools.T
 type ProviderTestTool struct{ deps *Deps }
 
 func NewProviderTestTool(d *Deps) *ProviderTestTool { return &ProviderTestTool{deps: d} }
-func (t *ProviderTestTool) Name() string             { return "system.provider.test" }
+func (t *ProviderTestTool) Name() string            { return "system.provider.test" }
 func (t *ProviderTestTool) Description() string {
 	return "Test a provider connection. Parameters: name (required)."
 }
+
 func (t *ProviderTestTool) Parameters() map[string]any {
 	return map[string]any{
 		"type":       "object",
@@ -143,6 +148,7 @@ func (t *ProviderTestTool) Parameters() map[string]any {
 		"required":   []string{"name"},
 	}
 }
+
 func (t *ProviderTestTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	name, _ := args["name"].(string)
 	if name == "" {

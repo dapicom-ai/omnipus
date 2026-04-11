@@ -3,11 +3,13 @@ package tools
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/media"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
@@ -20,10 +22,11 @@ type ToolEntry struct {
 }
 
 type ToolRegistry struct {
-	tools      map[string]*ToolEntry
-	mu         sync.RWMutex
-	version    atomic.Uint64 // incremented on Register/RegisterHidden for cache invalidation
-	mediaStore media.MediaStore
+	tools       map[string]*ToolEntry
+	mu          sync.RWMutex
+	version     atomic.Uint64 // incremented on Register/RegisterHidden for cache invalidation
+	mediaStore  media.MediaStore
+	auditLogger *audit.Logger // SEC-15: structured audit logging for tool executions
 }
 
 type mediaStoreAware interface {
@@ -89,6 +92,27 @@ func (r *ToolRegistry) SetMediaStore(store media.MediaStore) {
 			aware.SetMediaStore(store)
 		}
 	}
+}
+
+// SetAuditLogger injects an audit Logger into the registry for tool execution
+// audit logging (SEC-15). Following the SetMediaStore pattern for dependency injection.
+func (r *ToolRegistry) SetAuditLogger(logger *audit.Logger) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.auditLogger = logger
+}
+
+// Unregister removes a tool from the registry. Used by fail-closed paths where
+// we need to strip a tool that could not be securely wired.
+func (r *ToolRegistry) Unregister(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, exists := r.tools[name]; !exists {
+		return
+	}
+	delete(r.tools, name)
+	r.version.Add(1)
+	logger.DebugCF("tools", "Unregistered tool", map[string]any{"name": name})
 }
 
 // PromoteTools atomically sets the TTL for multiple non-core tools.
@@ -197,6 +221,11 @@ func (r *ToolRegistry) ExecuteWithContext(
 			"args": args,
 		})
 
+	// Capture auditLogger under lock to avoid a data race with SetAuditLogger.
+	r.mu.RLock()
+	auditLog := r.auditLogger
+	r.mu.RUnlock()
+
 	tool, ok := r.Get(name)
 	if !ok {
 		logger.ErrorCF("tool", "Tool not found",
@@ -291,6 +320,30 @@ func (r *ToolRegistry) ExecuteWithContext(
 			})
 	}
 
+	// SEC-15: Write structured audit entry for every tool execution.
+	// Audit logging is best-effort — errors are logged via slog but never
+	// propagate to the caller. The audit logger handles its own degraded-mode
+	// recovery internally.
+	if auditLog != nil {
+		agentID := ToolAgentID(ctx)
+		decision := audit.DecisionAllow
+		if result.IsError {
+			decision = audit.DecisionError
+		}
+		if err := auditLog.Log(&audit.Entry{
+			Event:    audit.EventToolCall,
+			Decision: decision,
+			AgentID:  agentID,
+			Tool:     name,
+			Details: map[string]any{
+				"duration_ms": duration.Milliseconds(),
+			},
+		}); err != nil {
+			slog.Error("SEC-15: audit log write failed for tool execution",
+				"tool", name, "agent", agentID, "error", err)
+		}
+	}
+
 	return result
 }
 
@@ -320,7 +373,7 @@ func (r *ToolRegistry) GetDefinitions() []map[string]any {
 			continue
 		}
 
-		definitions = append(definitions, ToolToSchema(r.tools[name].Tool))
+		definitions = append(definitions, ToolToSchema(entry.Tool))
 	}
 	return definitions
 }
@@ -345,7 +398,11 @@ func (r *ToolRegistry) ToProviderDefs() []providers.ToolDefinition {
 		// Safely extract nested values with type checks
 		fn, ok := schema["function"].(map[string]any)
 		if !ok {
-			logger.WarnCF("tools", "skipping malformed tool schema — missing or invalid \"function\" key", map[string]any{"tool": name})
+			logger.WarnCF(
+				"tools",
+				"skipping malformed tool schema — missing or invalid \"function\" key",
+				map[string]any{"tool": name},
+			)
 			continue
 		}
 
@@ -383,8 +440,9 @@ func (r *ToolRegistry) Clone() *ToolRegistry {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	clone := &ToolRegistry{
-		tools:      make(map[string]*ToolEntry, len(r.tools)),
-		mediaStore: r.mediaStore,
+		tools:       make(map[string]*ToolEntry, len(r.tools)),
+		mediaStore:  r.mediaStore,
+		auditLogger: r.auditLogger,
 	}
 	for name, entry := range r.tools {
 		clone.tools[name] = &ToolEntry{

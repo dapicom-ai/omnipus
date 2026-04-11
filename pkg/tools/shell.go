@@ -21,7 +21,69 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/constants"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
+	"github.com/dapicom-ai/omnipus/pkg/policy"
+	"github.com/dapicom-ai/omnipus/pkg/sandbox"
 )
+
+// ExecPolicyAuditor evaluates an exec command against the policy engine and
+// audit-logs the decision. Implemented by *policy.PolicyAuditor. Defined as an
+// interface so tests can supply lightweight mocks and so this package does not
+// need to directly import the audit package through this dependency edge.
+//
+// Contract: implementations MUST audit-log every decision (allow AND deny) as
+// a side effect of EvaluateExec. Returning a decision without logging violates
+// the SEC-15/ADR-002 §W-3 contract. This is not expressible in the signature
+// but is part of the type's invariant — test doubles must honor it.
+type ExecPolicyAuditor interface {
+	EvaluateExec(agentID, command string) policy.Decision
+}
+
+// ExecSandboxBackend applies kernel or application-level sandbox restrictions
+// to a child process before it starts. Implemented by sandbox.SandboxBackend.
+// Defined as a narrow interface so the tool only depends on the single method
+// it actually calls.
+type ExecSandboxBackend interface {
+	ApplyToCmd(cmd *exec.Cmd, policy sandbox.SandboxPolicy) error
+}
+
+// ExecChildProxy optionally routes a child process's HTTP(S) traffic through a
+// loopback SSRF proxy (SEC-28). Implemented by security.ExecProxy. The
+// interface is intentionally narrow so shell.go depends only on the two
+// methods it actually calls.
+//
+// PrepareCmd must be called before cmd.Start() and must be paired with exactly
+// one CmdDone() call once the process has exited so the proxy's active-cmd
+// counter stays balanced and its idle-shutdown logic can fire.
+type ExecChildProxy interface {
+	PrepareCmd(cmd *exec.Cmd)
+	CmdDone()
+}
+
+// ExecToolDeps bundles optional Wave 2 security dependencies for ExecTool.
+// All fields are optional — a nil PolicyAuditor disables binary allowlist
+// enforcement (useful when the policy layer is not configured), and a nil
+// SandboxBackend disables per-process sandbox application (useful in headless
+// tests and on unsupported platforms).
+//
+// Note: the interactive approval layer (SEC-08, "ask" prompts) is handled at
+// the agent loop level by HookManager.ApproveTool and routed to the WebSocket
+// approval hook — do NOT also prompt here from shell.go, which would block on
+// stdin in headless deployments. The two layers run in this runtime order:
+//   - Pre-dispatch: interactive approval (SEC-08) via HookManager.ApproveTool
+//     → gateway/ws_approval.go, before the tool ever sees the command
+//   - In-tool: automated binary allowlist (SEC-05) via this file, inside
+//     executeRun after guardCommand() but before the command runs
+//
+// Both layers must allow for the command to run; either can deny.
+type ExecToolDeps struct {
+	PolicyAuditor  ExecPolicyAuditor
+	SandboxBackend ExecSandboxBackend
+	SandboxPolicy  sandbox.SandboxPolicy
+	// ExecProxy optionally routes child-process HTTP(S) traffic through a
+	// loopback SSRF proxy (SEC-28). Nil disables proxy injection — the child
+	// receives no HTTP_PROXY env vars and traffic flows directly to the network.
+	ExecProxy ExecChildProxy
+}
 
 var (
 	globalSessionManager = NewSessionManager()
@@ -45,6 +107,21 @@ type ExecTool struct {
 	restrictToWorkspace  bool
 	allowRemote          bool
 	sessionManager       *SessionManager
+
+	// Wave 2: Security wiring (SEC-01/02/03/05).
+	// policyAuditor enforces the binary allowlist (SEC-05) and audit-logs the
+	// decision — the allowlist itself lives on the PolicyAuditor's Evaluator,
+	// not on this struct, so it stays in sync with the live policy config.
+	// sandboxBackend applies kernel (Landlock/seccomp) or application-level
+	// restrictions to every child process. Both are optional: nil means the
+	// corresponding feature is disabled.
+	policyAuditor  ExecPolicyAuditor
+	sandboxBackend ExecSandboxBackend
+	sandboxPolicy  sandbox.SandboxPolicy
+	// execProxy is the SEC-28 SSRF proxy for child processes. Nil = disabled.
+	// When non-nil, PrepareCmd injects HTTP_PROXY/HTTPS_PROXY env vars before
+	// Start() and CmdDone() is called exactly once after cmd.Wait() returns.
+	execProxy ExecChildProxy
 }
 
 var (
@@ -121,6 +198,48 @@ func NewExecTool(workingDir string, restrict bool, allowPaths ...[]*regexp.Regex
 	return NewExecToolWithConfig(workingDir, restrict, nil, allowPaths...)
 }
 
+// NewExecToolWithDeps constructs an ExecTool with optional Wave 2 security
+// dependencies. Callers that do not need the policy auditor or sandbox backend
+// should use NewExecToolWithConfig, which passes a zero-valued ExecToolDeps.
+func NewExecToolWithDeps(
+	workingDir string,
+	restrict bool,
+	cfg *config.Config,
+	deps ExecToolDeps,
+	allowPaths ...[]*regexp.Regexp,
+) (*ExecTool, error) {
+	tool, err := NewExecToolWithConfig(workingDir, restrict, cfg, allowPaths...)
+	if err != nil {
+		return nil, err
+	}
+	tool.policyAuditor = deps.PolicyAuditor
+	tool.sandboxBackend = deps.SandboxBackend
+	tool.sandboxPolicy = deps.SandboxPolicy
+	tool.execProxy = deps.ExecProxy
+	return tool, nil
+}
+
+// applySandboxToCmd applies the configured sandbox policy to a child process
+// before Start(). When no backend is configured this is a no-op.
+//
+// On Linux 5.13+ the kernel backend is effectively a no-op because
+// Landlock+seccomp are already in effect on the Omnipus process and inherit
+// to children. On unsupported kernels and other platforms, the
+// FallbackBackend injects OMNIPUS_SANDBOX_PATHS so cooperative helper scripts
+// can self-enforce.
+//
+// The returned error is already prefixed with "sandbox setup failed: " so
+// callers can pass it directly to ErrorResult.
+func (t *ExecTool) applySandboxToCmd(cmd *exec.Cmd) error {
+	if t.sandboxBackend == nil {
+		return nil
+	}
+	if err := t.sandboxBackend.ApplyToCmd(cmd, t.sandboxPolicy); err != nil {
+		return fmt.Errorf("sandbox setup failed: %v", err)
+	}
+	return nil
+}
+
 func NewExecToolWithConfig(
 	workingDir string,
 	restrict bool,
@@ -142,7 +261,11 @@ func NewExecToolWithConfig(
 		if enableDenyPatterns {
 			denyPatterns = append(denyPatterns, defaultDenyPatterns...)
 			if len(execConfig.CustomDenyPatterns) > 0 {
-				logger.InfoCF("shell", "Using custom deny patterns", map[string]any{"patterns": execConfig.CustomDenyPatterns})
+				logger.InfoCF(
+					"shell",
+					"Using custom deny patterns",
+					map[string]any{"patterns": execConfig.CustomDenyPatterns},
+				)
 				for _, pattern := range execConfig.CustomDenyPatterns {
 					re, err := regexp.Compile(pattern)
 					if err != nil {
@@ -332,6 +455,27 @@ func (t *ExecTool) executeRun(ctx context.Context, args map[string]any) *ToolRes
 		return ErrorResult(guardError)
 	}
 
+	// SEC-05: Binary allowlist enforcement (Wave 2).
+	//
+	// Delegates unconditionally to the policy auditor, which auto-logs every
+	// decision to the audit log (ADR-002 §W-3). The evaluator decides whether
+	// to enforce based on its own default_policy + allowed_binaries state:
+	//   - empty allowlist + default_policy="allow" → always allows
+	//   - empty allowlist + default_policy="deny" → always denies
+	//   - non-empty allowlist → matches against patterns, honors default_policy on miss
+	// This is the automated enforcement layer — the interactive approval
+	// prompt is handled separately by the agent loop's HookManager.ApproveTool
+	// which routes through the WebSocket approval channel, so we deliberately
+	// do not call ExecApprovalManager.CheckApproval() here (that would block
+	// on stdin in headless deployments).
+	if t.policyAuditor != nil {
+		agentID := ToolAgentID(ctx)
+		decision := t.policyAuditor.EvaluateExec(agentID, command)
+		if !decision.Allowed {
+			return ErrorResult(fmt.Sprintf("Command blocked by exec allowlist: %s", decision.PolicyRule))
+		}
+	}
+
 	// Re-resolve symlinks immediately before execution to shrink the TOCTOU window
 	// between validation and cmd.Dir assignment.
 	if t.restrictToWorkspace && t.workingDir != "" && cwd != t.workingDir {
@@ -344,11 +488,18 @@ func (t *ExecTool) executeRun(ctx context.Context, args map[string]any) *ToolRes
 		} else {
 			absWorkspace, absErr := filepath.Abs(t.workingDir)
 			if absErr != nil {
-				return ErrorResult(fmt.Sprintf("Command blocked by safety guard (workspace path resolution failed: %v)", absErr))
+				return ErrorResult(
+					fmt.Sprintf("Command blocked by safety guard (workspace path resolution failed: %v)", absErr),
+				)
 			}
 			wsResolved, symlinkErr := filepath.EvalSymlinks(absWorkspace)
 			if symlinkErr != nil {
-				return ErrorResult(fmt.Sprintf("Command blocked by safety guard (workspace symlink resolution failed: %v)", symlinkErr))
+				return ErrorResult(
+					fmt.Sprintf(
+						"Command blocked by safety guard (workspace symlink resolution failed: %v)",
+						symlinkErr,
+					),
+				)
 			}
 			if wsResolved == "" {
 				wsResolved = absWorkspace
@@ -390,6 +541,22 @@ func (t *ExecTool) runSync(ctx context.Context, command, cwd string) *ToolResult
 	}
 
 	prepareCommandForTermination(cmd)
+
+	// SEC-01/02/03: Apply sandbox restrictions to the child process before Start().
+	// See applySandboxToCmd for the threat-model rationale.
+	if err := t.applySandboxToCmd(cmd); err != nil {
+		return ErrorResult(err.Error())
+	}
+
+	// SEC-28: Route child-process HTTP(S) traffic through the loopback SSRF
+	// proxy. PrepareCmd must run AFTER applySandboxToCmd so the sandbox env
+	// setup does not clobber the proxy vars, and BEFORE Start() so the child
+	// inherits them. CmdDone() balances the proxy's active-cmd counter once
+	// cmd.Wait() returns, regardless of exit path (success, error, timeout).
+	if t.execProxy != nil {
+		t.execProxy.PrepareCmd(cmd)
+		defer t.execProxy.CmdDone()
+	}
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -542,7 +709,39 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 		session.stdinWriter = stdinWriter
 	}
 
+	// SEC-01/02/03: Apply sandbox restrictions to the background child process
+	// before Start(). Must happen after the PTY / pipe setup above (which may
+	// replace SysProcAttr) but before Start().
+	if err := t.applySandboxToCmd(cmd); err != nil {
+		if session.ptyMaster != nil {
+			session.ptyMaster.Close()
+		}
+		if ptySlaveToClose != nil {
+			ptySlaveToClose.Close()
+		}
+		return ErrorResult(err.Error())
+	}
+
+	// SEC-28: Route child-process HTTP(S) traffic through the loopback SSRF
+	// proxy. Unlike runSync we cannot defer CmdDone() here because the command
+	// runs asynchronously; the paired CmdDone() call is made from the wait
+	// goroutine below (one for PTY mode, one for non-PTY mode). We use
+	// proxyActive to make the counter increment conditional on PrepareCmd
+	// actually having been called, and to avoid a double-decrement if Start()
+	// fails after PrepareCmd.
+	proxyActive := false
+	if t.execProxy != nil {
+		t.execProxy.PrepareCmd(cmd)
+		proxyActive = true
+	}
+
 	if err := cmd.Start(); err != nil {
+		// Start failed after PrepareCmd: balance the counter immediately so
+		// the proxy's idle watcher can still shut it down.
+		if proxyActive {
+			t.execProxy.CmdDone()
+			proxyActive = false
+		}
 		if session.ptyMaster != nil {
 			session.ptyMaster.Close()
 		}
@@ -566,6 +765,12 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 	if session.PTY && session.ptyMaster != nil {
 		go func() {
 			waitErr := cmd.Wait() // Wait for process to exit
+			// SEC-28: Balance the proxy's active-cmd counter. CmdDone()
+			// must run after cmd.Wait() (not before Start) so the child's
+			// network lifetime is fully covered by the proxy.
+			if proxyActive {
+				t.execProxy.CmdDone()
+			}
 			session.mu.Lock()
 			if cmd.ProcessState != nil {
 				session.ExitCode = cmd.ProcessState.ExitCode()
@@ -644,6 +849,11 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 				stdinWriter.Close()
 			}
 			waitErr := cmd.Wait()
+			// SEC-28: Balance the proxy's active-cmd counter after the
+			// process has fully exited and its pipes have drained.
+			if proxyActive {
+				t.execProxy.CmdDone()
+			}
 			session.mu.Lock()
 			if cmd.ProcessState != nil {
 				session.ExitCode = cmd.ProcessState.ExitCode()

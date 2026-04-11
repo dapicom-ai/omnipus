@@ -259,10 +259,12 @@ func TestBuildWeixinSyncBufPathUsesOmnipusHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv(config.EnvHome, home)
 
+	const tokenRef = "WEIXIN_TEST_TOKEN"
+	t.Setenv(tokenRef, "token-123")
 	wxCfg := config.WeixinConfig{
-		BaseURL: "https://ilinkai.weixin.qq.com/",
+		BaseURL:  "https://ilinkai.weixin.qq.com/",
+		TokenRef: tokenRef,
 	}
-	wxCfg.SetToken("token-123")
 	got := buildWeixinSyncBufPath(wxCfg)
 	if filepath.Dir(got) != filepath.Join(home, "channels", "weixin", "sync") {
 		t.Fatalf("sync path dir = %q", filepath.Dir(got))

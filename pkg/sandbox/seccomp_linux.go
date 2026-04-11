@@ -133,8 +133,8 @@ func assembleBPF(blockedNrs []uint32) []unix.SockFilter {
 		remaining := n - i // instructions left after this one before allow
 		prog = append(prog, unix.SockFilter{
 			Code: uint16(bpfJMP | bpfJEQ | bpfK),
-			Jt:   uint8(remaining),     // jump to deny (skip remaining JEQs + allow)
-			Jf:   0,                     // fall through to next JEQ
+			Jt:   uint8(remaining), // jump to deny (skip remaining JEQs + allow)
+			Jf:   0,                // fall through to next JEQ
 			K:    nr,
 		})
 	}

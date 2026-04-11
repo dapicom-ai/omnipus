@@ -28,9 +28,9 @@ import (
 
 // Sentinel errors for HandleLogin error handling.
 var (
-	ErrInvalidCredentials  = errors.New("invalid credentials")
-	ErrUserNotFound        = errors.New("user not found")
-	ErrAdminAlreadyExists  = errors.New("admin already registered")
+	ErrInvalidCredentials = errors.New("invalid credentials")
+	ErrUserNotFound       = errors.New("user not found")
+	ErrAdminAlreadyExists = errors.New("admin already registered")
 )
 
 // loginRateLimiter tracks failed login attempts per IP+username to prevent brute force attacks.
@@ -42,9 +42,9 @@ var (
 type loginRateLimiter struct {
 	mu       sync.Mutex
 	attempts map[string]*loginAttempt
-	limit   int
-	window  time.Duration
-	block   time.Duration
+	limit    int
+	window   time.Duration
+	block    time.Duration
 }
 
 type loginAttempt struct {
@@ -56,9 +56,9 @@ type loginAttempt struct {
 func newLoginRateLimiter() *loginRateLimiter {
 	return &loginRateLimiter{
 		attempts: make(map[string]*loginAttempt),
-		limit:   5,
-		window:  15 * time.Minute,
-		block:   15 * time.Minute,
+		limit:    5,
+		window:   15 * time.Minute,
+		block:    15 * time.Minute,
 	}
 }
 
@@ -205,7 +205,11 @@ func withRateLimit(limiter *apiRateLimiter, handler http.HandlerFunc) http.Handl
 			retryAfter := limiter.retryAfter(ip)
 			w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfter))
 			slog.Warn("api: rate limit exceeded", "ip", ip, "path", r.URL.Path, "retry_after", retryAfter)
-			jsonErr(w, http.StatusTooManyRequests, fmt.Sprintf("rate limit exceeded, retry after %d seconds", retryAfter))
+			jsonErr(
+				w,
+				http.StatusTooManyRequests,
+				fmt.Sprintf("rate limit exceeded, retry after %d seconds", retryAfter),
+			)
 			return
 		}
 		handler(w, r)
@@ -434,7 +438,7 @@ func (a *restAPI) HandleRegisterAdmin(w http.ResponseWriter, r *http.Request) {
 	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
 		gw, ok := m["gateway"].(map[string]any)
 		if !ok {
-			// gateway key absent — initialise it so we can add the user.
+			// gateway key absent — initialize it so we can add the user.
 			gw = map[string]any{}
 			m["gateway"] = gw
 		}

@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/dapicom-ai/omnipus/pkg/logger"
-
 	"github.com/dapicom-ai/omnipus/pkg/providers/protocoltypes"
 )
 
@@ -267,7 +266,11 @@ func DecodeToolCallArguments(raw json.RawMessage, name string) map[string]any {
 
 	var decoded any
 	if err := json.Unmarshal(raw, &decoded); err != nil {
-		logger.WarnCF("common", "failed to decode tool call arguments payload", map[string]any{"tool": name, "error": err.Error()})
+		logger.WarnCF(
+			"common",
+			"failed to decode tool call arguments payload",
+			map[string]any{"tool": name, "error": err.Error()},
+		)
 		arguments["raw"] = string(raw)
 		return arguments
 	}
@@ -278,14 +281,22 @@ func DecodeToolCallArguments(raw json.RawMessage, name string) map[string]any {
 			return arguments
 		}
 		if err := json.Unmarshal([]byte(v), &arguments); err != nil {
-			logger.WarnCF("common", "failed to decode tool call arguments", map[string]any{"tool": name, "error": err.Error()})
+			logger.WarnCF(
+				"common",
+				"failed to decode tool call arguments",
+				map[string]any{"tool": name, "error": err.Error()},
+			)
 			arguments["raw"] = v
 		}
 		return arguments
 	case map[string]any:
 		return v
 	default:
-		logger.WarnCF("common", "unsupported tool call arguments type", map[string]any{"tool": name, "type": fmt.Sprintf("%T", decoded)})
+		logger.WarnCF(
+			"common",
+			"unsupported tool call arguments type",
+			map[string]any{"tool": name, "type": fmt.Sprintf("%T", decoded)},
+		)
 		arguments["raw"] = string(raw)
 		return arguments
 	}

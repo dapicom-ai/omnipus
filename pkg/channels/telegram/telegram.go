@@ -23,6 +23,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/commands"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/identity"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/media"
@@ -53,9 +54,14 @@ type TelegramChannel struct {
 
 	registerFunc     func(context.Context, []commands.Definition) error
 	commandRegCancel context.CancelFunc
+	commandRegWG     sync.WaitGroup
 }
 
-func NewTelegramChannel(cfg *config.Config, bus *bus.MessageBus) (*TelegramChannel, error) {
+func NewTelegramChannel(
+	cfg *config.Config,
+	secrets credentials.SecretBundle,
+	bus *bus.MessageBus,
+) (*TelegramChannel, error) {
 	var opts []telego.BotOption
 	telegramCfg := cfg.Channels.Telegram
 
@@ -83,7 +89,14 @@ func NewTelegramChannel(cfg *config.Config, bus *bus.MessageBus) (*TelegramChann
 	}
 	opts = append(opts, telego.WithLogger(logger.NewLogger("telego")))
 
-	bot, err := telego.NewBot(telegramCfg.Token.String(), opts...)
+	token := secrets.GetString(telegramCfg.TokenRef)
+	if token == "" {
+		return nil, fmt.Errorf(
+			"telegram: token not resolved (token_ref=%q): check credential store",
+			telegramCfg.TokenRef,
+		)
+	}
+	bot, err := telego.NewBot(token, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create telegram bot: %w", err)
 	}

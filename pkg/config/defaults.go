@@ -16,7 +16,7 @@ import (
 // DefaultConfig returns the default configuration for Omnipus.
 func DefaultConfig() *Config {
 	// Determine the base path for the workspace.
-	// Priority: $PICOCLAW_HOME > ~/.omnipus
+	// Priority: $OMNIPUS_HOME > ~/.omnipus
 	var homePath string
 	if omnipusHome := os.Getenv(EnvHome); omnipusHome != "" {
 		homePath = omnipusHome
@@ -29,8 +29,11 @@ func DefaultConfig() *Config {
 			// and non-uniqueness problems of a PID-based name.
 			userTempDir, mkErr := os.MkdirTemp(os.TempDir(), "omnipus-")
 			if mkErr != nil {
-				logger.ErrorCF("config", "UserHomeDir failed and could not create secure temp dir; data isolation not guaranteed",
-					map[string]any{"error": homeErr.Error(), "mkdir_error": mkErr.Error()})
+				logger.ErrorCF(
+					"config",
+					"UserHomeDir failed and could not create secure temp dir; data isolation not guaranteed",
+					map[string]any{"error": homeErr.Error(), "mkdir_error": mkErr.Error()},
+				)
 				userTempDir = os.TempDir()
 			} else {
 				// MkdirTemp creates with 0700 on Unix; ensure correct permissions.
@@ -138,7 +141,6 @@ func DefaultConfig() *Config {
 					Text:    FlexibleStringSlice{"Thinking..."},
 				},
 				CryptoDatabasePath: "",
-				CryptoPassphrase:   SecureString{},
 			},
 			LINE: LINEConfig{
 				Enabled:      false,
@@ -167,14 +169,6 @@ func DefaultConfig() *Config {
 				CDNBaseURL: "https://novac2c.cdn.weixin.qq.com/c2c",
 				AllowFrom:  FlexibleStringSlice{},
 				Proxy:      "",
-			},
-			Pico: PicoConfig{
-				Enabled:        false,
-				PingInterval:   30,
-				ReadTimeout:    60,
-				WriteTimeout:   10,
-				MaxConnections: 100,
-				AllowFrom:      FlexibleStringSlice{},
 			},
 		},
 		Hooks: HooksConfig{

@@ -4,10 +4,14 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 )
 
 func init() {
-	channels.RegisterFactory("discord", func(cfg *config.Config, b *bus.MessageBus) (channels.Channel, error) {
-		return NewDiscordChannel(cfg.Channels.Discord, b)
-	})
+	channels.RegisterFactory(
+		"discord",
+		func(cfg *config.Config, secrets credentials.SecretBundle, b *bus.MessageBus) (channels.Channel, error) {
+			return NewDiscordChannel(cfg.Channels.Discord, secrets, b)
+		},
+	)
 }

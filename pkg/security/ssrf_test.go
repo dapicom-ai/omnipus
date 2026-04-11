@@ -31,19 +31,39 @@ func TestSSRFChecker_PrivateIPv4Ranges(t *testing.T) {
 		// Dataset row 1 — RFC 1918 Class A start
 		{name: "10.0.0.1 private Class A", ip: "10.0.0.1", wantBlocked: true, wantReason: "private IP range"},
 		// Dataset row 2 — RFC 1918 Class A end
-		{name: "10.255.255.255 private Class A boundary", ip: "10.255.255.255", wantBlocked: true, wantReason: "private IP range"},
+		{
+			name:        "10.255.255.255 private Class A boundary",
+			ip:          "10.255.255.255",
+			wantBlocked: true,
+			wantReason:  "private IP range",
+		},
 		// Dataset row 3 — RFC 1918 Class B start
 		{name: "172.16.0.1 private Class B", ip: "172.16.0.1", wantBlocked: true, wantReason: "private IP range"},
 		// Dataset row 4 — RFC 1918 Class B end
-		{name: "172.31.255.255 private Class B boundary", ip: "172.31.255.255", wantBlocked: true, wantReason: "private IP range"},
+		{
+			name:        "172.31.255.255 private Class B boundary",
+			ip:          "172.31.255.255",
+			wantBlocked: true,
+			wantReason:  "private IP range",
+		},
 		// Dataset row 5 — just outside Class B (must be allowed)
 		{name: "172.32.0.1 outside private", ip: "172.32.0.1", wantBlocked: false},
 		// Dataset row 6 — RFC 1918 Class C start
 		{name: "192.168.0.1 private Class C", ip: "192.168.0.1", wantBlocked: true, wantReason: "private IP range"},
 		// Dataset row 7 — RFC 1918 Class C end
-		{name: "192.168.255.255 private Class C boundary", ip: "192.168.255.255", wantBlocked: true, wantReason: "private IP range"},
+		{
+			name:        "192.168.255.255 private Class C boundary",
+			ip:          "192.168.255.255",
+			wantBlocked: true,
+			wantReason:  "private IP range",
+		},
 		// Dataset row 8 — AWS/GCP/Azure cloud metadata (exact block)
-		{name: "169.254.169.254 cloud metadata", ip: "169.254.169.254", wantBlocked: true, wantReason: "cloud metadata endpoint"},
+		{
+			name:        "169.254.169.254 cloud metadata",
+			ip:          "169.254.169.254",
+			wantBlocked: true,
+			wantReason:  "cloud metadata endpoint",
+		},
 		// Dataset row 9 — link-local
 		{name: "169.254.0.1 link-local", ip: "169.254.0.1", wantBlocked: true, wantReason: "private IP range"},
 		// Dataset row 10 — loopback standard
@@ -103,7 +123,12 @@ func TestSSRFChecker_PrivateIPv6Ranges(t *testing.T) {
 		// Dataset row 17 — IPv4-mapped IPv6 private (10.0.0.1)
 		{name: "::ffff:10.0.0.1 IPv4-mapped private", ip: "::ffff:10.0.0.1", wantBlocked: true, wantReason: "SSRF"},
 		// Dataset row 18 — IPv4-mapped IPv6 metadata
-		{name: "::ffff:169.254.169.254 IPv4-mapped metadata", ip: "::ffff:169.254.169.254", wantBlocked: true, wantReason: "SSRF"},
+		{
+			name:        "::ffff:169.254.169.254 IPv4-mapped metadata",
+			ip:          "::ffff:169.254.169.254",
+			wantBlocked: true,
+			wantReason:  "SSRF",
+		},
 		// Dataset row 19 — public IPv6 (must be allowed)
 		{name: "2001:4860:4860::8888 public IPv6 Google DNS", ip: "2001:4860:4860::8888", wantBlocked: false},
 	}

@@ -442,7 +442,11 @@ func (p *AntigravityProvider) parseSSEResponse(body string) (*LLMResponse, error
 				if part.FunctionCall != nil {
 					argumentsJSON, marshalErr := json.Marshal(part.FunctionCall.Args)
 					if marshalErr != nil {
-						logger.WarnCF("antigravity", "failed to marshal function call args", map[string]any{"tool": part.FunctionCall.Name, "error": marshalErr.Error()})
+						logger.WarnCF(
+							"antigravity",
+							"failed to marshal function call args",
+							map[string]any{"tool": part.FunctionCall.Name, "error": marshalErr.Error()},
+						)
 						argumentsJSON = []byte("{}")
 					}
 					toolCalls = append(toolCalls, ToolCall{
@@ -607,18 +611,26 @@ func createAntigravityTokenSource() func() (string, string, error) {
 			// Try to fetch project ID from API
 			fetchedID, err := FetchAntigravityProjectID(cred.AccessToken)
 			if err != nil {
-				logger.ErrorCF("provider.antigravity", "Could not fetch project ID from API; falling back to hardcoded default — requests may fail if this project ID is incorrect", map[string]any{
-					"error":    err.Error(),
-					"fallback": "rising-fact-p41fc",
-				})
+				logger.ErrorCF(
+					"provider.antigravity",
+					"Could not fetch project ID from API; falling back to hardcoded default — requests may fail if this project ID is incorrect",
+					map[string]any{
+						"error":    err.Error(),
+						"fallback": "rising-fact-p41fc",
+					},
+				)
 				projectID = "rising-fact-p41fc" // Default fallback (same as OpenCode)
 			} else {
 				projectID = fetchedID
 				cred.ProjectID = projectID
 				if credErr := auth.SetCredential("google-antigravity", cred); credErr != nil {
-					logger.WarnCF("provider.antigravity", "Failed to persist updated project ID to credential store", map[string]any{
-						"error": credErr.Error(),
-					})
+					logger.WarnCF(
+						"provider.antigravity",
+						"Failed to persist updated project ID to credential store",
+						map[string]any{
+							"error": credErr.Error(),
+						},
+					)
 				}
 			}
 		}

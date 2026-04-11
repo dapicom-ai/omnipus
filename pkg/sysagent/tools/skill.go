@@ -17,10 +17,11 @@ import (
 type SkillInstallTool struct{ deps *Deps }
 
 func NewSkillInstallTool(d *Deps) *SkillInstallTool { return &SkillInstallTool{deps: d} }
-func (t *SkillInstallTool) Name() string             { return "system.skill.install" }
+func (t *SkillInstallTool) Name() string            { return "system.skill.install" }
 func (t *SkillInstallTool) Description() string {
 	return "Install a skill from ClawHub.\nParameters: name (required), agent_ids (optional), credentials (optional)."
 }
+
 func (t *SkillInstallTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -32,6 +33,7 @@ func (t *SkillInstallTool) Parameters() map[string]any {
 		"required": []string{"name"},
 	}
 }
+
 func (t *SkillInstallTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	name, _ := args["name"].(string)
 	if name == "" {
@@ -62,10 +64,11 @@ func (t *SkillInstallTool) Execute(_ context.Context, args map[string]any) *tool
 type SkillRemoveTool struct{ deps *Deps }
 
 func NewSkillRemoveTool(d *Deps) *SkillRemoveTool { return &SkillRemoveTool{deps: d} }
-func (t *SkillRemoveTool) Name() string            { return "system.skill.remove" }
+func (t *SkillRemoveTool) Name() string           { return "system.skill.remove" }
 func (t *SkillRemoveTool) Description() string {
 	return "Remove an installed skill. Parameters: name (required), confirm (bool, must be true)."
 }
+
 func (t *SkillRemoveTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -76,6 +79,7 @@ func (t *SkillRemoveTool) Parameters() map[string]any {
 		"required": []string{"name", "confirm"},
 	}
 }
+
 func (t *SkillRemoveTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	name, _ := args["name"].(string)
 	confirm, _ := args["confirm"].(bool)
@@ -100,10 +104,11 @@ func (t *SkillRemoveTool) Execute(_ context.Context, args map[string]any) *tools
 type SkillSearchTool struct{ deps *Deps }
 
 func NewSkillSearchTool(d *Deps) *SkillSearchTool { return &SkillSearchTool{deps: d} }
-func (t *SkillSearchTool) Name() string            { return "system.skill.search" }
+func (t *SkillSearchTool) Name() string           { return "system.skill.search" }
 func (t *SkillSearchTool) Description() string {
 	return "Search ClawHub for skills.\nParameters: query (required), sort (trending/new/popular), limit."
 }
+
 func (t *SkillSearchTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -115,6 +120,7 @@ func (t *SkillSearchTool) Parameters() map[string]any {
 		"required": []string{"query"},
 	}
 }
+
 func (t *SkillSearchTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
 	query, _ := args["query"].(string)
 	if query == "" {
@@ -134,13 +140,15 @@ func (t *SkillSearchTool) Execute(_ context.Context, args map[string]any) *tools
 type SkillListTool struct{ deps *Deps }
 
 func NewSkillListTool(d *Deps) *SkillListTool { return &SkillListTool{deps: d} }
-func (t *SkillListTool) Name() string          { return "system.skill.list" }
+func (t *SkillListTool) Name() string         { return "system.skill.list" }
 func (t *SkillListTool) Description() string {
 	return "List all installed skills. No parameters required."
 }
+
 func (t *SkillListTool) Parameters() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{}}
 }
+
 func (t *SkillListTool) Execute(_ context.Context, _ map[string]any) *tools.ToolResult {
 	slog.Info("sysagent: stub tool invoked", "tool", "system.skill.list")
 	return tools.NewToolResult(successJSON(map[string]any{

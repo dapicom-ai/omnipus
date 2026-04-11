@@ -21,7 +21,7 @@ func TestGetConfigPath(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
-func TestGetConfigPath_WithPICOCLAW_HOME(t *testing.T) {
+func TestGetConfigPath_WithOMNIPUS_HOME(t *testing.T) {
 	t.Setenv(config.EnvHome, "/custom/omnipus")
 	t.Setenv("HOME", "/tmp/home")
 
@@ -31,8 +31,8 @@ func TestGetConfigPath_WithPICOCLAW_HOME(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
-func TestGetConfigPath_WithPICOCLAW_CONFIG(t *testing.T) {
-	t.Setenv("PICOCLAW_CONFIG", "/custom/config.json")
+func TestGetConfigPath_WithOMNIPUS_CONFIG(t *testing.T) {
+	t.Setenv("OMNIPUS_CONFIG", "/custom/config.json")
 	t.Setenv(config.EnvHome, "/custom/omnipus")
 	t.Setenv("HOME", "/tmp/home")
 

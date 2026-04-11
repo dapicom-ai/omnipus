@@ -48,7 +48,7 @@ Add this to `config.json`:
 | placeholder          | object   | No       | Placeholder message config (see below) |
 | reasoning_channel_id | string   | No       | Target channel for reasoning output |
 | message_format       | string   | No       | Output format: `"richtext"` (default) renders markdown as HTML; `"plain"` sends plain text only |
-| crypto_database_path | string   | No       | Path to store the crypto database (uses workspace path `~/.picoclaw/workspace` if empty) |
+| crypto_database_path | string   | No       | Path to store the crypto database (uses workspace path `~/.omnipus/workspace` if empty) |
 | crypto_passphrase    | string   | No       | Serialization key for encrypting session keys in the database; must remain unchanged once set |
 
 ### Placeholder Config

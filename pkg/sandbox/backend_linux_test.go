@@ -49,9 +49,12 @@ func TestSandboxBackend_LinuxFull(t *testing.T) {
 			},
 			InheritToChildren: true,
 		}
-		// NOTE: Do NOT call Apply on the test process — it would restrict the Go test runner.
-		// Instead, validate that Apply can be constructed correctly.
-		// Integration testing of actual restrictions happens in subprocess tests.
+		// NOTE: Do NOT call Apply on the test process — it would permanently restrict
+		// the Go test runner via Landlock's one-way ratchet. This test validates
+		// only that the policy struct is constructed correctly.
+		//
+		// Subprocess-level Apply enforcement coverage lives in
+		// backend_linux_subprocess_test.go:TestLandlock_ApplySubprocess.
 		_ = policy
 		_ = backend
 		assert.NotNil(t, backend)

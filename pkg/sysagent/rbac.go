@@ -95,10 +95,10 @@ var toolPermissions = map[string]ToolPermission{
 	"system.config.set": {MinRole: RoleOperator},
 
 	// Diagnostics / utility.
-	"system.doctor.run":     {MinRole: RoleViewer},
-	"system.backup.create":  {MinRole: RoleOperator},
-	"system.cost.query":     {MinRole: RoleViewer},
-	"system.navigate":       {MinRole: RoleViewer},
+	"system.doctor.run":    {MinRole: RoleViewer},
+	"system.backup.create": {MinRole: RoleOperator},
+	"system.cost.query":    {MinRole: RoleViewer},
+	"system.navigate":      {MinRole: RoleViewer},
 }
 
 // roleWeight returns a numeric weight for ordering; higher = more privileged.
@@ -117,27 +117,27 @@ func roleWeight(r PrincipalRole) int {
 	}
 }
 
-// ErrPermissionDenied is returned when the caller's role is insufficient.
-type ErrPermissionDenied struct {
+// PermissionDeniedError is returned when the caller's role is insufficient.
+type PermissionDeniedError struct {
 	Tool     string
 	Caller   PrincipalRole
 	Required PrincipalRole
 }
 
-func (e *ErrPermissionDenied) Error() string {
+func (e *PermissionDeniedError) Error() string {
 	return fmt.Sprintf(
 		"PERMISSION_DENIED: tool %q requires %s access, caller has %s",
 		e.Tool, e.Required, e.Caller,
 	)
 }
 
-// CheckRBAC returns nil when callerRole may call toolName, or ErrPermissionDenied.
+// CheckRBAC returns nil when callerRole may call toolName, or PermissionDeniedError.
 // Single-user mode (RoleSingleUser) bypasses role checks — RBAC only applies when
 // SEC-19 is enabled.
 func CheckRBAC(callerRole PrincipalRole, toolName string) error {
 	// User agents never get system tool access.
 	if callerRole == RoleAgent {
-		return &ErrPermissionDenied{Tool: toolName, Caller: callerRole, Required: RoleViewer}
+		return &PermissionDeniedError{Tool: toolName, Caller: callerRole, Required: RoleViewer}
 	}
 	// Single-user mode: no restrictions.
 	if callerRole == RoleSingleUser {
@@ -146,16 +146,16 @@ func CheckRBAC(callerRole PrincipalRole, toolName string) error {
 	perm, known := toolPermissions[toolName]
 	if !known {
 		// Unknown tool: deny by default.
-		return &ErrPermissionDenied{Tool: toolName, Caller: callerRole, Required: RoleOperator}
+		return &PermissionDeniedError{Tool: toolName, Caller: callerRole, Required: RoleOperator}
 	}
 	if roleWeight(callerRole) < roleWeight(perm.MinRole) {
-		return &ErrPermissionDenied{Tool: toolName, Caller: callerRole, Required: perm.MinRole}
+		return &PermissionDeniedError{Tool: toolName, Caller: callerRole, Required: perm.MinRole}
 	}
 	return nil
 }
 
 // FriendlyDenialMessage returns a conversational explanation of a denial.
-func FriendlyDenialMessage(err *ErrPermissionDenied) string {
+func FriendlyDenialMessage(err *PermissionDeniedError) string {
 	return fmt.Sprintf(
 		"That operation requires %s access. You're connected as %s.",
 		err.Required, err.Caller,

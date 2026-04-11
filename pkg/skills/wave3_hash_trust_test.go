@@ -1,8 +1,6 @@
 package skills
 
 import (
-	"archive/zip"
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -158,40 +156,44 @@ func TestTrustPolicyBlockUnverified(t *testing.T) {
 	// The caller (CLI / tool) must check: if !result.Verified && policy == block_unverified → block
 }
 
-// TestTrustPolicyWarnUnverified verifies that when no hash is provided,
-// result.Verified=false signals warn_unverified to warn-but-proceed.
-// Traces to: wave3-skill-ecosystem-spec.md line 839 (Test #9: TestTrustPolicyWarnUnverified)
-// BDD Scenario Outline: policy=warn_unverified, can_verify=cannot → warning, install proceeds.
-
-func TestTrustPolicyWarnUnverified(t *testing.T) {
-	// Traces to: wave3-skill-ecosystem-spec.md line 447 (Scenario Outline: Install with different trust policies)
-	// Same as block scenario: Verified=false is the signal; warn_unverified proceeds (no error from pipeline)
-	zipBuf := createTestZip(t, map[string]string{
-		"SKILL.md": "---\nname: warn-skill\ndescription: Warn on unverified\n---\nContent",
-	})
-
+// runNoHashInstall installs a skill with no SHA256 hash available and returns
+// the result. The skill is served by a local httptest server. This helper
+// eliminates structural duplication between TestTrustPolicyWarnUnverified and
+// TestTrustPolicyAllowAll — both exercise the same pipeline path; only the
+// caller's handling of result.Verified differs.
+func runNoHashInstall(t *testing.T, slug, displayName, skillMDContent string) (*InstallResult, error) {
+	t.Helper()
+	zipBuf := createTestZip(t, map[string]string{"SKILL.md": skillMDContent})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v1/skills/warn-skill":
-			json.NewEncoder(w).Encode(clawhubSkillResponse{
-				Slug:          "warn-skill",
-				DisplayName:   "Warn Skill",
-				Summary:       "Warn",
+		case "/api/v1/skills/" + slug:
+			json.NewEncoder(w).Encode(clawhubSkillResponse{ //nolint:errcheck
+				Slug:          slug,
+				DisplayName:   displayName,
+				Summary:       displayName,
 				LatestVersion: &clawhubVersionInfo{Version: "1.0.0", SHA256: ""},
 			})
 		case "/api/v1/download":
 			w.Header().Set("Content-Type", "application/zip")
-			w.Write(zipBuf)
+			w.Write(zipBuf) //nolint:errcheck
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
 	}))
-	defer srv.Close()
-
+	t.Cleanup(srv.Close)
 	targetDir := t.TempDir()
 	reg := newTestRegistry(srv.URL, "")
-	result, err := reg.DownloadAndInstall(context.Background(), "warn-skill", "1.0.0", targetDir)
+	return reg.DownloadAndInstall(context.Background(), slug, "1.0.0", targetDir)
+}
 
+// TestTrustPolicyWarnUnverified verifies that when no hash is provided,
+// result.Verified=false signals warn_unverified to warn-but-proceed.
+// Traces to: wave3-skill-ecosystem-spec.md line 839 (Test #9: TestTrustPolicyWarnUnverified)
+// BDD Scenario Outline: policy=warn_unverified, can_verify=cannot → warning, install proceeds.
+func TestTrustPolicyWarnUnverified(t *testing.T) {
+	// Same as block scenario: Verified=false is the signal; warn_unverified proceeds (no error from pipeline)
+	result, err := runNoHashInstall(t, "warn-skill", "Warn Skill",
+		"---\nname: warn-skill\ndescription: Warn on unverified\n---\nContent")
 	// warn_unverified: pipeline succeeds (no error), caller warns
 	require.NoError(t, err, "warn_unverified: pipeline must not block — caller decides")
 	assert.False(t, result.Verified,
@@ -202,37 +204,10 @@ func TestTrustPolicyWarnUnverified(t *testing.T) {
 // install proceeds even without hash — result.Verified stays false, no warning emitted.
 // Traces to: wave3-skill-ecosystem-spec.md line 840 (Test #10: TestTrustPolicyAllowAll)
 // BDD Scenario Outline: policy=allow_all, can_verify=cannot → install proceeds silently.
-
 func TestTrustPolicyAllowAll(t *testing.T) {
-	// Traces to: wave3-skill-ecosystem-spec.md line 447 (Scenario Outline: Install with different trust policies)
 	// allow_all: same pipeline behavior as warn, but caller skips warning too.
-	// This test verifies the pipeline doesn't block when no hash is available.
-	zipBuf := createTestZip(t, map[string]string{
-		"SKILL.md": "---\nname: allow-skill\ndescription: Allow all\n---\nContent",
-	})
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/v1/skills/allow-skill":
-			json.NewEncoder(w).Encode(clawhubSkillResponse{
-				Slug:          "allow-skill",
-				DisplayName:   "Allow Skill",
-				Summary:       "Allow all",
-				LatestVersion: &clawhubVersionInfo{Version: "1.0.0", SHA256: ""},
-			})
-		case "/api/v1/download":
-			w.Header().Set("Content-Type", "application/zip")
-			w.Write(zipBuf)
-		default:
-			w.WriteHeader(http.StatusNotFound)
-		}
-	}))
-	defer srv.Close()
-
-	targetDir := t.TempDir()
-	reg := newTestRegistry(srv.URL, "")
-	result, err := reg.DownloadAndInstall(context.Background(), "allow-skill", "1.0.0", targetDir)
-
+	result, err := runNoHashInstall(t, "allow-skill", "Allow Skill",
+		"---\nname: allow-skill\ndescription: Allow all\n---\nContent")
 	require.NoError(t, err, "allow_all: pipeline must proceed silently when no hash available")
 	assert.False(t, result.Verified,
 		"result.Verified stays false — allow_all caller skips both warning and blocking")
@@ -333,25 +308,4 @@ func TestClawHubMalwareBlockIntegration(t *testing.T) {
 		"IsMalwareBlocked must be true when moderation flags the skill")
 	assert.True(t, result.IsSuspicious,
 		"IsSuspicious must be true when moderation flags the skill as suspicious")
-}
-
-// buildTestZipBytes creates a minimal valid zip in-memory (without using t.Helper pattern)
-// for use in tests that don't have access to testing.T directly.
-func buildTestZipBytes(files map[string]string) ([]byte, error) {
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
-	for name, content := range files {
-		w, err := zw.Create(name)
-		if err != nil {
-			return nil, err
-		}
-		_, err = w.Write([]byte(content))
-		if err != nil {
-			return nil, err
-		}
-	}
-	if err := zw.Close(); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
 }

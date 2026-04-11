@@ -10,12 +10,14 @@ import (
 func TestCreateProviderReturnsHTTPProviderForOpenRouter(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agents.Defaults.ModelName = "test-openrouter"
+	const keyRef = "FACTORY_TEST_OPENROUTER_KEY"
+	t.Setenv(keyRef, "sk-or-test")
 	modelCfg := &config.ModelConfig{
 		ModelName: "test-openrouter",
 		Model:     "openrouter/auto",
 		APIBase:   "https://openrouter.ai/api/v1",
+		APIKeyRef: keyRef,
 	}
-	modelCfg.SetAPIKey("sk-or-test")
 	cfg.Providers = []*config.ModelConfig{modelCfg}
 
 	provider, _, err := CreateProvider(cfg)

@@ -92,8 +92,8 @@ When `enabled` is `true`, every tool call sends a short message to the chat befo
 Both fields can also be set via environment variables:
 
 ```bash
-PICOCLAW_AGENTS_DEFAULTS_TOOL_FEEDBACK_ENABLED=true
-PICOCLAW_AGENTS_DEFAULTS_TOOL_FEEDBACK_MAX_ARGS_LENGTH=300
+OMNIPUS_AGENTS_DEFAULTS_TOOL_FEEDBACK_ENABLED=true
+OMNIPUS_AGENTS_DEFAULTS_TOOL_FEEDBACK_MAX_ARGS_LENGTH=300
 ```
 
 > **Note:** `tool_feedback` is independent of `--debug` mode. It works in production and does not require the gateway to be started with any special flag.

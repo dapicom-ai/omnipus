@@ -55,13 +55,18 @@ type SSEHandler struct {
 }
 
 type sseSession struct {
-	ch          chan string    // token chunks
+	ch          chan string // token chunks
 	doneCh      chan struct{}
 	closeOnce   sync.Once // guards close(doneCh)
 	chCloseOnce sync.Once // guards close(ch)
 }
 
-func newSSEHandler(msgBus *bus.MessageBus, ps *session.PartitionStore, allowedOrigin string, cfg func() *config.Config) *SSEHandler {
+func newSSEHandler(
+	msgBus *bus.MessageBus,
+	ps *session.PartitionStore,
+	allowedOrigin string,
+	cfg func() *config.Config,
+) *SSEHandler {
 	h := &SSEHandler{
 		msgBus:        msgBus,
 		partitions:    nil, // always nil — SSE is legacy; use WebSocket for persistent sessions
@@ -218,7 +223,7 @@ func (h *SSEHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-r.Context().Done():
 			// FR-019/020: save partial response as "interrupted" when client disconnects
-			// or the request context is cancelled (e.g., server shutdown).
+			// or the request context is canceled (e.g., server shutdown).
 			if partial := responseBuilder.String(); partial != "" {
 				h.recordAssistantMessageStatus(sessionID, partial, "interrupted")
 			} else if sessionID != "" && h.partitions != nil {
