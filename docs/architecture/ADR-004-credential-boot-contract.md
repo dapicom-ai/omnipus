@@ -18,19 +18,28 @@ Without a formal contract, callers were using `LoadConfig` (store=nil), which si
 
 ### Boot Order Contract
 
-Every production caller must follow this exact sequence:
+Every production caller must follow this exact sequence, implemented in the shared `bootCredentials` helper (`pkg/gateway/gateway.go`):
 
 ```
-NewStore → Unlock → LoadConfigWithStore → InjectFromConfig → InjectChannelsFromConfig → NewManager → Start
+NewStore → Unlock → LoadConfigWithStore → InjectFromConfig →
+ResolveBundle → cfg.RegisterSensitiveValues(plaintexts) →
+NewManager(cfg, bundle, bus) → Start
 ```
 
 1. **`credentials.NewStore(path)`** — construct the store (does not read disk, safe before any I/O)
 2. **`credentials.Unlock(store)`** — decrypt the store using the master key (see Provisioning below). If this fails, boot aborts with a fatal error.
 3. **`config.LoadConfigWithStore(path, store)`** — load config, migrating v0 configs by moving plaintext secrets into the store and returning a v1 config with `*Ref` fields. If the v0 config contains plaintext secrets and the store is nil or locked, the load fails with an actionable error.
-4. **`credentials.InjectFromConfig(cfg, store)`** — resolve each provider `APIKeyRef` from the store and inject into the process environment. Any error is fatal at boot; reject the reload on hot-reload.
-5. **`credentials.InjectChannelsFromConfig(cfg, store)`** — resolve all channel/web-tool `*Ref` fields into the process environment. `ErrNotFound` for an enabled channel is fatal. `ErrNotFound` for a disabled channel or unconfigured tool is logged at Info and skipped.
-6. **`channels.NewManager(cfg, bus, mediaStore)`** — channel constructors read their credentials via `os.Getenv(cfg.X.TokenRef)`. If construction fails for an enabled channel, boot aborts.
-7. **`manager.Start()`** — begin receiving messages.
+4. **`credentials.InjectFromConfig(cfg, store)`** — resolve each provider `APIKeyRef` from the store and inject into the process environment so LLM SDK clients can read them. Any error is fatal at boot; reject the reload on hot-reload.
+5. **`credentials.ResolveBundle(cfg, store)`** — resolve all channel `*Ref` fields into a `SecretBundle`. Channels receive secrets via the bundle — no `os.Setenv` for channel credentials. `ErrNotFound` for an **enabled** channel is fatal. `ErrNotFound` for a **disabled** channel is logged at Info and skipped.
+6. **`cfg.RegisterSensitiveValues(plaintexts)`** — register all resolved plaintext values with the config's sensitive-data replacer so they are scrubbed from LLM output and audit logs. Semantics are "replace not append" — every call must supply the complete current set so that rotated or removed secrets are evicted.
+7. **`channels.NewManager(cfg, bundle, bus, mediaStore)`** — channel constructors receive secrets via the `SecretBundle` parameter. If construction fails for an enabled channel, boot aborts.
+8. **`manager.Start()`** — begin receiving messages.
+
+### Canonical Shared Helper
+
+`bootCredentials(homePath, configPath string)` in `pkg/gateway/gateway.go` is the single implementation of the above sequence. Both `gateway.Run` and `pkg/gateway/boot_order_test.go` call this helper so that a refactor of one cannot silently drift from the other.
+
+REST-initiated config writes (`safeUpdateConfigJSON`) also rewire sensitive-data scrubbing via `restAPI.refreshConfigAndRewireServices`, which runs steps 3–6 on the new config and atomically swaps it via `agentLoop.SwapConfig`.
 
 ### Master-Key Provisioning
 
@@ -52,13 +61,14 @@ Headless deployments **must** set `OMNIPUS_MASTER_KEY` or `OMNIPUS_KEY_FILE`. If
 
 ### Failure Semantics
 
-| Scenario | Boot behavior | Hot-reload behavior |
-|----------|--------------|---------------------|
+| Scenario | Boot behavior | Hot-reload / REST-write behavior |
+|----------|--------------|----------------------------------|
 | `Unlock` fails | Fatal — abort boot | Reject reload, keep old config |
+| `LoadConfigWithStore` fails | Fatal — abort boot | Reject reload, keep old config |
 | `InjectFromConfig` returns any error | Fatal — abort boot | Reject reload, keep old config |
-| `InjectChannelsFromConfig` returns `ErrStoreLocked` | Fatal | Reject reload |
-| `InjectChannelsFromConfig` returns `ErrNotFound` for enabled channel | Fatal | Reject reload |
-| `InjectChannelsFromConfig` returns `ErrNotFound` for disabled channel/tool | Info log, continue | Info log, continue |
+| `ResolveBundle` returns `ErrNotFound` for **enabled** channel | Fatal — abort boot | Reject reload, keep old config |
+| `ResolveBundle` returns `ErrNotFound` for **disabled** channel | Info log, continue | Info log, continue |
+| `RegisterSensitiveValues` (never errors) | — | — |
 | `channels.NewManager` fails (enabled channel) | Fatal | Reject reload |
 
 ### Legacy v0 Migration
@@ -81,5 +91,6 @@ When `LoadConfigWithStore` encounters a v0 config file:
 - Gateway always starts with a fully resolved environment or not at all.
 - Operators get a clear error message when OMNIPUS_MASTER_KEY is missing.
 - v0 → v1 migration is automatic and preserves all secrets.
+- Hot-reload and REST config writes re-arm sensitive-data scrubbing so newly-added credentials are immediately scrubbed from LLM output and audit logs.
 - Hot-reload failures are non-destructive: the old config continues serving.
-- See also: `pkg/credentials/inject.go`, `pkg/config/config_old.go` (`MigrateWithStore`), `pkg/gateway/gateway.go` (`Run`, `executeReload`).
+- See also: `pkg/credentials/inject.go`, `pkg/config/config_old.go` (`MigrateWithStore`), `pkg/gateway/gateway.go` (`bootCredentials`, `Run`, `executeReload`), `pkg/gateway/rest.go` (`refreshConfigAndRewireServices`, `safeUpdateConfigJSON`).

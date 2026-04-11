@@ -47,7 +47,27 @@ These are non-negotiable and apply to every decision:
 
 **Storage:** File-based only (JSON/JSONL) for all Omnipus data. No PostgreSQL or Redis. Exception: WhatsApp session uses SQLite via whatsmeow with `modernc.org/sqlite` (pure Go, no CGo). SQLite is isolated to WhatsApp session storage only — never used for Omnipus's own data. Data directory: `~/.omnipus/`. Atomic writes (temp file + rename). Credentials in `credentials.json` (AES-256-GCM encrypted, Argon2id KDF), never in `config.json`. **Sessions:** Day-partitioned JSONL transcripts (`sessions/<id>/<YYYY-MM-DD>.jsonl`) with configurable retention (default 90 days). Two-layer context compression: tool result pruning (in-memory) + conversation compaction (persistent, with memory flush). **Concurrency:** Per-entity files for high-contention data (tasks, pins), single-writer goroutine for shared files (config, credentials), advisory `flock`/`LockFileEx` as defense-in-depth.
 
-**Credential provisioning:** All secrets are stored in `credentials.json` (AES-256-GCM, Argon2id KDF). The master key is resolved from (in priority order): `OMNIPUS_MASTER_KEY` (64-char hex, for CI/containers), `OMNIPUS_KEY_FILE` (path to a 0600 file containing the hex key, for servers), or an interactive TTY passphrase prompt (development only). Headless operators MUST set `OMNIPUS_MASTER_KEY` or `OMNIPUS_KEY_FILE` before running `omnipus gateway`. To generate a key file: `openssl rand -hex 32 > /path/to/omnipus.key && chmod 600 /path/to/omnipus.key`. The canonical gateway boot order is `NewStore → Unlock → LoadConfigWithStore → InjectFromConfig → InjectChannelsFromConfig → NewManager → Start` — any failure aborts boot with an actionable error. See [ADR-004](docs/architecture/ADR-004-credential-boot-contract.md) for the full contract.
+**Credential provisioning:** All secrets are stored in `credentials.json` (AES-256-GCM, Argon2id KDF). See [ADR-004](docs/architecture/ADR-004-credential-boot-contract.md) for the full boot contract.
+
+**Unlock modes** (tried in priority order):
+
+1. `OMNIPUS_MASTER_KEY` — 64-char hex-encoded 256-bit key in the environment. Use for CI/CD pipelines and container deployments where secrets are injected via env.
+2. `OMNIPUS_KEY_FILE` — path to a file (mode 0600) containing the hex key. Use for long-running server deployments where mounting a key file is more practical than env injection.
+3. **Interactive TTY prompt** — passphrase entered at the terminal. Only works when a TTY is attached; never use for headless/daemon mode.
+
+Headless operators MUST set `OMNIPUS_MASTER_KEY` or `OMNIPUS_KEY_FILE` before running `omnipus gateway`. If neither is set and no TTY is present, `credentials.Unlock` returns an error and boot aborts with an actionable message.
+
+**Generating a key file:**
+
+```bash
+openssl rand -hex 32 > /var/lib/omnipus/master.key
+chmod 600 /var/lib/omnipus/master.key
+export OMNIPUS_KEY_FILE=/var/lib/omnipus/master.key
+```
+
+**Key rotation:** Generate a new key, then re-encrypt using `omnipus credentials rotate` (checks `--old-key-file` and `--new-key-file`). The rotate command decrypts with the old key and re-encrypts every credential with the new key atomically. Update `OMNIPUS_KEY_FILE` to point at the new key before restarting the gateway. There is no zero-downtime rotation path in the current CLI — a brief restart is required.
+
+**Boot order:** `NewStore → Unlock → LoadConfigWithStore → InjectFromConfig → NewManager → Start` — any failure aborts boot. Channel secrets are now passed directly as a `credentials.SecretBundle` to channel constructors; they do not require environment injection.
 
 ## Architecture Patterns
 

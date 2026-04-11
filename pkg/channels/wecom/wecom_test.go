@@ -12,6 +12,7 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/media"
 )
 
@@ -588,9 +589,11 @@ func newTestWeComChannel(t *testing.T, messageBus *bus.MessageBus) *WeComChannel
 	t.Helper()
 
 	const secretRef = "WECOM_TEST_SECRET"
-	t.Setenv(secretRef, "secret-1")
+	bundle := credentials.SecretBundle{
+		credentials.SecretRef(secretRef): "secret-1",
+	}
 	cfg := config.WeComConfig{BotID: "bot-1", SecretRef: secretRef}
-	ch, err := NewChannel(cfg, messageBus)
+	ch, err := NewChannel(cfg, bundle, messageBus)
 	if err != nil {
 		t.Fatalf("NewChannel() error = %v", err)
 	}

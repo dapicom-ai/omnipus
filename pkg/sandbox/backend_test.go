@@ -111,9 +111,10 @@ func TestSandboxBackend_SelectBackend(t *testing.T) {
 		// subsequent test in the same binary. Apply is therefore skipped for
 		// Landlock backends in unit tests.
 		//
-		// NOTE: subprocess-level Apply coverage (spawning a child process that
-		// calls Apply, then verifying filesystem restrictions are enforced) does
-		// not yet exist. It is tracked as a future integration-test gap.
+		// Subprocess-level Apply coverage lives in
+		// backend_linux_subprocess_test.go:TestLandlock_ApplySubprocess, which
+		// forks the test binary, calls Apply inside the child, and verifies
+		// that /etc/passwd is blocked before the child exits.
 		if backend.Name() != "fallback" && backend.Name() != "seccomp" {
 			t.Skipf("skipping Apply for %q backend: would irreversibly sandbox the test process", backend.Name())
 		}

@@ -3,7 +3,6 @@ package weixin
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/identity"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
@@ -37,17 +37,24 @@ type WeixinChannel struct {
 }
 
 func init() {
-	channels.RegisterFactory("weixin", func(cfg *config.Config, bus *bus.MessageBus) (channels.Channel, error) {
-		return NewWeixinChannel(cfg.Channels.Weixin, bus)
-	})
+	channels.RegisterFactory(
+		"weixin",
+		func(cfg *config.Config, secrets credentials.SecretBundle, bus *bus.MessageBus) (channels.Channel, error) {
+			return NewWeixinChannel(cfg.Channels.Weixin, secrets, bus)
+		},
+	)
 }
 
 // NewWeixinChannel creates a new WeixinChannel from config.
-func NewWeixinChannel(cfg config.WeixinConfig, messageBus *bus.MessageBus) (*WeixinChannel, error) {
-	token := os.Getenv(cfg.TokenRef)
+func NewWeixinChannel(
+	cfg config.WeixinConfig,
+	secrets credentials.SecretBundle,
+	messageBus *bus.MessageBus,
+) (*WeixinChannel, error) {
+	token := secrets.GetString(cfg.TokenRef)
 	if token == "" {
 		return nil, fmt.Errorf(
-			"weixin: TokenRef %q resolved to empty string — set the env var before starting the channel",
+			"weixin: token_ref %q not resolved — check credential store",
 			cfg.TokenRef,
 		)
 	}

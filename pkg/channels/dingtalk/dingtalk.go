@@ -6,7 +6,6 @@ package dingtalk
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 
@@ -17,6 +16,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/identity"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/utils"
@@ -37,8 +37,12 @@ type DingTalkChannel struct {
 }
 
 // NewDingTalkChannel creates a new DingTalk channel instance
-func NewDingTalkChannel(cfg config.DingTalkConfig, messageBus *bus.MessageBus) (*DingTalkChannel, error) {
-	clientSecret := os.Getenv(cfg.ClientSecretRef)
+func NewDingTalkChannel(
+	cfg config.DingTalkConfig,
+	secrets credentials.SecretBundle,
+	messageBus *bus.MessageBus,
+) (*DingTalkChannel, error) {
+	clientSecret := secrets.GetString(cfg.ClientSecretRef)
 	if cfg.ClientID == "" || clientSecret == "" {
 		return nil, fmt.Errorf(
 			"dingtalk: client_id and client_secret are required (client_secret_ref=%q): check credential store",

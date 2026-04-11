@@ -17,6 +17,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/media"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/routing"
@@ -53,7 +54,7 @@ func newStartedTestChannelManager(
 ) *channels.Manager {
 	t.Helper()
 
-	cm, err := channels.NewManager(&config.Config{}, msgBus, store)
+	cm, err := channels.NewManager(&config.Config{}, credentials.SecretBundle{}, msgBus, store)
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
@@ -2186,7 +2187,7 @@ func TestTargetReasoningChannelID_AllChannels(t *testing.T) {
 	}
 
 	al := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{})
-	chManager, err := channels.NewManager(&config.Config{}, bus.NewMessageBus(), nil)
+	chManager, err := channels.NewManager(&config.Config{}, credentials.SecretBundle{}, bus.NewMessageBus(), nil)
 	if err != nil {
 		t.Fatalf("Failed to create channel manager: %v", err)
 	}
@@ -2426,7 +2427,7 @@ func TestProcessMessage_PublishesReasoningContentToReasoningChannel(t *testing.T
 	}
 	al := NewAgentLoop(cfg, msgBus, provider)
 
-	chManager, err := channels.NewManager(&config.Config{}, msgBus, nil)
+	chManager, err := channels.NewManager(&config.Config{}, credentials.SecretBundle{}, msgBus, nil)
 	if err != nil {
 		t.Fatalf("Failed to create channel manager: %v", err)
 	}

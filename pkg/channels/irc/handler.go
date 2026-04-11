@@ -2,7 +2,6 @@ package irc
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"time"
 	"unicode"
@@ -18,8 +17,8 @@ import (
 // onConnect is called after a successful connection (and on reconnect).
 func (c *IRCChannel) onConnect(conn *ircevent.Connection) {
 	// NickServ auth (only if SASL is not configured)
-	if nickServPassword := os.Getenv(c.config.NickServPasswordRef); nickServPassword != "" && c.config.SASLUser == "" {
-		conn.Privmsg("NickServ", "IDENTIFY "+nickServPassword)
+	if c.nickServPassword != "" && c.config.SASLUser == "" {
+		conn.Privmsg("NickServ", "IDENTIFY "+c.nickServPassword)
 	}
 
 	// Join configured channels

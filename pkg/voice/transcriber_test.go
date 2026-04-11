@@ -4,21 +4,28 @@ import (
 	"testing"
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 )
 
 func TestDetectTranscriber(t *testing.T) {
-	// Set env vars used across multiple test cases.
+	// Provider API keys are still injected via env (InjectFromConfig path).
 	t.Setenv("TRANSCRIBER_TEST_GEMINI_KEY", "sk-gemini-model")
 	t.Setenv("TRANSCRIBER_TEST_OPENAI_KEY", "sk-openai")
 	t.Setenv("TRANSCRIBER_TEST_GROQ_KEY", "sk-groq-model")
 	t.Setenv("TRANSCRIBER_TEST_AZURE_KEY", "sk-azure")
 	t.Setenv("TRANSCRIBER_TEST_ANTHROPIC_KEY", "sk-anthropic")
 	t.Setenv("TRANSCRIBER_TEST_OTHER_KEY", "sk-other-model")
-	t.Setenv("TRANSCRIBER_TEST_ELEVENLABS_KEY", "sk_elevenlabs_test")
+
+	// ElevenLabs key comes from the SecretBundle (no env injection).
+	elevenLabsBundle := credentials.SecretBundle{
+		"TRANSCRIBER_TEST_ELEVENLABS_KEY": "sk_elevenlabs_test",
+	}
+	emptyBundle := credentials.SecretBundle{}
 
 	tests := []struct {
 		name     string
 		cfg      *config.Config
+		bundle   credentials.SecretBundle
 		wantNil  bool
 		wantName string
 	}{
@@ -139,6 +146,7 @@ func TestDetectTranscriber(t *testing.T) {
 			cfg: &config.Config{
 				Voice: config.VoiceConfig{ElevenLabsAPIKeyRef: "TRANSCRIBER_TEST_ELEVENLABS_KEY"},
 			},
+			bundle:   elevenLabsBundle,
 			wantName: "elevenlabs",
 		},
 		{
@@ -153,6 +161,7 @@ func TestDetectTranscriber(t *testing.T) {
 					},
 				},
 			},
+			bundle:   elevenLabsBundle,
 			wantName: "elevenlabs",
 		},
 		{
@@ -170,13 +179,18 @@ func TestDetectTranscriber(t *testing.T) {
 					},
 				},
 			},
+			bundle:   elevenLabsBundle,
 			wantName: "audio-model",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			tr := DetectTranscriber(tc.cfg)
+			bundle := tc.bundle
+			if bundle == nil {
+				bundle = emptyBundle
+			}
+			tr := DetectTranscriber(tc.cfg, bundle)
 			if tc.wantNil {
 				if tr != nil {
 					t.Errorf("DetectTranscriber() = %v, want nil", tr)

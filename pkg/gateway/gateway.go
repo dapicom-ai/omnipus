@@ -77,6 +77,7 @@ type services struct {
 	manualReloadChan chan struct{}
 	reloading        atomic.Bool
 	credStore        *credentials.Store
+	bundle           credentials.SecretBundle // resolved channel secrets — never written to env
 }
 
 type startupBlockedProvider struct {
@@ -95,6 +96,120 @@ func (p *startupBlockedProvider) Chat(
 
 func (p *startupBlockedProvider) GetDefaultModel() string {
 	return ""
+}
+
+// buildEnabledRefMap returns a set of credential ref names that belong to
+// channels that are currently enabled. Used by bootCredentials to distinguish
+// a missing credential on an enabled channel (fatal) from one on a disabled
+// channel (Info + continue). Only channel refs are included — provider
+// APIKeyRef misses are already fatal via InjectFromConfig.
+func buildEnabledRefMap(cfg *config.Config) map[string]bool {
+	m := make(map[string]bool)
+	ch := cfg.Channels
+
+	type channelRef struct {
+		enabled bool
+		refs    []string
+	}
+	entries := []channelRef{
+		{ch.Telegram.Enabled, []string{ch.Telegram.TokenRef}},
+		{ch.Discord.Enabled, []string{ch.Discord.TokenRef}},
+		{ch.Slack.Enabled, []string{ch.Slack.BotTokenRef, ch.Slack.AppTokenRef}},
+		{ch.Feishu.Enabled, []string{ch.Feishu.AppSecretRef, ch.Feishu.EncryptKeyRef, ch.Feishu.VerificationTokenRef}},
+		{ch.QQ.Enabled, []string{ch.QQ.AppSecretRef}},
+		{ch.DingTalk.Enabled, []string{ch.DingTalk.ClientSecretRef}},
+		{ch.Matrix.Enabled, []string{ch.Matrix.AccessTokenRef, ch.Matrix.CryptoPassphraseRef}},
+		{ch.LINE.Enabled, []string{ch.LINE.ChannelSecretRef, ch.LINE.ChannelAccessTokenRef}},
+		{ch.OneBot.Enabled, []string{ch.OneBot.AccessTokenRef}},
+		{ch.WeCom.Enabled, []string{ch.WeCom.SecretRef}},
+		{ch.Weixin.Enabled, []string{ch.Weixin.TokenRef}},
+		{ch.IRC.Enabled, []string{ch.IRC.PasswordRef, ch.IRC.NickServPasswordRef, ch.IRC.SASLPasswordRef}},
+	}
+	for _, e := range entries {
+		if !e.enabled {
+			continue
+		}
+		for _, ref := range e.refs {
+			if ref != "" {
+				m[ref] = true
+			}
+		}
+	}
+	return m
+}
+
+// bootCredentials runs the canonical credential + config boot sequence and
+// returns the initialized config, secret bundle, and store.
+//
+// Sequence (matches ADR-004 §Boot Order Contract):
+//  1. NewStore → Unlock (fatal on failure)
+//  2. LoadConfigWithStore (fatal on failure)
+//  3. InjectFromConfig for provider env-vars (fatal on failure)
+//  4. ResolveBundle for channel secrets (NotFoundError for disabled channels is Info, rest Warn)
+//  5. cfg.RegisterSensitiveValues with all resolved plaintexts
+//
+// Both Run and boot_order_test.go call this helper so that a refactor of one
+// cannot silently drift from the other.
+func bootCredentials(
+	homePath, configPath string,
+) (*config.Config, credentials.SecretBundle, *credentials.Store, error) {
+	credStore := credentials.NewStore(filepath.Join(homePath, "credentials.json"))
+	if unlockErr := credentials.Unlock(credStore); unlockErr != nil {
+		return nil, nil, nil, fmt.Errorf("credential store: %w", unlockErr)
+	}
+
+	cfg, err := config.LoadConfigWithStore(configPath, credStore)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("error loading config: %w", err)
+	}
+
+	// Inject provider API keys into the process environment so LLM SDK clients
+	// can read them via os.Getenv. Channels use SecretBundle instead (no env injection).
+	if errs := credentials.InjectFromConfig(cfg, credStore); len(errs) > 0 {
+		for _, e := range errs {
+			slog.Error("provider credential injection failed", "error", e)
+		}
+		return nil, nil, nil, fmt.Errorf(
+			"fatal: provider credential injection failed — ensure OMNIPUS_MASTER_KEY is set and all referenced credentials exist",
+		)
+	}
+
+	// Build a ref→enabled map so we can distinguish a missing credential on an
+	// enabled channel (fatal) from one on a disabled channel (Info + continue).
+	enabledRefs := buildEnabledRefMap(cfg)
+
+	// Resolve all credential refs into a SecretBundle. Channels receive secrets
+	// via the bundle — no os.Setenv for channel credentials (B1 fix).
+	bundle, bundleErrs := credentials.ResolveBundle(cfg, credStore)
+	for _, e := range bundleErrs {
+		var notFound *credentials.NotFoundError
+		if errors.As(e, &notFound) {
+			if enabledRefs[notFound.Name] {
+				// Missing credential on an enabled channel is fatal at boot.
+				return nil, nil, nil, fmt.Errorf(
+					"fatal: enabled channel credential %q not found in store — "+
+						"ensure the credential is stored before starting: %w",
+					notFound.Name, e,
+				)
+			}
+			slog.Info("channel credential not found (channel is disabled)", "ref", notFound.Name)
+			continue
+		}
+		slog.Warn("credential bundle resolution error", "error", e)
+	}
+
+	// Register all resolved plaintext credentials with the config's sensitive-data
+	// replacer so they are scrubbed from LLM output and audit logs (A1 fix).
+	// Semantics are "replace", so every call installs the complete current set.
+	values := make([]string, 0, len(bundle))
+	for _, v := range bundle {
+		if v != "" {
+			values = append(values, v)
+		}
+	}
+	cfg.RegisterSensitiveValues(values)
+
+	return cfg, bundle, credStore, nil
 }
 
 // Run starts the gateway runtime using the configuration loaded from configPath.
@@ -119,46 +234,9 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	// Construct and unlock the credential store BEFORE loading config so that
 	// v0→v1 migration (MigrateWithStore) can persist legacy plaintext secrets.
 	// Implements BRD SEC-22/SEC-23 deny-by-default behavior.
-	credStore := credentials.NewStore(filepath.Join(homePath, "credentials.json"))
-	if unlockErr := credentials.Unlock(credStore); unlockErr != nil {
-		return fmt.Errorf("credential store: %w", unlockErr)
-	}
-
-	cfg, err := config.LoadConfigWithStore(configPath, credStore)
+	cfg, bundle, credStore, err := bootCredentials(homePath, configPath)
 	if err != nil {
-		return fmt.Errorf("error loading config: %w", err)
-	}
-
-	// Inject all provider/channel secrets into the process environment so
-	// channel constructors and provider factories can read them via os.Getenv.
-	// This must happen before createStartupProvider and setupAndStartServices.
-	if errs := credentials.InjectFromConfig(cfg, credStore); len(errs) > 0 {
-		for _, e := range errs {
-			slog.Error("provider credential injection failed", "error", e)
-		}
-		return fmt.Errorf(
-			"fatal: provider credential injection failed — ensure OMNIPUS_MASTER_KEY is set and all referenced credentials exist",
-		)
-	}
-	if errs := credentials.InjectChannelsFromConfig(cfg, credStore); len(errs) > 0 {
-		// Distinguish: ErrStoreLocked or non-ErrNotFound errors are always fatal.
-		// ErrNotFound for an enabled channel is fatal. ErrNotFound for a disabled
-		// channel is logged at Info and skipped.
-		var fatalErrs []error
-		for _, e := range errs {
-			var notFound *credentials.NotFoundError
-			if errors.As(e, &notFound) {
-				// Log at Warn — the gateway boot path has already decided below
-				// whether to treat this as fatal based on channel enabled state.
-				slog.Info("channel credential not found (channel may be disabled)", "error", e)
-				continue
-			}
-			slog.Error("channel credential injection failed", "error", e)
-			fatalErrs = append(fatalErrs, e)
-		}
-		if len(fatalErrs) > 0 {
-			return fmt.Errorf("fatal: channel credential injection failed — ensure OMNIPUS_MASTER_KEY is set")
-		}
+		return err
 	}
 
 	logger.SetLevelFromString(cfg.Gateway.LogLevel)
@@ -200,7 +278,7 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 			"skills_available": skillsInfo["available"],
 		})
 
-	runningServices, err := setupAndStartServices(cfg, agentLoop, msgBus, homePath, credStore)
+	runningServices, err := setupAndStartServices(cfg, bundle, agentLoop, msgBus, homePath, credStore)
 	if err != nil {
 		return err
 	}
@@ -299,9 +377,8 @@ func executeReload(
 	allowEmptyStartup bool,
 ) error {
 	defer runningServices.reloading.Store(false)
-	// Re-inject credentials for the new config so newly added channels/providers
-	// receive their resolved secrets before service reconstruction. If injection
-	// fails, reject the reload and keep the old config serving.
+	// Re-inject provider credentials for the new config so LLM SDK clients
+	// receive their secrets. If injection fails, reject the reload.
 	if cs := runningServices.credStore; cs != nil {
 		if errs := credentials.InjectFromConfig(newCfg, cs); len(errs) > 0 {
 			for _, e := range errs {
@@ -309,20 +386,28 @@ func executeReload(
 			}
 			return fmt.Errorf("reload rejected: provider credential injection failed")
 		}
-		if errs := credentials.InjectChannelsFromConfig(newCfg, cs); len(errs) > 0 {
-			var fatalErrs []error
-			for _, e := range errs {
-				var notFound *credentials.NotFoundError
-				if errors.As(e, &notFound) {
-					slog.Info("reload: channel credential not found (channel may be disabled)", "error", e)
-					continue
-				}
-				slog.Error("reload: channel credential injection failed", "error", e)
-				fatalErrs = append(fatalErrs, e)
+
+		// Re-resolve the SecretBundle for channels (no os.Setenv for channel creds).
+		newBundle, bundleErrs := credentials.ResolveBundle(newCfg, cs)
+		for _, e := range bundleErrs {
+			var notFound *credentials.NotFoundError
+			if errors.As(e, &notFound) {
+				slog.Info("reload: channel credential not found (channel may be disabled)", "error", e)
+				continue
 			}
-			if len(fatalErrs) > 0 {
-				return fmt.Errorf("reload rejected: channel credential injection failed")
+			slog.Warn("reload: credential bundle resolution error", "error", e)
+		}
+		runningServices.bundle = newBundle
+
+		// Re-register resolved plaintexts so the scrubber stays current after reload.
+		reloadValues := make([]string, 0, len(newBundle))
+		for _, v := range newBundle {
+			if v != "" {
+				reloadValues = append(reloadValues, v)
 			}
+		}
+		if len(reloadValues) > 0 {
+			newCfg.RegisterSensitiveValues(reloadValues)
 		}
 	}
 	return handleConfigReload(ctx, agentLoop, newCfg, provider, runningServices, msgBus, allowEmptyStartup)
@@ -347,12 +432,13 @@ func createStartupProvider(
 
 func setupAndStartServices(
 	cfg *config.Config,
+	bundle credentials.SecretBundle,
 	agentLoop *agent.AgentLoop,
 	msgBus *bus.MessageBus,
 	homePath string,
 	credStore *credentials.Store,
 ) (*services, error) {
-	runningServices := &services{credStore: credStore}
+	runningServices := &services{credStore: credStore, bundle: bundle}
 
 	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
 	var err error
@@ -396,7 +482,12 @@ func setupAndStartServices(
 		fms.Start()
 	}
 
-	runningServices.ChannelManager, err = channels.NewManager(cfg, msgBus, runningServices.MediaStore)
+	runningServices.ChannelManager, err = channels.NewManager(
+		cfg,
+		runningServices.bundle,
+		msgBus,
+		runningServices.MediaStore,
+	)
 	if err != nil {
 		if fms, ok := runningServices.MediaStore.(*media.FileMediaStore); ok {
 			fms.Stop()
@@ -407,7 +498,7 @@ func setupAndStartServices(
 	agentLoop.SetChannelManager(runningServices.ChannelManager)
 	agentLoop.SetMediaStore(runningServices.MediaStore)
 
-	if transcriber := voice.DetectTranscriber(cfg); transcriber != nil {
+	if transcriber := voice.DetectTranscriber(cfg, runningServices.bundle); transcriber != nil {
 		agentLoop.SetTranscriber(transcriber)
 		logger.InfoCF("voice", "Transcription enabled (agent-level)", map[string]any{"provider": transcriber.Name()})
 	}
@@ -656,7 +747,7 @@ func restartServices(
 
 	al.SetChannelManager(runningServices.ChannelManager)
 
-	if err = runningServices.ChannelManager.Reload(context.Background(), cfg); err != nil {
+	if err = runningServices.ChannelManager.Reload(context.Background(), cfg, runningServices.bundle); err != nil {
 		return fmt.Errorf("error reload channels: %w", err)
 	}
 	fmt.Println("  ✓ Channels restarted.")
@@ -680,7 +771,7 @@ func restartServices(
 		fmt.Println("  ✓ Device event service restarted")
 	}
 
-	transcriber := voice.DetectTranscriber(cfg)
+	transcriber := voice.DetectTranscriber(cfg, runningServices.bundle)
 	al.SetTranscriber(transcriber)
 	if transcriber != nil {
 		logger.InfoCF("voice", "Transcription re-enabled (agent-level)", map[string]any{"provider": transcriber.Name()})

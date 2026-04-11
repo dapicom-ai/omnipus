@@ -5,14 +5,17 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 )
 
 func TestNewIRCChannel(t *testing.T) {
 	msgBus := bus.NewMessageBus()
 
+	emptyBundle := credentials.SecretBundle{}
+
 	t.Run("missing server", func(t *testing.T) {
 		cfg := config.IRCConfig{Nick: "bot"}
-		_, err := NewIRCChannel(cfg, msgBus)
+		_, err := NewIRCChannel(cfg, emptyBundle, msgBus)
 		if err == nil {
 			t.Error("expected error for missing server, got nil")
 		}
@@ -20,7 +23,7 @@ func TestNewIRCChannel(t *testing.T) {
 
 	t.Run("missing nick", func(t *testing.T) {
 		cfg := config.IRCConfig{Server: "irc.example.com:6667"}
-		_, err := NewIRCChannel(cfg, msgBus)
+		_, err := NewIRCChannel(cfg, emptyBundle, msgBus)
 		if err == nil {
 			t.Error("expected error for missing nick, got nil")
 		}
@@ -32,7 +35,7 @@ func TestNewIRCChannel(t *testing.T) {
 			Nick:     "testbot",
 			Channels: []string{"#test"},
 		}
-		ch, err := NewIRCChannel(cfg, msgBus)
+		ch, err := NewIRCChannel(cfg, emptyBundle, msgBus)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

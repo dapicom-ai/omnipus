@@ -89,7 +89,11 @@ func runWeixinOnboard(baseURL, proxy string, timeout time.Duration) error {
 	return nil
 }
 
-// weixinTokenCredRef is the credential store key used for the Weixin bot token.
+// weixinTokenCredRef is the credential-store key used for the Weixin bot
+// token. Currently a package constant because WeixinConfig is singular
+// in the config schema — only one Weixin bot per gateway. If the schema
+// ever becomes multi-bot (ChannelsConfig.Weixin []WeixinConfig), this
+// should become a function of the BotID: "WEIXIN_TOKEN_" + botID.
 const weixinTokenCredRef = "WEIXIN_TOKEN"
 
 // saveWeixinConfig patches channels.weixin in the config and saves the token

@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"reflect"
+	"strings"
 )
 
 // CredentialStore is a minimal interface satisfied by credentials.Store.
@@ -577,66 +579,74 @@ func (c *configV0) migrateChannelConfigs() {
 	}
 }
 
+// secretFieldPatterns is the set of JSON tag base-names that identify a field
+// as a legacy plaintext secret in configV0. The reflection walker in
+// hasLegacySecretsReflect matches the base name of the json struct tag (the
+// part before the first comma) against this set.
+//
+// Drift guard: config_old_test.go contains TestHasLegacySecrets_CoversAllSecretFields
+// which walks configV0 via reflection and fails if a string field whose json tag
+// suffix matches one of these patterns is not detected by hasLegacySecrets.
+// If a new v0 secret field is added, its json tag must match one of these patterns
+// OR this list must be updated — otherwise the drift guard test will catch the gap.
+var secretFieldPatterns = []string{
+	"token", "secret", "password", "api_key", "app_secret",
+	"access_token", "bot_token", "app_token", "channel_secret",
+	"channel_access_token", "client_secret", "verification_token",
+	"nickserv_password", "sasl_password", "encrypt_key",
+	"crypto_passphrase", "auth_token", "elevenlabs_api_key",
+}
+
 // hasLegacySecrets returns true if the v0 config contains any non-empty
 // plaintext secret fields that would be silently lost during a plain Migrate.
+// It uses reflection to walk configV0 so new secret fields are detected
+// automatically as long as their json tag matches one of secretFieldPatterns.
 func (c *configV0) hasLegacySecrets() bool {
-	if c.Channels.Telegram.Token != "" {
-		return true
+	return hasLegacySecretsReflect(reflect.ValueOf(c))
+}
+
+// hasLegacySecretsReflect is the recursive reflection walker for hasLegacySecrets.
+func hasLegacySecretsReflect(v reflect.Value) bool {
+	// Dereference pointer/interface.
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return false
+		}
+		v = v.Elem()
 	}
-	if c.Channels.Discord.Token != "" {
-		return true
-	}
-	if c.Channels.WeCom.Secret != "" {
-		return true
-	}
-	if c.Channels.Slack.BotToken != "" {
-		return true
-	}
-	if c.Channels.Slack.AppToken != "" {
-		return true
-	}
-	if c.Channels.Feishu.AppSecret != "" {
-		return true
-	}
-	if c.Channels.Feishu.EncryptKey != "" {
-		return true
-	}
-	if c.Channels.Feishu.VerificationToken != "" {
-		return true
-	}
-	if c.Channels.QQ.AppSecret != "" {
-		return true
-	}
-	if c.Channels.DingTalk.ClientSecret != "" {
-		return true
-	}
-	if c.Channels.Matrix.AccessToken != "" {
-		return true
-	}
-	if c.Channels.LINE.ChannelSecret != "" {
-		return true
-	}
-	if c.Channels.LINE.ChannelAccessToken != "" {
-		return true
-	}
-	if c.Channels.OneBot.AccessToken != "" {
-		return true
-	}
-	if c.Channels.Weixin.Token != "" {
-		return true
-	}
-	if c.Channels.IRC.Password != "" {
-		return true
-	}
-	if c.Channels.IRC.NickServPassword != "" {
-		return true
-	}
-	if c.Channels.IRC.SASLPassword != "" {
-		return true
-	}
-	for _, m := range c.ModelList {
-		if m.APIKey != "" {
-			return true
+	t := v.Type()
+	switch v.Kind() {
+	case reflect.Struct:
+		for i := 0; i < v.NumField(); i++ {
+			field := t.Field(i)
+			if !field.IsExported() {
+				continue
+			}
+			fv := v.Field(i)
+			if fv.Kind() == reflect.String && fv.String() != "" {
+				tag := strings.Split(field.Tag.Get("json"), ",")[0]
+				for _, pat := range secretFieldPatterns {
+					if tag == pat {
+						return true
+					}
+				}
+			}
+			if hasLegacySecretsReflect(fv) {
+				return true
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		for i := 0; i < v.Len(); i++ {
+			if hasLegacySecretsReflect(v.Index(i)) {
+				return true
+			}
+		}
+	case reflect.Map:
+		iter := v.MapRange()
+		for iter.Next() {
+			if hasLegacySecretsReflect(iter.Value()) {
+				return true
+			}
 		}
 	}
 	return false

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/ergochat/irc-go/ircevent"
@@ -13,20 +12,28 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
 
 // IRCChannel implements the Channel interface for IRC servers.
 type IRCChannel struct {
 	*channels.BaseChannel
-	config config.IRCConfig
-	conn   *ircevent.Connection
-	ctx    context.Context
-	cancel context.CancelFunc
+	config           config.IRCConfig
+	password         string // resolved once at construction from PasswordRef
+	saslPassword     string // resolved once at construction from SASLPasswordRef
+	nickServPassword string // resolved once at construction from NickServPasswordRef
+	conn             *ircevent.Connection
+	ctx              context.Context
+	cancel           context.CancelFunc
 }
 
 // NewIRCChannel creates a new IRC channel.
-func NewIRCChannel(cfg config.IRCConfig, messageBus *bus.MessageBus) (*IRCChannel, error) {
+func NewIRCChannel(
+	cfg config.IRCConfig,
+	secrets credentials.SecretBundle,
+	messageBus *bus.MessageBus,
+) (*IRCChannel, error) {
 	if cfg.Server == "" {
 		return nil, fmt.Errorf("irc server is required")
 	}
@@ -41,8 +48,11 @@ func NewIRCChannel(cfg config.IRCConfig, messageBus *bus.MessageBus) (*IRCChanne
 	)
 
 	return &IRCChannel{
-		BaseChannel: base,
-		config:      cfg,
+		BaseChannel:      base,
+		config:           cfg,
+		password:         secrets.GetString(cfg.PasswordRef),
+		saslPassword:     secrets.GetString(cfg.SASLPasswordRef),
+		nickServPassword: secrets.GetString(cfg.NickServPasswordRef),
 	}, nil
 }
 
@@ -69,7 +79,7 @@ func (c *IRCChannel) Start(ctx context.Context) error {
 		Nick:        c.config.Nick,
 		User:        user,
 		RealName:    realName,
-		Password:    os.Getenv(c.config.PasswordRef),
+		Password:    c.password,
 		UseTLS:      c.config.TLS,
 		RequestCaps: caps,
 		QuitMessage: "Goodbye",
@@ -84,9 +94,9 @@ func (c *IRCChannel) Start(ctx context.Context) error {
 	}
 
 	// SASL auth (takes priority over NickServ)
-	if saslPassword := os.Getenv(c.config.SASLPasswordRef); c.config.SASLUser != "" && saslPassword != "" {
+	if c.config.SASLUser != "" && c.saslPassword != "" {
 		conn.SASLLogin = c.config.SASLUser
-		conn.SASLPassword = saslPassword
+		conn.SASLPassword = c.saslPassword
 	}
 
 	// Register event handlers

@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +17,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/identity"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/media"
@@ -64,9 +64,13 @@ type LINEChannel struct {
 }
 
 // NewLINEChannel creates a new LINE channel instance.
-func NewLINEChannel(cfg config.LINEConfig, messageBus *bus.MessageBus) (*LINEChannel, error) {
-	channelSecret := os.Getenv(cfg.ChannelSecretRef)
-	accessToken := os.Getenv(cfg.ChannelAccessTokenRef)
+func NewLINEChannel(
+	cfg config.LINEConfig,
+	secrets credentials.SecretBundle,
+	messageBus *bus.MessageBus,
+) (*LINEChannel, error) {
+	channelSecret := secrets.GetString(cfg.ChannelSecretRef)
+	accessToken := secrets.GetString(cfg.ChannelAccessTokenRef)
 	if channelSecret == "" || accessToken == "" {
 		return nil, fmt.Errorf(
 			"line: channel_secret and channel_access_token are required (channel_secret_ref=%q, channel_access_token_ref=%q): check credential store",

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,6 +15,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/identity"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/media"
@@ -25,6 +25,7 @@ import (
 type OneBotChannel struct {
 	*channels.BaseChannel
 	config        config.OneBotConfig
+	accessToken   string // resolved once at construction from AccessTokenRef
 	conn          *websocket.Conn
 	ctx           context.Context
 	cancel        context.CancelFunc
@@ -97,7 +98,11 @@ type oneBotMessageSegment struct {
 	Data map[string]any `json:"data"`
 }
 
-func NewOneBotChannel(cfg config.OneBotConfig, messageBus *bus.MessageBus) (*OneBotChannel, error) {
+func NewOneBotChannel(
+	cfg config.OneBotConfig,
+	secrets credentials.SecretBundle,
+	messageBus *bus.MessageBus,
+) (*OneBotChannel, error) {
 	base := channels.NewBaseChannel("onebot", cfg, messageBus, cfg.AllowFrom,
 		channels.WithGroupTrigger(cfg.GroupTrigger),
 		channels.WithReasoningChannelID(cfg.ReasoningChannelID),
@@ -107,6 +112,7 @@ func NewOneBotChannel(cfg config.OneBotConfig, messageBus *bus.MessageBus) (*One
 	return &OneBotChannel{
 		BaseChannel: base,
 		config:      cfg,
+		accessToken: secrets.GetString(cfg.AccessTokenRef),
 		dedup:       make(map[string]struct{}, dedupSize),
 		dedupRing:   make([]string, dedupSize),
 		dedupIdx:    0,
@@ -190,8 +196,8 @@ func (c *OneBotChannel) connect() error {
 	dialer.HandshakeTimeout = 10 * time.Second
 
 	header := make(map[string][]string)
-	if accessToken := os.Getenv(c.config.AccessTokenRef); accessToken != "" {
-		header["Authorization"] = []string{"Bearer " + accessToken}
+	if c.accessToken != "" {
+		header["Authorization"] = []string{"Bearer " + c.accessToken}
 	}
 
 	conn, resp, err := dialer.Dial(c.config.WSUrl, header)

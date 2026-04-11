@@ -21,6 +21,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	"github.com/dapicom-ai/omnipus/pkg/taskstore"
 )
@@ -29,6 +30,7 @@ import (
 // containing one user with the given username and bcrypt password hash.
 func createTestConfigWithUser(t *testing.T, dir, username, passwordHash string) {
 	cfg := map[string]any{
+		"version":   1, // required for LoadConfig/LoadConfigWithStore to skip v0 migration
 		"agents":    map[string]any{"defaults": map[string]any{}, "list": []any{}},
 		"providers": []any{},
 		"gateway": map[string]any{
@@ -64,8 +66,9 @@ func newTestRestAPIWithHomeAuth(t *testing.T) *restAPI {
 			},
 		},
 	}
-	// Write a minimal config.json so safeUpdateConfigJSON can read and atomically update it
-	minimalCfg := []byte(`{"agents":{"defaults":{},"list":[]},"providers":[]}`)
+	// Write a minimal v1 config.json so safeUpdateConfigJSON can read and atomically update it.
+	// version:1 prevents LoadConfig from treating it as v0 and running migration.
+	minimalCfg := []byte(`{"version":1,"agents":{"defaults":{},"list":[]},"providers":[]}`)
 	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
 
 	msgBus := bus.NewMessageBus()
@@ -263,6 +266,7 @@ func TestHandleLogin_DifferentInputProducesDifferentToken(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := map[string]any{
+		"version":   1,
 		"agents":    map[string]any{"defaults": map[string]any{}, "list": []any{}},
 		"providers": []any{},
 		"gateway": map[string]any{
@@ -723,6 +727,7 @@ func TestHandleLogin_DevModeBypass_DenyByDefault(t *testing.T) {
 	tmpDir := t.TempDir()
 	// Write config with empty users array.
 	cfg := map[string]any{
+		"version":   1,
 		"agents":    map[string]any{"defaults": map[string]any{}, "list": []any{}},
 		"providers": []any{},
 		"gateway": map[string]any{
@@ -1311,6 +1316,94 @@ func TestConfigFromContext_ReturnsDifferentConfigThanLive(t *testing.T) {
 // TriggerReload returns "reload not configured" in the test environment because
 // AgentLoop.Run() is never called during unit tests.
 // This is not a production bug — it's a test environment limitation.
+// TestLogin_AfterOnboardingWithoutRestart verifies that after onboarding completes
+// (which writes users to disk via safeUpdateConfigJSON), a subsequent login and
+// token validation succeeds without a process restart.
+//
+// Before the A2 fix, safeUpdateConfigJSON only wrote to disk. The in-memory config
+// (used by withAuth via GetConfig()) still had no users, so checkBearerAuth fell
+// into the "no users configured" branch and returned 401 for every request.
+//
+// After the fix, safeUpdateConfigJSON calls refreshConfigAndRewireServices so GetConfig()
+// returns the config with the newly created admin user immediately.
+func TestLogin_AfterOnboardingWithoutRestart(t *testing.T) {
+	tmpDir := t.TempDir()
+	// Fresh gateway — no users in-memory config.
+	// Use version:1 so LoadConfigWithStore (called by refreshConfigAndRewireServices) does
+	// not attempt V0 migration, which would fail because the minimal config has
+	// `providers` as an array incompatible with providersConfigV0.
+	minimalCfg := []byte(`{"version":1,"agents":{"defaults":{},"list":[]},"providers":[]}`)
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "config.json"), minimalCfg, 0o600))
+
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{Host: "127.0.0.1", Port: 8080},
+		Agents: config.AgentsConfig{
+			Defaults: config.AgentDefaults{
+				Workspace: tmpDir,
+				ModelName: "test-model",
+				MaxTokens: 4096,
+			},
+		},
+	}
+	msgBus := bus.NewMessageBus()
+	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+
+	t.Setenv("OMNIPUS_MASTER_KEY", testMasterKey)
+	credStore, credErr := func() (*credentials.Store, error) {
+		s := credentials.NewStore(filepath.Join(tmpDir, "credentials.json"))
+		if err := credentials.Unlock(s); err != nil {
+			return nil, err
+		}
+		return s, nil
+	}()
+	require.NoError(t, credErr)
+
+	api := &restAPI{
+		agentLoop:     al,
+		homePath:      tmpDir,
+		allowedOrigin: "http://localhost:3000",
+		onboardingMgr: onboarding.NewManager(tmpDir),
+		taskStore:     taskstore.New(tmpDir + "/tasks"),
+		credStore:     credStore,
+	}
+
+	// Step 1: Complete onboarding — writes admin to disk AND refreshes in-memory config.
+	// Use a provider body that passes ValidateProviders (model field required).
+	onboardBody := `{"provider":{"id":"openai","api_key":"sk-test","model":"gpt-4o"},"admin":{"username":"admin","password":"secret123"}}`
+	onboardReq := httptest.NewRequest(http.MethodPost, "/api/v1/onboarding/complete", strings.NewReader(onboardBody))
+	onboardReq.Header.Set("Content-Type", "application/json")
+	onboardW := httptest.NewRecorder()
+	api.HandleCompleteOnboarding(onboardW, onboardReq)
+	require.Equal(t, http.StatusOK, onboardW.Code, "onboarding must succeed: %s", onboardW.Body.String())
+
+	// Step 2: Login with the newly created admin credentials.
+	loginBody := `{"username":"admin","password":"secret123"}`
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(loginBody))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginW := httptest.NewRecorder()
+	api.HandleLogin(loginW, loginReq)
+	require.Equal(t, http.StatusOK, loginW.Code, "login must succeed after onboarding: %s", loginW.Body.String())
+	var loginResp map[string]any
+	require.NoError(t, json.Unmarshal(loginW.Body.Bytes(), &loginResp))
+	token, _ := loginResp["token"].(string)
+	require.NotEmpty(t, token, "login must return a non-empty token")
+
+	// Step 3: Use the token via withAuth (falls back to GetConfig() since no
+	// configSnapshotMiddleware in unit tests). Before A2 fix this returns 401.
+	validateHandler := api.withAuth(api.HandleValidateToken)
+	validateReq := httptest.NewRequest(http.MethodGet, "/api/v1/auth/validate", nil)
+	validateReq.Header.Set("Authorization", "Bearer "+token)
+	validateW := httptest.NewRecorder()
+	validateHandler(validateW, validateReq)
+
+	assert.Equal(t, http.StatusOK, validateW.Code,
+		"validate must return 200 after onboarding without restart: %s", validateW.Body.String())
+	var validateResp map[string]any
+	require.NoError(t, json.Unmarshal(validateW.Body.Bytes(), &validateResp))
+	assert.Equal(t, "admin", validateResp["username"])
+	assert.Equal(t, "admin", validateResp["role"])
+}
+
 func TestHandleValidateToken_TriggerReloadNotConfigured(t *testing.T) {
 	tmpDir := t.TempDir()
 	hash, err := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)

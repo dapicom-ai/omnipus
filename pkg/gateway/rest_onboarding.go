@@ -93,10 +93,24 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Build the provider entry as a JSON object to inject into providers array.
+	// model defaults per provider when not specified in the onboarding request.
+	providerModel := body.Provider.Model
+	if providerModel == "" {
+		switch body.Provider.ID {
+		case "anthropic":
+			providerModel = "claude-sonnet-4-6"
+		case "gemini", "google":
+			providerModel = "gemini-2.0-flash"
+		case "openrouter":
+			providerModel = "openai/gpt-4o"
+		default: // openai and any other provider
+			providerModel = "gpt-4o"
+		}
+	}
 	newProviderEntry := map[string]any{
 		"model_name":  body.Provider.ID,
 		"provider":    body.Provider.ID,
-		"model":       body.Provider.Model,
+		"model":       providerModel,
 		"api_key_ref": credRefName,
 	}
 

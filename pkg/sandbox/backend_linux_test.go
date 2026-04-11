@@ -53,9 +53,8 @@ func TestSandboxBackend_LinuxFull(t *testing.T) {
 		// the Go test runner via Landlock's one-way ratchet. This test validates
 		// only that the policy struct is constructed correctly.
 		//
-		// NOTE: subprocess-level Apply coverage (spawning a child process, calling
-		// Apply, then asserting filesystem restrictions are enforced) does not yet
-		// exist. It is tracked as a future integration-test gap.
+		// Subprocess-level Apply enforcement coverage lives in
+		// backend_linux_subprocess_test.go:TestLandlock_ApplySubprocess.
 		_ = policy
 		_ = backend
 		assert.NotNil(t, backend)

@@ -28,6 +28,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/identity"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/media"
@@ -57,6 +58,7 @@ type qqAPI interface {
 type QQChannel struct {
 	*channels.BaseChannel
 	config         config.QQConfig
+	appSecret      string // resolved once at construction from AppSecretRef
 	api            qqAPI
 	tokenSource    oauth2.TokenSource
 	ctx            context.Context
@@ -82,7 +84,11 @@ type QQChannel struct {
 	stopOnce sync.Once
 }
 
-func NewQQChannel(cfg config.QQConfig, messageBus *bus.MessageBus) (*QQChannel, error) {
+func NewQQChannel(
+	cfg config.QQConfig,
+	secrets credentials.SecretBundle,
+	messageBus *bus.MessageBus,
+) (*QQChannel, error) {
 	base := channels.NewBaseChannel("qq", cfg, messageBus, cfg.AllowFrom,
 		channels.WithMaxMessageLength(cfg.MaxMessageLength),
 		channels.WithGroupTrigger(cfg.GroupTrigger),
@@ -92,13 +98,14 @@ func NewQQChannel(cfg config.QQConfig, messageBus *bus.MessageBus) (*QQChannel, 
 	return &QQChannel{
 		BaseChannel: base,
 		config:      cfg,
+		appSecret:   secrets.GetString(cfg.AppSecretRef),
 		dedup:       make(map[string]time.Time),
 		done:        make(chan struct{}),
 	}, nil
 }
 
 func (c *QQChannel) Start(ctx context.Context) error {
-	appSecret := os.Getenv(c.config.AppSecretRef)
+	appSecret := c.appSecret
 	if c.config.AppID == "" || appSecret == "" {
 		return fmt.Errorf(
 			"QQ: app_id and app_secret not configured (app_secret_ref=%q): check credential store",

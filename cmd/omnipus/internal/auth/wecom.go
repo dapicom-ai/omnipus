@@ -195,7 +195,11 @@ func defaultWeComQRFlowOptions(timeout time.Duration) wecomQRFlowOptions {
 	}
 }
 
-// wecomSecretCredRef is the credential store key used for the WeCom bot secret.
+// wecomSecretCredRef is the credential-store key used for the WeCom bot
+// secret. Currently a package constant because WeComConfig is singular
+// in the config schema — only one WeCom bot per gateway. If the schema
+// ever becomes multi-bot (ChannelsConfig.WeCom []WeComConfig), this
+// should become a function of the BotID: "WECOM_SECRET_" + botID.
 const wecomSecretCredRef = "WECOM_SECRET"
 
 func applyWeComAuthResult(cfg *config.Config, botInfo wecomQRBotInfo) {

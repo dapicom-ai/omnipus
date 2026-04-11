@@ -24,6 +24,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/identity"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/media"
@@ -37,11 +38,13 @@ const errCodeTenantTokenInvalid = 99991663
 
 type FeishuChannel struct {
 	*channels.BaseChannel
-	config     config.FeishuConfig
-	appSecret  string
-	client     *lark.Client
-	wsClient   *larkws.Client
-	tokenCache *tokenCache // custom cache that supports invalidation
+	config            config.FeishuConfig
+	appSecret         string
+	verificationToken string // resolved once at construction from VerificationTokenRef
+	encryptKey        string // resolved once at construction from EncryptKeyRef
+	client            *lark.Client
+	wsClient          *larkws.Client
+	tokenCache        *tokenCache // custom cache that supports invalidation
 
 	botOpenID atomic.Value // stores string; populated lazily for @mention detection
 
@@ -49,7 +52,11 @@ type FeishuChannel struct {
 	cancel context.CancelFunc
 }
 
-func NewFeishuChannel(cfg config.FeishuConfig, bus *bus.MessageBus) (*FeishuChannel, error) {
+func NewFeishuChannel(
+	cfg config.FeishuConfig,
+	secrets credentials.SecretBundle,
+	bus *bus.MessageBus,
+) (*FeishuChannel, error) {
 	base := channels.NewBaseChannel("feishu", cfg, bus, cfg.AllowFrom,
 		channels.WithGroupTrigger(cfg.GroupTrigger),
 		channels.WithReasoningChannelID(cfg.ReasoningChannelID),
@@ -60,13 +67,15 @@ func NewFeishuChannel(cfg config.FeishuConfig, bus *bus.MessageBus) (*FeishuChan
 	if cfg.IsLark {
 		opts = append(opts, lark.WithOpenBaseUrl(lark.LarkBaseUrl))
 	}
-	appSecret := os.Getenv(cfg.AppSecretRef)
+	appSecret := secrets.GetString(cfg.AppSecretRef)
 	ch := &FeishuChannel{
-		BaseChannel: base,
-		config:      cfg,
-		appSecret:   appSecret,
-		tokenCache:  tc,
-		client:      lark.NewClient(cfg.AppID, appSecret, opts...),
+		BaseChannel:       base,
+		config:            cfg,
+		appSecret:         appSecret,
+		verificationToken: secrets.GetString(cfg.VerificationTokenRef),
+		encryptKey:        secrets.GetString(cfg.EncryptKeyRef),
+		tokenCache:        tc,
+		client:            lark.NewClient(cfg.AppID, appSecret, opts...),
 	}
 	ch.SetOwner(ch)
 	return ch, nil
@@ -84,9 +93,7 @@ func (c *FeishuChannel) Start(ctx context.Context) error {
 		})
 	}
 
-	verificationToken := os.Getenv(c.config.VerificationTokenRef)
-	encryptKey := os.Getenv(c.config.EncryptKeyRef)
-	dispatcher := larkdispatcher.NewEventDispatcher(verificationToken, encryptKey).
+	dispatcher := larkdispatcher.NewEventDispatcher(c.verificationToken, c.encryptKey).
 		OnP2MessageReceiveV1(c.handleMessageReceive)
 
 	runCtx, cancel := context.WithCancel(ctx)

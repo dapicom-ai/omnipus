@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"reflect"
 	"strings"
-	"sync"
 
 	"gopkg.in/yaml.v3"
 )
@@ -28,47 +27,85 @@ import (
 // for the resolution path. The credentials.json store uses AES-256-GCM +
 // Argon2id per CLAUDE.md and BRD SEC-23.
 
-// SensitiveDataCache caches the compiled strings.Replacer for filtering
+// SensitiveDataCache holds the compiled strings.Replacer for filtering
 // sensitive data out of LLM responses and logs.
 //
-// Computed once on first access via sync.Once.
+// Instances are built fully populated and then stored atomically under
+// Config.sensitiveMu; readers that obtain a non-nil cache pointer may call
+// replacer without holding any lock.
 type SensitiveDataCache struct {
 	replacer *strings.Replacer
-	once     sync.Once
 }
 
 // SensitiveDataReplacer returns the strings.Replacer for filtering sensitive data.
-// It is computed once on first access via sync.Once.
+// The replacer is built lazily on first call and rebuilt whenever
+// RegisterSensitiveValues invalidates the cache.
+//
+// Thread-safe: safe to call concurrently with RegisterSensitiveValues.
 func (sec *Config) SensitiveDataReplacer() *strings.Replacer {
-	sec.initSensitiveCache()
+	sec.sensitiveMu.RLock()
+	cache := sec.sensitiveCache
+	sec.sensitiveMu.RUnlock()
+	if cache != nil {
+		return cache.replacer
+	}
+	// Cache is nil — build it under the write lock.
+	sec.sensitiveMu.Lock()
+	defer sec.sensitiveMu.Unlock()
+	if sec.sensitiveCache != nil {
+		// Another goroutine already built it while we waited for the write lock.
+		return sec.sensitiveCache.replacer
+	}
+	sec.buildAndPopulateSensitiveCache()
 	return sec.sensitiveCache.replacer
 }
 
-// initSensitiveCache initializes the sensitive data cache if not already done.
-func (sec *Config) initSensitiveCache() {
-	if sec.sensitiveCache == nil {
-		sec.sensitiveCache = &SensitiveDataCache{}
-	}
-	sec.sensitiveCache.once.Do(func() {
-		values := sec.collectSensitiveValues()
-		if len(values) == 0 {
-			sec.sensitiveCache.replacer = strings.NewReplacer()
-			return
-		}
+// RegisterSensitiveValues replaces the runtime sensitive-data list with the
+// supplied values and resets the compiled replacer cache so the next call to
+// SensitiveDataReplacer rebuilds with the new set. Semantics are "replace not
+// append" so that rotated or removed secrets are evicted on every reload; callers
+// must pass the COMPLETE current set of plaintexts each time.
+//
+// Thread-safe: safe to call concurrently with SensitiveDataReplacer.
+func (sec *Config) RegisterSensitiveValues(values []string) {
+	sec.sensitiveMu.Lock()
+	defer sec.sensitiveMu.Unlock()
+	// Replace (not append) so stale secrets from a prior config are evicted.
+	sec.registeredSensitive = append(sec.registeredSensitive[:0:0], values...)
+	sec.registeredSensitive = unique(sec.registeredSensitive)
+	// Invalidate the cache so the next SensitiveDataReplacer() call rebuilds.
+	sec.sensitiveCache = nil
+}
 
-		// Build old/new pairs for strings.Replacer
-		var pairs []string
-		for _, v := range values {
-			if len(v) > 3 {
-				pairs = append(pairs, v, "[FILTERED]")
-			}
+// buildAndPopulateSensitiveCache constructs the replacer and stores it on
+// sec.sensitiveCache. Must be called with sensitiveMu write-locked.
+func (sec *Config) buildAndPopulateSensitiveCache() {
+	cache := &SensitiveDataCache{}
+
+	// (a) Reflection-walked SecureString fields (kept for backward compat).
+	values := sec.collectSensitiveValues()
+	// (b) Runtime-registered plaintexts — read under the already-held write lock.
+	values = unique(append(values, sec.registeredSensitive...))
+
+	if len(values) == 0 {
+		cache.replacer = strings.NewReplacer()
+		sec.sensitiveCache = cache
+		return
+	}
+
+	// Build old/new pairs for strings.Replacer.
+	var pairs []string
+	for _, v := range values {
+		if len(v) > 3 {
+			pairs = append(pairs, v, "[FILTERED]")
 		}
-		if len(pairs) == 0 {
-			sec.sensitiveCache.replacer = strings.NewReplacer()
-			return
-		}
-		sec.sensitiveCache.replacer = strings.NewReplacer(pairs...)
-	})
+	}
+	if len(pairs) == 0 {
+		cache.replacer = strings.NewReplacer()
+	} else {
+		cache.replacer = strings.NewReplacer(pairs...)
+	}
+	sec.sensitiveCache = cache
 }
 
 // collectSensitiveValues collects all sensitive strings from Config using reflection.
@@ -263,4 +300,7 @@ func (s *SecureString) UnmarshalText(text []byte) error {
 // SecureModelList is the type used by Config.Providers. It is a plain slice of
 // *ModelConfig; the credential-separation custom UnmarshalYAML that used to
 // live here has been removed along with the .security.yml mechanism.
+//
+// Note: this is a named alias for []*ModelConfig and can be replaced with that
+// type directly in a future size-hygiene PR.
 type SecureModelList []*ModelConfig

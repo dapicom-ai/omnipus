@@ -7,6 +7,7 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 )
 
 // TestTypingIndicator_UnsupportedChannel verifies that channels not implementing
@@ -47,15 +48,21 @@ func TestChannelRegistryNoDisplacement(t *testing.T) {
 	// Pre-condition: register a sentinel factory under a test-only name
 	sentinelName := "test-sentinel-wave4-nodisplace"
 	sentinelCalled := false
-	RegisterFactory(sentinelName, func(cfg *config.Config, b *bus.MessageBus) (Channel, error) {
-		sentinelCalled = true
-		return nil, nil
-	})
+	RegisterFactory(
+		sentinelName,
+		func(cfg *config.Config, _ credentials.SecretBundle, b *bus.MessageBus) (Channel, error) {
+			sentinelCalled = true
+			return nil, nil
+		},
+	)
 
 	// Registering another factory must not remove the sentinel
-	RegisterFactory("test-wave4-second", func(cfg *config.Config, b *bus.MessageBus) (Channel, error) {
-		return nil, nil
-	})
+	RegisterFactory(
+		"test-wave4-second",
+		func(cfg *config.Config, _ credentials.SecretBundle, b *bus.MessageBus) (Channel, error) {
+			return nil, nil
+		},
+	)
 
 	// Sentinel factory must still be retrievable
 	f, ok := getFactory(sentinelName)
@@ -63,7 +70,7 @@ func TestChannelRegistryNoDisplacement(t *testing.T) {
 	assert.NotNil(t, f, "sentinel factory must not be nil after second RegisterFactory call")
 
 	// Verify it's actually our sentinel (call it)
-	_, _ = f(nil, nil)
+	_, _ = f(nil, nil, nil)
 	assert.True(t, sentinelCalled, "sentinel factory must be callable and execute our implementation")
 }
 

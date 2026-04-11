@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +16,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/identity"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
@@ -110,8 +110,12 @@ func (s *recentMessageSet) Mark(id string) bool {
 	return true
 }
 
-func NewChannel(cfg config.WeComConfig, messageBus *bus.MessageBus) (*WeComChannel, error) {
-	secret := os.Getenv(cfg.SecretRef)
+func NewChannel(
+	cfg config.WeComConfig,
+	secrets credentials.SecretBundle,
+	messageBus *bus.MessageBus,
+) (*WeComChannel, error) {
+	secret := secrets.GetString(cfg.SecretRef)
 	if cfg.BotID == "" || secret == "" {
 		return nil, fmt.Errorf(
 			"wecom: bot_id and secret are required (secret_ref=%q): check credential store",

@@ -9,6 +9,7 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 )
 
 func newTestDingTalkChannel(t *testing.T, cfg config.DingTalkConfig) (*DingTalkChannel, *bus.MessageBus) {
@@ -19,11 +20,14 @@ func newTestDingTalkChannel(t *testing.T, cfg config.DingTalkConfig) (*DingTalkC
 	}
 	if cfg.ClientSecretRef == "" {
 		cfg.ClientSecretRef = "DINGTALK_TEST_CLIENT_SECRET"
-		t.Setenv("DINGTALK_TEST_CLIENT_SECRET", "test-client-secret")
+	}
+
+	secrets := credentials.SecretBundle{
+		credentials.SecretRef(cfg.ClientSecretRef): "test-client-secret",
 	}
 
 	msgBus := bus.NewMessageBus()
-	ch, err := NewDingTalkChannel(cfg, msgBus)
+	ch, err := NewDingTalkChannel(cfg, secrets, msgBus)
 	if err != nil {
 		t.Fatalf("new channel: %v", err)
 	}

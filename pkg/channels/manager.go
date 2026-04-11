@@ -20,6 +20,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/constants"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/health"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/media"
@@ -93,6 +94,7 @@ type Manager struct {
 	workers        map[string]*channelWorker
 	bus            *bus.MessageBus
 	config         *config.Config
+	secrets        credentials.SecretBundle // resolved plaintext secrets; never written to env
 	mediaStore     media.MediaStore
 	dispatchTask   *asyncTask
 	mux            *dynamicServeMux
@@ -271,12 +273,18 @@ func (m *Manager) preSendMedia(ctx context.Context, name string, msg bus.Outboun
 	}
 }
 
-func NewManager(cfg *config.Config, messageBus *bus.MessageBus, store media.MediaStore) (*Manager, error) {
+func NewManager(
+	cfg *config.Config,
+	secrets credentials.SecretBundle,
+	messageBus *bus.MessageBus,
+	store media.MediaStore,
+) (*Manager, error) {
 	m := &Manager{
 		channels:      make(map[string]Channel),
 		workers:       make(map[string]*channelWorker),
 		bus:           messageBus,
 		config:        cfg,
+		secrets:       secrets,
 		mediaStore:    store,
 		channelHashes: make(map[string]string),
 	}
@@ -366,7 +374,7 @@ func (m *Manager) initChannel(name, displayName string) error {
 	logger.DebugCF("channels", "Attempting to initialize channel", map[string]any{
 		"channel": displayName,
 	})
-	ch, err := f(m.config, m.bus)
+	ch, err := f(m.config, m.secrets, m.bus)
 	if err != nil {
 		logger.ErrorCF("channels", "Failed to initialize channel", map[string]any{
 			"channel": displayName,
@@ -1167,15 +1175,17 @@ func (m *Manager) GetEnabledChannels() []string {
 // channel config hashes to detect additions and removals: removed channels are
 // stopped, added channels are initialized and started, and existing (unchanged)
 // channel workers are restarted on a fresh context to ensure continued routing.
-func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
+func (m *Manager) Reload(ctx context.Context, cfg *config.Config, secrets credentials.SecretBundle) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Save old config so we can revert on error.
+	// Save old config and secrets so we can revert on error.
 	oldConfig := m.config
+	oldSecrets := m.secrets
 
-	// Update config early: initChannel uses m.config via factory(m.config, m.bus).
+	// Update config and secrets early: initChannel uses m.config and m.secrets via factory call.
 	m.config = cfg
+	m.secrets = secrets
 
 	list := toChannelHashes(cfg)
 	added, removed := compareChannels(m.channelHashes, list)
@@ -1210,6 +1220,7 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		logger.ErrorC("channels", fmt.Sprintf("toChannelConfig error: %v", err))
 		m.config = oldConfig
+		m.secrets = oldSecrets
 		cancel()
 		return err
 	}
@@ -1220,6 +1231,7 @@ func (m *Manager) Reload(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		logger.ErrorC("channels", fmt.Sprintf("initChannels error: %v", err))
 		m.config = oldConfig
+		m.secrets = oldSecrets
 		cancel()
 		return err
 	}

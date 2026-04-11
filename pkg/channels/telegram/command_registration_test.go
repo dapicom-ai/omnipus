@@ -14,7 +14,6 @@ func TestStartCommandRegistration_DoesNotBlock(t *testing.T) {
 	ch := &TelegramChannel{}
 	started := make(chan struct{}, 1)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	ch.registerFunc = func(context.Context, []commands.Definition) error {
 		started <- struct{}{}
@@ -26,8 +25,13 @@ func TestStartCommandRegistration_DoesNotBlock(t *testing.T) {
 	select {
 	case <-started:
 	case <-time.After(time.Second):
+		cancel()
 		t.Fatal("registration did not start asynchronously")
 	}
+	// Cancel and wait for the goroutine to exit so it does not race with other
+	// tests that modify the commandRegistrationBackoff package variable.
+	cancel()
+	ch.WaitCommandRegistrationDone()
 }
 
 func TestStartCommandRegistration_RetriesUntilSuccessThenStops(t *testing.T) {
@@ -61,8 +65,10 @@ func TestStartCommandRegistration_RetriesUntilSuccessThenStops(t *testing.T) {
 		t.Fatalf("expected at least 3 attempts, got %d", attempts.Load())
 	}
 
+	// Wait for the goroutine to exit cleanly — it returns after a successful
+	// registration, so WaitCommandRegistrationDone should return promptly.
+	ch.WaitCommandRegistrationDone()
 	stable := attempts.Load()
-	time.Sleep(30 * time.Millisecond)
 	if attempts.Load() != stable {
 		t.Fatalf("expected retries to stop after success, got %d -> %d", stable, attempts.Load())
 	}
@@ -87,9 +93,9 @@ func TestStartCommandRegistration_StopsAfterCancel(t *testing.T) {
 
 	time.Sleep(20 * time.Millisecond)
 	cancel()
-	time.Sleep(20 * time.Millisecond) // allow in-flight attempt to settle
+	ch.WaitCommandRegistrationDone() // deterministic: goroutine has fully exited
 	stable := attempts.Load()
-	time.Sleep(30 * time.Millisecond)
+	time.Sleep(5 * time.Millisecond) // sanity: no new attempts after done
 	if attempts.Load() != stable {
 		t.Fatalf("expected retries to quiesce after cancel, got %d -> %d", stable, attempts.Load())
 	}

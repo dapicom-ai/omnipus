@@ -1321,6 +1321,12 @@ func (a *restAPI) storeCredential(refName, apiKey string) (string, error) {
 // safeUpdateConfigJSON reads config.json, applies a mutation function on the raw JSON map,
 // and writes it back atomically. This preserves SecureStrings (API keys) that would be
 // destroyed by config.SaveConfig's JSON round-trip through the Go struct.
+//
+// After a successful atomic write it calls refreshConfigAndRewireServices so the
+// configSnapshotMiddleware picks up the new config immediately AND sensitive-data
+// scrubbing is re-armed with the new credentials (A1+A2 fix). If the in-memory
+// refresh fails the error is returned to the caller so the HTTP handler can surface
+// a 500 rather than silently serving stale state.
 func (a *restAPI) safeUpdateConfigJSON(mutate func(m map[string]any) error) error {
 	a.configMu.Lock()
 	defer a.configMu.Unlock()
@@ -1339,7 +1345,68 @@ func (a *restAPI) safeUpdateConfigJSON(mutate func(m map[string]any) error) erro
 	if err != nil {
 		return fmt.Errorf("serialize config: %w", err)
 	}
-	return fileutil.WriteFileAtomic(a.configPath(), out, 0o600)
+	if writeErr := fileutil.WriteFileAtomic(a.configPath(), out, 0o600); writeErr != nil {
+		return writeErr
+	}
+	// Refresh the in-memory config AND rewire sensitive-data scrubbing.
+	// Propagate the error so callers fail the HTTP request rather than silently
+	// serving stale in-memory state (prevents A1 regression on REST-initiated writes).
+	if refreshErr := a.refreshConfigAndRewireServices(a.configPath()); refreshErr != nil {
+		return fmt.Errorf("config written but in-memory refresh failed: %w", refreshErr)
+	}
+	return nil
+}
+
+// refreshConfigAndRewireServices loads a fresh config from disk, re-resolves the
+// credential bundle, registers all resolved plaintexts with the sensitive-data
+// replacer, and atomically swaps the in-memory config on the agent loop.
+//
+// This is the single authoritative refresh path — both safeUpdateConfigJSON and
+// any future REST-initiated config write must call this method rather than
+// calling a bare SwapConfig (which skips credential resolution and
+// RegisterSensitiveValues, causing an A1-class scrubber regression).
+//
+// When a.credStore is nil (e.g. tests that don't wire a store), the function
+// falls back to config.LoadConfig (no migration, no credential resolution) and
+// skips RegisterSensitiveValues — there are no credentials to re-arm in that case.
+//
+// Called while a.configMu is held.
+func (a *restAPI) refreshConfigAndRewireServices(configPath string) error {
+	if a.credStore == nil {
+		// No credential store wired — use the plain loader (no v0 migration, no
+		// credential resolution). Safe because without a store there are no
+		// secrets to re-arm in the replacer.
+		newCfg, err := config.LoadConfig(configPath)
+		if err != nil {
+			return fmt.Errorf("load config (no store): %w", err)
+		}
+		a.agentLoop.SwapConfig(newCfg)
+		return nil
+	}
+	newCfg, err := config.LoadConfigWithStore(configPath, a.credStore)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+	bundle, bundleErrs := credentials.ResolveBundle(newCfg, a.credStore)
+	for _, e := range bundleErrs {
+		// Non-fatal: a disabled channel missing its cred is acceptable here.
+		// Enabled-channel fatality is enforced at boot; REST-initiated reloads
+		// are best-effort so we log and continue.
+		slog.Warn("refreshConfigAndRewireServices: bundle resolution error", "error", e)
+	}
+	// Replace (not append) the entire sensitive-values set so rotated secrets
+	// are evicted and the scrubber reflects exactly the current config state.
+	values := make([]string, 0, len(bundle))
+	for _, v := range bundle {
+		if v != "" {
+			values = append(values, v)
+		}
+	}
+	newCfg.RegisterSensitiveValues(values)
+	// Atomically swap the config pointer so all subsequent requests see the
+	// new config with scrubbing fully re-armed.
+	a.agentLoop.SwapConfig(newCfg)
+	return nil
 }
 
 func (a *restAPI) updateConfig(w http.ResponseWriter, r *http.Request) {

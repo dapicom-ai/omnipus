@@ -54,7 +54,7 @@ func newOnboardingTestAPI(t *testing.T, tmpDir string, al *agent.AgentLoop) *res
 // Then 200 with {"token":"<token>","role":"admin","username":"admin"}.
 func TestHandleCompleteOnboarding_Success(t *testing.T) {
 	tmpDir := t.TempDir()
-	minimalCfg := []byte(`{"agents":{"defaults":{},"list":[]},"providers":[]}`)
+	minimalCfg := []byte(`{"version":1,"agents":{"defaults":{},"list":[]},"providers":[]}`)
 	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
 
 	cfg := &config.Config{
@@ -96,7 +96,7 @@ func TestHandleCompleteOnboarding_Success(t *testing.T) {
 // Then 409 Conflict with {"error":"onboarding already complete"}.
 func TestHandleCompleteOnboarding_AlreadyComplete(t *testing.T) {
 	tmpDir := t.TempDir()
-	minimalCfg := []byte(`{"agents":{"defaults":{},"list":[]},"providers":[]}`)
+	minimalCfg := []byte(`{"version":1,"agents":{"defaults":{},"list":[]},"providers":[]}`)
 	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
 
 	cfg := &config.Config{
@@ -268,7 +268,7 @@ func TestHandleCompleteOnboarding_MethodNotAllowed(t *testing.T) {
 // Then login succeeds and the returned token validates successfully.
 func TestHandleCompleteOnboarding_ThenLogin(t *testing.T) {
 	tmpDir := t.TempDir()
-	minimalCfg := []byte(`{"agents":{"defaults":{},"list":[]},"providers":[]}`)
+	minimalCfg := []byte(`{"version":1,"agents":{"defaults":{},"list":[]},"providers":[]}`)
 	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
 
 	cfg := &config.Config{
@@ -345,7 +345,7 @@ func TestHandleCompleteOnboarding_ThenLogin(t *testing.T) {
 // Then it contains the admin user with a password_hash and token_hash.
 func TestHandleCompleteOnboarding_PersistsAdmin(t *testing.T) {
 	tmpDir := t.TempDir()
-	minimalCfg := []byte(`{"agents":{"defaults":{},"list":[]},"providers":[]}`)
+	minimalCfg := []byte(`{"version":1,"agents":{"defaults":{},"list":[]},"providers":[]}`)
 	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
 
 	cfg := &config.Config{
@@ -401,7 +401,7 @@ func TestHandleCompleteOnboarding_PersistsAdmin(t *testing.T) {
 // is not corrupted (has exactly one admin user).
 func TestHandleCompleteOnboarding_Concurrent(t *testing.T) {
 	tmpDir := t.TempDir()
-	minimalCfg := []byte(`{"agents":{"defaults":{},"list":[]},"providers":[]}`)
+	minimalCfg := []byte(`{"version":1,"agents":{"defaults":{},"list":[]},"providers":[]}`)
 	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
 
 	// Set up a credential store so the onboarding can persist API keys (SEC-23).
@@ -475,7 +475,7 @@ func TestHandleCompleteOnboarding_Concurrent(t *testing.T) {
 // (the one that acquires the lock first) and the others get 409 or 500.
 func TestHandleCompleteOnboarding_ConcurrentDifferentUsers(t *testing.T) {
 	tmpDir := t.TempDir()
-	minimalCfg := []byte(`{"agents":{"defaults":{},"list":[]},"providers":[]}`)
+	minimalCfg := []byte(`{"version":1,"agents":{"defaults":{},"list":[]},"providers":[]}`)
 	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
 
 	// Set up a credential store so the onboarding can persist API keys (SEC-23).

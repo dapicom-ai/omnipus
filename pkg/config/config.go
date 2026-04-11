@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/caarlos0/env/v11"
@@ -136,6 +137,16 @@ type Config struct {
 
 	// cache for sensitive values and compiled regex (computed once)
 	sensitiveCache *SensitiveDataCache
+
+	// sensitiveMu guards registeredSensitive and sensitiveCache to prevent data
+	// races between the agent-loop log scrubber (reads) and config reloads (writes).
+	sensitiveMu sync.RWMutex
+
+	// registeredSensitive holds plaintext secrets registered at runtime via
+	// RegisterSensitiveValues (e.g., resolved credential store values). These
+	// supplement the reflection-walked SecureString fields so that *Ref-based
+	// credentials are also scrubbed from LLM output and audit logs.
+	registeredSensitive []string
 }
 
 // OmnipusStorageConfig holds storage-related settings per Appendix E §E.5.4.

@@ -1548,6 +1548,17 @@ func (al *AgentLoop) GetConfig() *config.Config {
 	return al.cfg
 }
 
+// SwapConfig atomically replaces the in-memory config with the supplied,
+// fully-initialized *config.Config (credentials resolved, sensitive values
+// registered). Callers are responsible for calling credentials.ResolveBundle
+// and cfg.RegisterSensitiveValues before SwapConfig — this method only does
+// the atomic pointer swap.
+func (al *AgentLoop) SwapConfig(newCfg *config.Config) {
+	al.mu.Lock()
+	al.cfg = newCfg
+	al.mu.Unlock()
+}
+
 // GetTaskStore returns the shared TaskStore (may be nil in tests).
 func GetTaskStore(al *AgentLoop) *taskstore.TaskStore {
 	return al.taskStore

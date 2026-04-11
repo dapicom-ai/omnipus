@@ -56,7 +56,7 @@ func newTestAPIWithHome(t *testing.T) (*restAPI, string) {
 			},
 		},
 	}
-	minimalCfg := []byte(`{"agents":{"defaults":{},"list":[]},"providers":[]}`)
+	minimalCfg := []byte(`{"version":1,"agents":{"defaults":{},"list":[]},"providers":[]}`)
 	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
 	msgBus := bus.NewMessageBus()
 	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
@@ -96,7 +96,7 @@ func newTestAPIWithMasterKey(t *testing.T) (*restAPI, string, string) {
 			},
 		},
 	}
-	minimalCfg := []byte(`{"agents":{"defaults":{},"list":[]},"providers":[]}`)
+	minimalCfg := []byte(`{"version":1,"agents":{"defaults":{},"list":[]},"providers":[]}`)
 	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
 	msgBus := bus.NewMessageBus()
 	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})

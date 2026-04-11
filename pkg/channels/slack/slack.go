@@ -3,7 +3,6 @@ package slack
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/identity"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/media"
@@ -38,9 +38,13 @@ type slackMessageRef struct {
 	Timestamp string
 }
 
-func NewSlackChannel(cfg config.SlackConfig, messageBus *bus.MessageBus) (*SlackChannel, error) {
-	botToken := os.Getenv(cfg.BotTokenRef)
-	appToken := os.Getenv(cfg.AppTokenRef)
+func NewSlackChannel(
+	cfg config.SlackConfig,
+	secrets credentials.SecretBundle,
+	messageBus *bus.MessageBus,
+) (*SlackChannel, error) {
+	botToken := secrets.GetString(cfg.BotTokenRef)
+	appToken := secrets.GetString(cfg.AppTokenRef)
 	if botToken == "" || appToken == "" {
 		return nil, fmt.Errorf(
 			"slack: bot_token and app_token are required (bot_token_ref=%q, app_token_ref=%q): check credential store",
