@@ -1,6 +1,6 @@
 # Business Requirements Document
 
-## Omnipus — Enterprise Security, Governance & Feature Enhancement for PicoClaw
+## Omnipus — Enterprise Security, Governance & Feature Enhancement for Omnipus
 
 **Version:** 1.0 DRAFT  
 **Date:** March 19, 2026  
@@ -11,11 +11,11 @@
 
 ## 1. Executive Summary
 
-PicoClaw is the lightest-weight open-source AI agent runtime available — a single Go binary under 20MB that boots in under one second and runs on hardware as cheap as $10. In five weeks it has reached 25K GitHub stars and proven its core value proposition: an AI agent that deploys anywhere, with zero dependencies.
+Omnipus is the lightest-weight open-source AI agent runtime available — a single Go binary under 20MB that boots in under one second and runs on hardware as cheap as $10. In five weeks it has reached 25K GitHub stars and proven its core value proposition: an AI agent that deploys anywhere, with zero dependencies.
 
-However, PicoClaw currently lacks the security posture, governance controls, and operational features required for enterprise, regulated, and multi-tenant environments. Competitors like NemoClaw (NVIDIA) have demonstrated that the market demands kernel-level sandboxing, audit trails, role-based access, and fine-grained tool permissions before organizations will trust an autonomous agent with real work.
+However, Omnipus currently lacks the security posture, governance controls, and operational features required for enterprise, regulated, and multi-tenant environments. Competitors like NemoClaw (NVIDIA) have demonstrated that the market demands kernel-level sandboxing, audit trails, role-based access, and fine-grained tool permissions before organizations will trust an autonomous agent with real work.
 
-This BRD defines the requirements for **Omnipus** — an agentic core built on PicoClaw’s foundation, delivering enterprise-grade security, governance, and a polished user experience.
+This BRD defines the requirements for **Omnipus** — an agentic core built on Omnipus’s foundation, delivering enterprise-grade security, governance, and a polished user experience.
 
 Omnipus is built around a common **agentic core**: a Go binary containing the security subsystem, policy engine, channel integrations, agent runtime, and data model. The UI is a shared `@omnipus/ui` React component library. The core supports multiple deployment modes: open source (single binary with embedded web UI), desktop (Electron wrapper), and hosted (cloud/SaaS).
 
@@ -29,22 +29,22 @@ Omnipus is built around a common **agentic core**: a Go binary containing the se
 
 ### 2.1 Security Gaps
 
-PicoClaw’s current security model is workspace-level only. While it blocks dangerous commands (rm -rf, fork bombs, disk writes) and restricts file operations to the workspace directory, it has significant shortcomings:
+Omnipus’s current security model is workspace-level only. While it blocks dangerous commands (rm -rf, fork bombs, disk writes) and restricts file operations to the workspace directory, it has significant shortcomings:
 
 - **No kernel-level enforcement.** Workspace restrictions are application-level checks that child processes spawned by build tools or shell commands can bypass. There is no OS-enforced isolation via Landlock, seccomp, or process namespaces.
 - **No tool-level permissions.** All tools are available to all agents. There is no allow/deny list, no per-binary execution control, no per-method API restriction, and no deny-by-default policy model.
 - **No audit trail.** There is no structured log of what actions an agent took, which tools it invoked, which LLM calls it made, which files it modified, or why a particular action was allowed or blocked.
-- **No role-based access.** PicoClaw has no concept of operator roles, permission tiers, or differentiated access between administrators, operators, and agents.
+- **No role-based access.** Omnipus has no concept of operator roles, permission tiers, or differentiated access between administrators, operators, and agents.
 - **No credential management.** API keys and tokens sit in plain-text JSON config files with no encryption at rest, no secure injection mechanism, and no log redaction.
 - **No policy engine.** There is no declarative, structured way to define and enforce security policies across agents, tools, and resources. No hot-reload capability for runtime policy changes.
 
 ### 2.2 Functional Gaps
 
-While PicoClaw is surprisingly feature-complete for a five-week-old project (55+ features already implemented), it has notable gaps versus OpenClaw:
+While Omnipus is surprisingly feature-complete for a five-week-old project (55+ features already implemented), it has notable gaps versus OpenClaw:
 
 - **Missing channel integrations.** Signal, Microsoft Teams, Google Chat, Nostr, Mattermost, Twitch, and Zalo are not supported (~8 channels behind OpenClaw’s 22+).
-- **No skill marketplace.** OpenClaw’s ClawHub has 13,729 community-built skills. PicoClaw has no equivalent registry, discovery mechanism, or trust verification system.
-- **Limited multi-agent orchestration.** PicoClaw can spawn subagents asynchronously but lacks full orchestration patterns (supervisor/worker delegation, channel-to-agent routing).
+- **No skill marketplace.** OpenClaw’s ClawHub has 13,729 community-built skills. Omnipus has no equivalent registry, discovery mechanism, or trust verification system.
+- **Limited multi-agent orchestration.** Omnipus can spawn subagents asynchronously but lacks full orchestration patterns (supervisor/worker delegation, channel-to-agent routing).
 - **No operational tooling.** No diagnostic command (like OpenClaw’s `doctor`), no backup/restore, no Tailscale integration for remote access.
 - **No plugin architecture.** No way to bundle and distribute provider integrations or third-party extensions as installable packages.
 
@@ -52,19 +52,19 @@ While PicoClaw is surprisingly feature-complete for a five-week-old project (55+
 
 The AI agent market is moving rapidly from experimental personal assistants toward enterprise deployment. NVIDIA’s launch of NemoClaw at GTC 2026 (March 16) with 17 enterprise partners (Salesforce, Cisco, Google, Adobe, CrowdStrike, SAP, ServiceNow) signals that security and governance are now table stakes. OpenClaw’s well-documented security incidents — CVE-2026-25253 (CVSS 8.8), the ClawHavoc malware campaign against ClawHub skills, and Snyk’s sandbox bypass research — have further accelerated demand for hardened agent runtimes.
 
-PicoClaw has a unique window of opportunity: it can deliver NemoClaw-grade security without NemoClaw’s infrastructure overhead, targeting edge, IoT, hybrid cloud, and resource-constrained enterprise environments that NemoClaw cannot serve.
+Omnipus has a unique window of opportunity: it can deliver NemoClaw-grade security without NemoClaw’s infrastructure overhead, targeting edge, IoT, hybrid cloud, and resource-constrained enterprise environments that NemoClaw cannot serve.
 
 -----
 
 ## 3. Project Objectives
 
 1. **Build the agentic core** — a Go binary containing security, policy, channels, agent runtime, and data model that serves as the foundation for all deployment modes.
-2. **Harden PicoClaw’s security posture** to be comparable to NemoClaw’s OpenShell runtime, using native Go and Linux kernel features instead of Docker/K3s containers.
+2. **Harden Omnipus’s security posture** to be comparable to NemoClaw’s OpenShell runtime, using native Go and Linux kernel features instead of Docker/K3s containers.
 3. **Implement a declarative policy engine** that gives operators fine-grained control over what agents can access, execute, and invoke — with deny-by-default semantics.
 4. **Add enterprise governance capabilities** including structured audit logging, role-based access control, credential management, and security diagnostics.
 5. **Close functional gaps** in channel integrations, multi-agent orchestration, extensibility, and operational tooling.
-6. **Deliver a polished UI** — a noticeably better experience than PicoClaw or OpenClaw, with inline tool output, streaming, agent management, and a system agent for conversational configuration.
-7. **Preserve PicoClaw’s core identity**: single binary, zero dependencies, sub-second startup, minimal RAM, runs on $10 hardware.
+6. **Deliver a polished UI** — a noticeably better experience than Omnipus or OpenClaw, with inline tool output, streaming, agent management, and a system agent for conversational configuration.
+7. **Preserve Omnipus’s core identity**: single binary, zero dependencies, sub-second startup, minimal RAM, runs on $10 hardware.
 8. **Design for multiple deployment modes** — architecture decisions must support open source (single binary), desktop (Electron), and hosted (cloud/SaaS) without fundamental changes.
 
 -----
@@ -76,10 +76,10 @@ PicoClaw has a unique window of opportunity: it can deliver NemoClaw-grade secur
 |**Single binary (agentic core)**                     |The Go agentic core compiles into a single binary. No runtime dependencies (no Docker, no Node.js, no Python). The Desktop variant wraps this binary in Electron. The open source variant embeds the web UI via `go:embed`. The SaaS variant may decompose the core into services later — but the core itself remains a single compilable unit.|
 |**Minimal footprint**                                |Total RAM overhead for all new security features should not exceed 5-10MB beyond current baseline.                                                                          |
 |**Graceful degradation**                             |Features requiring Linux 5.13+ kernel (Landlock, seccomp) must fall back cleanly to application-level enforcement on older kernels, non-Linux platforms, and Android/Termux.|
-|**Ecosystem compatibility**                          |Omnipus follows PicoClaw/OpenClaw conventions where applicable: SKILL.md format (ClawHub compatible), HEARTBEAT.md, SOUL.md, AGENTS.md, JSON config structure patterns. This maximizes compatibility with the existing skill ecosystem and community knowledge. Omnipus is not a drop-in PicoClaw replacement — it has its own config format but adopts the same concepts and file conventions.|
+|**Ecosystem compatibility**                          |Omnipus follows Omnipus/OpenClaw conventions where applicable: SKILL.md format (ClawHub compatible), HEARTBEAT.md, SOUL.md, AGENTS.md, JSON config structure patterns. This maximizes compatibility with the existing skill ecosystem and community knowledge. Omnipus is not a drop-in Omnipus replacement — it has its own config format but adopts the same concepts and file conventions.|
 |**Deny-by-default for security, opt-in for features**|Security policies default to most restrictive. New functional features default to disabled until explicitly enabled.                                                        |
 |**All features implemented in Go**                   |No CGo, no external C libraries, no shelling out for security-critical paths. Pure Go using `golang.org/x/sys/unix` for kernel interfaces.                                  |
-|**Channel provider model (hybrid)**                  |Go channels are compiled into the binary (inheriting PicoClaw's architecture) and communicate via an internal MessageBus. Non-Go channels (Signal/Java, Teams/Node.js) and community channels run as external processes using a bridge protocol (JSON over stdin/stdout). All channels implement the same `ChannelProvider` interface. WhatsApp uses `modernc.org/sqlite` (pure Go) to avoid CGo. This preserves the single-binary deployment for 90%+ of users while supporting non-Go and community extensions.|
+|**Channel provider model (hybrid)**                  |Go channels are compiled into the binary (inheriting Omnipus's architecture) and communicate via an internal MessageBus. Non-Go channels (Signal/Java, Teams/Node.js) and community channels run as external processes using a bridge protocol (JSON over stdin/stdout). All channels implement the same `ChannelProvider` interface. WhatsApp uses `modernc.org/sqlite` (pure Go) to avoid CGo. This preserves the single-binary deployment for 90%+ of users while supporting non-Go and community extensions.|
 
 -----
 
@@ -186,7 +186,7 @@ The following limitations are inherent to Omnipus's unprivileged execution model
 |FUNC-08|Mattermost channel        |P3      |Easy    |Compiled-in Go channel. REST API and WebSocket integration. Straightforward, well-documented API.|
 |FUNC-09|Twitch channel            |P3      |Easy    |Compiled-in Go channel. IRC-based chat integration. Minimal complexity, reuses existing IRC channel adapter code.|
 
-Go channels are compiled into the binary (single process, zero IPC overhead, inheriting PicoClaw's architecture). Non-Go channels (Signal/Java, Teams/Node.js) use the bridge protocol as external processes. Community channels use the bridge protocol with the Omnipus Channel SDK. All implement the same `ChannelProvider` interface. See Appendix E §E.10.
+Go channels are compiled into the binary (single process, zero IPC overhead, inheriting Omnipus's architecture). Non-Go channels (Signal/Java, Teams/Node.js) use the bridge protocol as external processes. Community channels use the bridge protocol with the Omnipus Channel SDK. All implement the same `ChannelProvider` interface. See Appendix E §E.10.
 
 ### 5.10 FUNCTIONAL — Multi-Agent & Orchestration
 
@@ -202,7 +202,7 @@ Go channels are compiled into the binary (single process, zero IPC overhead, inh
 |-------|----------------------------|--------|--------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 |FUNC-12|Skill marketplace / registry|P2      |Moderate|CLI commands to browse, search, install, and update skills from a central registry. Includes metadata (description, author, version, hash). Supports self-hosted registries for enterprise deployments.|
 |FUNC-12a|ClawHub skill protocol     |P0      |Moderate|Implement the ClawHub registry protocol in Go: search, retrieve metadata, download packages. Consumes the existing 13,729+ skill ecosystem.|
-|FUNC-12b|SKILL.md parser and loader |P0      |Easy    |Parse OpenClaw's SKILL.md format — Markdown with metadata frontmatter. Extends PicoClaw's basic skills system to be format-compatible with ClawHub skills.|
+|FUNC-12b|SKILL.md parser and loader |P0      |Easy    |Parse OpenClaw's SKILL.md format — Markdown with metadata frontmatter. Extends Omnipus's basic skills system to be format-compatible with ClawHub skills.|
 |FUNC-12c|Skill hash verification    |P0      |Easy    |When installing a skill from ClawHub, verify its SHA-256 hash against the registry manifest. Integrates with SEC-09.|
 |FUNC-12d|Skill install/update/remove CLI|P0   |Easy    |CLI commands: `omnipus skill install/update/remove/search/list`. Skills install to `~/.omnipus/workspace/skills/<name>/`.|
 |FUNC-12e|ClawHub compatibility testing|P0     |Moderate|Automated test suite: install top 50 ClawHub skills, verify loading and tool registration. Run in CI.|
@@ -384,7 +384,7 @@ Features included:
 
 **Assumptions:**
 
-- PicoClaw’s existing codebase (Go, ~86.8% Go) is architecturally suitable for adding security middleware in the agent loop and tool invocation paths without major refactoring.
+- Omnipus’s existing codebase (Go, ~86.8% Go) is architecturally suitable for adding security middleware in the agent loop and tool invocation paths without major refactoring.
 - Team composition and timeline to be determined after prioritization and detailed specification.
 - Kernel-level features (Landlock, seccomp) will be Linux-only. macOS, Windows, FreeBSD, and Android/Termux deployments will use application-level enforcement only. This is acceptable because the primary enterprise deployment target is Linux.
 - The existing JSON config format can be extended without breaking changes. No migration to YAML is required.
@@ -397,10 +397,10 @@ Features included:
 |Risk                                                 |Impact                                   |Likelihood|Mitigation                                                                                                                                                  |
 |-----------------------------------------------------|-----------------------------------------|----------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
 |Landlock/seccomp complexity exceeds estimate         |Phase 1 delay                            |Medium    |Spike: build a standalone PoC in week 1 before committing to the architecture. Use existing Go libraries (go-landlock, go-seccomp) as starting points.      |
-|Security features increase RAM beyond budget         |Erodes PicoClaw’s core value prop        |Low       |Profile continuously. Audit logging uses ring buffer with configurable max size. Policy engine uses minimal in-memory representation.                       |
+|Security features increase RAM beyond budget         |Erodes Omnipus’s core value prop        |Low       |Profile continuously. Audit logging uses ring buffer with configurable max size. Policy engine uses minimal in-memory representation.                       |
 |Backward compatibility break in config               |Alienates existing 25K-star community    |Medium    |All new config sections are additive under a `security` key. Validate with v0.2.x config corpus before each release.                                        |
 |Channel integration APIs change or require paid tiers|Phase 3 scope creep                      |Medium    |Prioritize open-protocol channels (Nostr, Mattermost, Twitch/IRC) first. Enterprise channels (Teams, Google Chat) may require user-provided API credentials.|
-|PicoClaw upstream moves fast (95% AI-bootstrapped)   |Merge conflicts, divergence from upstream|High      |Contribute security features upstream to sipeed/picoclaw. Maintain Omnipus as a compatible fork if upstream declines.                                        |
+|Omnipus upstream moves fast (95% AI-bootstrapped)   |Merge conflicts, divergence from upstream|High      |Contribute security features upstream to sipeed/omnipus. Maintain Omnipus as a compatible fork if upstream declines.                                        |
 |NemoClaw matures faster than expected                |Competitive window closes                |Medium    |Focus on the lightweight differentiator — Omnipus runs where NemoClaw cannot (edge, IoT, constrained hardware). This is not a market NemoClaw targets.       |
 
 -----
@@ -411,11 +411,11 @@ Features included:
 |----------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 |**Landlock**          |A Linux Security Module (LSM) available since kernel 5.13 that enables unprivileged processes to restrict their own filesystem access. Unlike AppArmor or SELinux, it requires no system-wide configuration or root access.     |
 |**seccomp-BPF**       |Secure Computing mode with Berkeley Packet Filters. Allows a process to install a filter that restricts which system calls it can make. Used to block privilege escalation, raw socket creation, and other dangerous operations.|
-|**MCP**               |Model Context Protocol. An open standard for connecting AI models to external tools and data sources. PicoClaw supports MCP as of v0.2.1.                                                                                       |
+|**MCP**               |Model Context Protocol. An open standard for connecting AI models to external tools and data sources. Omnipus supports MCP as of v0.2.1.                                                                                       |
 |**OpenShell**         |NVIDIA’s open-source security runtime for autonomous AI agents. Used by NemoClaw to provide sandboxing, policy enforcement, and inference routing. Requires Docker and K3s.                                                     |
 |**RBAC**              |Role-Based Access Control. A method of regulating access based on the roles of individual users or processes within an organization.                                                                                            |
 |**SSRF**              |Server-Side Request Forgery. An attack where an agent is tricked into making HTTP requests to internal/private network endpoints.                                                                                               |
-|**Deny-by-default**   |A security model where all actions are blocked unless explicitly permitted by policy. The opposite of PicoClaw’s current permissive model.                                                                                      |
+|**Deny-by-default**   |A security model where all actions are blocked unless explicitly permitted by policy. The opposite of Omnipus’s current permissive model.                                                                                      |
 |**ClawHub**           |OpenClaw’s community skill registry, hosting 13,729+ skills as of February 2026. Has been targeted by malware campaigns (ClawHavoc).                                                                                            |
 |**Hot-reload**        |The ability to update configuration or policy at runtime without restarting the agent process.                                                                                                                                  |
 |**Tamper-evident log**|~~An audit log where each entry is cryptographically chained to the previous entry via HMAC, making modifications or deletions detectable.~~ **Descoped v1.0.** HMAC-chained audit logs are not required for NemoClaw parity or v1.0 enterprise readiness.                                                                                       |

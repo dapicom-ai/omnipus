@@ -1,24 +1,24 @@
 # 💬 Weixin (WeChat Personal) Channel
 
-PicoClaw supports connecting to your personal WeChat account using the official Tencent iLink API.
+Omnipus supports connecting to your personal WeChat account using the official Tencent iLink API.
 
 ## 🚀 Quick Onboarding
 
 The easiest way to set up the Weixin channel is using the interactive onboarding command:
 
 ```bash
-picoclaw auth weixin
+omnipus auth weixin
 ```
 
 This command will:
 1. Request a QR code from the iLink API and display it in your terminal.
 2. Wait for you to scan the QR code with your WeChat mobile app.
-3. Upon approval, automatically save the generated access token to your `~/.picoclaw/config.json`.
+3. Upon approval, automatically save the generated access token to your `~/.omnipus/config.json`.
 
 After onboarding, you can start the gateway:
 
 ```bash
-picoclaw gateway
+omnipus gateway
 ```
 
 ---

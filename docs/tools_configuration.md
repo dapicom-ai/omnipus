@@ -183,7 +183,7 @@ To completely disable the `exec` tool, set `enabled` to `false`:
 
 **Via environment variable:**
 ```bash
-PICOCLAW_TOOLS_EXEC_ENABLED=false
+OMNIPUS_TOOLS_EXEC_ENABLED=false
 ```
 
 > **Note:** When disabled, the agent will not be able to execute shell commands. This also affects the Cron tool's ability to run scheduled shell commands.
@@ -516,15 +516,15 @@ The skills tool configures skill discovery and installation via registries like 
 
 ## Environment Variables
 
-All configuration options can be overridden via environment variables with the format `PICOCLAW_TOOLS_<SECTION>_<KEY>`:
+All configuration options can be overridden via environment variables with the format `OMNIPUS_TOOLS_<SECTION>_<KEY>`:
 
 For example:
 
-- `PICOCLAW_TOOLS_WEB_BRAVE_ENABLED=true`
-- `PICOCLAW_TOOLS_EXEC_ENABLED=false`
-- `PICOCLAW_TOOLS_EXEC_ENABLE_DENY_PATTERNS=false`
-- `PICOCLAW_TOOLS_CRON_EXEC_TIMEOUT_MINUTES=10`
-- `PICOCLAW_TOOLS_MCP_ENABLED=true`
+- `OMNIPUS_TOOLS_WEB_BRAVE_ENABLED=true`
+- `OMNIPUS_TOOLS_EXEC_ENABLED=false`
+- `OMNIPUS_TOOLS_EXEC_ENABLE_DENY_PATTERNS=false`
+- `OMNIPUS_TOOLS_CRON_EXEC_TIMEOUT_MINUTES=10`
+- `OMNIPUS_TOOLS_MCP_ENABLED=true`
 
 Note: Nested map-style config (for example `tools.mcp.servers.<name>.*`) is configured in `config.json` rather than
 environment variables.

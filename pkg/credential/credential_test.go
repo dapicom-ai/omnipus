@@ -69,14 +69,14 @@ func TestResolve_EncKey_RoundTrip(t *testing.T) {
 	const passphrase = "test-passphrase-32bytes-long-ok!"
 	const plaintext = "sk-encrypted-secret"
 
-	t.Setenv("PICOCLAW_SSH_KEY_PATH", sshKeyPath)
+	t.Setenv("OMNIPUS_SSH_KEY_PATH", sshKeyPath)
 
 	enc, err := credential.Encrypt(passphrase, "", plaintext)
 	if err != nil {
 		t.Fatalf("Encrypt: %v", err)
 	}
 
-	t.Setenv("PICOCLAW_KEY_PASSPHRASE", passphrase)
+	t.Setenv("OMNIPUS_KEY_PASSPHRASE", passphrase)
 
 	r := credential.NewResolver(t.TempDir())
 	got, err := r.Resolve(enc)
@@ -99,9 +99,9 @@ func TestResolve_EncKey_WithSSHKey(t *testing.T) {
 	const passphrase = "test-passphrase"
 	const plaintext = "sk-ssh-protected-secret"
 
-	// Set PICOCLAW_SSH_KEY_PATH before Encrypt so the path passes allowedSSHKeyPath validation.
-	t.Setenv("PICOCLAW_KEY_PASSPHRASE", passphrase)
-	t.Setenv("PICOCLAW_SSH_KEY_PATH", sshKeyPath)
+	// Set OMNIPUS_SSH_KEY_PATH before Encrypt so the path passes allowedSSHKeyPath validation.
+	t.Setenv("OMNIPUS_KEY_PASSPHRASE", passphrase)
+	t.Setenv("OMNIPUS_SSH_KEY_PATH", sshKeyPath)
 
 	enc, err := credential.Encrypt(passphrase, sshKeyPath, plaintext)
 	if err != nil {
@@ -124,25 +124,25 @@ func TestResolve_EncKey_NoPassphrase(t *testing.T) {
 	if err := os.WriteFile(sshKeyPath, []byte("fake-ssh-key\n"), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	t.Setenv("PICOCLAW_SSH_KEY_PATH", sshKeyPath)
+	t.Setenv("OMNIPUS_SSH_KEY_PATH", sshKeyPath)
 
 	enc, err := credential.Encrypt("some-passphrase", "", "sk-secret")
 	if err != nil {
 		t.Fatalf("Encrypt: %v", err)
 	}
 
-	t.Setenv("PICOCLAW_KEY_PASSPHRASE", "")
+	t.Setenv("OMNIPUS_KEY_PASSPHRASE", "")
 
 	r := credential.NewResolver(t.TempDir())
 	_, err = r.Resolve(enc)
 	if err == nil {
-		t.Fatal("expected error when PICOCLAW_KEY_PASSPHRASE is unset, got nil")
+		t.Fatal("expected error when OMNIPUS_KEY_PASSPHRASE is unset, got nil")
 	}
 }
 
 func TestResolve_EncKey_BadCiphertext(t *testing.T) {
-	t.Setenv("PICOCLAW_KEY_PASSPHRASE", "some-passphrase")
-	t.Setenv("PICOCLAW_SSH_KEY_PATH", "")
+	t.Setenv("OMNIPUS_KEY_PASSPHRASE", "some-passphrase")
+	t.Setenv("OMNIPUS_SSH_KEY_PATH", "")
 
 	r := credential.NewResolver(t.TempDir())
 	_, err := r.Resolve("enc://!!not-valid-base64!!")
@@ -152,8 +152,8 @@ func TestResolve_EncKey_BadCiphertext(t *testing.T) {
 }
 
 func TestResolve_EncKey_PayloadTooShort(t *testing.T) {
-	t.Setenv("PICOCLAW_KEY_PASSPHRASE", "some-passphrase")
-	t.Setenv("PICOCLAW_SSH_KEY_PATH", "")
+	t.Setenv("OMNIPUS_KEY_PASSPHRASE", "some-passphrase")
+	t.Setenv("OMNIPUS_SSH_KEY_PATH", "")
 
 	// Valid base64 but fewer bytes than salt(16)+nonce(12)+1 minimum.
 	import64 := "dG9vc2hvcnQ=" // "tooshort" = 8 bytes
@@ -170,14 +170,14 @@ func TestResolve_EncKey_WrongPassphrase(t *testing.T) {
 	if err := os.WriteFile(sshKeyPath, []byte("fake-ssh-key\n"), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	t.Setenv("PICOCLAW_SSH_KEY_PATH", sshKeyPath)
+	t.Setenv("OMNIPUS_SSH_KEY_PATH", sshKeyPath)
 
 	enc, err := credential.Encrypt("correct-passphrase", "", "sk-secret")
 	if err != nil {
 		t.Fatalf("Encrypt: %v", err)
 	}
 
-	t.Setenv("PICOCLAW_KEY_PASSPHRASE", "wrong-passphrase")
+	t.Setenv("OMNIPUS_KEY_PASSPHRASE", "wrong-passphrase")
 
 	r := credential.NewResolver(t.TempDir())
 	_, err = r.Resolve(enc)
@@ -202,7 +202,7 @@ func TestDeriveKey_SSHKeyNotFound(t *testing.T) {
 	}
 
 	// Register the real key path so allowedSSHKeyPath validation passes for Encrypt.
-	t.Setenv("PICOCLAW_SSH_KEY_PATH", sshKeyPath)
+	t.Setenv("OMNIPUS_SSH_KEY_PATH", sshKeyPath)
 
 	enc, err := credential.Encrypt("passphrase", sshKeyPath, "sk-secret")
 	if err != nil {
@@ -211,8 +211,8 @@ func TestDeriveKey_SSHKeyNotFound(t *testing.T) {
 
 	// Point to a non-existent SSH key so deriveKey's ReadFile fails.
 	// The path is still under the same dir, so allowedSSHKeyPath passes (exact env match).
-	t.Setenv("PICOCLAW_KEY_PASSPHRASE", "passphrase")
-	t.Setenv("PICOCLAW_SSH_KEY_PATH", filepath.Join(dir, "nonexistent_key"))
+	t.Setenv("OMNIPUS_KEY_PASSPHRASE", "passphrase")
+	t.Setenv("OMNIPUS_SSH_KEY_PATH", filepath.Join(dir, "nonexistent_key"))
 
 	r := credential.NewResolver(t.TempDir())
 	_, err = r.Resolve(enc)
@@ -264,7 +264,7 @@ func TestResolve_FileRef_withinConfigDir(t *testing.T) {
 }
 
 // TestEncrypt_SSHKeyOutsideAllowedDirs verifies that Encrypt rejects SSH key paths
-// that are not under PICOCLAW_SSH_KEY_PATH, PICOCLAW_HOME, or ~/.ssh/.
+// that are not under OMNIPUS_SSH_KEY_PATH, OMNIPUS_HOME, or ~/.ssh/.
 func TestEncrypt_SSHKeyOutsideAllowedDirs(t *testing.T) {
 	dir := t.TempDir()
 	sshKeyPath := filepath.Join(dir, "omnipus_ed25519.key")
@@ -273,8 +273,8 @@ func TestEncrypt_SSHKeyOutsideAllowedDirs(t *testing.T) {
 	}
 
 	// Make sure none of the allowed env vars point here.
-	t.Setenv("PICOCLAW_SSH_KEY_PATH", "")
-	t.Setenv("PICOCLAW_HOME", "")
+	t.Setenv("OMNIPUS_SSH_KEY_PATH", "")
+	t.Setenv("OMNIPUS_HOME", "")
 
 	_, err := credential.Encrypt("passphrase", sshKeyPath, "sk-secret")
 	if err == nil {

@@ -1,5 +1,5 @@
 // Omnipus - Ultra-lightweight personal AI agent
-// Built on PicoClaw's foundation. See CLAUDE.md for project lineage.
+// Built on Omnipus's foundation. See CLAUDE.md for project lineage.
 // License: MIT
 //
 // Copyright (c) 2026 Omnipus contributors

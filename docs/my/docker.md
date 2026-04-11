@@ -23,7 +23,7 @@ docker compose -f docker/docker-compose.yml --profile gateway up -d
 ```
 
 > [!TIP]
-> **Pengguna Docker**: Secara lalai, Gateway mendengar pada `127.0.0.1` yang tidak boleh diakses dari host. Jika anda perlu mengakses health endpoint atau mendedahkan port, tetapkan `PICOCLAW_GATEWAY_HOST=0.0.0.0` dalam persekitaran anda atau kemas kini `config.json`.
+> **Pengguna Docker**: Secara lalai, Gateway mendengar pada `127.0.0.1` yang tidak boleh diakses dari host. Jika anda perlu mengakses health endpoint atau mendedahkan port, tetapkan `OMNIPUS_GATEWAY_HOST=0.0.0.0` dalam persekitaran anda atau kemas kini `config.json`.
 
 ```bash
 # 5. Semak log

@@ -47,7 +47,7 @@ No architectural coupling between the two — they are independent features that
 
 ### User Story 1 — WhatsApp Native Channel Connection (Priority: P0)
 
-An end user wants to connect their WhatsApp account to Omnipus so that they can interact with their AI agent through WhatsApp messages. Currently, PicoClaw requires an external WebSocket bridge (`ws://localhost:3001`) which is fragile, adds a runtime dependency, and frequently drops connection. A compiled-in native channel eliminates this external dependency, improving reliability and simplifying setup.
+An end user wants to connect their WhatsApp account to Omnipus so that they can interact with their AI agent through WhatsApp messages. Currently, Omnipus requires an external WebSocket bridge (`ws://localhost:3001`) which is fragile, adds a runtime dependency, and frequently drops connection. A compiled-in native channel eliminates this external dependency, improving reliability and simplifying setup.
 
 **Why this priority**: WhatsApp is the #1 messaging platform globally (2B+ users) and the most requested channel. Without native WhatsApp, Omnipus cannot credibly compete with OpenClaw. The bridge-based approach violates the single-binary, zero-dependency constraint.
 
@@ -196,7 +196,7 @@ An end user wants to see a typing indicator in their messaging app when the Omni
 
 ### Acceptance Gate: Existing Channel Regression (Priority: P0)
 
-All 10 existing PicoClaw channels MUST continue to function correctly after Wave 4 changes. This is a non-negotiable regression gate — Wave 4 cannot ship if any existing channel breaks.
+All 10 existing Omnipus channels MUST continue to function correctly after Wave 4 changes. This is a non-negotiable regression gate — Wave 4 cannot ship if any existing channel breaks.
 
 **Channels under regression protection**:
 
@@ -224,7 +224,7 @@ All 10 existing PicoClaw channels MUST continue to function correctly after Wave
 
 ### Acceptance Gate: Heartbeat, Cron & Sub-Agent Regression (Priority: P0)
 
-PicoClaw's HEARTBEAT.md, cron scheduling, and sub-agent spawning features are inherited by Omnipus. These MUST NOT regress after Wave 4 changes.
+Omnipus's HEARTBEAT.md, cron scheduling, and sub-agent spawning features are inherited by Omnipus. These MUST NOT regress after Wave 4 changes.
 
 **Acceptance Criteria**:
 
@@ -249,7 +249,7 @@ Primary flows:
 
 - When any channel begins processing an inbound message, the system sends a platform-appropriate typing indicator within 500ms.
 - When the channel does not support typing indicators, the system does nothing (graceful no-op).
-- When all 10 existing PicoClaw channels are configured, they continue to send/receive messages normally after Wave 4 changes.
+- When all 10 existing Omnipus channels are configured, they continue to send/receive messages normally after Wave 4 changes.
 - When HEARTBEAT.md is configured, the heartbeat fires at the configured interval, unaffected by Wave 4 changes.
 - When cron jobs are scheduled, they fire at scheduled times, unaffected by Wave 4 changes.
 - When sub-agents are spawned, spawn_status tracking works correctly, unaffected by Wave 4 changes.
@@ -1153,7 +1153,7 @@ Existing integration seams protected by:
 - **FR-025**: System MUST emit a platform-appropriate typing indicator within 500ms of the agent starting to process an inbound message. WhatsApp: `sendPresenceUpdating` (whatsmeow). Telegram: `sendChatAction("typing")` (telego). Discord: typing intent (discordgo). Slack: typing indicator (slack-go).
 - **FR-026**: System MUST gracefully no-op when a channel does not support typing indicators. No error SHOULD be logged for unsupported channels.
 - **FR-027**: System MUST re-send typing indicators at platform-appropriate intervals when agent processing exceeds 10 seconds, to prevent indicator expiry.
-- **FR-028**: System MUST pass existing channel regression tests for all 10 PicoClaw channels (Telegram, Discord, Slack, Matrix, IRC, LINE, WeCom, QQ, DingTalk, WebChat) — message send/receive round-trip verified for each.
+- **FR-028**: System MUST pass existing channel regression tests for all 10 Omnipus channels (Telegram, Discord, Slack, Matrix, IRC, LINE, WeCom, QQ, DingTalk, WebChat) — message send/receive round-trip verified for each.
 - **FR-029**: System MUST NOT displace or overwrite existing channel factory registrations when registering new Wave 4 channels.
 - **FR-030**: System MUST continue to execute HEARTBEAT.md at the configured interval after Wave 4 changes. Heartbeat execution MUST NOT be blocked by Wave 4 channel goroutines.
 - **FR-031**: System MUST continue to fire cron jobs at scheduled times after Wave 4 changes.
@@ -1176,7 +1176,7 @@ Existing integration seams protected by:
 - **SC-010**: Browser tools register in ToolRegistry and appear in agent tool lists when `tools.browser.enabled: true`.
 - **SC-011**: Typing indicator is emitted within 500ms of agent processing start for WhatsApp, Telegram, Discord, and Slack channels (p99).
 - **SC-012**: Channels without typing support (IRC, etc.) produce zero errors related to typing indicators during a 24-hour test run.
-- **SC-013**: All 10 existing PicoClaw channels pass message send/receive round-trip integration tests after Wave 4 changes (100% pass rate).
+- **SC-013**: All 10 existing Omnipus channels pass message send/receive round-trip integration tests after Wave 4 changes (100% pass rate).
 - **SC-014**: HEARTBEAT.md, cron jobs, and sub-agent spawning all pass regression tests with Wave 4 channels active (100% pass rate).
 - **SC-015**: No goroutine deadlocks detected during 10-minute concurrent operation of all features (verified via `go test -race`).
 
@@ -1222,7 +1222,7 @@ Existing integration seams protected by:
 | 3 | Browser `new_tab` behavior — how does the agent open a new tab vs reuse existing? Is there an explicit tab management API? | Agent assumes `browser.navigate` reuses the current tab. No explicit tab API. | Decision: `browser.navigate` reuses current tab by default. Add optional `new_tab: true` parameter to open in new tab. Add `browser.close_tab()` for explicit tab management. Defer `browser.list_tabs` to future wave. **Accepted.** |
 | 4 | WhatsApp message types beyond text — what happens with images, voice, stickers, polls, reactions received before FUNC-25? | Agent ignores non-text messages silently. | Decision: Log unsupported message types at debug level. Do not publish to MessageBus. No error. **Accepted as specified in Edge Cases.** |
 | 5 | Browser `max_memory_mb` enforcement mechanism — chromedp doesn't expose per-profile memory metrics. | Agent skips memory-based enforcement, only enforces tab limits and timeouts. | Decision: Memory enforcement is best-effort. Use Chrome's `--max-old-space-size` flag at launch for V8 heap, plus periodic check of OS-level process RSS. Log warning when threshold exceeded, close oldest inactive tab. Do not hard-kill the browser. **Accepted.** |
-| 6 | WhatsApp `store.db` location — the BRD says `~/.omnipus/channels/whatsapp/session.db` but existing code uses `workspace/whatsapp/store.db`. | Agent uses whatever the existing code uses. | Decision: Use the config-driven path (`session_store_path`) with default `~/.omnipus/channels/whatsapp/store.db` (matching BRD). Existing code's default of `workspace/whatsapp/store.db` is a PicoClaw-ism that should be updated. **Accepted — use BRD path.** |
+| 6 | WhatsApp `store.db` location — the BRD says `~/.omnipus/channels/whatsapp/session.db` but existing code uses `workspace/whatsapp/store.db`. | Agent uses whatever the existing code uses. | Decision: Use the config-driven path (`session_store_path`) with default `~/.omnipus/channels/whatsapp/store.db` (matching BRD). Existing code's default of `workspace/whatsapp/store.db` is a Omnipus-ism that should be updated. **Accepted — use BRD path.** |
 
 ---
 

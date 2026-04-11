@@ -101,7 +101,7 @@ An operator in a regulated environment wants to start with zero permissions and 
 
 1. **Given** `security.default_policy: "deny"` and an agent with no `tools` section, **When** the agent invokes any tool, **Then** the tool is denied.
 2. **Given** `security.default_policy: "deny"` and an agent with `tools.allow: ["web_search"]`, **When** the agent invokes `web_search`, **Then** the tool is allowed.
-3. **Given** `security.default_policy: "allow"` (default/backward-compatible), **When** an agent with no `tools` section invokes any tool, **Then** all tools are allowed (PicoClaw-compatible behavior).
+3. **Given** `security.default_policy: "allow"` (default/backward-compatible), **When** an agent with no `tools` section invokes any tool, **Then** all tools are allowed (Omnipus-compatible behavior).
 
 ---
 
@@ -281,7 +281,7 @@ An operator configuring a Telegram or Discord channel wants to be warned if the 
 
 - When the audit log file is exactly 50MB, the next write triggers rotation.
 - When a rate limit window boundary is crossed mid-request, the request that crossed the boundary is counted in the new window.
-- When `security.default_policy` is missing from config, it defaults to `"allow"` for backward compatibility with PicoClaw configs.
+- When `security.default_policy` is missing from config, it defaults to `"allow"` for backward compatibility with Omnipus configs.
 - When an agent has both `tools.allow` and `tools.deny` with overlapping entries, `deny` takes precedence.
 - When the global cost cap is set to 0, all LLM calls are denied (emergency stop).
 - When the system agent performs operations, rate limits are bypassed but audit logging still applies.
@@ -998,7 +998,7 @@ Expected: Startup error: `"security.ssrf.allow_internal must be an array of stri
 - **FR-007**: System MUST evaluate tool allow/deny lists per agent before every tool invocation, with deny taking precedence over allow when both are specified.
 - **FR-008**: System MUST enforce per-binary execution control via glob pattern matching against `tools.exec.allowed_binaries` before running any exec command.
 - **FR-009**: System MUST implement deny-by-default semantics when `security.default_policy` is `"deny"`, requiring explicit `tools.allow` entries for any tool to be available.
-- **FR-010**: System MUST default `security.default_policy` to `"allow"` when the field is absent, maintaining backward compatibility with PicoClaw configs.
+- **FR-010**: System MUST default `security.default_policy` to `"allow"` when the field is absent, maintaining backward compatibility with Omnipus configs.
 - **FR-011**: System MUST present an interactive exec approval prompt in CLI mode when `tools.exec.approval` is `"ask"`, supporting Allow, Deny, and Always Allow responses.
 - **FR-012**: System MUST persist "Always Allow" patterns from exec approval and auto-approve matching commands in subsequent invocations.
 - **FR-013**: System MUST load all security policies from `config.json` at startup (static, load-once) and refuse to start if the security section is malformed.
@@ -1159,8 +1159,8 @@ All ambiguities resolved on 2026-03-28:
 - `golang.org/x/sys/unix` provides all necessary syscall wrappers for Landlock (SYS_LANDLOCK_CREATE_RULESET, SYS_LANDLOCK_ADD_RULE, SYS_LANDLOCK_RESTRICT_SELF) and seccomp (PR_SET_NO_NEW_PRIVS, PR_SET_SECCOMP, SockFilter).
 - Linux CI runners for integration tests have kernel 5.13+ with Landlock enabled in the kernel config.
 - The config system (from Wave 1) provides a parsed `config.json` as a Go struct at startup. The security layer reads from this struct; it does not parse JSON directly.
-- The agent loop (from Wave 1 or PicoClaw) calls into the policy engine before executing each tool. The security layer provides a `CheckPolicy(agentID, toolName, params) -> (Decision, error)` function that the agent loop calls.
-- The exec tool (from PicoClaw) accepts a hook for environment variable injection and pre-execution checks. The security layer uses this hook to apply sandbox, proxy, and approval logic.
+- The agent loop (from Wave 1 or Omnipus) calls into the policy engine before executing each tool. The security layer provides a `CheckPolicy(agentID, toolName, params) -> (Decision, error)` function that the agent loop calls.
+- The exec tool (from Omnipus) accepts a hook for environment variable injection and pre-execution checks. The security layer uses this hook to apply sandbox, proxy, and approval logic.
 - `omnipus doctor` is a CLI command framework that accepts check functions. The security layer registers its checks (DM safety, network egress warning, sandbox status) with this framework.
 - Windows Job Object sandboxing is explicitly out of scope for Wave 2. Windows uses the Fallback backend.
 - RBAC (SEC-19), credential management (SEC-22/23), and tamper-evident logging (SEC-18) are out of scope for Wave 2.

@@ -12,7 +12,7 @@ Les clés chiffrées sont stockées sous forme de chaînes `enc://<base64>` et d
 **1. Définir votre phrase secrète**
 
 ```bash
-export PICOCLAW_KEY_PASSPHRASE="your-passphrase"
+export OMNIPUS_KEY_PASSPHRASE="your-passphrase"
 ```
 
 **2. Chiffrer une clé API**
@@ -48,7 +48,7 @@ enc://AAAA...base64...
 |--------|---------|--------------|
 | Texte clair | `sk-abc123` | Utilisé tel quel |
 | Référence fichier | `file://openai.key` | Contenu lu depuis le même répertoire que le fichier de configuration |
-| Chiffré | `enc://<base64>` | Déchiffré au démarrage avec `PICOCLAW_KEY_PASSPHRASE` |
+| Chiffré | `enc://<base64>` | Déchiffré au démarrage avec `OMNIPUS_KEY_PASSPHRASE` |
 | Vide | `""` | Transmis tel quel (utilisé avec `auth_method: oauth`) |
 
 ---
@@ -99,7 +99,7 @@ Le tag d'authentification GCM est automatiquement ajouté au texte chiffré. Tou
 
 Lorsqu'une clé privée SSH est fournie, casser le chiffrement nécessite **les deux** :
 
-1. La **phrase secrète** (`PICOCLAW_KEY_PASSPHRASE`)
+1. La **phrase secrète** (`OMNIPUS_KEY_PASSPHRASE`)
 2. Le **fichier de clé privée SSH**
 
 Cela signifie qu'un fichier de configuration divulgué seul ne suffit pas pour récupérer la clé API, même si la phrase secrète est faible. La clé SSH apporte 256 bits d'entropie (Ed25519) indépendamment de la force de la phrase secrète.
@@ -119,12 +119,12 @@ Cela signifie qu'un fichier de configuration divulgué seul ne suffit pas pour r
 
 | Variable | Requis | Description |
 |----------|--------|-------------|
-| `PICOCLAW_KEY_PASSPHRASE` | Oui (pour `enc://`) | Phrase secrète utilisée pour la dérivation de clé |
-| `PICOCLAW_SSH_KEY_PATH` | Non | Chemin vers la clé privée SSH. Si non défini, détection automatique depuis `~/.ssh/omnipus_ed25519.key` |
+| `OMNIPUS_KEY_PASSPHRASE` | Oui (pour `enc://`) | Phrase secrète utilisée pour la dérivation de clé |
+| `OMNIPUS_SSH_KEY_PATH` | Non | Chemin vers la clé privée SSH. Si non défini, détection automatique depuis `~/.ssh/omnipus_ed25519.key` |
 
 ### Détection automatique de la clé SSH
 
-Si `PICOCLAW_SSH_KEY_PATH` n'est pas défini, Omnipus recherche la clé dédiée :
+Si `OMNIPUS_SSH_KEY_PATH` n'est pas défini, Omnipus recherche la clé dédiée :
 
 ```
 ~/.ssh/omnipus_ed25519.key
@@ -135,17 +135,17 @@ Exécutez `omnipus onboard` pour le générer automatiquement.
 
 `os.UserHomeDir()` est utilisé pour la résolution multiplateforme du répertoire personnel (lit `USERPROFILE` sous Windows, `HOME` sous Unix/macOS).
 
-> **Remarque :** Un fichier de clé SSH est requis pour le chiffrement des identifiants. Si aucune clé n'est trouvée et que `PICOCLAW_SSH_KEY_PATH` n'est pas défini, le chiffrement/déchiffrement échouera. Exécutez `omnipus onboard` pour générer la clé automatiquement.
+> **Remarque :** Un fichier de clé SSH est requis pour le chiffrement des identifiants. Si aucune clé n'est trouvée et que `OMNIPUS_SSH_KEY_PATH` n'est pas défini, le chiffrement/déchiffrement échouera. Exécutez `omnipus onboard` pour générer la clé automatiquement.
 
 ---
 
 ## Migration
 
-Étant donné que les seuls éléments secrets sont `PICOCLAW_KEY_PASSPHRASE` et le fichier de clé privée SSH, la migration est simple :
+Étant donné que les seuls éléments secrets sont `OMNIPUS_KEY_PASSPHRASE` et le fichier de clé privée SSH, la migration est simple :
 
 1. Copiez le fichier de configuration sur la nouvelle machine.
-2. Définissez `PICOCLAW_KEY_PASSPHRASE` avec la même valeur.
-3. Copiez le fichier de clé privée SSH au même chemin (ou définissez `PICOCLAW_SSH_KEY_PATH` vers son nouvel emplacement).
+2. Définissez `OMNIPUS_KEY_PASSPHRASE` avec la même valeur.
+3. Copiez le fichier de clé privée SSH au même chemin (ou définissez `OMNIPUS_SSH_KEY_PATH` vers son nouvel emplacement).
 
 Aucun re-chiffrement n'est nécessaire.
 

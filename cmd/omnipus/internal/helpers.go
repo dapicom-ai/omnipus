@@ -12,7 +12,7 @@ import (
 const Logo = pkg.Logo
 
 // GetOmnipusHome returns the omnipus home directory.
-// Priority: $PICOCLAW_HOME > ~/.omnipus
+// Priority: $OMNIPUS_HOME > ~/.omnipus
 func GetOmnipusHome() string {
 	if home := os.Getenv(config.EnvHome); home != "" {
 		return home

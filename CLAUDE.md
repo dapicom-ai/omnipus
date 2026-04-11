@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Omnipus is an agentic core built on PicoClaw's foundation, shipping as three product variants:
+Omnipus is an agentic core built on Omnipus's foundation, shipping as three product variants:
 
-1. **Omnipus Open Source** (primary, ships first) — Single Go binary with embedded web UI, similar to PicoClaw/OpenClaw. Community-facing, builds adoption.
+1. **Omnipus Open Source** (primary, ships first) — Single Go binary with embedded web UI, similar to Omnipus/OpenClaw. Community-facing, builds adoption.
 2. **Omnipus Desktop** (ships second) — Free polished Electron desktop app. Premium UX, auto-updates, native menus.
 3. **Omnipus Cloud/SaaS** (ships third) — Scalable hosted version with team features and managed infrastructure.
 
@@ -24,7 +24,7 @@ Pre-implementation. The `docs/BRD/` directory contains the complete specificatio
 - `Omnipus_BRD_AppendixC_UI_Spec.md` — Appendix C: Full UI/UX spec (React 19, Vite 6, shadcn/ui, Phosphor Icons)
 - `Omnipus_BRD_AppendixD_System_Agent.md` — Appendix D: System agent with 35 system tools, 3 core agents
 - `Omnipus_BRD_AppendixE_DataModel.md` — Appendix E: File-based data model (JSON/JSONL), directory structure, entity schemas
-- `OpenClaw_vs_PicoClaw_Comparison.md` — Competitive analysis informing UI/UX decisions
+- `OpenClaw_vs_Omnipus_Comparison.md` — Competitive analysis informing UI/UX decisions
 
 Always read the relevant BRD documents before implementing a feature. The specs are the source of truth.
 
@@ -36,7 +36,7 @@ These are non-negotiable and apply to every decision:
 2. **Pure Go** — no CGo, no external C libraries, no shelling out for security-critical paths. Use `golang.org/x/sys/unix` for kernel interfaces.
 3. **Minimal footprint** — total RAM overhead for all security features must stay under 10MB beyond baseline.
 4. **Graceful degradation** — features requiring Linux 5.13+ (Landlock, seccomp) must fall back to application-level enforcement on older kernels, non-Linux platforms, and Android/Termux.
-5. **Ecosystem compatibility** — follows PicoClaw/OpenClaw conventions (SKILL.md, HEARTBEAT.md, SOUL.md, AGENTS.md, JSON config patterns) for skill ecosystem and community compatibility. Omnipus has its own config format but adopts the same concepts.
+5. **Ecosystem compatibility** — follows Omnipus/OpenClaw conventions (SKILL.md, HEARTBEAT.md, SOUL.md, AGENTS.md, JSON config patterns) for skill ecosystem and community compatibility. Omnipus has its own config format but adopts the same concepts.
 6. **Deny-by-default for security, opt-in for features** — security policies default to most restrictive; functional features default to disabled.
 
 ## Tech Stack
@@ -51,7 +51,7 @@ These are non-negotiable and apply to every decision:
 
 **Platform abstraction for sandboxing:** `SandboxBackend` interface with Linux (Landlock+seccomp), Windows (Job Objects+Restricted Tokens+DACL), and Fallback (app-level) backends. Policy engine and audit logging are cross-platform; only enforcement backend varies.
 
-**Channel provider model:** Hybrid in-process/bridge architecture inheriting PicoClaw's design. Go channels are compiled into the binary and communicate via an internal `MessageBus` (zero IPC overhead, single process). Non-Go channels (Signal/Java, Teams/Node.js) and community channels run as external processes using a bridge protocol (JSON over stdin/stdout). All channels implement the same `ChannelProvider` Go interface — compiled-in channels implement it directly, external channels implement it via `BridgeAdapter`. Community channels are built with the Omnipus Channel SDK, installed locally at user's own risk.
+**Channel provider model:** Hybrid in-process/bridge architecture inheriting Omnipus's design. Go channels are compiled into the binary and communicate via an internal `MessageBus` (zero IPC overhead, single process). Non-Go channels (Signal/Java, Teams/Node.js) and community channels run as external processes using a bridge protocol (JSON over stdin/stdout). All channels implement the same `ChannelProvider` Go interface — compiled-in channels implement it directly, external channels implement it via `BridgeAdapter`. Community channels are built with the Omnipus Channel SDK, installed locally at user's own risk.
 
 **Agent types:** System (`omnipus-system`, hardcoded, always on, 35 exclusive `system.*` tools), Core (hardcoded prompts compiled into binary, user can toggle/configure), Custom (user-defined with SOUL.md + AGENTS.md).
 

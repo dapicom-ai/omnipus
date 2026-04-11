@@ -535,15 +535,15 @@ You can override any security value using environment variables:
 
 ```bash
 # Channels
-export PICOCLAW_CHANNELS_TELEGRAM_TOKEN="token-from-env"
-export PICOCLAW_CHANNELS_DISCORD_TOKEN="discord-token-from-env"
+export OMNIPUS_CHANNELS_TELEGRAM_TOKEN="token-from-env"
+export OMNIPUS_CHANNELS_DISCORD_TOKEN="discord-token-from-env"
 
 # Web Tools
-export PICOCLAW_TOOLS_WEB_BRAVE_API_KEY="brave-key-from-env"
-export PICOCLAW_TOOLS_WEB_BAIDU_API_KEY="baidu-key-from-env"
+export OMNIPUS_TOOLS_WEB_BRAVE_API_KEY="brave-key-from-env"
+export OMNIPUS_TOOLS_WEB_BAIDU_API_KEY="baidu-key-from-env"
 
 # Skills
-export PICOCLAW_TOOLS_SKILLS_GITHUB_TOKEN="github-token-from-env"
+export OMNIPUS_TOOLS_SKILLS_GITHUB_TOKEN="github-token-from-env"
 ```
 
 Environment variables have the highest priority and will override both config.json

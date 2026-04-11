@@ -16,7 +16,7 @@ import (
 // DefaultConfig returns the default configuration for Omnipus.
 func DefaultConfig() *Config {
 	// Determine the base path for the workspace.
-	// Priority: $PICOCLAW_HOME > ~/.omnipus
+	// Priority: $OMNIPUS_HOME > ~/.omnipus
 	var homePath string
 	if omnipusHome := os.Getenv(EnvHome); omnipusHome != "" {
 		homePath = omnipusHome

@@ -240,7 +240,7 @@ docker compose -f docker/docker-compose.yml --profile launcher up -d
 # http://localhost:18800 を開く
 ```
 
-> **Docker / VM ユーザー:** Gateway はデフォルトで `127.0.0.1` でリッスンします。ホストからアクセスできるようにするには `PICOCLAW_GATEWAY_HOST=0.0.0.0` を設定するか、`-public` フラグを使用してください。
+> **Docker / VM ユーザー:** Gateway はデフォルトで `127.0.0.1` でリッスンします。ホストからアクセスできるようにするには `OMNIPUS_GATEWAY_HOST=0.0.0.0` を設定するか、`-public` フラグを使用してください。
 
 ```bash
 # ログを確認

@@ -100,7 +100,7 @@ export const FileReadPreviewUI = makeAssistantToolUI<ReadFileArgs, unknown>({
   ),
 })
 
-// BRD C.6.1.4 tool name (dot-notation). Backend uses PicoClaw convention (read_file); both registered.
+// BRD C.6.1.4 tool name (dot-notation). Backend uses Omnipus convention (read_file); both registered.
 export const FileReadAliasDotUI = makeAssistantToolUI<ReadFileArgs, unknown>({
   toolName: 'file.read',
   render: ({ args, result, status }) => (

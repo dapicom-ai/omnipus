@@ -24,7 +24,7 @@ docker compose -f docker/docker-compose.yml --profile gateway up -d
 ```
 
 > [!TIP]
-> **Docker ユーザー**: デフォルトでは Gateway は `127.0.0.1` でリッスンしており、コンテナ外からはアクセスできません。ヘルスチェックエンドポイントへのアクセスやポート公開が必要な場合は、環境変数で `PICOCLAW_GATEWAY_HOST=0.0.0.0` を設定するか、`config.json` を更新してください。
+> **Docker ユーザー**: デフォルトでは Gateway は `127.0.0.1` でリッスンしており、コンテナ外からはアクセスできません。ヘルスチェックエンドポイントへのアクセスやポート公開が必要な場合は、環境変数で `OMNIPUS_GATEWAY_HOST=0.0.0.0` を設定するか、`config.json` を更新してください。
 
 ```bash
 # 5. ログを確認

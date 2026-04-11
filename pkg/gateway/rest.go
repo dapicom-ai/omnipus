@@ -2652,7 +2652,7 @@ func (a *restAPI) HandleChannels(w http.ResponseWriter, r *http.Request) {
 		{ID: "onebot", Name: "OneBot", Transport: "websocket", Enabled: ch.OneBot.Enabled, Description: "OneBot v11 protocol"},
 		{ID: "irc", Name: "IRC", Transport: "tcp", Enabled: ch.IRC.Enabled, Description: "Internet Relay Chat"},
 		{ID: "matrix", Name: "Matrix", Transport: "http", Enabled: ch.Matrix.Enabled, Description: "Matrix protocol"},
-		{ID: "pico", Name: "PicoClaw", Transport: "http", Enabled: ch.Pico.Enabled, Description: "PicoClaw bridge channel"},
+		{ID: "pico", Name: "Omnipus", Transport: "http", Enabled: ch.Pico.Enabled, Description: "Omnipus bridge channel"},
 		{ID: "maixcam", Name: "MaixCam", Transport: "serial", Enabled: ch.MaixCam.Enabled, Description: "MaixCam edge device"},
 	}
 	jsonOK(w, channels)

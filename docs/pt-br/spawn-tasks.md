@@ -57,5 +57,5 @@ O subagente tem acesso a ferramentas (message, web_search, etc.) e pode se comun
 
 **Variáveis de ambiente:**
 
-* `PICOCLAW_HEARTBEAT_ENABLED=false` para desabilitar
-* `PICOCLAW_HEARTBEAT_INTERVAL=60` para alterar o intervalo
+* `OMNIPUS_HEARTBEAT_ENABLED=false` para desabilitar
+* `OMNIPUS_HEARTBEAT_INTERVAL=60` para alterar o intervalo

@@ -218,8 +218,8 @@ skills:
 		var _ yaml.Marshaler = (*SecureString)(nil)
 		// If you are using Value types in your config, also check:
 		var _ yaml.Marshaler = SecureString{}
-		t.Setenv("PICOCLAW_CHANNELS_QQ_APP_SECRET", "qq_app_secret_env")
-		t.Setenv("PICOCLAW_TOOLS_WEB_BRAVE_API_KEYS", "brave_key_env,abc")
+		t.Setenv("OMNIPUS_CHANNELS_QQ_APP_SECRET", "qq_app_secret_env")
+		t.Setenv("OMNIPUS_TOOLS_WEB_BRAVE_API_KEYS", "brave_key_env,abc")
 		err2 := env.Parse(cfg2)
 		require.NoError(t, err2)
 		assert.Equal(t, "qq_app_secret_env", cfg2.Channels.QQ.AppSecret.raw)

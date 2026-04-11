@@ -106,7 +106,7 @@ Apply these architectural lenses:
 | **Security** | Does this respect deny-by-default? Does it introduce new attack surface? |
 | **Degradation** | Does this gracefully degrade on older kernels / non-Linux / Termux? |
 | **Footprint** | Does this stay within the 10MB RAM overhead constraint? |
-| **Ecosystem** | Does this maintain PicoClaw/OpenClaw compatibility (SKILL.md, HEARTBEAT.md, SOUL.md)? |
+| **Ecosystem** | Does this maintain Omnipus/OpenClaw compatibility (SKILL.md, HEARTBEAT.md, SOUL.md)? |
 
 ### Step 4: Decide
 

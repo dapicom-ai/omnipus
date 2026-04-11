@@ -86,17 +86,17 @@ Nếu bạn đã có `bot_id` và `secret` từ nền tảng WeCom AI Bot, hãy 
 
 ### Biến môi trường
 
-Tất cả các trường có thể được ghi đè bằng biến môi trường với tiền tố `PICOCLAW_CHANNELS_WECOM_`:
+Tất cả các trường có thể được ghi đè bằng biến môi trường với tiền tố `OMNIPUS_CHANNELS_WECOM_`:
 
 | Biến môi trường | Trường tương ứng |
 | ---------------- | ---------------- |
-| `PICOCLAW_CHANNELS_WECOM_ENABLED` | `enabled` |
-| `PICOCLAW_CHANNELS_WECOM_BOT_ID` | `bot_id` |
-| `PICOCLAW_CHANNELS_WECOM_SECRET` | `secret` |
-| `PICOCLAW_CHANNELS_WECOM_WEBSOCKET_URL` | `websocket_url` |
-| `PICOCLAW_CHANNELS_WECOM_SEND_THINKING_MESSAGE` | `send_thinking_message` |
-| `PICOCLAW_CHANNELS_WECOM_ALLOW_FROM` | `allow_from` |
-| `PICOCLAW_CHANNELS_WECOM_REASONING_CHANNEL_ID` | `reasoning_channel_id` |
+| `OMNIPUS_CHANNELS_WECOM_ENABLED` | `enabled` |
+| `OMNIPUS_CHANNELS_WECOM_BOT_ID` | `bot_id` |
+| `OMNIPUS_CHANNELS_WECOM_SECRET` | `secret` |
+| `OMNIPUS_CHANNELS_WECOM_WEBSOCKET_URL` | `websocket_url` |
+| `OMNIPUS_CHANNELS_WECOM_SEND_THINKING_MESSAGE` | `send_thinking_message` |
+| `OMNIPUS_CHANNELS_WECOM_ALLOW_FROM` | `allow_from` |
+| `OMNIPUS_CHANNELS_WECOM_REASONING_CHANNEL_ID` | `reasoning_channel_id` |
 
 ---
 

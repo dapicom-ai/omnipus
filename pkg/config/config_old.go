@@ -10,21 +10,21 @@ import (
 )
 
 type agentDefaultsV0 struct {
-	Workspace                 string         `json:"workspace"                       env:"PICOCLAW_AGENTS_DEFAULTS_WORKSPACE"`
-	RestrictToWorkspace       bool           `json:"restrict_to_workspace"           env:"PICOCLAW_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
-	AllowReadOutsideWorkspace bool           `json:"allow_read_outside_workspace"    env:"PICOCLAW_AGENTS_DEFAULTS_ALLOW_READ_OUTSIDE_WORKSPACE"`
-	Provider                  string         `json:"provider"                        env:"PICOCLAW_AGENTS_DEFAULTS_PROVIDER"`
-	ModelName                 string         `json:"model_name,omitempty"            env:"PICOCLAW_AGENTS_DEFAULTS_MODEL_NAME"`
-	Model                     string         `json:"model"                           env:"PICOCLAW_AGENTS_DEFAULTS_MODEL"` // Deprecated: use model_name instead
+	Workspace                 string         `json:"workspace"                       env:"OMNIPUS_AGENTS_DEFAULTS_WORKSPACE"`
+	RestrictToWorkspace       bool           `json:"restrict_to_workspace"           env:"OMNIPUS_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
+	AllowReadOutsideWorkspace bool           `json:"allow_read_outside_workspace"    env:"OMNIPUS_AGENTS_DEFAULTS_ALLOW_READ_OUTSIDE_WORKSPACE"`
+	Provider                  string         `json:"provider"                        env:"OMNIPUS_AGENTS_DEFAULTS_PROVIDER"`
+	ModelName                 string         `json:"model_name,omitempty"            env:"OMNIPUS_AGENTS_DEFAULTS_MODEL_NAME"`
+	Model                     string         `json:"model"                           env:"OMNIPUS_AGENTS_DEFAULTS_MODEL"` // Deprecated: use model_name instead
 	ModelFallbacks            []string       `json:"model_fallbacks,omitempty"`
-	ImageModel                string         `json:"image_model,omitempty"           env:"PICOCLAW_AGENTS_DEFAULTS_IMAGE_MODEL"`
+	ImageModel                string         `json:"image_model,omitempty"           env:"OMNIPUS_AGENTS_DEFAULTS_IMAGE_MODEL"`
 	ImageModelFallbacks       []string       `json:"image_model_fallbacks,omitempty"`
-	MaxTokens                 int            `json:"max_tokens"                      env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOKENS"`
-	Temperature               *float64       `json:"temperature,omitempty"           env:"PICOCLAW_AGENTS_DEFAULTS_TEMPERATURE"`
-	MaxToolIterations         int            `json:"max_tool_iterations"             env:"PICOCLAW_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
-	SummarizeMessageThreshold int            `json:"summarize_message_threshold"     env:"PICOCLAW_AGENTS_DEFAULTS_SUMMARIZE_MESSAGE_THRESHOLD"`
-	SummarizeTokenPercent     int            `json:"summarize_token_percent"         env:"PICOCLAW_AGENTS_DEFAULTS_SUMMARIZE_TOKEN_PERCENT"`
-	MaxMediaSize              int            `json:"max_media_size,omitempty"        env:"PICOCLAW_AGENTS_DEFAULTS_MAX_MEDIA_SIZE"`
+	MaxTokens                 int            `json:"max_tokens"                      env:"OMNIPUS_AGENTS_DEFAULTS_MAX_TOKENS"`
+	Temperature               *float64       `json:"temperature,omitempty"           env:"OMNIPUS_AGENTS_DEFAULTS_TEMPERATURE"`
+	MaxToolIterations         int            `json:"max_tool_iterations"             env:"OMNIPUS_AGENTS_DEFAULTS_MAX_TOOL_ITERATIONS"`
+	SummarizeMessageThreshold int            `json:"summarize_message_threshold"     env:"OMNIPUS_AGENTS_DEFAULTS_SUMMARIZE_MESSAGE_THRESHOLD"`
+	SummarizeTokenPercent     int            `json:"summarize_token_percent"         env:"OMNIPUS_AGENTS_DEFAULTS_SUMMARIZE_TOKEN_PERCENT"`
+	MaxMediaSize              int            `json:"max_media_size,omitempty"        env:"OMNIPUS_AGENTS_DEFAULTS_MAX_MEDIA_SIZE"`
 	Routing                   *RoutingConfig `json:"routing,omitempty"`
 }
 
@@ -59,29 +59,29 @@ type configV0 struct {
 }
 
 type toolsConfigV0 struct {
-	AllowReadPaths  []string            `json:"allow_read_paths"  env:"PICOCLAW_TOOLS_ALLOW_READ_PATHS"`
-	AllowWritePaths []string            `json:"allow_write_paths" env:"PICOCLAW_TOOLS_ALLOW_WRITE_PATHS"`
+	AllowReadPaths  []string            `json:"allow_read_paths"  env:"OMNIPUS_TOOLS_ALLOW_READ_PATHS"`
+	AllowWritePaths []string            `json:"allow_write_paths" env:"OMNIPUS_TOOLS_ALLOW_WRITE_PATHS"`
 	Web             webToolsConfigV0    `json:"web"`
 	Cron            CronToolsConfig     `json:"cron"`
 	Exec            ExecConfig          `json:"exec"`
 	Skills          skillsToolsConfigV0 `json:"skills"`
 	MediaCleanup    MediaCleanupConfig  `json:"media_cleanup"`
 	MCP             MCPConfig           `json:"mcp"`
-	AppendFile      ToolConfig          `json:"append_file"                                              envPrefix:"PICOCLAW_TOOLS_APPEND_FILE_"`
-	EditFile        ToolConfig          `json:"edit_file"                                                envPrefix:"PICOCLAW_TOOLS_EDIT_FILE_"`
-	FindSkills      ToolConfig          `json:"find_skills"                                              envPrefix:"PICOCLAW_TOOLS_FIND_SKILLS_"`
-	I2C             ToolConfig          `json:"i2c"                                                      envPrefix:"PICOCLAW_TOOLS_I2C_"`
-	InstallSkill    ToolConfig          `json:"install_skill"                                            envPrefix:"PICOCLAW_TOOLS_INSTALL_SKILL_"`
-	ListDir         ToolConfig          `json:"list_dir"                                                 envPrefix:"PICOCLAW_TOOLS_LIST_DIR_"`
-	Message         ToolConfig          `json:"message"                                                  envPrefix:"PICOCLAW_TOOLS_MESSAGE_"`
-	ReadFile        ReadFileToolConfig  `json:"read_file"                                                envPrefix:"PICOCLAW_TOOLS_READ_FILE_"`
-	SendFile        ToolConfig          `json:"send_file"                                                envPrefix:"PICOCLAW_TOOLS_SEND_FILE_"`
-	Spawn           ToolConfig          `json:"spawn"                                                    envPrefix:"PICOCLAW_TOOLS_SPAWN_"`
-	SpawnStatus     ToolConfig          `json:"spawn_status"                                             envPrefix:"PICOCLAW_TOOLS_SPAWN_STATUS_"`
-	SPI             ToolConfig          `json:"spi"                                                      envPrefix:"PICOCLAW_TOOLS_SPI_"`
-	Subagent        ToolConfig          `json:"subagent"                                                 envPrefix:"PICOCLAW_TOOLS_SUBAGENT_"`
-	WebFetch        ToolConfig          `json:"web_fetch"                                                envPrefix:"PICOCLAW_TOOLS_WEB_FETCH_"`
-	WriteFile       ToolConfig          `json:"write_file"                                               envPrefix:"PICOCLAW_TOOLS_WRITE_FILE_"`
+	AppendFile      ToolConfig          `json:"append_file"                                              envPrefix:"OMNIPUS_TOOLS_APPEND_FILE_"`
+	EditFile        ToolConfig          `json:"edit_file"                                                envPrefix:"OMNIPUS_TOOLS_EDIT_FILE_"`
+	FindSkills      ToolConfig          `json:"find_skills"                                              envPrefix:"OMNIPUS_TOOLS_FIND_SKILLS_"`
+	I2C             ToolConfig          `json:"i2c"                                                      envPrefix:"OMNIPUS_TOOLS_I2C_"`
+	InstallSkill    ToolConfig          `json:"install_skill"                                            envPrefix:"OMNIPUS_TOOLS_INSTALL_SKILL_"`
+	ListDir         ToolConfig          `json:"list_dir"                                                 envPrefix:"OMNIPUS_TOOLS_LIST_DIR_"`
+	Message         ToolConfig          `json:"message"                                                  envPrefix:"OMNIPUS_TOOLS_MESSAGE_"`
+	ReadFile        ReadFileToolConfig  `json:"read_file"                                                envPrefix:"OMNIPUS_TOOLS_READ_FILE_"`
+	SendFile        ToolConfig          `json:"send_file"                                                envPrefix:"OMNIPUS_TOOLS_SEND_FILE_"`
+	Spawn           ToolConfig          `json:"spawn"                                                    envPrefix:"OMNIPUS_TOOLS_SPAWN_"`
+	SpawnStatus     ToolConfig          `json:"spawn_status"                                             envPrefix:"OMNIPUS_TOOLS_SPAWN_STATUS_"`
+	SPI             ToolConfig          `json:"spi"                                                      envPrefix:"OMNIPUS_TOOLS_SPI_"`
+	Subagent        ToolConfig          `json:"subagent"                                                 envPrefix:"OMNIPUS_TOOLS_SUBAGENT_"`
+	WebFetch        ToolConfig          `json:"web_fetch"                                                envPrefix:"OMNIPUS_TOOLS_WEB_FETCH_"`
+	WriteFile       ToolConfig          `json:"write_file"                                               envPrefix:"OMNIPUS_TOOLS_WRITE_FILE_"`
 }
 
 type channelsConfigV0 struct {
@@ -97,7 +97,7 @@ type channelsConfigV0 struct {
 	Matrix   matrixConfigV0   `json:"matrix"`
 	LINE     lineConfigV0     `json:"line"`
 	OneBot   onebotConfigV0   `json:"onebot"`
-	WeCom    wecomConfigV0    `json:"wecom"    envPrefix:"PICOCLAW_CHANNELS_WECOM_"`
+	WeCom    wecomConfigV0    `json:"wecom"    envPrefix:"OMNIPUS_CHANNELS_WECOM_"`
 	Pico     picoConfigV0     `json:"pico"`
 	IRC      ircConfigV0      `json:"irc"`
 }
@@ -138,15 +138,15 @@ func (v *channelsConfigV0) ToChannelsConfig() ChannelsConfig {
 }
 
 type qqConfigV0 struct {
-	Enabled              bool                `json:"enabled"                  env:"PICOCLAW_CHANNELS_QQ_ENABLED"`
-	AppID                string              `json:"app_id"                   env:"PICOCLAW_CHANNELS_QQ_APP_ID"`
-	AppSecret            string              `json:"app_secret"               env:"PICOCLAW_CHANNELS_QQ_APP_SECRET"`
-	AllowFrom            FlexibleStringSlice `json:"allow_from"               env:"PICOCLAW_CHANNELS_QQ_ALLOW_FROM"`
+	Enabled              bool                `json:"enabled"                  env:"OMNIPUS_CHANNELS_QQ_ENABLED"`
+	AppID                string              `json:"app_id"                   env:"OMNIPUS_CHANNELS_QQ_APP_ID"`
+	AppSecret            string              `json:"app_secret"               env:"OMNIPUS_CHANNELS_QQ_APP_SECRET"`
+	AllowFrom            FlexibleStringSlice `json:"allow_from"               env:"OMNIPUS_CHANNELS_QQ_ALLOW_FROM"`
 	GroupTrigger         GroupTriggerConfig  `json:"group_trigger,omitempty"`
-	MaxMessageLength     int                 `json:"max_message_length"       env:"PICOCLAW_CHANNELS_QQ_MAX_MESSAGE_LENGTH"`
-	MaxBase64FileSizeMiB int64               `json:"max_base64_file_size_mib" env:"PICOCLAW_CHANNELS_QQ_MAX_BASE64_FILE_SIZE_MIB"`
-	SendMarkdown         bool                `json:"send_markdown"            env:"PICOCLAW_CHANNELS_QQ_SEND_MARKDOWN"`
-	ReasoningChannelID   string              `json:"reasoning_channel_id"     env:"PICOCLAW_CHANNELS_QQ_REASONING_CHANNEL_ID"`
+	MaxMessageLength     int                 `json:"max_message_length"       env:"OMNIPUS_CHANNELS_QQ_MAX_MESSAGE_LENGTH"`
+	MaxBase64FileSizeMiB int64               `json:"max_base64_file_size_mib" env:"OMNIPUS_CHANNELS_QQ_MAX_BASE64_FILE_SIZE_MIB"`
+	SendMarkdown         bool                `json:"send_markdown"            env:"OMNIPUS_CHANNELS_QQ_SEND_MARKDOWN"`
+	ReasoningChannelID   string              `json:"reasoning_channel_id"     env:"OMNIPUS_CHANNELS_QQ_REASONING_CHANNEL_ID"`
 }
 
 func (v *qqConfigV0) ToQQConfig() QQConfig {
@@ -164,16 +164,16 @@ func (v *qqConfigV0) ToQQConfig() QQConfig {
 }
 
 type telegramConfigV0 struct {
-	Enabled            bool                `json:"enabled"                 env:"PICOCLAW_CHANNELS_TELEGRAM_ENABLED"`
-	Token              string              `json:"token"                   env:"PICOCLAW_CHANNELS_TELEGRAM_TOKEN"`
-	BaseURL            string              `json:"base_url"                env:"PICOCLAW_CHANNELS_TELEGRAM_BASE_URL"`
-	Proxy              string              `json:"proxy"                   env:"PICOCLAW_CHANNELS_TELEGRAM_PROXY"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"              env:"PICOCLAW_CHANNELS_TELEGRAM_ALLOW_FROM"`
+	Enabled            bool                `json:"enabled"                 env:"OMNIPUS_CHANNELS_TELEGRAM_ENABLED"`
+	Token              string              `json:"token"                   env:"OMNIPUS_CHANNELS_TELEGRAM_TOKEN"`
+	BaseURL            string              `json:"base_url"                env:"OMNIPUS_CHANNELS_TELEGRAM_BASE_URL"`
+	Proxy              string              `json:"proxy"                   env:"OMNIPUS_CHANNELS_TELEGRAM_PROXY"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"              env:"OMNIPUS_CHANNELS_TELEGRAM_ALLOW_FROM"`
 	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"`
 	Typing             TypingConfig        `json:"typing,omitempty"`
 	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"    env:"PICOCLAW_CHANNELS_TELEGRAM_REASONING_CHANNEL_ID"`
-	UseMarkdownV2      bool                `json:"use_markdown_v2"         env:"PICOCLAW_CHANNELS_TELEGRAM_USE_MARKDOWN_V2"`
+	ReasoningChannelID string              `json:"reasoning_channel_id"    env:"OMNIPUS_CHANNELS_TELEGRAM_REASONING_CHANNEL_ID"`
+	UseMarkdownV2      bool                `json:"use_markdown_v2"         env:"OMNIPUS_CHANNELS_TELEGRAM_USE_MARKDOWN_V2"`
 }
 
 func (v *telegramConfigV0) ToTelegramConfig() TelegramConfig {
@@ -195,17 +195,17 @@ func (v *telegramConfigV0) ToTelegramConfig() TelegramConfig {
 }
 
 type feishuConfigV0 struct {
-	Enabled             bool                `json:"enabled"                 env:"PICOCLAW_CHANNELS_FEISHU_ENABLED"`
-	AppID               string              `json:"app_id"                  env:"PICOCLAW_CHANNELS_FEISHU_APP_ID"`
-	AppSecret           string              `json:"app_secret"              env:"PICOCLAW_CHANNELS_FEISHU_APP_SECRET"`
-	EncryptKey          string              `json:"encrypt_key"             env:"PICOCLAW_CHANNELS_FEISHU_ENCRYPT_KEY"`
-	VerificationToken   string              `json:"verification_token"      env:"PICOCLAW_CHANNELS_FEISHU_VERIFICATION_TOKEN"`
-	AllowFrom           FlexibleStringSlice `json:"allow_from"              env:"PICOCLAW_CHANNELS_FEISHU_ALLOW_FROM"`
+	Enabled             bool                `json:"enabled"                 env:"OMNIPUS_CHANNELS_FEISHU_ENABLED"`
+	AppID               string              `json:"app_id"                  env:"OMNIPUS_CHANNELS_FEISHU_APP_ID"`
+	AppSecret           string              `json:"app_secret"              env:"OMNIPUS_CHANNELS_FEISHU_APP_SECRET"`
+	EncryptKey          string              `json:"encrypt_key"             env:"OMNIPUS_CHANNELS_FEISHU_ENCRYPT_KEY"`
+	VerificationToken   string              `json:"verification_token"      env:"OMNIPUS_CHANNELS_FEISHU_VERIFICATION_TOKEN"`
+	AllowFrom           FlexibleStringSlice `json:"allow_from"              env:"OMNIPUS_CHANNELS_FEISHU_ALLOW_FROM"`
 	GroupTrigger        GroupTriggerConfig  `json:"group_trigger,omitempty"`
 	Placeholder         PlaceholderConfig   `json:"placeholder,omitempty"`
-	ReasoningChannelID  string              `json:"reasoning_channel_id"    env:"PICOCLAW_CHANNELS_FEISHU_REASONING_CHANNEL_ID"`
-	RandomReactionEmoji FlexibleStringSlice `json:"random_reaction_emoji"   env:"PICOCLAW_CHANNELS_FEISHU_RANDOM_REACTION_EMOJI"`
-	IsLark              bool                `json:"is_lark"                 env:"PICOCLAW_CHANNELS_FEISHU_IS_LARK"`
+	ReasoningChannelID  string              `json:"reasoning_channel_id"    env:"OMNIPUS_CHANNELS_FEISHU_REASONING_CHANNEL_ID"`
+	RandomReactionEmoji FlexibleStringSlice `json:"random_reaction_emoji"   env:"OMNIPUS_CHANNELS_FEISHU_RANDOM_REACTION_EMOJI"`
+	IsLark              bool                `json:"is_lark"                 env:"OMNIPUS_CHANNELS_FEISHU_IS_LARK"`
 }
 
 func (v *feishuConfigV0) ToFeishuConfig() FeishuConfig {
@@ -230,15 +230,15 @@ func (v *feishuConfigV0) ToFeishuConfig() FeishuConfig {
 }
 
 type discordConfigV0 struct {
-	Enabled            bool                `json:"enabled"                 env:"PICOCLAW_CHANNELS_DISCORD_ENABLED"`
-	Token              string              `json:"token"                   env:"PICOCLAW_CHANNELS_DISCORD_TOKEN"`
-	Proxy              string              `json:"proxy"                   env:"PICOCLAW_CHANNELS_DISCORD_PROXY"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"              env:"PICOCLAW_CHANNELS_DISCORD_ALLOW_FROM"`
-	MentionOnly        bool                `json:"mention_only"            env:"PICOCLAW_CHANNELS_DISCORD_MENTION_ONLY"`
+	Enabled            bool                `json:"enabled"                 env:"OMNIPUS_CHANNELS_DISCORD_ENABLED"`
+	Token              string              `json:"token"                   env:"OMNIPUS_CHANNELS_DISCORD_TOKEN"`
+	Proxy              string              `json:"proxy"                   env:"OMNIPUS_CHANNELS_DISCORD_PROXY"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"              env:"OMNIPUS_CHANNELS_DISCORD_ALLOW_FROM"`
+	MentionOnly        bool                `json:"mention_only"            env:"OMNIPUS_CHANNELS_DISCORD_MENTION_ONLY"`
 	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"`
 	Typing             TypingConfig        `json:"typing,omitempty"`
 	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"    env:"PICOCLAW_CHANNELS_DISCORD_REASONING_CHANNEL_ID"`
+	ReasoningChannelID string              `json:"reasoning_channel_id"    env:"OMNIPUS_CHANNELS_DISCORD_REASONING_CHANNEL_ID"`
 }
 
 func (v *discordConfigV0) ToDiscordConfig() DiscordConfig {
@@ -259,11 +259,11 @@ func (v *discordConfigV0) ToDiscordConfig() DiscordConfig {
 }
 
 type maixcamConfigV0 struct {
-	Enabled            bool                `json:"enabled"              env:"PICOCLAW_CHANNELS_MAIXCAM_ENABLED"`
-	Host               string              `json:"host"                 env:"PICOCLAW_CHANNELS_MAIXCAM_HOST"`
-	Port               int                 `json:"port"                 env:"PICOCLAW_CHANNELS_MAIXCAM_PORT"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"           env:"PICOCLAW_CHANNELS_MAIXCAM_ALLOW_FROM"`
-	ReasoningChannelID string              `json:"reasoning_channel_id" env:"PICOCLAW_CHANNELS_MAIXCAM_REASONING_CHANNEL_ID"`
+	Enabled            bool                `json:"enabled"              env:"OMNIPUS_CHANNELS_MAIXCAM_ENABLED"`
+	Host               string              `json:"host"                 env:"OMNIPUS_CHANNELS_MAIXCAM_HOST"`
+	Port               int                 `json:"port"                 env:"OMNIPUS_CHANNELS_MAIXCAM_PORT"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"           env:"OMNIPUS_CHANNELS_MAIXCAM_ALLOW_FROM"`
+	ReasoningChannelID string              `json:"reasoning_channel_id" env:"OMNIPUS_CHANNELS_MAIXCAM_REASONING_CHANNEL_ID"`
 }
 
 func (v *maixcamConfigV0) ToMaixCamConfig() MaixCamConfig {
@@ -277,12 +277,12 @@ func (v *maixcamConfigV0) ToMaixCamConfig() MaixCamConfig {
 }
 
 type dingtalkConfigV0 struct {
-	Enabled            bool                `json:"enabled"                 env:"PICOCLAW_CHANNELS_DINGTALK_ENABLED"`
-	ClientID           string              `json:"client_id"               env:"PICOCLAW_CHANNELS_DINGTALK_CLIENT_ID"`
-	ClientSecret       string              `json:"client_secret"           env:"PICOCLAW_CHANNELS_DINGTALK_CLIENT_SECRET"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"              env:"PICOCLAW_CHANNELS_DINGTALK_ALLOW_FROM"`
+	Enabled            bool                `json:"enabled"                 env:"OMNIPUS_CHANNELS_DINGTALK_ENABLED"`
+	ClientID           string              `json:"client_id"               env:"OMNIPUS_CHANNELS_DINGTALK_CLIENT_ID"`
+	ClientSecret       string              `json:"client_secret"           env:"OMNIPUS_CHANNELS_DINGTALK_CLIENT_SECRET"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"              env:"OMNIPUS_CHANNELS_DINGTALK_ALLOW_FROM"`
 	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"    env:"PICOCLAW_CHANNELS_DINGTALK_REASONING_CHANNEL_ID"`
+	ReasoningChannelID string              `json:"reasoning_channel_id"    env:"OMNIPUS_CHANNELS_DINGTALK_REASONING_CHANNEL_ID"`
 }
 
 func (v *dingtalkConfigV0) ToDingTalkConfig() DingTalkConfig {
@@ -300,14 +300,14 @@ func (v *dingtalkConfigV0) ToDingTalkConfig() DingTalkConfig {
 }
 
 type slackConfigV0 struct {
-	Enabled            bool                `json:"enabled"                 env:"PICOCLAW_CHANNELS_SLACK_ENABLED"`
-	BotToken           string              `json:"bot_token"               env:"PICOCLAW_CHANNELS_SLACK_BOT_TOKEN"`
-	AppToken           string              `json:"app_token"               env:"PICOCLAW_CHANNELS_SLACK_APP_TOKEN"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"              env:"PICOCLAW_CHANNELS_SLACK_ALLOW_FROM"`
+	Enabled            bool                `json:"enabled"                 env:"OMNIPUS_CHANNELS_SLACK_ENABLED"`
+	BotToken           string              `json:"bot_token"               env:"OMNIPUS_CHANNELS_SLACK_BOT_TOKEN"`
+	AppToken           string              `json:"app_token"               env:"OMNIPUS_CHANNELS_SLACK_APP_TOKEN"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"              env:"OMNIPUS_CHANNELS_SLACK_ALLOW_FROM"`
 	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"`
 	Typing             TypingConfig        `json:"typing,omitempty"`
 	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"    env:"PICOCLAW_CHANNELS_SLACK_REASONING_CHANNEL_ID"`
+	ReasoningChannelID string              `json:"reasoning_channel_id"    env:"OMNIPUS_CHANNELS_SLACK_REASONING_CHANNEL_ID"`
 }
 
 func (v *slackConfigV0) ToSlackConfig() SlackConfig {
@@ -329,17 +329,17 @@ func (v *slackConfigV0) ToSlackConfig() SlackConfig {
 }
 
 type matrixConfigV0 struct {
-	Enabled            bool                `json:"enabled"                  env:"PICOCLAW_CHANNELS_MATRIX_ENABLED"`
-	Homeserver         string              `json:"homeserver"               env:"PICOCLAW_CHANNELS_MATRIX_HOMESERVER"`
-	UserID             string              `json:"user_id"                  env:"PICOCLAW_CHANNELS_MATRIX_USER_ID"`
-	AccessToken        string              `json:"access_token"             env:"PICOCLAW_CHANNELS_MATRIX_ACCESS_TOKEN"`
-	DeviceID           string              `json:"device_id,omitempty"      env:"PICOCLAW_CHANNELS_MATRIX_DEVICE_ID"`
-	JoinOnInvite       bool                `json:"join_on_invite"           env:"PICOCLAW_CHANNELS_MATRIX_JOIN_ON_INVITE"`
-	MessageFormat      string              `json:"message_format,omitempty" env:"PICOCLAW_CHANNELS_MATRIX_MESSAGE_FORMAT"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"               env:"PICOCLAW_CHANNELS_MATRIX_ALLOW_FROM"`
+	Enabled            bool                `json:"enabled"                  env:"OMNIPUS_CHANNELS_MATRIX_ENABLED"`
+	Homeserver         string              `json:"homeserver"               env:"OMNIPUS_CHANNELS_MATRIX_HOMESERVER"`
+	UserID             string              `json:"user_id"                  env:"OMNIPUS_CHANNELS_MATRIX_USER_ID"`
+	AccessToken        string              `json:"access_token"             env:"OMNIPUS_CHANNELS_MATRIX_ACCESS_TOKEN"`
+	DeviceID           string              `json:"device_id,omitempty"      env:"OMNIPUS_CHANNELS_MATRIX_DEVICE_ID"`
+	JoinOnInvite       bool                `json:"join_on_invite"           env:"OMNIPUS_CHANNELS_MATRIX_JOIN_ON_INVITE"`
+	MessageFormat      string              `json:"message_format,omitempty" env:"OMNIPUS_CHANNELS_MATRIX_MESSAGE_FORMAT"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"               env:"OMNIPUS_CHANNELS_MATRIX_ALLOW_FROM"`
 	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"`
 	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"     env:"PICOCLAW_CHANNELS_MATRIX_REASONING_CHANNEL_ID"`
+	ReasoningChannelID string              `json:"reasoning_channel_id"     env:"OMNIPUS_CHANNELS_MATRIX_REASONING_CHANNEL_ID"`
 }
 
 func (v *matrixConfigV0) ToMatrixConfig() MatrixConfig {
@@ -362,17 +362,17 @@ func (v *matrixConfigV0) ToMatrixConfig() MatrixConfig {
 }
 
 type lineConfigV0 struct {
-	Enabled            bool                `json:"enabled"                 env:"PICOCLAW_CHANNELS_LINE_ENABLED"`
-	ChannelSecret      string              `json:"channel_secret"          env:"PICOCLAW_CHANNELS_LINE_CHANNEL_SECRET"`
-	ChannelAccessToken string              `json:"channel_access_token"    env:"PICOCLAW_CHANNELS_LINE_CHANNEL_ACCESS_TOKEN"`
-	WebhookHost        string              `json:"webhook_host"            env:"PICOCLAW_CHANNELS_LINE_WEBHOOK_HOST"`
-	WebhookPort        int                 `json:"webhook_port"            env:"PICOCLAW_CHANNELS_LINE_WEBHOOK_PORT"`
-	WebhookPath        string              `json:"webhook_path"            env:"PICOCLAW_CHANNELS_LINE_WEBHOOK_PATH"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"              env:"PICOCLAW_CHANNELS_LINE_ALLOW_FROM"`
+	Enabled            bool                `json:"enabled"                 env:"OMNIPUS_CHANNELS_LINE_ENABLED"`
+	ChannelSecret      string              `json:"channel_secret"          env:"OMNIPUS_CHANNELS_LINE_CHANNEL_SECRET"`
+	ChannelAccessToken string              `json:"channel_access_token"    env:"OMNIPUS_CHANNELS_LINE_CHANNEL_ACCESS_TOKEN"`
+	WebhookHost        string              `json:"webhook_host"            env:"OMNIPUS_CHANNELS_LINE_WEBHOOK_HOST"`
+	WebhookPort        int                 `json:"webhook_port"            env:"OMNIPUS_CHANNELS_LINE_WEBHOOK_PORT"`
+	WebhookPath        string              `json:"webhook_path"            env:"OMNIPUS_CHANNELS_LINE_WEBHOOK_PATH"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"              env:"OMNIPUS_CHANNELS_LINE_ALLOW_FROM"`
 	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"`
 	Typing             TypingConfig        `json:"typing,omitempty"`
 	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"    env:"PICOCLAW_CHANNELS_LINE_REASONING_CHANNEL_ID"`
+	ReasoningChannelID string              `json:"reasoning_channel_id"    env:"OMNIPUS_CHANNELS_LINE_REASONING_CHANNEL_ID"`
 }
 
 func (v *lineConfigV0) ToLINEConfig() LINEConfig {
@@ -397,16 +397,16 @@ func (v *lineConfigV0) ToLINEConfig() LINEConfig {
 }
 
 type onebotConfigV0 struct {
-	Enabled            bool                `json:"enabled"                 env:"PICOCLAW_CHANNELS_ONEBOT_ENABLED"`
-	WSUrl              string              `json:"ws_url"                  env:"PICOCLAW_CHANNELS_ONEBOT_WS_URL"`
-	AccessToken        string              `json:"access_token"            env:"PICOCLAW_CHANNELS_ONEBOT_ACCESS_TOKEN"`
-	ReconnectInterval  int                 `json:"reconnect_interval"      env:"PICOCLAW_CHANNELS_ONEBOT_RECONNECT_INTERVAL"`
-	GroupTriggerPrefix []string            `json:"group_trigger_prefix"    env:"PICOCLAW_CHANNELS_ONEBOT_GROUP_TRIGGER_PREFIX"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"              env:"PICOCLAW_CHANNELS_ONEBOT_ALLOW_FROM"`
+	Enabled            bool                `json:"enabled"                 env:"OMNIPUS_CHANNELS_ONEBOT_ENABLED"`
+	WSUrl              string              `json:"ws_url"                  env:"OMNIPUS_CHANNELS_ONEBOT_WS_URL"`
+	AccessToken        string              `json:"access_token"            env:"OMNIPUS_CHANNELS_ONEBOT_ACCESS_TOKEN"`
+	ReconnectInterval  int                 `json:"reconnect_interval"      env:"OMNIPUS_CHANNELS_ONEBOT_RECONNECT_INTERVAL"`
+	GroupTriggerPrefix []string            `json:"group_trigger_prefix"    env:"OMNIPUS_CHANNELS_ONEBOT_GROUP_TRIGGER_PREFIX"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"              env:"OMNIPUS_CHANNELS_ONEBOT_ALLOW_FROM"`
 	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"`
 	Typing             TypingConfig        `json:"typing,omitempty"`
 	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"    env:"PICOCLAW_CHANNELS_ONEBOT_REASONING_CHANNEL_ID"`
+	ReasoningChannelID string              `json:"reasoning_channel_id"    env:"OMNIPUS_CHANNELS_ONEBOT_REASONING_CHANNEL_ID"`
 }
 
 func (v *onebotConfigV0) ToOneBotConfig() OneBotConfig {
@@ -457,13 +457,13 @@ func (v *wecomConfigV0) ToWeComConfig() WeComConfig {
 }
 
 type weixinConfigV0 struct {
-	Enabled            bool                `json:"enabled"              env:"PICOCLAW_CHANNELS_WEIXIN_ENABLED"`
-	Token              string              `json:"token"                env:"PICOCLAW_CHANNELS_WEIXIN_TOKEN"`
-	BaseURL            string              `json:"base_url"             env:"PICOCLAW_CHANNELS_WEIXIN_BASE_URL"`
-	CDNBaseURL         string              `json:"cdn_base_url"         env:"PICOCLAW_CHANNELS_WEIXIN_CDN_BASE_URL"`
-	Proxy              string              `json:"proxy"                env:"PICOCLAW_CHANNELS_WEIXIN_PROXY"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"           env:"PICOCLAW_CHANNELS_WEIXIN_ALLOW_FROM"`
-	ReasoningChannelID string              `json:"reasoning_channel_id" env:"PICOCLAW_CHANNELS_WEIXIN_REASONING_CHANNEL_ID"`
+	Enabled            bool                `json:"enabled"              env:"OMNIPUS_CHANNELS_WEIXIN_ENABLED"`
+	Token              string              `json:"token"                env:"OMNIPUS_CHANNELS_WEIXIN_TOKEN"`
+	BaseURL            string              `json:"base_url"             env:"OMNIPUS_CHANNELS_WEIXIN_BASE_URL"`
+	CDNBaseURL         string              `json:"cdn_base_url"         env:"OMNIPUS_CHANNELS_WEIXIN_CDN_BASE_URL"`
+	Proxy              string              `json:"proxy"                env:"OMNIPUS_CHANNELS_WEIXIN_PROXY"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"           env:"OMNIPUS_CHANNELS_WEIXIN_ALLOW_FROM"`
+	ReasoningChannelID string              `json:"reasoning_channel_id" env:"OMNIPUS_CHANNELS_WEIXIN_REASONING_CHANNEL_ID"`
 }
 
 func (v *weixinConfigV0) ToWeiXinConfig() WeixinConfig {
@@ -482,15 +482,15 @@ func (v *weixinConfigV0) ToWeiXinConfig() WeixinConfig {
 }
 
 type picoConfigV0 struct {
-	Enabled         bool                `json:"enabled"                     env:"PICOCLAW_CHANNELS_PICO_ENABLED"`
-	Token           string              `json:"token"                       env:"PICOCLAW_CHANNELS_PICO_TOKEN"`
+	Enabled         bool                `json:"enabled"                     env:"OMNIPUS_CHANNELS_PICO_ENABLED"`
+	Token           string              `json:"token"                       env:"OMNIPUS_CHANNELS_PICO_TOKEN"`
 	AllowTokenQuery bool                `json:"allow_token_query,omitempty"`
 	AllowOrigins    []string            `json:"allow_origins,omitempty"`
 	PingInterval    int                 `json:"ping_interval,omitempty"`
 	ReadTimeout     int                 `json:"read_timeout,omitempty"`
 	WriteTimeout    int                 `json:"write_timeout,omitempty"`
 	MaxConnections  int                 `json:"max_connections,omitempty"`
-	AllowFrom       FlexibleStringSlice `json:"allow_from"                  env:"PICOCLAW_CHANNELS_PICO_ALLOW_FROM"`
+	AllowFrom       FlexibleStringSlice `json:"allow_from"                  env:"OMNIPUS_CHANNELS_PICO_ALLOW_FROM"`
 	Placeholder     PlaceholderConfig   `json:"placeholder,omitempty"`
 }
 
@@ -513,22 +513,22 @@ func (v *picoConfigV0) ToPicoConfig() PicoConfig {
 }
 
 type ircConfigV0 struct {
-	Enabled            bool                `json:"enabled"                 env:"PICOCLAW_CHANNELS_IRC_ENABLED"`
-	Server             string              `json:"server"                  env:"PICOCLAW_CHANNELS_IRC_SERVER"`
-	TLS                bool                `json:"tls"                     env:"PICOCLAW_CHANNELS_IRC_TLS"`
-	Nick               string              `json:"nick"                    env:"PICOCLAW_CHANNELS_IRC_NICK"`
-	User               string              `json:"user,omitempty"          env:"PICOCLAW_CHANNELS_IRC_USER"`
-	RealName           string              `json:"real_name,omitempty"     env:"PICOCLAW_CHANNELS_IRC_REAL_NAME"`
-	Password           string              `json:"password"                env:"PICOCLAW_CHANNELS_IRC_PASSWORD"`
-	NickServPassword   string              `json:"nickserv_password"       env:"PICOCLAW_CHANNELS_IRC_NICKSERV_PASSWORD"`
-	SASLUser           string              `json:"sasl_user"               env:"PICOCLAW_CHANNELS_IRC_SASL_USER"`
-	SASLPassword       string              `json:"sasl_password"           env:"PICOCLAW_CHANNELS_IRC_SASL_PASSWORD"`
-	Channels           FlexibleStringSlice `json:"channels"                env:"PICOCLAW_CHANNELS_IRC_CHANNELS"`
-	RequestCaps        FlexibleStringSlice `json:"request_caps,omitempty"  env:"PICOCLAW_CHANNELS_IRC_REQUEST_CAPS"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"              env:"PICOCLAW_CHANNELS_IRC_ALLOW_FROM"`
+	Enabled            bool                `json:"enabled"                 env:"OMNIPUS_CHANNELS_IRC_ENABLED"`
+	Server             string              `json:"server"                  env:"OMNIPUS_CHANNELS_IRC_SERVER"`
+	TLS                bool                `json:"tls"                     env:"OMNIPUS_CHANNELS_IRC_TLS"`
+	Nick               string              `json:"nick"                    env:"OMNIPUS_CHANNELS_IRC_NICK"`
+	User               string              `json:"user,omitempty"          env:"OMNIPUS_CHANNELS_IRC_USER"`
+	RealName           string              `json:"real_name,omitempty"     env:"OMNIPUS_CHANNELS_IRC_REAL_NAME"`
+	Password           string              `json:"password"                env:"OMNIPUS_CHANNELS_IRC_PASSWORD"`
+	NickServPassword   string              `json:"nickserv_password"       env:"OMNIPUS_CHANNELS_IRC_NICKSERV_PASSWORD"`
+	SASLUser           string              `json:"sasl_user"               env:"OMNIPUS_CHANNELS_IRC_SASL_USER"`
+	SASLPassword       string              `json:"sasl_password"           env:"OMNIPUS_CHANNELS_IRC_SASL_PASSWORD"`
+	Channels           FlexibleStringSlice `json:"channels"                env:"OMNIPUS_CHANNELS_IRC_CHANNELS"`
+	RequestCaps        FlexibleStringSlice `json:"request_caps,omitempty"  env:"OMNIPUS_CHANNELS_IRC_REQUEST_CAPS"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"              env:"OMNIPUS_CHANNELS_IRC_ALLOW_FROM"`
 	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"`
 	Typing             TypingConfig        `json:"typing,omitempty"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"    env:"PICOCLAW_CHANNELS_IRC_REASONING_CHANNEL_ID"`
+	ReasoningChannelID string              `json:"reasoning_channel_id"    env:"OMNIPUS_CHANNELS_IRC_REASONING_CHANNEL_ID"`
 }
 
 func (v *ircConfigV0) ToIRCConfig() IRCConfig {
@@ -618,12 +618,12 @@ func (p providersConfigV0) IsEmpty() bool {
 }
 
 type providerConfigV0 struct {
-	APIKey         string `json:"api_key"                   env:"PICOCLAW_PROVIDERS_{{.Name}}_API_KEY"`
-	APIBase        string `json:"api_base"                  env:"PICOCLAW_PROVIDERS_{{.Name}}_API_BASE"`
-	Proxy          string `json:"proxy,omitempty"           env:"PICOCLAW_PROVIDERS_{{.Name}}_PROXY"`
-	RequestTimeout int    `json:"request_timeout,omitempty" env:"PICOCLAW_PROVIDERS_{{.Name}}_REQUEST_TIMEOUT"`
-	AuthMethod     string `json:"auth_method,omitempty"     env:"PICOCLAW_PROVIDERS_{{.Name}}_AUTH_METHOD"`
-	ConnectMode    string `json:"connect_mode,omitempty"    env:"PICOCLAW_PROVIDERS_{{.Name}}_CONNECT_MODE"` // only for Github Copilot, `stdio` or `grpc`
+	APIKey         string `json:"api_key"                   env:"OMNIPUS_PROVIDERS_{{.Name}}_API_KEY"`
+	APIBase        string `json:"api_base"                  env:"OMNIPUS_PROVIDERS_{{.Name}}_API_BASE"`
+	Proxy          string `json:"proxy,omitempty"           env:"OMNIPUS_PROVIDERS_{{.Name}}_PROXY"`
+	RequestTimeout int    `json:"request_timeout,omitempty" env:"OMNIPUS_PROVIDERS_{{.Name}}_REQUEST_TIMEOUT"`
+	AuthMethod     string `json:"auth_method,omitempty"     env:"OMNIPUS_PROVIDERS_{{.Name}}_AUTH_METHOD"`
+	ConnectMode    string `json:"connect_mode,omitempty"    env:"OMNIPUS_PROVIDERS_{{.Name}}_CONNECT_MODE"` // only for Github Copilot, `stdio` or `grpc`
 }
 
 // MarshalJSON implements custom JSON marshaling for providersConfig
@@ -638,7 +638,7 @@ func (p providersConfigV0) MarshalJSON() ([]byte, error) {
 
 type openAIProviderConfigV0 struct {
 	providerConfigV0
-	WebSearch bool `json:"web_search" env:"PICOCLAW_PROVIDERS_OPENAI_WEB_SEARCH"`
+	WebSearch bool `json:"web_search" env:"OMNIPUS_PROVIDERS_OPENAI_WEB_SEARCH"`
 }
 
 type modelConfigV0 struct {
@@ -757,7 +757,7 @@ func (c *configV0) Migrate() (*Config, error) {
 }
 
 type webToolsConfigV0 struct {
-	ToolConfig           `                    envPrefix:"PICOCLAW_TOOLS_WEB_"`
+	ToolConfig           `                    envPrefix:"OMNIPUS_TOOLS_WEB_"`
 	Brave                braveConfigV0       `                                json:"brave"`
 	Tavily               tavilyConfigV0      `                                json:"tavily"`
 	DuckDuckGo           DuckDuckGoConfig    `                                json:"duckduckgo"`
@@ -765,18 +765,18 @@ type webToolsConfigV0 struct {
 	SearXNG              SearXNGConfig       `                                json:"searxng"`
 	GLMSearch            glmSearchConfigV0   `                                json:"glm_search"`
 	BaiduSearch          baiduSearchConfigV0 `                                json:"baidu_search"`
-	PreferNative         bool                `                                json:"prefer_native"                    env:"PICOCLAW_TOOLS_WEB_PREFER_NATIVE"`
-	Proxy                string              `                                json:"proxy,omitempty"                  env:"PICOCLAW_TOOLS_WEB_PROXY"`
-	FetchLimitBytes      int64               `                                json:"fetch_limit_bytes,omitempty"      env:"PICOCLAW_TOOLS_WEB_FETCH_LIMIT_BYTES"`
-	Format               string              `                                json:"format,omitempty"                 env:"PICOCLAW_TOOLS_WEB_FORMAT"`
-	PrivateHostWhitelist FlexibleStringSlice `                                json:"private_host_whitelist,omitempty" env:"PICOCLAW_TOOLS_WEB_PRIVATE_HOST_WHITELIST"`
+	PreferNative         bool                `                                json:"prefer_native"                    env:"OMNIPUS_TOOLS_WEB_PREFER_NATIVE"`
+	Proxy                string              `                                json:"proxy,omitempty"                  env:"OMNIPUS_TOOLS_WEB_PROXY"`
+	FetchLimitBytes      int64               `                                json:"fetch_limit_bytes,omitempty"      env:"OMNIPUS_TOOLS_WEB_FETCH_LIMIT_BYTES"`
+	Format               string              `                                json:"format,omitempty"                 env:"OMNIPUS_TOOLS_WEB_FORMAT"`
+	PrivateHostWhitelist FlexibleStringSlice `                                json:"private_host_whitelist,omitempty" env:"OMNIPUS_TOOLS_WEB_PRIVATE_HOST_WHITELIST"`
 }
 
 type braveConfigV0 struct {
-	Enabled    bool     `json:"enabled"     env:"PICOCLAW_TOOLS_WEB_BRAVE_ENABLED"`
-	APIKey     string   `json:"api_key"     env:"PICOCLAW_TOOLS_WEB_BRAVE_API_KEY"`
-	APIKeys    []string `json:"api_keys"    env:"PICOCLAW_TOOLS_WEB_BRAVE_API_KEYS"`
-	MaxResults int      `json:"max_results" env:"PICOCLAW_TOOLS_WEB_BRAVE_MAX_RESULTS"`
+	Enabled    bool     `json:"enabled"     env:"OMNIPUS_TOOLS_WEB_BRAVE_ENABLED"`
+	APIKey     string   `json:"api_key"     env:"OMNIPUS_TOOLS_WEB_BRAVE_API_KEY"`
+	APIKeys    []string `json:"api_keys"    env:"OMNIPUS_TOOLS_WEB_BRAVE_API_KEYS"`
+	MaxResults int      `json:"max_results" env:"OMNIPUS_TOOLS_WEB_BRAVE_MAX_RESULTS"`
 }
 
 func toSecureStrings(keys []string) SecureStrings {
@@ -796,11 +796,11 @@ func (v *braveConfigV0) ToBraveConfig() BraveConfig {
 }
 
 type tavilyConfigV0 struct {
-	Enabled    bool     `json:"enabled"     env:"PICOCLAW_TOOLS_WEB_TAVILY_ENABLED"`
-	APIKey     string   `json:"api_key"     env:"PICOCLAW_TOOLS_WEB_TAVILY_API_KEY"`
-	APIKeys    []string `json:"api_keys"    env:"PICOCLAW_TOOLS_WEB_TAVILY_API_KEYS"`
-	BaseURL    string   `json:"base_url"    env:"PICOCLAW_TOOLS_WEB_TAVILY_BASE_URL"`
-	MaxResults int      `json:"max_results" env:"PICOCLAW_TOOLS_WEB_TAVILY_MAX_RESULTS"`
+	Enabled    bool     `json:"enabled"     env:"OMNIPUS_TOOLS_WEB_TAVILY_ENABLED"`
+	APIKey     string   `json:"api_key"     env:"OMNIPUS_TOOLS_WEB_TAVILY_API_KEY"`
+	APIKeys    []string `json:"api_keys"    env:"OMNIPUS_TOOLS_WEB_TAVILY_API_KEYS"`
+	BaseURL    string   `json:"base_url"    env:"OMNIPUS_TOOLS_WEB_TAVILY_BASE_URL"`
+	MaxResults int      `json:"max_results" env:"OMNIPUS_TOOLS_WEB_TAVILY_MAX_RESULTS"`
 }
 
 func (v *tavilyConfigV0) ToTavilyConfig() TavilyConfig {
@@ -813,10 +813,10 @@ func (v *tavilyConfigV0) ToTavilyConfig() TavilyConfig {
 }
 
 type perplexityConfigV0 struct {
-	Enabled    bool     `json:"enabled"     env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_ENABLED"`
-	APIKey     string   `json:"api_key"     env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_API_KEY"`
-	APIKeys    []string `json:"api_keys"    env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_API_KEYS"`
-	MaxResults int      `json:"max_results" env:"PICOCLAW_TOOLS_WEB_PERPLEXITY_MAX_RESULTS"`
+	Enabled    bool     `json:"enabled"     env:"OMNIPUS_TOOLS_WEB_PERPLEXITY_ENABLED"`
+	APIKey     string   `json:"api_key"     env:"OMNIPUS_TOOLS_WEB_PERPLEXITY_API_KEY"`
+	APIKeys    []string `json:"api_keys"    env:"OMNIPUS_TOOLS_WEB_PERPLEXITY_API_KEYS"`
+	MaxResults int      `json:"max_results" env:"OMNIPUS_TOOLS_WEB_PERPLEXITY_MAX_RESULTS"`
 }
 
 func (v *perplexityConfigV0) ToPerplexityConfig() PerplexityConfig {
@@ -828,10 +828,10 @@ func (v *perplexityConfigV0) ToPerplexityConfig() PerplexityConfig {
 }
 
 type glmSearchConfigV0 struct {
-	Enabled      bool   `json:"enabled"       env:"PICOCLAW_TOOLS_WEB_GLM_ENABLED"`
-	APIKey       string `json:"api_key"       env:"PICOCLAW_TOOLS_WEB_GLM_API_KEY"`
-	BaseURL      string `json:"base_url"      env:"PICOCLAW_TOOLS_WEB_GLM_BASE_URL"`
-	SearchEngine string `json:"search_engine" env:"PICOCLAW_TOOLS_WEB_GLM_SEARCH_ENGINE"`
+	Enabled      bool   `json:"enabled"       env:"OMNIPUS_TOOLS_WEB_GLM_ENABLED"`
+	APIKey       string `json:"api_key"       env:"OMNIPUS_TOOLS_WEB_GLM_API_KEY"`
+	BaseURL      string `json:"base_url"      env:"OMNIPUS_TOOLS_WEB_GLM_BASE_URL"`
+	SearchEngine string `json:"search_engine" env:"OMNIPUS_TOOLS_WEB_GLM_SEARCH_ENGINE"`
 }
 
 func (v *glmSearchConfigV0) ToGLMSearchConfig() GLMSearchConfig {
@@ -844,10 +844,10 @@ func (v *glmSearchConfigV0) ToGLMSearchConfig() GLMSearchConfig {
 }
 
 type baiduSearchConfigV0 struct {
-	Enabled    bool   `json:"enabled"     env:"PICOCLAW_TOOLS_WEB_BAIDU_ENABLED"`
-	APIKey     string `json:"api_key"     env:"PICOCLAW_TOOLS_WEB_BAIDU_API_KEY"`
-	BaseURL    string `json:"base_url"    env:"PICOCLAW_TOOLS_WEB_BAIDU_BASE_URL"`
-	MaxResults int    `json:"max_results" env:"PICOCLAW_TOOLS_WEB_BAIDU_MAX_RESULTS"`
+	Enabled    bool   `json:"enabled"     env:"OMNIPUS_TOOLS_WEB_BAIDU_ENABLED"`
+	APIKey     string `json:"api_key"     env:"OMNIPUS_TOOLS_WEB_BAIDU_API_KEY"`
+	BaseURL    string `json:"base_url"    env:"OMNIPUS_TOOLS_WEB_BAIDU_BASE_URL"`
+	MaxResults int    `json:"max_results" env:"OMNIPUS_TOOLS_WEB_BAIDU_MAX_RESULTS"`
 }
 
 func (v *baiduSearchConfigV0) ToBaiduSearchConfig() BaiduSearchConfig {
@@ -884,10 +884,10 @@ func (v *webToolsConfigV0) ToWebToolsConfig() WebToolsConfig {
 }
 
 type skillsToolsConfigV0 struct {
-	ToolConfig            `                         envPrefix:"PICOCLAW_TOOLS_SKILLS_"`
+	ToolConfig            `                         envPrefix:"OMNIPUS_TOOLS_SKILLS_"`
 	Registries            skillsRegistriesConfigV0 `                                   json:"registries"`
 	Github                skillsGithubConfigV0     `                                   json:"github"`
-	MaxConcurrentSearches int                      `                                   json:"max_concurrent_searches" env:"PICOCLAW_TOOLS_SKILLS_MAX_CONCURRENT_SEARCHES"`
+	MaxConcurrentSearches int                      `                                   json:"max_concurrent_searches" env:"OMNIPUS_TOOLS_SKILLS_MAX_CONCURRENT_SEARCHES"`
 	SearchCache           SearchCacheConfig        `                                   json:"search_cache"`
 }
 
@@ -896,11 +896,11 @@ type skillsRegistriesConfigV0 struct {
 }
 
 type clawHubRegistryConfigV0 struct {
-	Enabled    bool   `json:"enabled"     env:"PICOCLAW_SKILLS_REGISTRIES_CLAWHUB_ENABLED"`
-	BaseURL    string `json:"base_url"    env:"PICOCLAW_SKILLS_REGISTRIES_CLAWHUB_BASE_URL"`
-	AuthToken  string `json:"auth_token"  env:"PICOCLAW_SKILLS_REGISTRIES_CLAWHUB_AUTH_TOKEN"`
-	SearchPath string `json:"search_path" env:"PICOCLAW_SKILLS_REGISTRIES_CLAWHUB_SEARCH_PATH"`
-	SkillsPath string `json:"skills_path" env:"PICOCLAW_SKILLS_REGISTRIES_CLAWHUB_SKILLS_PATH"`
+	Enabled    bool   `json:"enabled"     env:"OMNIPUS_SKILLS_REGISTRIES_CLAWHUB_ENABLED"`
+	BaseURL    string `json:"base_url"    env:"OMNIPUS_SKILLS_REGISTRIES_CLAWHUB_BASE_URL"`
+	AuthToken  string `json:"auth_token"  env:"OMNIPUS_SKILLS_REGISTRIES_CLAWHUB_AUTH_TOKEN"`
+	SearchPath string `json:"search_path" env:"OMNIPUS_SKILLS_REGISTRIES_CLAWHUB_SEARCH_PATH"`
+	SkillsPath string `json:"skills_path" env:"OMNIPUS_SKILLS_REGISTRIES_CLAWHUB_SKILLS_PATH"`
 }
 
 func (v *clawHubRegistryConfigV0) ToClawHubRegistryConfig() ClawHubRegistryConfig {
@@ -917,8 +917,8 @@ func (v *clawHubRegistryConfigV0) ToClawHubRegistryConfig() ClawHubRegistryConfi
 }
 
 type skillsGithubConfigV0 struct {
-	Token string `json:"token"           env:"PICOCLAW_TOOLS_SKILLS_GITHUB_TOKEN"`
-	Proxy string `json:"proxy,omitempty" env:"PICOCLAW_TOOLS_SKILLS_GITHUB_PROXY"`
+	Token string `json:"token"           env:"OMNIPUS_TOOLS_SKILLS_GITHUB_TOKEN"`
+	Proxy string `json:"proxy,omitempty" env:"OMNIPUS_TOOLS_SKILLS_GITHUB_PROXY"`
 }
 
 func (v *skillsGithubConfigV0) ToSkillsGithubConfig() SkillsGithubConfig {

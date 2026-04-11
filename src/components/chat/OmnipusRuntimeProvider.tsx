@@ -65,7 +65,7 @@ export function OmnipusRuntimeProvider({ children }: { children: React.ReactNode
       {/*
        * Tool UI registrations — each component calls useAssistantToolUI on mount.
        * Tool name → UI component mapping. Underscore names match pkg/sysagent/tools/ exports
-       * (PicoClaw convention); dot-notation names match BRD C.6.1.4 spec. Both registered
+       * (Omnipus convention); dot-notation names match BRD C.6.1.4 spec. Both registered
        * to handle either naming convention from the agent.
        *   exec              → TerminalOutputUI          (shell command execution)
        *   read_file         → FileReadPreviewUI         (read file content)

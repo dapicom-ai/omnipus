@@ -112,7 +112,7 @@ function makeWriteFileUI(toolName: string) {
 
 export const FileWriteConfirmUI = makeWriteFileUI('write_file')
 
-// BRD C.6.1.4 tool name (dot-notation). Backend uses PicoClaw convention (write_file); both registered.
+// BRD C.6.1.4 tool name (dot-notation). Backend uses Omnipus convention (write_file); both registered.
 export const FileWriteAliasDotUI = makeWriteFileUI('file.write')
 
 export const EditFileConfirmUI = makeAssistantToolUI<EditFileArgs, unknown>({

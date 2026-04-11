@@ -143,7 +143,7 @@ Công cụ exec được sử dụng để thực thi các lệnh shell.
 
 **Qua biến môi trường:**
 ```bash
-PICOCLAW_TOOLS_EXEC_ENABLED=false
+OMNIPUS_TOOLS_EXEC_ENABLED=false
 ```
 
 > **Lưu ý:** Khi bị vô hiệu hóa, agent sẽ không thể thực thi lệnh shell. Điều này cũng ảnh hưởng đến khả năng chạy lệnh shell theo lịch của công cụ Cron.
@@ -399,14 +399,14 @@ Công cụ skills cấu hình khám phá và cài đặt kỹ năng thông qua c
 
 ## Biến môi trường
 
-Tất cả các tùy chọn cấu hình có thể được ghi đè qua biến môi trường với định dạng `PICOCLAW_TOOLS_<SECTION>_<KEY>`:
+Tất cả các tùy chọn cấu hình có thể được ghi đè qua biến môi trường với định dạng `OMNIPUS_TOOLS_<SECTION>_<KEY>`:
 
 Ví dụ:
 
-- `PICOCLAW_TOOLS_WEB_BRAVE_ENABLED=true`
-- `PICOCLAW_TOOLS_EXEC_ENABLED=false`
-- `PICOCLAW_TOOLS_EXEC_ENABLE_DENY_PATTERNS=false`
-- `PICOCLAW_TOOLS_CRON_EXEC_TIMEOUT_MINUTES=10`
-- `PICOCLAW_TOOLS_MCP_ENABLED=true`
+- `OMNIPUS_TOOLS_WEB_BRAVE_ENABLED=true`
+- `OMNIPUS_TOOLS_EXEC_ENABLED=false`
+- `OMNIPUS_TOOLS_EXEC_ENABLE_DENY_PATTERNS=false`
+- `OMNIPUS_TOOLS_CRON_EXEC_TIMEOUT_MINUTES=10`
+- `OMNIPUS_TOOLS_MCP_ENABLED=true`
 
 Lưu ý: Cấu hình kiểu map lồng nhau (ví dụ `tools.mcp.servers.<name>.*`) được cấu hình trong `config.json` thay vì qua biến môi trường.

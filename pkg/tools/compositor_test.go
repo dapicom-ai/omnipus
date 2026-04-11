@@ -173,7 +173,7 @@ func TestToolCompositor_ComposeAndRegister_DenyAll(t *testing.T) {
 // TestToolCompositor_ComposeAndRegister_AllowAll verifies that when the policy
 // allows all tools, all discovered skill tools are promoted.
 //
-// Traces to: wave2-security-layer-spec.md line 103 — default_policy allow is PicoClaw-compatible.
+// Traces to: wave2-security-layer-spec.md line 103 — default_policy allow is Omnipus-compatible.
 func TestToolCompositor_ComposeAndRegister_AllowAll(t *testing.T) {
 	const agentID = "open-agent"
 
