@@ -27,6 +27,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
+	_ "github.com/dapicom-ai/omnipus/pkg/channels/googlechat"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/dingtalk"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/discord"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/feishu"
