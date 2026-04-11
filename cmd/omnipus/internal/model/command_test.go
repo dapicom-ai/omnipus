@@ -64,7 +64,7 @@ func TestShowCurrentModel_WithDefaultModel(t *testing.T) {
 				ModelName: "gpt-4",
 			},
 		},
-		ModelList: []*config.ModelConfig{
+		Providers: []*config.ModelConfig{
 			{ModelName: "gpt-4", Model: "openai/gpt-4", APIKeys: config.SecureStrings{config.NewSecureString("test")}},
 			{
 				ModelName: "claude-3",
@@ -91,7 +91,7 @@ func TestShowCurrentModel_NoDefaultModel(t *testing.T) {
 				ModelName: "",
 			},
 		},
-		ModelList: []*config.ModelConfig{
+		Providers: []*config.ModelConfig{
 			{ModelName: "gpt-4", Model: "openai/gpt-4", APIKeys: config.SecureStrings{config.NewSecureString("test")}},
 		},
 	}
@@ -106,14 +106,14 @@ func TestShowCurrentModel_NoDefaultModel(t *testing.T) {
 
 func TestListAvailableModels_Empty(t *testing.T) {
 	cfg := &config.Config{
-		ModelList: []*config.ModelConfig{},
+		Providers: []*config.ModelConfig{},
 	}
 
 	output := captureStdout(func() {
 		listAvailableModels(cfg)
 	})
 
-	assert.Contains(t, output, "No models configured in model_list")
+	assert.Contains(t, output, "No providers configured in providers")
 }
 
 func TestListAvailableModels_WithModels(t *testing.T) {
@@ -123,7 +123,7 @@ func TestListAvailableModels_WithModels(t *testing.T) {
 				ModelName: "gpt-4",
 			},
 		},
-		ModelList: []*config.ModelConfig{
+		Providers: []*config.ModelConfig{
 			{ModelName: "gpt-4", Model: "openai/gpt-4", APIKeys: config.SecureStrings{config.NewSecureString("test")}},
 			{
 				ModelName: "claude-3",
@@ -153,7 +153,7 @@ func TestSetDefaultModel_ValidModel(t *testing.T) {
 				ModelName: "old-model",
 			},
 		},
-		ModelList: []*config.ModelConfig{
+		Providers: []*config.ModelConfig{
 			{
 				ModelName: "new-model",
 				Model:     "openai/new-model",
@@ -189,7 +189,7 @@ func TestSetDefaultModel_InvalidModel(t *testing.T) {
 				ModelName: "existing-model",
 			},
 		},
-		ModelList: []*config.ModelConfig{
+		Providers: []*config.ModelConfig{
 			{
 				ModelName: "existing-model",
 				Model:     "openai/existing",
@@ -210,7 +210,7 @@ func TestSetDefaultModel_ModelWithoutAPIKey(t *testing.T) {
 				ModelName: "existing-model",
 			},
 		},
-		ModelList: []*config.ModelConfig{
+		Providers: []*config.ModelConfig{
 			{
 				ModelName: "existing-model",
 				Model:     "openai/existing",
@@ -233,7 +233,7 @@ func TestSetDefaultModel_SaveConfigError(t *testing.T) {
 				ModelName: "old-model",
 			},
 		},
-		ModelList: []*config.ModelConfig{
+		Providers: []*config.ModelConfig{
 			{
 				ModelName: "new-model",
 				Model:     "openai/new-model",
@@ -278,7 +278,7 @@ func TestModelCommandExecution_Show(t *testing.T) {
 				ModelName: "test-model",
 			},
 		},
-		ModelList: []*config.ModelConfig{
+		Providers: []*config.ModelConfig{
 			{
 				ModelName: "test-model",
 				Model:     "openai/test",
@@ -309,7 +309,7 @@ func TestModelCommandExecution_Set(t *testing.T) {
 				ModelName: "old-model",
 			},
 		},
-		ModelList: []*config.ModelConfig{
+		Providers: []*config.ModelConfig{
 			{
 				ModelName: "old-model",
 				Model:     "openai/old",
@@ -351,7 +351,7 @@ func TestListAvailableModels_MarkerLogic(t *testing.T) {
 				ModelName: "middle-model",
 			},
 		},
-		ModelList: []*config.ModelConfig{
+		Providers: []*config.ModelConfig{
 			{
 				ModelName: "first-model",
 				Model:     "openai/first",

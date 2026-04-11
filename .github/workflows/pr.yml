@@ -7,6 +7,13 @@ jobs:
   lint:
     name: Linter
     runs-on: ubuntu-latest
+    env:
+      # pkg/gateway/*.go is tagged //go:build !cgo (pure-Go per CLAUDE.md hard
+      # constraint #2). Without CGO_ENABLED=0 the whole gateway package is
+      # excluded from the build and every caller of gateway.Run fails with
+      # "undefined: gateway.Run". CI must run with CGO disabled to match the
+      # release build and the project's pure-Go policy.
+      CGO_ENABLED: "0"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -30,6 +37,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GOFLAGS: -tags=goolm,stdjson
+      # See comment on the lint job above.
+      CGO_ENABLED: "0"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -49,6 +58,9 @@ jobs:
   test:
     name: Tests
     runs-on: ubuntu-latest
+    env:
+      # See comment on the lint job above.
+      CGO_ENABLED: "0"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
