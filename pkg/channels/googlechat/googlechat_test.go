@@ -1,0 +1,304 @@
+package googlechat
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/dapicom-ai/omnipus/pkg/bus"
+	"github.com/dapicom-ai/omnipus/pkg/channels"
+	"github.com/dapicom-ai/omnipus/pkg/config"
+)
+
+func newSS(s string) config.SecureString { return *config.NewSecureString(s) }
+
+func TestNewGoogleChatChannel_WebhookMode(t *testing.T) {
+	cfg := config.GoogleChatConfig{
+		Enabled:    true,
+		Mode:       "webhook",
+		WebhookURL: newSS("https://chat.googleapis.com/webhook/123"),
+	}
+	msgBus := bus.NewMessageBus()
+	ch, err := NewGoogleChatChannel(cfg, msgBus)
+	if err != nil {
+		t.Fatalf("NewGoogleChatChannel() = %v", err)
+	}
+	if ch.Name() != "google-chat" {
+		t.Errorf("Name() = %q, want %q", ch.Name(), "google-chat")
+	}
+	if ch.mode != "webhook" {
+		t.Errorf("mode = %q, want %q", ch.mode, "webhook")
+	}
+}
+
+func TestNewGoogleChatChannel_BotModeWithJSON(t *testing.T) {
+	cfg := config.GoogleChatConfig{
+		Enabled: true,
+		Mode:   "bot",
+		ServiceAccountJSON: newSS(`{
+			"client_email": "test@example.com",
+			"private_key": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gunVvxw\nVYyCAvRA1qVaS2lAFW8J8Z8pwC4sw3q3tqR9tGcLcWaVb3mZMiTJACJL+4WJxKKIlz1\nqL8tPB2Cxn5eGrL8Cnw4PYe0RQYp5q4bjByL2x3tHMF88dTj1gDgtLZM9Y2r0aZKLcS\nZ2fMvwD8W8bIqAYCCg3rGcNHCgL3i3qPVBMD8M8K8E6mBKPO5l9XLTdM4l0qYBN1f7q\n6E8Q1nLqJ0rI3tHMF88dTj1gDgtLZM9Y2r0aZKLcSZ2fMvwD8W8bIqAYCCg3rGcNHCg\nL3i3qPVBMD8M8K8E6mBKPO5l9XLTdM4l0qYBN1f7q6E8Q1nLqJ0rIxQIDAQABAoIBABb\nw2qPb4nLqJ0rI3tHMF88dTj1gDgtLZM9Y2r0aZKLcSZ2fMvwD8W8bIqAYCCg3rGcNHCg\nL3i3qPVBMD8M8K8E6mBKPO5l9XLTdM4l0qYBN1f7q6E8Q1nLqJ0rI3tHMF88dTj1gDgt\nLZM9Y2r0aZKLcSZ2fMvwD8W8bIqAYCCg3rGcNHCgL3i3qPVBMD8M8K8E6mBKPO5l9XLTd\nM4l0qYBN1f7q6E8Q1nLqJ0rI3tHMF88dTj1gDgtLZM9Y2r0aZKLcSZ2fMvwD8W8bIqAY\nCg3rGcNHCgL3i3qPVBMD8M8K8E6mBKPO5l9XLTdM4l0qYBN1f7q6E8Q1nLqJ0rIxQID\nAQABAoIBADhXe7s8vLp1V2xGLBHMx3qPVBMD8M8K8E6mBKPO5l9XLTdM4l0qYBN1f7q6\nE8Q1nLqJ0rI3tHMF88dTj1gDgtLZM9Y2r0aZKLcSZ2fMvwD8W8bIqAYCCg3rGcNHCgL3\ni3qPVBMD8M8K8E6mBKPO5l9XLTdM4l0qYBN1f7q6E8Q1nLqJ0rI3tHMF88dTj1gDgtLZ\nM9Y2r0aZKLcSZ2fMvwD8W8bIqAYCCg3rGcNHCgL3i3qPVBMD8M8K8E6mBKPO5l9XLTdM\nl0qYBN1f7q6E8Q1nLqJ0rI3tHMF88dTj1gDgtLZM9Y2r0aZKLcSZ2fMvwD8W8bIqAYC\nCg3rGcNHCgL3i3qPVBMD8M8K8E6mBKPO5l9XLTdM4l0qYBN1f7q6E8Q1nLqJ0rIxQID\nAQAB\n-----END RSA PRIVATE KEY-----\n",
+			"token_uri": "https://oauth2.googleapis.com/token"
+		}`),
+	}
+	msgBus := bus.NewMessageBus()
+	ch, err := NewGoogleChatChannel(cfg, msgBus)
+	if err != nil {
+		t.Fatalf("NewGoogleChatChannel() = %v", err)
+	}
+	if ch.mode != "bot" {
+		t.Errorf("mode = %q, want %q", ch.mode, "bot")
+	}
+}
+
+func TestNewGoogleChatChannel_NoCredentials(t *testing.T) {
+	cfg := config.GoogleChatConfig{
+		Enabled: true,
+		Mode:    "webhook",
+	}
+	msgBus := bus.NewMessageBus()
+	_, err := NewGoogleChatChannel(cfg, msgBus)
+	if err == nil {
+		t.Error("expected error for missing credentials")
+	}
+}
+
+func TestGoogleChatChannel_SendWebhook(t *testing.T) {
+	var receivedBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		bodyReader := http.MaxBytesReader(w, r.Body, 10<<20)
+		receivedBody, _ = io.ReadAll(bodyReader)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	cfg := config.GoogleChatConfig{
+		Enabled:    true,
+		Mode:       "webhook",
+		WebhookURL: newSS(server.URL),
+	}
+	msgBus := bus.NewMessageBus()
+	ch, _ := NewGoogleChatChannel(cfg, msgBus)
+	ch.client = server.Client()
+	ch.ctx = context.Background()
+	ch.cancel = func() {}
+	ch.SetRunning(true)
+
+	msg := bus.OutboundMessage{
+		Channel: "google-chat",
+		ChatID:  "spaces/abc",
+		Content: "Hello from test",
+	}
+
+	err := ch.Send(context.Background(), msg)
+	if err != nil {
+		t.Errorf("Send() = %v", err)
+	}
+
+	var payload map[string]any
+	json.Unmarshal(receivedBody, &payload)
+	if payload["text"] != "Hello from test" {
+		t.Errorf("text = %q, want %q", payload["text"], "Hello from test")
+	}
+}
+
+func TestGoogleChatChannel_WebhookPath(t *testing.T) {
+	ch := &GoogleChatChannel{}
+	if path := ch.WebhookPath(); path != "/webhook/google-chat" {
+		t.Errorf("WebhookPath() = %q, want %q", path, "/webhook/google-chat")
+	}
+}
+
+func TestGoogleChatChannel_HealthPath(t *testing.T) {
+	ch := &GoogleChatChannel{}
+	if path := ch.HealthPath(); path != "/webhook/google-chat/health" {
+		t.Errorf("HealthPath() = %q, want %q", path, "/webhook/google-chat/health")
+	}
+}
+
+func TestGoogleChatChannel_HealthHandlerRunning(t *testing.T) {
+	ch := &GoogleChatChannel{}
+	ch.healthOK.Store(true)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/health", nil)
+	ch.HealthHandler(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("HealthHandler() status = %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+func TestGoogleChatChannel_HealthHandlerNotRunning(t *testing.T) {
+	ch := &GoogleChatChannel{}
+	ch.healthOK.Store(false)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/health", nil)
+	ch.HealthHandler(w, r)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Errorf("HealthHandler() status = %d, want %d", w.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestGoogleChatChannel_GroupTrigger_ORLogic(t *testing.T) {
+	tests := []struct {
+		name         string
+		msg          string
+		isMentioned  bool
+		mMentionOnly bool
+		prefixes     []string
+		want         bool
+	}{
+		{
+			name:         "mentioned with mention_only true",
+			msg:          "hello",
+			isMentioned:  true,
+			mMentionOnly: true,
+			want:         true,
+		},
+		{
+			name:         "not mentioned with mention_only true",
+			msg:          "hello",
+			isMentioned: false,
+			mMentionOnly: true,
+			want:         false,
+		},
+		{
+			name:        "prefix match",
+			msg:         "/ask hello",
+			isMentioned: false,
+			prefixes:    []string{"/ask"},
+			want:        true,
+		},
+		{
+			name:        "no prefix match",
+			msg:         "/skip hello",
+			isMentioned: false,
+			prefixes:    []string{"/ask"},
+			want:        false,
+		},
+		{
+			name:        "permissive default (no trigger config)",
+			msg:         "hello",
+			isMentioned: false,
+			want:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.GoogleChatConfig{
+				Mode:       "webhook",
+				WebhookURL: newSS("https://chat.googleapis.com/webhook/test"),
+				GroupTrigger: config.GroupTriggerConfig{
+					MentionOnly: tt.mMentionOnly,
+					Prefixes:    tt.prefixes,
+				},
+			}
+			msgBus := bus.NewMessageBus()
+			ch, err := NewGoogleChatChannel(cfg, msgBus)
+			if err != nil {
+				t.Fatalf("NewGoogleChatChannel() = %v", err)
+			}
+			ch.BaseChannel = channels.NewBaseChannel("google-chat", cfg, msgBus, nil,
+				channels.WithGroupTrigger(cfg.GroupTrigger),
+			)
+			ok, _ := ch.ShouldRespondInGroup(tt.isMentioned, tt.msg)
+			if ok != tt.want {
+				t.Errorf("ShouldRespondInGroup() = %v, want %v", ok, tt.want)
+			}
+		})
+	}
+}
+
+func TestBackoff(t *testing.T) {
+	for attempt := 0; attempt < 10; attempt++ {
+		delay := backoff(attempt)
+		if delay <= 0 {
+			t.Errorf("backoff(%d) = %v, must be > 0", attempt, delay)
+		}
+		if delay > 30*time.Second {
+			t.Errorf("backoff(%d) = %v, must be <= 30s", attempt, delay)
+		}
+	}
+}
+
+func TestParseRetryAfter_WithHeader(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "60")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+	client := server.Client()
+	req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
+	resp, _ := client.Do(req)
+	defer resp.Body.Close()
+
+	delay := parseRetryAfter(resp)
+	if delay != 60*time.Second {
+		t.Errorf("parseRetryAfter() = %v, want 60s", delay)
+	}
+}
+
+func TestParseRetryAfter_WithoutHeader(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+	client := server.Client()
+	req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
+	resp, _ := client.Do(req)
+	defer resp.Body.Close()
+
+	delay := parseRetryAfter(resp)
+	if delay <= 0 {
+		t.Errorf("parseRetryAfter() must be > 0, got %v", delay)
+	}
+}
+
+func TestGoogleChatEvent_Parsing(t *testing.T) {
+	raw := `{
+  "type": "MESSAGE",
+  "space": {
+    "name": "spaces/abc123",
+    "displayName": "Test Space",
+    "type": "ROOM"
+  },
+  "sender": {
+    "name": "users/123",
+    "displayName": "Alice",
+    "email": "alice@example.com"
+  },
+  "message": {
+    "name": "messages/456",
+    "text": "Hello bot!"
+  }
+}`
+	var event googleChatEvent
+	if err := json.Unmarshal([]byte(raw), &event); err != nil {
+		t.Fatalf("Unmarshal() = %v", err)
+	}
+	if event.Type != "MESSAGE" {
+		t.Errorf("Type = %q, want MESSAGE", event.Type)
+	}
+	if event.Space.Name != "spaces/abc123" {
+		t.Errorf("Space.Name = %q, want spaces/abc123", event.Space.Name)
+	}
+	if event.Sender.Name != "users/123" {
+		t.Errorf("Sender.Name = %q, want users/123", event.Sender.Name)
+	}
+	var msg googleChatMessage
+	json.Unmarshal(event.Message, &msg)
+	if msg.Text != "Hello bot!" {
+		t.Errorf("Message.Text = %q, want Hello bot!", msg.Text)
+	}
+}

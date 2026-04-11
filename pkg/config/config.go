@@ -490,6 +490,7 @@ type ChannelsConfig struct {
 	Weixin   WeixinConfig   `json:"weixin"   yaml:"weixin,omitempty"`
 	IRC      IRCConfig      `json:"irc"      yaml:"irc,omitempty"`
 	Teams    TeamsConfig    `json:"teams"    yaml:"teams,omitempty"`
+	GoogleChat GoogleChatConfig `json:"google-chat" yaml:"google-chat,omitempty"`
 }
 
 // GroupTriggerConfig controls when the bot responds in group chats.
@@ -683,6 +684,21 @@ type WeixinConfig struct {
 	Proxy              string              `json:"proxy"                yaml:"-" env:"OMNIPUS_CHANNELS_WEIXIN_PROXY"`
 	AllowFrom          FlexibleStringSlice `json:"allow_from"           yaml:"-" env:"OMNIPUS_CHANNELS_WEIXIN_ALLOW_FROM"`
 	ReasoningChannelID string              `json:"reasoning_channel_id" yaml:"-" env:"OMNIPUS_CHANNELS_WEIXIN_REASONING_CHANNEL_ID"`
+}
+
+type GoogleChatConfig struct {
+	Enabled            bool                `json:"enabled"                         yaml:"-"                             env:"PICOCLAW_CHANNELS_GOOGLECHAT_ENABLED"`
+	Mode               string              `json:"mode"                            yaml:"-"                             env:"PICOCLAW_CHANNELS_GOOGLECHAT_MODE"` // "webhook" | "bot"
+	WebhookURL         SecureString        `json:"webhook_url,omitzero"            yaml:"webhook_url,omitempty"         env:"PICOCLAW_CHANNELS_GOOGLECHAT_WEBHOOK_URL"`
+	ServiceAccountFile string              `json:"service_account_file,omitempty" yaml:"-"                             env:"PICOCLAW_CHANNELS_GOOGLECHAT_SERVICE_ACCOUNT_FILE"`
+	ServiceAccountJSON SecureString        `json:"service_account_json,omitzero"  yaml:"service_account_json,omitempty" env:"PICOCLAW_CHANNELS_GOOGLECHAT_SERVICE_ACCOUNT_JSON"`
+	Space              string              `json:"space"                            yaml:"-"                             env:"PICOCLAW_CHANNELS_GOOGLECHAT_SPACE"`
+	BotUser            string              `json:"bot_user"                        yaml:"-"                             env:"PICOCLAW_CHANNELS_GOOGLECHAT_BOT_USER"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"                      yaml:"-"                             env:"PICOCLAW_CHANNELS_GOOGLECHAT_ALLOW_FROM"`
+	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"        yaml:"-"`
+	Typing             TypingConfig        `json:"typing,omitempty"                yaml:"-"`
+	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"          yaml:"-"`
+	ReasoningChannelID string              `json:"reasoning_channel_id"            yaml:"-"                             env:"PICOCLAW_CHANNELS_GOOGLECHAT_REASONING_CHANNEL_ID"`
 }
 
 type IRCConfig struct {
