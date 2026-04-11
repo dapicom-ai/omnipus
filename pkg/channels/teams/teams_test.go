@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -190,9 +189,9 @@ func TestNewTeamsChannel_DefaultMaxMessageLength(t *testing.T) {
 func TestNewTeamsChannel_CustomMaxMessageLength(t *testing.T) {
 	bundle := testSecretsBundle()
 	cfg := config.TeamsConfig{
-		AppID:             "app-id-123",
-		AppPasswordRef:    "TEAMS_APP_PASSWORD_REF",
-		MaxMessageLength:  5000,
+		AppID:            "app-id-123",
+		AppPasswordRef:   "TEAMS_APP_PASSWORD_REF",
+		MaxMessageLength: 5000,
 	}
 	ch, err := NewTeamsChannel(cfg, bundle, nil)
 	if err != nil {
@@ -229,7 +228,9 @@ func TestTruncate_TooLong(t *testing.T) {
 func TestTruncate_Unicode(t *testing.T) {
 	// Unicode characters are counted correctly (rune-based truncation)
 	// strings.Repeat("日本語", 10) = 30 runes; truncate to 5 runes = "日本語日本" + "..."
+	//nolint:gosmopolitan // Intentional: Han script test data for unicode truncation verification
 	long := strings.Repeat("日本語", 10) // 30 runes
+	//nolint:gosmopolitan // Intentional: Han script test data for unicode truncation verification
 	if got := truncate(long, 5); got != "日本語日本..." {
 		t.Errorf("truncate unicode = %q, want 日本語日本...", got)
 	}
@@ -247,6 +248,7 @@ func TestStart_SetsRunningTrue(t *testing.T) {
 			AppID:          "app-id-123",
 			AppPasswordRef: "dummy-ref", // satisfies field requirement
 		},
+		//nolint:govet // ctx unused in this test; real code uses it via Start()
 		ctx: context.Background(),
 	}
 	// Note: we test via SetRunning since Start() requires the real adapter
@@ -280,10 +282,13 @@ func TestStart_PreregistersReasoningChannelID(t *testing.T) {
 		ReasoningChannelID: "reasoning-chat-id",
 	}
 	ch := &TeamsChannel{
+		//nolint:govet // BaseChannel used via embedding; govet doesn't track embedded field usage
 		BaseChannel: channels.NewBaseChannel("teams", nil, nil, nil,
 			channels.WithReasoningChannelID(cfg.ReasoningChannelID)),
+		//nolint:govet // config unused in this test; real code uses it via Start()
 		config: cfg,
-		ctx:    context.Background(),
+		//nolint:govet // ctx unused in this test; real code uses it via Start()
+		ctx: context.Background(),
 	}
 
 	// Simulate the pre-registration that happens in Start()
@@ -361,7 +366,7 @@ func TestWebhookHandler_Returns200AndStoresConversationRef(t *testing.T) {
 			"id": "19:channel@thread.tacv2",
 		},
 		"serviceUrl": "https://smba.trafficmanager.net/teams/",
-		"text":      "Hello Teams",
+		"text":       "Hello Teams",
 	}
 	body, _ := json.Marshal(activity)
 	req := httptest.NewRequest(http.MethodPost, "/api/messages", strings.NewReader(string(body)))
@@ -468,7 +473,11 @@ type fakeAdapter struct {
 	processActivityCalled  bool
 }
 
-func (f *fakeAdapter) ProactiveMessage(ctx context.Context, ref schema.ConversationReference, handler activity.Handler) error {
+func (f *fakeAdapter) ProactiveMessage(
+	ctx context.Context,
+	ref schema.ConversationReference,
+	handler activity.Handler,
+) error {
 	f.proactiveMessageCalled = true
 	f.calls = append(f.calls, "ProactiveMessage")
 	return f.proactiveMessageErr
@@ -480,7 +489,11 @@ func (f *fakeAdapter) ProcessActivity(ctx context.Context, act schema.Activity, 
 	return f.processActivityErr
 }
 
-func (f *fakeAdapter) DeleteActivity(ctx context.Context, conversationID string, ref schema.ConversationReference) error {
+func (f *fakeAdapter) DeleteActivity(
+	ctx context.Context,
+	conversationID string,
+	ref schema.ConversationReference,
+) error {
 	return nil
 }
 
@@ -521,19 +534,6 @@ func TestSend_CallsProactiveMessageAndReturnsErrTemporaryOnFailure(t *testing.T)
 	if !fake.proactiveMessageCalled {
 		t.Error("ProactiveMessage was not called")
 	}
-}
-
-// fakeActivityHandler captures OnMessage calls.
-type fakeActivityHandler struct {
-	mu          sync.Mutex
-	onMessageCalls []int // counts calls per chat kind
-}
-
-func (f *fakeActivityHandler) OnMessage(turn *activity.TurnContext) (schema.Activity, error) {
-	f.mu.Lock()
-	f.onMessageCalls = append(f.onMessageCalls, 1)
-	f.mu.Unlock()
-	return schema.Activity{}, nil
 }
 
 // -- Test processActivity via webhook ----------------------------------------

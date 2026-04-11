@@ -475,21 +475,21 @@ func (d *AgentDefaults) GetModelName() string {
 }
 
 type ChannelsConfig struct {
-	WhatsApp   WhatsAppConfig   `json:"whatsapp"    yaml:"-"`
-	Telegram   TelegramConfig   `json:"telegram"    yaml:"telegram,omitempty"`
-	Feishu     FeishuConfig     `json:"feishu"      yaml:"feishu,omitempty"`
-	Discord    DiscordConfig    `json:"discord"     yaml:"discord,omitempty"`
-	MaixCam    MaixCamConfig    `json:"maixcam"     yaml:"-"`
-	QQ         QQConfig         `json:"qq"          yaml:"qq,omitempty"`
-	DingTalk   DingTalkConfig   `json:"dingtalk"    yaml:"dingtalk,omitempty"`
-	Slack      SlackConfig      `json:"slack"       yaml:"slack,omitempty"`
-	Matrix     MatrixConfig     `json:"matrix"      yaml:"matrix,omitempty"`
-	LINE       LINEConfig       `json:"line"        yaml:"line,omitempty"`
-	OneBot     OneBotConfig     `json:"onebot"      yaml:"onebot,omitempty"`
-	WeCom      WeComConfig      `json:"wecom"       yaml:"wecom,omitempty"       envPrefix:"OMNIPUS_CHANNELS_WECOM_"`
-	Weixin     WeixinConfig     `json:"weixin"      yaml:"weixin,omitempty"`
-	IRC        IRCConfig        `json:"irc"         yaml:"irc,omitempty"`
-	Teams      TeamsConfig      `json:"teams"       yaml:"teams,omitempty"`
+	WhatsApp WhatsAppConfig `json:"whatsapp" yaml:"-"`
+	Telegram TelegramConfig `json:"telegram" yaml:"telegram,omitempty"`
+	Feishu   FeishuConfig   `json:"feishu"   yaml:"feishu,omitempty"`
+	Discord  DiscordConfig  `json:"discord"  yaml:"discord,omitempty"`
+	MaixCam  MaixCamConfig  `json:"maixcam"  yaml:"-"`
+	QQ       QQConfig       `json:"qq"       yaml:"qq,omitempty"`
+	DingTalk DingTalkConfig `json:"dingtalk" yaml:"dingtalk,omitempty"`
+	Slack    SlackConfig    `json:"slack"    yaml:"slack,omitempty"`
+	Matrix   MatrixConfig   `json:"matrix"   yaml:"matrix,omitempty"`
+	LINE     LINEConfig     `json:"line"     yaml:"line,omitempty"`
+	OneBot   OneBotConfig   `json:"onebot"   yaml:"onebot,omitempty"`
+	WeCom    WeComConfig    `json:"wecom"    yaml:"wecom,omitempty"    envPrefix:"OMNIPUS_CHANNELS_WECOM_"`
+	Weixin   WeixinConfig   `json:"weixin"   yaml:"weixin,omitempty"`
+	IRC      IRCConfig      `json:"irc"      yaml:"irc,omitempty"`
+	Teams    TeamsConfig    `json:"teams"    yaml:"teams,omitempty"`
 }
 
 // GroupTriggerConfig controls when the bot responds in group chats.
@@ -705,16 +705,16 @@ type IRCConfig struct {
 }
 
 type TeamsConfig struct {
-	Enabled            bool                `json:"enabled"                 yaml:"-" env:"OMNIPUS_CHANNELS_TEAMS_ENABLED"`
-	AppID              string              `json:"app_id"                  yaml:"-" env:"OMNIPUS_CHANNELS_TEAMS_APP_ID"`
+	Enabled            bool                `json:"enabled"                    yaml:"-" env:"OMNIPUS_CHANNELS_TEAMS_ENABLED"`
+	AppID              string              `json:"app_id"                     yaml:"-" env:"OMNIPUS_CHANNELS_TEAMS_APP_ID"`
 	AppPasswordRef     string              `json:"app_password_ref,omitempty" yaml:"-" env:"OMNIPUS_CHANNELS_TEAMS_APP_PASSWORD_REF"`
-	TenantID           string              `json:"tenant_id"               yaml:"-" env:"OMNIPUS_CHANNELS_TEAMS_TENANT_ID"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"              yaml:"-" env:"OMNIPUS_CHANNELS_TEAMS_ALLOW_FROM"`
-	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty" yaml:"-"`
-	Typing             TypingConfig        `json:"typing,omitempty"        yaml:"-"`
-	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"   yaml:"-"`
-	ReasoningChannelID string              `json:"reasoning_channel_id"    yaml:"-" env:"OMNIPUS_CHANNELS_TEAMS_REASONING_CHANNEL_ID"`
-	MaxMessageLength   int                 `json:"max_message_length"      yaml:"-" env:"OMNIPUS_CHANNELS_TEAMS_MAX_MESSAGE_LENGTH"`
+	TenantID           string              `json:"tenant_id"                  yaml:"-" env:"OMNIPUS_CHANNELS_TEAMS_TENANT_ID"`
+	AllowFrom          FlexibleStringSlice `json:"allow_from"                 yaml:"-" env:"OMNIPUS_CHANNELS_TEAMS_ALLOW_FROM"`
+	GroupTrigger       GroupTriggerConfig  `json:"group_trigger,omitempty"    yaml:"-"`
+	Typing             TypingConfig        `json:"typing,omitempty"           yaml:"-"`
+	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"      yaml:"-"`
+	ReasoningChannelID string              `json:"reasoning_channel_id"       yaml:"-" env:"OMNIPUS_CHANNELS_TEAMS_REASONING_CHANNEL_ID"`
+	MaxMessageLength   int                 `json:"max_message_length"         yaml:"-" env:"OMNIPUS_CHANNELS_TEAMS_MAX_MESSAGE_LENGTH"`
 }
 
 type HeartbeatConfig struct {

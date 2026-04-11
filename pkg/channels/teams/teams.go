@@ -49,12 +49,12 @@ const (
 // TeamsChannel implements the channels.Channel interface for Microsoft Teams.
 type TeamsChannel struct {
 	*channels.BaseChannel
-	config     config.TeamsConfig
+	config      config.TeamsConfig
 	appPassword string // plaintext password, not stored after construction
-	adapter    core.Adapter
-	ctx        context.Context
-	cancel     context.CancelFunc
-	stopOnce   sync.Once
+	adapter     core.Adapter
+	ctx         context.Context
+	cancel      context.CancelFunc
+	stopOnce    sync.Once
 
 	// activeGoroutines tracks in-flight processActivity goroutines for graceful shutdown.
 	activeGoroutines sync.WaitGroup
@@ -75,7 +75,11 @@ type TeamsChannel struct {
 // NewTeamsChannel creates a new Teams channel with the given configuration.
 // Returns nil if AppID or AppPassword is empty. MaxMessageLength defaults to 4000
 // if not specified or set to a non-positive value.
-func NewTeamsChannel(cfg config.TeamsConfig, secrets credentials.SecretBundle, messageBus *bus.MessageBus) (*TeamsChannel, error) {
+func NewTeamsChannel(
+	cfg config.TeamsConfig,
+	secrets credentials.SecretBundle,
+	messageBus *bus.MessageBus,
+) (*TeamsChannel, error) {
 	appPassword := secrets.GetString(cfg.AppPasswordRef)
 	if cfg.AppID == "" || appPassword == "" {
 		return nil, fmt.Errorf("teams app_id and app_password are required")
@@ -93,7 +97,7 @@ func NewTeamsChannel(cfg config.TeamsConfig, secrets credentials.SecretBundle, m
 	)
 
 	return &TeamsChannel{
-		BaseChannel:  base,
+		BaseChannel: base,
 		config:      cfg,
 		appPassword: appPassword,
 	}, nil
@@ -346,7 +350,7 @@ func (c *TeamsChannel) processActivity(act schema.Activity) {
 		if err := c.adapter.ProcessActivity(ctx, act, handler); err != nil {
 			logger.ErrorCF("teams", "Failed to acknowledge activity to Teams (may cause retry)", map[string]any{
 				"activity_id": act.ID,
-				"error":      err.Error(),
+				"error":       err.Error(),
 			})
 		}
 	}
@@ -395,7 +399,11 @@ func (c *TeamsChannel) Send(ctx context.Context, msg bus.OutboundMessage) error 
 			"chat_id": msg.ChatID,
 			"type":    fmt.Sprintf("%T", refVal),
 		})
-		return fmt.Errorf("teams: corrupted conversation reference for chatID %s: %w", msg.ChatID, channels.ErrTemporary)
+		return fmt.Errorf(
+			"teams: corrupted conversation reference for chatID %s: %w",
+			msg.ChatID,
+			channels.ErrTemporary,
+		)
 	}
 
 	convRef := schema.ConversationReference{

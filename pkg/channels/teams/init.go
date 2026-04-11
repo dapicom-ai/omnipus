@@ -8,7 +8,10 @@ import (
 )
 
 func init() {
-	channels.RegisterFactory("teams", func(cfg *config.Config, secrets credentials.SecretBundle, b *bus.MessageBus) (channels.Channel, error) {
-		return NewTeamsChannel(cfg.Channels.Teams, secrets, b)
-	})
+	channels.RegisterFactory(
+		"teams",
+		func(cfg *config.Config, secrets credentials.SecretBundle, b *bus.MessageBus) (channels.Channel, error) {
+			return NewTeamsChannel(cfg.Channels.Teams, secrets, b)
+		},
+	)
 }
