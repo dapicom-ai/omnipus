@@ -16,8 +16,6 @@ import (
 )
 
 func TestDispatchIncoming_UsesActualChatIDAndStoresReqIDRoute(t *testing.T) {
-	t.Parallel()
-
 	messageBus := bus.NewMessageBus()
 	ch := newTestWeComChannel(t, messageBus)
 
@@ -88,8 +86,6 @@ func TestDispatchIncoming_UsesActualChatIDAndStoresReqIDRoute(t *testing.T) {
 }
 
 func TestNewChannel_DoesNotRegisterMessageSplitLimit(t *testing.T) {
-	t.Parallel()
-
 	ch := newTestWeComChannel(t, bus.NewMessageBus())
 	if got := ch.MaxMessageLength(); got != 0 {
 		t.Fatalf("MaxMessageLength() = %d, want 0", got)
@@ -97,8 +93,6 @@ func TestNewChannel_DoesNotRegisterMessageSplitLimit(t *testing.T) {
 }
 
 func TestBeginStream_UpdateAndFinalize(t *testing.T) {
-	t.Parallel()
-
 	ch := newTestWeComChannel(t, bus.NewMessageBus())
 	ch.SetRunning(true)
 	ch.queueTurn("chat-1", wecomTurn{
@@ -159,8 +153,6 @@ func TestBeginStream_UpdateAndFinalize(t *testing.T) {
 }
 
 func TestSend_StreamFailureFallsBackToActualChatID(t *testing.T) {
-	t.Parallel()
-
 	ch := newTestWeComChannel(t, bus.NewMessageBus())
 	ch.SetRunning(true)
 	ch.queueTurn("chat-1", wecomTurn{
@@ -228,8 +220,6 @@ func TestSend_StreamFailureFallsBackToActualChatID(t *testing.T) {
 }
 
 func TestSend_DoesNotSplitStreamReply(t *testing.T) {
-	t.Parallel()
-
 	ch := newTestWeComChannel(t, bus.NewMessageBus())
 	ch.SetRunning(true)
 	ch.queueTurn("chat-1", wecomTurn{
@@ -271,8 +261,6 @@ func TestSend_DoesNotSplitStreamReply(t *testing.T) {
 }
 
 func TestSend_DoesNotSplitActivePush(t *testing.T) {
-	t.Parallel()
-
 	ch := newTestWeComChannel(t, bus.NewMessageBus())
 	ch.SetRunning(true)
 
@@ -307,8 +295,6 @@ func TestSend_DoesNotSplitActivePush(t *testing.T) {
 }
 
 func TestSendMedia_SendsActiveImage(t *testing.T) {
-	t.Parallel()
-
 	ch := newTestWeComChannel(t, bus.NewMessageBus())
 	ch.SetRunning(true)
 
@@ -406,8 +392,6 @@ func TestSendMedia_SendsActiveImage(t *testing.T) {
 }
 
 func TestSendMedia_UsesTurnImageAndFinishesStream(t *testing.T) {
-	t.Parallel()
-
 	ch := newTestWeComChannel(t, bus.NewMessageBus())
 	ch.SetRunning(true)
 
@@ -515,8 +499,6 @@ func TestSendMedia_UsesTurnImageAndFinishesStream(t *testing.T) {
 }
 
 func TestSendMedia_SendsActiveFile(t *testing.T) {
-	t.Parallel()
-
 	ch := newTestWeComChannel(t, bus.NewMessageBus())
 	ch.SetRunning(true)
 
@@ -605,8 +587,9 @@ func TestSendMedia_SendsActiveFile(t *testing.T) {
 func newTestWeComChannel(t *testing.T, messageBus *bus.MessageBus) *WeComChannel {
 	t.Helper()
 
-	cfg := config.WeComConfig{BotID: "bot-1"}
-	cfg.SetSecret("secret-1")
+	const secretRef = "WECOM_TEST_SECRET"
+	t.Setenv(secretRef, "secret-1")
+	cfg := config.WeComConfig{BotID: "bot-1", SecretRef: secretRef}
 	ch, err := NewChannel(cfg, messageBus)
 	if err != nil {
 		t.Fatalf("NewChannel() error = %v", err)

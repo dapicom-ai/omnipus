@@ -83,7 +83,11 @@ func NewTelegramChannel(cfg *config.Config, bus *bus.MessageBus) (*TelegramChann
 	}
 	opts = append(opts, telego.WithLogger(logger.NewLogger("telego")))
 
-	bot, err := telego.NewBot(telegramCfg.Token.String(), opts...)
+	token := os.Getenv(telegramCfg.TokenRef)
+	if token == "" {
+		return nil, fmt.Errorf("telegram: token not resolved (token_ref=%q): check credential store", telegramCfg.TokenRef)
+	}
+	bot, err := telego.NewBot(token, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create telegram bot: %w", err)
 	}

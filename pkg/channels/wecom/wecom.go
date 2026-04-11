@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,7 @@ const (
 type WeComChannel struct {
 	*channels.BaseChannel
 	config config.WeComConfig
+	secret string
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -109,8 +111,9 @@ func (s *recentMessageSet) Mark(id string) bool {
 }
 
 func NewChannel(cfg config.WeComConfig, messageBus *bus.MessageBus) (*WeComChannel, error) {
-	if cfg.BotID == "" || cfg.Secret.String() == "" {
-		return nil, fmt.Errorf("wecom bot_id and secret are required")
+	secret := os.Getenv(cfg.SecretRef)
+	if cfg.BotID == "" || secret == "" {
+		return nil, fmt.Errorf("wecom: bot_id and secret are required (secret_ref=%q): check credential store", cfg.SecretRef)
 	}
 	if cfg.WebSocketURL == "" {
 		cfg.WebSocketURL = wecomDefaultWebSocketURL
@@ -127,6 +130,7 @@ func NewChannel(cfg config.WeComConfig, messageBus *bus.MessageBus) (*WeComChann
 	ch := &WeComChannel{
 		BaseChannel: base,
 		config:      cfg,
+		secret:      secret,
 		pending:     make(map[string]chan wecomEnvelope),
 		turns:       make(map[string][]wecomTurn),
 		recent:      newRecentMessageSet(wecomRecentMessageMax),
@@ -356,7 +360,7 @@ func (c *WeComChannel) runConnection() error {
 		Headers: wecomHeaders{ReqID: randomID(10)},
 		Body: map[string]string{
 			"bot_id": c.config.BotID,
-			"secret": c.config.Secret.String(),
+			"secret": c.secret,
 		},
 	}, wecomCommandTimeout); writeErr != nil {
 		return writeErr

@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -514,27 +515,27 @@ func registerSharedTools(
 
 		if cfg.Tools.IsToolEnabled("web") {
 			searchTool, err := tools.NewWebSearchTool(tools.WebSearchToolOptions{
-				BraveAPIKeys:          cfg.Tools.Web.Brave.APIKeys.Values(),
+				BraveAPIKeys:          braveKeys(cfg.Tools.Web.Brave.APIKey()),
 				BraveMaxResults:       cfg.Tools.Web.Brave.MaxResults,
 				BraveEnabled:          cfg.Tools.Web.Brave.Enabled,
-				TavilyAPIKeys:         cfg.Tools.Web.Tavily.APIKeys.Values(),
+				TavilyAPIKeys:         tavilyKeys(cfg.Tools.Web.Tavily.APIKey()),
 				TavilyBaseURL:         cfg.Tools.Web.Tavily.BaseURL,
 				TavilyMaxResults:      cfg.Tools.Web.Tavily.MaxResults,
 				TavilyEnabled:         cfg.Tools.Web.Tavily.Enabled,
 				DuckDuckGoMaxResults:  cfg.Tools.Web.DuckDuckGo.MaxResults,
 				DuckDuckGoEnabled:     cfg.Tools.Web.DuckDuckGo.Enabled,
-				PerplexityAPIKeys:     cfg.Tools.Web.Perplexity.APIKeys.Values(),
+				PerplexityAPIKeys:     perplexityKeys(cfg.Tools.Web.Perplexity.APIKey()),
 				PerplexityMaxResults:  cfg.Tools.Web.Perplexity.MaxResults,
 				PerplexityEnabled:     cfg.Tools.Web.Perplexity.Enabled,
 				SearXNGBaseURL:        cfg.Tools.Web.SearXNG.BaseURL,
 				SearXNGMaxResults:     cfg.Tools.Web.SearXNG.MaxResults,
 				SearXNGEnabled:        cfg.Tools.Web.SearXNG.Enabled,
-				GLMSearchAPIKey:       cfg.Tools.Web.GLMSearch.APIKey.String(),
+				GLMSearchAPIKey:       cfg.Tools.Web.GLMSearch.APIKey(),
 				GLMSearchBaseURL:      cfg.Tools.Web.GLMSearch.BaseURL,
 				GLMSearchEngine:       cfg.Tools.Web.GLMSearch.SearchEngine,
 				GLMSearchMaxResults:   cfg.Tools.Web.GLMSearch.MaxResults,
 				GLMSearchEnabled:      cfg.Tools.Web.GLMSearch.Enabled,
-				BaiduSearchAPIKey:     cfg.Tools.Web.BaiduSearch.APIKey.String(),
+				BaiduSearchAPIKey:     cfg.Tools.Web.BaiduSearch.APIKey(),
 				BaiduSearchBaseURL:    cfg.Tools.Web.BaiduSearch.BaseURL,
 				BaiduSearchMaxResults: cfg.Tools.Web.BaiduSearch.MaxResults,
 				BaiduSearchEnabled:    cfg.Tools.Web.BaiduSearch.Enabled,
@@ -606,7 +607,7 @@ func registerSharedTools(
 				ClawHub: skills.ClawHubConfig{
 					Enabled:         clawHubConfig.Enabled,
 					BaseURL:         clawHubConfig.BaseURL,
-					AuthToken:       clawHubConfig.AuthToken.String(),
+					AuthToken:       os.Getenv(clawHubConfig.AuthTokenRef),
 					SearchPath:      clawHubConfig.SearchPath,
 					SkillsPath:      clawHubConfig.SkillsPath,
 					DownloadPath:    clawHubConfig.DownloadPath,
@@ -4878,4 +4879,29 @@ func estimateLLMCallCost(model string, usage *providers.UsageInfo) float64 {
 	inputCost := float64(usage.PromptTokens) / 1000.0 * rate.inputPer1K
 	outputCost := float64(usage.CompletionTokens) / 1000.0 * rate.outputPer1K
 	return inputCost + outputCost
+}
+
+
+// braveKeys returns a []string for use as BraveAPIKeys. Returns nil if the key is empty.
+func braveKeys(key string) []string {
+	if key == "" {
+		return nil
+	}
+	return []string{key}
+}
+
+// tavilyKeys returns a []string for use as TavilyAPIKeys. Returns nil if the key is empty.
+func tavilyKeys(key string) []string {
+	if key == "" {
+		return nil
+	}
+	return []string{key}
+}
+
+// perplexityKeys returns a []string for use as PerplexityAPIKeys. Returns nil if the key is empty.
+func perplexityKeys(key string) []string {
+	if key == "" {
+		return nil
+	}
+	return []string{key}
 }

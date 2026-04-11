@@ -704,15 +704,19 @@ func TestToStandardConfig(t *testing.T) {
 	if !foundModel {
 		t.Error("expected to find claude-sonnet-4-20250514 model config")
 	}
-	if foundAPIKey != "sk-ant-test" {
-		t.Errorf("expected api key 'sk-ant-test', got '%s'", foundAPIKey)
+	// API keys are not migrated from OpenClaw; the credential store is separate.
+	// Users must re-enter them via `omnipus credentials set <REF> <value>`.
+	if foundAPIKey != "" {
+		t.Errorf("expected empty api key after migration (secrets not migrated), got '%s'", foundAPIKey)
 	}
 
 	if !stdCfg.Channels.Telegram.Enabled {
 		t.Error("telegram should be enabled")
 	}
-	if stdCfg.Channels.Telegram.Token.String() != "test-token" {
-		t.Errorf("expected token 'test-token', got '%s'", stdCfg.Channels.Telegram.Token.String())
+	// Secrets are not migrated from OpenClaw; users must re-enter them via
+	// `omnipus credentials set TELEGRAM_TOKEN <value>` and set token_ref in config.
+	if stdCfg.Channels.Telegram.TokenRef != "" {
+		t.Errorf("expected empty token_ref after migration (secrets not migrated), got %q", stdCfg.Channels.Telegram.TokenRef)
 	}
 
 	if stdCfg.Gateway.Port != 8080 {

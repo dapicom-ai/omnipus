@@ -9,6 +9,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/datamodel"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
@@ -33,7 +35,6 @@ import (
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/line"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/maixcam"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/onebot"
-	_ "github.com/dapicom-ai/omnipus/pkg/channels/pico"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/qq"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/slack"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/telegram"
@@ -73,6 +74,7 @@ type services struct {
 	HealthServer     *health.Server
 	manualReloadChan chan struct{}
 	reloading        atomic.Bool
+	credStore        *credentials.Store
 }
 
 type startupBlockedProvider struct {
@@ -112,9 +114,47 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	}
 	defer logger.DisableFileLogging()
 
-	cfg, err := config.LoadConfig(configPath)
+	// Construct and unlock the credential store BEFORE loading config so that
+	// v0→v1 migration (MigrateWithStore) can persist legacy plaintext secrets.
+	// Implements BRD SEC-22/SEC-23 deny-by-default behaviour.
+	credStore := credentials.NewStore(filepath.Join(homePath, "credentials.json"))
+	if err := credentials.Unlock(credStore); err != nil {
+		return fmt.Errorf("credential store: %w", err)
+	}
+
+	cfg, err := config.LoadConfigWithStore(configPath, credStore)
 	if err != nil {
 		return fmt.Errorf("error loading config: %w", err)
+	}
+
+	// Inject all provider/channel secrets into the process environment so
+	// channel constructors and provider factories can read them via os.Getenv.
+	// This must happen before createStartupProvider and setupAndStartServices.
+	if errs := credentials.InjectFromConfig(cfg, credStore); len(errs) > 0 {
+		for _, e := range errs {
+			slog.Error("provider credential injection failed", "error", e)
+		}
+		return fmt.Errorf("fatal: provider credential injection failed — ensure OMNIPUS_MASTER_KEY is set and all referenced credentials exist")
+	}
+	if errs := credentials.InjectChannelsFromConfig(cfg, credStore); len(errs) > 0 {
+		// Distinguish: ErrStoreLocked or non-ErrNotFound errors are always fatal.
+		// ErrNotFound for an enabled channel is fatal. ErrNotFound for a disabled
+		// channel is logged at Info and skipped.
+		var fatalErrs []error
+		for _, e := range errs {
+			var notFound *credentials.ErrNotFound
+			if errors.As(e, &notFound) {
+				// Log at Warn — the gateway boot path has already decided below
+				// whether to treat this as fatal based on channel enabled state.
+				slog.Info("channel credential not found (channel may be disabled)", "error", e)
+				continue
+			}
+			slog.Error("channel credential injection failed", "error", e)
+			fatalErrs = append(fatalErrs, e)
+		}
+		if len(fatalErrs) > 0 {
+			return fmt.Errorf("fatal: channel credential injection failed — ensure OMNIPUS_MASTER_KEY is set")
+		}
 	}
 
 	logger.SetLevelFromString(cfg.Gateway.LogLevel)
@@ -156,7 +196,7 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 			"skills_available": skillsInfo["available"],
 		})
 
-	runningServices, err := setupAndStartServices(cfg, agentLoop, msgBus, homePath)
+	runningServices, err := setupAndStartServices(cfg, agentLoop, msgBus, homePath, credStore)
 	if err != nil {
 		return err
 	}
@@ -199,7 +239,7 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	var configReloadChan <-chan *config.Config
 	stopWatch := func() {}
 	if cfg.Gateway.HotReload {
-		configReloadChan, stopWatch = setupConfigWatcherPolling(configPath, debug)
+		configReloadChan, stopWatch = setupConfigWatcherPolling(configPath, debug, credStore)
 		logger.Info("Config hot reload enabled")
 	}
 	defer stopWatch()
@@ -224,7 +264,7 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 			}
 		case <-manualReloadChan:
 			logger.Info("Manual reload triggered via /reload endpoint")
-			newCfg, err := config.LoadConfig(configPath)
+			newCfg, err := config.LoadConfigWithStore(configPath, credStore)
 			if err != nil {
 				logger.Errorf("Error loading config for manual reload: %v", err)
 				runningServices.reloading.Store(false)
@@ -255,6 +295,32 @@ func executeReload(
 	allowEmptyStartup bool,
 ) error {
 	defer runningServices.reloading.Store(false)
+	// Re-inject credentials for the new config so newly added channels/providers
+	// receive their resolved secrets before service reconstruction. If injection
+	// fails, reject the reload and keep the old config serving.
+	if cs := runningServices.credStore; cs != nil {
+		if errs := credentials.InjectFromConfig(newCfg, cs); len(errs) > 0 {
+			for _, e := range errs {
+				slog.Error("reload: provider credential injection failed — rejecting reload", "error", e)
+			}
+			return fmt.Errorf("reload rejected: provider credential injection failed")
+		}
+		if errs := credentials.InjectChannelsFromConfig(newCfg, cs); len(errs) > 0 {
+			var fatalErrs []error
+			for _, e := range errs {
+				var notFound *credentials.ErrNotFound
+				if errors.As(e, &notFound) {
+					slog.Info("reload: channel credential not found (channel may be disabled)", "error", e)
+					continue
+				}
+				slog.Error("reload: channel credential injection failed", "error", e)
+				fatalErrs = append(fatalErrs, e)
+			}
+			if len(fatalErrs) > 0 {
+				return fmt.Errorf("reload rejected: channel credential injection failed")
+			}
+		}
+	}
 	return handleConfigReload(ctx, agentLoop, newCfg, provider, runningServices, msgBus, allowEmptyStartup)
 }
 
@@ -280,8 +346,9 @@ func setupAndStartServices(
 	agentLoop *agent.AgentLoop,
 	msgBus *bus.MessageBus,
 	homePath string,
+	credStore *credentials.Store,
 ) (*services, error) {
-	runningServices := &services{}
+	runningServices := &services{credStore: credStore}
 
 	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
 	var err error
@@ -380,6 +447,7 @@ func setupAndStartServices(
 		homePath:      homePath,
 		taskStore:     tStore,
 		taskExecutor:  tExecutor,
+		credStore:     credStore,
 	}
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions", api.withAuth(api.HandleSessions))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions/", api.withAuth(api.HandleSessions))
@@ -613,7 +681,7 @@ func restartServices(
 	return nil
 }
 
-func setupConfigWatcherPolling(configPath string, debug bool) (chan *config.Config, func()) {
+func setupConfigWatcherPolling(configPath string, debug bool, credStore *credentials.Store) (chan *config.Config, func()) {
 	configChan := make(chan *config.Config, 1)
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
@@ -644,7 +712,7 @@ func setupConfigWatcherPolling(configPath string, debug bool) (chan *config.Conf
 					lastModTime = currentModTime
 					lastSize = currentSize
 
-					newCfg, err := config.LoadConfig(configPath)
+					newCfg, err := config.LoadConfigWithStore(configPath, credStore)
 					if err != nil {
 						logger.Errorf("⚠ Error loading new config: %v", err)
 						logger.Warn("  Using previous valid config")

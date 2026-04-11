@@ -7,6 +7,15 @@ import (
 )
 
 func TestDetectTranscriber(t *testing.T) {
+	// Set env vars used across multiple test cases.
+	t.Setenv("TRANSCRIBER_TEST_GEMINI_KEY", "sk-gemini-model")
+	t.Setenv("TRANSCRIBER_TEST_OPENAI_KEY", "sk-openai")
+	t.Setenv("TRANSCRIBER_TEST_GROQ_KEY", "sk-groq-model")
+	t.Setenv("TRANSCRIBER_TEST_AZURE_KEY", "sk-azure")
+	t.Setenv("TRANSCRIBER_TEST_ANTHROPIC_KEY", "sk-anthropic")
+	t.Setenv("TRANSCRIBER_TEST_OTHER_KEY", "sk-other-model")
+	t.Setenv("TRANSCRIBER_TEST_ELEVENLABS_KEY", "sk_elevenlabs_test")
+
 	tests := []struct {
 		name     string
 		cfg      *config.Config
@@ -26,7 +35,7 @@ func TestDetectTranscriber(t *testing.T) {
 					{
 						ModelName: "voice-gemini",
 						Model:     "gemini/gemini-2.5-flash",
-						APIKeys:   config.SimpleSecureStrings("sk-gemini-model"),
+						APIKeyRef: "TRANSCRIBER_TEST_GEMINI_KEY",
 					},
 				},
 			},
@@ -36,11 +45,11 @@ func TestDetectTranscriber(t *testing.T) {
 			name: "groq via model list",
 			cfg: &config.Config{
 				Providers: []*config.ModelConfig{
-					{ModelName: "openai", Model: "openai/gpt-4o", APIKeys: config.SimpleSecureStrings("sk-openai")},
+					{ModelName: "openai", Model: "openai/gpt-4o", APIKeyRef: "TRANSCRIBER_TEST_OPENAI_KEY"},
 					{
 						ModelName: "groq",
 						Model:     "groq/llama-3.3-70b",
-						APIKeys:   config.SimpleSecureStrings("sk-groq-model"),
+						APIKeyRef: "TRANSCRIBER_TEST_GROQ_KEY",
 					},
 				},
 			},
@@ -54,7 +63,7 @@ func TestDetectTranscriber(t *testing.T) {
 					{
 						ModelName: "voice-openai-audio",
 						Model:     "openai/gpt-4o-audio-preview",
-						APIKeys:   config.SimpleSecureStrings("sk-openai"),
+						APIKeyRef: "TRANSCRIBER_TEST_OPENAI_KEY",
 					},
 				},
 			},
@@ -67,8 +76,9 @@ func TestDetectTranscriber(t *testing.T) {
 				Providers: []*config.ModelConfig{
 					{
 						ModelName: "voice-azure-audio",
-						Model:     "azure/my-audio-deployment", APIKeys: config.SimpleSecureStrings("sk-azure"),
-						APIBase: "https://example.openai.azure.com",
+						Model:     "azure/my-audio-deployment",
+						APIKeyRef: "TRANSCRIBER_TEST_AZURE_KEY",
+						APIBase:   "https://example.openai.azure.com",
 					},
 				},
 			},
@@ -82,7 +92,7 @@ func TestDetectTranscriber(t *testing.T) {
 					{
 						ModelName: "voice-anthropic",
 						Model:     "anthropic/claude-sonnet-4.6",
-						APIKeys:   config.SimpleSecureStrings("sk-anthropic"),
+						APIKeyRef: "TRANSCRIBER_TEST_ANTHROPIC_KEY",
 					},
 				},
 			},
@@ -104,7 +114,7 @@ func TestDetectTranscriber(t *testing.T) {
 					{
 						ModelName: "groq",
 						Model:     "groq/llama-3.3-70b",
-						APIKeys:   config.SimpleSecureStrings("sk-groq-model"),
+						APIKeyRef: "TRANSCRIBER_TEST_GROQ_KEY",
 					},
 				},
 			},
@@ -118,7 +128,7 @@ func TestDetectTranscriber(t *testing.T) {
 					{
 						ModelName: "other",
 						Model:     "gemini/gemini-2.5-flash",
-						APIKeys:   config.SimpleSecureStrings("sk-other-model"),
+						APIKeyRef: "TRANSCRIBER_TEST_OTHER_KEY",
 					},
 				},
 			},
@@ -127,19 +137,19 @@ func TestDetectTranscriber(t *testing.T) {
 		{
 			name: "elevenlabs voice config key",
 			cfg: &config.Config{
-				Voice: config.VoiceConfig{ElevenLabsAPIKey: *config.NewSecureString("sk_elevenlabs_test")},
+				Voice: config.VoiceConfig{ElevenLabsAPIKeyRef: "TRANSCRIBER_TEST_ELEVENLABS_KEY"},
 			},
 			wantName: "elevenlabs",
 		},
 		{
 			name: "elevenlabs takes priority over groq model list",
 			cfg: &config.Config{
-				Voice: config.VoiceConfig{ElevenLabsAPIKey: *config.NewSecureString("sk_elevenlabs_test")},
+				Voice: config.VoiceConfig{ElevenLabsAPIKeyRef: "TRANSCRIBER_TEST_ELEVENLABS_KEY"},
 				Providers: []*config.ModelConfig{
 					{
 						ModelName: "groq",
 						Model:     "groq/llama-3.3-70b",
-						APIKeys:   config.SimpleSecureStrings("sk-groq-model"),
+						APIKeyRef: "TRANSCRIBER_TEST_GROQ_KEY",
 					},
 				},
 			},
@@ -149,14 +159,14 @@ func TestDetectTranscriber(t *testing.T) {
 			name: "voice model name takes priority over elevenlabs",
 			cfg: &config.Config{
 				Voice: config.VoiceConfig{
-					ModelName:        "voice-gemini",
-					ElevenLabsAPIKey: *config.NewSecureString("sk_elevenlabs_test"),
+					ModelName:           "voice-gemini",
+					ElevenLabsAPIKeyRef: "TRANSCRIBER_TEST_ELEVENLABS_KEY",
 				},
 				Providers: []*config.ModelConfig{
 					{
 						ModelName: "voice-gemini",
 						Model:     "gemini/gemini-2.5-flash",
-						APIKeys:   config.SimpleSecureStrings("sk-gemini-model"),
+						APIKeyRef: "TRANSCRIBER_TEST_GEMINI_KEY",
 					},
 				},
 			},

@@ -3,6 +3,7 @@ package weixin
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -43,7 +44,11 @@ func init() {
 
 // NewWeixinChannel creates a new WeixinChannel from config.
 func NewWeixinChannel(cfg config.WeixinConfig, messageBus *bus.MessageBus) (*WeixinChannel, error) {
-	api, err := NewApiClient(cfg.BaseURL, cfg.Token.String(), cfg.Proxy)
+	token := os.Getenv(cfg.TokenRef)
+	if token == "" {
+		return nil, fmt.Errorf("weixin: TokenRef %q resolved to empty string — set the env var before starting the channel", cfg.TokenRef)
+	}
+	api, err := NewApiClient(cfg.BaseURL, token, cfg.Proxy)
 	if err != nil {
 		return nil, fmt.Errorf("weixin: failed to create API client: %w", err)
 	}

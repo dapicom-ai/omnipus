@@ -986,9 +986,8 @@ func (c *OmnipusConfig) ToStandardConfig() *config.Config {
 			Model:     m.Model,
 			APIBase:   m.APIBase,
 			Proxy:     m.Proxy,
-		}
-		if m.APIKey != "" {
-			mc.SetAPIKey(m.APIKey)
+			// APIKey not migrated: re-enter via `omnipus credentials set <REF> <value>`
+			// and set api_key_ref in config.
 		}
 		cfg.Providers = append(cfg.Providers, mc)
 	}
@@ -1023,107 +1022,55 @@ func (c ChannelsConfig) ToStandardChannels() config.ChannelsConfig {
 			Enabled:   c.WhatsApp.Enabled,
 			BridgeURL: c.WhatsApp.BridgeURL,
 		},
-		Telegram: func() config.TelegramConfig {
-			tc := config.TelegramConfig{
-				Enabled: c.Telegram.Enabled,
-				Proxy:   c.Telegram.Proxy,
-			}
-			if c.Telegram.Token != "" {
-				tc.Token = *config.NewSecureString(c.Telegram.Token)
-			}
-			return tc
-		}(),
-		Feishu: func() config.FeishuConfig {
-			fc := config.FeishuConfig{
-				Enabled: c.Feishu.Enabled,
-				AppID:   c.Feishu.AppID,
-			}
-			if c.Feishu.AppSecret != "" {
-				fc.AppSecret = *config.NewSecureString(c.Feishu.AppSecret)
-			}
-			if c.Feishu.EncryptKey != "" {
-				fc.EncryptKey = *config.NewSecureString(c.Feishu.EncryptKey)
-			}
-			if c.Feishu.VerificationToken != "" {
-				fc.VerificationToken = *config.NewSecureString(c.Feishu.VerificationToken)
-			}
-			return fc
-		}(),
-		Discord: func() config.DiscordConfig {
-			dc := config.DiscordConfig{
-				Enabled:     c.Discord.Enabled,
-				MentionOnly: c.Discord.MentionOnly,
-			}
-			if c.Discord.Token != "" {
-				dc.Token = *config.NewSecureString(c.Discord.Token)
-			}
-			return dc
-		}(),
+		Telegram: config.TelegramConfig{
+			Enabled: c.Telegram.Enabled,
+			Proxy:   c.Telegram.Proxy,
+			// Token not migrated: re-enter via `omnipus credentials set TELEGRAM_TOKEN`
+		},
+		Feishu: config.FeishuConfig{
+			Enabled: c.Feishu.Enabled,
+			AppID:   c.Feishu.AppID,
+			// AppSecret, EncryptKey, VerificationToken not migrated: re-enter via credentials set
+		},
+		Discord: config.DiscordConfig{
+			Enabled:     c.Discord.Enabled,
+			MentionOnly: c.Discord.MentionOnly,
+			// Token not migrated: re-enter via `omnipus credentials set DISCORD_TOKEN`
+		},
 		MaixCam: config.MaixCamConfig{
 			Enabled: c.MaixCam.Enabled,
 			Host:    c.MaixCam.Host,
 			Port:    c.MaixCam.Port,
 		},
-		QQ: func() config.QQConfig {
-			qc := config.QQConfig{
-				Enabled: c.QQ.Enabled,
-				AppID:   c.QQ.AppID,
-			}
-			if c.QQ.AppSecret != "" {
-				qc.AppSecret = *config.NewSecureString(c.QQ.AppSecret)
-			}
-			return qc
-		}(),
-		DingTalk: func() config.DingTalkConfig {
-			dt := config.DingTalkConfig{
-				Enabled:  c.DingTalk.Enabled,
-				ClientID: c.DingTalk.ClientID,
-			}
-			if c.DingTalk.ClientSecret != "" {
-				dt.ClientSecret = *config.NewSecureString(c.DingTalk.ClientSecret)
-			}
-			return dt
-		}(),
-		Slack: func() config.SlackConfig {
-			sc := config.SlackConfig{
-				Enabled: c.Slack.Enabled,
-			}
-			if c.Slack.BotToken != "" {
-				sc.BotToken = *config.NewSecureString(c.Slack.BotToken)
-			}
-			if c.Slack.AppToken != "" {
-				sc.AppToken = *config.NewSecureString(c.Slack.AppToken)
-			}
-			return sc
-		}(),
-		Matrix: func() config.MatrixConfig {
-			mc := config.MatrixConfig{
-				Enabled:      c.Matrix.Enabled,
-				Homeserver:   c.Matrix.Homeserver,
-				UserID:       c.Matrix.UserID,
-				AllowFrom:    c.Matrix.AllowFrom,
-				JoinOnInvite: true,
-			}
-			if c.Matrix.AccessToken != "" {
-				mc.AccessToken = *config.NewSecureString(c.Matrix.AccessToken)
-			}
-			return mc
-		}(),
-		LINE: func() config.LINEConfig {
-			lc := config.LINEConfig{
-				Enabled:     c.LINE.Enabled,
-				WebhookHost: c.LINE.WebhookHost,
-				WebhookPort: c.LINE.WebhookPort,
-				WebhookPath: c.LINE.WebhookPath,
-			}
-			if c.LINE.ChannelSecret != "" {
-				lc.ChannelSecret = *config.NewSecureString(c.LINE.ChannelSecret)
-			}
-			if c.LINE.ChannelAccessToken != "" {
-				lc.ChannelAccessToken = *config.NewSecureString(c.LINE.ChannelAccessToken)
-			}
-			return lc
-		}(),
+		QQ: config.QQConfig{
+			Enabled: c.QQ.Enabled,
+			AppID:   c.QQ.AppID,
+			// AppSecret not migrated: re-enter via `omnipus credentials set QQ_APP_SECRET`
+		},
+		DingTalk: config.DingTalkConfig{
+			Enabled:  c.DingTalk.Enabled,
+			ClientID: c.DingTalk.ClientID,
+			// ClientSecret not migrated: re-enter via `omnipus credentials set DINGTALK_CLIENT_SECRET`
+		},
+		Slack: config.SlackConfig{
+			Enabled: c.Slack.Enabled,
+			// BotToken, AppToken not migrated: re-enter via `omnipus credentials set SLACK_BOT_TOKEN`
+		},
+		Matrix: config.MatrixConfig{
+			Enabled:      c.Matrix.Enabled,
+			Homeserver:   c.Matrix.Homeserver,
+			UserID:       c.Matrix.UserID,
+			AllowFrom:    c.Matrix.AllowFrom,
+			JoinOnInvite: true,
+			// AccessToken not migrated: re-enter via `omnipus credentials set MATRIX_ACCESS_TOKEN`
+		},
+		LINE: config.LINEConfig{
+			Enabled:     c.LINE.Enabled,
+			WebhookHost: c.LINE.WebhookHost,
+			WebhookPort: c.LINE.WebhookPort,
+			WebhookPath: c.LINE.WebhookPath,
+			// ChannelSecret, ChannelAccessToken not migrated: re-enter via credentials set
+		},
 	}
 }
 
@@ -1135,15 +1082,13 @@ func (c GatewayConfig) ToStandardGateway() config.GatewayConfig {
 }
 
 func (c ToolsConfig) ToStandardTools() config.ToolsConfig {
+	// Legacy OpenClaw configs had plaintext API keys for web tools. During migration
+	// these are dropped — the operator must re-enter them via the credential store
+	// (omnipus credentials set BRAVE_API_KEY <value>). The Ref fields are intentionally
+	// left empty here so the tool starts disabled until credentials are explicitly set.
 	brave := config.BraveConfig{
 		Enabled:    c.Web.Brave.Enabled,
 		MaxResults: c.Web.Brave.MaxResults,
-	}
-	if c.Web.Brave.APIKey != "" {
-		brave.SetAPIKey(c.Web.Brave.APIKey)
-	}
-	if len(c.Web.Brave.APIKeys) > 0 {
-		brave.SetAPIKeys(c.Web.Brave.APIKeys)
 	}
 
 	tavily := config.TavilyConfig{
@@ -1151,16 +1096,10 @@ func (c ToolsConfig) ToStandardTools() config.ToolsConfig {
 		BaseURL:    c.Web.Tavily.BaseURL,
 		MaxResults: c.Web.Tavily.MaxResults,
 	}
-	if c.Web.Tavily.APIKey != "" {
-		tavily.SetAPIKey(c.Web.Tavily.APIKey)
-	}
 
 	perplexity := config.PerplexityConfig{
 		Enabled:    c.Web.Perplexity.Enabled,
 		MaxResults: c.Web.Perplexity.MaxResults,
-	}
-	if c.Web.Perplexity.APIKey != "" {
-		perplexity.SetAPIKey(c.Web.Perplexity.APIKey)
 	}
 
 	return config.ToolsConfig{

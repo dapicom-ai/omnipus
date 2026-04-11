@@ -138,7 +138,6 @@ func DefaultConfig() *Config {
 					Text:    FlexibleStringSlice{"Thinking..."},
 				},
 				CryptoDatabasePath: "",
-				CryptoPassphrase:   SecureString{},
 			},
 			LINE: LINEConfig{
 				Enabled:      false,
@@ -167,14 +166,6 @@ func DefaultConfig() *Config {
 				CDNBaseURL: "https://novac2c.cdn.weixin.qq.com/c2c",
 				AllowFrom:  FlexibleStringSlice{},
 				Proxy:      "",
-			},
-			Pico: PicoConfig{
-				Enabled:        false,
-				PingInterval:   30,
-				ReadTimeout:    60,
-				WriteTimeout:   10,
-				MaxConnections: 100,
-				AllowFrom:      FlexibleStringSlice{},
 			},
 		},
 		Hooks: HooksConfig{

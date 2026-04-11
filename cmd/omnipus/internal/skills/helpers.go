@@ -29,7 +29,7 @@ func buildRegistryManager(cfg *config.Config) *skills.RegistryManager {
 		ClawHub: skills.ClawHubConfig{
 			Enabled:         ch.Enabled,
 			BaseURL:         ch.BaseURL,
-			AuthToken:       ch.AuthToken.String(),
+			AuthToken:       os.Getenv(ch.AuthTokenRef),
 			SearchPath:      ch.SearchPath,
 			SkillsPath:      ch.SkillsPath,
 			DownloadPath:    ch.DownloadPath,
@@ -201,7 +201,7 @@ func skillsUpdateCmd(installer *skills.SkillInstaller, skillName string) error {
 		ClawHub: skills.ClawHubConfig{
 			Enabled:         clawHubConfig.Enabled,
 			BaseURL:         clawHubConfig.BaseURL,
-			AuthToken:       clawHubConfig.AuthToken.String(),
+			AuthToken:       os.Getenv(clawHubConfig.AuthTokenRef),
 			SearchPath:      clawHubConfig.SearchPath,
 			SkillsPath:      clawHubConfig.SkillsPath,
 			DownloadPath:    clawHubConfig.DownloadPath,
@@ -395,7 +395,7 @@ func skillsSearchCmd(query string) {
 		ClawHub: skills.ClawHubConfig{
 			Enabled:         clawHubConfig.Enabled,
 			BaseURL:         clawHubConfig.BaseURL,
-			AuthToken:       clawHubConfig.AuthToken.String(),
+			AuthToken:       os.Getenv(clawHubConfig.AuthTokenRef),
 			SearchPath:      clawHubConfig.SearchPath,
 			SkillsPath:      clawHubConfig.SkillsPath,
 			DownloadPath:    clawHubConfig.DownloadPath,

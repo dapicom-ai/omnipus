@@ -55,6 +55,7 @@ type restAPI struct {
 	configMu       sync.Mutex           // guards safeUpdateConfigJSON (read-modify-write cycle)
 	taskStore      *taskstore.TaskStore // task persistence
 	taskExecutor   *agent.TaskExecutor  // task execution engine
+	credStore      *credentials.Store   // shared unlocked credential store (injected at boot)
 }
 
 // --- CORS / JSON helpers ---
@@ -520,13 +521,6 @@ func strVal(m map[string]any, key string) string {
 	return s
 }
 
-// firstAPIKey returns the resolved value of the first non-empty API key, or "".
-func firstAPIKey(keys config.SecureStrings) string {
-	if len(keys) == 0 {
-		return ""
-	}
-	return keys[0].String()
-}
 
 // inferProviderName returns the provider name from an explicit Provider field,
 // or infers it from the Model field's "provider/model" format. Falls back to "default".
@@ -1277,42 +1271,42 @@ func (a *restAPI) configPath() string {
 	return filepath.Join(a.homePath, "config.json")
 }
 
-// resolveCredentialRef resolves an api_key_ref from the encrypted credentials store.
-// Returns the plaintext API key, or empty string if the store is locked or the ref is missing.
-func (a *restAPI) resolveCredentialRef(ref string) string {
+// resolveCredentialRef resolves a credential reference from the shared credential store.
+// Returns an error if the store is locked or the ref is not found, so callers can
+// surface a meaningful error instead of silently returning "".
+func (a *restAPI) resolveCredentialRef(ref string) (string, error) {
 	if ref == "" {
-		return ""
+		return "", nil
 	}
-	store := credentials.NewStore(a.credentialsStorePath())
-	if err := credentials.Unlock(store); err != nil {
-		slog.Warn("rest: credential store locked for ref resolution", "ref", ref, "error", err)
-		return ""
+	store := a.credStore
+	if store == nil {
+		store = credentials.NewStore(a.credentialsStorePath())
+		if err := credentials.Unlock(store); err != nil {
+			return "", fmt.Errorf("credential store locked: %w", err)
+		}
 	}
 	value, err := credentials.ResolveRef(store, ref)
 	if err != nil {
-		slog.Warn("rest: could not resolve credential ref", "ref", ref, "error", err)
-		return ""
+		return "", fmt.Errorf("credential store: %w", err)
 	}
-	return value
+	return value, nil
 }
 
 // storeCredential stores an API key in the encrypted credentials store and
-// returns the credential reference name. If the store is unavailable (locked or
-// write error), it logs a warning and returns "" so the caller can fall back to
-// plaintext storage.
-func (a *restAPI) storeCredential(refName, apiKey string) string {
-	store := credentials.NewStore(a.credentialsStorePath())
-	if err := credentials.Unlock(store); err != nil {
-		slog.Warn("rest: credential store locked, falling back to plaintext api_key",
-			"ref", refName, "error", err)
-		return ""
+// returns the credential reference name. Returns an error if the store is locked
+// or unavailable — never falls back to plaintext (SEC-23).
+func (a *restAPI) storeCredential(refName, apiKey string) (string, error) {
+	store := a.credStore
+	if store == nil {
+		store = credentials.NewStore(a.credentialsStorePath())
+		if err := credentials.Unlock(store); err != nil {
+			return "", fmt.Errorf("credential store locked: set OMNIPUS_MASTER_KEY or unlock before saving secrets: %w", err)
+		}
 	}
 	if err := store.Set(refName, apiKey); err != nil {
-		slog.Error("rest: failed to store API key in credentials store, falling back to plaintext",
-			"ref", refName, "error", err)
-		return ""
+		return "", fmt.Errorf("failed to store API key in credentials store: %w", err)
 	}
-	return refName
+	return refName, nil
 }
 
 // safeUpdateConfigJSON reads config.json, applies a mutation function on the raw JSON map,
@@ -2187,13 +2181,16 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 				providerOrder = append(providerOrder, providerName)
 			}
 			providerModels[providerName] = append(providerModels[providerName], m.ModelName)
-			// Store the first API key per provider for upstream model fetching.
-			// Check APIKeys first (plaintext or env-resolved), then fall back to
-			// api_key_ref resolution from the encrypted credentials store.
+			// Resolve API key for upstream model fetching.
+			// APIKeyRef is resolved via process environment (set by InjectFromConfig).
 			if _, hasKey := providerAPIKeys[providerName]; !hasKey {
-				resolved := firstAPIKey(m.APIKeys)
+				resolved := m.APIKey()
 				if resolved == "" && m.APIKeyRef != "" {
-					resolved = a.resolveCredentialRef(m.APIKeyRef)
+					if v, err := a.resolveCredentialRef(m.APIKeyRef); err != nil {
+						slog.Warn("rest: could not resolve provider credential", "ref", m.APIKeyRef, "error", err)
+					} else {
+						resolved = v
+					}
 				}
 				if resolved != "" {
 					providerAPIKeys[providerName] = resolved
@@ -2275,11 +2272,17 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		// Store API key in the encrypted credentials store (AES-256-GCM) and
-		// reference it via api_key_ref in config.json. Falls back to plaintext
-		// api_keys if the credential store is unavailable.
+		// reference it via api_key_ref in config.json. Refuses the operation if
+		// the credential store is locked (SEC-23: no plaintext fallback).
 		var credRefName string
 		if req.APIKey != "" {
-			credRefName = a.storeCredential(providerID+"_API_KEY", req.APIKey)
+			ref, err := a.storeCredential(providerID+"_API_KEY", req.APIKey)
+			if err != nil {
+				slog.Error("rest: credential store unavailable for provider update", "provider", providerID, "error", err)
+				jsonErr(w, http.StatusServiceUnavailable, "credential store locked: set OMNIPUS_MASTER_KEY or unlock before saving secrets")
+				return
+			}
+			credRefName = ref
 		}
 		if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
 			providerList, _ := m["providers"].([]any)
@@ -2292,13 +2295,9 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 				pName := inferProviderName(strVal(model, "provider"), strVal(model, "model"))
 				if pName == providerID {
 					if req.APIKey != "" {
-						if credRefName != "" {
-							model["api_key_ref"] = credRefName
-							delete(model, "api_key")
-							delete(model, "api_keys")
-						} else {
-							model["api_keys"] = []string{req.APIKey}
-						}
+						model["api_key_ref"] = credRefName
+						delete(model, "api_key")
+						delete(model, "api_keys")
 					}
 					if req.Model != "" {
 						model["model"] = req.Model
@@ -2314,11 +2313,7 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 					"model_name": providerID,
 					"provider":   providerID,
 					"model":      req.Model,
-				}
-				if credRefName != "" {
-					newEntry["api_key_ref"] = credRefName
-				} else {
-					newEntry["api_keys"] = []string{req.APIKey}
+					"api_key_ref": credRefName,
 				}
 				m["providers"] = append(providerList, newEntry)
 			}
@@ -2375,7 +2370,14 @@ func (a *restAPI) HandleProviders(w http.ResponseWriter, r *http.Request) {
 				apiKeys, _ := modelMap["api_keys"].([]any)
 				apiKeyRef, _ := modelMap["api_key_ref"].(string)
 				hasPlaintextKey := len(apiKeys) > 0 && apiKeys[0] != ""
-				hasCredRef := apiKeyRef != "" && a.resolveCredentialRef(apiKeyRef) != ""
+				hasCredRef := false
+				if apiKeyRef != "" {
+					if v, err := a.resolveCredentialRef(apiKeyRef); err != nil {
+						slog.Warn("rest: provider test: credential store error", "ref", apiKeyRef, "error", err)
+					} else {
+						hasCredRef = v != ""
+					}
+				}
 				if !hasPlaintextKey && !hasCredRef {
 					jsonOK(w, map[string]any{"success": false, "error": "no API key configured for this provider"})
 					return
@@ -2652,7 +2654,6 @@ func (a *restAPI) HandleChannels(w http.ResponseWriter, r *http.Request) {
 		{ID: "onebot", Name: "OneBot", Transport: "websocket", Enabled: ch.OneBot.Enabled, Description: "OneBot v11 protocol"},
 		{ID: "irc", Name: "IRC", Transport: "tcp", Enabled: ch.IRC.Enabled, Description: "Internet Relay Chat"},
 		{ID: "matrix", Name: "Matrix", Transport: "http", Enabled: ch.Matrix.Enabled, Description: "Matrix protocol"},
-		{ID: "pico", Name: "Omnipus", Transport: "http", Enabled: ch.Pico.Enabled, Description: "Omnipus bridge channel"},
 		{ID: "maixcam", Name: "MaixCam", Transport: "serial", Enabled: ch.MaixCam.Enabled, Description: "MaixCam edge device"},
 	}
 	jsonOK(w, channels)
@@ -2664,7 +2665,7 @@ var validChannelIDs = map[string]bool{
 	"telegram": true, "discord": true, "slack": true, "whatsapp": true,
 	"feishu": true, "dingtalk": true, "wecom": true, "weixin": true,
 	"line": true, "qq": true, "onebot": true, "irc": true,
-	"matrix": true, "pico": true, "maixcam": true,
+	"matrix": true, "maixcam": true,
 }
 
 func (a *restAPI) setChannelEnabled(w http.ResponseWriter, channelID string, enabled bool) {
@@ -2708,7 +2709,6 @@ var channelSensitiveFields = map[string][]string{
 	"onebot":     {"access_token"},
 	"irc":        {"password", "nickserv_password", "sasl_password"},
 	"weixin":     {"token"},
-	"pico":       {"token"},
 	"maixcam":    {},
 	"whatsapp":   {},
 }
@@ -2727,7 +2727,6 @@ var channelRequiredFields = map[string][]string{
 	"onebot":    {"ws_url"},
 	"irc":       {"server", "nick"},
 	"weixin":    {"token"},
-	"pico":      {"token"},
 	"maixcam":   {},
 	"whatsapp":  {},
 }
@@ -2853,7 +2852,6 @@ func countEnabledChannels(cfg *config.Config) int {
 		ch.OneBot.Enabled,
 		ch.IRC.Enabled,
 		ch.Matrix.Enabled,
-		ch.Pico.Enabled,
 		ch.MaixCam.Enabled,
 	} {
 		if enabled {

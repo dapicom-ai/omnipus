@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,6 +20,8 @@ import (
 
 	"github.com/dapicom-ai/omnipus/cmd/omnipus/internal"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
+	"github.com/dapicom-ai/omnipus/pkg/fileutil"
 )
 
 const (
@@ -125,8 +128,46 @@ func authWeComCmdWithScanner(
 
 	applyWeComAuthResult(cfg, botInfo)
 
-	if saveErr := config.SaveConfig(internal.GetConfigPath(), cfg); saveErr != nil {
-		return fmt.Errorf("failed to save config: %w", saveErr)
+	// Persist the bot secret in the encrypted credential store.
+	home := internal.GetOmnipusHome()
+	storePath := home + "/credentials.json"
+	store := credentials.NewStore(storePath)
+	if err := credentials.Unlock(store); err != nil {
+		return fmt.Errorf("failed to unlock credential store: %w", err)
+	}
+
+	// Serialize concurrent auth runs via an advisory flock on the credentials
+	// file so that two simultaneous "omnipus auth wecom" processes cannot race
+	// on the same hardcoded ref and delete each other's secret.
+	lockPath := home + "/.credentials.lock"
+	var saveErr error
+	flockErr := fileutil.WithFlock(lockPath, func() error {
+		// Step 1: write secret to store first.  If this fails, config is never
+		// touched and the user is not left with a broken ref.
+		if err := store.Set(wecomSecretCredRef, botInfo.Secret); err != nil {
+			return fmt.Errorf("failed to save WeCom secret to credential store: %w", err)
+		}
+
+		// Step 2: persist config with the SecretRef pointing at the stored secret.
+		// If SaveConfig fails, roll back by deleting the secret we just wrote.
+		if err := config.SaveConfig(internal.GetConfigPath(), cfg); err != nil {
+			if delErr := store.Delete(wecomSecretCredRef); delErr != nil {
+				slog.Error("wecom auth: rollback failed — orphaned credential requires manual cleanup",
+					"ref", wecomSecretCredRef,
+					"delete_error", delErr,
+					"hint", "run: omnipus credentials delete "+wecomSecretCredRef,
+				)
+			}
+			saveErr = fmt.Errorf("failed to save config: %w", err)
+			return saveErr
+		}
+		return nil
+	})
+	if flockErr != nil {
+		return flockErr
+	}
+	if saveErr != nil {
+		return saveErr
 	}
 
 	fmt.Fprintln(writer)
@@ -154,10 +195,13 @@ func defaultWeComQRFlowOptions(timeout time.Duration) wecomQRFlowOptions {
 	}
 }
 
+// wecomSecretCredRef is the credential store key used for the WeCom bot secret.
+const wecomSecretCredRef = "WECOM_SECRET"
+
 func applyWeComAuthResult(cfg *config.Config, botInfo wecomQRBotInfo) {
 	cfg.Channels.WeCom.Enabled = true
 	cfg.Channels.WeCom.BotID = botInfo.BotID
-	cfg.Channels.WeCom.SetSecret(botInfo.Secret)
+	cfg.Channels.WeCom.SecretRef = wecomSecretCredRef
 	if strings.TrimSpace(cfg.Channels.WeCom.WebSocketURL) == "" {
 		cfg.Channels.WeCom.WebSocketURL = wecomDefaultWebSocketURL
 	}

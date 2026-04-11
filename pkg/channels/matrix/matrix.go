@@ -202,7 +202,7 @@ func NewMatrixChannel(
 ) (*MatrixChannel, error) {
 	homeserver := strings.TrimSpace(cfg.Homeserver)
 	userID := strings.TrimSpace(cfg.UserID)
-	accessToken := strings.TrimSpace(cfg.AccessToken.String())
+	accessToken := strings.TrimSpace(os.Getenv(cfg.AccessTokenRef))
 	if homeserver == "" {
 		return nil, fmt.Errorf("matrix homeserver is required")
 	}
@@ -257,7 +257,7 @@ func (c *MatrixChannel) Start(ctx context.Context) error {
 	c.startTime = time.Now()
 
 	// Initialize crypto helper if database and passphrase are configured
-	if c.cryptoDbPath != "" && c.config.CryptoPassphrase.String() != "" {
+	if c.cryptoDbPath != "" && c.config.CryptoPassphraseRef != "" {
 		if err := c.initCrypto(ctx); err != nil {
 			logger.WarnCF(
 				"matrix",
@@ -349,7 +349,7 @@ func (c *MatrixChannel) initCrypto(ctx context.Context) error {
 		return fmt.Errorf("wrap database: %w", err)
 	}
 
-	cryptoHelper, err := cryptohelper.NewCryptoHelper(c.client, []byte(c.config.CryptoPassphrase.String()), wrappedDB)
+	cryptoHelper, err := cryptohelper.NewCryptoHelper(c.client, []byte(os.Getenv(c.config.CryptoPassphraseRef)), wrappedDB)
 	if err != nil {
 		return fmt.Errorf("create crypto helper: %w", err)
 	}

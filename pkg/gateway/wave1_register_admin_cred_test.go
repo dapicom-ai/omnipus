@@ -371,7 +371,7 @@ func TestProviders_BackwardCompatPlaintextAPIKey(t *testing.T) {
 			},
 		},
 		Providers: config.SecureModelList{
-			{ModelName: "openai", Provider: "openai", Model: "gpt-4o", APIKeys: config.SimpleSecureStrings("sk-oldformat-plaintext")},
+			{ModelName: "openai", Provider: "openai", Model: "gpt-4o", APIKeyRef: "OPENAI_API_KEY"},
 		},
 	}
 	msgBus := bus.NewMessageBus()
@@ -477,9 +477,11 @@ func TestOnboarding_CreatesAPIKeyRef(t *testing.T) {
 // AND the API key value matches what was submitted.
 //
 // Traces to: pkg/gateway/rest_onboarding.go — HandleCompleteOnboarding fallback path
-func TestOnboarding_FallsBackToPlaintextWhenNoMasterKey(t *testing.T) {
-	// Explicitly disable credentials store.
-	api, tmpDir := newTestAPIWithHome(t)
+func TestOnboarding_RefusesWhenNoMasterKey(t *testing.T) {
+	// After SEC-23 enforcement: no plaintext fallback — the credential store must be
+	// unlocked before onboarding can complete. When no master key is configured,
+	// HandleCompleteOnboarding must return 503 Service Unavailable.
+	api, _ := newTestAPIWithHome(t)
 	// Ensure no master key is available.
 	t.Setenv("OMNIPUS_MASTER_KEY", "")
 	t.Setenv("OMNIPUS_KEY_FILE", "")
@@ -490,36 +492,9 @@ func TestOnboarding_FallsBackToPlaintextWhenNoMasterKey(t *testing.T) {
 	w := httptest.NewRecorder()
 	api.HandleCompleteOnboarding(w, req)
 
-	require.Equal(t, http.StatusOK, w.Code, "onboarding must still succeed when no credentials store")
-
-	// Verify plaintext api_key is in config.json.
-	cfgMap := readConfigMap(t, tmpDir)
-	providerList, ok := cfgMap["providers"].([]any)
-	require.True(t, ok, "config.json must have a 'providers' array")
-	require.NotEmpty(t, providerList)
-
-	var openaiEntry map[string]any
-	for _, p := range providerList {
-		pm, ok := p.(map[string]any)
-		if !ok {
-			continue
-		}
-		if pm["model_name"] == "openai" || pm["provider"] == "openai" {
-			openaiEntry = pm
-			break
-		}
-	}
-	require.NotNil(t, openaiEntry, "openai provider entry must be present in config.json")
-
-	// api_key_ref must be absent (no credentials store available).
-	apiKeyRef, _ := openaiEntry["api_key_ref"].(string)
-	assert.Empty(t, apiKeyRef,
-		"config.json must NOT have api_key_ref when credentials store is not available")
-
-	// Plaintext api_key must be present and correct.
-	plaintextKey, _ := openaiEntry["api_key"].(string)
-	assert.Equal(t, "sk-fallback-test", plaintextKey,
-		"config.json must have correct plaintext api_key as fallback when no credentials store")
+	// SEC-23: must refuse with 503 when credential store is locked — no plaintext fallback.
+	require.Equal(t, http.StatusServiceUnavailable, w.Code,
+		"onboarding must return 503 when credential store is locked (SEC-23 no-plaintext-fallback)")
 }
 
 // TestProviderPUT_StoresAPIKeyRef verifies that PUT /api/v1/providers/{id} stores the
@@ -595,19 +570,17 @@ func TestProviderPUT_StoresAPIKeyRef(t *testing.T) {
 		"credentials store must return the exact API key submitted via PUT")
 }
 
-// TestProviderPUT_FallsBackToPlaintextWhenNoMasterKey verifies that PUT /api/v1/providers/{id}
-// falls back to storing plaintext api_keys in config.json when no credentials store is available.
+// TestProviderPUT_RefusesWhenNoMasterKey verifies that PUT /api/v1/providers/{id}
+// refuses with 503 Service Unavailable when the credential store is locked.
+// SEC-23: no plaintext fallback — secrets must always go to the encrypted store.
 //
 // BDD: Given OMNIPUS_MASTER_KEY is NOT set,
 // When PUT /api/v1/providers/openai {"api_key":"sk-plain","model":"gpt-4o"} is called,
-// Then config.json has plaintext api_keys for openai (not api_key_ref).
+// Then the handler returns 503 and no plaintext key is persisted to config.json.
 //
-// NOTE: Same reload-failure caveat as TestProviderPUT_StoresAPIKeyRef — the handler
-// returns 500 in test environments because TriggerReload fails, but data is persisted.
-//
-// Traces to: pkg/gateway/rest.go — HandleProviders PUT (fallback to plaintext)
-func TestProviderPUT_FallsBackToPlaintextWhenNoMasterKey(t *testing.T) {
-	api, tmpDir := newTestAPIWithHome(t)
+// Traces to: pkg/gateway/rest.go — HandleProviders PUT (refuse if locked, SEC-23)
+func TestProviderPUT_RefusesWhenNoMasterKey(t *testing.T) {
+	api, _ := newTestAPIWithHome(t)
 	// No master key — credentials store will be locked.
 	t.Setenv("OMNIPUS_MASTER_KEY", "")
 	t.Setenv("OMNIPUS_KEY_FILE", "")
@@ -621,41 +594,9 @@ func TestProviderPUT_FallsBackToPlaintextWhenNoMasterKey(t *testing.T) {
 
 	api.HandleProviders(w, req)
 
-	// Accept 200 or 500 (data persisted even if reload fails in test).
-	code := w.Code
-	assert.True(t, code == http.StatusOK || code == http.StatusInternalServerError,
-		"PUT /providers/openai must not return a 4xx error (got %d)", code)
-
-	// Verify plaintext api_keys in config.json (persistence check, independent of HTTP status).
-	cfgMap := readConfigMap(t, tmpDir)
-	providerList, ok := cfgMap["providers"].([]any)
-	require.True(t, ok)
-	require.NotEmpty(t, providerList, "providers must be persisted before reload attempt")
-
-	var openaiEntry map[string]any
-	for _, p := range providerList {
-		pm, ok := p.(map[string]any)
-		if !ok {
-			continue
-		}
-		if pm["model_name"] == "openai" || pm["provider"] == "openai" {
-			openaiEntry = pm
-			break
-		}
-	}
-	require.NotNil(t, openaiEntry, "openai provider entry must exist in config.json after PUT without master key")
-
-	// api_key_ref must be absent.
-	apiKeyRef, _ := openaiEntry["api_key_ref"].(string)
-	assert.Empty(t, apiKeyRef,
-		"config.json must NOT have api_key_ref when credentials store is not available")
-
-	// api_keys must be present with the plaintext value.
-	apiKeys, ok := openaiEntry["api_keys"].([]any)
-	require.True(t, ok, "config.json must have api_keys array as fallback")
-	require.Len(t, apiKeys, 1, "api_keys must have exactly one entry")
-	assert.Equal(t, "sk-plain", apiKeys[0],
-		"api_keys[0] must be the plaintext key submitted via PUT")
+	// SEC-23: must refuse — no plaintext fallback.
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code,
+		"PUT /providers/openai must return 503 when credential store is locked (SEC-23)")
 }
 
 // TestProviderGET_ResolvesAPIKeyRefFromCredStore verifies that GET /api/v1/providers

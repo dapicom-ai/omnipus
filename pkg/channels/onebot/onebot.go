@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -189,8 +190,8 @@ func (c *OneBotChannel) connect() error {
 	dialer.HandshakeTimeout = 10 * time.Second
 
 	header := make(map[string][]string)
-	if c.config.AccessToken.String() != "" {
-		header["Authorization"] = []string{"Bearer " + c.config.AccessToken.String()}
+	if accessToken := os.Getenv(c.config.AccessTokenRef); accessToken != "" {
+		header["Authorization"] = []string{"Bearer " + accessToken}
 	}
 
 	conn, resp, err := dialer.Dial(c.config.WSUrl, header)

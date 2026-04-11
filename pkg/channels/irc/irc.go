@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/ergochat/irc-go/ircevent"
@@ -68,7 +69,7 @@ func (c *IRCChannel) Start(ctx context.Context) error {
 		Nick:        c.config.Nick,
 		User:        user,
 		RealName:    realName,
-		Password:    c.config.Password.String(),
+		Password:    os.Getenv(c.config.PasswordRef),
 		UseTLS:      c.config.TLS,
 		RequestCaps: caps,
 		QuitMessage: "Goodbye",
@@ -83,9 +84,9 @@ func (c *IRCChannel) Start(ctx context.Context) error {
 	}
 
 	// SASL auth (takes priority over NickServ)
-	if c.config.SASLUser != "" && c.config.SASLPassword.String() != "" {
+	if saslPassword := os.Getenv(c.config.SASLPasswordRef); c.config.SASLUser != "" && saslPassword != "" {
 		conn.SASLLogin = c.config.SASLUser
-		conn.SASLPassword = c.config.SASLPassword.String()
+		conn.SASLPassword = saslPassword
 	}
 
 	// Register event handlers

@@ -18,9 +18,32 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	"github.com/dapicom-ai/omnipus/pkg/taskstore"
 )
+
+// testMasterKey is a deterministic hex master key used only in tests.
+const testMasterKey = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+
+// newOnboardingTestAPI creates a restAPI wired with an unlocked credential store
+// for onboarding tests that submit api_key values (SEC-23: no plaintext fallback).
+func newOnboardingTestAPI(t *testing.T, tmpDir string, al *agent.AgentLoop) *restAPI {
+	t.Helper()
+	t.Setenv("OMNIPUS_MASTER_KEY", testMasterKey)
+	credStore := credentials.NewStore(tmpDir + "/credentials.json")
+	if err := credentials.Unlock(credStore); err != nil {
+		t.Fatalf("unlock credential store: %v", err)
+	}
+	return &restAPI{
+		agentLoop:     al,
+		homePath:      tmpDir,
+		allowedOrigin: "http://localhost:3000",
+		onboardingMgr: onboarding.NewManager(tmpDir),
+		taskStore:     taskstore.New(tmpDir + "/tasks"),
+		credStore:     credStore,
+	}
+}
 
 // --- HandleCompleteOnboarding tests ---
 
@@ -46,13 +69,7 @@ func TestHandleCompleteOnboarding_Success(t *testing.T) {
 	}
 	msgBus := bus.NewMessageBus()
 	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
-	api := &restAPI{
-		agentLoop:     al,
-		homePath:      tmpDir,
-		allowedOrigin: "http://localhost:3000",
-		onboardingMgr: onboarding.NewManager(tmpDir),
-		taskStore:     taskstore.New(tmpDir + "/tasks"),
-	}
+	api := newOnboardingTestAPI(t, tmpDir, al)
 
 	// Verify onboarding is not complete yet
 	require.False(t, api.onboardingMgr.IsComplete(), "onboarding should not be complete initially")
@@ -266,13 +283,7 @@ func TestHandleCompleteOnboarding_ThenLogin(t *testing.T) {
 	}
 	msgBus := bus.NewMessageBus()
 	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
-	api := &restAPI{
-		agentLoop:     al,
-		homePath:      tmpDir,
-		allowedOrigin: "http://localhost:3000",
-		onboardingMgr: onboarding.NewManager(tmpDir),
-		taskStore:     taskstore.New(tmpDir + "/tasks"),
-	}
+	api := newOnboardingTestAPI(t, tmpDir, al)
 
 	// Step 1: Complete onboarding
 	onboardingBody := `{"provider":{"id":"openai","api_key":"sk-test"},"admin":{"username":"admin","password":"secret123"}}`
@@ -345,13 +356,7 @@ func TestHandleCompleteOnboarding_PersistsAdmin(t *testing.T) {
 	}
 	msgBus := bus.NewMessageBus()
 	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
-	api := &restAPI{
-		agentLoop:     al,
-		homePath:      tmpDir,
-		allowedOrigin: "http://localhost:3000",
-		onboardingMgr: onboarding.NewManager(tmpDir),
-		taskStore:     taskstore.New(tmpDir + "/tasks"),
-	}
+	api := newOnboardingTestAPI(t, tmpDir, al)
 
 	// Complete onboarding
 	body := `{"provider":{"id":"openai","api_key":"sk-test"},"admin":{"username":"admin","password":"secret123"}}`
@@ -395,6 +400,12 @@ func TestHandleCompleteOnboarding_Concurrent(t *testing.T) {
 	minimalCfg := []byte(`{"agents":{"defaults":{},"list":[]},"providers":[]}`)
 	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
 
+	// Set up a credential store so the onboarding can persist API keys (SEC-23).
+	masterKey := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	t.Setenv("OMNIPUS_MASTER_KEY", masterKey)
+	credStore := credentials.NewStore(tmpDir + "/credentials.json")
+	require.NoError(t, credentials.Unlock(credStore))
+
 	cfg := &config.Config{
 		Gateway: config.GatewayConfig{Host: "127.0.0.1", Port: 8080},
 		Agents: config.AgentsConfig{
@@ -414,6 +425,7 @@ func TestHandleCompleteOnboarding_Concurrent(t *testing.T) {
 		allowedOrigin: "http://localhost:3000",
 		onboardingMgr: onboardingMgr,
 		taskStore:     taskstore.New(tmpDir + "/tasks"),
+		credStore:     credStore,
 	}
 
 	const n = 5
@@ -462,6 +474,12 @@ func TestHandleCompleteOnboarding_ConcurrentDifferentUsers(t *testing.T) {
 	minimalCfg := []byte(`{"agents":{"defaults":{},"list":[]},"providers":[]}`)
 	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
 
+	// Set up a credential store so the onboarding can persist API keys (SEC-23).
+	masterKey := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	t.Setenv("OMNIPUS_MASTER_KEY", masterKey)
+	credStore := credentials.NewStore(tmpDir + "/credentials.json")
+	require.NoError(t, credentials.Unlock(credStore))
+
 	cfg := &config.Config{
 		Gateway: config.GatewayConfig{Host: "127.0.0.1", Port: 8080},
 		Agents: config.AgentsConfig{
@@ -480,6 +498,7 @@ func TestHandleCompleteOnboarding_ConcurrentDifferentUsers(t *testing.T) {
 		allowedOrigin: "http://localhost:3000",
 		onboardingMgr: onboarding.NewManager(tmpDir),
 		taskStore:     taskstore.New(tmpDir + "/tasks"),
+		credStore:     credStore,
 	}
 
 	const n = 5

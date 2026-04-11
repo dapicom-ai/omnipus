@@ -16,8 +16,8 @@ func TestGetModelConfig_Found(t *testing.T) {
 	cfg := &Config{
 		Version: CurrentVersion,
 		Providers: []*ModelConfig{
-			{ModelName: "test-model", Model: "openai/gpt-4o", APIKeys: SimpleSecureStrings("key1")},
-			{ModelName: "other-model", Model: "anthropic/claude", APIKeys: SimpleSecureStrings("key2")},
+			{ModelName: "test-model", Model: "openai/gpt-4o", APIKeyRef: "TEST_KEY_1"},
+			{ModelName: "other-model", Model: "anthropic/claude", APIKeyRef: "TEST_KEY_2"},
 		},
 	}
 
@@ -33,7 +33,7 @@ func TestGetModelConfig_Found(t *testing.T) {
 func TestGetModelConfig_NotFound(t *testing.T) {
 	cfg := &Config{
 		Providers: []*ModelConfig{
-			{ModelName: "test-model", Model: "openai/gpt-4o", APIKeys: SimpleSecureStrings("key1")},
+			{ModelName: "test-model", Model: "openai/gpt-4o", APIKeyRef: "TEST_KEY_1"},
 		},
 	}
 
@@ -57,9 +57,9 @@ func TestGetModelConfig_EmptyList(t *testing.T) {
 func TestGetModelConfig_RoundRobin(t *testing.T) {
 	cfg := &Config{
 		Providers: []*ModelConfig{
-			{ModelName: "lb-model", Model: "openai/gpt-4o-1", APIKeys: SimpleSecureStrings("key1")},
-			{ModelName: "lb-model", Model: "openai/gpt-4o-2", APIKeys: SimpleSecureStrings("key2")},
-			{ModelName: "lb-model", Model: "openai/gpt-4o-3", APIKeys: SimpleSecureStrings("key3")},
+			{ModelName: "lb-model", Model: "openai/gpt-4o-1", APIKeyRef: "TEST_KEY_1"},
+			{ModelName: "lb-model", Model: "openai/gpt-4o-2", APIKeyRef: "TEST_KEY_2"},
+			{ModelName: "lb-model", Model: "openai/gpt-4o-3", APIKeyRef: "TEST_KEY_3"},
 		},
 	}
 
@@ -86,9 +86,9 @@ func TestGetModelConfig_RoundRobinStartsFromFirstMatch(t *testing.T) {
 
 	cfg := &Config{
 		Providers: []*ModelConfig{
-			{ModelName: "lb-model", Model: "openai/gpt-4o-1", APIKeys: SimpleSecureStrings("key1")},
-			{ModelName: "lb-model", Model: "openai/gpt-4o-2", APIKeys: SimpleSecureStrings("key2")},
-			{ModelName: "lb-model", Model: "openai/gpt-4o-3", APIKeys: SimpleSecureStrings("key3")},
+			{ModelName: "lb-model", Model: "openai/gpt-4o-1", APIKeyRef: "TEST_KEY_1"},
+			{ModelName: "lb-model", Model: "openai/gpt-4o-2", APIKeyRef: "TEST_KEY_2"},
+			{ModelName: "lb-model", Model: "openai/gpt-4o-3", APIKeyRef: "TEST_KEY_3"},
 		},
 	}
 
@@ -114,8 +114,8 @@ func TestGetModelConfig_RoundRobinStartsFromFirstMatch(t *testing.T) {
 func TestGetModelConfig_Concurrent(t *testing.T) {
 	cfg := &Config{
 		Providers: []*ModelConfig{
-			{ModelName: "concurrent-model", Model: "openai/gpt-4o-1", APIKeys: SimpleSecureStrings("key1")},
-			{ModelName: "concurrent-model", Model: "openai/gpt-4o-2", APIKeys: SimpleSecureStrings("key2")},
+			{ModelName: "concurrent-model", Model: "openai/gpt-4o-1", APIKeyRef: "TEST_KEY_1"},
+			{ModelName: "concurrent-model", Model: "openai/gpt-4o-2", APIKeyRef: "TEST_KEY_2"},
 		},
 	}
 

@@ -3,6 +3,7 @@ package slack
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
@@ -22,6 +23,7 @@ import (
 type SlackChannel struct {
 	*channels.BaseChannel
 	config       config.SlackConfig
+	botToken     string
 	api          *slack.Client
 	socketClient *socketmode.Client
 	botUserID    string
@@ -37,13 +39,15 @@ type slackMessageRef struct {
 }
 
 func NewSlackChannel(cfg config.SlackConfig, messageBus *bus.MessageBus) (*SlackChannel, error) {
-	if cfg.BotToken.String() == "" || cfg.AppToken.String() == "" {
-		return nil, fmt.Errorf("slack bot_token and app_token are required")
+	botToken := os.Getenv(cfg.BotTokenRef)
+	appToken := os.Getenv(cfg.AppTokenRef)
+	if botToken == "" || appToken == "" {
+		return nil, fmt.Errorf("slack: bot_token and app_token are required (bot_token_ref=%q, app_token_ref=%q): check credential store", cfg.BotTokenRef, cfg.AppTokenRef)
 	}
 
 	api := slack.New(
-		cfg.BotToken.String(),
-		slack.OptionAppLevelToken(cfg.AppToken.String()),
+		botToken,
+		slack.OptionAppLevelToken(appToken),
 	)
 
 	socketClient := socketmode.New(api)
@@ -57,6 +61,7 @@ func NewSlackChannel(cfg config.SlackConfig, messageBus *bus.MessageBus) (*Slack
 	return &SlackChannel{
 		BaseChannel:  base,
 		config:       cfg,
+		botToken:     botToken,
 		api:          api,
 		socketClient: socketClient,
 	}, nil
@@ -523,7 +528,7 @@ func (c *SlackChannel) downloadSlackFile(file slack.File) string {
 	return utils.DownloadFile(downloadURL, file.Name, utils.DownloadOptions{
 		LoggerPrefix: "slack",
 		ExtraHeaders: map[string]string{
-			"Authorization": "Bearer " + c.config.BotToken.String(),
+			"Authorization": "Bearer " + c.botToken,
 		},
 	})
 }

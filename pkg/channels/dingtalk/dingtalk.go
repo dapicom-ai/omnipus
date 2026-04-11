@@ -6,6 +6,7 @@ package dingtalk
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
@@ -37,8 +38,9 @@ type DingTalkChannel struct {
 
 // NewDingTalkChannel creates a new DingTalk channel instance
 func NewDingTalkChannel(cfg config.DingTalkConfig, messageBus *bus.MessageBus) (*DingTalkChannel, error) {
-	if cfg.ClientID == "" || cfg.ClientSecret.String() == "" {
-		return nil, fmt.Errorf("dingtalk client_id and client_secret are required")
+	clientSecret := os.Getenv(cfg.ClientSecretRef)
+	if cfg.ClientID == "" || clientSecret == "" {
+		return nil, fmt.Errorf("dingtalk: client_id and client_secret are required (client_secret_ref=%q): check credential store", cfg.ClientSecretRef)
 	}
 
 	// Set the logger for the Stream SDK
@@ -54,7 +56,7 @@ func NewDingTalkChannel(cfg config.DingTalkConfig, messageBus *bus.MessageBus) (
 		BaseChannel:  base,
 		config:       cfg,
 		clientID:     cfg.ClientID,
-		clientSecret: cfg.ClientSecret.String(),
+		clientSecret: clientSecret,
 	}, nil
 }
 

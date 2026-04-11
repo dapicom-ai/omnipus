@@ -81,7 +81,7 @@ func listAvailableModels(cfg *config.Config) {
 		if model.ModelName == defaultModel {
 			marker = "> "
 		}
-		if model.APIKey() == "" {
+		if model.APIKeyRef == "" && model.AuthMethod == "" && model.APIBase == "" {
 			continue
 		}
 		fmt.Printf("%s- %s (%s)\n", marker, model.ModelName, model.Model)
@@ -92,7 +92,7 @@ func setDefaultModel(configPath string, cfg *config.Config, modelName string) er
 	// Validate that the model exists in providers
 	modelFound := false
 	for _, model := range cfg.Providers {
-		if model.APIKey() != "" && model.ModelName == modelName {
+		if (model.APIKeyRef != "" || model.AuthMethod != "" || model.APIBase != "") && model.ModelName == modelName {
 			modelFound = true
 			break
 		}

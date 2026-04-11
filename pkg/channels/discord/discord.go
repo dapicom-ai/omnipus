@@ -53,7 +53,11 @@ func NewDiscordChannel(cfg config.DiscordConfig, bus *bus.MessageBus) (*DiscordC
 			discordgo.LogDebug:         logger.DEBUG,
 		}).Log
 
-	session, err := discordgo.New("Bot " + cfg.Token.String())
+	token := os.Getenv(cfg.TokenRef)
+	if token == "" {
+		return nil, fmt.Errorf("discord: token not resolved (token_ref=%q): check credential store", cfg.TokenRef)
+	}
+	session, err := discordgo.New("Bot " + token)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create discord session: %w", err)
 	}

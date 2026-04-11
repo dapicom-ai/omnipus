@@ -38,6 +38,7 @@ const errCodeTenantTokenInvalid = 99991663
 type FeishuChannel struct {
 	*channels.BaseChannel
 	config     config.FeishuConfig
+	appSecret  string
 	client     *lark.Client
 	wsClient   *larkws.Client
 	tokenCache *tokenCache // custom cache that supports invalidation
@@ -59,18 +60,20 @@ func NewFeishuChannel(cfg config.FeishuConfig, bus *bus.MessageBus) (*FeishuChan
 	if cfg.IsLark {
 		opts = append(opts, lark.WithOpenBaseUrl(lark.LarkBaseUrl))
 	}
+	appSecret := os.Getenv(cfg.AppSecretRef)
 	ch := &FeishuChannel{
 		BaseChannel: base,
 		config:      cfg,
+		appSecret:   appSecret,
 		tokenCache:  tc,
-		client:      lark.NewClient(cfg.AppID, cfg.AppSecret.String(), opts...),
+		client:      lark.NewClient(cfg.AppID, appSecret, opts...),
 	}
 	ch.SetOwner(ch)
 	return ch, nil
 }
 
 func (c *FeishuChannel) Start(ctx context.Context) error {
-	if c.config.AppID == "" || c.config.AppSecret.String() == "" {
+	if c.config.AppID == "" || c.appSecret == "" {
 		return fmt.Errorf("feishu app_id or app_secret is empty")
 	}
 
@@ -81,7 +84,9 @@ func (c *FeishuChannel) Start(ctx context.Context) error {
 		})
 	}
 
-	dispatcher := larkdispatcher.NewEventDispatcher(c.config.VerificationToken.String(), c.config.EncryptKey.String()).
+	verificationToken := os.Getenv(c.config.VerificationTokenRef)
+	encryptKey := os.Getenv(c.config.EncryptKeyRef)
+	dispatcher := larkdispatcher.NewEventDispatcher(verificationToken, encryptKey).
 		OnP2MessageReceiveV1(c.handleMessageReceive)
 
 	runCtx, cancel := context.WithCancel(ctx)
@@ -94,7 +99,7 @@ func (c *FeishuChannel) Start(ctx context.Context) error {
 	}
 	c.wsClient = larkws.NewClient(
 		c.config.AppID,
-		c.config.AppSecret.String(),
+		c.appSecret,
 		larkws.WithEventHandler(dispatcher),
 		larkws.WithDomain(domain),
 	)

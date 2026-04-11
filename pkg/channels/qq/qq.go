@@ -98,8 +98,9 @@ func NewQQChannel(cfg config.QQConfig, messageBus *bus.MessageBus) (*QQChannel, 
 }
 
 func (c *QQChannel) Start(ctx context.Context) error {
-	if c.config.AppID == "" || c.config.AppSecret.String() == "" {
-		return fmt.Errorf("QQ app_id and app_secret not configured")
+	appSecret := os.Getenv(c.config.AppSecretRef)
+	if c.config.AppID == "" || appSecret == "" {
+		return fmt.Errorf("QQ: app_id and app_secret not configured (app_secret_ref=%q): check credential store", c.config.AppSecretRef)
 	}
 
 	botgo.SetLogger(newBotGoLogger("botgo"))
@@ -112,7 +113,7 @@ func (c *QQChannel) Start(ctx context.Context) error {
 	// create token source
 	credentials := &token.QQBotCredentials{
 		AppID:     c.config.AppID,
-		AppSecret: c.config.AppSecret.String(),
+		AppSecret: appSecret,
 	}
 	c.tokenSource = token.NewQQBotTokenSource(credentials)
 

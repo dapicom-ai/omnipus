@@ -7,7 +7,17 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
+	"log/slog"
 )
+
+// CredentialStore is a minimal interface satisfied by credentials.Store.
+// Using an interface here avoids a circular import (config → credentials).
+// The caller (gateway, CLI commands) supplies the real store at migration time.
+type CredentialStore interface {
+	// Set stores a named credential value.
+	Set(name, value string) error
+}
 
 type agentDefaultsV0 struct {
 	Workspace                 string         `json:"workspace"                       env:"OMNIPUS_AGENTS_DEFAULTS_WORKSPACE"`
@@ -97,43 +107,26 @@ type channelsConfigV0 struct {
 	Matrix   matrixConfigV0   `json:"matrix"`
 	LINE     lineConfigV0     `json:"line"`
 	OneBot   onebotConfigV0   `json:"onebot"`
-	WeCom    wecomConfigV0    `json:"wecom"    envPrefix:"OMNIPUS_CHANNELS_WECOM_"`
-	Pico     picoConfigV0     `json:"pico"`
-	IRC      ircConfigV0      `json:"irc"`
+	WeCom wecomConfigV0 `json:"wecom" envPrefix:"OMNIPUS_CHANNELS_WECOM_"`
+	IRC   ircConfigV0   `json:"irc"`
 }
 
 func (v *channelsConfigV0) ToChannelsConfig() ChannelsConfig {
-	telegram := v.Telegram.ToTelegramConfig()
-	feishu := v.Feishu.ToFeishuConfig()
-	discord := v.Discord.ToDiscordConfig()
-	maixcam := v.MaixCam.ToMaixCamConfig()
-	qq := v.QQ.ToQQConfig()
-	weixin := v.Weixin.ToWeiXinConfig()
-	dingtalk := v.DingTalk.ToDingTalkConfig()
-	slack := v.Slack.ToSlackConfig()
-	matrix := v.Matrix.ToMatrixConfig()
-	line := v.LINE.ToLINEConfig()
-	onebot := v.OneBot.ToOneBotConfig()
-	wecom := v.WeCom.ToWeComConfig()
-	pico := v.Pico.ToPicoConfig()
-	irc := v.IRC.ToIRCConfig()
-
 	return ChannelsConfig{
 		WhatsApp: v.WhatsApp,
-		Telegram: telegram,
-		Feishu:   feishu,
-		Discord:  discord,
-		MaixCam:  maixcam,
-		QQ:       qq,
-		Weixin:   weixin,
-		DingTalk: dingtalk,
-		Slack:    slack,
-		Matrix:   matrix,
-		LINE:     line,
-		OneBot:   onebot,
-		WeCom:    wecom,
-		Pico:     pico,
-		IRC:      irc,
+		Telegram: v.Telegram.ToTelegramConfig(),
+		Feishu:   v.Feishu.ToFeishuConfig(),
+		Discord:  v.Discord.ToDiscordConfig(),
+		MaixCam:  v.MaixCam.ToMaixCamConfig(),
+		QQ:       v.QQ.ToQQConfig(),
+		Weixin:   v.Weixin.ToWeiXinConfig(),
+		DingTalk: v.DingTalk.ToDingTalkConfig(),
+		Slack:    v.Slack.ToSlackConfig(),
+		Matrix:   v.Matrix.ToMatrixConfig(),
+		LINE:     v.LINE.ToLINEConfig(),
+		OneBot:   v.OneBot.ToOneBotConfig(),
+		WeCom:    v.WeCom.ToWeComConfig(),
+		IRC:      v.IRC.ToIRCConfig(),
 	}
 }
 
@@ -159,7 +152,6 @@ func (v *qqConfigV0) ToQQConfig() QQConfig {
 		MaxBase64FileSizeMiB: v.MaxBase64FileSizeMiB,
 		SendMarkdown:         v.SendMarkdown,
 		ReasoningChannelID:   v.ReasoningChannelID,
-		AppSecret:            *NewSecureString(v.AppSecret),
 	}
 }
 
@@ -177,7 +169,7 @@ type telegramConfigV0 struct {
 }
 
 func (v *telegramConfigV0) ToTelegramConfig() TelegramConfig {
-	cfg := TelegramConfig{
+	return TelegramConfig{
 		Enabled:            v.Enabled,
 		BaseURL:            v.BaseURL,
 		Proxy:              v.Proxy,
@@ -188,10 +180,6 @@ func (v *telegramConfigV0) ToTelegramConfig() TelegramConfig {
 		ReasoningChannelID: v.ReasoningChannelID,
 		UseMarkdownV2:      v.UseMarkdownV2,
 	}
-	if v.Token != "" {
-		cfg.Token = *NewSecureString(v.Token)
-	}
-	return cfg
 }
 
 type feishuConfigV0 struct {
@@ -209,7 +197,7 @@ type feishuConfigV0 struct {
 }
 
 func (v *feishuConfigV0) ToFeishuConfig() FeishuConfig {
-	cfg := FeishuConfig{
+	return FeishuConfig{
 		Enabled:            v.Enabled,
 		AppID:              v.AppID,
 		AllowFrom:          v.AllowFrom,
@@ -217,16 +205,6 @@ func (v *feishuConfigV0) ToFeishuConfig() FeishuConfig {
 		Placeholder:        v.Placeholder,
 		ReasoningChannelID: v.ReasoningChannelID,
 	}
-	if v.AppSecret != "" {
-		cfg.AppSecret = *NewSecureString(v.AppSecret)
-	}
-	if v.EncryptKey != "" {
-		cfg.EncryptKey = *NewSecureString(v.EncryptKey)
-	}
-	if v.VerificationToken != "" {
-		cfg.VerificationToken = *NewSecureString(v.VerificationToken)
-	}
-	return cfg
 }
 
 type discordConfigV0 struct {
@@ -242,7 +220,7 @@ type discordConfigV0 struct {
 }
 
 func (v *discordConfigV0) ToDiscordConfig() DiscordConfig {
-	cfg := DiscordConfig{
+	return DiscordConfig{
 		Enabled:            v.Enabled,
 		Proxy:              v.Proxy,
 		AllowFrom:          v.AllowFrom,
@@ -252,10 +230,6 @@ func (v *discordConfigV0) ToDiscordConfig() DiscordConfig {
 		Placeholder:        v.Placeholder,
 		ReasoningChannelID: v.ReasoningChannelID,
 	}
-	if v.Token != "" {
-		cfg.Token = *NewSecureString(v.Token)
-	}
-	return cfg
 }
 
 type maixcamConfigV0 struct {
@@ -286,17 +260,13 @@ type dingtalkConfigV0 struct {
 }
 
 func (v *dingtalkConfigV0) ToDingTalkConfig() DingTalkConfig {
-	cfg := DingTalkConfig{
+	return DingTalkConfig{
 		Enabled:            v.Enabled,
 		ClientID:           v.ClientID,
 		AllowFrom:          v.AllowFrom,
 		GroupTrigger:       v.GroupTrigger,
 		ReasoningChannelID: v.ReasoningChannelID,
 	}
-	if v.ClientSecret != "" {
-		cfg.ClientSecret = *NewSecureString(v.ClientSecret)
-	}
-	return cfg
 }
 
 type slackConfigV0 struct {
@@ -311,7 +281,7 @@ type slackConfigV0 struct {
 }
 
 func (v *slackConfigV0) ToSlackConfig() SlackConfig {
-	cfg := SlackConfig{
+	return SlackConfig{
 		Enabled:            v.Enabled,
 		AllowFrom:          v.AllowFrom,
 		GroupTrigger:       v.GroupTrigger,
@@ -319,13 +289,6 @@ func (v *slackConfigV0) ToSlackConfig() SlackConfig {
 		Placeholder:        v.Placeholder,
 		ReasoningChannelID: v.ReasoningChannelID,
 	}
-	if v.BotToken != "" {
-		cfg.BotToken = *NewSecureString(v.BotToken)
-	}
-	if v.AppToken != "" {
-		cfg.AppToken = *NewSecureString(v.AppToken)
-	}
-	return cfg
 }
 
 type matrixConfigV0 struct {
@@ -343,7 +306,7 @@ type matrixConfigV0 struct {
 }
 
 func (v *matrixConfigV0) ToMatrixConfig() MatrixConfig {
-	cfg := MatrixConfig{
+	return MatrixConfig{
 		Enabled:            v.Enabled,
 		Homeserver:         v.Homeserver,
 		UserID:             v.UserID,
@@ -355,10 +318,6 @@ func (v *matrixConfigV0) ToMatrixConfig() MatrixConfig {
 		Placeholder:        v.Placeholder,
 		ReasoningChannelID: v.ReasoningChannelID,
 	}
-	if v.AccessToken != "" {
-		cfg.AccessToken = *NewSecureString(v.AccessToken)
-	}
-	return cfg
 }
 
 type lineConfigV0 struct {
@@ -376,7 +335,7 @@ type lineConfigV0 struct {
 }
 
 func (v *lineConfigV0) ToLINEConfig() LINEConfig {
-	cfg := LINEConfig{
+	return LINEConfig{
 		Enabled:            v.Enabled,
 		WebhookHost:        v.WebhookHost,
 		WebhookPort:        v.WebhookPort,
@@ -387,13 +346,6 @@ func (v *lineConfigV0) ToLINEConfig() LINEConfig {
 		Placeholder:        v.Placeholder,
 		ReasoningChannelID: v.ReasoningChannelID,
 	}
-	if v.ChannelSecret != "" {
-		cfg.ChannelSecret = *NewSecureString(v.ChannelSecret)
-	}
-	if v.ChannelAccessToken != "" {
-		cfg.ChannelAccessToken = *NewSecureString(v.ChannelAccessToken)
-	}
-	return cfg
 }
 
 type onebotConfigV0 struct {
@@ -410,7 +362,7 @@ type onebotConfigV0 struct {
 }
 
 func (v *onebotConfigV0) ToOneBotConfig() OneBotConfig {
-	cfg := OneBotConfig{
+	return OneBotConfig{
 		Enabled:            v.Enabled,
 		WSUrl:              v.WSUrl,
 		ReconnectInterval:  v.ReconnectInterval,
@@ -421,10 +373,6 @@ func (v *onebotConfigV0) ToOneBotConfig() OneBotConfig {
 		Placeholder:        v.Placeholder,
 		ReasoningChannelID: v.ReasoningChannelID,
 	}
-	if v.AccessToken != "" {
-		cfg.AccessToken = *NewSecureString(v.AccessToken)
-	}
-	return cfg
 }
 
 type wecomConfigV0 struct {
@@ -442,7 +390,7 @@ type wecomConfigV0 struct {
 }
 
 func (v *wecomConfigV0) ToWeComConfig() WeComConfig {
-	cfg := WeComConfig{
+	return WeComConfig{
 		Enabled:             v.Enabled,
 		BotID:               v.BotID,
 		WebSocketURL:        v.WebSocketURL,
@@ -450,10 +398,6 @@ func (v *wecomConfigV0) ToWeComConfig() WeComConfig {
 		AllowFrom:           v.AllowFrom,
 		ReasoningChannelID:  v.ReasoningChannelID,
 	}
-	if v.Secret != "" {
-		cfg.Secret = *NewSecureString(v.Secret)
-	}
-	return cfg
 }
 
 type weixinConfigV0 struct {
@@ -467,7 +411,7 @@ type weixinConfigV0 struct {
 }
 
 func (v *weixinConfigV0) ToWeiXinConfig() WeixinConfig {
-	cfg := WeixinConfig{
+	return WeixinConfig{
 		Enabled:            v.Enabled,
 		BaseURL:            v.BaseURL,
 		CDNBaseURL:         v.CDNBaseURL,
@@ -475,42 +419,8 @@ func (v *weixinConfigV0) ToWeiXinConfig() WeixinConfig {
 		AllowFrom:          v.AllowFrom,
 		ReasoningChannelID: v.ReasoningChannelID,
 	}
-	if v.Token != "" {
-		cfg.Token = *NewSecureString(v.Token)
-	}
-	return cfg
 }
 
-type picoConfigV0 struct {
-	Enabled         bool                `json:"enabled"                     env:"OMNIPUS_CHANNELS_PICO_ENABLED"`
-	Token           string              `json:"token"                       env:"OMNIPUS_CHANNELS_PICO_TOKEN"`
-	AllowTokenQuery bool                `json:"allow_token_query,omitempty"`
-	AllowOrigins    []string            `json:"allow_origins,omitempty"`
-	PingInterval    int                 `json:"ping_interval,omitempty"`
-	ReadTimeout     int                 `json:"read_timeout,omitempty"`
-	WriteTimeout    int                 `json:"write_timeout,omitempty"`
-	MaxConnections  int                 `json:"max_connections,omitempty"`
-	AllowFrom       FlexibleStringSlice `json:"allow_from"                  env:"OMNIPUS_CHANNELS_PICO_ALLOW_FROM"`
-	Placeholder     PlaceholderConfig   `json:"placeholder,omitempty"`
-}
-
-func (v *picoConfigV0) ToPicoConfig() PicoConfig {
-	cfg := PicoConfig{
-		Enabled:         v.Enabled,
-		AllowTokenQuery: v.AllowTokenQuery,
-		AllowOrigins:    v.AllowOrigins,
-		PingInterval:    v.PingInterval,
-		ReadTimeout:     v.ReadTimeout,
-		WriteTimeout:    v.WriteTimeout,
-		MaxConnections:  v.MaxConnections,
-		AllowFrom:       v.AllowFrom,
-		Placeholder:     v.Placeholder,
-	}
-	if v.Token != "" {
-		cfg.Token = *NewSecureString(v.Token)
-	}
-	return cfg
-}
 
 type ircConfigV0 struct {
 	Enabled            bool                `json:"enabled"                 env:"OMNIPUS_CHANNELS_IRC_ENABLED"`
@@ -532,7 +442,7 @@ type ircConfigV0 struct {
 }
 
 func (v *ircConfigV0) ToIRCConfig() IRCConfig {
-	cfg := IRCConfig{
+	return IRCConfig{
 		Enabled:            v.Enabled,
 		Server:             v.Server,
 		TLS:                v.TLS,
@@ -547,16 +457,6 @@ func (v *ircConfigV0) ToIRCConfig() IRCConfig {
 		Typing:             v.Typing,
 		ReasoningChannelID: v.ReasoningChannelID,
 	}
-	if v.Password != "" {
-		cfg.Password = *NewSecureString(v.Password)
-	}
-	if v.NickServPassword != "" {
-		cfg.NickServPassword = *NewSecureString(v.NickServPassword)
-	}
-	if v.SASLPassword != "" {
-		cfg.SASLPassword = *NewSecureString(v.SASLPassword)
-	}
-	return cfg
 }
 
 type providersConfigV0 struct {
@@ -678,6 +578,173 @@ func (c *configV0) migrateChannelConfigs() {
 	}
 }
 
+// hasLegacySecrets returns true if the v0 config contains any non-empty
+// plaintext secret fields that would be silently lost during a plain Migrate.
+func (c *configV0) hasLegacySecrets() bool {
+	if c.Channels.Telegram.Token != "" { return true }
+	if c.Channels.Discord.Token != "" { return true }
+	if c.Channels.WeCom.Secret != "" { return true }
+	if c.Channels.Slack.BotToken != "" { return true }
+	if c.Channels.Slack.AppToken != "" { return true }
+	if c.Channels.Feishu.AppSecret != "" { return true }
+	if c.Channels.Feishu.EncryptKey != "" { return true }
+	if c.Channels.Feishu.VerificationToken != "" { return true }
+	if c.Channels.QQ.AppSecret != "" { return true }
+	if c.Channels.DingTalk.ClientSecret != "" { return true }
+	if c.Channels.Matrix.AccessToken != "" { return true }
+	if c.Channels.LINE.ChannelSecret != "" { return true }
+	if c.Channels.LINE.ChannelAccessToken != "" { return true }
+	if c.Channels.OneBot.AccessToken != "" { return true }
+	if c.Channels.Weixin.Token != "" { return true }
+	if c.Channels.IRC.Password != "" { return true }
+	if c.Channels.IRC.NickServPassword != "" { return true }
+	if c.Channels.IRC.SASLPassword != "" { return true }
+	for _, m := range c.ModelList {
+		if m.APIKey != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// MigrateWithStore migrates the v0 config to the current schema and, for each
+// non-empty legacy plaintext secret field, writes the value into store and sets
+// the corresponding *Ref field in the output config. If store is nil and
+// plaintext secrets are present, MigrateWithStore returns an error directing the
+// operator to set OMNIPUS_MASTER_KEY before migrating.
+func (c *configV0) MigrateWithStore(store CredentialStore) (*Config, error) {
+	cfg, err := c.Migrate()
+	if err != nil {
+		return nil, err
+	}
+
+	// migrateSecret is a helper that writes value into store under refName, sets
+	// *Ref in cfg (via the setter callback), and logs the operation.
+	migrateSecret := func(refName, value string, setter func(ref string)) error {
+		if value == "" {
+			return nil
+		}
+		if store == nil {
+			return fmt.Errorf(
+				"config migration: legacy plaintext secret %q requires OMNIPUS_MASTER_KEY to be set before migration",
+				refName,
+			)
+		}
+		if err := store.Set(refName, value); err != nil {
+			return fmt.Errorf("migrate %s: %w", refName, err)
+		}
+		setter(refName)
+		slog.Warn("config migration: moved legacy plaintext secret to credential store", "ref", refName)
+		return nil
+	}
+
+	// Channel secrets
+	if err := migrateSecret("TELEGRAM_TOKEN", c.Channels.Telegram.Token,
+		func(ref string) { cfg.Channels.Telegram.TokenRef = ref }); err != nil {
+		return nil, err
+	}
+	if err := migrateSecret("DISCORD_TOKEN", c.Channels.Discord.Token,
+		func(ref string) { cfg.Channels.Discord.TokenRef = ref }); err != nil {
+		return nil, err
+	}
+	if err := migrateSecret("WECOM_SECRET", c.Channels.WeCom.Secret,
+		func(ref string) { cfg.Channels.WeCom.SecretRef = ref }); err != nil {
+		return nil, err
+	}
+	if err := migrateSecret("SLACK_BOT_TOKEN", c.Channels.Slack.BotToken,
+		func(ref string) { cfg.Channels.Slack.BotTokenRef = ref }); err != nil {
+		return nil, err
+	}
+	if err := migrateSecret("SLACK_APP_TOKEN", c.Channels.Slack.AppToken,
+		func(ref string) { cfg.Channels.Slack.AppTokenRef = ref }); err != nil {
+		return nil, err
+	}
+	if err := migrateSecret("FEISHU_APP_SECRET", c.Channels.Feishu.AppSecret,
+		func(ref string) { cfg.Channels.Feishu.AppSecretRef = ref }); err != nil {
+		return nil, err
+	}
+	if err := migrateSecret("FEISHU_ENCRYPT_KEY", c.Channels.Feishu.EncryptKey,
+		func(ref string) { cfg.Channels.Feishu.EncryptKeyRef = ref }); err != nil {
+		return nil, err
+	}
+	if err := migrateSecret("FEISHU_VERIFICATION_TOKEN", c.Channels.Feishu.VerificationToken,
+		func(ref string) { cfg.Channels.Feishu.VerificationTokenRef = ref }); err != nil {
+		return nil, err
+	}
+	if err := migrateSecret("QQ_APP_SECRET", c.Channels.QQ.AppSecret,
+		func(ref string) { cfg.Channels.QQ.AppSecretRef = ref }); err != nil {
+		return nil, err
+	}
+	if err := migrateSecret("DINGTALK_CLIENT_SECRET", c.Channels.DingTalk.ClientSecret,
+		func(ref string) { cfg.Channels.DingTalk.ClientSecretRef = ref }); err != nil {
+		return nil, err
+	}
+	if err := migrateSecret("MATRIX_ACCESS_TOKEN", c.Channels.Matrix.AccessToken,
+		func(ref string) { cfg.Channels.Matrix.AccessTokenRef = ref }); err != nil {
+		return nil, err
+	}
+	if err := migrateSecret("LINE_CHANNEL_SECRET", c.Channels.LINE.ChannelSecret,
+		func(ref string) { cfg.Channels.LINE.ChannelSecretRef = ref }); err != nil {
+		return nil, err
+	}
+	if err := migrateSecret("LINE_CHANNEL_ACCESS_TOKEN", c.Channels.LINE.ChannelAccessToken,
+		func(ref string) { cfg.Channels.LINE.ChannelAccessTokenRef = ref }); err != nil {
+		return nil, err
+	}
+	if err := migrateSecret("ONEBOT_ACCESS_TOKEN", c.Channels.OneBot.AccessToken,
+		func(ref string) { cfg.Channels.OneBot.AccessTokenRef = ref }); err != nil {
+		return nil, err
+	}
+	if err := migrateSecret("WEIXIN_TOKEN", c.Channels.Weixin.Token,
+		func(ref string) { cfg.Channels.Weixin.TokenRef = ref }); err != nil {
+		return nil, err
+	}
+	if err := migrateSecret("IRC_PASSWORD", c.Channels.IRC.Password,
+		func(ref string) { cfg.Channels.IRC.PasswordRef = ref }); err != nil {
+		return nil, err
+	}
+	if err := migrateSecret("IRC_NICKSERV_PASSWORD", c.Channels.IRC.NickServPassword,
+		func(ref string) { cfg.Channels.IRC.NickServPasswordRef = ref }); err != nil {
+		return nil, err
+	}
+	if err := migrateSecret("IRC_SASL_PASSWORD", c.Channels.IRC.SASLPassword,
+		func(ref string) { cfg.Channels.IRC.SASLPasswordRef = ref }); err != nil {
+		return nil, err
+	}
+
+	// Provider secrets from model_list
+	for i, m := range c.ModelList {
+		if m.APIKey == "" || i >= len(cfg.Providers) {
+			continue
+		}
+		// Only migrate if the Ref field is not already set
+		if cfg.Providers[i].APIKeyRef != "" {
+			continue
+		}
+		refName := fmt.Sprintf("%s_API_KEY", sanitizeRefName(m.ModelName))
+		if err := migrateSecret(refName, m.APIKey,
+			func(ref string) { cfg.Providers[i].APIKeyRef = ref }); err != nil {
+			return nil, err
+		}
+	}
+
+	return cfg, nil
+}
+
+// sanitizeRefName converts a model name to an env-var-safe uppercase ref name.
+func sanitizeRefName(name string) string {
+	result := make([]byte, len(name))
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+			result[i] = c &^ 0x20 // uppercase
+		} else {
+			result[i] = '_'
+		}
+	}
+	return string(result)
+}
+
 func (c *configV0) Migrate() (*Config, error) {
 	// Migrate legacy channel config fields to new unified structures
 	cfg := DefaultConfig()
@@ -747,7 +814,6 @@ func (c *configV0) Migrate() (*Config, error) {
 				MaxTokensField: m.MaxTokensField,
 				RequestTimeout: m.RequestTimeout,
 				ThinkingLevel:  m.ThinkingLevel,
-				APIKeys:        toSecureStrings(MergeAPIKeys(m.APIKey, m.APIKeys)),
 			}
 		}
 	}
@@ -779,19 +845,10 @@ type braveConfigV0 struct {
 	MaxResults int      `json:"max_results" env:"OMNIPUS_TOOLS_WEB_BRAVE_MAX_RESULTS"`
 }
 
-func toSecureStrings(keys []string) SecureStrings {
-	apikeys := make(SecureStrings, len(keys))
-	for i, key := range keys {
-		apikeys[i] = NewSecureString(key)
-	}
-	return apikeys
-}
-
 func (v *braveConfigV0) ToBraveConfig() BraveConfig {
 	return BraveConfig{
 		Enabled:    v.Enabled,
 		MaxResults: v.MaxResults,
-		APIKeys:    toSecureStrings(MergeAPIKeys(v.APIKey, v.APIKeys)),
 	}
 }
 
@@ -808,7 +865,6 @@ func (v *tavilyConfigV0) ToTavilyConfig() TavilyConfig {
 		Enabled:    v.Enabled,
 		BaseURL:    v.BaseURL,
 		MaxResults: v.MaxResults,
-		APIKeys:    toSecureStrings(MergeAPIKeys(v.APIKey, v.APIKeys)),
 	}
 }
 
@@ -823,7 +879,6 @@ func (v *perplexityConfigV0) ToPerplexityConfig() PerplexityConfig {
 	return PerplexityConfig{
 		Enabled:    v.Enabled,
 		MaxResults: v.MaxResults,
-		APIKeys:    toSecureStrings(MergeAPIKeys(v.APIKey, v.APIKeys)),
 	}
 }
 
@@ -837,7 +892,6 @@ type glmSearchConfigV0 struct {
 func (v *glmSearchConfigV0) ToGLMSearchConfig() GLMSearchConfig {
 	return GLMSearchConfig{
 		Enabled:      v.Enabled,
-		APIKey:       *NewSecureString(v.APIKey),
 		BaseURL:      v.BaseURL,
 		SearchEngine: v.SearchEngine,
 	}
@@ -853,7 +907,6 @@ type baiduSearchConfigV0 struct {
 func (v *baiduSearchConfigV0) ToBaiduSearchConfig() BaiduSearchConfig {
 	return BaiduSearchConfig{
 		Enabled:    v.Enabled,
-		APIKey:     *NewSecureString(v.APIKey),
 		BaseURL:    v.BaseURL,
 		MaxResults: v.MaxResults,
 	}
@@ -904,16 +957,12 @@ type clawHubRegistryConfigV0 struct {
 }
 
 func (v *clawHubRegistryConfigV0) ToClawHubRegistryConfig() ClawHubRegistryConfig {
-	cfg := ClawHubRegistryConfig{
+	return ClawHubRegistryConfig{
 		Enabled:    v.Enabled,
 		BaseURL:    v.BaseURL,
 		SearchPath: v.SearchPath,
 		SkillsPath: v.SkillsPath,
 	}
-	if v.AuthToken != "" {
-		cfg.AuthToken = *NewSecureString(v.AuthToken)
-	}
-	return cfg
 }
 
 type skillsGithubConfigV0 struct {
@@ -923,7 +972,6 @@ type skillsGithubConfigV0 struct {
 
 func (v *skillsGithubConfigV0) ToSkillsGithubConfig() SkillsGithubConfig {
 	return SkillsGithubConfig{
-		Token: *NewSecureString(v.Token),
 		Proxy: v.Proxy,
 	}
 }
