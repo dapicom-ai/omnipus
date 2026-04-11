@@ -46,7 +46,7 @@ func (t *ConfigGetTool) Execute(_ context.Context, args map[string]any) *tools.T
 			"Use system.provider.list to see configured providers (without keys)",
 		))
 	}
-	value, err := dotGet(t.deps.Cfg, key)
+	value, err := dotGet(t.deps.GetCfg(), key)
 	if err != nil {
 		return tools.ErrorResult(errorJSON("KEY_NOT_FOUND",
 			fmt.Sprintf("Config key %q not found: %v", key, err),
@@ -103,14 +103,24 @@ func (t *ConfigSetTool) Execute(_ context.Context, args map[string]any) *tools.T
 		return tools.ErrorResult(errorJSON("INVALID_KEY", err.Error(),
 			"Use system.config.get to inspect available config keys"))
 	}
-	prevValue, _ := dotGet(t.deps.Cfg, key)
 	requiresRestart := isRestartRequired(key)
 
-	if err := dotSet(t.deps.Cfg, key, value); err != nil {
-		return tools.ErrorResult(errorJSON("SET_FAILED", err.Error(),
+	// Capture prevValue before mutation (under the same lock as the mutation).
+	var prevValue any
+	var setErr error
+	err := t.deps.WithConfig(func(cfg *config.Config) error {
+		prevValue, _ = dotGet(cfg, key)
+		if err := dotSet(cfg, key, value); err != nil {
+			setErr = err
+			return fmt.Errorf("SET_FAILED: %w", err)
+		}
+		return nil
+	})
+	if setErr != nil {
+		return tools.ErrorResult(errorJSON("SET_FAILED", setErr.Error(),
 			"Check that the key is a valid config path"))
 	}
-	if err := t.deps.SaveConfig(); err != nil {
+	if err != nil {
 		return tools.ErrorResult(errorJSON("SAVE_FAILED", err.Error(), ""))
 	}
 	return tools.NewToolResult(successJSON(map[string]any{

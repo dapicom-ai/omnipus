@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -32,12 +33,14 @@ type mockSystemTool struct {
 	name        string
 	description string
 	params      map[string]any
+	executed    atomic.Bool
 }
 
 func (m *mockSystemTool) Name() string               { return m.name }
 func (m *mockSystemTool) Description() string        { return m.description }
 func (m *mockSystemTool) Parameters() map[string]any { return m.params }
 func (m *mockSystemTool) Execute(_ context.Context, _ map[string]any) *tools.ToolResult {
+	m.executed.Store(true)
 	return tools.NewToolResult(`{"success":true}`)
 }
 
@@ -105,7 +108,9 @@ func TestSystemToolErrorContract(t *testing.T) {
 	})
 
 	t.Run("confirmation-required response is not success", func(t *testing.T) {
-		// Destructive ops without a confirmation handler must return an error.
+		// Destructive ops without a confirmation handler and without confirm:true must
+		// return CONFIRMATION_REQUIRED. In single-user mode, passing confirm:false
+		// (or omitting confirm) triggers the denial path.
 		registry := tools.NewToolRegistry()
 		handler := sysagent.NewSystemToolHandler(sysagent.HandlerConfig{
 			Registry: registry,
@@ -117,11 +122,11 @@ func TestSystemToolErrorContract(t *testing.T) {
 			sysagent.RoleSingleUser,
 			"test-device",
 			"system.agent.delete",
-			map[string]any{"id": "my-agent", "confirm": true},
+			map[string]any{"id": "my-agent", "confirm": false}, // confirm:false → denied
 		)
 		require.NotNil(t, result)
 		assert.True(t, result.IsError,
-			"destructive op with nil confirm handler must return an error result")
+			"destructive op with nil confirm handler and confirm:false must return an error result")
 		assert.Contains(t, result.ContentForLLM(), "CONFIRMATION_REQUIRED",
 			"result must include CONFIRMATION_REQUIRED in content")
 	})
@@ -801,6 +806,78 @@ func TestConfirmationFlowIntegration(t *testing.T) {
 // Traces to: wave5b-system-agent-spec.md line 730 (Scenario: Run doctor from Settings UI)
 func TestDoctorRunIntegration(t *testing.T) {
 	t.Skip("Blocked: system.doctor.run tool and state.json last_doctor_run/last_doctor_score fields pending task #2-3")
+}
+
+// =====================================================================
+// TestSysagentGuardedTool_DeleteRequiresConfirmation
+// =====================================================================
+
+// TestSysagentGuardedTool_ConfirmationPaths verifies confirmation gate behavior
+// across three sub-cases per Blocker 3:
+//
+//  1. SingleUser + confirm=false → denied with CONFIRMATION_REQUIRED
+//  2. SingleUser + confirm=true  → tool executes, executed flag set
+//  3. Operator   + confirm=true, h.confirm=nil → denied (multi-user requires confirm func)
+//
+// Traces to: critical blocker — GuardedTool wraps raw tools with handler guards.
+// BRD SEC-19, US-4 AC1 — destructive ops require UI-button confirmation.
+func TestSysagentGuardedTool_ConfirmationPaths(t *testing.T) {
+	newMockDelete := func() (*mockSystemTool, *tools.ToolRegistry) {
+		mock := &mockSystemTool{
+			name:        "system.agent.delete",
+			description: "Delete an agent",
+			params:      map[string]any{"type": "object"},
+		}
+		reg := tools.NewToolRegistry()
+		reg.Register(mock)
+		return mock, reg
+	}
+
+	t.Run("SingleUser_confirm_false_denied", func(t *testing.T) {
+		mock, reg := newMockDelete()
+		handler := sysagent.NewSystemToolHandler(sysagent.HandlerConfig{
+			Registry: reg,
+			Confirm:  nil,
+		})
+		guarded := sysagent.NewGuardedTool(mock, handler, sysagent.RoleSingleUser, "test-device")
+
+		result := guarded.Execute(context.Background(), map[string]any{"id": "my-agent", "confirm": false})
+		require.NotNil(t, result)
+		assert.True(t, result.IsError, "confirm=false must return error")
+		assert.Contains(t, result.ContentForLLM(), "CONFIRMATION_REQUIRED")
+		assert.False(t, mock.executed.Load(), "inner tool must NOT have executed")
+	})
+
+	t.Run("SingleUser_confirm_true_executes", func(t *testing.T) {
+		mock, reg := newMockDelete()
+		handler := sysagent.NewSystemToolHandler(sysagent.HandlerConfig{
+			Registry: reg,
+			Confirm:  nil,
+		})
+		guarded := sysagent.NewGuardedTool(mock, handler, sysagent.RoleSingleUser, "test-device")
+
+		result := guarded.Execute(context.Background(), map[string]any{"id": "my-agent", "confirm": true})
+		require.NotNil(t, result)
+		assert.False(t, result.IsError, "SingleUser+confirm=true must succeed, got: %s", result.ContentForLLM())
+		assert.True(t, mock.executed.Load(), "inner tool must have executed")
+	})
+
+	t.Run("Admin_confirm_true_denied_without_confirm_func", func(t *testing.T) {
+		mock, reg := newMockDelete()
+		handler := sysagent.NewSystemToolHandler(sysagent.HandlerConfig{
+			Registry: reg,
+			Confirm:  nil, // multi-user mode: no confirm func wired
+		})
+		// Admin role passes RBAC for delete but is NOT single-user mode —
+		// must still require confirm func regardless of confirm arg.
+		guarded := sysagent.NewGuardedTool(mock, handler, sysagent.RoleAdmin, "test-device")
+
+		result := guarded.Execute(context.Background(), map[string]any{"id": "my-agent", "confirm": true})
+		require.NotNil(t, result)
+		assert.True(t, result.IsError, "Admin without confirm func must be denied in multi-user mode")
+		assert.Contains(t, result.ContentForLLM(), "CONFIRMATION_REQUIRED")
+		assert.False(t, mock.executed.Load(), "inner tool must NOT have executed")
+	})
 }
 
 // =====================================================================
