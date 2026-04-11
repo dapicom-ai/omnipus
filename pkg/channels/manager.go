@@ -66,6 +66,7 @@ var channelRateConfig = map[string]float64{
 	"line":     10,
 	"qq":       5,
 	"irc":      2,
+	"teams":    1,
 }
 
 type channelWorker struct {
@@ -518,6 +519,10 @@ func (m *Manager) initChannels(channels *config.ChannelsConfig) error {
 		if err := m.initChannel("irc", "IRC"); err != nil {
 			m.recordChannelFailure("irc", "IRC", err)
 		}
+	}
+
+	if channels.Teams.Enabled && channels.Teams.AppID != "" && channels.Teams.AppPasswordRef != "" {
+		m.initChannel("teams", "Microsoft Teams")
 	}
 
 	logger.InfoCF("channels", "Channel initialization completed", map[string]any{

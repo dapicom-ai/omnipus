@@ -180,13 +180,13 @@ The following limitations are inherent to Omnipus's unprivileged execution model
 |ID     |Requirement               |Priority|Effort  |Details                                                                                                                             |
 |-------|--------------------------|--------|--------|------------------------------------------------------------------------------------------------------------------------------------|
 |FUNC-04|Signal channel integration|P1      |Moderate|External channel provider using the bridge protocol (non-Go). Implementation via Signal CLI or signal-cli-rest-api (Java). Runs as a managed child process. Supports send/receive text, images, and group messages.|
-|FUNC-05|Microsoft Teams channel   |P1      |Moderate|External channel provider using the bridge protocol (non-Go). Bot Framework integration (Node.js) for Teams channels and direct messages. Requires Azure Bot registration. Runs as a managed child process.|
+|FUNC-05|Microsoft Teams channel   |P1      |Moderate|Compiled-in Go channel. Bot Framework integration via `msbotbuilder-go` (community Go port) for Teams channels and direct messages. Requires Azure Bot registration. Configuration under `channels.teams` with `app_id`, `app_password`, and `tenant_id`. Supports text, adaptive cards, and file attachments. Matches main BRD FUNC-05.|
 |FUNC-06|Google Chat channel       |P1      |Moderate|Compiled-in Go channel. Google Workspace API integration for Google Chat spaces and DMs. Requires Google Cloud project and service account.|
 |FUNC-07|Nostr channel             |P3      |Easy    |Compiled-in Go channel. Nostr relay integration using `go-nostr` library. Lightweight protocol, good fit for edge use cases.|
 |FUNC-08|Mattermost channel        |P3      |Easy    |Compiled-in Go channel. REST API and WebSocket integration. Straightforward, well-documented API.|
 |FUNC-09|Twitch channel            |P3      |Easy    |Compiled-in Go channel. IRC-based chat integration. Minimal complexity, reuses existing IRC channel adapter code.|
 
-Go channels are compiled into the binary (single process, zero IPC overhead, inheriting Omnipus's architecture). Non-Go channels (Signal/Java, Teams/Node.js) use the bridge protocol as external processes. Community channels use the bridge protocol with the Omnipus Channel SDK. All implement the same `ChannelProvider` interface. See Appendix E §E.10.
+Go channels are compiled into the binary (single process, zero IPC overhead, inheriting Omnipus's architecture). Non-Go channels (Signal/Java) use the bridge protocol as external processes. Community channels use the bridge protocol with the Omnipus Channel SDK. All implement the same `ChannelProvider` interface. See Appendix E §E.10.
 
 ### 5.10 FUNCTIONAL — Multi-Agent & Orchestration
 
