@@ -5168,23 +5168,39 @@ func (al *AgentLoop) WireAvaAgentTools(deps *systools.Deps, reg ...*AgentRegistr
 		}
 		sb.WriteString("\nUse `system.models.list` to see all available models from these providers.\n\n")
 
-		// Builtin tools — get from the default agent's registry.
+		// Builtin tools — full catalog of all tools that can be assigned to agents.
+		// This is hardcoded because tools may be disabled in config but still
+		// assignable to new agents (enabling happens per-agent).
 		sb.WriteString("## Builtin Tools\n")
-		sb.WriteString("These tools can be assigned to new agents via `tools_mode` and `tools_visible`:\n\n")
-		defaultAgent := r.GetDefaultAgent()
-		if defaultAgent != nil {
-			for _, t := range defaultAgent.Tools.GetAll() {
-				scope := t.Scope()
-				if scope == tools.ScopeSystem {
-					continue // Don't list system tools as assignable
-				}
-				desc := t.Description()
-				if len(desc) > 80 {
-					desc = desc[:77] + "..."
-				}
-				sb.WriteString(fmt.Sprintf("- `%s` — %s\n", t.Name(), desc))
-			}
-		}
+		sb.WriteString("These tools can be assigned to new agents via `tools_mode` and `tools_visible`.\n")
+		sb.WriteString("When `tools_mode` is `inherit`, the agent gets all tools appropriate for its scope.\n\n")
+		sb.WriteString("### File & Code\n")
+		sb.WriteString("- `read_file` — Read file contents\n")
+		sb.WriteString("- `write_file` — Write/create files\n")
+		sb.WriteString("- `edit_file` — Edit existing files (find & replace)\n")
+		sb.WriteString("- `list_dir` — List directory contents\n")
+		sb.WriteString("- `exec` — Execute shell commands\n")
+		sb.WriteString("\n### Web & Search\n")
+		sb.WriteString("- `web_search` — Search the web (Brave, Tavily, DuckDuckGo, etc.)\n")
+		sb.WriteString("- `web_fetch` — Fetch and read web page content\n")
+		sb.WriteString("\n### Browser Automation\n")
+		sb.WriteString("- `browser.navigate` — Navigate to a URL\n")
+		sb.WriteString("- `browser.click` — Click an element\n")
+		sb.WriteString("- `browser.type` — Type text into an element\n")
+		sb.WriteString("- `browser.screenshot` — Take a screenshot\n")
+		sb.WriteString("- `browser.get_text` — Extract page text\n")
+		sb.WriteString("- `browser.wait` — Wait for element/condition\n")
+		sb.WriteString("\n### Communication\n")
+		sb.WriteString("- `message` — Send messages to other agents or channels\n")
+		sb.WriteString("- `send_file` — Send a file to a channel\n")
+		sb.WriteString("\n### Task Management\n")
+		sb.WriteString("- `task_create` — Create and assign tasks to agents\n")
+		sb.WriteString("- `task_update` — Update task status\n")
+		sb.WriteString("- `task_list` — List tasks\n")
+		sb.WriteString("\n### Automation\n")
+		sb.WriteString("- `cron` — Schedule recurring tasks\n")
+		sb.WriteString("- `spawn` — Spawn a background process\n")
+		sb.WriteString("- `subagent` — Delegate work to a sub-agent\n")
 
 		return sb.String()
 	})
