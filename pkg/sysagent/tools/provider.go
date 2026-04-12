@@ -174,3 +174,75 @@ func (t *ProviderTestTool) Execute(_ context.Context, args map[string]any) *tool
 		"latency_ms": 0,
 	}))
 }
+
+// ---- system.models.list ----
+
+// ModelsListTool lists available models from configured providers.
+// Used by Ava (Agent Builder) to help users select a model for new agents.
+type ModelsListTool struct{ deps *Deps }
+
+func NewModelsListTool(d *Deps) *ModelsListTool { return &ModelsListTool{deps: d} }
+func (t *ModelsListTool) Name() string           { return "system.models.list" }
+func (t *ModelsListTool) Scope() tools.ToolScope { return tools.ScopeSystem }
+func (t *ModelsListTool) Description() string {
+	return "List available models from configured providers. " +
+		"Optional: filter by provider name. Returns model slugs, provider, and whether it's the system default."
+}
+
+func (t *ModelsListTool) Parameters() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"provider": map[string]any{"type": "string", "description": "Filter by provider name (e.g. 'openrouter'). Omit to show all."},
+		},
+	}
+}
+
+func (t *ModelsListTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
+	filterProvider, _ := args["provider"].(string)
+	cfg := t.deps.GetCfg()
+
+	type modelEntry struct {
+		Model    string `json:"model"`
+		Name     string `json:"name"`
+		Provider string `json:"provider"`
+		Default  bool   `json:"default,omitempty"`
+	}
+
+	defaultModel := cfg.Agents.Defaults.ModelName
+	var models []modelEntry
+	seen := map[string]bool{}
+
+	for _, p := range cfg.Providers {
+		if p == nil || p.Model == "" {
+			continue
+		}
+		providerName := p.Provider
+		if providerName == "" {
+			providerName = providerFromModelRef(p.Model)
+		}
+		if filterProvider != "" && providerName != filterProvider {
+			continue
+		}
+		if seen[p.Model] {
+			continue
+		}
+		seen[p.Model] = true
+		displayName := p.ModelName
+		if displayName == "" {
+			displayName = p.Model
+		}
+		models = append(models, modelEntry{
+			Model:    p.Model,
+			Name:     displayName,
+			Provider: providerName,
+			Default:  p.Model == defaultModel,
+		})
+	}
+
+	return tools.NewToolResult(successJSON(map[string]any{
+		"models":        models,
+		"default_model": defaultModel,
+		"total":         len(models),
+	}))
+}

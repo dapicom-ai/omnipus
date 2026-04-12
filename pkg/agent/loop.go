@@ -5107,11 +5107,12 @@ func (al *AgentLoop) WireAvaAgentTools(deps *systools.Deps, reg ...*AgentRegistr
 		Confirm:  nil,
 	})
 
-	// Only wire the 3 agent CRUD tools — Ava doesn't get the other 32 system tools.
+	// Wire agent CRUD tools + model lookup — Ava doesn't get the other system tools.
 	agentToolNames := []string{
 		"system.agent.create",
 		"system.agent.update",
 		"system.agent.delete",
+		"system.models.list",
 	}
 
 	wired := 0
@@ -5127,6 +5128,66 @@ func (al *AgentLoop) WireAvaAgentTools(deps *systools.Deps, reg ...*AgentRegistr
 		avaInst.Tools.Register(guarded)
 		wired++
 	}
+
+	// Inject available resources (tools, providers, defaults) into Ava's context
+	// so she can recommend tools and models during the agent creation interview.
+	avaInst.ContextBuilder.WithResourcesInjector(func() string {
+		cfg := deps.GetCfg()
+		var sb strings.Builder
+		sb.WriteString("# Available Resources\n\n")
+
+		// System defaults.
+		sb.WriteString("## System Defaults\n")
+		sb.WriteString(fmt.Sprintf("- Default model: `%s`\n", cfg.Agents.Defaults.ModelName))
+		if len(cfg.Agents.Defaults.ModelFallbacks) > 0 {
+			sb.WriteString(fmt.Sprintf("- Default fallbacks: %s\n", strings.Join(cfg.Agents.Defaults.ModelFallbacks, ", ")))
+		}
+		sb.WriteString("\n")
+
+		// Connected providers.
+		sb.WriteString("## Connected Providers\n")
+		providersSeen := map[string]bool{}
+		for _, p := range cfg.Providers {
+			if p == nil {
+				continue
+			}
+			name := p.Provider
+			if name == "" {
+				if idx := strings.IndexByte(p.Model, '/'); idx > 0 {
+					name = p.Model[:idx]
+				}
+			}
+			if name == "" || providersSeen[name] {
+				continue
+			}
+			providersSeen[name] = true
+			sb.WriteString(fmt.Sprintf("- %s\n", name))
+		}
+		if len(providersSeen) == 0 {
+			sb.WriteString("- (none configured)\n")
+		}
+		sb.WriteString("\nUse `system.models.list` to see all available models from these providers.\n\n")
+
+		// Builtin tools — get from the default agent's registry.
+		sb.WriteString("## Builtin Tools\n")
+		sb.WriteString("These tools can be assigned to new agents via `tools_mode` and `tools_visible`:\n\n")
+		defaultAgent := r.GetDefaultAgent()
+		if defaultAgent != nil {
+			for _, t := range defaultAgent.Tools.GetAll() {
+				scope := t.Scope()
+				if scope == tools.ScopeSystem {
+					continue // Don't list system tools as assignable
+				}
+				desc := t.Description()
+				if len(desc) > 80 {
+					desc = desc[:77] + "..."
+				}
+				sb.WriteString(fmt.Sprintf("- `%s` — %s\n", t.Name(), desc))
+			}
+		}
+
+		return sb.String()
+	})
 
 	logger.InfoCF("agent", "Agent CRUD tools wired into Ava (guarded)",
 		map[string]any{"agent_id": "ava", "tool_count": wired})

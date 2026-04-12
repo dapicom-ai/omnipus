@@ -120,6 +120,7 @@ func TestAgentCreate_WithColorAndIcon(t *testing.T) {
 		"name":        "Research Bot",
 		"description": "A research assistant",
 		"soul":        "You are a research bot.",
+		"model":       "test/model",
 		"color":       "#22C55E",
 		"icon":        "robot",
 	})
@@ -426,6 +427,7 @@ func TestAgentCreate_PersistsToDisk(t *testing.T) {
 		"name":        "Disk Bot",
 		"description": "A disk bot",
 		"soul":        "You are a disk bot.",
+		"model":       "test/model",
 		"color":       "#22C55E",
 		"icon":        "robot",
 	})
@@ -534,6 +536,7 @@ func TestAgentCreate_RejectsInvalidColor(t *testing.T) {
 			"name":        "Bot",
 			"description": "A test bot",
 			"soul":        "You are a test bot.",
+			"model":       "test/model",
 			"color":       bad,
 		})
 		if !result.IsError {
@@ -555,6 +558,7 @@ func TestAgentCreate_RejectsInvalidIcon(t *testing.T) {
 			"name":        "Bot",
 			"description": "A test bot",
 			"soul":        "You are a test bot.",
+			"model":       "test/model",
 			"icon":        bad,
 		})
 		if !result.IsError {
@@ -654,6 +658,9 @@ func TestWithConfig_SerializesReaderWriter(t *testing.T) {
 						"name":        fmt.Sprintf("Bot %d", i),
 						"description": "A test bot",
 						"soul":        "You are a test bot.",
+						"model":       "test/model",
+						"color":       "#22C55E",
+						"icon":        "robot",
 					})
 				}
 			}
@@ -821,7 +828,7 @@ func TestConcurrentRESTAndSysagentConfigWrite(t *testing.T) {
 			<-done
 			return
 		default:
-			createTool.Execute(ctx, map[string]any{"name": "concurrent-bot", "description": "test", "soul": "test"})
+			createTool.Execute(ctx, map[string]any{"name": "concurrent-bot", "description": "test", "soul": "test", "model": "test/model", "color": "#22C55E", "icon": "robot"})
 		}
 	}
 }

@@ -118,27 +118,37 @@ func NewAgentCreateTool(d *Deps) *AgentCreateTool { return &AgentCreateTool{deps
 func (t *AgentCreateTool) Name() string           { return "system.agent.create" }
 func (t *AgentCreateTool) Scope() tools.ToolScope { return tools.ScopeSystem }
 func (t *AgentCreateTool) Description() string {
-	return "Create a new custom agent with personality and configuration.\n" +
-		"Parameters: name (required), description (required), soul (required — the agent's personality and behavioral instructions), " +
-		"model (the LLM model slug, e.g. 'z-ai/glm-5-turbo'), color (hex like '#22C55E'), icon (Phosphor icon name like 'robot')."
+	return "Create a new custom agent with personality, model, tools, and configuration."
 }
 
 func (t *AgentCreateTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
+			// Mandatory
 			"name":        map[string]any{"type": "string", "description": "Display name for the new agent"},
 			"description": map[string]any{"type": "string", "description": "One-line description of the agent's purpose"},
 			"soul":        map[string]any{"type": "string", "description": "The agent's personality, role, and behavioral instructions (written to SOUL.md)"},
-			"model":       map[string]any{"type": "string", "description": "LLM model slug (e.g. 'z-ai/glm-5-turbo'). Uses the system default if omitted."},
+			"model":       map[string]any{"type": "string", "description": "Primary LLM model slug (e.g. 'z-ai/glm-5-turbo')"},
 			"color":       map[string]any{"type": "string", "description": "Hex avatar color (e.g. '#22C55E')"},
 			"icon":        map[string]any{"type": "string", "description": "Phosphor icon name (e.g. 'robot', 'pencil', 'book')"},
+			// Optional
+			"provider":              map[string]any{"type": "string", "description": "Provider name for the primary model (e.g. 'openrouter')"},
+			"model_fallbacks":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Fallback model slugs tried in order if primary fails"},
+			"heartbeat":             map[string]any{"type": "string", "description": "Proactive scheduling instructions (written to HEARTBEAT.md)"},
+			"can_delegate_to":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Agent IDs this agent can delegate tasks to. Use ['*'] for all."},
+			"tools_mode":            map[string]any{"type": "string", "enum": []string{"inherit", "explicit"}, "description": "Tool visibility: 'inherit' = all scope-appropriate tools, 'explicit' = only named tools"},
+			"tools_visible":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Tool names to enable when tools_mode='explicit'"},
+			"max_tool_iterations":   map[string]any{"type": "integer", "description": "Max tool calls per turn (0 = system default)"},
+			"timeout_seconds":       map[string]any{"type": "integer", "description": "Per-turn timeout in seconds (0 = disabled)"},
+			"restrict_to_workspace": map[string]any{"type": "boolean", "description": "Sandbox file access to agent's workspace only"},
 		},
-		"required": []string{"name", "description", "soul"},
+		"required": []string{"name", "description", "soul", "model", "color", "icon"},
 	}
 }
 
 func (t *AgentCreateTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
+	// Validate mandatory fields.
 	name, _ := args["name"].(string)
 	if strings.TrimSpace(name) == "" {
 		return tools.ErrorResult(errorJSON("INVALID_INPUT", "name is required", "Provide a name for the agent"))
@@ -151,7 +161,10 @@ func (t *AgentCreateTool) Execute(_ context.Context, args map[string]any) *tools
 	if strings.TrimSpace(soul) == "" {
 		return tools.ErrorResult(errorJSON("INVALID_INPUT", "soul is required", "Provide the agent's personality and behavioral instructions"))
 	}
-
+	model, _ := args["model"].(string)
+	if strings.TrimSpace(model) == "" {
+		return tools.ErrorResult(errorJSON("INVALID_INPUT", "model is required", "Provide the LLM model slug"))
+	}
 	color, _ := args["color"].(string)
 	if err := validateAgentColor(color); err != nil {
 		return tools.ErrorResult(errorJSON("INVALID_COLOR", err.Error(), "Use a 6-digit hex color, e.g. #22C55E"))
@@ -165,7 +178,6 @@ func (t *AgentCreateTool) Execute(_ context.Context, args map[string]any) *tools
 
 	var finalID string
 	err := t.deps.WithConfig(func(cfg *config.Config) error {
-		// Check for duplicate ID.
 		for _, a := range cfg.Agents.List {
 			if a.ID == id {
 				return fmt.Errorf("AGENT_ALREADY_EXISTS: an agent with ID %q already exists", id)
@@ -176,17 +188,42 @@ func (t *AgentCreateTool) Execute(_ context.Context, args map[string]any) *tools
 			ID:          id,
 			Name:        name,
 			Description: description,
+			Color:       color,
+			Icon:        icon,
 			Enabled:     &enabled,
+			Model:       &config.AgentModelConfig{Primary: model},
 		}
-		// Set model if provided.
-		if model, ok := args["model"].(string); ok && model != "" {
-			newAgent.Model = &config.AgentModelConfig{Primary: model}
+		// Optional: model fallbacks.
+		if fb, ok := args["model_fallbacks"].([]any); ok && len(fb) > 0 {
+			for _, v := range fb {
+				if s, ok := v.(string); ok && s != "" {
+					newAgent.Model.Fallbacks = append(newAgent.Model.Fallbacks, s)
+				}
+			}
 		}
-		if color != "" {
-			newAgent.Color = color
+		// Optional: delegation targets.
+		if dt, ok := args["can_delegate_to"].([]any); ok && len(dt) > 0 {
+			for _, v := range dt {
+				if s, ok := v.(string); ok && s != "" {
+					newAgent.CanDelegateTo = append(newAgent.CanDelegateTo, s)
+				}
+			}
 		}
-		if icon != "" {
-			newAgent.Icon = icon
+		// Optional: tool visibility.
+		if mode, ok := args["tools_mode"].(string); ok && (mode == "inherit" || mode == "explicit") {
+			toolsCfg := &config.AgentToolsCfg{
+				Builtin: config.AgentBuiltinToolsCfg{
+					Mode: config.VisibilityMode(mode),
+				},
+			}
+			if vis, ok := args["tools_visible"].([]any); ok {
+				for _, v := range vis {
+					if s, ok := v.(string); ok && s != "" {
+						toolsCfg.Builtin.Visible = append(toolsCfg.Builtin.Visible, s)
+					}
+				}
+			}
+			newAgent.Tools = toolsCfg
 		}
 		cfg.Agents.List = append(cfg.Agents.List, newAgent)
 		finalID = id
@@ -204,21 +241,23 @@ func (t *AgentCreateTool) Execute(_ context.Context, args map[string]any) *tools
 		return tools.ErrorResult(errorJSON("SAVE_FAILED", msg, "Check disk space and permissions"))
 	}
 
-	// Create agent workspace directory and write SOUL.md.
+	// Create agent workspace directory.
 	if err := datamodel.InitAgentWorkspace(t.deps.Home, finalID); err != nil {
 		slog.Warn("sysagent: could not create agent workspace", "id", finalID, "error", err)
 	}
-	// Write SOUL.md with the personality/instructions.
 	wsPath := datamodel.AgentWorkspacePath(t.deps.Home, finalID)
-	soulPath := wsPath + "/SOUL.md"
-	if err := os.WriteFile(soulPath, []byte(soul), 0o644); err != nil {
+
+	// Write SOUL.md (personality/instructions).
+	if err := os.WriteFile(wsPath+"/SOUL.md", []byte(soul), 0o644); err != nil {
 		slog.Warn("sysagent: could not write SOUL.md", "id", finalID, "error", err)
 	}
-
-	model := ""
-	if m, ok := args["model"].(string); ok {
-		model = m
+	// Write HEARTBEAT.md if provided.
+	if hb, ok := args["heartbeat"].(string); ok && strings.TrimSpace(hb) != "" {
+		if err := os.WriteFile(wsPath+"/HEARTBEAT.md", []byte(hb), 0o644); err != nil {
+			slog.Warn("sysagent: could not write HEARTBEAT.md", "id", finalID, "error", err)
+		}
 	}
+
 	return tools.NewToolResult(successJSON(map[string]any{
 		"id":     finalID,
 		"name":   name,
@@ -238,20 +277,29 @@ func NewAgentUpdateTool(d *Deps) *AgentUpdateTool { return &AgentUpdateTool{deps
 func (t *AgentUpdateTool) Name() string           { return "system.agent.update" }
 func (t *AgentUpdateTool) Scope() tools.ToolScope { return tools.ScopeSystem }
 func (t *AgentUpdateTool) Description() string {
-	return "Update an existing agent's configuration.\nParameters: id (required), name, description, model, provider, color, icon."
+	return "Update an existing agent's configuration. Only provided fields are changed; omitted fields are left as-is."
 }
 
 func (t *AgentUpdateTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"id":          map[string]any{"type": "string"},
-			"name":        map[string]any{"type": "string"},
-			"description": map[string]any{"type": "string"},
-			"model":       map[string]any{"type": "string"},
-			"provider":    map[string]any{"type": "string"},
-			"color":       map[string]any{"type": "string"},
-			"icon":        map[string]any{"type": "string"},
+			"id":                    map[string]any{"type": "string", "description": "Agent ID to update"},
+			"name":                  map[string]any{"type": "string"},
+			"description":          map[string]any{"type": "string"},
+			"soul":                  map[string]any{"type": "string", "description": "New personality/instructions (overwrites SOUL.md)"},
+			"model":                map[string]any{"type": "string", "description": "New primary model slug"},
+			"model_fallbacks":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"provider":             map[string]any{"type": "string"},
+			"color":                map[string]any{"type": "string"},
+			"icon":                 map[string]any{"type": "string"},
+			"heartbeat":            map[string]any{"type": "string", "description": "New HEARTBEAT.md content"},
+			"can_delegate_to":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"tools_mode":           map[string]any{"type": "string", "enum": []string{"inherit", "explicit"}},
+			"tools_visible":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"max_tool_iterations":  map[string]any{"type": "integer"},
+			"timeout_seconds":      map[string]any{"type": "integer"},
+			"restrict_to_workspace": map[string]any{"type": "boolean"},
 		},
 		"required": []string{"id"},
 	}
@@ -281,30 +329,81 @@ func (t *AgentUpdateTool) Execute(_ context.Context, args map[string]any) *tools
 	var found bool
 	err := t.deps.WithConfig(func(cfg *config.Config) error {
 		for i := range cfg.Agents.List {
-			if cfg.Agents.List[i].ID == id {
-				found = true
-				if cfg.Agents.List[i].Locked {
-					return fmt.Errorf("agent %q is a locked core agent and cannot be modified", id)
-				}
-				// All string fields treat empty as "skip, don't change" for consistency.
-				if v, ok := args["name"].(string); ok && v != "" {
-					cfg.Agents.List[i].Name = v
-					updated = append(updated, "name")
-				}
-				if v, ok := args["description"].(string); ok && v != "" {
-					cfg.Agents.List[i].Description = v
-					updated = append(updated, "description")
-				}
-				if colorPresent && color != "" {
-					cfg.Agents.List[i].Color = color
-					updated = append(updated, "color")
-				}
-				if iconPresent && icon != "" {
-					cfg.Agents.List[i].Icon = icon
-					updated = append(updated, "icon")
-				}
-				return nil
+			if cfg.Agents.List[i].ID != id {
+				continue
 			}
+			found = true
+			a := &cfg.Agents.List[i]
+			if a.Locked {
+				return fmt.Errorf("agent %q is a locked core agent and cannot be modified", id)
+			}
+			if v, ok := args["name"].(string); ok && v != "" {
+				a.Name = v
+				updated = append(updated, "name")
+			}
+			if v, ok := args["description"].(string); ok && v != "" {
+				a.Description = v
+				updated = append(updated, "description")
+			}
+			if colorPresent && color != "" {
+				a.Color = color
+				updated = append(updated, "color")
+			}
+			if iconPresent && icon != "" {
+				a.Icon = icon
+				updated = append(updated, "icon")
+			}
+			// Model config.
+			if v, ok := args["model"].(string); ok && v != "" {
+				if a.Model == nil {
+					a.Model = &config.AgentModelConfig{}
+				}
+				a.Model.Primary = v
+				updated = append(updated, "model")
+			}
+			if fb, ok := args["model_fallbacks"].([]any); ok {
+				if a.Model == nil {
+					a.Model = &config.AgentModelConfig{}
+				}
+				a.Model.Fallbacks = nil
+				for _, v := range fb {
+					if s, ok := v.(string); ok && s != "" {
+						a.Model.Fallbacks = append(a.Model.Fallbacks, s)
+					}
+				}
+				updated = append(updated, "model_fallbacks")
+			}
+			// Delegation.
+			if dt, ok := args["can_delegate_to"].([]any); ok {
+				a.CanDelegateTo = nil
+				for _, v := range dt {
+					if s, ok := v.(string); ok && s != "" {
+						a.CanDelegateTo = append(a.CanDelegateTo, s)
+					}
+				}
+				updated = append(updated, "can_delegate_to")
+			}
+			// Tool visibility.
+			if mode, ok := args["tools_mode"].(string); ok && (mode == "inherit" || mode == "explicit") {
+				if a.Tools == nil {
+					a.Tools = &config.AgentToolsCfg{}
+				}
+				a.Tools.Builtin.Mode = config.VisibilityMode(mode)
+				updated = append(updated, "tools_mode")
+			}
+			if vis, ok := args["tools_visible"].([]any); ok {
+				if a.Tools == nil {
+					a.Tools = &config.AgentToolsCfg{}
+				}
+				a.Tools.Builtin.Visible = nil
+				for _, v := range vis {
+					if s, ok := v.(string); ok && s != "" {
+						a.Tools.Builtin.Visible = append(a.Tools.Builtin.Visible, s)
+					}
+				}
+				updated = append(updated, "tools_visible")
+			}
+			return nil
 		}
 		return nil
 	})
@@ -317,6 +416,28 @@ func (t *AgentUpdateTool) Execute(_ context.Context, args map[string]any) *tools
 			"Use system.agent.list to see available agents",
 		))
 	}
+
+	// Write workspace files if provided.
+	wsPath := datamodel.AgentWorkspacePath(t.deps.Home, id)
+	if v, ok := args["soul"].(string); ok && strings.TrimSpace(v) != "" {
+		if err := os.MkdirAll(wsPath, 0o700); err == nil {
+			if err := os.WriteFile(wsPath+"/SOUL.md", []byte(v), 0o644); err != nil {
+				slog.Warn("sysagent: could not write SOUL.md", "id", id, "error", err)
+			} else {
+				updated = append(updated, "soul")
+			}
+		}
+	}
+	if v, ok := args["heartbeat"].(string); ok && strings.TrimSpace(v) != "" {
+		if err := os.MkdirAll(wsPath, 0o700); err == nil {
+			if err := os.WriteFile(wsPath+"/HEARTBEAT.md", []byte(v), 0o644); err != nil {
+				slog.Warn("sysagent: could not write HEARTBEAT.md", "id", id, "error", err)
+			} else {
+				updated = append(updated, "heartbeat")
+			}
+		}
+	}
+
 	return tools.NewToolResult(successJSON(map[string]any{
 		"id":             id,
 		"updated_fields": updated,

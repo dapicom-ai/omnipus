@@ -48,6 +48,18 @@ type ContextBuilder struct {
 	// build time. This catches nested file creations/deletions/mtime changes
 	// that may not update the top-level skill root directory mtime.
 	skillFilesAtCache map[string]time.Time
+
+	// resourcesInjector is an optional callback that returns additional context
+	// to inject into the system prompt. Used by Ava (Agent Builder) to inject
+	// available tools, skills, providers, and system defaults.
+	resourcesInjector func() string
+}
+
+// WithResourcesInjector sets a callback that provides additional context sections
+// to inject into the system prompt (e.g., available tools catalog for Ava).
+func (cb *ContextBuilder) WithResourcesInjector(fn func() string) *ContextBuilder {
+	cb.resourcesInjector = fn
+	return cb
 }
 
 func (cb *ContextBuilder) WithToolDiscovery(useBM25, useRegex bool) *ContextBuilder {
@@ -222,6 +234,13 @@ func (cb *ContextBuilder) BuildSystemPrompt() string {
 
 	if bootstrapContent != "" {
 		parts = append(parts, bootstrapContent)
+	}
+
+	// Agent-specific resource injection (e.g., available tools catalog for Ava).
+	if cb.resourcesInjector != nil {
+		if resources := cb.resourcesInjector(); resources != "" {
+			parts = append(parts, resources)
+		}
 	}
 
 	// Skills - show summary, AI can read full content with read_file tool
