@@ -9,6 +9,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 )
 
 // FeishuChannel is a stub implementation for 32-bit architectures
@@ -18,8 +19,10 @@ type FeishuChannel struct {
 
 var errUnsupported = errors.New("feishu channel is not supported on 32-bit architectures")
 
-// NewFeishuChannel returns an error on 32-bit architectures where the Feishu SDK is not supported
-func NewFeishuChannel(cfg config.FeishuConfig, bus *bus.MessageBus) (*FeishuChannel, error) {
+// NewFeishuChannel returns an error on 32-bit architectures where the Feishu SDK
+// is not supported. The signature matches the 64-bit variant so init.go compiles
+// on all architectures.
+func NewFeishuChannel(cfg config.FeishuConfig, _ credentials.SecretBundle, _ *bus.MessageBus) (*FeishuChannel, error) {
 	return nil, errors.New(
 		"feishu channel is not supported on 32-bit architectures (armv7l, 386, etc.). Please use a 64-bit system or disable feishu in your config",
 	)
