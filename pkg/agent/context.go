@@ -14,6 +14,7 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/coreagent"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/skills"
@@ -204,12 +205,18 @@ func (cb *ContextBuilder) BuildSystemPrompt() string {
 	// definition to avoid a second LoadAgentDefinition call inside.
 	bootstrapContent := cb.loadBootstrapFilesWithDef(agentDef)
 
-	// Core identity: if the agent has a SOUL.md, it defines the personality —
-	// skip the hardcoded "You are omnipus" identity and only inject workspace info.
-	// If no SOUL.md exists, use the full default identity.
-	if agentDef.Soul != nil && strings.TrimSpace(agentDef.Soul.Content) != "" {
+	// Core agents have compiled prompts (not on disk). Check for a compiled
+	// prompt first; if found, inject it as the SOUL content and use workspace-only
+	// identity. This keeps the prompt invisible to users (no SOUL.md file).
+	compiledPrompt := coreagent.GetPrompt(cb.agentID)
+	if compiledPrompt != "" {
+		parts = append(parts, cb.getWorkspaceInfo())
+		bootstrapContent = fmt.Sprintf("## SOUL\n\n%s\n\n", compiledPrompt) + bootstrapContent
+	} else if agentDef.Soul != nil && strings.TrimSpace(agentDef.Soul.Content) != "" {
+		// Custom agent with SOUL.md on disk — use workspace-only identity.
 		parts = append(parts, cb.getWorkspaceInfo())
 	} else {
+		// No SOUL.md and not a core agent — use the full default identity.
 		parts = append(parts, cb.getIdentity())
 	}
 

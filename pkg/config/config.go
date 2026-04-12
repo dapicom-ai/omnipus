@@ -397,6 +397,10 @@ type AgentConfig struct {
 	// Type classifies the agent. Empty defaults to AgentTypeCustom for stored agents;
 	// use ResolveType() to get the effective type.
 	Type AgentType `json:"type,omitempty"`
+	// Locked prevents modification of identity fields (name, description, color,
+	// icon, prompt). Used by core agents to keep their identity stable.
+	// Users CAN still change model, remove tools, and set heartbeat.
+	Locked bool `json:"locked,omitempty"`
 	// Tools, when non-nil, overrides scope-based tool visibility for this agent.
 	// Nil means all tools allowed by the agent's type are available.
 	Tools *AgentToolsCfg `json:"tools,omitempty"`
