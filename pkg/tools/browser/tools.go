@@ -2,6 +2,7 @@ package browser
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -190,7 +191,9 @@ func (t *TypeTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 
 // --- browser.screenshot (US-5) ---
 
-type ScreenshotTool struct{ mgr *BrowserManager }
+type ScreenshotTool struct {
+	mgr *BrowserManager
+}
 
 func (t *ScreenshotTool) Name() string           { return "browser.screenshot" }
 func (t *ScreenshotTool) Scope() tools.ToolScope { return tools.ScopeCore }
@@ -224,7 +227,14 @@ func (t *ScreenshotTool) Execute(ctx context.Context, args map[string]any) *tool
 		return tools.ErrorResult(fmt.Sprintf("browser.screenshot: failed to save: %s", err))
 	}
 
-	return jsonResult(map[string]any{"path": path})
+	// Return the screenshot as a data: URL. normalizeToolResult will detect it,
+	// store the image via MediaStore, add media refs, and replace ForLLM with a
+	// placeholder — which triggers ResponseHandled=true for media delivery.
+	dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf)
+	return &tools.ToolResult{
+		ForLLM:       dataURL,
+		ArtifactTags: []string{fmt.Sprintf("[file:%s]", path)},
+	}
 }
 
 // --- browser.get_text (US-5) ---

@@ -41,6 +41,7 @@ import (
 	systools "github.com/dapicom-ai/omnipus/pkg/sysagent/tools"
 	"github.com/dapicom-ai/omnipus/pkg/taskstore"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
+	"github.com/dapicom-ai/omnipus/pkg/tools/browser"
 	"github.com/dapicom-ai/omnipus/pkg/utils"
 	"github.com/dapicom-ai/omnipus/pkg/voice"
 )
@@ -110,6 +111,10 @@ type AgentLoop struct {
 	// bind failure this field is nil and exec children run without proxy env
 	// vars (degraded mode — LIM-02).
 	execProxy *security.ExecProxy
+
+	// Wave 4: Browser automation manager (US-4/US-6/US-7). Nil when browser
+	// tools are disabled. Shutdown() is called in AgentLoop.Close().
+	browserMgr *browser.BrowserManager
 
 	// Wave 4: Per-agent rate limiting and global daily cost cap (SEC-26).
 	// rateLimiter manages sliding-window counters; costTracker persists the
@@ -762,6 +767,51 @@ func registerSharedTools(
 				return infos
 			}))
 		}
+
+		// Browser automation tools (Wave 4, US-4/US-6/US-7; see wave4-whatsapp-browser-spec.md).
+		if cfg.Tools.IsToolEnabled("browser") {
+			browserCfg, cfgErr := browser.DefaultConfig()
+			if cfgErr != nil {
+				logger.ErrorCF("agent", "Browser tools: cannot determine defaults — skipping",
+					map[string]any{"error": cfgErr.Error()})
+			} else {
+				browserCfg.Enabled = true
+				// DefaultConfig sets Headless=true; only override if config explicitly sets fields.
+				if cfg.Tools.Browser.CDPURL != "" {
+					browserCfg.CDPURL = cfg.Tools.Browser.CDPURL
+				}
+				if cfg.Tools.Browser.PageTimeoutSec > 0 {
+					browserCfg.PageTimeout = time.Duration(cfg.Tools.Browser.PageTimeoutSec) * time.Second
+				}
+				if cfg.Tools.Browser.MaxTabs > 0 {
+					browserCfg.MaxTabs = cfg.Tools.Browser.MaxTabs
+				}
+				if cfg.Tools.Browser.ProfileDir != "" {
+					browserCfg.ProfileDir = cfg.Tools.Browser.ProfileDir
+				}
+				browserCfg.PersistSession = cfg.Tools.Browser.PersistSession
+
+				ssrfChecker := security.NewSSRFChecker(nil)
+				mgr, regErr := browser.RegisterTools(agent.Tools, browserCfg, ssrfChecker)
+				// browser.evaluate runs arbitrary JS — deny by default (SEC-04/SEC-06).
+				// Requires explicit opt-in via tools.browser.evaluate_enabled.
+				if !cfg.Tools.Browser.EvaluateEnabled {
+					agent.Tools.Unregister("browser.evaluate")
+				}
+				if regErr != nil {
+					logger.ErrorCF("agent", "Failed to register browser tools — "+
+						"ensure Chromium/Chrome is installed or set tools.browser.cdp_url",
+						map[string]any{"error": regErr.Error()})
+				} else {
+					al.mu.Lock()
+					if al.browserMgr != nil {
+						al.browserMgr.Shutdown()
+					}
+					al.browserMgr = mgr
+					al.mu.Unlock()
+				}
+			}
+		}
 	}
 }
 
@@ -1140,6 +1190,14 @@ func (al *AgentLoop) WaitForActiveRequests() {
 
 // Close releases resources held by agent session stores. Call after Stop.
 func (al *AgentLoop) Close() {
+	// Shutdown the browser manager (if any) to kill the Chromium subprocess.
+	al.mu.Lock()
+	if al.browserMgr != nil {
+		al.browserMgr.Shutdown()
+		al.browserMgr = nil
+	}
+	al.mu.Unlock()
+
 	mcpManager := al.mcp.takeManager()
 
 	if mcpManager != nil {
@@ -3752,6 +3810,7 @@ turnLoop:
 					ForUserLen: len(toolResult.ForUser),
 					IsError:    toolResult.IsError,
 					Async:      toolResult.Async,
+					Result:     contentForLLM,
 				},
 			)
 			tcStatus := "success"

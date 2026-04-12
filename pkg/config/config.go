@@ -1192,6 +1192,23 @@ type ToolsConfig struct {
 	Subagent        ToolConfig         `json:"subagent"          yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_SUBAGENT_"`
 	WebFetch        ToolConfig         `json:"web_fetch"         yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_WEB_FETCH_"`
 	WriteFile       ToolConfig         `json:"write_file"        yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_WRITE_FILE_"`
+	Browser         BrowserToolConfig  `json:"browser"           yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_BROWSER_"`
+}
+
+// BrowserToolConfig holds browser automation settings (Wave 4, US-4/US-6/US-7).
+// Maps to config.json: tools.browser.*
+type BrowserToolConfig struct {
+	ToolConfig     `       envPrefix:"OMNIPUS_TOOLS_BROWSER_"`
+	Headless       bool   `                                   json:"headless"        env:"OMNIPUS_TOOLS_BROWSER_HEADLESS"`
+	CDPURL         string `                                   json:"cdp_url"         env:"OMNIPUS_TOOLS_BROWSER_CDP_URL"`
+	PageTimeoutSec int    `                                   json:"page_timeout"    env:"OMNIPUS_TOOLS_BROWSER_PAGE_TIMEOUT"`
+	MaxTabs        int    `                                   json:"max_tabs"        env:"OMNIPUS_TOOLS_BROWSER_MAX_TABS"`
+	PersistSession bool   `                                   json:"persist_session" env:"OMNIPUS_TOOLS_BROWSER_PERSIST_SESSION"`
+	ProfileDir     string `                                   json:"profile_dir"     env:"OMNIPUS_TOOLS_BROWSER_PROFILE_DIR"`
+	// EvaluateEnabled gates browser.evaluate (arbitrary JS execution).
+	// Defaults to false (deny-by-default per SEC-04/SEC-06). Must be explicitly
+	// opted in by the operator since evaluate runs arbitrary JavaScript.
+	EvaluateEnabled bool `json:"evaluate_enabled" env:"OMNIPUS_TOOLS_BROWSER_EVALUATE_ENABLED"`
 }
 
 // IsFilterSensitiveDataEnabled returns true if sensitive data filtering is enabled
@@ -1635,6 +1652,11 @@ func (t *ToolsConfig) IsToolEnabled(name string) bool {
 		return t.TaskCreate.Enabled
 	case "task_update":
 		return t.TaskUpdate.Enabled
+	case "browser", "browser.navigate", "browser.click", "browser.type",
+		"browser.screenshot", "browser.get_text", "browser.wait":
+		return t.Browser.Enabled
+	case "browser.evaluate":
+		return t.Browser.Enabled && t.Browser.EvaluateEnabled
 	default:
 		// Deny-by-default for unrecognized tool names (CLAUDE.md constraint).
 		// Log at debug level so operators can detect typos in tool names.

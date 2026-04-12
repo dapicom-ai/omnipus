@@ -1452,3 +1452,66 @@ func TestAgentToolsCfg_JSONRoundTrip(t *testing.T) {
 		t.Errorf("second marshal differs from first:\n  first:  %s\n  second: %s", data, data2)
 	}
 }
+
+// TestIsToolEnabled_Browser verifies that the browser tool and all sub-tools
+// are gated by the Browser.Enabled config field.
+//
+// BDD: Given a ToolsConfig with Browser.Enabled = true,
+//
+//	When IsToolEnabled is called with "browser" and each sub-tool name,
+//	Then it returns true. When Browser.Enabled = false, it returns false.
+//
+// Traces to: issue #22 — wire browser tools into agent loop
+func TestIsToolEnabled_Browser(t *testing.T) {
+	// Standard browser tools gated by Browser.Enabled only.
+	names := []string{
+		"browser",
+		"browser.navigate",
+		"browser.click",
+		"browser.type",
+		"browser.screenshot",
+		"browser.get_text",
+		"browser.wait",
+	}
+
+	t.Run("enabled", func(t *testing.T) {
+		cfg := &ToolsConfig{}
+		cfg.Browser.Enabled = true
+		for _, name := range names {
+			if !cfg.IsToolEnabled(name) {
+				t.Errorf("IsToolEnabled(%q) = false, want true when browser is enabled", name)
+			}
+		}
+	})
+
+	t.Run("disabled", func(t *testing.T) {
+		cfg := &ToolsConfig{}
+		cfg.Browser.Enabled = false
+		for _, name := range names {
+			if cfg.IsToolEnabled(name) {
+				t.Errorf("IsToolEnabled(%q) = true, want false when browser is disabled", name)
+			}
+		}
+	})
+
+	// browser.evaluate requires both Browser.Enabled AND EvaluateEnabled (SEC-04/SEC-06).
+	t.Run("evaluate_denied_by_default", func(t *testing.T) {
+		cfg := &ToolsConfig{}
+		cfg.Browser.Enabled = true
+		cfg.Browser.EvaluateEnabled = false
+		if cfg.IsToolEnabled("browser.evaluate") {
+			t.Error("IsToolEnabled(browser.evaluate) = true, want false when EvaluateEnabled is false")
+		}
+	})
+
+	t.Run("evaluate_explicitly_enabled", func(t *testing.T) {
+		cfg := &ToolsConfig{}
+		cfg.Browser.Enabled = true
+		cfg.Browser.EvaluateEnabled = true
+		if !cfg.IsToolEnabled("browser.evaluate") {
+			t.Error(
+				"IsToolEnabled(browser.evaluate) = false, want true when both Browser.Enabled and EvaluateEnabled are true",
+			)
+		}
+	})
+}

@@ -29,15 +29,17 @@ var untrustedToolResults = map[string]struct{}{
 	"web_search": {},
 	// Web fetch — body is fully attacker-controlled.
 	"web_fetch": {},
-	// Browser automation — page DOM and screenshots are attacker-controlled.
+	// Browser automation — page DOM is attacker-controlled.
 	// Tool names use dot notation per pkg/tools/browser/tools.go.
-	"browser.navigate":   {},
-	"browser.click":      {},
-	"browser.type":       {},
-	"browser.screenshot": {},
-	"browser.get_text":   {},
-	"browser.wait":       {},
-	"browser.evaluate":   {},
+	"browser.navigate": {},
+	"browser.click":    {},
+	"browser.type":     {},
+	// browser.screenshot is intentionally EXCLUDED — its output is base64 PNG
+	// image data, not attacker-controlled text. Sanitizing it corrupts the JSON
+	// structure and prevents the frontend from rendering the inline preview.
+	"browser.get_text": {},
+	"browser.wait":     {},
+	"browser.evaluate": {},
 	// File read — paths may point outside the workspace (allowed paths)
 	// and files on disk may have been written by prior web_fetch calls.
 	// Without per-path trust labeling we conservatively treat read_file

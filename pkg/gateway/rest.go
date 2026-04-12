@@ -34,6 +34,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/coreagent"
 	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/fileutil"
+	"github.com/dapicom-ai/omnipus/pkg/media"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	providers_pkg "github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/session"
@@ -58,6 +59,7 @@ type restAPI struct {
 	taskStore     *taskstore.TaskStore // task persistence
 	taskExecutor  *agent.TaskExecutor  // task execution engine
 	credStore     *credentials.Store   // shared unlocked credential store (injected at boot)
+	mediaStore    media.MediaStore     // shared media store for serving media files
 }
 
 // --- CORS / JSON helpers ---
@@ -1839,6 +1841,7 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	cm.RegisterHTTPHandler("/api/v1/security/sandbox-status", a.withAuth(a.HandleSandboxStatus))
 	cm.RegisterHTTPHandler("/api/v1/credentials", a.withAuth(a.HandleCredentials))
 	cm.RegisterHTTPHandler("/api/v1/credentials/", a.withAuth(a.HandleCredentials))
+	cm.RegisterHTTPHandler("/api/v1/media/", a.withOptionalAuth(a.HandleMedia))
 	cm.RegisterHTTPHandler("/api/v1/backup", a.withAuth(a.HandleCreateBackup))
 	cm.RegisterHTTPHandler("/api/v1/backups", a.withAuth(a.HandleListBackups))
 	cm.RegisterHTTPHandler("/api/v1/restore", a.withAuth(a.HandleRestore))
@@ -3749,4 +3752,44 @@ func (a *restAPI) HandleServeUpload(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Disposition", "inline")
 	http.ServeFile(w, r, resolved)
+}
+
+// --- Media ---
+
+// HandleMedia serves a media file by its ref ID extracted from the URL path
+// (e.g. /api/v1/media/abc123 resolves "media://abc123" via MediaStore).
+func (a *restAPI) HandleMedia(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	a.setCORSHeaders(w, r)
+
+	if a.mediaStore == nil {
+		jsonErr(w, http.StatusServiceUnavailable, "media store not available")
+		return
+	}
+
+	refID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/media/"), "/")
+	if refID == "" || strings.ContainsAny(refID, "/\\") || strings.Contains(refID, "..") {
+		jsonErr(w, http.StatusBadRequest, "invalid media ref")
+		return
+	}
+
+	localPath, meta, err := a.mediaStore.ResolveWithMeta("media://" + refID)
+	if err != nil {
+		slog.Warn("rest: media ref not found", "ref", refID, "error", err.Error())
+		jsonErr(w, http.StatusNotFound, "media not found")
+		return
+	}
+
+	h := w.Header()
+	h.Set("X-Content-Type-Options", "nosniff")
+	if meta.ContentType != "" {
+		h.Set("Content-Type", meta.ContentType)
+	}
+	if meta.Filename != "" {
+		h.Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", meta.Filename))
+	}
+	http.ServeFile(w, r, localPath)
 }
