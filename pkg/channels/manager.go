@@ -521,6 +521,15 @@ func (m *Manager) initChannels(channels *config.ChannelsConfig) error {
 		}
 	}
 
+	if channels.GoogleChat.Enabled &&
+		(channels.GoogleChat.WebhookURL.String() != "" ||
+			channels.GoogleChat.ServiceAccountJSON.String() != "" ||
+			channels.GoogleChat.ServiceAccountFile != "") {
+		if err := m.initChannel("google-chat", "Google Chat"); err != nil {
+			m.recordChannelFailure("google-chat", "Google Chat", err)
+		}
+	}
+
 	if channels.Teams.Enabled && channels.Teams.AppID != "" && channels.Teams.AppPasswordRef != "" {
 		m.initChannel("teams", "Microsoft Teams")
 	}
