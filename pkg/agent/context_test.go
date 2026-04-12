@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/dapicom-ai/omnipus/pkg/providers"
@@ -305,4 +306,50 @@ func TestSanitizeHistoryForProvider_PartialToolResultsInMiddle(t *testing.T) {
 		t.Fatalf("expected 9 messages, got %d: %+v", len(result), roles(result))
 	}
 	assertRoles(t, result, "user", "assistant", "tool", "assistant", "user", "user", "assistant", "tool", "assistant")
+}
+
+// TestBuildSystemPrompt_CoreAgentUsesCompiledPrompt verifies that a core agent
+// (e.g., Jim) gets its compiled prompt from coreagent.GetPrompt, not the
+// default "You are omnipus" identity or a SOUL.md file.
+//
+// BDD: Given a ContextBuilder with agentID="jim",
+//
+//	When BuildSystemPrompt is called,
+//	Then the output contains "You are Jim" from the compiled prompt,
+//	And does NOT contain the default identity fallback text.
+//
+// Traces to: issue #45 — compiled prompts for core agents
+func TestBuildSystemPrompt_CoreAgentUsesCompiledPrompt(t *testing.T) {
+	workspace := t.TempDir()
+
+	cb := NewContextBuilder(workspace)
+	cb.WithAgentInfo("jim", "Jim")
+
+	prompt := cb.BuildSystemPrompt()
+
+	// Must contain the compiled prompt content for Jim
+	if !strings.Contains(prompt, "You are Jim") {
+		t.Errorf("expected compiled prompt to contain 'You are Jim', got first 500 chars:\n%s", prompt[:min(len(prompt), 500)])
+	}
+
+	// Must NOT contain the default identity fallback
+	if strings.Contains(prompt, "You are a helpful AI assistant") {
+		t.Error("core agent must NOT fall back to default identity — compiled prompt was not injected")
+	}
+}
+
+// TestBuildSystemPrompt_CustomAgentUsesDefaultIdentity verifies that a non-core
+// agent without a SOUL.md gets the default identity.
+func TestBuildSystemPrompt_CustomAgentUsesDefaultIdentity(t *testing.T) {
+	workspace := t.TempDir()
+
+	cb := NewContextBuilder(workspace)
+	cb.WithAgentInfo("custom-bot", "Custom Bot")
+
+	prompt := cb.BuildSystemPrompt()
+
+	// Non-core agents should NOT get a compiled prompt
+	if strings.Contains(prompt, "You are Jim") {
+		t.Error("non-core agent must NOT get a compiled prompt")
+	}
 }
