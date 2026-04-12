@@ -43,6 +43,12 @@ const submittedHTML = `<!DOCTYPE html>
 
 func skipIfNoBrowser(t *testing.T) {
 	t.Helper()
+	// CI environments often have Chrome installed but the sandbox fails in
+	// containers (Zygote initialization crash). Skip in CI unless the operator
+	// explicitly opts in via OMNIPUS_BROWSER_E2E=1.
+	if os.Getenv("CI") != "" && os.Getenv("OMNIPUS_BROWSER_E2E") == "" {
+		t.Skip("skipping browser E2E test in CI — set OMNIPUS_BROWSER_E2E=1 to enable")
+	}
 	for _, name := range []string{"chromium-browser", "chromium", "google-chrome", "google-chrome-stable"} {
 		if _, err := exec.LookPath(name); err == nil {
 			return
