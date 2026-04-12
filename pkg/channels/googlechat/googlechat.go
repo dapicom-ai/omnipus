@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/config"
@@ -29,14 +30,14 @@ import (
 )
 
 const (
-	googleChatAPIBase         = "https://chat.googleapis.com/v1"
-	googleChatTokenURL        = "https://oauth2.googleapis.com/token"
-	googleChatJWKSURL        = "https://www.googleapis.com/service_accounts/jwks"
-	googleChatMaxBodySize    = 1 << 20 // 1 MiB — matches LINE webhook limit
-	googleChatTokenExpiry    = 55 * time.Minute
-	googleChatTypingRefresh  = 25 * time.Second
-	maxRetries               = 3
-	maxJWKSAge               = 1 * time.Hour
+	googleChatAPIBase       = "https://chat.googleapis.com/v1"
+	googleChatTokenURL      = "https://oauth2.googleapis.com/token"
+	googleChatJWKSURL       = "https://www.googleapis.com/service_accounts/jwks"
+	googleChatMaxBodySize   = 1 << 20 // 1 MiB — matches LINE webhook limit
+	googleChatTokenExpiry   = 55 * time.Minute
+	googleChatTypingRefresh = 25 * time.Second
+	maxRetries              = 3
+	maxJWKSAge              = 1 * time.Hour
 )
 
 var (
@@ -54,19 +55,18 @@ type GoogleChatClient interface {
 // GoogleChatChannel implements the Channel interface for Google Chat.
 type GoogleChatChannel struct {
 	*channels.BaseChannel
-	config       config.GoogleChatConfig
-	mode         string // "webhook" | "bot"
-	webhookURL   string
-	saKey       *rsa.PrivateKey
-	saEmail     string
-	saKeyID     string // kid for the SA key
-	jwksCache   map[string]*rsa.PublicKey
-	jwksMu      sync.RWMutex
+	config        config.GoogleChatConfig
+	mode          string // "webhook" | "bot"
+	saKey         *rsa.PrivateKey
+	saEmail       string
+	saKeyID       string // kid for the SA key
+	jwksCache     map[string]*rsa.PublicKey
+	jwksMu        sync.RWMutex
 	jwksLastFetch time.Time
-	client      GoogleChatClient
-	healthOK    atomic.Bool
-	ctx         context.Context
-	cancel      context.CancelFunc
+	client        GoogleChatClient
+	healthOK      atomic.Bool
+	ctx           context.Context
+	cancel        context.CancelFunc
 }
 
 // NewGoogleChatChannel creates a new Google Chat channel.
@@ -102,8 +102,8 @@ func NewGoogleChatChannel(cfg config.GoogleChatConfig, b *bus.MessageBus) (*Goog
 		BaseChannel: base,
 		config:      cfg,
 		mode:        mode,
-		client:     &http.Client{Timeout: 30 * time.Second},
-		jwksCache:  make(map[string]*rsa.PublicKey),
+		client:      &http.Client{Timeout: 30 * time.Second},
+		jwksCache:   make(map[string]*rsa.PublicKey),
 	}
 	base.SetOwner(ch)
 
@@ -305,9 +305,9 @@ func backoff(attempt int) time.Duration {
 	if jitter > 500*time.Millisecond {
 		jitter = 500 * time.Millisecond
 	}
-	max := 30 * time.Second
-	if base+jitter > max {
-		return max
+	maxDuration := 30 * time.Second
+	if base+jitter > maxDuration {
+		return maxDuration
 	}
 	return base + jitter
 }
@@ -339,7 +339,7 @@ func (c *GoogleChatChannel) webhookHandler(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	sigHeader := r.Header.Get("google-signature")
+	sigHeader := r.Header.Get("Google-Signature")
 	if sigHeader == "" {
 		logger.WarnC("google-chat", "Missing google-signature header")
 		http.Error(w, "Forbidden", http.StatusForbidden)
@@ -363,19 +363,19 @@ func (c *GoogleChatChannel) webhookHandler(w http.ResponseWriter, r *http.Reques
 }
 
 type googleChatEvent struct {
-	Type      string            `json:"type"`
-	Token     string            `json:"token,omitempty"`
-	Space     googleChatSpace   `json:"space,omitempty"`
-	Sender    googleChatUser    `json:"sender,omitempty"`
-	Message   json.RawMessage   `json:"message,omitempty"`
-	EventTime string            `json:"eventTime,omitempty"`
+	Type      string          `json:"type"`
+	Token     string          `json:"token,omitempty"`
+	Space     googleChatSpace `json:"space,omitempty"`
+	Sender    googleChatUser  `json:"sender,omitempty"`
+	Message   json.RawMessage `json:"message,omitempty"`
+	EventTime string          `json:"eventTime,omitempty"`
 }
 
 type googleChatSpace struct {
-	Name                           string `json:"name"`
-	DisplayName                    string `json:"displayName,omitempty"`
-	Type                           string `json:"type,omitempty"`
-	SingleUserBotDirectMessages    bool   `json:"singleUserBotDirectMessages,omitempty"`
+	Name                        string `json:"name"`
+	DisplayName                 string `json:"displayName,omitempty"`
+	Type                        string `json:"type,omitempty"`
+	SingleUserBotDirectMessages bool   `json:"singleUserBotDirectMessages,omitempty"`
 }
 
 type googleChatUser struct {
@@ -386,11 +386,11 @@ type googleChatUser struct {
 }
 
 type googleChatMessage struct {
-	Name       string            `json:"name"`
-	Text       string            `json:"text,omitempty"`
-	Sender     googleChatUser    `json:"sender,omitempty"`
-	Thread     googleChatThread  `json:"thread,omitempty"`
-	Annotation []any             `json:"annotation,omitempty"`
+	Name       string           `json:"name"`
+	Text       string           `json:"text,omitempty"`
+	Sender     googleChatUser   `json:"sender,omitempty"`
+	Thread     googleChatThread `json:"thread,omitempty"`
+	Annotation []any            `json:"annotation,omitempty"`
 }
 
 type googleChatThread struct {
@@ -413,7 +413,8 @@ func (c *GoogleChatChannel) verifySignature(body []byte, sigHeader string) bool 
 
 	pubKey, err := c.getPublicKey(kid)
 	if err != nil {
-		logger.WarnCF("google-chat", "Failed to get public key for kid", map[string]any{"kid": kid, "error": err.Error()})
+		logger.WarnCF("google-chat", "Failed to get public key for kid",
+			map[string]any{"kid": kid, "error": err.Error()})
 		return false
 	}
 
@@ -563,9 +564,9 @@ func (c *GoogleChatChannel) processEvent(event googleChatEvent) {
 
 	sender := bus.SenderInfo{
 		Platform:    "google-chat",
-		PlatformID:   senderID,
-		CanonicalID:  identity.BuildCanonicalID("google-chat", senderID),
-		Username:     senderID,
+		PlatformID:  senderID,
+		CanonicalID: identity.BuildCanonicalID("google-chat", senderID),
+		Username:    senderID,
 		DisplayName: senderDisplayName,
 	}
 
@@ -596,7 +597,7 @@ func (c *GoogleChatChannel) initBotAuth() error {
 	}
 
 	var sa struct {
-		ClientEmail   string `json:"client_email"`
+		ClientEmail  string `json:"client_email"`
 		PrivateKey   string `json:"private_key"`
 		TokenURI     string `json:"token_uri"`
 		PrivateKeyID string `json:"private_key_id,omitempty"`
@@ -727,14 +728,16 @@ func (c *GoogleChatChannel) StartTyping(ctx context.Context, chatID string) (fun
 			case <-ticker.C:
 				req2, err := http.NewRequestWithContext(typingCtx, http.MethodPost, endpoint, bytes.NewReader(body))
 				if err != nil {
-					logger.WarnCF("google-chat", "Failed to create typing refresh request", map[string]any{"error": err.Error()})
+					logger.WarnCF("google-chat", "Failed to create typing refresh request",
+						map[string]any{"error": err.Error()})
 					continue
 				}
 				req2.Header.Set("Authorization", "Bearer "+token)
 				req2.Header.Set("Content-Type", "application/json")
 				resp2, err := c.client.Do(req2)
 				if err != nil {
-					logger.WarnCF("google-chat", "Failed to refresh typing indicator", map[string]any{"error": err.Error()})
+					logger.WarnCF("google-chat", "Failed to refresh typing indicator",
+						map[string]any{"error": err.Error()})
 					continue
 				}
 				resp2.Body.Close()

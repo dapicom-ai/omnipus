@@ -38,7 +38,7 @@ func TestNewGoogleChatChannel_WebhookMode(t *testing.T) {
 func TestNewGoogleChatChannel_BotModeWithJSON(t *testing.T) {
 	cfg := config.GoogleChatConfig{
 		Enabled: true,
-		Mode:   "bot",
+		Mode:    "bot",
 		ServiceAccountJSON: newSS(`{
 			"client_email": "test@example.com",
 			"private_key": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gunVvxw\nVYyCAvRA1qVaS2lAFW8J8Z8pwC4sw3q3tqR9tGcLcWaVb3mZMiTJACJL+4WJxKKIlz1\nqL8tPB2Cxn5eGrL8Cnw4PYe0RQYp5q4bjByL2x3tHMF88dTj1gDgtLZM9Y2r0aZKLcS\nZ2fMvwD8W8bIqAYCCg3rGcNHCgL3i3qPVBMD8M8K8E6mBKPO5l9XLTdM4l0qYBN1f7q\n6E8Q1nLqJ0rI3tHMF88dTj1gDgtLZM9Y2r0aZKLcSZ2fMvwD8W8bIqAYCCg3rGcNHCg\nL3i3qPVBMD8M8K8E6mBKPO5l9XLTdM4l0qYBN1f7q6E8Q1nLqJ0rIxQIDAQABAoIBABb\nw2qPb4nLqJ0rI3tHMF88dTj1gDgtLZM9Y2r0aZKLcSZ2fMvwD8W8bIqAYCCg3rGcNHCg\nL3i3qPVBMD8M8K8E6mBKPO5l9XLTdM4l0qYBN1f7q6E8Q1nLqJ0rI3tHMF88dTj1gDgt\nLZM9Y2r0aZKLcSZ2fMvwD8W8bIqAYCCg3rGcNHCgL3i3qPVBMD8M8K8E6mBKPO5l9XLTd\nM4l0qYBN1f7q6E8Q1nLqJ0rI3tHMF88dTj1gDgtLZM9Y2r0aZKLcSZ2fMvwD8W8bIqAY\nCg3rGcNHCgL3i3qPVBMD8M8K8E6mBKPO5l9XLTdM4l0qYBN1f7q6E8Q1nLqJ0rIxQID\nAQABAoIBADhXe7s8vLp1V2xGLBHMx3qPVBMD8M8K8E6mBKPO5l9XLTdM4l0qYBN1f7q6\nE8Q1nLqJ0rI3tHMF88dTj1gDgtLZM9Y2r0aZKLcSZ2fMvwD8W8bIqAYCCg3rGcNHCgL3\ni3qPVBMD8M8K8E6mBKPO5l9XLTdM4l0qYBN1f7q6E8Q1nLqJ0rI3tHMF88dTj1gDgtLZ\nM9Y2r0aZKLcSZ2fMvwD8W8bIqAYCCg3rGcNHCgL3i3qPVBMD8M8K8E6mBKPO5l9XLTdM\nl0qYBN1f7q6E8Q1nLqJ0rI3tHMF88dTj1gDgtLZM9Y2r0aZKLcSZ2fMvwD8W8bIqAYC\nCg3rGcNHCgL3i3qPVBMD8M8K8E6mBKPO5l9XLTdM4l0qYBN1f7q6E8Q1nLqJ0rIxQID\nAQAB\n-----END RSA PRIVATE KEY-----\n",
@@ -168,7 +168,7 @@ func TestGoogleChatChannel_GroupTrigger_ORLogic(t *testing.T) {
 		{
 			name:         "not mentioned with mention_only true",
 			msg:          "hello",
-			isMentioned: false,
+			isMentioned:  false,
 			mMentionOnly: true,
 			want:         false,
 		},
@@ -240,7 +240,10 @@ func TestParseRetryAfter_WithHeader(t *testing.T) {
 	defer server.Close()
 	client := server.Client()
 	req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
-	resp, _ := client.Do(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("client.Do failed: %v", err)
+	}
 	defer resp.Body.Close()
 
 	delay := parseRetryAfter(resp)
@@ -256,7 +259,10 @@ func TestParseRetryAfter_WithoutHeader(t *testing.T) {
 	defer server.Close()
 	client := server.Client()
 	req, _ := http.NewRequest(http.MethodGet, server.URL, nil)
-	resp, _ := client.Do(req)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("client.Do failed: %v", err)
+	}
 	defer resp.Body.Close()
 
 	delay := parseRetryAfter(resp)
