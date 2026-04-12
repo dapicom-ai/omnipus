@@ -32,6 +32,12 @@ export const TOOL_PRESETS = {
       'web_fetch',
       'message',
       'send_file',
+      'browser.navigate',
+      'browser.click',
+      'browser.type',
+      'browser.screenshot',
+      'browser.get_text',
+      'browser.wait',
     ],
   },
   task_manager: {

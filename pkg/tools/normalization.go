@@ -79,6 +79,19 @@ func normalizeToolResult(
 		result.ForLLM = "[Tool returned media content; omitted from model context and registered as a media attachment.]"
 	}
 
+	// When normalization registered media AND fully consumed the ForLLM content
+	// (replaced with a placeholder), mark the result as handled so the agent loop
+	// delivers the media to the chat channel. Don't override if the tool already
+	// set ResponseHandled, or if there's meaningful ForLLM content remaining.
+	if len(result.Media) > 0 && !result.ResponseHandled {
+		llmIsPlaceholder := strings.HasPrefix(result.ForLLM, "[Tool returned") ||
+			result.ForLLM == inlineMediaOmittedMessage ||
+			result.ForLLM == largeBase64OmittedMessage
+		if llmIsPlaceholder {
+			result.ResponseHandled = true
+		}
+	}
+
 	return result
 }
 

@@ -7,9 +7,18 @@ import { queryClient } from '@/lib/queryClient'
 import type { Message, ToolCall } from '@/lib/api'
 import type { WsReceiveFrame, WsExecApprovalRequestFrame, WsReplayMessageFrame, WsRateLimitFrame } from '@/lib/ws'
 
+export interface MediaAttachment {
+  type: 'image' | 'audio' | 'video' | 'file'
+  url: string
+  filename: string
+  contentType: string
+  caption?: string
+}
+
 export interface ChatMessage extends Message {
   isStreaming?: boolean
   streamCursor?: boolean
+  media?: MediaAttachment[]
 }
 
 export interface RateLimitEventData {
@@ -457,6 +466,44 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             },
           ],
         }))
+        break
+      }
+
+      case 'media': {
+        if (!Array.isArray(frame.parts) || frame.parts.length === 0) {
+          console.warn('[chat] Received media frame with empty or invalid parts — ignoring')
+          break
+        }
+        const attachments: MediaAttachment[] = frame.parts
+          .filter((p) => p.url && p.type)
+          .map((p) => ({
+            type: p.type,
+            url: p.url,
+            filename: p.filename,
+            contentType: p.content_type,
+            caption: p.caption,
+          }))
+        if (attachments.length === 0) break
+        set((state) => {
+          const msgs = [...state.messages]
+          const lastIdx = msgs.map((m) => m.role).lastIndexOf('assistant')
+          if (lastIdx !== -1) {
+            msgs[lastIdx] = {
+              ...msgs[lastIdx],
+              media: [...(msgs[lastIdx].media ?? []), ...attachments],
+            }
+            return { messages: msgs }
+          }
+          // No assistant message yet — create a media-only placeholder.
+          msgs.push({
+            id: generateId(),
+            role: 'assistant',
+            content: '',
+            timestamp: new Date().toISOString(),
+            media: attachments,
+          })
+          return { messages: msgs }
+        })
         break
       }
 

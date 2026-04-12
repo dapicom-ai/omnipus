@@ -182,6 +182,41 @@ function AssistantMessageRetryButton() {
   )
 }
 
+// Renders inline media attachments (images, files) for the last assistant
+// message that carries media. Media arrives via WebSocket "media" frames and
+// is appended to the most recent assistant message in the chat store.
+function InlineMedia() {
+  const messages = useChatStore((s) => s.messages)
+  const storeMsg = [...messages].reverse().find((m) => m.role === 'assistant' && m.media?.length)
+
+  if (!storeMsg?.media?.length) return null
+
+  return (
+    <div className="flex flex-col gap-2 mt-2">
+      {storeMsg.media.map((m, i) =>
+        m.type === 'image' ? (
+          <div key={`${m.url}-${i}`} className="rounded-lg overflow-hidden border border-[var(--color-border)] max-w-md">
+            <img src={m.url} alt={m.caption || m.filename} className="w-full" loading="lazy" />
+            {m.caption && (
+              <p className="text-xs text-[var(--color-muted)] px-2 py-1">{m.caption}</p>
+            )}
+          </div>
+        ) : (
+          <a
+            key={`${m.url}-${i}`}
+            href={m.url}
+            download={m.filename}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-[var(--color-border)] text-xs text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors"
+          >
+            <File size={14} />
+            {m.filename}
+          </a>
+        ),
+      )}
+    </div>
+  )
+}
+
 function AssistantMessage() {
   return (
     <MessagePrimitive.Root className="group flex gap-3 px-4 py-3">
@@ -202,6 +237,7 @@ function AssistantMessage() {
               },
             }}
           />
+          <InlineMedia />
         </div>
 
         {/* Action bar — Copy + Retry buttons, visible on hover */}

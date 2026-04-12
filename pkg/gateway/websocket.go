@@ -71,6 +71,17 @@ type wsServerFrame struct {
 	PolicyRule        string  `json:"policy_rule,omitempty"`
 	RetryAfterSeconds float64 `json:"retry_after_seconds,omitempty"`
 	AgentID           string  `json:"agent_id,omitempty"`
+	// media frame fields
+	Parts []wsMediaPart `json:"parts,omitempty"`
+}
+
+// wsMediaPart represents a single media attachment in a "media" WebSocket frame.
+type wsMediaPart struct {
+	Type        string `json:"type"`         // "image" | "audio" | "video" | "file"
+	URL         string `json:"url"`          // /api/v1/media/{ref}
+	Filename    string `json:"filename"`     // original filename
+	ContentType string `json:"content_type"` // MIME type
+	Caption     string `json:"caption,omitempty"`
 }
 
 // WSHandler handles the /api/v1/chat/ws WebSocket endpoint for bi-directional
@@ -913,6 +924,7 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 				Type:       "tool_call_result",
 				CallID:     p.ToolCallID,
 				Tool:       p.Tool,
+				Result:     p.Result,
 				Status:     status,
 				DurationMs: p.Duration.Milliseconds(),
 			})

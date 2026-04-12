@@ -114,6 +114,19 @@ export interface WsRateLimitFrame {
   tool?: string
 }
 
+export interface WsMediaPart {
+  type: 'image' | 'audio' | 'video' | 'file'
+  url: string
+  filename: string
+  content_type: string
+  caption?: string
+}
+
+export interface WsMediaFrame {
+  type: 'media'
+  parts: WsMediaPart[]
+}
+
 export type WsReceiveFrame =
   | WsTokenFrame
   | WsDoneFrame
@@ -124,6 +137,7 @@ export type WsReceiveFrame =
   | WsTaskStatusChangedFrame
   | WsReplayMessageFrame
   | WsRateLimitFrame
+  | WsMediaFrame
 
 function isValidFrame(frame: unknown): frame is WsReceiveFrame {
   if (typeof frame !== 'object' || frame === null) return false

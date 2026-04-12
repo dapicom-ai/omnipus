@@ -123,7 +123,9 @@ func TestIsUntrustedToolResult(t *testing.T) {
 		"browser.navigate",
 		"browser.click",
 		"browser.type",
-		"browser.screenshot",
+		// browser.screenshot is trusted — its output is base64 PNG image data,
+		// not attacker-controlled text. Sanitizing corrupts the data URL format
+		// needed for the media pipeline to extract and register it.
 		"browser.get_text",
 		"browser.wait",
 		"browser.evaluate",
@@ -148,9 +150,10 @@ func TestIsUntrustedToolResult(t *testing.T) {
 		"task_update",
 		"task_list",
 		"find_skills",
-		"",            // empty string must not match
-		"web_search2", // typo-squatting must not match
-		"WEB_SEARCH",  // case-sensitive
+		"browser.screenshot", // base64 PNG — not attacker text
+		"",                   // empty string must not match
+		"web_search2",        // typo-squatting must not match
+		"WEB_SEARCH",         // case-sensitive
 	}
 	for _, name := range trusted {
 		t.Run("trusted/"+name, func(t *testing.T) {

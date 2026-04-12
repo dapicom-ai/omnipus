@@ -696,6 +696,7 @@ func setupAndStartServices(
 		taskStore:     tStore,
 		taskExecutor:  tExecutor,
 		credStore:     credStore,
+		mediaStore:    runningServices.MediaStore,
 	}
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions", api.withAuth(api.HandleSessions))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions/", api.withAuth(api.HandleSessions))

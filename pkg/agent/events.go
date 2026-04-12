@@ -220,6 +220,9 @@ type ToolExecEndPayload struct {
 	ForUserLen int
 	IsError    bool
 	Async      bool
+	// Result is the tool's ForLLM content, forwarded to the browser via WebSocket
+	// so rich tool UIs (e.g., browser screenshot preview) can render the result.
+	Result string
 }
 
 // ToolExecSkippedPayload describes a skipped tool call.

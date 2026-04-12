@@ -762,6 +762,10 @@ func TestProcessMessage_MediaArtifactCanBeForwardedBySendFile(t *testing.T) {
 	if response != "" {
 		t.Fatalf("expected no final response after send_file handled delivery, got %q", response)
 	}
+	// The media artifact tool returns both ForLLM content AND media refs.
+	// Normalization only auto-handles (ResponseHandled=true) when ForLLM is
+	// fully consumed by the placeholder. Since this tool has meaningful ForLLM,
+	// the agent continues to a second LLM call where it calls send_file.
 	if provider.calls != 2 {
 		t.Fatalf("expected 2 LLM calls (artifact + send_file), got %d", provider.calls)
 	}
