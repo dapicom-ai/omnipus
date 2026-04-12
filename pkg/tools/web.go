@@ -1025,6 +1025,8 @@ func (t *WebSearchTool) Description() string {
 	return "Search the web for current information. Supports query, count, and an optional temporal range filter. Returns titles, URLs, and snippets from search results."
 }
 
+func (t *WebSearchTool) Scope() ToolScope { return ScopeGeneral }
+
 func (t *WebSearchTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -1178,6 +1180,8 @@ func (t *WebFetchTool) Name() string {
 func (t *WebFetchTool) Description() string {
 	return "Fetch a URL and extract readable content (HTML to text). Use this to get weather info, news, articles, or any web content."
 }
+
+func (t *WebFetchTool) Scope() ToolScope { return ScopeGeneral }
 
 func (t *WebFetchTool) Parameters() map[string]any {
 	return map[string]any{

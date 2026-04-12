@@ -394,6 +394,12 @@ type AgentConfig struct {
 	Color string `json:"color,omitempty"`
 	// Icon is the Phosphor icon name for this agent's avatar in the UI (e.g. "robot").
 	Icon string `json:"icon,omitempty"`
+	// Type classifies the agent. Empty defaults to AgentTypeCustom for stored agents;
+	// use ResolveType() to get the effective type.
+	Type AgentType `json:"type,omitempty"`
+	// Tools, when non-nil, overrides scope-based tool visibility for this agent.
+	// Nil means all tools allowed by the agent's type are available.
+	Tools *AgentToolsCfg `json:"tools,omitempty"`
 }
 
 // IsActive returns the effective active state of this agent.
@@ -402,6 +408,67 @@ type AgentConfig struct {
 // Agents with Enabled=false are inactive; Enabled=true are explicitly active.
 func (a AgentConfig) IsActive() bool {
 	return a.Enabled == nil || *a.Enabled
+}
+
+// AgentType classifies an agent for scope-based tool visibility filtering.
+type AgentType string
+
+const (
+	AgentTypeSystem AgentType = "system"
+	AgentTypeCore   AgentType = "core"
+	AgentTypeCustom AgentType = "custom"
+)
+
+// AgentToolsCfg holds per-agent overrides for builtin tool visibility and MCP server bindings.
+type AgentToolsCfg struct {
+	Builtin AgentBuiltinToolsCfg `json:"builtin,omitempty"`
+	MCP     AgentMCPToolsCfg     `json:"mcp,omitempty"`
+}
+
+// AgentBuiltinToolsCfg controls which builtin tools are visible to an agent.
+type AgentBuiltinToolsCfg struct {
+	// Mode determines how the tool set is computed:
+	//   - "inherit": agent inherits tools based on its type (default)
+	//   - "explicit": only tools listed in Visible are available
+	Mode    VisibilityMode `json:"mode"`
+	Visible []string       `json:"visible,omitempty"` // tool names when Mode=explicit
+}
+
+// AgentMCPToolsCfg controls which MCP servers are available to an agent.
+type AgentMCPToolsCfg struct {
+	Servers []AgentMCPServerBinding `json:"servers,omitempty"`
+}
+
+// AgentMCPServerBinding binds an MCP server to an agent.
+type AgentMCPServerBinding struct {
+	ID    string   `json:"id"`
+	Tools []string `json:"tools,omitempty"` // empty or ["*"] = all tools from that server
+}
+
+// VisibilityMode determines how an agent's tool set is computed.
+type VisibilityMode string
+
+const (
+	VisibilityInherit  VisibilityMode = "inherit"
+	VisibilityExplicit VisibilityMode = "explicit"
+)
+
+// ResolveType returns the effective agent type. If the Type field is set, it is
+// returned directly. Otherwise the type is inferred: "omnipus-system" →
+// AgentTypeSystem; known core agent IDs → AgentTypeCore; everything else →
+// AgentTypeCustom. The caller must provide isCoreAgent to avoid an import cycle
+// with the coreagent package.
+func (a AgentConfig) ResolveType(isCoreAgent func(string) bool) AgentType {
+	if a.Type != "" {
+		return a.Type
+	}
+	if a.ID == "omnipus-system" {
+		return AgentTypeSystem
+	}
+	if isCoreAgent != nil && isCoreAgent(a.ID) {
+		return AgentTypeCore
+	}
+	return AgentTypeCustom
 }
 
 type SubagentsConfig struct {

@@ -42,6 +42,8 @@ func (t *SpawnTool) Description() string {
 	return "Spawn a subagent to handle a task in the background. Use this for complex or time-consuming tasks that can run independently. The subagent will complete the task and report back when done."
 }
 
+func (t *SpawnTool) Scope() ToolScope { return ScopeCore }
+
 func (t *SpawnTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",

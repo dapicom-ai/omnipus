@@ -32,6 +32,8 @@ func (t *EditFileTool) Description() string {
 	return "Edit a file by replacing old_text with new_text. The old_text must exist exactly in the file."
 }
 
+func (t *EditFileTool) Scope() ToolScope { return ScopeCore }
+
 func (t *EditFileTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -94,6 +96,8 @@ func (t *AppendFileTool) Name() string {
 func (t *AppendFileTool) Description() string {
 	return "Append content to the end of a file"
 }
+
+func (t *AppendFileTool) Scope() ToolScope { return ScopeCore }
 
 func (t *AppendFileTool) Parameters() map[string]any {
 	return map[string]any{

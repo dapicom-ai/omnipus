@@ -19,7 +19,8 @@ func NewTaskListTool(store *taskstore.TaskStore) *TaskListTool {
 	return &TaskListTool{store: store}
 }
 
-func (t *TaskListTool) Name() string { return "task_list" }
+func (t *TaskListTool) Name() string     { return "task_list" }
+func (t *TaskListTool) Scope() ToolScope { return ScopeGeneral }
 
 func (t *TaskListTool) Description() string {
 	return "List tasks. Use role='assignee' for tasks assigned to you, role='delegator' for tasks you created for other agents."
@@ -87,7 +88,8 @@ func (t *TaskCreateTool) SetDelegateChecker(fn func(targetAgentID string) bool) 
 	t.delegateCheck = fn
 }
 
-func (t *TaskCreateTool) Name() string { return "task_create" }
+func (t *TaskCreateTool) Name() string     { return "task_create" }
+func (t *TaskCreateTool) Scope() ToolScope { return ScopeGeneral }
 
 func (t *TaskCreateTool) Description() string {
 	return "Create a task and assign it to an agent for execution."
@@ -215,7 +217,8 @@ func (t *TaskUpdateTool) SetOnComplete(fn func(*taskstore.TaskEntity)) {
 	t.onComplete = fn
 }
 
-func (t *TaskUpdateTool) Name() string { return "task_update" }
+func (t *TaskUpdateTool) Name() string     { return "task_update" }
+func (t *TaskUpdateTool) Scope() ToolScope { return ScopeGeneral }
 
 func (t *TaskUpdateTool) Description() string {
 	return "Update status of a task assigned to you. Mark as running, completed, or failed."
@@ -321,7 +324,8 @@ func NewTaskDeleteTool(store *taskstore.TaskStore) *TaskDeleteTool {
 	return &TaskDeleteTool{store: store}
 }
 
-func (t *TaskDeleteTool) Name() string { return "task_delete" }
+func (t *TaskDeleteTool) Name() string     { return "task_delete" }
+func (t *TaskDeleteTool) Scope() ToolScope { return ScopeGeneral }
 func (t *TaskDeleteTool) Description() string {
 	return "Delete a task by ID. Only use when explicitly asked to remove a task."
 }
@@ -366,7 +370,8 @@ func NewAgentListTool(lister func() []AgentInfo) *AgentListTool {
 	return &AgentListTool{listAgents: lister}
 }
 
-func (t *AgentListTool) Name() string { return "agent_list" }
+func (t *AgentListTool) Name() string     { return "agent_list" }
+func (t *AgentListTool) Scope() ToolScope { return ScopeGeneral }
 func (t *AgentListTool) Description() string {
 	return "List all available agents with their IDs and names. Use this to resolve agent names to IDs before delegating tasks."
 }

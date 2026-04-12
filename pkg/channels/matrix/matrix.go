@@ -213,7 +213,10 @@ func NewMatrixChannel(
 		return nil, fmt.Errorf("matrix user_id is required")
 	}
 	if accessToken == "" {
-		return nil, fmt.Errorf("matrix: access_token not resolved (access_token_ref=%q): check credential store", cfg.AccessTokenRef)
+		return nil, fmt.Errorf(
+			"matrix: access_token not resolved (access_token_ref=%q): check credential store",
+			cfg.AccessTokenRef,
+		)
 	}
 
 	client, err := mautrix.NewClient(homeserver, id.UserID(userID), accessToken)
@@ -231,7 +234,10 @@ func NewMatrixChannel(
 
 	cryptoPassphrase := secrets.GetString(cfg.CryptoPassphraseRef)
 	if cfg.CryptoPassphraseRef != "" && cryptoPassphrase == "" {
-		return nil, fmt.Errorf("matrix: crypto_passphrase not resolved (crypto_passphrase_ref=%q): check credential store", cfg.CryptoPassphraseRef)
+		return nil, fmt.Errorf(
+			"matrix: crypto_passphrase not resolved (crypto_passphrase_ref=%q): check credential store",
+			cfg.CryptoPassphraseRef,
+		)
 	}
 
 	base := channels.NewBaseChannel(

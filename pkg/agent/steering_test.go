@@ -446,8 +446,9 @@ type slowTool struct {
 	execCh   chan struct{} // closed when Execute starts
 }
 
-func (t *slowTool) Name() string        { return t.name }
-func (t *slowTool) Description() string { return "slow tool for testing" }
+func (t *slowTool) Name() string           { return t.name }
+func (t *slowTool) Description() string    { return "slow tool for testing" }
+func (t *slowTool) Scope() tools.ToolScope { return tools.ScopeGeneral }
 func (t *slowTool) Parameters() map[string]any {
 	return map[string]any{
 		"type":       "object",
@@ -626,8 +627,9 @@ type interruptibleTool struct {
 	once    sync.Once
 }
 
-func (t *interruptibleTool) Name() string        { return t.name }
-func (t *interruptibleTool) Description() string { return "interruptible tool for testing" }
+func (t *interruptibleTool) Name() string           { return t.name }
+func (t *interruptibleTool) Description() string    { return "interruptible tool for testing" }
+func (t *interruptibleTool) Scope() tools.ToolScope { return tools.ScopeGeneral }
 func (t *interruptibleTool) Parameters() map[string]any {
 	return map[string]any{
 		"type":       "object",

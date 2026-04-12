@@ -34,6 +34,8 @@ func (t *SpawnStatusTool) Description() string {
 		"(e.g. direct programmatic calls via Execute)."
 }
 
+func (t *SpawnStatusTool) Scope() ToolScope { return ScopeCore }
+
 func (t *SpawnStatusTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",

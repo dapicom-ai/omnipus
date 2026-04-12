@@ -12,12 +12,15 @@ import (
 )
 
 func init() {
-	channels.RegisterFactory("matrix", func(cfg *config.Config, secrets credentials.SecretBundle, b *bus.MessageBus) (channels.Channel, error) {
-		matrixCfg := cfg.Channels.Matrix
-		cryptoDatabasePath := matrixCfg.CryptoDatabasePath
-		if cryptoDatabasePath == "" {
-			cryptoDatabasePath = filepath.Join(cfg.WorkspacePath(), "matrix")
-		}
-		return NewMatrixChannel(matrixCfg, secrets, b, cryptoDatabasePath)
-	})
+	channels.RegisterFactory(
+		"matrix",
+		func(cfg *config.Config, secrets credentials.SecretBundle, b *bus.MessageBus) (channels.Channel, error) {
+			matrixCfg := cfg.Channels.Matrix
+			cryptoDatabasePath := matrixCfg.CryptoDatabasePath
+			if cryptoDatabasePath == "" {
+				cryptoDatabasePath = filepath.Join(cfg.WorkspacePath(), "matrix")
+			}
+			return NewMatrixChannel(matrixCfg, secrets, b, cryptoDatabasePath)
+		},
+	)
 }

@@ -26,6 +26,8 @@ func (t *RemoveSkillTool) Description() string {
 	return "Remove an installed skill by name. The skill's directory is deleted and it becomes unavailable to the agent."
 }
 
+func (t *RemoveSkillTool) Scope() ToolScope { return ScopeGeneral }
+
 func (t *RemoveSkillTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",

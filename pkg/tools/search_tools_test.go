@@ -19,6 +19,7 @@ func (m *mockSearchableTool) Parameters() map[string]any {
 	return map[string]any{"type": "object"}
 }
 
+func (m *mockSearchableTool) Scope() ToolScope { return ScopeGeneral }
 func (m *mockSearchableTool) Execute(ctx context.Context, args map[string]any) *ToolResult {
 	return SilentResult("mock executed: " + m.name)
 }

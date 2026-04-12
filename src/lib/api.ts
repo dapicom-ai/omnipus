@@ -859,6 +859,39 @@ export function fetchRateLimits(): Promise<RateLimitStatus> {
   return request<RateLimitStatus>('/security/rate-limits')
 }
 
+// ── Agent Tools ───────────────────────────────────────────────────────────────
+
+export interface BuiltinTool {
+  name: string
+  scope: 'system' | 'core' | 'general'
+  category: string
+  description: string
+}
+
+export interface AgentToolsCfg {
+  builtin: { mode: 'explicit' | 'inherit'; visible?: string[] }
+  mcp?: { servers: { id: string; tools?: string[] }[] }
+}
+
+export function fetchBuiltinTools(): Promise<BuiltinTool[]> {
+  return request<BuiltinTool[]>('/tools/builtin')
+}
+
+export function fetchMcpServersForAgent(): Promise<McpServer[]> {
+  return request<McpServer[]>('/mcp-servers')
+}
+
+export function fetchAgentTools(agentId: string): Promise<{ config: AgentToolsCfg; effective_tools: BuiltinTool[] }> {
+  return request<{ config: AgentToolsCfg; effective_tools: BuiltinTool[] }>(`/agents/${encodeURIComponent(agentId)}/tools`)
+}
+
+export function updateAgentTools(agentId: string, cfg: AgentToolsCfg): Promise<{ config: AgentToolsCfg; effective_tools: BuiltinTool[] }> {
+  return request<{ config: AgentToolsCfg; effective_tools: BuiltinTool[] }>(`/agents/${encodeURIComponent(agentId)}/tools`, {
+    method: 'PUT',
+    body: JSON.stringify(cfg),
+  })
+}
+
 // ── Sandbox Status ────────────────────────────────────────────────────────────
 
 export interface SandboxStatus {

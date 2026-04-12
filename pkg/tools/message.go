@@ -25,6 +25,8 @@ func (t *MessageTool) Description() string {
 	return "Send a message to user on a chat channel. Use this when you want to communicate something."
 }
 
+func (t *MessageTool) Scope() ToolScope { return ScopeGeneral }
+
 func (t *MessageTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",

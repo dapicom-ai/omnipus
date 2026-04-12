@@ -29,6 +29,8 @@ import { SmartSelect } from '@/components/ui/smart-select'
 import { ModelSelector } from '@/components/ui/model-selector'
 import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from '@/components/ui/accordion'
+import { ToolsAndPermissions } from './ToolsAndPermissions'
 import {
   fetchAgent,
   updateAgent,
@@ -37,6 +39,7 @@ import {
   fetchActivity,
   type AgentSession,
   type ActivityEvent,
+  type AgentToolsCfg,
 } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { AVATAR_COLORS } from '@/lib/constants'
@@ -138,6 +141,9 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
   const [toolFeedback, setToolFeedback] = useState(false)
   const [heartbeatEnabled, setHeartbeatEnabled] = useState(false)
   const [heartbeatInterval, setHeartbeatInterval] = useState(30)
+  const [toolsCfg, setToolsCfg] = useState<AgentToolsCfg>({
+    builtin: { mode: 'inherit' },
+  })
 
   useEffect(() => {
     if (!agent) return
@@ -317,7 +323,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
 
   return (
     <div className="absolute inset-0 overflow-y-auto">
-    <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
+    <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
       {/* Header */}
       <div className="flex items-center gap-3">
         <Button
@@ -362,459 +368,468 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
 
       <Separator />
 
-      {/* Identity section */}
-      {canEdit && (
-        <>
-          <section className="space-y-3">
-            <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)]">Identity</h2>
-            <div className="space-y-2">
-              <Input
-                value={name}
-                onChange={(e) => { markDirty(); setName(e.target.value) }}
-                placeholder="Agent name"
-                className="text-sm"
-              />
-              <Textarea
-                value={description}
-                onChange={(e) => { markDirty(); setDescription(e.target.value) }}
-                placeholder="Short description of this agent's purpose"
-                rows={2}
-                className="text-sm resize-none"
-              />
-            </div>
-
-            {/* Color picker */}
-            <div className="space-y-1.5">
-              <p className="text-xs text-[var(--color-muted)]">Avatar color</p>
-              <div className="flex gap-2">
-                {AVATAR_COLORS.map((color) => (
-                  <button
-                    key={color}
-                    type="button"
-                    onClick={() => { markDirty(); setSelectedColor(color) }}
-                    className="w-7 h-7 rounded-full transition-transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:ring-offset-1 focus:ring-offset-[var(--color-primary)]"
-                    style={{
-                      backgroundColor: color,
-                      boxShadow: selectedColor === color ? `0 0 0 2px var(--color-primary), 0 0 0 4px ${color}` : undefined,
-                    }}
-                    aria-label={color}
-                  />
-                ))}
-              </div>
-            </div>
-
-            {/* Icon picker */}
-            <div className="space-y-1.5">
-              <p className="text-xs text-[var(--color-muted)]">Avatar icon</p>
-              <SmartSelect
-                value={selectedIcon}
-                onValueChange={(v) => { markDirty(); setSelectedIcon(v as IconName) }}
-                triggerClassName="w-48"
-                items={ICON_OPTIONS.map(({ name: iconName }) => ({ value: iconName, label: iconName }))}
-              />
-            </div>
-          </section>
-          <Separator />
-        </>
-      )}
-
-      {/* Model section */}
-      <section className="space-y-3">
-        <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)]">Model</h2>
-        {providersError && (
-          <p className="text-xs text-[var(--color-warning)]">
-            Could not load providers. You can still enter a model slug manually.
-          </p>
-        )}
-        <ModelSelector
-          models={availableModels}
-          value={model}
-          onChange={(v) => { markDirty(); setModel(v) }}
-          placeholder="Provider default"
-          disabled={!canEdit}
-        />
-
-        {/* Fallback models */}
+      <Accordion
+        type="multiple"
+        defaultValue={['identity']}
+        className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden"
+      >
+        {/* Identity — default OPEN */}
         {canEdit && (
-          <div className="space-y-1.5">
-            <p className="text-xs text-[var(--color-muted)]">Fallback models (tried in order if primary fails)</p>
-            <div className="flex flex-wrap gap-1.5 p-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] min-h-[36px]">
-              {fallbackModels.map((m) => (
-                <span
-                  key={m}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono bg-[var(--color-surface-2)] text-[var(--color-secondary)] border border-[var(--color-border)]"
-                >
-                  {m}
-                  <button
-                    type="button"
-                    onClick={() => setFallbackModels((prev) => prev.filter((x) => x !== m))}
-                    className="text-[var(--color-muted)] hover:text-[var(--color-error)] transition-colors"
-                  >
-                    <X size={10} />
-                  </button>
-                </span>
-              ))}
-              <input
-                value={fallbackInput}
-                onChange={(e) => { markDirty(); setFallbackInput(e.target.value) }}
-                onKeyDown={handleFallbackKeyDown}
-                onBlur={addFallbackModel}
-                placeholder={fallbackModels.length === 0 ? 'Type a model name, press Enter' : ''}
-                className="flex-1 min-w-[160px] bg-transparent text-xs text-[var(--color-secondary)] outline-none placeholder:text-[var(--color-muted)]"
-              />
-            </div>
-          </div>
-        )}
-
-        {/* Advanced model params */}
-        {canEdit && (
-          <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setAdvancedOpen((o) => !o)}
-              className="flex items-center justify-between w-full px-3 py-2.5 text-sm font-medium text-[var(--color-secondary)] hover:text-[var(--color-accent)] transition-colors"
-            >
-              <span>Advanced parameters</span>
-              {advancedOpen ? <CaretUp size={13} /> : <CaretDown size={13} />}
-            </button>
-            {advancedOpen && (
-              <div className="px-3 pb-3 space-y-4 border-t border-[var(--color-border)]">
-                <RangeField
-                  label="Temperature"
-                  value={temperature}
-                  min={0}
-                  max={2}
-                  step={0.05}
-                  onChange={(v) => { markDirty(); setTemperature(v) }}
-                  format={(v) => v.toFixed(2)}
-                />
-                <RangeField
-                  label="Max tokens"
-                  value={maxTokens}
-                  min={256}
-                  max={32768}
-                  step={256}
-                  onChange={(v) => { markDirty(); setMaxTokens(v) }}
-                  format={(v) => v.toLocaleString()}
-                />
-                <RangeField
-                  label="Top P"
-                  value={topP}
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  onChange={(v) => { markDirty(); setTopP(v) }}
-                  format={(v) => v.toFixed(2)}
-                />
-              </div>
-            )}
-          </div>
-        )}
-      </section>
-
-      {/* SOUL.md editor */}
-      {canEdit && (
-        <>
-          <Separator />
-          <section className="space-y-3">
-            <div className="flex items-center gap-2">
-              <Scroll size={14} className="text-[var(--color-accent)]" />
-              <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)]">SOUL.md</h2>
-            </div>
-            <p className="text-xs text-[var(--color-muted)]">
-              The agent's personality and system prompt — defines who the agent is and how it behaves.
-            </p>
-            <Textarea
-              value={soul}
-              onChange={(e) => { markDirty(); setSoul(e.target.value) }}
-              placeholder={"# Soul\n\nDefine this agent's personality, expertise, and behavioral guidelines..."}
-              rows={8}
-              className="text-xs font-mono resize-none"
-            />
-            <SaveAllButton onUpload={setSoul} />
-          </section>
-        </>
-      )}
-
-      {/* Additional Instructions editor */}
-      {canEdit && (
-        <>
-          <Separator />
-          <section className="space-y-3">
-            <div className="flex items-center gap-2">
-              <NotePencil size={14} className="text-[var(--color-accent)]" />
-              <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)]">Additional Instructions</h2>
-            </div>
-            <p className="text-xs text-[var(--color-muted)]">
-              Extra instructions appended to the agent's context — task-specific guidance, constraints, or domain knowledge.
-            </p>
-            <Textarea
-              value={instructions}
-              onChange={(e) => { markDirty(); setInstructions(e.target.value) }}
-              placeholder="Add specific instructions, constraints, or domain knowledge..."
-              rows={6}
-              className="text-xs font-mono resize-none"
-            />
-            <SaveAllButton onUpload={setInstructions} />
-          </section>
-        </>
-      )}
-
-      {/* HEARTBEAT.md editor */}
-      {canEdit && (
-        <>
-          <Separator />
-          <section className="space-y-3">
-            <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)]">HEARTBEAT.md</h2>
-            <p className="text-xs text-[var(--color-muted)]">
-              The agent's persistent context — goals, preferences, and working memory.
-            </p>
-            <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3 space-y-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-[var(--color-secondary)]">Enable heartbeat</p>
-                  <p className="text-xs text-[var(--color-muted)]">Run this agent on a recurring schedule</p>
-                </div>
-                <Switch
-                  checked={heartbeatEnabled}
-                  onCheckedChange={(v) => { markDirty(); setHeartbeatEnabled(v) }}
-                  disabled={!canEdit}
-                />
-              </div>
-              {heartbeatEnabled && (
-                <div className="flex items-center gap-3 pt-1 border-t border-[var(--color-border)]">
-                  <label className="text-xs text-[var(--color-muted)] w-44 shrink-0">Interval (seconds)</label>
+          <AccordionItem value="identity" className="border-0">
+            <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+              Identity
+            </AccordionTrigger>
+            <AccordionContent>
+              <div className="px-4 space-y-3">
+                <div className="space-y-2">
                   <Input
-                    type="number"
-                    min={1}
-                    value={heartbeatInterval}
-                    onChange={(e) => { markDirty(); setHeartbeatInterval(Number(e.target.value)) }}
-                    className="text-xs h-8"
-                    disabled={!canEdit}
+                    value={name}
+                    onChange={(e) => { markDirty(); setName(e.target.value) }}
+                    placeholder="Agent name"
+                    className="text-sm"
                   />
+                  <Textarea
+                    value={description}
+                    onChange={(e) => { markDirty(); setDescription(e.target.value) }}
+                    placeholder="Short description of this agent's purpose"
+                    rows={2}
+                    className="text-sm resize-none"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <p className="text-xs text-[var(--color-muted)]">Avatar color</p>
+                  <div className="flex gap-2">
+                    {AVATAR_COLORS.map((color) => (
+                      <button
+                        key={color}
+                        type="button"
+                        onClick={() => { markDirty(); setSelectedColor(color) }}
+                        className="w-7 h-7 rounded-full transition-transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)] focus:ring-offset-1 focus:ring-offset-[var(--color-primary)]"
+                        style={{
+                          backgroundColor: color,
+                          boxShadow: selectedColor === color ? `0 0 0 2px var(--color-primary), 0 0 0 4px ${color}` : undefined,
+                        }}
+                        aria-label={color}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <p className="text-xs text-[var(--color-muted)]">Avatar icon</p>
+                  <SmartSelect
+                    value={selectedIcon}
+                    onValueChange={(v) => { markDirty(); setSelectedIcon(v as IconName) }}
+                    triggerClassName="w-48"
+                    items={ICON_OPTIONS.map(({ name: iconName }) => ({ value: iconName, label: iconName }))}
+                  />
+                </div>
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        )}
+
+        {/* Model Configuration — default CLOSED */}
+        <AccordionItem value="model" className="border-0">
+          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+            Model Configuration
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="px-4 space-y-3">
+              {providersError && (
+                <p className="text-xs text-[var(--color-warning)]">
+                  Could not load providers. You can still enter a model slug manually.
+                </p>
+              )}
+              <ModelSelector
+                models={availableModels}
+                value={model}
+                onChange={(v) => { markDirty(); setModel(v) }}
+                placeholder="Provider default"
+                disabled={!canEdit}
+              />
+              {canEdit && (
+                <div className="space-y-1.5">
+                  <p className="text-xs text-[var(--color-muted)]">Fallback models (tried in order if primary fails)</p>
+                  <div className="flex flex-wrap gap-1.5 p-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] min-h-[36px]">
+                    {fallbackModels.map((m) => (
+                      <span
+                        key={m}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-mono bg-[var(--color-surface-2)] text-[var(--color-secondary)] border border-[var(--color-border)]"
+                      >
+                        {m}
+                        <button
+                          type="button"
+                          onClick={() => setFallbackModels((prev) => prev.filter((x) => x !== m))}
+                          className="text-[var(--color-muted)] hover:text-[var(--color-error)] transition-colors"
+                        >
+                          <X size={10} />
+                        </button>
+                      </span>
+                    ))}
+                    <input
+                      value={fallbackInput}
+                      onChange={(e) => { markDirty(); setFallbackInput(e.target.value) }}
+                      onKeyDown={handleFallbackKeyDown}
+                      onBlur={addFallbackModel}
+                      placeholder={fallbackModels.length === 0 ? 'Type a model name, press Enter' : ''}
+                      className="flex-1 min-w-[160px] bg-transparent text-xs text-[var(--color-secondary)] outline-none placeholder:text-[var(--color-muted)]"
+                    />
+                  </div>
+                </div>
+              )}
+              {canEdit && (
+                <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setAdvancedOpen((o) => !o)}
+                    className="flex items-center justify-between w-full px-3 py-2.5 text-sm font-medium text-[var(--color-secondary)] hover:text-[var(--color-accent)] transition-colors"
+                  >
+                    <span>Advanced parameters</span>
+                    {advancedOpen ? <CaretUp size={13} /> : <CaretDown size={13} />}
+                  </button>
+                  {advancedOpen && (
+                    <div className="px-3 pb-3 space-y-4 border-t border-[var(--color-border)]">
+                      <RangeField
+                        label="Temperature"
+                        value={temperature}
+                        min={0}
+                        max={2}
+                        step={0.05}
+                        onChange={(v) => { markDirty(); setTemperature(v) }}
+                        format={(v) => v.toFixed(2)}
+                      />
+                      <RangeField
+                        label="Max tokens"
+                        value={maxTokens}
+                        min={256}
+                        max={32768}
+                        step={256}
+                        onChange={(v) => { markDirty(); setMaxTokens(v) }}
+                        format={(v) => v.toLocaleString()}
+                      />
+                      <RangeField
+                        label="Top P"
+                        value={topP}
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        onChange={(v) => { markDirty(); setTopP(v) }}
+                        format={(v) => v.toFixed(2)}
+                      />
+                    </div>
+                  )}
                 </div>
               )}
             </div>
-            <Textarea
-              value={heartbeat}
-              onChange={(e) => { markDirty(); setHeartbeat(e.target.value) }}
-              placeholder="# Heartbeat&#10;&#10;Write persistent context for this agent..."
-              rows={6}
-              className="text-xs font-mono resize-none"
-            />
-            <SaveAllButton onUpload={setHeartbeat} />
-          </section>
-        </>
-      )}
+          </AccordionContent>
+        </AccordionItem>
 
-      {/* Rate limits section */}
-      {agent.type !== 'system' && (
-        <>
-          <Separator />
-          <section className="space-y-3">
-            <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)]">Rate Limits</h2>
-            <div className="flex items-center justify-between py-1">
-              <div>
-                <p className="text-sm text-[var(--color-secondary)]">Use global defaults</p>
-                <p className="text-xs text-[var(--color-muted)]">Inherit rate limits from global settings</p>
-              </div>
-              <Switch
-                checked={useGlobalRateLimits}
-                onCheckedChange={(v) => { markDirty(); setUseGlobalRateLimits(v) }}
-                disabled={!canEdit}
-              />
-            </div>
-            {!useGlobalRateLimits && (
-              <div className="space-y-2">
-                <div className="flex items-center gap-3">
-                  <label className="text-xs text-[var(--color-muted)] w-44 shrink-0">LLM calls / hour</label>
-                  <Input
-                    type="number"
-                    min={0}
-                    value={maxLlmCallsPerHour}
-                    onChange={(e) => { markDirty(); setMaxLlmCallsPerHour(e.target.value === '' ? '' : Number(e.target.value)) }}
-                    placeholder="Unlimited"
-                    className="text-xs h-8"
+        {/* Rate Limits — default CLOSED */}
+        {agent.type !== 'system' && (
+          <AccordionItem value="rate-limits" className="border-0">
+            <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+              Rate Limits
+            </AccordionTrigger>
+            <AccordionContent>
+              <div className="px-4 space-y-3">
+                <div className="flex items-center justify-between py-1">
+                  <div>
+                    <p className="text-sm text-[var(--color-secondary)]">Use global defaults</p>
+                    <p className="text-xs text-[var(--color-muted)]">Inherit rate limits from global settings</p>
+                  </div>
+                  <Switch
+                    checked={useGlobalRateLimits}
+                    onCheckedChange={(v) => { markDirty(); setUseGlobalRateLimits(v) }}
                     disabled={!canEdit}
                   />
                 </div>
-                <div className="flex items-center gap-3">
-                  <label className="text-xs text-[var(--color-muted)] w-44 shrink-0">Tool calls / minute</label>
-                  <Input
-                    type="number"
-                    min={0}
-                    value={maxToolCallsPerMinute}
-                    onChange={(e) => { markDirty(); setMaxToolCallsPerMinute(e.target.value === '' ? '' : Number(e.target.value)) }}
-                    placeholder="Unlimited"
-                    className="text-xs h-8"
-                    disabled={!canEdit}
-                  />
-                </div>
-                <div className="flex items-center gap-3">
-                  <label className="text-xs text-[var(--color-muted)] w-44 shrink-0">Max cost / day ($)</label>
-                  <Input
-                    type="number"
-                    min={0}
-                    step={0.01}
-                    value={maxCostPerDay}
-                    onChange={(e) => { markDirty(); setMaxCostPerDay(e.target.value === '' ? '' : Number(e.target.value)) }}
-                    placeholder="Unlimited"
-                    className="text-xs h-8"
-                    disabled={!canEdit}
-                  />
-                </div>
+                {!useGlobalRateLimits && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-3">
+                      <label className="text-xs text-[var(--color-muted)] w-44 shrink-0">LLM calls / hour</label>
+                      <Input
+                        type="number"
+                        min={0}
+                        value={maxLlmCallsPerHour}
+                        onChange={(e) => { markDirty(); setMaxLlmCallsPerHour(e.target.value === '' ? '' : Number(e.target.value)) }}
+                        placeholder="Unlimited"
+                        className="text-xs h-8"
+                        disabled={!canEdit}
+                      />
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <label className="text-xs text-[var(--color-muted)] w-44 shrink-0">Tool calls / minute</label>
+                      <Input
+                        type="number"
+                        min={0}
+                        value={maxToolCallsPerMinute}
+                        onChange={(e) => { markDirty(); setMaxToolCallsPerMinute(e.target.value === '' ? '' : Number(e.target.value)) }}
+                        placeholder="Unlimited"
+                        className="text-xs h-8"
+                        disabled={!canEdit}
+                      />
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <label className="text-xs text-[var(--color-muted)] w-44 shrink-0">Max cost / day ($)</label>
+                      <Input
+                        type="number"
+                        min={0}
+                        step={0.01}
+                        value={maxCostPerDay}
+                        onChange={(e) => { markDirty(); setMaxCostPerDay(e.target.value === '' ? '' : Number(e.target.value)) }}
+                        placeholder="Unlimited"
+                        className="text-xs h-8"
+                        disabled={!canEdit}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
-          </section>
-        </>
-      )}
-
-      {/* Execution section */}
-      {agent.type !== 'system' && (
-        <>
-          <Separator />
-          <section className="space-y-3">
-            <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)]">Execution</h2>
-            <div className="space-y-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4">
-              <div className="flex items-center gap-3">
-                <label className="text-xs text-[var(--color-muted)] w-44 shrink-0">
-                  Turn timeout (seconds)
-                  <span className="block text-[10px] text-[var(--color-muted)]/70">0 = no limit</span>
-                </label>
-                <Input
-                  type="number"
-                  min={0}
-                  value={timeoutSeconds}
-                  onChange={(e) => { markDirty(); setTimeoutSeconds(Number(e.target.value)) }}
-                  className="text-xs h-8"
-                  disabled={!canEdit}
-                />
-              </div>
-              <div className="flex items-center gap-3">
-                <label className="text-xs text-[var(--color-muted)] w-44 shrink-0">Max tool iterations</label>
-                <Input
-                  type="number"
-                  min={1}
-                  value={maxToolIterations}
-                  onChange={(e) => { markDirty(); setMaxToolIterations(Number(e.target.value)) }}
-                  className="text-xs h-8"
-                  disabled={!canEdit}
-                />
-              </div>
-              <div className="flex items-center gap-3">
-                <label className="text-xs text-[var(--color-muted)] w-44 shrink-0">Message handling</label>
-                <SmartSelect
-                  value={steeringMode}
-                  onValueChange={(v) => { markDirty(); setSteeringMode(v) }}
-                  disabled={!canEdit}
-                  triggerClassName="text-xs h-8"
-                  items={[
-                    { value: 'one-at-a-time', label: 'One at a time' },
-                    { value: 'parallel', label: 'Parallel' },
-                    { value: 'queue', label: 'Queue' },
-                  ]}
-                />
-              </div>
-              <div className="flex items-center justify-between py-1">
-                <div>
-                  <p className="text-sm text-[var(--color-secondary)]">Tool progress feedback</p>
-                  <p className="text-xs text-[var(--color-muted)]">Show tool call status while running</p>
-                </div>
-                <Switch
-                  checked={toolFeedback}
-                  onCheckedChange={(v) => { markDirty(); setToolFeedback(v) }}
-                  disabled={!canEdit}
-                />
-              </div>
-            </div>
-          </section>
-        </>
-      )}
-
-      {/* Stats */}
-      {agent.stats && (
-        <>
-          <Separator />
-          <section>
-            <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)] mb-3">Stats</h2>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <StatCard label="Sessions" value={agent.stats.total_sessions.toString()} />
-              <StatCard
-                label="Tokens"
-                value={
-                  agent.stats.total_tokens >= 1000
-                    ? `${(agent.stats.total_tokens / 1000).toFixed(1)}k`
-                    : agent.stats.total_tokens.toString()
-                }
-              />
-              <StatCard label="Cost" value={`$${agent.stats.total_cost.toFixed(4)}`} />
-              <StatCard
-                label="Last active"
-                value={
-                  agent.stats.last_active
-                    ? new Date(agent.stats.last_active).toLocaleDateString()
-                    : '—'
-                }
-              />
-            </div>
-          </section>
-        </>
-      )}
-
-      {/* Recent sessions */}
-      <>
-        <Separator />
-        <section>
-          <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)] mb-3">Recent Sessions</h2>
-          {sessionsError ? (
-            <p className="text-sm text-[var(--color-error)]">Failed to load sessions</p>
-          ) : recentSessions.length > 0 ? (
-            <div className="space-y-1">
-              {recentSessions.map((s) => (
-                <SessionRow key={s.id} session={s} />
-              ))}
-            </div>
-          ) : (
-            <p className="text-xs text-[var(--color-muted)]">No sessions yet.</p>
-          )}
-        </section>
-      </>
-
-      {/* Tools */}
-      {agent.tools && agent.tools.length > 0 && (
-        <>
-          <Separator />
-          <section>
-            <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)] mb-3">
-              Tools & Skills
-            </h2>
-            <div className="flex flex-wrap gap-2">
-              {agent.tools.map((tool) => (
-                <Badge key={tool} variant="outline" className="font-mono text-[10px]">
-                  {tool}
-                </Badge>
-              ))}
-            </div>
-          </section>
-        </>
-      )}
-
-      {/* Recent activity */}
-      <Separator />
-      <section>
-        <h2 className="font-headline font-bold text-sm text-[var(--color-secondary)] mb-3">Recent Activity</h2>
-        {activityError ? (
-          <p className="text-sm text-[var(--color-error)]">Failed to load activity</p>
-        ) : recentActivity.length === 0 ? (
-          <p className="text-xs text-[var(--color-muted)]">No recent activity for this agent.</p>
-        ) : (
-          <div className="space-y-1">
-            {recentActivity.map((event) => (
-              <ActivityRow key={event.id} event={event} />
-            ))}
-          </div>
+            </AccordionContent>
+          </AccordionItem>
         )}
-      </section>
+
+        {/* Behavior — default CLOSED (SOUL + Instructions + Heartbeat + Execution) */}
+        {canEdit && (
+          <AccordionItem value="behavior" className="border-0">
+            <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+              Behavior
+            </AccordionTrigger>
+            <AccordionContent>
+              <div className="px-4 space-y-5">
+                {/* SOUL.md */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <Scroll size={13} className="text-[var(--color-accent)]" />
+                    <p className="text-xs font-medium text-[var(--color-secondary)]">SOUL.md</p>
+                  </div>
+                  <p className="text-xs text-[var(--color-muted)]">
+                    The agent's personality and system prompt.
+                  </p>
+                  <Textarea
+                    value={soul}
+                    onChange={(e) => { markDirty(); setSoul(e.target.value) }}
+                    placeholder={"# Soul\n\nDefine this agent's personality, expertise, and behavioral guidelines..."}
+                    rows={6}
+                    className="text-xs font-mono resize-none"
+                  />
+                  <SaveAllButton onUpload={setSoul} />
+                </div>
+
+                <Separator />
+
+                {/* Additional Instructions */}
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <NotePencil size={13} className="text-[var(--color-accent)]" />
+                    <p className="text-xs font-medium text-[var(--color-secondary)]">Additional Instructions</p>
+                  </div>
+                  <p className="text-xs text-[var(--color-muted)]">
+                    Extra instructions appended to the agent's context.
+                  </p>
+                  <Textarea
+                    value={instructions}
+                    onChange={(e) => { markDirty(); setInstructions(e.target.value) }}
+                    placeholder="Add specific instructions, constraints, or domain knowledge..."
+                    rows={4}
+                    className="text-xs font-mono resize-none"
+                  />
+                  <SaveAllButton onUpload={setInstructions} />
+                </div>
+
+                <Separator />
+
+                {/* HEARTBEAT.md */}
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-[var(--color-secondary)]">HEARTBEAT.md</p>
+                  <p className="text-xs text-[var(--color-muted)]">
+                    The agent's persistent context — goals, preferences, and working memory.
+                  </p>
+                  <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm text-[var(--color-secondary)]">Enable heartbeat</p>
+                        <p className="text-xs text-[var(--color-muted)]">Run on a recurring schedule</p>
+                      </div>
+                      <Switch
+                        checked={heartbeatEnabled}
+                        onCheckedChange={(v) => { markDirty(); setHeartbeatEnabled(v) }}
+                      />
+                    </div>
+                    {heartbeatEnabled && (
+                      <div className="flex items-center gap-3 pt-1 border-t border-[var(--color-border)]">
+                        <label className="text-xs text-[var(--color-muted)] w-44 shrink-0">Interval (seconds)</label>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={heartbeatInterval}
+                          onChange={(e) => { markDirty(); setHeartbeatInterval(Number(e.target.value)) }}
+                          className="text-xs h-8"
+                        />
+                      </div>
+                    )}
+                  </div>
+                  <Textarea
+                    value={heartbeat}
+                    onChange={(e) => { markDirty(); setHeartbeat(e.target.value) }}
+                    placeholder="# Heartbeat&#10;&#10;Write persistent context for this agent..."
+                    rows={4}
+                    className="text-xs font-mono resize-none"
+                  />
+                  <SaveAllButton onUpload={setHeartbeat} />
+                </div>
+
+                <Separator />
+
+                {/* Execution */}
+                {agent.type !== 'system' && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium text-[var(--color-secondary)]">Execution</p>
+                    <div className="space-y-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4">
+                      <div className="flex items-center gap-3">
+                        <label className="text-xs text-[var(--color-muted)] w-44 shrink-0">
+                          Turn timeout (seconds)
+                          <span className="block text-[10px] text-[var(--color-muted)]/70">0 = no limit</span>
+                        </label>
+                        <Input
+                          type="number"
+                          min={0}
+                          value={timeoutSeconds}
+                          onChange={(e) => { markDirty(); setTimeoutSeconds(Number(e.target.value)) }}
+                          className="text-xs h-8"
+                        />
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <label className="text-xs text-[var(--color-muted)] w-44 shrink-0">Max tool iterations</label>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={maxToolIterations}
+                          onChange={(e) => { markDirty(); setMaxToolIterations(Number(e.target.value)) }}
+                          className="text-xs h-8"
+                        />
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <label className="text-xs text-[var(--color-muted)] w-44 shrink-0">Message handling</label>
+                        <SmartSelect
+                          value={steeringMode}
+                          onValueChange={(v) => { markDirty(); setSteeringMode(v) }}
+                          triggerClassName="text-xs h-8"
+                          items={[
+                            { value: 'one-at-a-time', label: 'One at a time' },
+                            { value: 'parallel', label: 'Parallel' },
+                            { value: 'queue', label: 'Queue' },
+                          ]}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between py-1">
+                        <div>
+                          <p className="text-sm text-[var(--color-secondary)]">Tool progress feedback</p>
+                          <p className="text-xs text-[var(--color-muted)]">Show tool call status while running</p>
+                        </div>
+                        <Switch
+                          checked={toolFeedback}
+                          onCheckedChange={(v) => { markDirty(); setToolFeedback(v) }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        )}
+
+        {/* Tools & Permissions — default CLOSED */}
+        {agent.type !== 'system' && (
+          <AccordionItem value="tools" className="border-0">
+            <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+              <span>Tools &amp; Permissions</span>
+              {toolsCfg.builtin.mode === 'explicit' && (
+                <span className="text-xs text-[var(--color-muted)] font-normal ml-2">
+                  {toolsCfg.builtin.visible?.length ?? 0} selected
+                </span>
+              )}
+            </AccordionTrigger>
+            <AccordionContent>
+              <div className="px-4">
+                <ToolsAndPermissions
+                  agentId={agentId}
+                  agentType={agent.type}
+                  tools={toolsCfg}
+                  onChange={setToolsCfg}
+                />
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        )}
+
+        {/* Sessions — default CLOSED */}
+        <AccordionItem value="sessions" className="border-0">
+          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+            Sessions
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="px-4">
+              {sessionsError ? (
+                <p className="text-sm text-[var(--color-error)]">Failed to load sessions</p>
+              ) : recentSessions.length > 0 ? (
+                <div className="space-y-1">
+                  {recentSessions.map((s) => (
+                    <SessionRow key={s.id} session={s} />
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-[var(--color-muted)]">No sessions yet.</p>
+              )}
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+
+        {/* Activity — default CLOSED */}
+        <AccordionItem value="activity" className="border-0">
+          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+            Activity
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="px-4">
+              {agent.stats && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                  <StatCard label="Sessions" value={agent.stats.total_sessions.toString()} />
+                  <StatCard
+                    label="Tokens"
+                    value={
+                      agent.stats.total_tokens >= 1000
+                        ? `${(agent.stats.total_tokens / 1000).toFixed(1)}k`
+                        : agent.stats.total_tokens.toString()
+                    }
+                  />
+                  <StatCard label="Cost" value={`$${agent.stats.total_cost.toFixed(4)}`} />
+                  <StatCard
+                    label="Last active"
+                    value={
+                      agent.stats.last_active
+                        ? new Date(agent.stats.last_active).toLocaleDateString()
+                        : '—'
+                    }
+                  />
+                </div>
+              )}
+              {activityError ? (
+                <p className="text-sm text-[var(--color-error)]">Failed to load activity</p>
+              ) : recentActivity.length === 0 ? (
+                <p className="text-xs text-[var(--color-muted)]">No recent activity for this agent.</p>
+              ) : (
+                <div className="space-y-1">
+                  {recentActivity.map((event) => (
+                    <ActivityRow key={event.id} event={event} />
+                  ))}
+                </div>
+              )}
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
     </div>
     </div>
   )

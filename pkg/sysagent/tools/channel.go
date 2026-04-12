@@ -49,6 +49,7 @@ type ChannelEnableTool struct{ deps *Deps }
 
 func NewChannelEnableTool(d *Deps) *ChannelEnableTool { return &ChannelEnableTool{deps: d} }
 func (t *ChannelEnableTool) Name() string             { return "system.channel.enable" }
+func (t *ChannelEnableTool) Scope() tools.ToolScope   { return tools.ScopeSystem }
 func (t *ChannelEnableTool) Description() string {
 	return "Enable a channel so it can be configured and connected.\nParameters: id (required)."
 }
@@ -90,6 +91,7 @@ type ChannelConfigureTool struct{ deps *Deps }
 
 func NewChannelConfigureTool(d *Deps) *ChannelConfigureTool { return &ChannelConfigureTool{deps: d} }
 func (t *ChannelConfigureTool) Name() string                { return "system.channel.configure" }
+func (t *ChannelConfigureTool) Scope() tools.ToolScope      { return tools.ScopeSystem }
 func (t *ChannelConfigureTool) Description() string {
 	return "Configure an enabled channel with its credentials (token, phone_number, etc).\nParameters: id (required), plus channel-specific credentials."
 }
@@ -144,6 +146,7 @@ type ChannelDisableTool struct{ deps *Deps }
 
 func NewChannelDisableTool(d *Deps) *ChannelDisableTool { return &ChannelDisableTool{deps: d} }
 func (t *ChannelDisableTool) Name() string              { return "system.channel.disable" }
+func (t *ChannelDisableTool) Scope() tools.ToolScope    { return tools.ScopeSystem }
 func (t *ChannelDisableTool) Description() string {
 	return "Disable a channel. Parameters: id (required)."
 }
@@ -179,6 +182,7 @@ type ChannelListTool struct{ deps *Deps }
 
 func NewChannelListTool(d *Deps) *ChannelListTool { return &ChannelListTool{deps: d} }
 func (t *ChannelListTool) Name() string           { return "system.channel.list" }
+func (t *ChannelListTool) Scope() tools.ToolScope { return tools.ScopeSystem }
 func (t *ChannelListTool) Description() string {
 	return "List all channels with status and implementation tier. No parameters required."
 }
@@ -197,6 +201,7 @@ type ChannelTestTool struct{ deps *Deps }
 
 func NewChannelTestTool(d *Deps) *ChannelTestTool { return &ChannelTestTool{deps: d} }
 func (t *ChannelTestTool) Name() string           { return "system.channel.test" }
+func (t *ChannelTestTool) Scope() tools.ToolScope { return tools.ScopeSystem }
 func (t *ChannelTestTool) Description() string {
 	return "Test a channel connection. Parameters: id (required)."
 }

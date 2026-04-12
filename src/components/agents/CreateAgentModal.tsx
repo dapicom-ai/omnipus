@@ -19,11 +19,13 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { ModelSelector } from '@/components/ui/model-selector'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { useQuery } from '@tanstack/react-query'
 import { useUiStore } from '@/store/ui'
 import { createAgent, fetchProviders } from '@/lib/api'
-import type { Agent } from '@/lib/api'
+import type { Agent, AgentToolsCfg } from '@/lib/api'
 import { AVATAR_COLORS } from '@/lib/constants'
+import { ToolsAndPermissions } from './ToolsAndPermissions'
 
 const ICON_OPTIONS = [
   { name: 'Robot', component: Robot },
@@ -78,6 +80,9 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
   const [temperature, setTemperature] = useState(1.0)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [nameError, setNameError] = useState('')
+  const [toolsState, setToolsState] = useState<AgentToolsCfg>({
+    builtin: { mode: 'inherit' },
+  })
 
   const resetForm = () => {
     setName('')
@@ -88,6 +93,7 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
     setTemperature(1.0)
     setAdvancedOpen(false)
     setNameError('')
+    setToolsState({ builtin: { mode: 'inherit' } })
   }
 
   // Reset form state whenever the modal opens so stale values are not shown
@@ -132,7 +138,8 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
       icon,
       type: 'custom',
       model_params: { temperature },
-    })
+      tools_cfg: toolsState,
+    } as Partial<Agent> & { tools_cfg?: AgentToolsCfg })
   }
 
   return (
@@ -147,153 +154,165 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
             Configure a new custom agent with a persona, model, and tools.
           </DialogPrimitive.Description>
 
-          <div className="space-y-4 overflow-y-auto flex-1 min-h-0 pr-1">
-            {/* Avatar preview + color + icon */}
-            <div>
-              <label className="text-xs font-medium text-[var(--color-muted)] mb-2 block">
-                Avatar
-              </label>
-              <div className="flex items-start gap-4">
-                {/* Preview */}
-                <div
-                  className="w-12 h-12 rounded-full flex items-center justify-center shrink-0"
-                  style={{ backgroundColor: color }}
-                >
-                  <AvatarIcon size={20} className="text-[var(--color-primary)]" />
-                </div>
+          <Tabs defaultValue="general" className="flex-1 min-h-0 flex flex-col">
+            <TabsList className="shrink-0 mb-3">
+              <TabsTrigger value="general">General</TabsTrigger>
+              <TabsTrigger value="tools">Tools &amp; Permissions</TabsTrigger>
+            </TabsList>
 
-                <div className="flex-1 space-y-3">
-                  {/* Color palette */}
-                  <div>
-                    <p className="text-[10px] text-[var(--color-muted)] mb-1.5">Color</p>
-                    <div className="flex gap-2 flex-wrap">
-                      {AVATAR_COLORS.map((c) => (
-                        <button
-                          key={c}
-                          type="button"
-                          onClick={() => setColor(c)}
-                          className={`w-6 h-6 rounded-full transition-transform ${color === c ? 'ring-2 ring-[var(--color-secondary)] ring-offset-2 ring-offset-[var(--color-surface-1)] scale-110' : 'hover:scale-110'}`}
-                          style={{ backgroundColor: c }}
-                          aria-label={`Select color ${c}`}
-                        />
-                      ))}
+            <TabsContent value="general" className="flex-1 overflow-y-auto min-h-0 mt-0">
+              <div className="space-y-4 pr-1">
+                {/* Avatar preview + color + icon */}
+                <div>
+                  <label className="text-xs font-medium text-[var(--color-muted)] mb-2 block">
+                    Avatar
+                  </label>
+                  <div className="flex items-start gap-4">
+                    <div
+                      className="w-12 h-12 rounded-full flex items-center justify-center shrink-0"
+                      style={{ backgroundColor: color }}
+                    >
+                      <AvatarIcon size={20} className="text-[var(--color-primary)]" />
+                    </div>
+                    <div className="flex-1 space-y-3">
+                      <div>
+                        <p className="text-[10px] text-[var(--color-muted)] mb-1.5">Color</p>
+                        <div className="flex gap-2 flex-wrap">
+                          {AVATAR_COLORS.map((c) => (
+                            <button
+                              key={c}
+                              type="button"
+                              onClick={() => setColor(c)}
+                              className={`w-6 h-6 rounded-full transition-transform ${color === c ? 'ring-2 ring-[var(--color-secondary)] ring-offset-2 ring-offset-[var(--color-surface-1)] scale-110' : 'hover:scale-110'}`}
+                              style={{ backgroundColor: c }}
+                              aria-label={`Select color ${c}`}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-[var(--color-muted)] mb-1.5">Icon</p>
+                        <div className="grid grid-cols-5 gap-1.5">
+                          {ICON_OPTIONS.map(({ name: iconName, component: IconComp }) => (
+                            <button
+                              key={iconName}
+                              type="button"
+                              onClick={() => setIcon(iconName)}
+                              title={iconName}
+                              className={`flex items-center justify-center w-8 h-8 rounded-md transition-colors ${
+                                icon === iconName
+                                  ? 'bg-[var(--color-accent)] text-[var(--color-primary)]'
+                                  : 'bg-[var(--color-surface-2)] text-[var(--color-muted)] hover:text-[var(--color-secondary)]'
+                              }`}
+                            >
+                              <IconComp size={16} />
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     </div>
                   </div>
-
-                  {/* Icon grid */}
-                  <div>
-                    <p className="text-[10px] text-[var(--color-muted)] mb-1.5">Icon</p>
-                    <div className="grid grid-cols-5 gap-1.5">
-                      {ICON_OPTIONS.map(({ name: iconName, component: IconComp }) => (
-                        <button
-                          key={iconName}
-                          type="button"
-                          onClick={() => setIcon(iconName)}
-                          title={iconName}
-                          className={`flex items-center justify-center w-8 h-8 rounded-md transition-colors ${
-                            icon === iconName
-                              ? 'bg-[var(--color-accent)] text-[var(--color-primary)]'
-                              : 'bg-[var(--color-surface-2)] text-[var(--color-muted)] hover:text-[var(--color-secondary)]'
-                          }`}
-                        >
-                          <IconComp size={16} />
-                        </button>
-                      ))}
-                    </div>
-                  </div>
                 </div>
-              </div>
-            </div>
 
-            {/* Name */}
-            <div>
-              <label htmlFor="agent-name" className="text-xs font-medium text-[var(--color-muted)] mb-1.5 block">
-                Name <span className="text-[var(--color-error)]">*</span>
-              </label>
-              <Input
-                id="agent-name"
-                value={name}
-                onChange={(e) => {
-                  setName(e.target.value)
-                  if (e.target.value.trim()) setNameError('')
-                }}
-                placeholder="e.g. Research Assistant"
-                className={nameError ? 'border-[var(--color-error)]' : ''}
-                autoFocus
-              />
-              {nameError && (
-                <p className="mt-1 text-xs text-[var(--color-error)]">{nameError}</p>
-              )}
-            </div>
-
-            {/* Description */}
-            <div>
-              <label htmlFor="agent-description" className="text-xs font-medium text-[var(--color-muted)] mb-1.5 block">
-                Description
-              </label>
-              <Textarea
-                id="agent-description"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="What does this agent do?"
-                rows={2}
-              />
-            </div>
-
-            {/* Model */}
-            <div>
-              <label className="text-xs font-medium text-[var(--color-muted)] mb-1.5 block">
-                Model
-              </label>
-              {providersError && (
-                <div className="mb-2 rounded-md border border-[var(--color-error)]/40 bg-[var(--color-error)]/10 px-3 py-2">
-                  <p className="text-xs text-[var(--color-error)] font-medium">Provider list unavailable</p>
-                  <p className="text-xs text-[var(--color-error)]/80 mt-0.5">
-                    Could not load connected providers. The model list below may not reflect what is actually configured.
-                    Verify your provider settings before creating this agent.
-                  </p>
-                </div>
-              )}
-              <ModelSelector
-                models={availableModels}
-                value={model}
-                onChange={setModel}
-                placeholder="Use provider default"
-              />
-            </div>
-
-            {/* Advanced model params */}
-            <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setAdvancedOpen((o) => !o)}
-                className="flex items-center justify-between w-full px-3 py-2.5 text-sm font-medium text-[var(--color-secondary)] hover:text-[var(--color-accent)] transition-colors"
-              >
-                <span>Advanced</span>
-                {advancedOpen ? <CaretUp size={13} /> : <CaretDown size={13} />}
-              </button>
-              {advancedOpen && (
-                <div className="px-3 pb-3 border-t border-[var(--color-border)] pt-3 space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs text-[var(--color-muted)]">Temperature</span>
-                    <span className="text-xs font-mono text-[var(--color-secondary)]">{temperature.toFixed(2)}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={2}
-                    step={0.05}
-                    value={temperature}
-                    onChange={(e) => setTemperature(Number(e.target.value))}
-                    className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
-                    style={{
-                      background: `linear-gradient(to right, var(--color-accent) 0%, var(--color-accent) ${(temperature / 2) * 100}%, var(--color-border) ${(temperature / 2) * 100}%, var(--color-border) 100%)`,
+                {/* Name */}
+                <div>
+                  <label htmlFor="agent-name" className="text-xs font-medium text-[var(--color-muted)] mb-1.5 block">
+                    Name <span className="text-[var(--color-error)]">*</span>
+                  </label>
+                  <Input
+                    id="agent-name"
+                    value={name}
+                    onChange={(e) => {
+                      setName(e.target.value)
+                      if (e.target.value.trim()) setNameError('')
                     }}
+                    placeholder="e.g. Research Assistant"
+                    className={nameError ? 'border-[var(--color-error)]' : ''}
+                    autoFocus
+                  />
+                  {nameError && (
+                    <p className="mt-1 text-xs text-[var(--color-error)]">{nameError}</p>
+                  )}
+                </div>
+
+                {/* Description */}
+                <div>
+                  <label htmlFor="agent-description" className="text-xs font-medium text-[var(--color-muted)] mb-1.5 block">
+                    Description
+                  </label>
+                  <Textarea
+                    id="agent-description"
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="What does this agent do?"
+                    rows={2}
                   />
                 </div>
-              )}
-            </div>
-          </div>
+
+                {/* Model */}
+                <div>
+                  <label className="text-xs font-medium text-[var(--color-muted)] mb-1.5 block">
+                    Model
+                  </label>
+                  {providersError && (
+                    <div className="mb-2 rounded-md border border-[var(--color-error)]/40 bg-[var(--color-error)]/10 px-3 py-2">
+                      <p className="text-xs text-[var(--color-error)] font-medium">Provider list unavailable</p>
+                      <p className="text-xs text-[var(--color-error)]/80 mt-0.5">
+                        Could not load connected providers. Verify your provider settings before creating this agent.
+                      </p>
+                    </div>
+                  )}
+                  <ModelSelector
+                    models={availableModels}
+                    value={model}
+                    onChange={setModel}
+                    placeholder="Use provider default"
+                  />
+                </div>
+
+                {/* Advanced model params */}
+                <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setAdvancedOpen((o) => !o)}
+                    className="flex items-center justify-between w-full px-3 py-2.5 text-sm font-medium text-[var(--color-secondary)] hover:text-[var(--color-accent)] transition-colors"
+                  >
+                    <span>Advanced</span>
+                    {advancedOpen ? <CaretUp size={13} /> : <CaretDown size={13} />}
+                  </button>
+                  {advancedOpen && (
+                    <div className="px-3 pb-3 border-t border-[var(--color-border)] pt-3 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-[var(--color-muted)]">Temperature</span>
+                        <span className="text-xs font-mono text-[var(--color-secondary)]">{temperature.toFixed(2)}</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={2}
+                        step={0.05}
+                        value={temperature}
+                        onChange={(e) => setTemperature(Number(e.target.value))}
+                        className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
+                        style={{
+                          background: `linear-gradient(to right, var(--color-accent) 0%, var(--color-accent) ${(temperature / 2) * 100}%, var(--color-border) ${(temperature / 2) * 100}%, var(--color-border) 100%)`,
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="tools" className="flex-1 overflow-y-auto min-h-0 mt-0 pr-1">
+              <ToolsAndPermissions
+                agentId={null}
+                agentType="custom"
+                tools={toolsState}
+                onChange={setToolsState}
+              />
+            </TabsContent>
+          </Tabs>
 
           {/* Actions */}
           <div className="flex justify-end gap-2 mt-6">
