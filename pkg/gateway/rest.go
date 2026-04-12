@@ -792,9 +792,13 @@ func (a *restAPI) activeAgentIDSet() map[string]bool {
 
 // computeAgentStatus determines the agent status based on whether it is active,
 // has a non-empty SOUL.md, or is a system agent.
-func computeAgentStatus(agentID string, activeIDs map[string]bool, soul string) string {
+func computeAgentStatus(agentID string, activeIDs map[string]bool, soul string, locked bool) string {
 	if activeIDs[agentID] {
 		return "active"
+	}
+	// Core agents (locked) have compiled prompts — always idle (never draft).
+	if locked {
+		return "idle"
 	}
 	if strings.TrimSpace(soul) == "" {
 		return "draft"
@@ -869,7 +873,7 @@ func (a *restAPI) listAgents(w http.ResponseWriter) {
 		ag.Description = ac.Description
 		ag.Type = string(ac.ResolveType(coreagent.IsCoreAgent))
 		ag.Model = model
-		ag.Status = computeAgentStatus(ac.ID, activeIDs, soul)
+		ag.Status = computeAgentStatus(ac.ID, activeIDs, soul, ac.Locked)
 		ag.Soul = soul
 		agents = append(agents, ag)
 	}
@@ -903,7 +907,7 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 			ag.Description = ac.Description
 			ag.Type = string(ac.ResolveType(coreagent.IsCoreAgent))
 			ag.Model = model
-			ag.Status = computeAgentStatus(ac.ID, activeIDs, soul)
+			ag.Status = computeAgentStatus(ac.ID, activeIDs, soul, ac.Locked)
 			ag.Soul = soul
 			ag.Heartbeat = heartbeat
 			ag.Instructions = instructions
@@ -1278,7 +1282,7 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 	}
 	ag.Type = string(cfg.Agents.List[foundIdx].ResolveType(coreagent.IsCoreAgent))
 	ag.Model = model
-	ag.Status = computeAgentStatus(agentID, activeIDs, soul)
+	ag.Status = computeAgentStatus(agentID, activeIDs, soul, cfg.Agents.List[foundIdx].Locked)
 	// Hide compiled prompts for locked (core) agents.
 	if cfg.Agents.List[foundIdx].Locked {
 		soul = ""
