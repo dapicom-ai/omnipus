@@ -1097,15 +1097,13 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	// Locked core agents: reject identity mutations (name, description).
-	// Model changes, heartbeat, and tool adjustments are still allowed.
+	// Locked core agents: reject identity and prompt mutations.
+	// Allowed: model selection, heartbeat schedule (enabled/interval), tools (via updateAgentTools).
 	foundAgent := cfg.Agents.List[foundIdx]
 	if foundAgent.Locked {
-		// Locked agents (core agents) cannot have their identity or prompt modified.
-		// Protected: name, description, soul (prompt), heartbeat, instructions.
+		// Protected: name, description, soul (prompt content), heartbeat (HEARTBEAT.md content), instructions.
 		// Color and icon are not in the update request struct so they are implicitly
 		// protected. If color/icon fields are ever added, gate them here too.
-		// Allowed: model, tools (remove-only via updateAgentTools), heartbeat schedule.
 		if req.Name != nil || req.Description != nil ||
 			req.Soul != nil || req.Heartbeat != nil || req.Instructions != nil {
 			jsonErr(w, http.StatusForbidden, "cannot modify locked agent identity or prompt")
@@ -2957,7 +2955,7 @@ func (a *restAPI) getAgentTools(w http.ResponseWriter, agentID string) {
 // updateAgentTools handles PUT /api/v1/agents/{id}/tools — replaces the
 // agent's tool visibility config.
 func (a *restAPI) updateAgentTools(w http.ResponseWriter, r *http.Request, agentID string) {
-	// Note: the old "omnipus-system" guard was removed — system agent no longer exists.
+	// Legacy system agent ID returns 404 since it no longer exists.
 	// Core agents are protected by the Locked check below.
 	if agentID == "omnipus-system" {
 		jsonErr(w, http.StatusNotFound, fmt.Sprintf("agent %q not found", agentID))
@@ -2968,10 +2966,6 @@ func (a *restAPI) updateAgentTools(w http.ResponseWriter, r *http.Request, agent
 	found := false
 	for _, ac := range cfg.Agents.List {
 		if ac.ID == agentID {
-			if ac.ResolveType(coreagent.IsCoreAgent) == config.AgentTypeCore {
-				jsonErr(w, http.StatusForbidden, "cannot modify core agent tools")
-				return
-			}
 			found = true
 			break
 		}
