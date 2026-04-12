@@ -927,6 +927,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 					}
 
 					finalResponse = continued
+					published = false // Continue returned new content; deferred publish must fire
 				}
 
 				cancelDrain()
