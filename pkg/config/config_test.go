@@ -1246,3 +1246,209 @@ func TestAgentConfig_IsActive_NilDefaultsToTrue(t *testing.T) {
 		})
 	}
 }
+
+// --- ResolveType tests ---
+
+// TestResolveType_ExplicitType verifies that when AgentConfig.Type is set, it
+// is returned directly without inspecting the ID or calling isCoreAgent.
+//
+// BDD: Given an AgentConfig with Type="core"
+//
+//	When ResolveType is called
+//	Then "core" is returned without calling isCoreAgent
+//
+// Traces to: config.go AgentConfig.ResolveType — "if a.Type != "" { return a.Type }" branch
+func TestResolveType_ExplicitType(t *testing.T) {
+	a := AgentConfig{ID: "some-agent", Type: AgentTypeCore}
+
+	// isCoreAgent must not be called when Type is set explicitly.
+	called := false
+	got := a.ResolveType(func(id string) bool {
+		called = true
+		return false
+	})
+
+	if got != AgentTypeCore {
+		t.Errorf("ResolveType() = %q, want %q", got, AgentTypeCore)
+	}
+	if called {
+		t.Error("isCoreAgent should not be called when Type is set explicitly")
+	}
+
+	// Differentiation: a different explicit type returns a different result.
+	a2 := AgentConfig{ID: "some-agent", Type: AgentTypeSystem}
+	got2 := a2.ResolveType(nil)
+	if got2 != AgentTypeSystem {
+		t.Errorf("ResolveType() = %q, want %q", got2, AgentTypeSystem)
+	}
+	if got == got2 {
+		t.Error("different explicit types must produce different results")
+	}
+}
+
+// TestResolveType_SystemAgentID verifies that the canonical system agent ID
+// "omnipus-system" resolves to AgentTypeSystem even when Type is not set.
+//
+// BDD: Given an AgentConfig with ID="omnipus-system" and no explicit Type
+//
+//	When ResolveType is called
+//	Then AgentTypeSystem is returned
+//
+// Traces to: config.go AgentConfig.ResolveType — system ID guard
+func TestResolveType_SystemAgentID(t *testing.T) {
+	a := AgentConfig{ID: "omnipus-system"}
+
+	got := a.ResolveType(func(_ string) bool { return false })
+
+	if got != AgentTypeSystem {
+		t.Errorf("ResolveType() = %q, want AgentTypeSystem", got)
+	}
+}
+
+// TestResolveType_CoreAgentID verifies that an agent whose ID is recognized by
+// isCoreAgent resolves to AgentTypeCore.
+//
+// BDD: Given an AgentConfig with ID="researcher" and isCoreAgent returns true for it
+//
+//	When ResolveType is called
+//	Then AgentTypeCore is returned
+//
+// Traces to: config.go AgentConfig.ResolveType — isCoreAgent(a.ID) branch
+func TestResolveType_CoreAgentID(t *testing.T) {
+	a := AgentConfig{ID: "researcher"}
+
+	coreIDs := map[string]bool{"researcher": true, "assistant": true}
+	got := a.ResolveType(func(id string) bool { return coreIDs[id] })
+
+	if got != AgentTypeCore {
+		t.Errorf("ResolveType() = %q, want AgentTypeCore", got)
+	}
+
+	// Differentiation: a different ID not in coreIDs resolves to custom.
+	a2 := AgentConfig{ID: "my-custom-bot"}
+	got2 := a2.ResolveType(func(id string) bool { return coreIDs[id] })
+	if got2 != AgentTypeCustom {
+		t.Errorf("ResolveType() = %q, want AgentTypeCustom for unrecognized ID", got2)
+	}
+	if got == got2 {
+		t.Error("core agent ID and custom agent ID must resolve to different types")
+	}
+}
+
+// TestResolveType_CustomAgentID verifies that an agent not recognized by
+// isCoreAgent and not the system ID resolves to AgentTypeCustom.
+//
+// BDD: Given an AgentConfig with ID="my-bot" and isCoreAgent returns false
+//
+//	When ResolveType is called
+//	Then AgentTypeCustom is returned
+//
+// Traces to: config.go AgentConfig.ResolveType — else → AgentTypeCustom
+func TestResolveType_CustomAgentID(t *testing.T) {
+	a := AgentConfig{ID: "my-bot"}
+
+	got := a.ResolveType(func(_ string) bool { return false })
+
+	if got != AgentTypeCustom {
+		t.Errorf("ResolveType() = %q, want AgentTypeCustom", got)
+	}
+}
+
+// TestResolveType_NilCallback verifies that passing nil for isCoreAgent does
+// not panic; the agent falls through to AgentTypeCustom.
+//
+// BDD: Given an AgentConfig with ID="my-bot" and isCoreAgent=nil
+//
+//	When ResolveType is called
+//	Then AgentTypeCustom is returned without panicking
+//
+// Traces to: config.go AgentConfig.ResolveType — nil isCoreAgent guard
+func TestResolveType_NilCallback(t *testing.T) {
+	a := AgentConfig{ID: "my-bot"}
+
+	// Must not panic.
+	got := a.ResolveType(nil)
+
+	if got != AgentTypeCustom {
+		t.Errorf("ResolveType() = %q, want AgentTypeCustom when isCoreAgent is nil", got)
+	}
+}
+
+// --- AgentToolsCfg JSON round-trip test ---
+
+// TestAgentToolsCfg_JSONRoundTrip verifies that AgentToolsCfg serializes to
+// JSON and deserializes back with all fields preserved, including nested structs
+// (Builtin.Mode, Builtin.Visible, MCP.Servers).
+//
+// BDD: Given a fully-populated AgentToolsCfg
+//
+//	When it is marshaled to JSON and unmarshaled back
+//	Then all field values are identical to the original
+//
+// Traces to: config.go AgentToolsCfg, AgentBuiltinToolsCfg, AgentMCPToolsCfg
+func TestAgentToolsCfg_JSONRoundTrip(t *testing.T) {
+	original := AgentToolsCfg{
+		Builtin: AgentBuiltinToolsCfg{
+			Mode:    VisibilityExplicit,
+			Visible: []string{"exec", "web_search", "read_file"},
+		},
+		MCP: AgentMCPToolsCfg{
+			Servers: []AgentMCPServerBinding{
+				{ID: "github-server", Tools: []string{"create_issue", "list_prs"}},
+				{ID: "jira-server", Tools: []string{"*"}},
+			},
+		},
+	}
+
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("json.Marshal(AgentToolsCfg): %v", err)
+	}
+	if len(data) == 0 {
+		t.Fatal("marshaled JSON must not be empty")
+	}
+
+	var decoded AgentToolsCfg
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal(AgentToolsCfg): %v", err)
+	}
+
+	// Builtin.Mode
+	if decoded.Builtin.Mode != original.Builtin.Mode {
+		t.Errorf("Builtin.Mode = %q, want %q", decoded.Builtin.Mode, original.Builtin.Mode)
+	}
+
+	// Builtin.Visible — length and contents
+	if len(decoded.Builtin.Visible) != len(original.Builtin.Visible) {
+		t.Fatalf("Builtin.Visible len = %d, want %d", len(decoded.Builtin.Visible), len(original.Builtin.Visible))
+	}
+	for i, name := range original.Builtin.Visible {
+		if decoded.Builtin.Visible[i] != name {
+			t.Errorf("Builtin.Visible[%d] = %q, want %q", i, decoded.Builtin.Visible[i], name)
+		}
+	}
+
+	// MCP.Servers — count and contents
+	if len(decoded.MCP.Servers) != len(original.MCP.Servers) {
+		t.Fatalf("MCP.Servers len = %d, want %d", len(decoded.MCP.Servers), len(original.MCP.Servers))
+	}
+	for i, srv := range original.MCP.Servers {
+		if decoded.MCP.Servers[i].ID != srv.ID {
+			t.Errorf("MCP.Servers[%d].ID = %q, want %q", i, decoded.MCP.Servers[i].ID, srv.ID)
+		}
+		if len(decoded.MCP.Servers[i].Tools) != len(srv.Tools) {
+			t.Errorf("MCP.Servers[%d].Tools len = %d, want %d",
+				i, len(decoded.MCP.Servers[i].Tools), len(srv.Tools))
+		}
+	}
+
+	// Content differentiation: marshal again and compare bytes to confirm
+	// the round-trip is stable (not just shape-preserving).
+	data2, err := json.Marshal(decoded)
+	if err != nil {
+		t.Fatalf("second json.Marshal: %v", err)
+	}
+	if string(data) != string(data2) {
+		t.Errorf("second marshal differs from first:\n  first:  %s\n  second: %s", data, data2)
+	}
+}

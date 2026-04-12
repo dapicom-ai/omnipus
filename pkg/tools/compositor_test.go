@@ -338,6 +338,255 @@ func TestMCPToolAdapter_Execute_TextContent(t *testing.T) {
 	assert.Equal(t, "mcp result", result.ForLLM, "adapter must return MCPCaller text content")
 }
 
+// --- scopedMockTool — configurable-scope mock for FilterToolsByVisibility tests ---
+
+// scopedMockTool is a mock Tool with a user-supplied ToolScope for testing
+// FilterToolsByVisibility. The existing mockRegistryTool always returns
+// ScopeGeneral; this variant allows tests to configure each tool's scope.
+type scopedMockTool struct {
+	name  string
+	scope ToolScope
+}
+
+func (s *scopedMockTool) Name() string               { return s.name }
+func (s *scopedMockTool) Description() string        { return "scoped mock tool" }
+func (s *scopedMockTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
+func (s *scopedMockTool) Scope() ToolScope           { return s.scope }
+func (s *scopedMockTool) Execute(_ context.Context, _ map[string]any) *ToolResult {
+	return SilentResult("ok")
+}
+
+// makeScopedTool is a helper to create a *scopedMockTool wrapped as Tool.
+func makeScopedTool(name string, scope ToolScope) Tool {
+	return &scopedMockTool{name: name, scope: scope}
+}
+
+// allScopeTools returns a representative tool set containing one tool per scope.
+func allScopeTools() []Tool {
+	return []Tool{
+		makeScopedTool("system.manage_agents", ScopeSystem),
+		makeScopedTool("exec", ScopeCore),
+		makeScopedTool("web_search", ScopeGeneral),
+	}
+}
+
+// --- FilterToolsByVisibility tests ---
+
+// TestFilterToolsByVisibility_InheritMode_SystemAgent verifies that a system
+// agent in inherit mode receives tools from every scope (system, core, general).
+//
+// BDD: Given a system agent with nil/inherit config
+//
+//	When FilterToolsByVisibility is called with all three scope tools
+//	Then all three tools are returned
+//
+// Traces to: compositor.go FilterToolsByVisibility — scope gate ScopeSystem passes for "system"
+func TestFilterToolsByVisibility_InheritMode_SystemAgent(t *testing.T) {
+	tools := allScopeTools()
+	cfg := &ToolVisibilityCfg{Mode: "inherit"}
+
+	got := FilterToolsByVisibility(tools, "system", cfg)
+
+	require.Len(t, got, 3, "system agent in inherit mode must see all three scope levels")
+
+	names := make(map[string]bool, len(got))
+	for _, t := range got {
+		names[t.Name()] = true
+	}
+	assert.True(t, names["system.manage_agents"], "system tool must pass for system agent")
+	assert.True(t, names["exec"], "core tool must pass for system agent")
+	assert.True(t, names["web_search"], "general tool must pass for system agent")
+}
+
+// TestFilterToolsByVisibility_InheritMode_CoreAgent verifies that a core agent
+// in inherit mode sees core and general tools but NOT system-scoped tools.
+//
+// BDD: Given a core agent with inherit config
+//
+//	When FilterToolsByVisibility is called with all three scope tools
+//	Then core and general tools pass; system tool does not
+//
+// Traces to: compositor.go FilterToolsByVisibility — ScopeSystem blocks "core" agentType
+func TestFilterToolsByVisibility_InheritMode_CoreAgent(t *testing.T) {
+	tools := allScopeTools()
+	cfg := &ToolVisibilityCfg{Mode: "inherit"}
+
+	got := FilterToolsByVisibility(tools, "core", cfg)
+
+	require.Len(t, got, 2, "core agent must see core+general but not system tools")
+
+	names := make(map[string]bool, len(got))
+	for _, t := range got {
+		names[t.Name()] = true
+	}
+	assert.False(t, names["system.manage_agents"], "system tool must NOT pass for core agent")
+	assert.True(t, names["exec"], "core tool must pass for core agent")
+	assert.True(t, names["web_search"], "general tool must pass for core agent")
+}
+
+// TestFilterToolsByVisibility_InheritMode_CustomAgent verifies that a custom
+// agent in inherit mode sees only general-scoped tools.
+//
+// BDD: Given a custom agent with inherit config
+//
+//	When FilterToolsByVisibility is called with all three scope tools
+//	Then only general tool passes
+//
+// Traces to: compositor.go FilterToolsByVisibility — ScopeCore blocks "custom" without visibleSet
+func TestFilterToolsByVisibility_InheritMode_CustomAgent(t *testing.T) {
+	tools := allScopeTools()
+	cfg := &ToolVisibilityCfg{Mode: "inherit"}
+
+	got := FilterToolsByVisibility(tools, "custom", cfg)
+
+	require.Len(t, got, 1, "custom agent must see only general tools in inherit mode")
+	assert.Equal(t, "web_search", got[0].Name(), "only the general-scope tool must pass")
+}
+
+// TestFilterToolsByVisibility_ExplicitMode_CustomAgent verifies that a custom
+// agent with explicit mode sees exactly the named tools, including a core-scope
+// tool if it is listed in Visible (per the spec's "custom agents only if
+// explicitly listed" rule).
+//
+// BDD: Given a custom agent with explicit mode and Visible=["exec","web_search"]
+//
+//	When FilterToolsByVisibility is called
+//	Then both "exec" (core) and "web_search" (general) pass; system tool does not
+//
+// Traces to: compositor.go FilterToolsByVisibility — ScopeCore custom path + explicit mode layer
+func TestFilterToolsByVisibility_ExplicitMode_CustomAgent(t *testing.T) {
+	tools := allScopeTools()
+	cfg := &ToolVisibilityCfg{
+		Mode:    "explicit",
+		Visible: []string{"exec", "web_search"},
+	}
+
+	got := FilterToolsByVisibility(tools, "custom", cfg)
+
+	require.Len(t, got, 2, "explicit mode must return exactly the two listed tools")
+
+	names := make(map[string]bool, len(got))
+	for _, t := range got {
+		names[t.Name()] = true
+	}
+	assert.False(t, names["system.manage_agents"], "system tool must not pass even when agent is custom+explicit")
+	assert.True(t, names["exec"], "core tool must pass when explicitly listed for custom agent")
+	assert.True(t, names["web_search"], "general tool must pass when explicitly listed")
+}
+
+// TestFilterToolsByVisibility_ExplicitMode_CannotEscapeScope verifies that a
+// custom agent cannot gain access to system-scoped tools by listing them in the
+// explicit Visible set — the scope gate is an outer guard that cannot be bypassed.
+//
+// BDD: Given a custom agent with explicit mode listing a system-scoped tool
+//
+//	When FilterToolsByVisibility is called
+//	Then the system tool is still blocked (scope gate fires first)
+//
+// Traces to: compositor.go FilterToolsByVisibility — scope gate runs before explicit layer
+func TestFilterToolsByVisibility_ExplicitMode_CannotEscapeScope(t *testing.T) {
+	tools := []Tool{
+		makeScopedTool("system.manage_agents", ScopeSystem),
+		makeScopedTool("web_search", ScopeGeneral),
+	}
+	cfg := &ToolVisibilityCfg{
+		Mode:    "explicit",
+		Visible: []string{"system.manage_agents", "web_search"},
+	}
+
+	got := FilterToolsByVisibility(tools, "custom", cfg)
+
+	// Only the general tool may pass; system is blocked by the scope gate.
+	require.Len(t, got, 1, "system-scoped tool must be blocked even when listed in explicit Visible")
+	assert.Equal(t, "web_search", got[0].Name())
+}
+
+// TestFilterToolsByVisibility_NilConfig verifies that passing a nil cfg
+// defaults to inherit mode so the function does not panic.
+//
+// BDD: Given a nil ToolVisibilityCfg
+//
+//	When FilterToolsByVisibility is called for a custom agent
+//	Then it behaves identically to inherit mode
+//
+// Traces to: compositor.go FilterToolsByVisibility — nil cfg guard at top of function
+func TestFilterToolsByVisibility_NilConfig(t *testing.T) {
+	tools := allScopeTools()
+
+	// Must not panic.
+	got := FilterToolsByVisibility(tools, "custom", nil)
+
+	// Inherit mode for custom: only general passes.
+	require.Len(t, got, 1, "nil config must behave as inherit mode")
+	assert.Equal(t, "web_search", got[0].Name())
+}
+
+// TestFilterToolsByVisibility_EmptyVisibleList verifies that explicit mode with
+// an empty Visible list returns zero tools for non-system agents (nothing is
+// explicitly named, so nothing can pass the explicit layer).
+//
+// BDD: Given a custom agent with explicit mode and empty Visible list
+//
+//	When FilterToolsByVisibility is called
+//	Then no tools are returned
+//
+// Traces to: compositor.go FilterToolsByVisibility — explicit mode with nil visibleSet
+func TestFilterToolsByVisibility_EmptyVisibleList(t *testing.T) {
+	tools := allScopeTools()
+	cfg := &ToolVisibilityCfg{
+		Mode:    "explicit",
+		Visible: []string{}, // intentionally empty
+	}
+
+	got := FilterToolsByVisibility(tools, "custom", cfg)
+
+	// Explicit mode with empty Visible list: deny-by-default (CLAUDE.md hard constraint 6).
+	// No tools should pass — the empty visibleSet blocks everything in Layer 2.
+	require.Len(t, got, 0, "explicit mode with empty Visible must return zero tools")
+}
+
+// TestFilterToolsByVisibility_ExplicitMode_CoreAgent verifies that a core agent
+// with explicit mode receives only the tools named in the Visible list, and that
+// system-scoped tools are never returned regardless of the explicit list.
+//
+// BDD: Given a mix of system, core, and general tools,
+//
+//	When FilterToolsByVisibility is called with agentType="core", Mode="explicit",
+//	and Visible=["web_search"],
+//	Then only "web_search" is returned (the explicit list narrows the core agent's view),
+//	And system tools are never returned.
+//
+// Traces to: compositor.go FilterToolsByVisibility — explicit mode layer 2 applies to core agents;
+// scope gate layer 1 blocks system tools regardless of mode (PR #41 Per-Agent Tool Visibility).
+func TestFilterToolsByVisibility_ExplicitMode_CoreAgent(t *testing.T) {
+	// Given: one tool per scope (system, core, general)
+	input := allScopeTools()
+	// system.manage_agents (ScopeSystem), exec (ScopeCore), web_search (ScopeGeneral)
+
+	cfg := &ToolVisibilityCfg{
+		Mode:    "explicit",
+		Visible: []string{"web_search"},
+	}
+
+	// When: core agent with explicit mode listing only "web_search"
+	got := FilterToolsByVisibility(input, "core", cfg)
+
+	// Then: only web_search is returned
+	require.Len(t, got, 1, "explicit mode must filter core agent to exactly the listed tool")
+	assert.Equal(t, "web_search", got[0].Name(),
+		"explicit visible list must be the only tool returned")
+
+	// Then: system tool is never returned for a core agent regardless of mode
+	names := make(map[string]bool, len(got))
+	for _, t := range got {
+		names[t.Name()] = true
+	}
+	assert.False(t, names["system.manage_agents"],
+		"system-scoped tool must NEVER be returned for a core agent (scope gate blocks it)")
+	assert.False(t, names["exec"],
+		"core-scoped tool not in explicit Visible must be filtered out")
+}
+
 // TestMCPContentText_ConcatenatesTextContent verifies that mcpContentText
 // joins TextContent entries without a separator and silently skips non-text items.
 //

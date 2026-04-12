@@ -181,6 +181,93 @@ func (tc *ToolCompositor) ComposeAndRegister(agentID string) int {
 	return registered
 }
 
+// FilterToolsByVisibility returns the subset of tools that the given agent type
+// and tools config allow. It implements a 2-layer scope + visibility filter:
+//
+//  1. Scope gate: ScopeSystem → only system agents; ScopeCore → system+core
+//     agents (custom agents only if explicitly listed); ScopeGeneral → all.
+//  2. Explicit mode: if cfg.Mode == "explicit", only tools named in
+//     cfg.Visible pass (scope gate still applies as outer guard).
+//
+// MCP server-level filtering is not yet implemented; all MCP tools that pass
+// the scope and visibility gates are returned.
+//
+// The existing policy evaluator (allow/deny lists) remains a backstop run by
+// the caller — this function only handles scope + visibility.
+func FilterToolsByVisibility(allTools []Tool, agentType string, cfg *ToolVisibilityCfg) []Tool {
+	if cfg == nil {
+		cfg = &ToolVisibilityCfg{Mode: "inherit"}
+	}
+
+	// Warn on unrecognized mode — treated as "inherit" (scope-only filtering).
+	switch cfg.Mode {
+	case "explicit", "inherit", "":
+		// valid
+	default:
+		slog.Warn("FilterToolsByVisibility: unrecognized mode, treating as inherit",
+			"mode", cfg.Mode)
+	}
+
+	// Build a fast lookup set for explicit mode. Always build the set when
+	// mode is explicit, even if Visible is empty — an empty explicit list
+	// means zero tools (deny-by-default per CLAUDE.md hard constraint 6).
+	var visibleSet map[string]struct{}
+	if cfg.Mode == "explicit" {
+		visibleSet = make(map[string]struct{}, len(cfg.Visible))
+		for _, name := range cfg.Visible {
+			visibleSet[name] = struct{}{}
+		}
+	}
+
+	out := make([]Tool, 0, len(allTools))
+	for _, t := range allTools {
+		scope := t.Scope()
+
+		// Layer 1: scope gate based on agent type.
+		switch scope {
+		case ScopeSystem:
+			if agentType != "system" {
+				continue
+			}
+		case ScopeCore:
+			switch agentType {
+			case "system", "core":
+				// allowed by default
+			default:
+				// Custom agents only get core tools if explicitly listed.
+				if visibleSet == nil {
+					continue
+				}
+				if _, ok := visibleSet[t.Name()]; !ok {
+					continue
+				}
+			}
+		case ScopeGeneral:
+			// allowed for all agent types
+		default:
+			// Unknown or zero-value scope: deny by default (hard constraint 6).
+			continue
+		}
+
+		// Layer 2: explicit visibility filter.
+		if cfg.Mode == "explicit" {
+			if _, ok := visibleSet[t.Name()]; !ok {
+				continue
+			}
+		}
+
+		out = append(out, t)
+	}
+	return out
+}
+
+// ToolVisibilityCfg is a simplified view of the agent's tool visibility config,
+// used by FilterToolsByVisibility. Callers convert from config.AgentToolsCfg.
+type ToolVisibilityCfg struct {
+	Mode    string   // "inherit" or "explicit"
+	Visible []string // tool names when Mode == "explicit"
+}
+
 // mcpToolAdapter wraps a single MCP tool as a Tool, forwarding Execute calls
 // through the MCPCaller.  It is registered as a hidden tool (requires TTL
 // promotion before the agent loop exposes it).
@@ -209,6 +296,7 @@ func newMCPToolAdapter(serverName string, toolDef *mcp.Tool, caller MCPCaller) *
 func (a *mcpToolAdapter) Name() string               { return a.toolDef.Name }
 func (a *mcpToolAdapter) Description() string        { return a.toolDef.Description }
 func (a *mcpToolAdapter) Parameters() map[string]any { return a.params }
+func (a *mcpToolAdapter) Scope() ToolScope           { return ScopeGeneral }
 
 func (a *mcpToolAdapter) Execute(ctx context.Context, args map[string]any) *ToolResult {
 	result, err := a.caller.CallTool(ctx, a.serverName, a.toolDef.Name, args)

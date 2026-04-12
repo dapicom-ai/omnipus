@@ -240,6 +240,8 @@ func (t *echoTextTool) Parameters() map[string]any {
 	}
 }
 
+func (t *echoTextTool) Scope() tools.ToolScope { return tools.ScopeGeneral }
+
 func (t *echoTextTool) Execute(ctx context.Context, args map[string]any) *tools.ToolResult {
 	text, _ := args["text"].(string)
 	return tools.SilentResult(text)

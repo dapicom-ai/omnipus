@@ -142,3 +142,54 @@ The lead (you) orchestrates all work by spawning specialized subagents via the A
 - Fix issues found by reviews (spawn the relevant implementing subagent to fix)
 - Re-run failed reviews after fixes
 - Only create PR when all reviews pass
+
+## Build & E2E Testing
+
+### SPA Embed Pipeline
+
+The Go binary embeds the frontend SPA from `pkg/gateway/spa/` via `go:embed`. This directory is **not** the Vite build output — `npm run build` outputs to `dist/spa/`. You must sync them before building the binary:
+
+```bash
+npm run build                    # builds to dist/spa/
+rm -rf pkg/gateway/spa/assets    # remove stale assets
+cp -r dist/spa/* pkg/gateway/spa/  # sync to embed dir
+CGO_ENABLED=0 go build -o /tmp/omnipus ./cmd/omnipus/  # rebuild binary
+```
+
+**If you skip the sync, the binary will serve a stale SPA that does not include your frontend changes.** Verify with: `grep -c "YOUR_NEW_STRING" pkg/gateway/spa/assets/index-*.js` — must be >0.
+
+### E2E Testing with the Embedded SPA
+
+Always test against the embedded SPA (the Go binary), not the Vite dev server. The Vite dev server proxies `/api` to `localhost:18790` which may not match the gateway port.
+
+**Start the gateway:**
+
+```bash
+export OMNIPUS_HOME=/tmp/omnipus-e2e-test
+rm -rf "$OMNIPUS_HOME" && mkdir -p "$OMNIPUS_HOME"
+OMNIPUS_BEARER_TOKEN="" ./omnipus gateway --allow-empty &
+```
+
+**Known blockers and workarounds:**
+
+1. **Port conflict with other apps** — Port 3000 is the default. If another app (e.g., Next.js) is running on 3000, the gateway silently fails to bind. Check with `lsof -i :3000 | grep LISTEN`. Fix: set a different port in `$OMNIPUS_HOME/config.json` under `gateway.port` (e.g., 5000) before starting.
+
+2. **Onboarding requires auth bypass** — The onboarding flow calls API endpoints that require bearer auth before an admin account exists. Set `"dev_mode_bypass": true` in `config.json` under `gateway` after the first run creates the config, then restart the gateway. This is a pre-existing bug (the onboarding endpoints should use `withOptionalAuth`).
+
+3. **Model must support tool use** — Omnipus sends tools with every LLM request. If the selected model doesn't support tool use (e.g., `google/gemma-2-9b-it` on OpenRouter), the LLM call returns a 404 with "No endpoints found that support tool use." Use a tool-capable model like `z-ai/glm-5-turbo`, `google/gemini-2.5-flash`, or `anthropic/claude-3.5-haiku`.
+
+4. **Gateway logs are in `$OMNIPUS_HOME/logs/`** — `gateway.log` for runtime logs, `gateway_panic.log` for startup errors. Always check `gateway_panic.log` if the gateway exits silently.
+
+### E2E Test Checklist
+
+After frontend+backend changes, verify these flows on the embedded SPA:
+
+1. **Onboarding** — Welcome → Provider → API Key → Model Select → Admin Account → Complete
+2. **Chat** — Send message → receive LLM response → multi-turn context retained → token/cost updates
+3. **Agents** — List (system + custom) → Create Agent (with Tools & Permissions) → Agent Profile (accordion, tools panel)
+4. **System Agent** — Profile shows read-only sections only (no Identity, no Tools & Permissions)
+5. **Settings** — Provider shows Connected, all tabs load
+6. **Command Center** — Gateway status, task board
+7. **Skills & Tools** — 4 tabs, empty states
+8. **Sidebar** — All nav items, active highlighting
+9. **Console errors** — Zero JS errors (WebSocket reconnect warnings are acceptable)

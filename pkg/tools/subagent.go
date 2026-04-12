@@ -334,6 +334,8 @@ func (t *SubagentTool) Description() string {
 	return "Execute a subagent task synchronously and return the result. Use this for delegating specific tasks to an independent agent instance. Returns execution summary to user and full details to LLM."
 }
 
+func (t *SubagentTool) Scope() ToolScope { return ScopeCore }
+
 func (t *SubagentTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",

@@ -39,6 +39,7 @@ type mockSystemTool struct {
 func (m *mockSystemTool) Name() string               { return m.name }
 func (m *mockSystemTool) Description() string        { return m.description }
 func (m *mockSystemTool) Parameters() map[string]any { return m.params }
+func (m *mockSystemTool) Scope() tools.ToolScope     { return tools.ScopeSystem }
 func (m *mockSystemTool) Execute(_ context.Context, _ map[string]any) *tools.ToolResult {
 	m.executed.Store(true)
 	return tools.NewToolResult(`{"success":true}`)
@@ -879,6 +880,80 @@ func TestSysagentGuardedTool_ConfirmationPaths(t *testing.T) {
 		assert.False(t, mock.executed.Load(), "inner tool must NOT have executed")
 	})
 }
+
+// =====================================================================
+// TestGuardedToolScope_DelegatesToInner
+// =====================================================================
+
+// TestGuardedToolScope_DelegatesToInner verifies that GuardedTool.Scope()
+// delegates to the inner tool's Scope() rather than returning a hardcoded value.
+// Two different inner scopes are tested to prove delegation, not hardcoding.
+//
+// BDD: Given a GuardedTool wrapping an inner tool with a specific Scope,
+//
+//	When GuardedTool.Scope() is called,
+//	Then it returns the same scope as the inner tool (not a hardcoded value).
+//
+// Traces to: pkg/sysagent/guarded_tool.go — Scope() delegates to inner tool
+// so ToolCompositor's scope gate fires correctly (PR #41 Per-Agent Tool Visibility).
+func TestGuardedToolScope_DelegatesToInner(t *testing.T) {
+	tests := []struct {
+		name          string
+		innerScope    tools.ToolScope
+		expectedScope tools.ToolScope
+	}{
+		{
+			name:          "ScopeSystem_inner_returns_ScopeSystem",
+			innerScope:    tools.ScopeSystem,
+			expectedScope: tools.ScopeSystem,
+		},
+		{
+			name:          "ScopeCore_inner_returns_ScopeCore",
+			innerScope:    tools.ScopeCore,
+			expectedScope: tools.ScopeCore,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Given: a mock inner tool with a configurable scope
+			inner := &scopedInnerTool{
+				mockSystemTool: mockSystemTool{
+					name:        "test.tool",
+					description: "test",
+					params:      map[string]any{"type": "object"},
+				},
+				scope: tc.innerScope,
+			}
+			// And: a real tool registry with the inner tool registered
+			reg := tools.NewToolRegistry()
+			reg.Register(inner)
+			handler := sysagent.NewSystemToolHandler(sysagent.HandlerConfig{
+				Registry: reg,
+			})
+
+			// When: GuardedTool wraps the inner tool
+			guarded := sysagent.NewGuardedTool(inner, handler, sysagent.RoleSingleUser, "")
+
+			// Then: GuardedTool.Scope() returns the inner tool's scope
+			assert.Equal(t, tc.expectedScope, guarded.Scope(),
+				"GuardedTool must delegate Scope() to inner tool, not hardcode a value")
+		})
+	}
+
+	// Differentiation check: ensure the two test cases actually produced different scopes,
+	// proving the test is not trivially always-true.
+	require.NotEqual(t, tests[0].expectedScope, tests[1].expectedScope,
+		"test dataset must include two DIFFERENT scopes to prove delegation, not hardcoding")
+}
+
+// scopedInnerTool extends mockSystemTool with a configurable Scope() for GuardedTool delegation tests.
+type scopedInnerTool struct {
+	mockSystemTool
+	scope tools.ToolScope
+}
+
+func (s *scopedInnerTool) Scope() tools.ToolScope { return s.scope }
 
 // =====================================================================
 // Helper: verify strings import used

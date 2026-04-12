@@ -660,6 +660,8 @@ func (t *asyncFollowUpTool) Parameters() map[string]any {
 	}
 }
 
+func (t *asyncFollowUpTool) Scope() tools.ToolScope { return tools.ScopeGeneral }
+
 func (t *asyncFollowUpTool) Execute(ctx context.Context, args map[string]any) *tools.ToolResult {
 	return tools.AsyncResult("async follow-up scheduled")
 }

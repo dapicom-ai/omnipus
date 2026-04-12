@@ -24,6 +24,8 @@ func (t *I2CTool) Description() string {
 	return "Interact with I2C bus devices for reading sensors and controlling peripherals. Actions: detect (list buses), scan (find devices on a bus), read (read bytes from device), write (send bytes to device). Linux only."
 }
 
+func (t *I2CTool) Scope() ToolScope { return ScopeCore }
+
 func (t *I2CTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",

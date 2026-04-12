@@ -24,6 +24,8 @@ func (t *SPITool) Description() string {
 	return "Interact with SPI bus devices for high-speed peripheral communication. Actions: list (find SPI devices), transfer (full-duplex send/receive), read (receive bytes). Linux only."
 }
 
+func (t *SPITool) Scope() ToolScope { return ScopeCore }
+
 func (t *SPITool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",

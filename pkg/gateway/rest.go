@@ -31,6 +31,7 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/coreagent"
 	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/fileutil"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
@@ -38,6 +39,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/skills"
 	"github.com/dapicom-ai/omnipus/pkg/taskstore"
+	"github.com/dapicom-ai/omnipus/pkg/tools"
 )
 
 // Version is set at build time via -ldflags "-X github.com/dapicom-ai/omnipus/pkg/gateway.Version=x.y.z".
@@ -451,6 +453,19 @@ func (a *restAPI) HandleAgents(w http.ResponseWriter, r *http.Request) {
 	// GET /api/v1/agents/{id}/sessions
 	if r.Method == http.MethodGet && agentID != "" && subPath == "sessions" {
 		a.listAgentSessions(w, agentID)
+		return
+	}
+
+	// GET/PUT /api/v1/agents/{id}/tools — per-agent tool visibility config
+	if agentID != "" && subPath == "tools" {
+		switch r.Method {
+		case http.MethodGet:
+			a.getAgentTools(w, agentID)
+		case http.MethodPut:
+			a.updateAgentTools(w, r, agentID)
+		default:
+			jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
 		return
 	}
 
@@ -924,6 +939,20 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 		Name        string `json:"name"`
 		Description string `json:"description"`
 		Model       string `json:"model"`
+		Color       string `json:"color"`
+		Icon        string `json:"icon"`
+		ToolsCfg    *struct {
+			Builtin struct {
+				Mode    string   `json:"mode"`
+				Visible []string `json:"visible"`
+			} `json:"builtin"`
+			MCP struct {
+				Servers []struct {
+					ID    string   `json:"id"`
+					Tools []string `json:"tools"`
+				} `json:"servers"`
+			} `json:"mcp"`
+		} `json:"tools_cfg"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
@@ -937,9 +966,35 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 		ID:          uuid.New().String(),
 		Name:        req.Name,
 		Description: strings.TrimSpace(req.Description),
+		Color:       req.Color,
+		Icon:        req.Icon,
+		Type:        config.AgentTypeCustom,
 	}
 	if req.Model != "" {
 		ac.Model = &config.AgentModelConfig{Primary: req.Model}
+	}
+	if req.ToolsCfg != nil {
+		mode := config.VisibilityMode(req.ToolsCfg.Builtin.Mode)
+		if mode == "" {
+			mode = config.VisibilityInherit
+		}
+		if mode != config.VisibilityInherit && mode != config.VisibilityExplicit {
+			jsonErr(w, http.StatusUnprocessableEntity, "tools_cfg.builtin.mode must be 'inherit' or 'explicit'")
+			return
+		}
+		ac.Tools = &config.AgentToolsCfg{
+			Builtin: config.AgentBuiltinToolsCfg{
+				Mode:    mode,
+				Visible: req.ToolsCfg.Builtin.Visible,
+			},
+		}
+		if len(req.ToolsCfg.MCP.Servers) > 0 {
+			servers := make([]config.AgentMCPServerBinding, 0, len(req.ToolsCfg.MCP.Servers))
+			for _, s := range req.ToolsCfg.MCP.Servers {
+				servers = append(servers, config.AgentMCPServerBinding{ID: s.ID, Tools: s.Tools})
+			}
+			ac.Tools.MCP = config.AgentMCPToolsCfg{Servers: servers}
+		}
 	}
 	// Persist the new agent to config.json BEFORE mutating the live config.
 	// If persistence fails, the in-memory config stays consistent with disk.
@@ -953,12 +1008,39 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 		newAgent := map[string]any{
 			"id":   ac.ID,
 			"name": ac.Name,
+			"type": string(ac.Type),
 		}
 		if ac.Description != "" {
 			newAgent["description"] = ac.Description
 		}
+		if ac.Color != "" {
+			newAgent["color"] = ac.Color
+		}
+		if ac.Icon != "" {
+			newAgent["icon"] = ac.Icon
+		}
 		if ac.Model != nil {
 			newAgent["model"] = map[string]any{"primary": ac.Model.Primary}
+		}
+		if ac.Tools != nil {
+			toolsCfg := map[string]any{
+				"builtin": map[string]any{
+					"mode":    string(ac.Tools.Builtin.Mode),
+					"visible": ac.Tools.Builtin.Visible,
+				},
+			}
+			if len(ac.Tools.MCP.Servers) > 0 {
+				servers := make([]map[string]any, 0, len(ac.Tools.MCP.Servers))
+				for _, s := range ac.Tools.MCP.Servers {
+					srv := map[string]any{"id": s.ID}
+					if len(s.Tools) > 0 {
+						srv["tools"] = s.Tools
+					}
+					servers = append(servers, srv)
+				}
+				toolsCfg["mcp"] = map[string]any{"servers": servers}
+			}
+			newAgent["tools"] = toolsCfg
 		}
 		agents["list"] = append(list, newAgent)
 		return nil
@@ -1737,6 +1819,8 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	cm.RegisterHTTPHandler("/api/v1/mcp-servers/", a.withAuth(a.HandleMCPServers))
 	cm.RegisterHTTPHandler("/api/v1/storage/stats", a.withAuth(a.HandleStorageStats))
 	cm.RegisterHTTPHandler("/api/v1/tools", a.withAuth(a.HandleTools))
+	cm.RegisterHTTPHandler("/api/v1/tools/builtin", a.withAuth(a.HandleBuiltinTools))
+	cm.RegisterHTTPHandler("/api/v1/tools/mcp", a.withAuth(a.HandleMCPTools))
 	cm.RegisterHTTPHandler("/api/v1/channels", a.withAuth(a.HandleChannels))
 	cm.RegisterHTTPHandler("/api/v1/channels/", a.withAuth(a.HandleChannels))
 	cm.RegisterHTTPHandler("/api/v1/agents/", a.withAuth(a.HandleAgents))
@@ -2706,6 +2790,301 @@ func (a *restAPI) HandleTools(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	jsonOK(w, tools)
+}
+
+// --- Tool Visibility (Issue #41) ---
+
+// toolToMap converts a Tool to its REST representation. The category is derived
+// from the name prefix before the first dot (e.g. "system.agent_list" →
+// "system"). Falls back to defaultCategory when no dot is present.
+func toolToMap(t tools.Tool, defaultCategory string) map[string]any {
+	name := t.Name()
+	category := defaultCategory
+	if idx := strings.Index(name, "."); idx > 0 {
+		category = name[:idx]
+	}
+	return map[string]any{
+		"name":        name,
+		"scope":       string(t.Scope()),
+		"category":    category,
+		"description": t.Description(),
+	}
+}
+
+// HandleBuiltinTools handles GET /api/v1/tools/builtin — returns tools from the
+// default agent and the system agent (omnipus-system) merged into a single list,
+// each annotated with scope and category, for the tool picker UI.
+func (a *restAPI) HandleBuiltinTools(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	registry := a.agentLoop.GetRegistry()
+	defaultAgent := registry.GetDefaultAgent()
+	if defaultAgent == nil {
+		jsonOK(w, []map[string]any{})
+		return
+	}
+	seen := make(map[string]struct{})
+	result := make([]map[string]any, 0)
+	for _, t := range defaultAgent.Tools.GetAll() {
+		seen[t.Name()] = struct{}{}
+		result = append(result, toolToMap(t, "general"))
+	}
+	// Also include system agent tools if they exist, deduplicating by name.
+	if sysAgent, ok := registry.GetAgent("omnipus-system"); ok && sysAgent != nil {
+		for _, t := range sysAgent.Tools.GetAll() {
+			if _, dup := seen[t.Name()]; dup {
+				continue
+			}
+			seen[t.Name()] = struct{}{}
+			result = append(result, toolToMap(t, "system"))
+		}
+	}
+	jsonOK(w, result)
+}
+
+// HandleMCPTools handles GET /api/v1/tools/mcp — returns all configured MCP
+// servers with their status and tool lists for the agent tool picker UI.
+func (a *restAPI) HandleMCPTools(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	cfg := a.agentLoop.GetConfig()
+	servers := make([]map[string]any, 0, len(cfg.Tools.MCP.Servers))
+	for name, srv := range cfg.Tools.MCP.Servers {
+		entry := map[string]any{
+			"id":      name,
+			"name":    name,
+			"enabled": srv.Enabled,
+			"command": srv.Command,
+		}
+		if len(srv.Args) > 0 {
+			entry["args"] = srv.Args
+		}
+		servers = append(servers, entry)
+	}
+	jsonOK(w, servers)
+}
+
+// getAgentTools handles GET /api/v1/agents/{id}/tools — returns the agent's
+// tool visibility config and the resolved effective tool list.
+func (a *restAPI) getAgentTools(w http.ResponseWriter, agentID string) {
+	cfg := a.agentLoop.GetConfig()
+
+	// Determine agent type and tool config.
+	agentType := "custom"
+	var toolsCfg *config.AgentToolsCfg
+	if agentID == "omnipus-system" {
+		agentType = "system"
+	} else {
+		for _, ac := range cfg.Agents.List {
+			if ac.ID == agentID {
+				at := ac.ResolveType(coreagent.IsCoreAgent)
+				agentType = string(at)
+				toolsCfg = ac.Tools
+				break
+			}
+		}
+		// Core agents may not be in cfg.Agents.List (runtime-only). Detect them
+		// so FilterToolsByVisibility applies the correct scope gate.
+		if agentType == "custom" && coreagent.IsCoreAgent(agentID) {
+			agentType = "core"
+		}
+	}
+
+	// Build the effective tool list using scope filtering.
+	registry := a.agentLoop.GetRegistry()
+	agent, ok := registry.GetAgent(agentID)
+	if !ok {
+		slog.Warn("rest: agent found in config but not in registry, tool list may be stale",
+			"agent_id", agentID)
+		agent = registry.GetDefaultAgent()
+	}
+
+	effectiveTools := []map[string]any{}
+	if agent != nil {
+		filtered := tools.FilterToolsByVisibility(agent.Tools.GetAll(), agentType, toolsCfgToVisibility(toolsCfg))
+		for _, t := range filtered {
+			effectiveTools = append(effectiveTools, toolToMap(t, "general"))
+		}
+	}
+
+	// Build the response config. Return the stored config or a default.
+	respCfg := map[string]any{
+		"builtin": map[string]any{"mode": "inherit"},
+		"mcp":     map[string]any{"servers": []any{}},
+	}
+	if toolsCfg != nil {
+		mode := string(toolsCfg.Builtin.Mode)
+		if mode == "" {
+			mode = "inherit"
+		}
+		visible := toolsCfg.Builtin.Visible
+		if visible == nil {
+			visible = []string{}
+		}
+		servers := make([]map[string]any, 0, len(toolsCfg.MCP.Servers))
+		for _, s := range toolsCfg.MCP.Servers {
+			srv := map[string]any{"id": s.ID}
+			if len(s.Tools) > 0 {
+				srv["tools"] = s.Tools
+			}
+			servers = append(servers, srv)
+		}
+		respCfg = map[string]any{
+			"builtin": map[string]any{"mode": mode, "visible": visible},
+			"mcp":     map[string]any{"servers": servers},
+		}
+	}
+
+	jsonOK(w, map[string]any{
+		"config":          respCfg,
+		"effective_tools": effectiveTools,
+		"agent_type":      agentType,
+	})
+}
+
+// updateAgentTools handles PUT /api/v1/agents/{id}/tools — replaces the
+// agent's tool visibility config.
+func (a *restAPI) updateAgentTools(w http.ResponseWriter, r *http.Request, agentID string) {
+	if agentID == "omnipus-system" {
+		jsonErr(w, http.StatusForbidden, "cannot modify system agent tools")
+		return
+	}
+
+	cfg := a.agentLoop.GetConfig()
+	found := false
+	for _, ac := range cfg.Agents.List {
+		if ac.ID == agentID {
+			if ac.ResolveType(coreagent.IsCoreAgent) == config.AgentTypeCore {
+				jsonErr(w, http.StatusForbidden, "cannot modify core agent tools")
+				return
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		jsonErr(w, http.StatusNotFound, fmt.Sprintf("agent %q not found", agentID))
+		return
+	}
+
+	var req struct {
+		Builtin struct {
+			Mode    string   `json:"mode"`
+			Visible []string `json:"visible"`
+		} `json:"builtin"`
+		MCP struct {
+			Servers []struct {
+				ID    string   `json:"id"`
+				Tools []string `json:"tools"`
+			} `json:"servers"`
+		} `json:"mcp"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	// Validate mode.
+	mode := req.Builtin.Mode
+	if mode == "" {
+		mode = "inherit"
+	}
+	if mode != "inherit" && mode != "explicit" {
+		jsonErr(w, http.StatusUnprocessableEntity, "builtin.mode must be 'inherit' or 'explicit'")
+		return
+	}
+
+	// Validate MCP server IDs reference configured servers.
+	if len(req.MCP.Servers) > 0 {
+		configuredServers := cfg.Tools.MCP.Servers
+		for _, s := range req.MCP.Servers {
+			if s.ID == "" {
+				jsonErr(w, http.StatusUnprocessableEntity, "mcp.servers[].id must not be empty")
+				return
+			}
+			if _, exists := configuredServers[s.ID]; !exists {
+				jsonErr(w, http.StatusUnprocessableEntity, fmt.Sprintf("MCP server %q is not configured", s.ID))
+				return
+			}
+		}
+	}
+
+	// Persist to config.json.
+	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
+		agents, _ := m["agents"].(map[string]any)
+		if agents == nil {
+			return fmt.Errorf("agents section not found in config")
+		}
+		list, _ := agents["list"].([]any)
+		for i, raw := range list {
+			agentMap, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			if agentMap["id"] == agentID {
+				toolsCfg := map[string]any{
+					"builtin": map[string]any{
+						"mode":    mode,
+						"visible": req.Builtin.Visible,
+					},
+				}
+				if len(req.MCP.Servers) > 0 {
+					servers := make([]map[string]any, 0, len(req.MCP.Servers))
+					for _, s := range req.MCP.Servers {
+						srv := map[string]any{"id": s.ID}
+						if len(s.Tools) > 0 {
+							srv["tools"] = s.Tools
+						}
+						servers = append(servers, srv)
+					}
+					toolsCfg["mcp"] = map[string]any{"servers": servers}
+				}
+				agentMap["tools"] = toolsCfg
+				list[i] = agentMap
+				return nil
+			}
+		}
+		return fmt.Errorf("agent %q not found in config list", agentID)
+	}); err != nil {
+		slog.Error("rest: update agent tools config", "agent_id", agentID, "error", err)
+		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
+		return
+	}
+
+	var reloadWarning string
+	if err := a.agentLoop.TriggerReload(); err != nil {
+		slog.Error("config reload after agent tools update failed", "agent_id", agentID, "error", err)
+		reloadWarning = fmt.Sprintf("config saved but runtime reload failed: %v", err)
+	}
+
+	// Return the updated state. If reload failed, include a warning so the
+	// client knows the effective_tools may be stale until next restart.
+	if reloadWarning != "" {
+		// Still return 200 — the config was saved, just the live reload failed.
+		// The frontend can show a warning banner.
+		w.Header().Set("X-Omnipus-Warning", reloadWarning)
+	}
+	a.getAgentTools(w, agentID)
+}
+
+// toolsCfgToVisibility converts a config.AgentToolsCfg to the tools package's
+// ToolVisibilityCfg for use with FilterToolsByVisibility.
+func toolsCfgToVisibility(cfg *config.AgentToolsCfg) *tools.ToolVisibilityCfg {
+	if cfg == nil {
+		return &tools.ToolVisibilityCfg{Mode: "inherit"}
+	}
+	mode := string(cfg.Builtin.Mode)
+	if mode == "" {
+		mode = "inherit"
+	}
+	return &tools.ToolVisibilityCfg{
+		Mode:    mode,
+		Visible: cfg.Builtin.Visible,
+	}
 }
 
 // --- Channels ---

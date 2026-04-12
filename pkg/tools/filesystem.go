@@ -307,6 +307,8 @@ func (t *ReadFileTool) Description() string {
 	return "Read the contents of a file. Supports pagination via `offset` and `length`."
 }
 
+func (t *ReadFileTool) Scope() ToolScope { return ScopeGeneral }
+
 func (t *ReadFileTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -536,6 +538,8 @@ func (t *WriteFileTool) Description() string {
 	return "Write content to a file. If the file already exists, you must set overwrite=true to replace it."
 }
 
+func (t *WriteFileTool) Scope() ToolScope { return ScopeCore }
+
 func (t *WriteFileTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -604,6 +608,8 @@ func (t *ListDirTool) Name() string {
 func (t *ListDirTool) Description() string {
 	return "List files and directories in a path"
 }
+
+func (t *ListDirTool) Scope() ToolScope { return ScopeGeneral }
 
 func (t *ListDirTool) Parameters() map[string]any {
 	return map[string]any{

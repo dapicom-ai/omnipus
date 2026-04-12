@@ -2,12 +2,31 @@ package tools
 
 import "context"
 
+// ToolScope classifies a tool's privilege level for per-agent visibility filtering.
+type ToolScope string
+
+const (
+	// ScopeSystem tools are exclusive to the system agent (omnipus-system).
+	// They manage agents, channels, providers, MCP servers, and other infrastructure.
+	ScopeSystem ToolScope = "system"
+	// ScopeCore tools are available to system and core agents, and to custom
+	// agents only when explicitly listed in their tools.builtin.visible config.
+	// Examples: exec, browser.*, write_file, edit_file, spawn, subagent.
+	ScopeCore ToolScope = "core"
+	// ScopeGeneral tools are available to all agent types by default.
+	// Examples: read_file, list_dir, web_search, web_fetch, message, task_*.
+	ScopeGeneral ToolScope = "general"
+)
+
 // Tool is the interface that all tools must implement.
 type Tool interface {
 	Name() string
 	Description() string
 	Parameters() map[string]any
 	Execute(ctx context.Context, args map[string]any) *ToolResult
+	// Scope returns the privilege level of this tool, used by the ToolCompositor
+	// to apply scope-based visibility filtering per agent type.
+	Scope() ToolScope
 }
 
 // --- Request-scoped tool context (channel / chatID) ---

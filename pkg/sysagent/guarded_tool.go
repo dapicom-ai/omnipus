@@ -54,6 +54,10 @@ func (g *GuardedTool) Description() string { return g.inner.Description() }
 // Parameters delegates to the inner tool.
 func (g *GuardedTool) Parameters() map[string]any { return g.inner.Parameters() }
 
+// Scope delegates to the inner tool — the guard wrapper preserves the inner
+// tool's scope so the ToolCompositor's scope gate fires correctly.
+func (g *GuardedTool) Scope() tools.ToolScope { return g.inner.Scope() }
+
 // Execute routes through SystemToolHandler.Handle which enforces:
 //  1. RBAC check (CheckRBAC) — SEC-19
 //  2. Rate limit check (SystemRateLimiter.Check)

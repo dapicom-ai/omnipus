@@ -143,6 +143,10 @@ func (t *MCPTool) Description() string {
 	return fmt.Sprintf("[MCP:%s] %s", t.serverName, desc)
 }
 
+// Scope returns ScopeGeneral — MCP tools are treated as general-purpose tools
+// and are available to all agent types (subject to per-agent MCP server binding config).
+func (t *MCPTool) Scope() ToolScope { return ScopeGeneral }
+
 // Parameters returns the tool parameters schema
 func (t *MCPTool) Parameters() map[string]any {
 	// The InputSchema is already a JSON Schema object

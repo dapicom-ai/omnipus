@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -527,4 +528,376 @@ func TestAgentListStatus_CustomAgentActive(t *testing.T) {
 	// TODO: Blocked — turnState.agentID and AgentLoop.activeTurnStates are unexported.
 	// See testability comment above. This scenario is covered in pkg/agent/turn_test.go.
 	t.Skip("BLOCKED: activeTurnStates injection requires exported test helper in pkg/agent — see TODO above")
+}
+
+// --- Tool Visibility Endpoints (Issue #41) ---
+
+// TestHandleBuiltinTools_ReturnsJSON verifies GET /api/v1/tools/builtin returns a JSON array.
+// BDD: Given a running gateway,
+// When GET /api/v1/tools/builtin is called,
+// Then the response is 200 with a JSON array (possibly empty for test config).
+// Traces to: parsed-inventing-gem.md — PR 2 REST endpoints
+func TestHandleBuiltinTools_ReturnsJSON(t *testing.T) {
+	api, cleanup := newTestRestAPI(t)
+	defer cleanup()
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/tools/builtin", nil)
+	api.HandleBuiltinTools(w, r)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var result []map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	// May be empty in test config — the shape is what matters.
+	for _, tool := range result {
+		assert.Contains(t, tool, "name")
+		assert.Contains(t, tool, "scope")
+		assert.Contains(t, tool, "category")
+		assert.Contains(t, tool, "description")
+	}
+}
+
+// TestHandleBuiltinTools_MethodNotAllowed verifies POST is rejected.
+func TestHandleBuiltinTools_MethodNotAllowed(t *testing.T) {
+	api, cleanup := newTestRestAPI(t)
+	defer cleanup()
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/tools/builtin", nil)
+	api.HandleBuiltinTools(w, r)
+
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+// TestHandleMCPTools_ReturnsJSON verifies GET /api/v1/tools/mcp returns a JSON response.
+// BDD: Given a running gateway with no MCP servers,
+// When GET /api/v1/tools/mcp is called,
+// Then the response is 200 with a JSON array.
+// Traces to: parsed-inventing-gem.md — PR 2 REST endpoints
+func TestHandleMCPTools_ReturnsJSON(t *testing.T) {
+	api, cleanup := newTestRestAPI(t)
+	defer cleanup()
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/tools/mcp", nil)
+	api.HandleMCPTools(w, r)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	// Response should be valid JSON (array or object).
+	var result any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+}
+
+// TestGetAgentTools_SystemAgent verifies GET /api/v1/agents/omnipus-system/tools returns
+// agent_type "system" and a config object.
+// BDD: Given the system agent,
+// When GET /api/v1/agents/omnipus-system/tools is called,
+// Then the response includes agent_type "system", config, and effective_tools.
+// Traces to: parsed-inventing-gem.md — PR 2 REST endpoints
+func TestGetAgentTools_SystemAgent(t *testing.T) {
+	api, cleanup := newTestRestAPI(t)
+	defer cleanup()
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/agents/omnipus-system/tools", nil)
+	api.HandleAgents(w, r)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		AgentType      string           `json:"agent_type"`
+		Config         map[string]any   `json:"config"`
+		EffectiveTools []map[string]any `json:"effective_tools"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "system", resp.AgentType)
+	assert.NotNil(t, resp.Config)
+	assert.Contains(t, resp.Config, "builtin")
+}
+
+// TestGetAgentTools_CustomAgent verifies GET /api/v1/agents/{id}/tools for a custom agent.
+// BDD: Given a custom agent with tools config,
+// When GET /api/v1/agents/{id}/tools is called,
+// Then the response includes agent_type "custom" and the stored config.
+// Traces to: parsed-inventing-gem.md — PR 2 REST endpoints
+func TestGetAgentTools_CustomAgent(t *testing.T) {
+	t.Setenv("OMNIPUS_BEARER_TOKEN", "")
+
+	tmpDir := t.TempDir()
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{Host: "127.0.0.1", Port: 8080},
+		Agents: config.AgentsConfig{
+			Defaults: config.AgentDefaults{
+				Workspace: tmpDir,
+				ModelName: "test-model",
+				MaxTokens: 4096,
+			},
+			List: []config.AgentConfig{
+				{
+					ID:   "tool-agent",
+					Name: "Tool Agent",
+					Tools: &config.AgentToolsCfg{
+						Builtin: config.AgentBuiltinToolsCfg{
+							Mode:    config.VisibilityExplicit,
+							Visible: []string{"read_file", "web_search"},
+						},
+					},
+				},
+			},
+		},
+	}
+	msgBus := bus.NewMessageBus()
+	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	api := &restAPI{agentLoop: al}
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/agents/tool-agent/tools", nil)
+	api.HandleAgents(w, r)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		AgentType string         `json:"agent_type"`
+		Config    map[string]any `json:"config"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "custom", resp.AgentType)
+	builtin, ok := resp.Config["builtin"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "explicit", builtin["mode"])
+}
+
+// TestUpdateAgentTools_SystemAgentForbidden verifies PUT /api/v1/agents/omnipus-system/tools returns 403.
+// BDD: Given the system agent,
+// When PUT /api/v1/agents/omnipus-system/tools is called,
+// Then the response is 403 Forbidden.
+// Traces to: parsed-inventing-gem.md — system agent tools cannot be modified
+func TestUpdateAgentTools_SystemAgentForbidden(t *testing.T) {
+	api, cleanup := newTestRestAPI(t)
+	defer cleanup()
+
+	body := `{"builtin":{"mode":"explicit","visible":["read_file"]}}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPut, "/api/v1/agents/omnipus-system/tools", strings.NewReader(body))
+	api.HandleAgents(w, r)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+// TestUpdateAgentTools_NotFound verifies PUT /api/v1/agents/{unknown}/tools returns 404.
+func TestUpdateAgentTools_NotFound(t *testing.T) {
+	api, cleanup := newTestRestAPI(t)
+	defer cleanup()
+
+	body := `{"builtin":{"mode":"inherit"}}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPut, "/api/v1/agents/nonexistent/tools", strings.NewReader(body))
+	api.HandleAgents(w, r)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TestUpdateAgentTools_InvalidMode verifies PUT with bad mode returns 422.
+func TestUpdateAgentTools_InvalidMode(t *testing.T) {
+	t.Setenv("OMNIPUS_BEARER_TOKEN", "")
+
+	tmpDir := t.TempDir()
+	cfgPath := tmpDir + "/config.json"
+	// Write a minimal config.json so safeUpdateConfigJSON can read it.
+	cfgJSON := `{"agents":{"list":[{"id":"test-agent","name":"Test"}]}}`
+	require.NoError(t, os.WriteFile(cfgPath, []byte(cfgJSON), 0o600))
+
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{Host: "127.0.0.1", Port: 8080},
+		Agents: config.AgentsConfig{
+			Defaults: config.AgentDefaults{
+				Workspace: tmpDir,
+				ModelName: "test-model",
+				MaxTokens: 4096,
+			},
+			List: []config.AgentConfig{
+				{ID: "test-agent", Name: "Test"},
+			},
+		},
+	}
+	msgBus := bus.NewMessageBus()
+	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	api := &restAPI{agentLoop: al, homePath: tmpDir}
+
+	body := `{"builtin":{"mode":"bogus"}}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPut, "/api/v1/agents/test-agent/tools", strings.NewReader(body))
+	api.HandleAgents(w, r)
+
+	assert.Equal(t, http.StatusUnprocessableEntity, w.Code)
+}
+
+// TestCreateAgent_WithToolsCfg verifies POST /api/v1/agents with tools_cfg persists the tools config.
+// BDD: Given a create-agent request with tools_cfg,
+// When POST /api/v1/agents is called,
+// Then the response includes the agent and the tools config is accepted.
+// Traces to: parsed-inventing-gem.md — createAgent accepts tools_cfg
+func TestCreateAgent_WithToolsCfg(t *testing.T) {
+	t.Setenv("OMNIPUS_BEARER_TOKEN", "")
+
+	tmpDir := t.TempDir()
+	cfgPath := tmpDir + "/config.json"
+	cfgJSON := `{"agents":{"defaults":{"workspace":"` + tmpDir + `","model_name":"test-model","max_tokens":4096},"list":[]}}`
+	require.NoError(t, os.WriteFile(cfgPath, []byte(cfgJSON), 0o600))
+
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{Host: "127.0.0.1", Port: 8080},
+		Agents: config.AgentsConfig{
+			Defaults: config.AgentDefaults{
+				Workspace: tmpDir,
+				ModelName: "test-model",
+				MaxTokens: 4096,
+			},
+		},
+	}
+	msgBus := bus.NewMessageBus()
+	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	api := &restAPI{agentLoop: al, homePath: tmpDir}
+
+	body := `{
+		"name": "Research Bot",
+		"description": "A researcher",
+		"color": "#22C55E",
+		"icon": "magnifying-glass",
+		"tools_cfg": {
+			"builtin": {
+				"mode": "explicit",
+				"visible": ["read_file", "web_search", "web_fetch"]
+			},
+			"mcp": {
+				"servers": [{"id": "my-server"}]
+			}
+		}
+	}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/agents", strings.NewReader(body))
+	api.HandleAgents(w, r)
+
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	var resp struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+		Type string `json:"type"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "Research Bot", resp.Name)
+	assert.Equal(t, "custom", resp.Type)
+	assert.NotEmpty(t, resp.ID)
+
+	// Verify the config.json was updated with the tools config.
+	savedCfg, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	var savedMap map[string]any
+	require.NoError(t, json.Unmarshal(savedCfg, &savedMap))
+	agentsMap, _ := savedMap["agents"].(map[string]any)
+	list, _ := agentsMap["list"].([]any)
+	require.Len(t, list, 1)
+	agentMap, _ := list[0].(map[string]any)
+	assert.Equal(t, "#22C55E", agentMap["color"])
+	assert.Equal(t, "magnifying-glass", agentMap["icon"])
+	toolsMap, ok := agentMap["tools"].(map[string]any)
+	require.True(t, ok, "tools config must be persisted")
+	builtinMap, _ := toolsMap["builtin"].(map[string]any)
+	assert.Equal(t, "explicit", builtinMap["mode"])
+}
+
+// TestUpdateAgentTools_Success verifies PUT /api/v1/agents/{id}/tools returns 200,
+// updates the response body with the correct agent_type and mode, and persists the
+// tools config to config.json on disk.
+//
+// BDD: Given a custom agent exists in config and a config.json is on disk,
+//
+//	When PUT /api/v1/agents/{id}/tools is called with mode=explicit and visible=["read_file","web_search"],
+//	Then the response is 200, agent_type is "custom", config.builtin.mode is "explicit",
+//	And config.json on disk reflects the persisted tools config.
+//
+// Traces to: parsed-inventing-gem.md — PR #41 Per-Agent Tool Visibility, updateAgentTools success path
+func TestUpdateAgentTools_Success(t *testing.T) {
+	t.Setenv("OMNIPUS_BEARER_TOKEN", "")
+
+	tmpDir := t.TempDir()
+	cfgPath := tmpDir + "/config.json"
+	// Write a minimal config.json so safeUpdateConfigJSON can read it.
+	cfgJSON := `{"agents":{"defaults":{"workspace":"` + tmpDir + `","model_name":"test-model","max_tokens":4096},"list":[{"id":"update-agent","name":"Update Agent"}]}}`
+	require.NoError(t, os.WriteFile(cfgPath, []byte(cfgJSON), 0o600))
+
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{Host: "127.0.0.1", Port: 8080},
+		Agents: config.AgentsConfig{
+			Defaults: config.AgentDefaults{
+				Workspace: tmpDir,
+				ModelName: "test-model",
+				MaxTokens: 4096,
+			},
+			List: []config.AgentConfig{
+				{ID: "update-agent", Name: "Update Agent"},
+			},
+		},
+	}
+	msgBus := bus.NewMessageBus()
+	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	api := &restAPI{agentLoop: al, homePath: tmpDir}
+
+	body := `{"builtin":{"mode":"explicit","visible":["read_file","web_search"]}}`
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPut, "/api/v1/agents/update-agent/tools", strings.NewReader(body))
+	api.HandleAgents(w, r)
+
+	// Then: HTTP 200
+	require.Equal(t, http.StatusOK, w.Code)
+
+	// Then: response body has agent_type="custom" and config.builtin.mode="explicit"
+	var resp struct {
+		AgentType string         `json:"agent_type"`
+		Config    map[string]any `json:"config"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "custom", resp.AgentType,
+		"updateAgentTools must return agent_type=custom for a custom agent")
+	builtin, ok := resp.Config["builtin"].(map[string]any)
+	require.True(t, ok, "response config must contain a builtin object")
+	assert.Equal(t, "explicit", builtin["mode"],
+		"response config.builtin.mode must reflect the submitted mode")
+
+	// Then: config.json on disk was updated with the tools config
+	savedCfg, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	var savedMap map[string]any
+	require.NoError(t, json.Unmarshal(savedCfg, &savedMap))
+	agentsMap, _ := savedMap["agents"].(map[string]any)
+	list, _ := agentsMap["list"].([]any)
+	require.Len(t, list, 1, "config.json must contain exactly one agent")
+	agentMap, _ := list[0].(map[string]any)
+	toolsMap, ok := agentMap["tools"].(map[string]any)
+	require.True(t, ok, "tools config must be persisted to config.json")
+	persistedBuiltin, _ := toolsMap["builtin"].(map[string]any)
+	assert.Equal(t, "explicit", persistedBuiltin["mode"],
+		"config.json must persist mode=explicit")
+	visibleRaw, _ := persistedBuiltin["visible"].([]any)
+	require.Len(t, visibleRaw, 2, "config.json must persist visible list with 2 entries")
+	assert.Equal(t, "read_file", visibleRaw[0])
+	assert.Equal(t, "web_search", visibleRaw[1])
+}
+
+// TestHandleMCPTools_MethodNotAllowed verifies that POST to HandleMCPTools returns 405.
+//
+// BDD: Given a running gateway,
+//
+//	When POST /api/v1/tools/mcp is called,
+//	Then the response is 405 Method Not Allowed.
+//
+// Traces to: parsed-inventing-gem.md — PR 2 REST endpoints method guards
+func TestHandleMCPTools_MethodNotAllowed(t *testing.T) {
+	api, cleanup := newTestRestAPI(t)
+	defer cleanup()
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/tools/mcp", nil)
+	api.HandleMCPTools(w, r)
+
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }

@@ -34,7 +34,8 @@ func pinsDir(home string) string { return filepath.Join(home, "pins") }
 type PinListTool struct{ deps *Deps }
 
 func NewPinListTool(d *Deps) *PinListTool { return &PinListTool{deps: d} }
-func (t *PinListTool) Name() string       { return "system.pin.list" }
+func (t *PinListTool) Name() string           { return "system.pin.list" }
+func (t *PinListTool) Scope() tools.ToolScope  { return tools.ScopeSystem }
 func (t *PinListTool) Description() string {
 	return "List pinned artifacts with optional filters.\nParameters: agent_id, project_id, tags, search (all optional)."
 }
@@ -78,7 +79,8 @@ func (t *PinListTool) Execute(_ context.Context, args map[string]any) *tools.Too
 type PinCreateTool struct{ deps *Deps }
 
 func NewPinCreateTool(d *Deps) *PinCreateTool { return &PinCreateTool{deps: d} }
-func (t *PinCreateTool) Name() string         { return "system.pin.create" }
+func (t *PinCreateTool) Name() string             { return "system.pin.create" }
+func (t *PinCreateTool) Scope() tools.ToolScope   { return tools.ScopeSystem }
 func (t *PinCreateTool) Description() string {
 	return "Pin a chat response.\nParameters: session_id (required), message_id (required), title, tags, project_id."
 }
@@ -138,7 +140,8 @@ func (t *PinCreateTool) Execute(_ context.Context, args map[string]any) *tools.T
 type PinDeleteTool struct{ deps *Deps }
 
 func NewPinDeleteTool(d *Deps) *PinDeleteTool { return &PinDeleteTool{deps: d} }
-func (t *PinDeleteTool) Name() string         { return "system.pin.delete" }
+func (t *PinDeleteTool) Name() string             { return "system.pin.delete" }
+func (t *PinDeleteTool) Scope() tools.ToolScope   { return tools.ScopeSystem }
 func (t *PinDeleteTool) Description() string {
 	return "Delete a pin. Parameters: id (required), confirm (bool, must be true)."
 }
