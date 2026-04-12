@@ -2817,10 +2817,9 @@ func toolToMap(t tools.Tool, defaultCategory string) map[string]any {
 	}
 }
 
-// builtinToolCatalog is the canonical list of all tools available in the system.
-// This is the source of truth for the tool picker UI and agent configuration.
-// Each entry has: name, description, scope (general/core/system), category.
-var builtinToolCatalog = []map[string]any{
+// builtinToolCatalog is DEPRECATED — use tools.CatalogAsMapSlice() instead.
+// Kept temporarily to avoid breaking tests; will be removed in cleanup.
+var builtinToolCatalog_DEPRECATED = []map[string]any{
 	// File & Code
 	{"name": "read_file", "description": "Read file contents from the workspace", "scope": "core", "category": "file"},
 	{"name": "write_file", "description": "Write or create files in the workspace", "scope": "core", "category": "file"},
@@ -2881,7 +2880,7 @@ func (a *restAPI) HandleBuiltinTools(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	jsonOK(w, builtinToolCatalog)
+	jsonOK(w, tools.CatalogAsMapSlice())
 }
 
 // HandleMCPTools handles GET /api/v1/tools/mcp — returns all configured MCP
