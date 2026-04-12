@@ -633,6 +633,7 @@ type agentResponse struct {
 	ID                string `json:"id"`
 	Name              string `json:"name"`
 	Type              string `json:"type"` // "system" | "core" | "custom"
+	Locked            bool   `json:"locked"`
 	Model             string `json:"model,omitempty"`
 	Description       string `json:"description,omitempty"`
 	Status            string `json:"status"` // "active" | "idle" | "draft"
@@ -871,6 +872,7 @@ func (a *restAPI) listAgents(w http.ResponseWriter) {
 		ag.Name = ac.Name
 		ag.Description = ac.Description
 		ag.Type = string(ac.ResolveType(coreagent.IsCoreAgent))
+		ag.Locked = ac.Locked
 		ag.Model = model
 		ag.Status = computeAgentStatus(ac.ID, activeIDs, soul, ac.Locked)
 		ag.Soul = soul
@@ -905,6 +907,7 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 			ag.Name = ac.Name
 			ag.Description = ac.Description
 			ag.Type = string(ac.ResolveType(coreagent.IsCoreAgent))
+			ag.Locked = ac.Locked
 			ag.Model = model
 			ag.Status = computeAgentStatus(ac.ID, activeIDs, soul, ac.Locked)
 			ag.Soul = soul
@@ -1286,6 +1289,7 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		}
 	}
 	ag.Type = string(foundAgent.ResolveType(coreagent.IsCoreAgent))
+	ag.Locked = foundAgent.Locked
 	ag.Model = model
 	ag.Status = computeAgentStatus(agentID, activeIDs, soul, foundAgent.Locked)
 	// Hide compiled prompts for locked (core) agents.
