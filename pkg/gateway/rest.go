@@ -791,7 +791,7 @@ func (a *restAPI) activeAgentIDSet() map[string]bool {
 }
 
 // computeAgentStatus determines the agent status based on whether it is active,
-// has a non-empty SOUL.md, or is a system agent.
+// has a non-empty SOUL.md, or is a locked core agent.
 func computeAgentStatus(agentID string, activeIDs map[string]bool, soul string, locked bool) string {
 	if activeIDs[agentID] {
 		return "active"
@@ -850,7 +850,6 @@ func (a *restAPI) listAgents(w http.ResponseWriter) {
 
 	defaults := buildAgentDefaults(cfg)
 	defaultModel := cfg.Agents.Defaults.ModelName
-
 	for _, ac := range cfg.Agents.List {
 		model := defaultModel
 		if ac.Model != nil && ac.Model.Primary != "" {
@@ -1099,17 +1098,23 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 	// Model changes, heartbeat, and tool adjustments are still allowed.
 	foundAgent := cfg.Agents.List[foundIdx]
 	if foundAgent.Locked {
-		if req.Name != nil || req.Description != nil {
-			jsonErr(w, http.StatusForbidden, "cannot modify locked agent identity")
+		// Locked agents (core agents) cannot have their identity or prompt modified.
+		// Protected: name, description, soul (prompt), heartbeat, instructions.
+		// Color and icon are not in the update request struct so they are implicitly
+		// protected. If color/icon fields are ever added, gate them here too.
+		// Allowed: model, tools (remove-only via updateAgentTools), heartbeat schedule.
+		if req.Name != nil || req.Description != nil ||
+			req.Soul != nil || req.Heartbeat != nil || req.Instructions != nil {
+			jsonErr(w, http.StatusForbidden, "cannot modify locked agent identity or prompt")
 			return
 		}
 	}
 	// Persist to config.json BEFORE mutating the live config.
 	// Capture the new values to apply after persistence succeeds.
-	newName := cfg.Agents.List[foundIdx].Name
+	newName := foundAgent.Name
 	newModel := ""
-	if cfg.Agents.List[foundIdx].Model != nil {
-		newModel = cfg.Agents.List[foundIdx].Model.Primary
+	if foundAgent.Model != nil {
+		newModel = foundAgent.Model.Primary
 	}
 	if req.Name != nil {
 		newName = *req.Name
@@ -1280,11 +1285,11 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 			}
 		}
 	}
-	ag.Type = string(cfg.Agents.List[foundIdx].ResolveType(coreagent.IsCoreAgent))
+	ag.Type = string(foundAgent.ResolveType(coreagent.IsCoreAgent))
 	ag.Model = model
-	ag.Status = computeAgentStatus(agentID, activeIDs, soul, cfg.Agents.List[foundIdx].Locked)
+	ag.Status = computeAgentStatus(agentID, activeIDs, soul, foundAgent.Locked)
 	// Hide compiled prompts for locked (core) agents.
-	if cfg.Agents.List[foundIdx].Locked {
+	if foundAgent.Locked {
 		soul = ""
 	}
 	ag.Soul = soul
@@ -2948,8 +2953,10 @@ func (a *restAPI) getAgentTools(w http.ResponseWriter, agentID string) {
 // updateAgentTools handles PUT /api/v1/agents/{id}/tools — replaces the
 // agent's tool visibility config.
 func (a *restAPI) updateAgentTools(w http.ResponseWriter, r *http.Request, agentID string) {
+	// Note: the old "omnipus-system" guard was removed — system agent no longer exists.
+	// Core agents are protected by the Locked check below.
 	if agentID == "omnipus-system" {
-		jsonErr(w, http.StatusForbidden, "cannot modify system agent tools")
+		jsonErr(w, http.StatusNotFound, fmt.Sprintf("agent %q not found", agentID))
 		return
 	}
 
@@ -3766,7 +3773,7 @@ func (a *restAPI) HandleMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	refID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/media/"), "/")
+	refID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/media/"), "/")
 	if refID == "" || strings.ContainsAny(refID, "/\\") || strings.Contains(refID, "..") {
 		jsonErr(w, http.StatusBadRequest, "invalid media ref")
 		return

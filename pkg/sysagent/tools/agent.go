@@ -257,6 +257,9 @@ func (t *AgentUpdateTool) Execute(_ context.Context, args map[string]any) *tools
 		for i := range cfg.Agents.List {
 			if cfg.Agents.List[i].ID == id {
 				found = true
+				if cfg.Agents.List[i].Locked {
+					return fmt.Errorf("agent %q is a locked core agent and cannot be modified", id)
+				}
 				// All string fields treat empty as "skip, don't change" for consistency.
 				if v, ok := args["name"].(string); ok && v != "" {
 					cfg.Agents.List[i].Name = v
@@ -339,6 +342,9 @@ func (t *AgentDeleteTool) Execute(_ context.Context, args map[string]any) *tools
 		newList := cfg.Agents.List[:0]
 		for _, a := range cfg.Agents.List {
 			if a.ID == id {
+				if a.Locked {
+					return fmt.Errorf("agent %q is a locked core agent and cannot be deleted", id)
+				}
 				found = true
 				continue
 			}

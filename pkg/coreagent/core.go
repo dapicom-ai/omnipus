@@ -15,6 +15,8 @@
 package coreagent
 
 import (
+	"fmt"
+
 	"github.com/dapicom-ai/omnipus/pkg/config"
 )
 
@@ -67,20 +69,28 @@ func IsCoreAgent(id string) bool {
 	return ByID(CoreAgentID(id)) != nil
 }
 
-// GetPrompt returns the compiled system prompt for the given agent ID.
-// Returns empty string if the ID is not a core agent — the caller should
-// fall back to reading SOUL.md from disk.
-func GetPrompt(id string) string {
-	p, ok := prompts[id]
-	if !ok {
-		return ""
+// init validates that every core agent has a corresponding compiled prompt.
+// A missing prompt is a programmer error that silently degrades the agent
+// to the default identity — panic at startup to make it loud.
+func init() {
+	for _, ca := range All() {
+		if _, ok := prompts[string(ca.ID)]; !ok {
+			panic(fmt.Sprintf("coreagent: no compiled prompt for agent %q — add to prompts map", ca.ID))
+		}
 	}
-	return p
 }
 
-// SeedConfig ensures all core agents exist in cfg.Agents.List.
-// Creates missing ones with Locked=true and default metadata.
-// Returns true if any agents were added (caller should save the config).
+// GetPrompt returns the compiled system prompt for the given agent ID.
+// Returns empty string if the ID is not a core agent — callers should
+// apply their own fallback (e.g., check SOUL.md or use default identity).
+func GetPrompt(id string) string {
+	return prompts[id]
+}
+
+// SeedConfig ensures all core agents exist in cfg.Agents.List with Locked=true.
+// Creates missing ones and re-enforces Locked=true on existing core agents
+// (prevents config tampering from downgrading protection).
+// Returns true if config was modified (caller should save).
 func SeedConfig(cfg *config.Config) bool {
 	existing := make(map[string]bool, len(cfg.Agents.List))
 	for _, a := range cfg.Agents.List {
@@ -88,6 +98,15 @@ func SeedConfig(cfg *config.Config) bool {
 	}
 
 	modified := false
+
+	// Re-enforce Locked=true on existing core agents (tamper protection).
+	for i := range cfg.Agents.List {
+		if IsCoreAgent(cfg.Agents.List[i].ID) && !cfg.Agents.List[i].Locked {
+			cfg.Agents.List[i].Locked = true
+			modified = true
+		}
+	}
+
 	for _, ca := range All() {
 		if existing[string(ca.ID)] {
 			continue
@@ -144,8 +163,8 @@ func Ava() *CoreAgent {
 			"read_file", "write_file", "edit_file", "list_dir",
 			"web_search", "web_fetch",
 			"message",
-			// Ava also gets system.agent.create/update/delete — wired separately
-			// in registerSharedTools because they require GuardedTool wrapping.
+			// TODO(#45): Ava should also receive system.agent.create/update/delete
+			// with GuardedTool wrapping. Not yet wired — deferred to follow-up.
 		},
 	}
 }

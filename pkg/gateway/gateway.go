@@ -49,9 +49,9 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/devices"
 	"github.com/dapicom-ai/omnipus/pkg/health"
 	"github.com/dapicom-ai/omnipus/pkg/heartbeat"
+	"github.com/dapicom-ai/omnipus/pkg/coreagent"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/media"
-	"github.com/dapicom-ai/omnipus/pkg/coreagent"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/state"
@@ -278,7 +278,7 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	// agents that are not already present (checked by ID).
 	if coreagent.SeedConfig(cfg) {
 		if err := config.SaveConfig(configPath, cfg); err != nil {
-			slog.Warn("gateway: failed to save seeded core agents", "error", err)
+			return fmt.Errorf("gateway: failed to persist seeded core agents: %w", err)
 		}
 	}
 
