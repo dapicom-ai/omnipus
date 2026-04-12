@@ -6,8 +6,16 @@ package systools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"sort"
+	"strings"
+	"time"
 
+	"github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 )
 
@@ -204,40 +212,66 @@ func (t *ModelsListTool) Execute(_ context.Context, args map[string]any) *tools.
 
 	type modelEntry struct {
 		Model    string `json:"model"`
-		Name     string `json:"name"`
 		Provider string `json:"provider"`
 		Default  bool   `json:"default,omitempty"`
 	}
 
 	defaultModel := cfg.Agents.Defaults.ModelName
+
+	// Collect unique providers and resolve their API keys.
+	type providerInfo struct {
+		name   string
+		apiKey string
+	}
+	providersSeen := map[string]*providerInfo{}
+	for _, p := range cfg.Providers {
+		if p == nil {
+			continue
+		}
+		name := p.Provider
+		if name == "" {
+			name = providerFromModelRef(p.Model)
+		}
+		if name == "" || providersSeen[name] != nil {
+			continue
+		}
+		if filterProvider != "" && name != filterProvider {
+			continue
+		}
+		// Resolve API key.
+		apiKey := p.APIKey()
+		if apiKey == "" && p.APIKeyRef != "" && t.deps.CredStore != nil {
+			if v, err := t.deps.CredStore.Get(p.APIKeyRef); err == nil {
+				apiKey = v
+			}
+		}
+		providersSeen[name] = &providerInfo{name: name, apiKey: apiKey}
+	}
+
+	// Fetch models from each provider's upstream API.
 	var models []modelEntry
 	seen := map[string]bool{}
-
-	for _, p := range cfg.Providers {
-		if p == nil || p.Model == "" {
+	for _, pi := range providersSeen {
+		baseURL := providers.GetDefaultAPIBase(pi.name)
+		if baseURL == "" || pi.apiKey == "" {
 			continue
 		}
-		providerName := p.Provider
-		if providerName == "" {
-			providerName = providerFromModelRef(p.Model)
-		}
-		if filterProvider != "" && providerName != filterProvider {
+		upstream, err := fetchProviderModels(baseURL, pi.apiKey)
+		if err != nil {
+			slog.Warn("system.models.list: failed to fetch models", "provider", pi.name, "error", err)
 			continue
 		}
-		if seen[p.Model] {
-			continue
+		for _, m := range upstream {
+			if seen[m] {
+				continue
+			}
+			seen[m] = true
+			models = append(models, modelEntry{
+				Model:    m,
+				Provider: pi.name,
+				Default:  m == defaultModel,
+			})
 		}
-		seen[p.Model] = true
-		displayName := p.ModelName
-		if displayName == "" {
-			displayName = p.Model
-		}
-		models = append(models, modelEntry{
-			Model:    p.Model,
-			Name:     displayName,
-			Provider: providerName,
-			Default:  p.Model == defaultModel,
-		})
 	}
 
 	return tools.NewToolResult(successJSON(map[string]any{
@@ -245,4 +279,48 @@ func (t *ModelsListTool) Execute(_ context.Context, args map[string]any) *tools.
 		"default_model": defaultModel,
 		"total":         len(models),
 	}))
+}
+
+// fetchProviderModels fetches models from an OpenAI-compatible /models endpoint.
+func fetchProviderModels(baseURL, apiKey string) ([]string, error) {
+	client := &http.Client{Timeout: 15 * time.Second}
+	req, err := http.NewRequest("GET", strings.TrimSuffix(baseURL, "/")+"/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("X-Api-Key", apiKey)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	models := make([]string, 0, len(result.Data))
+	for _, m := range result.Data {
+		if m.ID != "" {
+			models = append(models, m.ID)
+		}
+	}
+	sort.Strings(models)
+	return models, nil
 }
