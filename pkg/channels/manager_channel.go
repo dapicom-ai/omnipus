@@ -121,4 +121,3 @@ func toChannelConfig(cfg *config.Config, list []string) (*config.ChannelsConfig,
 
 	return result, nil
 }
-
