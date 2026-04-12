@@ -20,10 +20,11 @@ import (
 // GuardedTool satisfies the tools.Tool interface so it can be registered and
 // called identically to raw tools — callers see no difference.
 type GuardedTool struct {
-	inner      tools.Tool
-	handler    *SystemToolHandler
-	callerRole PrincipalRole
-	deviceID   string
+	inner         tools.Tool
+	handler       *SystemToolHandler
+	callerRole    PrincipalRole
+	deviceID      string
+	scopeOverride *tools.ToolScope // if set, overrides inner.Scope()
 }
 
 // NewGuardedTool wraps inner with the handler's guard sequence (RBAC, rate
@@ -54,9 +55,21 @@ func (g *GuardedTool) Description() string { return g.inner.Description() }
 // Parameters delegates to the inner tool.
 func (g *GuardedTool) Parameters() map[string]any { return g.inner.Parameters() }
 
-// Scope delegates to the inner tool — the guard wrapper preserves the inner
-// tool's scope so the ToolCompositor's scope gate fires correctly.
-func (g *GuardedTool) Scope() tools.ToolScope { return g.inner.Scope() }
+// Scope returns the scope override if set, otherwise delegates to the inner tool.
+// The scope override allows system-scoped tools to be registered on core agents
+// (e.g., agent CRUD tools on Ava) without changing the tool's base scope.
+func (g *GuardedTool) Scope() tools.ToolScope {
+	if g.scopeOverride != nil {
+		return *g.scopeOverride
+	}
+	return g.inner.Scope()
+}
+
+// WithScopeOverride returns the GuardedTool with an overridden scope.
+func (g *GuardedTool) WithScopeOverride(scope tools.ToolScope) *GuardedTool {
+	g.scopeOverride = &scope
+	return g
+}
 
 // Execute routes through SystemToolHandler.Handle which enforces:
 //  1. RBAC check (CheckRBAC) — SEC-19

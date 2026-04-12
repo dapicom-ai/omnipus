@@ -116,6 +116,9 @@ type AgentLoop struct {
 	// tools are disabled. Shutdown() is called in AgentLoop.Close().
 	browserMgr *browser.BrowserManager
 
+	// Ava agent CRUD deps — stored so WireAvaAgentTools can re-run on hot reload.
+	avaDeps *systools.Deps
+
 	// Wave 4: Per-agent rate limiting and global daily cost cap (SEC-26).
 	// rateLimiter manages sliding-window counters; costTracker persists the
 	// daily cost accumulator across restarts. Both are always non-nil after
@@ -1545,6 +1548,13 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 
 	// Ensure shared tools are re-registered on the new registry
 	registerSharedTools(al, cfg, al.bus, registry, provider)
+
+	// Re-wire Ava's agent CRUD tools on the new registry.
+	if al.avaDeps != nil {
+		if err := al.WireAvaAgentTools(al.avaDeps, registry); err != nil {
+			logger.WarnCF("agent", "hot-reload: failed to re-wire Ava agent tools", map[string]any{"error": err.Error()})
+		}
+	}
 
 	// Atomically swap the config and registry under write lock
 	// This ensures readers see a consistent pair
@@ -5068,5 +5078,57 @@ func (al *AgentLoop) WireSystemTools(deps *systools.Deps, navCb systools.Navigat
 	}
 	logger.InfoCF("agent", "System tools wired into system agent (guarded)",
 		map[string]any{"agent_id": DefaultAgentID, "tool_count": len(sysRegistry.List())})
+	return nil
+}
+
+// WireAvaAgentTools registers the 3 agent CRUD tools (system.agent.create,
+// system.agent.update, system.agent.delete) on the "ava" core agent so she
+// can create custom agents through her structured interview flow.
+// These are wrapped with GuardedTool for RBAC + rate limiting + audit.
+// WireAvaAgentTools registers the 3 agent CRUD tools on Ava.
+// If reg is nil, the current registry is used. Pass a specific registry
+// during hot-reload when the new registry hasn't been swapped yet.
+func (al *AgentLoop) WireAvaAgentTools(deps *systools.Deps, reg ...*AgentRegistry) error {
+	al.avaDeps = deps
+	var r *AgentRegistry
+	if len(reg) > 0 && reg[0] != nil {
+		r = reg[0]
+	} else {
+		r = al.GetRegistry()
+	}
+	avaInst, ok := r.GetAgent("ava")
+	if !ok || avaInst == nil {
+		return fmt.Errorf("WireAvaAgentTools: agent 'ava' not found in registry")
+	}
+
+	handler := sysagent.NewSystemToolHandler(sysagent.HandlerConfig{
+		Registry: systools.BuildRegistry(deps, nil),
+		Audit:    al.auditLogger,
+		Confirm:  nil,
+	})
+
+	// Only wire the 3 agent CRUD tools — Ava doesn't get the other 32 system tools.
+	agentToolNames := []string{
+		"system.agent.create",
+		"system.agent.update",
+		"system.agent.delete",
+	}
+
+	wired := 0
+	fullRegistry := systools.BuildRegistry(deps, nil)
+	for _, name := range agentToolNames {
+		t, exists := fullRegistry.Get(name)
+		if !exists {
+			logger.WarnCF("agent", "WireAvaAgentTools: tool not found in registry", map[string]any{"tool": name})
+			continue
+		}
+		guarded := sysagent.NewGuardedTool(t, handler, sysagent.RoleSingleUser, "gateway").
+			WithScopeOverride(tools.ScopeCore)
+		avaInst.Tools.Register(guarded)
+		wired++
+	}
+
+	logger.InfoCF("agent", "Agent CRUD tools wired into Ava (guarded)",
+		map[string]any{"agent_id": "ava", "tool_count": wired})
 	return nil
 }

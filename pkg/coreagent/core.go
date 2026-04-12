@@ -163,8 +163,7 @@ func Ava() *CoreAgent {
 			"read_file", "write_file", "edit_file", "list_dir",
 			"web_search", "web_fetch",
 			"message",
-			// TODO(#45): Ava should also receive system.agent.create/update/delete
-			// with GuardedTool wrapping. Not yet wired — deferred to follow-up.
+			"system.agent.create", "system.agent.update", "system.agent.delete",
 		},
 	}
 }

@@ -51,6 +51,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/heartbeat"
 	"github.com/dapicom-ai/omnipus/pkg/coreagent"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
+	systools "github.com/dapicom-ai/omnipus/pkg/sysagent/tools"
 	"github.com/dapicom-ai/omnipus/pkg/media"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
@@ -284,6 +285,22 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 
 	msgBus := bus.NewMessageBus()
 	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider)
+
+	// Wire agent CRUD tools (system.agent.create/update/delete) to Ava so she
+	// can create custom agents through her structured interview flow.
+	avaDeps := &systools.Deps{
+		Home:       homePath,
+		ConfigPath: configPath,
+		GetCfg:     agentLoop.GetConfig,
+		MutateConfig: agentLoop.MutateConfig,
+		SaveConfigLocked: func(cfg *config.Config) error {
+			return config.SaveConfig(configPath, cfg)
+		},
+		CredStore: credStore,
+	}
+	if err := agentLoop.WireAvaAgentTools(avaDeps); err != nil {
+		slog.Warn("gateway: failed to wire Ava agent tools", "error", err)
+	}
 
 	fmt.Println("\n📦 Agent Status:")
 	startupInfo := agentLoop.GetStartupInfo()
