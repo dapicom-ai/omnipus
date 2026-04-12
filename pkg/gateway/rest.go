@@ -841,19 +841,11 @@ func (a *restAPI) readChannelConfigRaw(channelID string) (map[string]any, error)
 
 func (a *restAPI) listAgents(w http.ResponseWriter) {
 	cfg := a.agentLoop.GetConfig()
-	agents := make([]agentResponse, 0, len(cfg.Agents.List)+1)
+	agents := make([]agentResponse, 0, len(cfg.Agents.List))
 	activeIDs := a.activeAgentIDSet()
 
-	// System agent is always present and always active.
 	defaults := buildAgentDefaults(cfg)
 	defaultModel := cfg.Agents.Defaults.ModelName
-	sysAgent := defaults
-	sysAgent.ID = "omnipus-system"
-	sysAgent.Name = "Omnipus"
-	sysAgent.Type = "system"
-	sysAgent.Model = defaultModel
-	sysAgent.Status = "active"
-	agents = append(agents, sysAgent)
 
 	for _, ac := range cfg.Agents.List {
 		model := defaultModel
@@ -866,12 +858,16 @@ func (a *restAPI) listAgents(w http.ResponseWriter) {
 		}
 		// M2: listAgents only needs SOUL.md to determine draft status — avoid reading
 		// HEARTBEAT.md and AGENT.md unnecessarily in the list endpoint.
-		soul := readSoulMD(workspace)
+		// Core agents have compiled prompts — do not expose them via SOUL.md.
+		var soul string
+		if !ac.Locked {
+			soul = readSoulMD(workspace)
+		}
 		ag := defaults
 		ag.ID = ac.ID
 		ag.Name = ac.Name
 		ag.Description = ac.Description
-		ag.Type = "custom"
+		ag.Type = string(ac.ResolveType(coreagent.IsCoreAgent))
 		ag.Model = model
 		ag.Status = computeAgentStatus(ac.ID, activeIDs, soul)
 		ag.Soul = soul
@@ -884,27 +880,6 @@ func (a *restAPI) listAgents(w http.ResponseWriter) {
 func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 	cfg := a.agentLoop.GetConfig()
 	defaults := buildAgentDefaults(cfg)
-
-	// System agent is always present and always active.
-	if id == "omnipus-system" {
-		workspace, wsErr := agentWorkspacePath(cfg, "omnipus-system", "")
-		if wsErr != nil {
-			slog.Warn("rest: getAgent: could not resolve system agent workspace", "error", wsErr)
-		}
-		soul, heartbeat, instructions := readAgentFiles(workspace)
-		ag := defaults
-		ag.ID = "omnipus-system"
-		ag.Name = "Omnipus"
-		ag.Type = "system"
-		ag.Model = cfg.Agents.Defaults.ModelName
-		ag.Status = "active"
-		ag.Soul = soul
-		ag.Heartbeat = heartbeat
-		ag.Instructions = instructions
-		jsonOK(w, ag)
-		return
-	}
-
 	activeIDs := a.activeAgentIDSet()
 
 	for _, ac := range cfg.Agents.List {
@@ -918,11 +893,15 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 				slog.Warn("rest: getAgent: could not resolve workspace", "agent_id", ac.ID, "error", wsErr)
 			}
 			soul, heartbeat, instructions := readAgentFiles(workspace)
+			// Core agents have compiled prompts — do not expose them.
+			if ac.Locked {
+				soul = ""
+			}
 			ag := defaults
 			ag.ID = ac.ID
 			ag.Name = ac.Name
 			ag.Description = ac.Description
-			ag.Type = "custom"
+			ag.Type = string(ac.ResolveType(coreagent.IsCoreAgent))
 			ag.Model = model
 			ag.Status = computeAgentStatus(ac.ID, activeIDs, soul)
 			ag.Soul = soul
@@ -1112,6 +1091,15 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
+	// Locked core agents: reject identity mutations (name, description).
+	// Model changes, heartbeat, and tool adjustments are still allowed.
+	foundAgent := cfg.Agents.List[foundIdx]
+	if foundAgent.Locked {
+		if req.Name != nil || req.Description != nil {
+			jsonErr(w, http.StatusForbidden, "cannot modify locked agent identity")
+			return
+		}
+	}
 	// Persist to config.json BEFORE mutating the live config.
 	// Capture the new values to apply after persistence succeeds.
 	newName := cfg.Agents.List[foundIdx].Name
@@ -1288,9 +1276,13 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 			}
 		}
 	}
-	ag.Type = "custom"
+	ag.Type = string(cfg.Agents.List[foundIdx].ResolveType(coreagent.IsCoreAgent))
 	ag.Model = model
 	ag.Status = computeAgentStatus(agentID, activeIDs, soul)
+	// Hide compiled prompts for locked (core) agents.
+	if cfg.Agents.List[foundIdx].Locked {
+		soul = ""
+	}
 	ag.Soul = soul
 	ag.Heartbeat = heartbeat
 	ag.Instructions = instructions

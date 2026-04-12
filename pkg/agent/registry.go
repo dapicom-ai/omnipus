@@ -11,9 +11,9 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 )
 
-// DefaultAgentID is the registry key for the system/default agent. It is the
-// identifier under which the "omnipus-system" agent is registered, and it is
-// the agent that receives the 35 system.* tools via WireSystemTools.
+// DefaultAgentID is the registry key for the default agent. It is the internal
+// identifier for the generic default agent instance used when no specific agent
+// is targeted (e.g., unrouted channel messages).
 const DefaultAgentID = "main"
 
 // AgentRegistry manages multiple agent instances and routes messages to them.
@@ -47,13 +47,12 @@ func NewAgentRegistry(
 		"model":     defaultInstance.Model,
 	})
 
-	// Register custom agents from config.
-	// Protect reserved IDs: DefaultAgentID is the default/system agent; "omnipus-system"
-	// is the canonical external name. A custom agent using either ID would silently
-	// overwrite a critical entry, so we reject those names at registration time.
+	// Register agents from config (core agents seeded by coreagent.SeedConfig are
+	// stored in cfg.Agents.List alongside custom agents).
+	// Protect the DefaultAgentID ("main") — a custom/core agent using that ID would
+	// silently overwrite the generic default agent instance.
 	reservedIDs := map[string]bool{
-		DefaultAgentID:   true,
-		"omnipus-system": true,
+		DefaultAgentID: true,
 	}
 	for i := range cfg.Agents.List {
 		ac := &cfg.Agents.List[i]
@@ -78,14 +77,10 @@ func NewAgentRegistry(
 }
 
 // GetAgent returns the agent instance for a given ID.
-// "omnipus-system" is treated as an alias for "main" (the default/system agent).
 func (r *AgentRegistry) GetAgent(agentID string) (*AgentInstance, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	id := routing.NormalizeAgentID(agentID)
-	if id == "omnipus-system" {
-		id = DefaultAgentID
-	}
 	agent, ok := r.agents[id]
 	return agent, ok
 }
