@@ -1236,7 +1236,7 @@ func (m *mediaArtifactTool) Execute(ctx context.Context, args map[string]any) *t
 
 type toolLimitTestTool struct{}
 
-func (m *toolLimitTestTool) Name() string        { return "tool_limit_test_tool" }
+func (m *toolLimitTestTool) Name() string           { return "tool_limit_test_tool" }
 func (m *toolLimitTestTool) Scope() tools.ToolScope { return tools.ScopeGeneral }
 func (m *toolLimitTestTool) Description() string {
 	return "Tool used to exhaust the iteration budget in tests"

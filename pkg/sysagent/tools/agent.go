@@ -115,8 +115,8 @@ type AgentCreateTool struct{ deps *Deps }
 
 func NewAgentCreateTool(d *Deps) *AgentCreateTool { return &AgentCreateTool{deps: d} }
 
-func (t *AgentCreateTool) Name() string              { return "system.agent.create" }
-func (t *AgentCreateTool) Scope() tools.ToolScope    { return tools.ScopeSystem }
+func (t *AgentCreateTool) Name() string           { return "system.agent.create" }
+func (t *AgentCreateTool) Scope() tools.ToolScope { return tools.ScopeSystem }
 func (t *AgentCreateTool) Description() string {
 	return "Create a new custom agent.\nParameters: name (required), description, model, provider, color, icon."
 }
@@ -209,8 +209,8 @@ type AgentUpdateTool struct{ deps *Deps }
 
 func NewAgentUpdateTool(d *Deps) *AgentUpdateTool { return &AgentUpdateTool{deps: d} }
 
-func (t *AgentUpdateTool) Name() string              { return "system.agent.update" }
-func (t *AgentUpdateTool) Scope() tools.ToolScope    { return tools.ScopeSystem }
+func (t *AgentUpdateTool) Name() string           { return "system.agent.update" }
+func (t *AgentUpdateTool) Scope() tools.ToolScope { return tools.ScopeSystem }
 func (t *AgentUpdateTool) Description() string {
 	return "Update an existing agent's configuration.\nParameters: id (required), name, description, model, provider, color, icon."
 }
@@ -301,8 +301,8 @@ type AgentDeleteTool struct{ deps *Deps }
 
 func NewAgentDeleteTool(d *Deps) *AgentDeleteTool { return &AgentDeleteTool{deps: d} }
 
-func (t *AgentDeleteTool) Name() string              { return "system.agent.delete" }
-func (t *AgentDeleteTool) Scope() tools.ToolScope    { return tools.ScopeSystem }
+func (t *AgentDeleteTool) Name() string           { return "system.agent.delete" }
+func (t *AgentDeleteTool) Scope() tools.ToolScope { return tools.ScopeSystem }
 func (t *AgentDeleteTool) Description() string {
 	return "Delete an agent and all its data (sessions, memory, workspace).\nParameters: id (required), confirm (bool, must be true)."
 }
@@ -376,8 +376,8 @@ type AgentListTool struct{ deps *Deps }
 
 func NewAgentListTool(d *Deps) *AgentListTool { return &AgentListTool{deps: d} }
 
-func (t *AgentListTool) Name() string              { return "system.agent.list" }
-func (t *AgentListTool) Scope() tools.ToolScope    { return tools.ScopeSystem }
+func (t *AgentListTool) Name() string           { return "system.agent.list" }
+func (t *AgentListTool) Scope() tools.ToolScope { return tools.ScopeSystem }
 func (t *AgentListTool) Description() string {
 	return "List all agents with their status, model, and task count.\nParameters: status (optional: active/inactive/all, default all)."
 }
@@ -436,8 +436,8 @@ type AgentActivateTool struct{ deps *Deps }
 
 func NewAgentActivateTool(d *Deps) *AgentActivateTool { return &AgentActivateTool{deps: d} }
 
-func (t *AgentActivateTool) Name() string              { return "system.agent.activate" }
-func (t *AgentActivateTool) Scope() tools.ToolScope    { return tools.ScopeSystem }
+func (t *AgentActivateTool) Name() string           { return "system.agent.activate" }
+func (t *AgentActivateTool) Scope() tools.ToolScope { return tools.ScopeSystem }
 func (t *AgentActivateTool) Description() string {
 	return "Activate a core or custom agent, persisting the enabled state.\nParameters: id (required)."
 }
@@ -463,8 +463,8 @@ type AgentDeactivateTool struct{ deps *Deps }
 
 func NewAgentDeactivateTool(d *Deps) *AgentDeactivateTool { return &AgentDeactivateTool{deps: d} }
 
-func (t *AgentDeactivateTool) Name() string              { return "system.agent.deactivate" }
-func (t *AgentDeactivateTool) Scope() tools.ToolScope    { return tools.ScopeSystem }
+func (t *AgentDeactivateTool) Name() string           { return "system.agent.deactivate" }
+func (t *AgentDeactivateTool) Scope() tools.ToolScope { return tools.ScopeSystem }
 func (t *AgentDeactivateTool) Description() string {
 	return "Deactivate an agent (makes it unavailable for new sessions), persisting the disabled state.\nParameters: id (required)."
 }

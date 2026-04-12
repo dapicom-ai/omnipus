@@ -15,8 +15,8 @@ import (
 
 type MCPAddTool struct{ deps *Deps }
 
-func NewMCPAddTool(d *Deps) *MCPAddTool    { return &MCPAddTool{deps: d} }
-func (t *MCPAddTool) Name() string          { return "system.mcp.add" }
+func NewMCPAddTool(d *Deps) *MCPAddTool      { return &MCPAddTool{deps: d} }
+func (t *MCPAddTool) Name() string           { return "system.mcp.add" }
 func (t *MCPAddTool) Scope() tools.ToolScope { return tools.ScopeSystem }
 func (t *MCPAddTool) Description() string {
 	return "Add an MCP server.\nParameters: name (required), transport (stdio/sse/http), command, args, url, env, agent_ids."
@@ -56,9 +56,9 @@ func (t *MCPAddTool) Execute(_ context.Context, args map[string]any) *tools.Tool
 
 type MCPRemoveTool struct{ deps *Deps }
 
-func NewMCPRemoveTool(d *Deps) *MCPRemoveTool { return &MCPRemoveTool{deps: d} }
-func (t *MCPRemoveTool) Name() string              { return "system.mcp.remove" }
-func (t *MCPRemoveTool) Scope() tools.ToolScope    { return tools.ScopeSystem }
+func NewMCPRemoveTool(d *Deps) *MCPRemoveTool   { return &MCPRemoveTool{deps: d} }
+func (t *MCPRemoveTool) Name() string           { return "system.mcp.remove" }
+func (t *MCPRemoveTool) Scope() tools.ToolScope { return tools.ScopeSystem }
 func (t *MCPRemoveTool) Description() string {
 	return "Remove an MCP server. Parameters: name (required), confirm (bool, must be true)."
 }
@@ -97,9 +97,9 @@ func (t *MCPRemoveTool) Execute(_ context.Context, args map[string]any) *tools.T
 
 type MCPListTool struct{ deps *Deps }
 
-func NewMCPListTool(d *Deps) *MCPListTool { return &MCPListTool{deps: d} }
+func NewMCPListTool(d *Deps) *MCPListTool     { return &MCPListTool{deps: d} }
 func (t *MCPListTool) Name() string           { return "system.mcp.list" }
-func (t *MCPListTool) Scope() tools.ToolScope  { return tools.ScopeSystem }
+func (t *MCPListTool) Scope() tools.ToolScope { return tools.ScopeSystem }
 func (t *MCPListTool) Description() string {
 	return "List all MCP servers with status and assigned agents. No parameters required."
 }

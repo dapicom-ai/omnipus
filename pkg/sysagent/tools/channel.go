@@ -182,7 +182,7 @@ type ChannelListTool struct{ deps *Deps }
 
 func NewChannelListTool(d *Deps) *ChannelListTool { return &ChannelListTool{deps: d} }
 func (t *ChannelListTool) Name() string           { return "system.channel.list" }
-func (t *ChannelListTool) Scope() tools.ToolScope  { return tools.ScopeSystem }
+func (t *ChannelListTool) Scope() tools.ToolScope { return tools.ScopeSystem }
 func (t *ChannelListTool) Description() string {
 	return "List all channels with status and implementation tier. No parameters required."
 }
@@ -201,7 +201,7 @@ type ChannelTestTool struct{ deps *Deps }
 
 func NewChannelTestTool(d *Deps) *ChannelTestTool { return &ChannelTestTool{deps: d} }
 func (t *ChannelTestTool) Name() string           { return "system.channel.test" }
-func (t *ChannelTestTool) Scope() tools.ToolScope  { return tools.ScopeSystem }
+func (t *ChannelTestTool) Scope() tools.ToolScope { return tools.ScopeSystem }
 func (t *ChannelTestTool) Description() string {
 	return "Test a channel connection. Parameters: id (required)."
 }

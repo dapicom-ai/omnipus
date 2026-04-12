@@ -1409,8 +1409,8 @@ func TestAgentToolsCfg_JSONRoundTrip(t *testing.T) {
 	}
 
 	var decoded AgentToolsCfg
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("json.Unmarshal(AgentToolsCfg): %v", err)
+	if unmarshalErr := json.Unmarshal(data, &decoded); unmarshalErr != nil {
+		t.Fatalf("json.Unmarshal(AgentToolsCfg): %v", unmarshalErr)
 	}
 
 	// Builtin.Mode

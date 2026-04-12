@@ -25,7 +25,7 @@ const defaultSessionID = "default"
 
 type NavigateTool struct{ mgr *BrowserManager }
 
-func (t *NavigateTool) Name() string        { return "browser.navigate" }
+func (t *NavigateTool) Name() string           { return "browser.navigate" }
 func (t *NavigateTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *NavigateTool) Description() string {
 	return "Navigate to a URL and return page metadata. Subject to SSRF protection."
@@ -104,7 +104,7 @@ func (t *NavigateTool) Execute(ctx context.Context, args map[string]any) *tools.
 type ClickTool struct{ mgr *BrowserManager }
 
 func (t *ClickTool) Name() string           { return "browser.click" }
-func (t *ClickTool) Scope() tools.ToolScope  { return tools.ScopeCore }
+func (t *ClickTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *ClickTool) Description() string    { return "Click an element matching a CSS selector." }
 func (t *ClickTool) Parameters() map[string]any {
 	return map[string]any{
@@ -145,7 +145,7 @@ func (t *ClickTool) Execute(ctx context.Context, args map[string]any) *tools.Too
 
 type TypeTool struct{ mgr *BrowserManager }
 
-func (t *TypeTool) Name() string        { return "browser.type" }
+func (t *TypeTool) Name() string           { return "browser.type" }
 func (t *TypeTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *TypeTool) Description() string {
 	return "Type text into an input element matching a CSS selector."
@@ -193,7 +193,7 @@ func (t *TypeTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 type ScreenshotTool struct{ mgr *BrowserManager }
 
 func (t *ScreenshotTool) Name() string           { return "browser.screenshot" }
-func (t *ScreenshotTool) Scope() tools.ToolScope  { return tools.ScopeCore }
+func (t *ScreenshotTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *ScreenshotTool) Description() string    { return "Capture a PNG screenshot of the current page." }
 func (t *ScreenshotTool) Parameters() map[string]any {
 	return map[string]any{
@@ -231,7 +231,7 @@ func (t *ScreenshotTool) Execute(ctx context.Context, args map[string]any) *tool
 
 type GetTextTool struct{ mgr *BrowserManager }
 
-func (t *GetTextTool) Name() string        { return "browser.get_text" }
+func (t *GetTextTool) Name() string           { return "browser.get_text" }
 func (t *GetTextTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *GetTextTool) Description() string {
 	return "Get the inner text of an element matching a CSS selector."
@@ -281,7 +281,7 @@ func (t *GetTextTool) Execute(ctx context.Context, args map[string]any) *tools.T
 
 type WaitTool struct{ mgr *BrowserManager }
 
-func (t *WaitTool) Name() string        { return "browser.wait" }
+func (t *WaitTool) Name() string           { return "browser.wait" }
 func (t *WaitTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *WaitTool) Description() string {
 	return "Wait for an element matching a CSS selector to appear in the DOM."
@@ -324,7 +324,7 @@ func (t *WaitTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 
 type EvaluateTool struct{ mgr *BrowserManager }
 
-func (t *EvaluateTool) Name() string        { return "browser.evaluate" }
+func (t *EvaluateTool) Name() string           { return "browser.evaluate" }
 func (t *EvaluateTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *EvaluateTool) Description() string {
 	return "Execute JavaScript in the page context. Denied by default — must be explicitly allowed by policy."

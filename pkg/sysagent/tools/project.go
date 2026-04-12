@@ -32,8 +32,8 @@ func projectsDir(home string) string { return filepath.Join(home, "projects") }
 type ProjectCreateTool struct{ deps *Deps }
 
 func NewProjectCreateTool(d *Deps) *ProjectCreateTool { return &ProjectCreateTool{deps: d} }
-func (t *ProjectCreateTool) Name() string              { return "system.project.create" }
-func (t *ProjectCreateTool) Scope() tools.ToolScope    { return tools.ScopeSystem }
+func (t *ProjectCreateTool) Name() string             { return "system.project.create" }
+func (t *ProjectCreateTool) Scope() tools.ToolScope   { return tools.ScopeSystem }
 func (t *ProjectCreateTool) Description() string {
 	return "Create a new project.\nParameters: name (required), description, color, agent_ids."
 }
@@ -90,8 +90,8 @@ func (t *ProjectCreateTool) Execute(_ context.Context, args map[string]any) *too
 type ProjectUpdateTool struct{ deps *Deps }
 
 func NewProjectUpdateTool(d *Deps) *ProjectUpdateTool { return &ProjectUpdateTool{deps: d} }
-func (t *ProjectUpdateTool) Name() string              { return "system.project.update" }
-func (t *ProjectUpdateTool) Scope() tools.ToolScope    { return tools.ScopeSystem }
+func (t *ProjectUpdateTool) Name() string             { return "system.project.update" }
+func (t *ProjectUpdateTool) Scope() tools.ToolScope   { return tools.ScopeSystem }
 func (t *ProjectUpdateTool) Description() string {
 	return "Update an existing project.\nParameters: id (required), name, description, color, agent_ids."
 }
@@ -145,8 +145,8 @@ func (t *ProjectUpdateTool) Execute(_ context.Context, args map[string]any) *too
 type ProjectDeleteTool struct{ deps *Deps }
 
 func NewProjectDeleteTool(d *Deps) *ProjectDeleteTool { return &ProjectDeleteTool{deps: d} }
-func (t *ProjectDeleteTool) Name() string              { return "system.project.delete" }
-func (t *ProjectDeleteTool) Scope() tools.ToolScope    { return tools.ScopeSystem }
+func (t *ProjectDeleteTool) Name() string             { return "system.project.delete" }
+func (t *ProjectDeleteTool) Scope() tools.ToolScope   { return tools.ScopeSystem }
 func (t *ProjectDeleteTool) Description() string {
 	return "Delete a project. Parameters: id (required), confirm (bool, must be true)."
 }
@@ -186,8 +186,8 @@ func (t *ProjectDeleteTool) Execute(_ context.Context, args map[string]any) *too
 type ProjectListTool struct{ deps *Deps }
 
 func NewProjectListTool(d *Deps) *ProjectListTool { return &ProjectListTool{deps: d} }
-func (t *ProjectListTool) Name() string              { return "system.project.list" }
-func (t *ProjectListTool) Scope() tools.ToolScope    { return tools.ScopeSystem }
+func (t *ProjectListTool) Name() string           { return "system.project.list" }
+func (t *ProjectListTool) Scope() tools.ToolScope { return tools.ScopeSystem }
 func (t *ProjectListTool) Description() string {
 	return "List all projects with task counts. No parameters required."
 }
