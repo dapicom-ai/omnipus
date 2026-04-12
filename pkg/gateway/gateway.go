@@ -345,6 +345,8 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	}
 	runningServices.HealthServer.SetReloadFunc(reloadTrigger)
 	agentLoop.SetReloadFunc(reloadTrigger)
+	// Wire reload trigger into Ava's deps so agent create triggers hot-reload.
+	avaDeps.ReloadFunc = reloadTrigger
 	runningServices.HealthServer.SetDegradedFunc(func() (bool, string) {
 		runningServices.reloadMu.Lock()
 		defer runningServices.reloadMu.Unlock()

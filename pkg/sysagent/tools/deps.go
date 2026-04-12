@@ -63,6 +63,9 @@ type Deps struct {
 	SaveConfigLocked func(cfg *config.Config) error
 	// CredStore is the encrypted credential store.
 	CredStore *credentials.Store
+	// ReloadFunc triggers a hot-reload of the agent loop so newly created agents
+	// become available immediately. Nil in tests or when not wired.
+	ReloadFunc func() error
 }
 
 // clearMaps recursively walks v and zeros every map field it finds. Called

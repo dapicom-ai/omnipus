@@ -264,6 +264,13 @@ func (t *AgentCreateTool) Execute(_ context.Context, args map[string]any) *tools
 		}
 	}
 
+	// Trigger hot-reload so the new agent is immediately available for chat.
+	if t.deps.ReloadFunc != nil {
+		if err := t.deps.ReloadFunc(); err != nil {
+			slog.Warn("sysagent: hot-reload after agent create failed", "id", finalID, "error", err)
+		}
+	}
+
 	return tools.NewToolResult(successJSON(map[string]any{
 		"id":     finalID,
 		"name":   name,
