@@ -269,7 +269,10 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 		return fmt.Errorf("error creating provider: %w", err)
 	}
 
-	if modelID != "" {
+	// Only override ModelName if it was empty (first boot / migration).
+	// Don't overwrite an alias (e.g. "openrouter-auto") with the raw model slug
+	// (e.g. "z-ai/glm-5-turbo") — the alias is what GetModelConfig looks up by.
+	if modelID != "" && cfg.Agents.Defaults.ModelName == "" {
 		cfg.Agents.Defaults.ModelName = modelID
 	}
 
@@ -800,7 +803,7 @@ func handleConfigReload(
 		return fmt.Errorf("error creating new provider: %w", err)
 	}
 
-	if newModelID != "" {
+	if newModelID != "" && newCfg.Agents.Defaults.ModelName == "" {
 		newCfg.Agents.Defaults.ModelName = newModelID
 	}
 
