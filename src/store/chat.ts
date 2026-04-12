@@ -253,7 +253,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   sendMessage: (content) => {
     const { connection, isConnected } = useConnectionStore.getState()
-    const { activeSessionId, activeAgentId, activeAgentType } = useSessionStore.getState()
+    const { activeSessionId, activeAgentId } = useSessionStore.getState()
     const { isStreaming } = get()
 
     if (isStreaming) {
@@ -296,10 +296,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       type: 'message',
       content,
       session_id: activeSessionId ?? undefined,
-      // Don't send agent_id for the system agent — it handles routing itself.
-      // Use activeAgentType (set by setActiveSession) rather than matching a hardcoded ID string,
-      // so this stays correct even if the system agent's ID ever changes.
-      agent_id: activeAgentId && activeAgentType !== 'system' ? activeAgentId : undefined,
+      // Always send agent_id when available — core and custom agents both route by ID.
+      agent_id: activeAgentId ?? undefined,
     })
 
     if (!sent) {

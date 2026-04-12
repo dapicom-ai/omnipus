@@ -338,8 +338,10 @@ export function SessionPanel() {
     }
   }
 
-  // Normalise system agent ID for sessions that were created under 'default' or 'main'
-  const systemAgentId = agents.find((a) => a.type === 'system')?.id ?? 'omnipus-system'
+  // Normalise legacy agent IDs for sessions that were created under 'default' or 'main'
+  // (pre-core-roster sessions used these placeholder IDs). Map to the first core agent, or
+  // keep the raw ID if no core agent is available yet.
+  const defaultAgentId = agents.find((a) => a.type === 'core')?.id ?? agents[0]?.id ?? 'unknown'
 
   const chatSessions = sessions.filter((s) => !s.type || s.type === 'chat')
   const taskSessions = sessions.filter((s) => s.type === 'task')
@@ -347,7 +349,7 @@ export function SessionPanel() {
   // Group sessions by agent, normalising legacy agent IDs
   function groupByAgent(items: Session[]): Record<string, Session[]> {
     return items.reduce<Record<string, Session[]>>((acc, s) => {
-      const agentId = (s.agent_id === 'default' || s.agent_id === 'main') ? systemAgentId : s.agent_id
+      const agentId = (s.agent_id === 'default' || s.agent_id === 'main') ? defaultAgentId : s.agent_id
       if (!acc[agentId]) acc[agentId] = []
       acc[agentId].push(s)
       return acc

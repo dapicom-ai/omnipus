@@ -18,7 +18,7 @@ import { TOOL_PRESETS, type PresetKey } from '@/lib/agentToolPresets'
 
 interface ToolsAndPermissionsProps {
   agentId: string | null
-  agentType: 'system' | 'core' | 'custom'
+  agentType: 'core' | 'custom'
   tools: AgentToolsCfg
   onChange: (tools: AgentToolsCfg) => void
 }

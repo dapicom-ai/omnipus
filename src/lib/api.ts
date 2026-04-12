@@ -33,9 +33,10 @@ export interface Agent {
   id: string
   name: string
   description: string
-  type: 'system' | 'core' | 'custom'
+  type: 'core' | 'custom'
   model: string
   status: 'active' | 'idle' | 'error' | 'draft'
+  locked?: boolean
   icon?: string
   color?: string
   tools?: string[]

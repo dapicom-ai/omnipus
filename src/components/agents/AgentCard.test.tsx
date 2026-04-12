@@ -41,16 +41,14 @@ describe('AgentCard — rendering (test #12)', () => {
     expect(screen.getByText(/General purpose assistant/i)).toBeInTheDocument()
   })
 
-  it('renders system agent with system type badge', () => {
+  it('renders locked core agent with core type badge', () => {
     // Dataset: Agent Card Rendering row 2
     render(
       <AgentCard
-        agent={makeAgent({ id: 'omnipus-system', name: 'Omnipus System', type: 'system' })}
+        agent={makeAgent({ id: 'mia', name: 'Mia', type: 'core', locked: true })}
       />
     )
-    // Use exact match: badge text is "system", agent name is "Omnipus System" — both contain "system"
-    // getByText with exact string finds element whose full text content equals "system"
-    expect(screen.getAllByText(/^system$/i).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/^core$/i).length).toBeGreaterThan(0)
   })
 
   it('renders without crashing when icon is unrecognized', () => {

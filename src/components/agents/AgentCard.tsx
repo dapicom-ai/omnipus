@@ -10,7 +10,6 @@ interface AgentCardProps {
 }
 
 const typeBadgeVariant = {
-  system: 'warning',
   core: 'secondary',
   custom: 'outline',
 } as const
@@ -71,7 +70,7 @@ export function AgentCard({ agent }: AgentCardProps) {
               </span>
             )}
           </div>
-          {agent.status === 'draft' && (
+          {agent.status === 'draft' && agent.type === 'custom' && (
             <p className="text-[10px] text-[var(--color-warning)]/70 mt-1">
               Set up SOUL.md to activate this agent
             </p>

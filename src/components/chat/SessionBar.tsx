@@ -80,7 +80,7 @@ export function SessionBar() {
 
   const handleAgentSelect = (agentId: string) => {
     const selected = agents.find((a) => a.id === agentId)
-    // Pass agent type so sendMessage can route system agent correctly without ID matching
+    // Pass agent type so the session store stays in sync with the selected agent
     setActiveSession(null, agentId, selected?.type ?? null)
   }
 

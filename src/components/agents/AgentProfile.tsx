@@ -319,7 +319,8 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     )
   }
 
-  const canEdit = agent.type !== 'system'
+  const isLocked = agent.locked === true
+  const canEdit = !isLocked
 
   return (
     <div className="absolute inset-0 overflow-y-auto">
@@ -346,11 +347,14 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
         <div className="min-w-0">
           <h1 className="font-headline text-xl font-bold text-[var(--color-secondary)]">{agent.name}</h1>
           <div className="flex items-center gap-2 mt-1">
-            <Badge variant={
-              agent.type === 'system' ? 'warning' : agent.type === 'core' ? 'secondary' : 'outline'
-            }>
+            <Badge variant={agent.type === 'core' ? 'secondary' : 'outline'}>
               {agent.type}
             </Badge>
+            {agent.locked && (
+              <Badge variant="outline" className="text-[var(--color-muted)] border-[var(--color-border)]">
+                read-only
+              </Badge>
+            )}
             <span className="text-xs text-[var(--color-muted)]">{agent.description}</span>
           </div>
         </div>
@@ -525,7 +529,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
         </AccordionItem>
 
         {/* Rate Limits — default CLOSED */}
-        {agent.type !== 'system' && (
+        {!isLocked && (
           <AccordionItem value="rate-limits" className="border-0">
             <AccordionTrigger className="px-4 font-headline font-bold text-sm">
               Rate Limits
@@ -682,7 +686,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
                 <Separator />
 
                 {/* Execution */}
-                {agent.type !== 'system' && (
+                {!isLocked && (
                   <div className="space-y-2">
                     <p className="text-xs font-medium text-[var(--color-secondary)]">Execution</p>
                     <div className="space-y-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4">
@@ -741,8 +745,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
         )}
 
         {/* Tools & Permissions — default CLOSED */}
-        {agent.type !== 'system' && (
-          <AccordionItem value="tools" className="border-0">
+        <AccordionItem value="tools" className="border-0">
             <AccordionTrigger className="px-4 font-headline font-bold text-sm">
               <span>Tools &amp; Permissions</span>
               {toolsCfg.builtin.mode === 'explicit' && (
@@ -762,7 +765,6 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
               </div>
             </AccordionContent>
           </AccordionItem>
-        )}
 
         {/* Sessions — default CLOSED */}
         <AccordionItem value="sessions" className="border-0">
