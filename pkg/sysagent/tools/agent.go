@@ -118,7 +118,9 @@ func NewAgentCreateTool(d *Deps) *AgentCreateTool { return &AgentCreateTool{deps
 func (t *AgentCreateTool) Name() string           { return "system.agent.create" }
 func (t *AgentCreateTool) Scope() tools.ToolScope { return tools.ScopeSystem }
 func (t *AgentCreateTool) Description() string {
-	return "Create a new custom agent.\nParameters: name (required), description, model, provider, color, icon."
+	return "Create a new custom agent with personality and configuration.\n" +
+		"Parameters: name (required), description (required), soul (required — the agent's personality and behavioral instructions), " +
+		"model (the LLM model slug, e.g. 'z-ai/glm-5-turbo'), color (hex like '#22C55E'), icon (Phosphor icon name like 'robot')."
 }
 
 func (t *AgentCreateTool) Parameters() map[string]any {
@@ -126,13 +128,13 @@ func (t *AgentCreateTool) Parameters() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"name":        map[string]any{"type": "string", "description": "Display name for the new agent"},
-			"description": map[string]any{"type": "string"},
-			"model":       map[string]any{"type": "string"},
-			"provider":    map[string]any{"type": "string"},
-			"color":       map[string]any{"type": "string"},
-			"icon":        map[string]any{"type": "string"},
+			"description": map[string]any{"type": "string", "description": "One-line description of the agent's purpose"},
+			"soul":        map[string]any{"type": "string", "description": "The agent's personality, role, and behavioral instructions (written to SOUL.md)"},
+			"model":       map[string]any{"type": "string", "description": "LLM model slug (e.g. 'z-ai/glm-5-turbo'). Uses the system default if omitted."},
+			"color":       map[string]any{"type": "string", "description": "Hex avatar color (e.g. '#22C55E')"},
+			"icon":        map[string]any{"type": "string", "description": "Phosphor icon name (e.g. 'robot', 'pencil', 'book')"},
 		},
-		"required": []string{"name"},
+		"required": []string{"name", "description", "soul"},
 	}
 }
 
@@ -140,6 +142,14 @@ func (t *AgentCreateTool) Execute(_ context.Context, args map[string]any) *tools
 	name, _ := args["name"].(string)
 	if strings.TrimSpace(name) == "" {
 		return tools.ErrorResult(errorJSON("INVALID_INPUT", "name is required", "Provide a name for the agent"))
+	}
+	description, _ := args["description"].(string)
+	if strings.TrimSpace(description) == "" {
+		return tools.ErrorResult(errorJSON("INVALID_INPUT", "description is required", "Provide a one-line description"))
+	}
+	soul, _ := args["soul"].(string)
+	if strings.TrimSpace(soul) == "" {
+		return tools.ErrorResult(errorJSON("INVALID_INPUT", "soul is required", "Provide the agent's personality and behavioral instructions"))
 	}
 
 	color, _ := args["color"].(string)
@@ -161,12 +171,16 @@ func (t *AgentCreateTool) Execute(_ context.Context, args map[string]any) *tools
 				return fmt.Errorf("AGENT_ALREADY_EXISTS: an agent with ID %q already exists", id)
 			}
 		}
+		enabled := true
 		newAgent := config.AgentConfig{
-			ID:   id,
-			Name: name,
+			ID:          id,
+			Name:        name,
+			Description: description,
+			Enabled:     &enabled,
 		}
-		if v, ok := args["description"].(string); ok && v != "" {
-			newAgent.Description = v
+		// Set model if provided.
+		if model, ok := args["model"].(string); ok && model != "" {
+			newAgent.Model = &config.AgentModelConfig{Primary: model}
 		}
 		if color != "" {
 			newAgent.Color = color
@@ -190,13 +204,25 @@ func (t *AgentCreateTool) Execute(_ context.Context, args map[string]any) *tools
 		return tools.ErrorResult(errorJSON("SAVE_FAILED", msg, "Check disk space and permissions"))
 	}
 
-	// Create agent workspace directory (non-fatal: config entry persisted above).
+	// Create agent workspace directory and write SOUL.md.
 	if err := datamodel.InitAgentWorkspace(t.deps.Home, finalID); err != nil {
 		slog.Warn("sysagent: could not create agent workspace", "id", finalID, "error", err)
+	}
+	// Write SOUL.md with the personality/instructions.
+	wsPath := datamodel.AgentWorkspacePath(t.deps.Home, finalID)
+	soulPath := wsPath + "/SOUL.md"
+	if err := os.WriteFile(soulPath, []byte(soul), 0o644); err != nil {
+		slog.Warn("sysagent: could not write SOUL.md", "id", finalID, "error", err)
+	}
+
+	model := ""
+	if m, ok := args["model"].(string); ok {
+		model = m
 	}
 	return tools.NewToolResult(successJSON(map[string]any{
 		"id":     finalID,
 		"name":   name,
+		"model":  model,
 		"type":   string(config.AgentTypeCustom),
 		"status": "active",
 	}))
