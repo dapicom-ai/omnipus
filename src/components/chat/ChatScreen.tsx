@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { generateId } from '@/lib/constants'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -106,15 +106,29 @@ function ThinkingIndicator() {
   )
 }
 
-// Custom text renderer with streaming cursor
+// Custom text renderer with streaming cursor.
+// Wrapped in ErrorBoundary because MessagePartPrimitive.InProgress throws
+// "MessagePartText can only be used inside text or reasoning message parts"
+// when AssistantUI calls this component for a tool-call-only message.
+class TextPartErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props)
+    this.state = { hasError: false }
+  }
+  static getDerivedStateFromError() { return { hasError: true } }
+  render() { return this.state.hasError ? null : this.props.children }
+}
+
 function AssistantTextPart() {
   return (
-    <div>
-      <MarkdownText />
-      <MessagePartPrimitive.InProgress>
-        <span className="inline-block w-1.5 h-4 bg-[var(--color-accent)] ml-0.5 animate-pulse align-text-bottom" />
-      </MessagePartPrimitive.InProgress>
-    </div>
+    <TextPartErrorBoundary>
+      <div>
+        <MarkdownText />
+        <MessagePartPrimitive.InProgress>
+          <span className="inline-block w-1.5 h-4 bg-[var(--color-accent)] ml-0.5 animate-pulse align-text-bottom" />
+        </MessagePartPrimitive.InProgress>
+      </div>
+    </TextPartErrorBoundary>
   )
 }
 
