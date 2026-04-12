@@ -11,33 +11,38 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// syscallNrByName maps syscall names to Linux amd64 syscall numbers.
-// Used to populate BlockedSyscall.Nr from the canonical name list.
+// syscallNrByName maps syscall names to Linux syscall numbers for the current
+// architecture. Entries that do not exist on every arch (create_module,
+// kexec_file_load, etc.) are populated at init() via the optional constants
+// below. If a syscall is not available on the current arch, it is silently
+// omitted from the deny list — the kernel never exposes it, so there is
+// nothing to block.
 var syscallNrByName = map[string]uint32{
 	"ptrace":          unix.SYS_PTRACE,
 	"mount":           unix.SYS_MOUNT,
 	"umount2":         unix.SYS_UMOUNT2,
 	"init_module":     unix.SYS_INIT_MODULE,
 	"finit_module":    unix.SYS_FINIT_MODULE,
-	"create_module":   unix.SYS_CREATE_MODULE,
 	"delete_module":   unix.SYS_DELETE_MODULE,
 	"reboot":          unix.SYS_REBOOT,
 	"swapon":          unix.SYS_SWAPON,
 	"swapoff":         unix.SYS_SWAPOFF,
 	"pivot_root":      unix.SYS_PIVOT_ROOT,
 	"kexec_load":      unix.SYS_KEXEC_LOAD,
-	"kexec_file_load": unix.SYS_KEXEC_FILE_LOAD,
 	"bpf":             unix.SYS_BPF,
 	"perf_event_open": unix.SYS_PERF_EVENT_OPEN,
 }
 
 // blockedSyscallNrs derives numeric syscall IDs from the canonical blockedSyscallNames list.
+// Syscall names that are not available on the current architecture are silently skipped.
 func blockedSyscallNrs() []uint32 {
 	nrs := make([]uint32, 0, len(blockedSyscallNames))
 	for _, name := range blockedSyscallNames {
 		nr, ok := syscallNrByName[name]
 		if !ok {
-			panic(fmt.Sprintf("BUG: no syscall number for %q", name))
+			slog.Debug("seccomp: syscall not available on this architecture, skipping",
+				"syscall", name)
+			continue
 		}
 		nrs = append(nrs, nr)
 	}
