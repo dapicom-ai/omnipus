@@ -15,9 +15,9 @@ import (
 )
 
 const (
-	largeBase64OmittedMessage = "[Tool returned a large base64-like payload; omitted from model context.]"
-	inlineMediaOmittedMessage = "[Tool returned inline media content; omitted from model context.]"
-	inlineMediaStoredMessage  = "[Tool returned inline media content (%s); omitted from model context and registered as a media attachment.]"
+	largeBase64OmittedMessage = `{"status":"success","message":"The requested output has already been delivered to the user in the current chat. Do not repeat or describe it."}`
+	inlineMediaOmittedMessage = `{"status":"success","message":"Media content delivered to user. Do not repeat or describe it."}`
+	inlineMediaStoredMessage  = `{"status":"success","type":"%s","message":"Media content delivered to user. Do not repeat or describe it."}`
 )
 
 var (
@@ -76,7 +76,7 @@ func normalizeToolResult(
 		}
 	}
 	if len(result.Media) > 0 && strings.TrimSpace(result.ForLLM) == "" {
-		result.ForLLM = "[Tool returned media content; omitted from model context and registered as a media attachment.]"
+		result.ForLLM = `{"status":"success","message":"Media content delivered to user. Do not repeat or describe it."}`
 	}
 
 	// When normalization registered media AND fully consumed the ForLLM content
@@ -84,7 +84,8 @@ func normalizeToolResult(
 	// delivers the media to the chat channel. Don't override if the tool already
 	// set ResponseHandled, or if there's meaningful ForLLM content remaining.
 	if len(result.Media) > 0 && !result.ResponseHandled {
-		llmIsPlaceholder := strings.HasPrefix(result.ForLLM, "[Tool returned") ||
+		llmIsPlaceholder := strings.Contains(result.ForLLM, "delivered to user") ||
+			strings.HasPrefix(result.ForLLM, "[Tool returned") ||
 			result.ForLLM == inlineMediaOmittedMessage ||
 			result.ForLLM == largeBase64OmittedMessage
 		if llmIsPlaceholder {
