@@ -720,7 +720,12 @@ func TestGetAgentTools_CustomAgent(t *testing.T) {
 	assert.Equal(t, "custom", resp.AgentType)
 	builtin, ok := resp.Config["builtin"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "explicit", builtin["mode"])
+	// Legacy mode:"explicit" + visible:[...] is converted to policy format.
+	assert.Equal(t, "deny", builtin["default_policy"])
+	policies, ok := builtin["policies"].(map[string]any)
+	require.True(t, ok, "policies must be a map")
+	assert.Equal(t, "allow", policies["read_file"])
+	assert.Equal(t, "allow", policies["web_search"])
 }
 
 // TestUpdateAgentTools_SystemAgentNotFound verifies PUT /api/v1/agents/omnipus-system/tools returns 404.
@@ -830,7 +835,8 @@ func TestUpdateAgentTools_InvalidMode(t *testing.T) {
 	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
 	api := &restAPI{agentLoop: al, homePath: tmpDir}
 
-	body := `{"builtin":{"mode":"bogus"}}`
+	// Invalid default_policy should be rejected.
+	body := `{"builtin":{"default_policy":"bogus"}}`
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPut, "/api/v1/agents/test-agent/tools", strings.NewReader(body))
 	api.HandleAgents(w, r)
@@ -958,7 +964,7 @@ func TestUpdateAgentTools_Success(t *testing.T) {
 	// Then: HTTP 200
 	require.Equal(t, http.StatusOK, w.Code)
 
-	// Then: response body has agent_type="custom" and config.builtin.mode="explicit"
+	// Then: response body has agent_type="custom" and policy format
 	var resp struct {
 		AgentType string         `json:"agent_type"`
 		Config    map[string]any `json:"config"`
@@ -968,8 +974,9 @@ func TestUpdateAgentTools_Success(t *testing.T) {
 		"updateAgentTools must return agent_type=custom for a custom agent")
 	builtin, ok := resp.Config["builtin"].(map[string]any)
 	require.True(t, ok, "response config must contain a builtin object")
-	assert.Equal(t, "explicit", builtin["mode"],
-		"response config.builtin.mode must reflect the submitted mode")
+	// Legacy mode:"explicit" + visible is converted to policy format
+	assert.Equal(t, "deny", builtin["default_policy"],
+		"explicit mode converts to default_policy=deny")
 
 	// Then: config.json on disk was updated with the tools config
 	savedCfg, err := os.ReadFile(cfgPath)
@@ -983,12 +990,12 @@ func TestUpdateAgentTools_Success(t *testing.T) {
 	toolsMap, ok := agentMap["tools"].(map[string]any)
 	require.True(t, ok, "tools config must be persisted to config.json")
 	persistedBuiltin, _ := toolsMap["builtin"].(map[string]any)
-	assert.Equal(t, "explicit", persistedBuiltin["mode"],
-		"config.json must persist mode=explicit")
-	visibleRaw, _ := persistedBuiltin["visible"].([]any)
-	require.Len(t, visibleRaw, 2, "config.json must persist visible list with 2 entries")
-	assert.Equal(t, "read_file", visibleRaw[0])
-	assert.Equal(t, "web_search", visibleRaw[1])
+	assert.Equal(t, "deny", persistedBuiltin["default_policy"],
+		"config.json must persist default_policy=deny (converted from mode=explicit)")
+	policiesRaw, ok := persistedBuiltin["policies"].(map[string]any)
+	require.True(t, ok, "config.json must persist policies map")
+	assert.Equal(t, "allow", policiesRaw["read_file"])
+	assert.Equal(t, "allow", policiesRaw["web_search"])
 }
 
 // TestHandleMCPTools_MethodNotAllowed verifies that POST to HandleMCPTools returns 405.

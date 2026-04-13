@@ -92,6 +92,10 @@ type wsApprovalHook struct {
 	// timeout is the per-request approval deadline. Defaults to wsApprovalTimeout.
 	timeout time.Duration
 
+	// policyResolver returns the tool policy ("allow"/"ask"/"deny") for a tool
+	// on a specific agent. If nil, falls back to autoApproveSafeTool.
+	policyResolver func(toolName string, agentID string) string
+
 	// alwaysAllowed tracks tool names the user has approved with "Always Allow".
 	// Protected by mu. Persists for the lifetime of the WebSocket connection.
 	mu            sync.Mutex
@@ -125,12 +129,20 @@ func (h *wsApprovalHook) ApproveTool(
 		return agent.ApprovalDecision{Verdict: agent.VerdictAllow}, nil
 	}
 
-	// Auto-approve safe tools that don't need interactive confirmation.
-	// These are read-only operations or workspace-scoped file writes that
-	// the sandbox already restricts to the agent's workspace directory.
-	if autoApproveSafeTool(req.Tool) {
-		return agent.ApprovalDecision{Verdict: agent.VerdictAllow}, nil
+	// Check tool policy: allow → auto-approve, ask → show dialog, deny → reject.
+	policy := "ask" // default to ask if no resolver
+	if h.policyResolver != nil {
+		policy = h.policyResolver(req.Tool, req.Meta.AgentID)
+	} else if autoApproveSafeTool(req.Tool) {
+		policy = "allow"
 	}
+	switch policy {
+	case "allow":
+		return agent.ApprovalDecision{Verdict: agent.VerdictAllow}, nil
+	case "deny":
+		return agent.ApprovalDecision{Verdict: agent.VerdictDeny, Reason: "tool denied by agent policy"}, nil
+	}
+	// policy == "ask" — fall through to interactive approval
 
 	// Check if this tool was previously "Always Allowed" by the user.
 	h.mu.Lock()

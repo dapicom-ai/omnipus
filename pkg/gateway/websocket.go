@@ -297,7 +297,21 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// sends an exec_approval_request frame and blocks until the browser responds or
 	// the request times out.
 	hookName := "ws-approval-" + chatID
-	approvalHook := &wsApprovalHook{conn: wc, chatID: chatID, registry: h.approvalRegistry, timeout: wsApprovalTimeout}
+	approvalHook := &wsApprovalHook{
+		conn:     wc,
+		chatID:   chatID,
+		registry: h.approvalRegistry,
+		timeout:  wsApprovalTimeout,
+		policyResolver: func(toolName string, agentID string) string {
+			cfg := h.agentLoop.GetConfig()
+			for _, ac := range cfg.Agents.List {
+				if ac.ID == agentID && ac.Tools != nil {
+					return string(ac.Tools.Builtin.ResolvePolicy(toolName))
+				}
+			}
+			return "allow"
+		},
+	}
 	if err := h.agentLoop.MountHook(agent.NamedHook(hookName, approvalHook)); err != nil {
 		slog.Error("ws: could not mount approval hook — closing connection", "chat_id", chatID, "error", err)
 		sendConnFrame(

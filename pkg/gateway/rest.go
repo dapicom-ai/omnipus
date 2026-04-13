@@ -2954,16 +2954,12 @@ func (a *restAPI) getAgentTools(w http.ResponseWriter, agentID string) {
 		}
 	}
 
-	// Build the response config with policy format.
-	defaultPolicy := "allow"
-	policies := map[string]string{}
-	if toolsCfg != nil {
-		if toolsCfg.Builtin.DefaultPolicy != "" {
-			defaultPolicy = string(toolsCfg.Builtin.DefaultPolicy)
-		}
-		for k, v := range toolsCfg.Builtin.Policies {
-			policies[k] = string(v)
-		}
+	// Build the response config with policy format (handles legacy conversion).
+	policyCfg := toolsCfgToPolicy(toolsCfg)
+	defaultPolicy := policyCfg.DefaultPolicy
+	policies := policyCfg.Policies
+	if policies == nil {
+		policies = map[string]string{}
 	}
 	servers := make([]map[string]any, 0)
 	if toolsCfg != nil {
@@ -3015,6 +3011,10 @@ func (a *restAPI) updateAgentTools(w http.ResponseWriter, r *http.Request, agent
 
 	var req struct {
 		Builtin struct {
+			// New policy format
+			DefaultPolicy string            `json:"default_policy"`
+			Policies      map[string]string `json:"policies"`
+			// Legacy format (backward compat)
 			Mode    string   `json:"mode"`
 			Visible []string `json:"visible"`
 		} `json:"builtin"`
@@ -3030,14 +3030,34 @@ func (a *restAPI) updateAgentTools(w http.ResponseWriter, r *http.Request, agent
 		return
 	}
 
-	// Validate mode.
-	mode := req.Builtin.Mode
-	if mode == "" {
-		mode = "inherit"
+	// Convert legacy format to policy format if needed.
+	if req.Builtin.DefaultPolicy == "" && req.Builtin.Mode != "" {
+		switch req.Builtin.Mode {
+		case "explicit":
+			req.Builtin.DefaultPolicy = "deny"
+			req.Builtin.Policies = make(map[string]string, len(req.Builtin.Visible))
+			for _, name := range req.Builtin.Visible {
+				req.Builtin.Policies[name] = "allow"
+			}
+		case "inherit":
+			req.Builtin.DefaultPolicy = "allow"
+		}
 	}
-	if mode != "inherit" && mode != "explicit" {
-		jsonErr(w, http.StatusUnprocessableEntity, "builtin.mode must be 'inherit' or 'explicit'")
+	if req.Builtin.DefaultPolicy == "" {
+		req.Builtin.DefaultPolicy = "allow"
+	}
+
+	// Validate policy values.
+	validPolicies := map[string]bool{"allow": true, "ask": true, "deny": true}
+	if !validPolicies[req.Builtin.DefaultPolicy] {
+		jsonErr(w, http.StatusUnprocessableEntity, "builtin.default_policy must be 'allow', 'ask', or 'deny'")
 		return
+	}
+	for name, p := range req.Builtin.Policies {
+		if !validPolicies[p] {
+			jsonErr(w, http.StatusUnprocessableEntity, fmt.Sprintf("invalid policy %q for tool %q", p, name))
+			return
+		}
 	}
 
 	// Validate MCP server IDs reference configured servers.
@@ -3068,11 +3088,14 @@ func (a *restAPI) updateAgentTools(w http.ResponseWriter, r *http.Request, agent
 				continue
 			}
 			if agentMap["id"] == agentID {
+				builtinCfg := map[string]any{
+					"default_policy": req.Builtin.DefaultPolicy,
+				}
+				if len(req.Builtin.Policies) > 0 {
+					builtinCfg["policies"] = req.Builtin.Policies
+				}
 				toolsCfg := map[string]any{
-					"builtin": map[string]any{
-						"mode":    mode,
-						"visible": req.Builtin.Visible,
-					},
+					"builtin": builtinCfg,
 				}
 				if len(req.MCP.Servers) > 0 {
 					servers := make([]map[string]any, 0, len(req.MCP.Servers))

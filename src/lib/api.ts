@@ -870,7 +870,13 @@ export interface BuiltinTool {
 }
 
 export interface AgentToolsCfg {
-  builtin: { mode: 'explicit' | 'inherit'; visible?: string[] }
+  builtin: {
+    default_policy?: 'allow' | 'ask' | 'deny'
+    policies?: Record<string, 'allow' | 'ask' | 'deny'>
+    // Legacy fields (backward compat)
+    mode?: 'explicit' | 'inherit'
+    visible?: string[]
+  }
   mcp?: { servers: { id: string; tools?: string[] }[] }
 }
 
