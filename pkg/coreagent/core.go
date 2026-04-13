@@ -99,10 +99,31 @@ func SeedConfig(cfg *config.Config) bool {
 
 	modified := false
 
-	// Re-enforce Locked=true on existing core agents (tamper protection).
+	// Re-enforce identity fields on existing core agents (tamper protection + rename).
 	for i := range cfg.Agents.List {
-		if IsCoreAgent(cfg.Agents.List[i].ID) && !cfg.Agents.List[i].Locked {
-			cfg.Agents.List[i].Locked = true
+		ca := ByID(CoreAgentID(cfg.Agents.List[i].ID))
+		if ca == nil {
+			continue
+		}
+		a := &cfg.Agents.List[i]
+		if !a.Locked {
+			a.Locked = true
+			modified = true
+		}
+		if a.Name != ca.Name {
+			a.Name = ca.Name
+			modified = true
+		}
+		if a.Description != ca.Description {
+			a.Description = ca.Description
+			modified = true
+		}
+		if a.Color != ca.Color {
+			a.Color = ca.Color
+			modified = true
+		}
+		if a.Icon != ca.Icon {
+			a.Icon = ca.Icon
 			modified = true
 		}
 	}
@@ -133,7 +154,7 @@ func SeedConfig(cfg *config.Config) bool {
 func Jim() *CoreAgent {
 	return &CoreAgent{
 		ID:       IDJim,
-		Name:     "Jim",
+		Name:     "Jim — General Purpose",
 		Subtitle: "General Purpose",
 		Description: "Your everyday assistant — warm, efficient, and reliable. " +
 			"Handles tasks, research, writing, and coordinates with other agents.",
@@ -153,7 +174,7 @@ func Jim() *CoreAgent {
 func Ava() *CoreAgent {
 	return &CoreAgent{
 		ID:       IDAva,
-		Name:     "Ava",
+		Name:     "Ava — Agent Builder",
 		Subtitle: "Agent Builder",
 		Description: "Your agent consultant — interviews you about what you need, " +
 			"then creates a custom agent with a tailored personality and tools.",
@@ -173,7 +194,7 @@ func Ava() *CoreAgent {
 func Mia() *CoreAgent {
 	return &CoreAgent{
 		ID:       IDMia,
-		Name:     "Mia",
+		Name:     "Mia — Omnipus Guide",
 		Subtitle: "Coach & Guide",
 		Description: "Your friendly guide to Omnipus — explains features step-by-step, " +
 			"helps with setup, and answers any question about the platform.",
@@ -191,7 +212,7 @@ func Mia() *CoreAgent {
 func Ray() *CoreAgent {
 	return &CoreAgent{
 		ID:       IDRay,
-		Name:     "Ray",
+		Name:     "Ray — Researcher",
 		Subtitle: "Researcher",
 		Description: "Your research analyst — digs deep into topics, synthesizes findings " +
 			"from multiple sources, and presents results with citations.",
@@ -209,7 +230,7 @@ func Ray() *CoreAgent {
 func Max() *CoreAgent {
 	return &CoreAgent{
 		ID:       IDMax,
-		Name:     "Max",
+		Name:     "Max — Automator",
 		Subtitle: "Automator",
 		Description: "Your workflow planner — designs multi-step automation, " +
 			"presents the plan for approval, then executes it precisely.",
