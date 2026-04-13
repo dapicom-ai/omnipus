@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { FloppyDisk, ShieldCheck, ShieldWarning, Prohibit } from '@phosphor-icons/react'
-import { Button } from '@/components/ui/button'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+
+import { ShieldCheck, ShieldWarning, Prohibit } from '@phosphor-icons/react'
 import { MCPServerPicker } from './MCPServerPicker'
 import {
   fetchBuiltinTools,
@@ -12,7 +12,8 @@ import {
   type AgentToolsCfg,
   type BuiltinTool,
 } from '@/lib/api'
-import { useUiStore } from '@/store/ui'
+import { useAutoSave } from '@/hooks/useAutoSave'
+import { AutoSaveIndicator } from '@/components/ui/AutoSaveIndicator'
 
 type ToolPolicy = 'allow' | 'ask' | 'deny'
 
@@ -124,8 +125,16 @@ const CATEGORY_LABELS: Record<string, string> = {
 }
 
 export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onChange }: ToolsAndPermissionsProps) {
-  const { addToast } = useUiStore()
   const queryClient = useQueryClient()
+
+  const { status: saveStatus, error: saveError } = useAutoSave(
+    tools,
+    (data) => updateAgentTools(agentId!, data).then((result) => {
+      onChange(result.config)
+      queryClient.invalidateQueries({ queryKey: ['agent-tools', agentId] })
+    }),
+    { disabled: !agentId },
+  )
 
   const { data: builtinTools = [], isLoading: toolsLoading, isError: toolsError } = useQuery({
     queryKey: ['tools-builtin'],
@@ -154,18 +163,6 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentToolsData, agentId])
-
-  const { mutate: doSave, isPending: isSaving } = useMutation({
-    mutationFn: (cfg: AgentToolsCfg) => updateAgentTools(agentId!, cfg),
-    onSuccess: (result) => {
-      onChange(result.config)
-      queryClient.invalidateQueries({ queryKey: ['agent-tools', agentId] })
-      addToast({ message: 'Tool policies saved', variant: 'success' })
-    },
-    onError: (err: Error) => {
-      addToast({ message: `Failed to save: ${err.message}`, variant: 'error' })
-    },
-  })
 
   const defaultPolicy: ToolPolicy = (tools.builtin?.default_policy as ToolPolicy) || 'allow'
   const policies: Record<string, ToolPolicy> = (tools.builtin?.policies as Record<string, ToolPolicy>) || {}
@@ -367,23 +364,13 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
         />
       </div>
 
-      {/* Save */}
-      {agentId && (
-        <div className="pt-2 flex items-center gap-3">
-          <Button
-            size="sm"
-            onClick={() => doSave(tools)}
-            disabled={isSaving}
-            className="gap-2"
-          >
-            <FloppyDisk size={13} weight="bold" />
-            {isSaving ? 'Saving...' : 'Save Tool Policies'}
-          </Button>
-          <span className="text-[10px] text-[var(--color-muted)]">
-            {Object.keys(policies).length} override{Object.keys(policies).length !== 1 ? 's' : ''} | Default: {defaultPolicy}
-          </span>
-        </div>
-      )}
+      {/* Auto-save status */}
+      <div className="pt-2 flex items-center gap-3">
+        <AutoSaveIndicator status={saveStatus} error={saveError} />
+        <span className="text-[10px] text-[var(--color-muted)]">
+          {Object.keys(policies).length} override{Object.keys(policies).length !== 1 ? 's' : ''} | Default: {defaultPolicy}
+        </span>
+      </div>
     </div>
   )
 }

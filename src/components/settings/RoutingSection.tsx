@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { FloppyDisk } from '@phosphor-icons/react'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { useAutoSave } from '@/hooks/useAutoSave'
+import { AutoSaveIndicator } from '@/components/ui/AutoSaveIndicator'
 import { SmartSelect } from '@/components/ui/smart-select'
 import {
   Table,
@@ -13,7 +13,6 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { fetchChannels, configureChannel } from '@/lib/api'
-import { useUiStore } from '@/store/ui'
 
 type DmPolicy = 'allow' | 'deny' | 'known_only'
 
@@ -25,12 +24,10 @@ interface ChannelRoute {
 }
 
 export function RoutingSection() {
-  const { addToast } = useUiStore()
   const queryClient = useQueryClient()
   const isDirtyRef = useRef(false)
   const markDirty = () => { isDirtyRef.current = true }
 
-  const [isSaving, setIsSaving] = useState(false)
   const [routes, setRoutes] = useState<ChannelRoute[]>([])
 
   const { data: channels, isLoading } = useQuery({
@@ -51,19 +48,11 @@ export function RoutingSection() {
     )
   }, [channels])
 
-  function updateRoute(id: string, field: keyof ChannelRoute, value: string) {
-    markDirty()
-    setRoutes((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, [field]: value } : r))
-    )
-  }
-
-  async function handleSave() {
-    setIsSaving(true)
-    try {
-      // Persist routing rules via the per-channel configure endpoint
+  const { status: saveStatus, error: saveError } = useAutoSave(
+    routes,
+    async (currentRoutes) => {
       await Promise.all(
-        routes.map((r) =>
+        currentRoutes.map((r) =>
           configureChannel(r.id, {
             allow_from: r.allow_from
               .split(',')
@@ -75,15 +64,15 @@ export function RoutingSection() {
       )
       isDirtyRef.current = false
       queryClient.invalidateQueries({ queryKey: ['channels'] })
-      addToast({ message: 'Routing rules saved', variant: 'success' })
-    } catch (err) {
-      addToast({
-        message: err instanceof Error ? err.message : 'Failed to save routing rules',
-        variant: 'error',
-      })
-    } finally {
-      setIsSaving(false)
-    }
+    },
+    { disabled: routes.length === 0 },
+  )
+
+  function updateRoute(id: string, field: keyof ChannelRoute, value: string) {
+    markDirty()
+    setRoutes((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, [field]: value } : r))
+    )
   }
 
   if (isLoading) return <div className="text-sm text-[var(--color-muted)]">Loading...</div>
@@ -97,10 +86,7 @@ export function RoutingSection() {
             Control which users can send messages per channel and how DMs are handled.
           </p>
         </div>
-        <Button size="sm" onClick={handleSave} disabled={isSaving} className="gap-1.5">
-          <FloppyDisk size={13} weight="bold" />
-          {isSaving ? 'Saving...' : 'Save'}
-        </Button>
+        <AutoSaveIndicator status={saveStatus} error={saveError} />
       </div>
 
       {routes.length === 0 ? (

@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react'
-import { FloppyDisk, ArrowsClockwise, LockKey } from '@phosphor-icons/react'
+import { useState, useEffect, useMemo } from 'react'
+import { ArrowsClockwise, LockKey } from '@phosphor-icons/react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
+import { useAutoSave } from '@/hooks/useAutoSave'
+import { AutoSaveIndicator } from '@/components/ui/AutoSaveIndicator'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Slider } from '@/components/ui/slider'
@@ -81,14 +83,14 @@ export function ProfileSection() {
     }
   }, [userContextData])
 
-  const { mutate: saveUserContext, isPending: isSavingContext } = useMutation({
-    mutationFn: () => updateUserContext(userContent),
-    onSuccess: () => {
-      addToast({ message: 'Workspace context saved', variant: 'success' })
+  const { status: contextSaveStatus, error: contextSaveError } = useAutoSave(
+    userContent,
+    async (content) => {
+      await updateUserContext(content)
       queryClient.invalidateQueries({ queryKey: ['user-context'] })
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
-  })
+    { disabled: userContextError },
+  )
 
   const { mutate: submitPasswordChange, isPending: isChangingPassword } = useMutation({
     mutationFn: () => changePassword(currentPassword, newPassword),
@@ -126,17 +128,20 @@ export function ProfileSection() {
     document.documentElement.style.setProperty('--user-font-size', `${fontSize}px`)
   }, [fontSize])
 
-  function handleSave() {
-    const ok =
-      savePref('name', name) &&
-      savePref('timezone', timezone) &&
-      savePref('font_size', fontSize)
-    if (!ok) {
-      addToast({ message: 'Some preferences could not be saved — storage may be full or restricted.', variant: 'error' })
-      return
-    }
-    addToast({ message: 'Preferences saved', variant: 'success' })
-  }
+  const prefsData = useMemo(() => ({ name, timezone, fontSize }), [name, timezone, fontSize])
+
+  const { status: prefSaveStatus, error: prefSaveError } = useAutoSave(
+    prefsData,
+    async (prefs) => {
+      const ok =
+        savePref('name', prefs.name) &&
+        savePref('timezone', prefs.timezone) &&
+        savePref('font_size', prefs.fontSize)
+      if (!ok) {
+        throw new Error('Some preferences could not be saved — storage may be full or restricted.')
+      }
+    },
+  )
 
   return (
     <div className="space-y-6">
@@ -147,10 +152,7 @@ export function ProfileSection() {
             Personal preferences stored in this browser.
           </p>
         </div>
-        <Button size="sm" onClick={handleSave} className="gap-1.5">
-          <FloppyDisk size={13} weight="bold" />
-          Save
-        </Button>
+        <AutoSaveIndicator status={prefSaveStatus} error={prefSaveError} />
       </div>
 
       {/* Identity */}
@@ -307,16 +309,7 @@ export function ProfileSection() {
             Workspace Context
           </h3>
           {!userContextError && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => saveUserContext()}
-              disabled={isSavingContext}
-              className="gap-1.5"
-            >
-              <FloppyDisk size={13} weight="bold" />
-              {isSavingContext ? 'Saving...' : 'Save'}
-            </Button>
+            <AutoSaveIndicator status={contextSaveStatus} error={contextSaveError} />
           )}
         </div>
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-3">

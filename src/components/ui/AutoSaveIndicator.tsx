@@ -1,0 +1,43 @@
+import { Check, CircleNotch, Warning } from '@phosphor-icons/react'
+import type { AutoSaveStatus } from '@/hooks/useAutoSave'
+
+interface AutoSaveIndicatorProps {
+  status: AutoSaveStatus
+  error?: string
+  className?: string
+}
+
+/**
+ * Subtle auto-save status indicator.
+ * idle → hidden, saving → spinner, saved → checkmark (fades), error → red warning.
+ */
+export function AutoSaveIndicator({ status, error, className = '' }: AutoSaveIndicatorProps) {
+  if (status === 'idle') return null
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1 text-[10px] transition-opacity duration-300 ${
+        status === 'saved' ? 'opacity-60' : 'opacity-100'
+      } ${className}`}
+    >
+      {status === 'saving' && (
+        <>
+          <CircleNotch size={11} className="animate-spin text-[var(--color-muted)]" />
+          <span className="text-[var(--color-muted)]">Saving...</span>
+        </>
+      )}
+      {status === 'saved' && (
+        <>
+          <Check size={11} weight="bold" className="text-emerald-400" />
+          <span className="text-emerald-400">Saved</span>
+        </>
+      )}
+      {status === 'error' && (
+        <>
+          <Warning size={11} weight="bold" className="text-[var(--color-error)]" />
+          <span className="text-[var(--color-error)]">{error || 'Save failed'}</span>
+        </>
+      )}
+    </span>
+  )
+}

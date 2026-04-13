@@ -1,12 +1,14 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { AuditLogViewer } from './AuditLogViewer'
 import { ExecAllowlistSection } from './ExecAllowlistSection'
 import { PromptGuardSection } from './PromptGuardSection'
 import { ExecProxyStatusCard } from './ExecProxyStatusCard'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { FloppyDisk, Plus, Trash, Key, ShieldCheck, ShieldWarning, Prohibit } from '@phosphor-icons/react'
+import { Plus, Trash, Key, ShieldCheck, ShieldWarning, Prohibit } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { useAutoSave } from '@/hooks/useAutoSave'
+import { AutoSaveIndicator } from '@/components/ui/AutoSaveIndicator'
 import { Switch } from '@/components/ui/switch'
 import { SmartSelect } from '@/components/ui/smart-select'
 import {
@@ -28,7 +30,6 @@ import {
   fetchBuiltinTools,
   fetchGlobalToolPolicies,
   updateGlobalToolPolicies,
-  type GlobalToolPolicies,
   type BuiltinTool,
 } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
@@ -96,7 +97,6 @@ function groupByCategory(tools: BuiltinTool[]): Record<string, BuiltinTool[]> {
 }
 
 function GlobalToolPoliciesSection() {
-  const { addToast } = useUiStore()
   const queryClient = useQueryClient()
 
   const { data: builtinTools = [], isLoading: toolsLoading, isError: toolsError } = useQuery({
@@ -121,14 +121,19 @@ function GlobalToolPoliciesSection() {
     isDraftInitialised.current = true
   }, [globalPolicies])
 
-  const { mutate: doSave, isPending: isSaving } = useMutation({
-    mutationFn: (cfg: GlobalToolPolicies) => updateGlobalToolPolicies(cfg),
-    onSuccess: () => {
+  const policiesData = useMemo(
+    () => ({ default_policy: defaultPolicy, policies: perToolPolicies }),
+    [defaultPolicy, perToolPolicies],
+  )
+
+  const { status: saveStatus, error: saveError } = useAutoSave(
+    policiesData,
+    async (cfg) => {
+      await updateGlobalToolPolicies(cfg)
       queryClient.invalidateQueries({ queryKey: ['global-tool-policies'] })
-      addToast({ message: 'Global tool policies saved', variant: 'success' })
     },
-    onError: (err: Error) => addToast({ message: `Failed to save: ${err.message}`, variant: 'error' }),
-  })
+    { disabled: !isDraftInitialised.current },
+  )
 
   function handleSetDefaultPolicy(p: ToolPolicy) {
     setDefaultPolicy(p)
@@ -235,15 +240,7 @@ function GlobalToolPoliciesSection() {
       </div>
 
       <div className="pt-2 flex items-center gap-3">
-        <Button
-          size="sm"
-          onClick={() => doSave({ default_policy: defaultPolicy, policies: perToolPolicies })}
-          disabled={isSaving}
-          className="gap-2"
-        >
-          <FloppyDisk size={13} weight="bold" />
-          {isSaving ? 'Saving...' : 'Save Global Policies'}
-        </Button>
+        <AutoSaveIndicator status={saveStatus} error={saveError} />
         <span className="text-[10px] text-[var(--color-muted)]">
           {Object.keys(perToolPolicies).length} override{Object.keys(perToolPolicies).length !== 1 ? 's' : ''} | Default: {defaultPolicy}
         </span>
@@ -306,9 +303,21 @@ export function SecuritySection() {
     setEnableDenyPatterns(config.security.enable_deny_patterns ?? false)
   }, [config])
 
-  const { mutate: doSave, isPending: isSaving } = useMutation({
-    mutationFn: () =>
-      updateConfig({
+  const securityFormData = useMemo(() => ({
+    policy_mode: policyMode,
+    exec_approval: execApproval,
+    daily_cost_cap: dailyCostCap,
+    exec_timeout_seconds: execTimeoutSecs,
+    max_background_seconds: maxBackgroundSecs,
+    enable_deny_patterns: enableDenyPatterns,
+    agent_llm_calls_per_hour: agentLlmCallsPerHour,
+    agent_tool_calls_per_min: agentToolCallsPerMin,
+  }), [policyMode, execApproval, dailyCostCap, execTimeoutSecs, maxBackgroundSecs, enableDenyPatterns, agentLlmCallsPerHour, agentToolCallsPerMin])
+
+  const { status: saveStatus, error: saveError } = useAutoSave(
+    securityFormData,
+    async () => {
+      await updateConfig({
         security: {
           policy_mode: policyMode,
           exec_approval: execApproval,
@@ -322,19 +331,12 @@ export function SecuritySection() {
             max_agent_tool_calls_per_minute: agentToolCallsPerMin ? parseInt(agentToolCallsPerMin, 10) : undefined,
           },
         },
-      }),
-    onSuccess: () => {
+      })
       isDirtyRef.current = false
       queryClient.invalidateQueries({ queryKey: ['config'] })
-      addToast({ message: 'Security settings saved', variant: 'success' })
     },
-    onError: (err: Error) => addToast({
-      message: err.message.includes('501')
-        ? 'Settings changes require editing config.json and restarting the gateway'
-        : err.message,
-      variant: 'error',
-    }),
-  })
+    { disabled: !config },
+  )
 
   const { mutate: doAddCred, isPending: isAddingCred } = useMutation({
     mutationFn: () => addCredential(credKey.trim(), credValue),
@@ -379,10 +381,7 @@ export function SecuritySection() {
             Control agent behavior boundaries and resource limits.
           </p>
         </div>
-        <Button size="sm" onClick={() => doSave()} disabled={isSaving} className="gap-1.5">
-          <FloppyDisk size={13} weight="bold" />
-          {isSaving ? 'Saving...' : 'Save'}
-        </Button>
+        <AutoSaveIndicator status={saveStatus} error={saveError} />
       </div>
 
       {/* Tool Access — Global Policies */}

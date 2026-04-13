@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Copy, ArrowsClockwise, FloppyDisk, CheckCircle, CaretDown, CaretRight } from '@phosphor-icons/react'
+import { Copy, ArrowsClockwise, CheckCircle, CaretDown, CaretRight } from '@phosphor-icons/react'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -9,6 +9,8 @@ import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { fetchConfig, updateConfig, rotateGatewayToken, fetchGatewayStatus } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
+import { useAutoSave } from '@/hooks/useAutoSave'
+import { AutoSaveIndicator } from '@/components/ui/AutoSaveIndicator'
 
 export function GatewaySection() {
   const { addToast } = useUiStore()
@@ -46,9 +48,18 @@ export function GatewaySection() {
     setLogLevel(config.gateway.log_level ?? 'info')
   }, [config])
 
-  const { mutate: doSave, isPending: isSaving } = useMutation({
-    mutationFn: () =>
-      updateConfig({
+  const gatewayFormData = useMemo(() => ({
+    bind_address: bindAddress,
+    port,
+    auth_mode: authMode,
+    hot_reload: hotReload,
+    log_level: logLevel,
+  }), [bindAddress, port, authMode, hotReload, logLevel])
+
+  const { status: saveStatus, error: saveError } = useAutoSave(
+    gatewayFormData,
+    async () => {
+      await updateConfig({
         gateway: {
           bind_address: bindAddress,
           port: parseInt(port, 10),
@@ -56,19 +67,12 @@ export function GatewaySection() {
           hot_reload: hotReload,
           log_level: logLevel,
         },
-      }),
-    onSuccess: () => {
+      })
       isDirtyRef.current = false
       queryClient.invalidateQueries({ queryKey: ['config'] })
-      addToast({ message: 'Gateway settings saved. Restart required to apply.', variant: 'default' })
     },
-    onError: (err: Error) => addToast({
-      message: err.message.includes('501')
-        ? 'Settings changes require editing config.json and restarting the gateway'
-        : err.message,
-      variant: 'error',
-    }),
-  })
+    { disabled: !config },
+  )
 
   const { mutate: doRotate, isPending: isRotating } = useMutation({
     mutationFn: rotateGatewayToken,
@@ -116,10 +120,7 @@ export function GatewaySection() {
             Configure how the gateway listens. Restart required for changes to take effect.
           </p>
         </div>
-        <Button size="sm" onClick={() => doSave()} disabled={isSaving} className="gap-1.5">
-          <FloppyDisk size={13} weight="bold" />
-          {isSaving ? 'Saving...' : 'Save'}
-        </Button>
+        <AutoSaveIndicator status={saveStatus} error={saveError} />
       </div>
 
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-4">
