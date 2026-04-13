@@ -387,9 +387,21 @@ export function SecuritySection() {
 
       <Accordion
         type="multiple"
-        defaultValue={['tool-access']}
+        defaultValue={['diagnostics']}
         className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden"
       >
+        {/* Diagnostics — open by default */}
+        <AccordionItem value="diagnostics" className="border-0">
+          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+            Diagnostics
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="px-4 space-y-3">
+              <DiagnosticsSection />
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+
         {/* Tool Access — Global Policies */}
         <AccordionItem value="tool-access" className="border-0">
           <AccordionTrigger className="px-4 font-headline font-bold text-sm">
@@ -398,6 +410,103 @@ export function SecuritySection() {
           <AccordionContent>
             <div className="px-4 space-y-3">
               <GlobalToolPoliciesSection />
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+
+        {/* Command Execution & Allowlist — merged section */}
+        <AccordionItem value="command-execution" className="border-0">
+          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+            Command Execution & Allowlist
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="px-4 space-y-3">
+              <p className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-wider mt-4">
+                Timeouts & Patterns
+              </p>
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-[var(--color-secondary)]">Exec timeout (seconds)</p>
+                    <p className="text-xs text-[var(--color-muted)]">Max time for a single command, 0 = no limit</p>
+                  </div>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={execTimeoutSecs}
+                    onChange={(e) => { markDirty(); setExecTimeoutSecs(e.target.value) }}
+                    className="w-24 h-7 text-xs font-mono"
+                    placeholder="0"
+                  />
+                </div>
+
+                <Separator />
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-[var(--color-secondary)]">Background timeout (seconds)</p>
+                    <p className="text-xs text-[var(--color-muted)]">Max time for background processes, 0 = no limit</p>
+                  </div>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={maxBackgroundSecs}
+                    onChange={(e) => { markDirty(); setMaxBackgroundSecs(e.target.value) }}
+                    className="w-24 h-7 text-xs font-mono"
+                    placeholder="0"
+                  />
+                </div>
+
+                <Separator />
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-[var(--color-secondary)]">Enable deny patterns</p>
+                    <p className="text-xs text-[var(--color-muted)]">Block commands matching configured deny patterns</p>
+                  </div>
+                  <Switch
+                    checked={enableDenyPatterns}
+                    onCheckedChange={(v) => { markDirty(); setEnableDenyPatterns(v) }}
+                  />
+                </div>
+              </div>
+
+              <p className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-wider mt-4">
+                Binary Allowlist
+              </p>
+              <ExecAllowlistSection />
+
+              <p className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-wider mt-4">
+                SSRF Proxy
+              </p>
+              <ExecProxyStatusCard />
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+
+        {/* Prompt Guard */}
+        <AccordionItem value="prompt-guard" className="border-0">
+          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+            Prompt Injection Defense
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="px-4 space-y-3">
+              <PromptGuardSection />
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+
+        {/* Process Sandbox */}
+        <AccordionItem value="sandbox" className="border-0">
+          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+            Process Sandbox
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="px-4 space-y-3">
+              <SandboxSection />
+              <p className="text-xs text-[var(--color-muted)] pt-1">
+                These settings can be changed in config.json. A restart is required for changes to take effect.
+              </p>
             </div>
           </AccordionContent>
         </AccordionItem>
@@ -523,63 +632,6 @@ export function SecuritySection() {
           </AccordionContent>
         </AccordionItem>
 
-        {/* Command Execution */}
-        <AccordionItem value="command-execution" className="border-0">
-          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
-            Command Execution
-          </AccordionTrigger>
-          <AccordionContent>
-            <div className="px-4 space-y-3">
-              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-[var(--color-secondary)]">Exec timeout (seconds)</p>
-                    <p className="text-xs text-[var(--color-muted)]">Max time for a single command, 0 = no limit</p>
-                  </div>
-                  <Input
-                    type="number"
-                    min="0"
-                    value={execTimeoutSecs}
-                    onChange={(e) => { markDirty(); setExecTimeoutSecs(e.target.value) }}
-                    className="w-24 h-7 text-xs font-mono"
-                    placeholder="0"
-                  />
-                </div>
-
-                <Separator />
-
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-[var(--color-secondary)]">Background timeout (seconds)</p>
-                    <p className="text-xs text-[var(--color-muted)]">Max time for background processes, 0 = no limit</p>
-                  </div>
-                  <Input
-                    type="number"
-                    min="0"
-                    value={maxBackgroundSecs}
-                    onChange={(e) => { markDirty(); setMaxBackgroundSecs(e.target.value) }}
-                    className="w-24 h-7 text-xs font-mono"
-                    placeholder="0"
-                  />
-                </div>
-
-                <Separator />
-
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-[var(--color-secondary)]">Enable deny patterns</p>
-                    <p className="text-xs text-[var(--color-muted)]">Block commands matching configured deny patterns</p>
-                  </div>
-                  <Switch
-                    checked={enableDenyPatterns}
-                    onCheckedChange={(v) => { markDirty(); setEnableDenyPatterns(v) }}
-                  />
-                </div>
-              </div>
-            </div>
-          </AccordionContent>
-        </AccordionItem>
-
         {/* Credential Vault */}
         <AccordionItem value="credential-vault" className="border-0">
           <AccordionTrigger className="px-4 font-headline font-bold text-sm">
@@ -627,54 +679,6 @@ export function SecuritySection() {
           </AccordionContent>
         </AccordionItem>
 
-        {/* Process Sandbox */}
-        <AccordionItem value="sandbox" className="border-0">
-          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
-            Process Sandbox
-          </AccordionTrigger>
-          <AccordionContent>
-            <div className="px-4 space-y-3">
-              <SandboxSection />
-            </div>
-          </AccordionContent>
-        </AccordionItem>
-
-        {/* Prompt Guard */}
-        <AccordionItem value="prompt-guard" className="border-0">
-          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
-            Prompt Injection Defense
-          </AccordionTrigger>
-          <AccordionContent>
-            <div className="px-4 space-y-3">
-              <PromptGuardSection />
-            </div>
-          </AccordionContent>
-        </AccordionItem>
-
-        {/* Exec Binary Allowlist */}
-        <AccordionItem value="exec-allowlist" className="border-0">
-          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
-            Exec Binary Allowlist
-          </AccordionTrigger>
-          <AccordionContent>
-            <div className="px-4 space-y-3">
-              <ExecAllowlistSection />
-            </div>
-          </AccordionContent>
-        </AccordionItem>
-
-        {/* Exec HTTP Proxy Status */}
-        <AccordionItem value="exec-proxy" className="border-0">
-          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
-            Exec HTTP Proxy
-          </AccordionTrigger>
-          <AccordionContent>
-            <div className="px-4 space-y-3">
-              <ExecProxyStatusCard />
-            </div>
-          </AccordionContent>
-        </AccordionItem>
-
         {/* Audit Log */}
         <AccordionItem value="audit-log" className="border-0">
           <AccordionTrigger className="px-4 font-headline font-bold text-sm">
@@ -693,18 +697,6 @@ export function SecuritySection() {
               <p className="text-xs text-[var(--color-muted)]">
                 Security events, policy decisions, and tool executions. Use the button above to open the full viewer.
               </p>
-            </div>
-          </AccordionContent>
-        </AccordionItem>
-
-        {/* Diagnostics */}
-        <AccordionItem value="diagnostics" className="border-0">
-          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
-            Diagnostics
-          </AccordionTrigger>
-          <AccordionContent>
-            <div className="px-4 space-y-3">
-              <DiagnosticsSection />
             </div>
           </AccordionContent>
         </AccordionItem>
