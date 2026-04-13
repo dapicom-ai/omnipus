@@ -223,6 +223,11 @@ export interface Config {
   data: {
     session_retention_days: number
   }
+  tools?: {
+    exec?: {
+      enable_proxy?: boolean
+    }
+  }
 }
 
 const VALID_AUTH_MODES = ['none', 'token'] as const

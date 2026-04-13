@@ -505,7 +505,7 @@ export function SecuritySection() {
             <div className="px-4 space-y-3">
               <SandboxSection />
               <p className="text-xs text-[var(--color-muted)] pt-1">
-                These settings can be changed in config.json. A restart is required for changes to take effect.
+                Sandbox configuration is auto-detected at startup based on your kernel capabilities.
               </p>
             </div>
           </AccordionContent>

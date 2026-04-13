@@ -1,7 +1,11 @@
-import { useQuery } from '@tanstack/react-query'
-import { Globe, ArrowsClockwise, Warning, CheckCircle, XCircle } from '@phosphor-icons/react'
+import { useState } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Globe, ArrowsClockwise, Warning, CheckCircle, XCircle, ArrowCounterClockwise } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
-import { fetchExecProxyStatus } from '@/lib/api'
+import { Switch } from '@/components/ui/switch'
+import { fetchExecProxyStatus, updateConfig } from '@/lib/api'
+import { RestartConfirmDialog } from '@/components/ui/RestartConfirmDialog'
+import { useUiStore } from '@/store/ui'
 
 // ── Status indicator ──────────────────────────────────────────────────────────
 
@@ -40,6 +44,9 @@ const STATUS_CONFIG: Record<
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function ExecProxyStatusCard(): React.ReactElement {
+  const { addToast } = useUiStore()
+  const queryClient = useQueryClient()
+
   const {
     data,
     isLoading,
@@ -52,8 +59,48 @@ export function ExecProxyStatusCard(): React.ReactElement {
     refetchInterval: 10_000,
   })
 
+  // Track whether we have a pending toggle intent waiting for dialog confirmation
+  const [pendingEnabled, setPendingEnabled] = useState<boolean | null>(null)
+  const [restartPending, setRestartPending] = useState(false)
+
+  const { mutate: saveProxyEnabled, isPending: isSaving } = useMutation({
+    mutationFn: (enabled: boolean) =>
+      updateConfig({ tools: { exec: { enable_proxy: enabled } } }),
+    onSuccess: (_result, enabled) => {
+      setRestartPending(true)
+      setPendingEnabled(null)
+      addToast({
+        message: `SSRF proxy ${enabled ? 'enabled' : 'disabled'}. Restart the Omnipus gateway to apply.`,
+        variant: 'success',
+      })
+      queryClient.invalidateQueries({ queryKey: ['exec-proxy-status'] })
+      queryClient.invalidateQueries({ queryKey: ['config'] })
+    },
+    onError: (err: Error) => {
+      setPendingEnabled(null)
+      addToast({ message: `Failed to save proxy setting: ${err.message}`, variant: 'error' })
+    },
+  })
+
+  function handleToggle(nextEnabled: boolean) {
+    setPendingEnabled(nextEnabled)
+  }
+
+  function handleDialogConfirm() {
+    if (pendingEnabled !== null) {
+      saveProxyEnabled(pendingEnabled)
+    }
+  }
+
+  function handleDialogCancel() {
+    setPendingEnabled(null)
+  }
+
   const status = data ? resolveStatus(data.enabled, data.running) : null
   const cfg = status ? STATUS_CONFIG[status] : null
+
+  // Optimistically reflect the pending toggle in the switch; fall back to server value
+  const switchChecked = pendingEnabled !== null ? pendingEnabled : (data?.enabled ?? false)
 
   return (
     <section className="space-y-3">
@@ -78,6 +125,24 @@ export function ExecProxyStatusCard(): React.ReactElement {
       </div>
 
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-3">
+        {/* Enable toggle row */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-[var(--color-secondary)]">Enable SSRF Proxy</span>
+            {restartPending && (
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/20 text-amber-400 border border-amber-500/40">
+                <ArrowCounterClockwise size={10} weight="bold" />
+                Gateway restart required
+              </span>
+            )}
+          </div>
+          <Switch
+            checked={switchChecked}
+            onCheckedChange={handleToggle}
+            disabled={isLoading || isSaving}
+          />
+        </div>
+
         {isLoading ? (
           <p className="text-sm text-[var(--color-muted)]">Checking...</p>
         ) : isError ? (
@@ -107,12 +172,6 @@ export function ExecProxyStatusCard(): React.ReactElement {
             </div>
 
             {/* Contextual message */}
-            {status === 'disabled' && (
-              <p className="text-xs text-[var(--color-muted)]">
-                Enable via{' '}
-                <span className="font-mono">config.tools.exec.enable_proxy</span>
-              </p>
-            )}
             {status === 'stopped' && (
               <div className="flex items-start gap-2 rounded-md border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/8 p-2.5">
                 <Warning
@@ -134,6 +193,13 @@ export function ExecProxyStatusCard(): React.ReactElement {
           Routes exec tool child process HTTP/HTTPS traffic through an SSRF-protected loopback proxy (SEC-28).
         </p>
       </div>
+
+      <RestartConfirmDialog
+        open={pendingEnabled !== null}
+        onConfirm={handleDialogConfirm}
+        onCancel={handleDialogCancel}
+        saving={isSaving}
+      />
     </section>
   )
 }
