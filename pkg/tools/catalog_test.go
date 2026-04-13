@@ -6,8 +6,9 @@ import (
 )
 
 func TestCatalog_NoDuplicateNames(t *testing.T) {
-	seen := make(map[string]bool, len(BuiltinCatalog))
-	for _, e := range BuiltinCatalog {
+	catalog := GetBuiltinCatalog()
+	seen := make(map[string]bool, len(catalog))
+	for _, e := range catalog {
 		if seen[e.Name] {
 			t.Errorf("duplicate tool name in catalog: %q", e.Name)
 		}
@@ -16,7 +17,7 @@ func TestCatalog_NoDuplicateNames(t *testing.T) {
 }
 
 func TestCatalog_AllFieldsNonEmpty(t *testing.T) {
-	for _, e := range BuiltinCatalog {
+	for _, e := range GetBuiltinCatalog() {
 		if e.Name == "" {
 			t.Error("catalog entry has empty Name")
 		}
@@ -34,7 +35,7 @@ func TestCatalog_AllFieldsNonEmpty(t *testing.T) {
 
 func TestCatalog_ValidScopes(t *testing.T) {
 	valid := map[ToolScope]bool{ScopeSystem: true, ScopeCore: true, ScopeGeneral: true}
-	for _, e := range BuiltinCatalog {
+	for _, e := range GetBuiltinCatalog() {
 		if !valid[e.Scope] {
 			t.Errorf("catalog entry %q has invalid scope %q", e.Name, e.Scope)
 		}
@@ -48,7 +49,7 @@ func TestCatalog_ValidCategories(t *testing.T) {
 		CategoryAutomation: true, CategorySearch: true, CategorySkills: true,
 		CategoryHardware: true, CategorySystem: true,
 	}
-	for _, e := range BuiltinCatalog {
+	for _, e := range GetBuiltinCatalog() {
 		if !valid[e.Category] {
 			t.Errorf("catalog entry %q has invalid category %q", e.Name, e.Category)
 		}
@@ -56,9 +57,10 @@ func TestCatalog_ValidCategories(t *testing.T) {
 }
 
 func TestCatalogAsMapSlice(t *testing.T) {
+	catalog := GetBuiltinCatalog()
 	result := CatalogAsMapSlice()
-	if len(result) != len(BuiltinCatalog) {
-		t.Fatalf("CatalogAsMapSlice returned %d entries, expected %d", len(result), len(BuiltinCatalog))
+	if len(result) != len(catalog) {
+		t.Fatalf("CatalogAsMapSlice returned %d entries, expected %d", len(result), len(catalog))
 	}
 	for i, m := range result {
 		for _, key := range []string{"name", "description", "scope", "category"} {
@@ -71,7 +73,7 @@ func TestCatalogAsMapSlice(t *testing.T) {
 
 func TestCatalogMarkdown_ContainsAllNonSystemTools(t *testing.T) {
 	md := CatalogMarkdown()
-	for _, e := range BuiltinCatalog {
+	for _, e := range GetBuiltinCatalog() {
 		if e.Scope == ScopeSystem {
 			continue
 		}
@@ -83,7 +85,7 @@ func TestCatalogMarkdown_ContainsAllNonSystemTools(t *testing.T) {
 
 func TestCatalogMarkdown_ExcludesSystemTools(t *testing.T) {
 	md := CatalogMarkdown()
-	for _, e := range BuiltinCatalog {
+	for _, e := range GetBuiltinCatalog() {
 		if e.Scope == ScopeSystem {
 			if strings.Contains(md, "`"+e.Name+"`") {
 				t.Errorf("CatalogMarkdown should not contain system tool %q", e.Name)
@@ -93,7 +95,27 @@ func TestCatalogMarkdown_ExcludesSystemTools(t *testing.T) {
 }
 
 func TestCatalog_MinimumSize(t *testing.T) {
-	if len(BuiltinCatalog) < 60 {
-		t.Errorf("expected at least 60 tools in catalog, got %d", len(BuiltinCatalog))
+	if len(GetBuiltinCatalog()) < 60 {
+		t.Errorf("expected at least 60 tools in catalog, got %d", len(GetBuiltinCatalog()))
+	}
+}
+
+// TestGetBuiltinCatalog_ReturnsCopy verifies that GetBuiltinCatalog returns the
+// same entries as the underlying slice, and that the returned slice is non-nil.
+func TestGetBuiltinCatalog_ReturnsCopy(t *testing.T) {
+	catalog := GetBuiltinCatalog()
+	if catalog == nil {
+		t.Fatal("GetBuiltinCatalog must return a non-nil slice")
+	}
+	if len(catalog) == 0 {
+		t.Fatal("GetBuiltinCatalog must return a non-empty slice")
+	}
+	// Two calls must return slices of the same length with the same first element.
+	catalog2 := GetBuiltinCatalog()
+	if len(catalog) != len(catalog2) {
+		t.Errorf("GetBuiltinCatalog returned different lengths: %d vs %d", len(catalog), len(catalog2))
+	}
+	if catalog[0].Name != catalog2[0].Name {
+		t.Errorf("GetBuiltinCatalog first entry mismatch: %q vs %q", catalog[0].Name, catalog2[0].Name)
 	}
 }

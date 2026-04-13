@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -82,7 +83,7 @@ func NewHandoffTool(
 }
 
 func (t *HandoffTool) Name() string     { return "handoff" }
-func (t *HandoffTool) Scope() ToolScope { return ScopeGeneral }
+func (t *HandoffTool) Scope() ToolScope { return ScopeCore }
 
 func (t *HandoffTool) Description() string {
 	return "Hand off the conversation to a specialist agent. The user's subsequent messages will go to the target agent."
@@ -153,7 +154,8 @@ func (t *HandoffTool) Execute(ctx context.Context, args map[string]any) *ToolRes
 
 	transcript, err := t.sessionStore.ReadTranscript(sessionID)
 	if err != nil {
-		// Non-fatal: proceed with empty context rather than failing the handoff.
+		slog.Warn("handoff: could not read transcript for context transfer", "session", sessionID, "error", err)
+		// Proceed with empty context rather than failing the handoff.
 		transcript = nil
 	}
 	recent, older := splitByTokenBudget(transcript, budget)
@@ -177,8 +179,7 @@ func (t *HandoffTool) Execute(ctx context.Context, args map[string]any) *ToolRes
 		Timestamp: time.Now().UTC(),
 	})
 	if appendErr != nil {
-		// Best-effort: log loss is non-fatal for the handoff itself.
-		_ = appendErr
+		slog.Warn("handoff: could not write audit entry to transcript", "session", sessionID, "error", appendErr)
 	}
 
 	// Step 8: Notify frontend (so the UI can update its active-agent indicator).
@@ -283,7 +284,7 @@ func NewReturnToDefaultTool(
 }
 
 func (t *ReturnToDefaultTool) Name() string     { return "return_to_default" }
-func (t *ReturnToDefaultTool) Scope() ToolScope { return ScopeGeneral }
+func (t *ReturnToDefaultTool) Scope() ToolScope { return ScopeCore }
 
 func (t *ReturnToDefaultTool) Description() string {
 	return "Return the conversation to the default agent. Clears any active handoff override for this session."
@@ -336,8 +337,7 @@ func (t *ReturnToDefaultTool) Execute(ctx context.Context, args map[string]any) 
 		Timestamp: time.Now().UTC(),
 	})
 	if appendErr != nil {
-		// Best-effort: transcript append failure does not block the return.
-		_ = appendErr
+		slog.Warn("handoff: could not write audit entry to transcript", "session", sessionID, "error", appendErr)
 	}
 
 	// Notify the frontend.

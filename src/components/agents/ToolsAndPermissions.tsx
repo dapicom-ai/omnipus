@@ -159,7 +159,13 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
 
   useEffect(() => {
     if (agentToolsData && agentId) {
-      onChange(agentToolsData.config)
+      // Only propagate when the incoming config actually differs from what is
+      // already in state — prevents a spurious auto-save on the initial load.
+      const incoming = JSON.stringify(agentToolsData.config)
+      const current = JSON.stringify(tools)
+      if (incoming !== current) {
+        onChange(agentToolsData.config)
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentToolsData, agentId])
@@ -310,9 +316,12 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
                 const currentPolicy = resolvePolicy(tool.name, policies, defaultPolicy)
                 const isOverridden = tool.name in policies
 
-                // Determine effective global policy for this tool
-                const globalDefaultPolicy = globalPolicies?.default_policy ?? 'allow'
-                const globalToolPolicy = globalPolicies?.policies?.[tool.name] ?? globalDefaultPolicy
+                // Determine effective global policy for this tool.
+                // When the fetch failed, default to 'deny' (deny-by-default security posture).
+                const globalDefaultPolicy = globalPoliciesError ? 'deny' : (globalPolicies?.default_policy ?? 'allow')
+                const globalToolPolicy = globalPoliciesError
+                  ? 'deny'
+                  : (globalPolicies?.policies?.[tool.name] ?? globalDefaultPolicy)
                 const isGloballyDenied = globalToolPolicy === 'deny'
                 const isGloballyAsked = globalToolPolicy === 'ask'
 

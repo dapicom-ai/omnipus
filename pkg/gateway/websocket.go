@@ -970,16 +970,24 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 			// When the handoff tool succeeds, notify the frontend to switch agents.
 			if p.Tool == "handoff" && status == "success" {
 				if activeAgent, ok := h.agentLoop.GetSessionActiveAgent(chatID); ok {
+					agentName, _ := h.agentLoop.GetRegistry().GetAgentName(activeAgent)
 					sendConnFrame(wc, wsServerFrame{
 						Type:    "agent_switched",
 						AgentID: activeAgent,
+						Message: agentName,
 					})
 				}
 			}
 			if p.Tool == "return_to_default" && status == "success" {
+				defaultAgent := h.agentLoop.GetRegistry().GetDefaultAgent()
+				var defaultName string
+				if defaultAgent != nil {
+					defaultName = defaultAgent.Name
+				}
 				sendConnFrame(wc, wsServerFrame{
 					Type:    "agent_switched",
 					AgentID: "", // empty = return to default
+					Message: defaultName,
 				})
 			}
 		case agent.EventKindRateLimit:

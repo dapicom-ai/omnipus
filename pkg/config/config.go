@@ -430,6 +430,7 @@ type AgentToolsCfg struct {
 }
 
 // ToolPolicy defines the access policy for a tool on a specific agent.
+// TODO(#70): Consolidate with policy.ToolPolicy to avoid duplicate type definitions.
 type ToolPolicy string
 
 const (
@@ -1685,10 +1686,12 @@ func (t *ToolsConfig) IsToolEnabled(name string) bool {
 		return t.EditFile.Enabled
 	case "append_file":
 		return t.AppendFile.Enabled
+	case "send_file":
+		return t.SendFile.Enabled
 
 	// Low-risk tools — always available; per-agent policy controls access.
 	case "skills", "media_cleanup", "find_skills", "install_skill",
-		"list_dir", "message", "read_file", "send_file",
+		"list_dir", "message", "read_file",
 		"task_list", "task_create", "task_update":
 		return true
 

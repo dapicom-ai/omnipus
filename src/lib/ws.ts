@@ -130,6 +130,7 @@ export interface WsMediaFrame {
 export interface WsAgentSwitchedFrame {
   type: 'agent_switched'
   agent_id: string
+  agent_name?: string  // included by backend for display without an extra lookup
 }
 
 export type WsReceiveFrame =

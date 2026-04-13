@@ -181,6 +181,28 @@ func (tc *ToolCompositor) ComposeAndRegister(agentID string) int {
 	return registered
 }
 
+// passesScopeGate reports whether a tool with the given scope is structurally
+// accessible to agentType. This is the outer guard — it cannot be bypassed by
+// policy or visibility configuration.
+//
+//   - ScopeSystem: only the system agent may use these tools.
+//   - ScopeCore: system and core agents pass by default; custom agents require an
+//     explicit override (callers check their own visibility/policy layer).
+//   - ScopeGeneral: any agent type passes.
+//   - Unknown/zero-value scopes: denied (fail-closed, per CLAUDE.md hard constraint 6).
+func passesScopeGate(scope ToolScope, agentType string) bool {
+	switch scope {
+	case ScopeSystem:
+		return agentType == "system"
+	case ScopeCore:
+		return agentType == "system" || agentType == "core"
+	case ScopeGeneral:
+		return true
+	default:
+		return false // deny unknown scopes
+	}
+}
+
 // FilterToolsByVisibility returns the subset of tools that the given agent type
 // and tools config allow. It implements a 2-layer scope + visibility filter:
 //
@@ -226,28 +248,19 @@ func FilterToolsByVisibility(allTools []Tool, agentType string, cfg *ToolVisibil
 		scope := t.Scope()
 
 		// Layer 1: scope gate based on agent type.
-		switch scope {
-		case ScopeSystem:
-			if agentType != "system" {
+		// For core-scoped tools, custom agents are allowed through only if the
+		// tool is explicitly listed in the visibility set (callers set visibleSet
+		// when cfg.Mode == "explicit"). This is checked here rather than in
+		// passesScopeGate so the helper remains a pure structural gate.
+		if scope == ScopeCore && !passesScopeGate(scope, agentType) {
+			// Custom (non-system, non-core) agent: only allow if explicitly listed.
+			if visibleSet == nil {
 				continue
 			}
-		case ScopeCore:
-			switch agentType {
-			case "system", "core":
-				// allowed by default
-			default:
-				// Custom agents only get core tools if explicitly listed.
-				if visibleSet == nil {
-					continue
-				}
-				if _, ok := visibleSet[t.Name()]; !ok {
-					continue
-				}
+			if _, ok := visibleSet[t.Name()]; !ok {
+				continue
 			}
-		case ScopeGeneral:
-			// allowed for all agent types
-		default:
-			// Unknown or zero-value scope: deny by default (hard constraint 6).
+		} else if !passesScopeGate(scope, agentType) {
 			continue
 		}
 
@@ -335,26 +348,16 @@ func FilterToolsByPolicy(allTools []Tool, agentType string, cfg *ToolPolicyCfg) 
 	for _, t := range allTools {
 		scope := t.Scope()
 
-		// Layer 1: scope gate (unchanged — structural constraint).
-		switch scope {
-		case ScopeSystem:
-			if agentType != "system" {
+		// Layer 1: scope gate (structural constraint — cannot be bypassed by policy).
+		// For core-scoped tools, custom agents are allowed through only if their
+		// effective policy is allow or ask (not deny).
+		if scope == ScopeCore && !passesScopeGate(scope, agentType) {
+			// Custom agent: allowed only if effective policy is not "deny".
+			p := resolveEffective(t.Name())
+			if p == "deny" {
 				continue
 			}
-		case ScopeCore:
-			switch agentType {
-			case "system", "core":
-				// allowed
-			default:
-				// Custom agents get core tools only if their effective policy is allow/ask.
-				p := resolveEffective(t.Name())
-				if p == "deny" {
-					continue
-				}
-			}
-		case ScopeGeneral:
-			// allowed for all
-		default:
+		} else if !passesScopeGate(scope, agentType) {
 			continue
 		}
 

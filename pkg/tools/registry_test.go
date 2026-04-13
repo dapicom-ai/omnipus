@@ -735,3 +735,113 @@ func TestToolRegistry_ExecuteWithContext_SanitizesInlineMediaWithoutStore(t *tes
 		t.Fatalf("expected inline media omission note, got %q", result.ForLLM)
 	}
 }
+
+// --- SanitizeToolName / UnsanitizeToolName tests ---
+
+// TestSanitizeToolName verifies that dots are replaced with underscores.
+//
+// BDD: Given tool names with dots,
+// When SanitizeToolName is called,
+// Then dots become underscores.
+func TestSanitizeToolName(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		// Single dot
+		{"browser.navigate", "browser_navigate"},
+		// Multi-dot
+		{"system.agent.create", "system_agent_create"},
+		// No dots — unchanged
+		{"read_file", "read_file"},
+		// Already underscore — no change
+		{"browser_navigate", "browser_navigate"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.input, func(t *testing.T) {
+			got := SanitizeToolName(tc.input)
+			if got != tc.want {
+				t.Errorf("SanitizeToolName(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestUnsanitizeToolName_RoundTrip verifies the round-trip property:
+// SanitizeToolName → UnsanitizeToolName recovers the original name when it
+// exists in the registry.
+//
+// BDD: Given a registry containing "browser.navigate" and "system.agent.create",
+// When UnsanitizeToolName is called on their sanitized forms,
+// Then the original dotted names are returned.
+func TestUnsanitizeToolName_RoundTrip(t *testing.T) {
+	r := NewToolRegistry()
+	r.Register(newMockTool("browser.navigate", "navigate to URL"))
+	r.Register(newMockTool("system.agent.create", "create agent"))
+
+	tests := []struct {
+		sanitized string
+		want      string
+		desc      string
+	}{
+		{"browser_navigate", "browser.navigate", "single-dot round-trip"},
+		{"system_agent_create", "system.agent.create", "multi-dot round-trip"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.desc, func(t *testing.T) {
+			got := r.UnsanitizeToolName(tc.sanitized)
+			if got != tc.want {
+				t.Errorf("UnsanitizeToolName(%q) = %q, want %q", tc.sanitized, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestUnsanitizeToolName_NoDots verifies that a name without dots is returned
+// as-is when it exists in the registry under the underscore form.
+//
+// BDD: Given a registry containing "read_file" (no dots),
+// When UnsanitizeToolName("read_file") is called,
+// Then "read_file" is returned unchanged.
+func TestUnsanitizeToolName_NoDots(t *testing.T) {
+	r := NewToolRegistry()
+	r.Register(newMockTool("read_file", "reads a file"))
+
+	got := r.UnsanitizeToolName("read_file")
+	if got != "read_file" {
+		t.Errorf("UnsanitizeToolName(%q) = %q, want %q", "read_file", got, "read_file")
+	}
+}
+
+// TestUnsanitizeToolName_DotFormNotInRegistry verifies that when only the
+// underscore form ("browser_navigate") is registered — not the dot form — the
+// function returns the input as-is rather than constructing a false mapping.
+//
+// BDD: Given a registry with "browser_navigate" (underscore, no dot form),
+// When UnsanitizeToolName("browser_navigate") is called,
+// Then "browser_navigate" is returned unchanged (direct registry hit, no dot substitution).
+func TestUnsanitizeToolName_DotFormNotInRegistry(t *testing.T) {
+	r := NewToolRegistry()
+	// Only the underscore form is present — dot form does NOT exist.
+	r.Register(newMockTool("browser_navigate", "navigate"))
+
+	got := r.UnsanitizeToolName("browser_navigate")
+	if got != "browser_navigate" {
+		t.Errorf("UnsanitizeToolName(%q) = %q, want %q", "browser_navigate", got, "browser_navigate")
+	}
+}
+
+// TestUnsanitizeToolName_NotInRegistry verifies that a completely unknown
+// sanitized name is returned as-is (no mapping, no panic).
+//
+// BDD: Given an empty registry,
+// When UnsanitizeToolName("unknown_tool") is called,
+// Then "unknown_tool" is returned (no false dot substitution).
+func TestUnsanitizeToolName_NotInRegistry(t *testing.T) {
+	r := NewToolRegistry()
+
+	got := r.UnsanitizeToolName("unknown_tool")
+	if got != "unknown_tool" {
+		t.Errorf("UnsanitizeToolName(%q) = %q, want %q", "unknown_tool", got, "unknown_tool")
+	}
+}

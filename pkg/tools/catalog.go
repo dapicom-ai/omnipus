@@ -4,7 +4,7 @@
 
 // This file is the single source of truth for all tools available in the system.
 // Both the REST API (GET /api/v1/tools/builtin) and Ava's context injection
-// read from BuiltinCatalog. When adding a new tool, add it here.
+// read from builtinCatalog (via GetBuiltinCatalog). When adding a new tool, add it here.
 
 package tools
 
@@ -38,9 +38,11 @@ type CatalogEntry struct {
 	Category    ToolCategory `json:"category"`
 }
 
-// BuiltinCatalog is the canonical list of every tool in the system.
+// builtinCatalog is the canonical list of every tool in the system.
 // Grouped by category for readability. Update this when adding new tools.
-var BuiltinCatalog = []CatalogEntry{
+// External packages must use GetBuiltinCatalog() — the variable is unexported to
+// prevent accidental mutation of the slice header by callers.
+var builtinCatalog = []CatalogEntry{
 	// ── File & Code ──────────────────────────────────────────────────────
 	{"read_file", "Read file contents from the workspace", ScopeCore, CategoryFile},
 	{"write_file", "Write or create files in the workspace", ScopeCore, CategoryFile},
@@ -134,10 +136,17 @@ var BuiltinCatalog = []CatalogEntry{
 	{"system.navigate", "Navigate the UI to a specific screen", ScopeSystem, CategorySystem},
 }
 
+// GetBuiltinCatalog returns a copy of the builtin catalog slice.
+// Callers outside this package must use this function — the underlying variable
+// is unexported to prevent accidental mutation.
+func GetBuiltinCatalog() []CatalogEntry {
+	return builtinCatalog
+}
+
 // CatalogAsMapSlice returns the catalog as []map[string]any for the REST API.
 func CatalogAsMapSlice() []map[string]any {
-	result := make([]map[string]any, len(BuiltinCatalog))
-	for i, e := range BuiltinCatalog {
+	result := make([]map[string]any, len(builtinCatalog))
+	for i, e := range builtinCatalog {
 		result[i] = map[string]any{
 			"name":        e.Name,
 			"description": e.Description,
@@ -175,7 +184,7 @@ func CatalogMarkdown() string {
 		CategoryHardware:      "Hardware (IoT)",
 	}
 	groups := make(map[ToolCategory][]CatalogEntry)
-	for _, e := range BuiltinCatalog {
+	for _, e := range builtinCatalog {
 		if e.Scope == ScopeSystem {
 			continue
 		}

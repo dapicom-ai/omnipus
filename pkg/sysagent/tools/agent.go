@@ -175,6 +175,9 @@ func (t *AgentCreateTool) Execute(_ context.Context, args map[string]any) *tools
 	}
 
 	id := toSlug(name)
+	if err := validateID(id); err != nil {
+		return tools.ErrorResult(errorJSON("INVALID_INPUT", err.Error(), ""))
+	}
 
 	var finalID string
 	err := t.deps.WithConfig(func(cfg *config.Config) error {
@@ -454,9 +457,9 @@ func (t *AgentUpdateTool) Execute(_ context.Context, args map[string]any) *tools
 	wsPath := omnipusHome + "/agents/" + id
 	if v, ok := args["soul"].(string); ok && strings.TrimSpace(v) != "" {
 		if err := os.MkdirAll(wsPath, 0o700); err != nil {
-			slog.Warn("sysagent: could not create workspace for SOUL.md update", "id", id, "error", err)
+			return tools.ErrorResult(errorJSON("WRITE_ERROR", "could not update SOUL.md: "+err.Error(), ""))
 		} else if err := os.WriteFile(wsPath+"/SOUL.md", []byte(v), 0o644); err != nil {
-			slog.Warn("sysagent: could not write SOUL.md", "id", id, "error", err)
+			return tools.ErrorResult(errorJSON("WRITE_ERROR", "could not update SOUL.md: "+err.Error(), ""))
 		} else {
 			updated = append(updated, "soul")
 		}

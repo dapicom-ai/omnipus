@@ -222,12 +222,12 @@ func NewAgentLoop(
 	// All new chat sessions are created here (joined session model).
 	sharedDir := filepath.Join(homePath, "sessions")
 	if err := os.MkdirAll(sharedDir, 0o700); err != nil {
-		logger.ErrorCF("agent", "Failed to create shared sessions dir; shared store disabled",
+		logger.ErrorCF("agent", "Shared session store unavailable — new sessions will use per-agent stores",
 			map[string]any{"dir": sharedDir, "error": err.Error()})
 	} else {
 		sharedStore, ssErr := session.NewUnifiedStore(sharedDir)
 		if ssErr != nil {
-			logger.ErrorCF("agent", "Failed to init shared session store; new sessions will fall back to per-agent store",
+			logger.ErrorCF("agent", "Shared session store init failed — new sessions will use per-agent stores",
 				map[string]any{"dir": sharedDir, "error": ssErr.Error()})
 		} else {
 			al.sharedSessionStore = sharedStore
@@ -632,11 +632,7 @@ func registerSharedTools(
 			agent.Tools.Register(messageTool)
 		}
 
-		// Handoff tools — always registered (ScopeGeneral).
-		// NOTE: al.GetSessionStore() is provided by the session-store refactor
-		// subagent (joined-session-store-spec.md). Until that lands, GetSessionStore
-		// returns nil and the tools fall back to no-op store behaviour at runtime.
-		// The compile error here is expected until both subagents are integrated.
+		// Handoff tools — always registered (ScopeCore).
 		getRegistryReader := func() tools.AgentRegistryReader {
 			return al.GetRegistry()
 		}
@@ -5257,11 +5253,10 @@ func (al *AgentLoop) WireSystemTools(deps *systools.Deps, navCb systools.Navigat
 	return nil
 }
 
-// WireAvaAgentTools registers the 3 agent CRUD tools (system.agent.create,
-// system.agent.update, system.agent.delete) on the "ava" core agent so she
-// can create custom agents through her structured interview flow.
-// These are wrapped with GuardedTool for RBAC + rate limiting + audit.
-// WireAvaAgentTools registers the 3 agent CRUD tools on Ava.
+// WireAvaAgentTools registers the 4 agent tools (system.agent.create,
+// system.agent.update, system.agent.delete, system.models.list) on the "ava"
+// core agent so she can create custom agents through her structured interview
+// flow. These are wrapped with GuardedTool for RBAC + rate limiting + audit.
 // If reg is nil, the current registry is used. Pass a specific registry
 // during hot-reload when the new registry hasn't been swapped yet.
 func (al *AgentLoop) WireAvaAgentTools(deps *systools.Deps, reg ...*AgentRegistry) error {

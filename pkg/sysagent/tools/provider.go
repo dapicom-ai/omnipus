@@ -264,7 +264,7 @@ func (t *ModelsListTool) Execute(_ context.Context, args map[string]any) *tools.
 		}
 		upstream, err := fetchProviderModels(baseURL, pi.apiKey)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("%s: failed to fetch models: %v", pi.name, err))
+			warnings = append(warnings, fmt.Sprintf("%s: could not fetch model list", pi.name))
 			slog.Warn("system.models.list: failed to fetch models", "provider", pi.name, "error", err)
 			continue
 		}

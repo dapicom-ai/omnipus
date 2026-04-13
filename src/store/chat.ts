@@ -452,7 +452,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       case 'agent_switched': {
         // Handoff tool switched the active agent — update the session store
         // so the dropdown reflects the new agent and subsequent messages route correctly.
-        const newAgentId = (frame as { agent_id?: string }).agent_id
+        // frame.agent_name is available for future display use without an extra lookup.
+        const newAgentId = frame.agent_id
         if (newAgentId) {
           const sessionStore = useSessionStore.getState()
           sessionStore.setActiveSession(sessionStore.activeSessionId, newAgentId)

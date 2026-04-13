@@ -587,6 +587,256 @@ func TestFilterToolsByVisibility_ExplicitMode_CoreAgent(t *testing.T) {
 		"core-scoped tool not in explicit Visible must be filtered out")
 }
 
+// --- FilterToolsByPolicy tests ---
+
+// allPolicyTools returns a representative set covering all three scopes.
+func allPolicyTools() []Tool {
+	return []Tool{
+		makeScopedTool("system.agent.list", ScopeSystem),
+		makeScopedTool("exec", ScopeCore),
+		makeScopedTool("web_search", ScopeGeneral),
+	}
+}
+
+// TestFilterToolsByPolicy_GlobalDeny_RemovesTool verifies that a global "deny"
+// on a specific tool removes it from the output regardless of agent policy.
+//
+// BDD: Given global policy denies "web_search",
+// When FilterToolsByPolicy is called for a system agent,
+// Then "web_search" is absent from the result.
+//
+// Traces to: compositor.go FilterToolsByPolicy — resolveEffective deny wins.
+func TestFilterToolsByPolicy_GlobalDeny_RemovesTool(t *testing.T) {
+	cfg := &ToolPolicyCfg{
+		DefaultPolicy:       "allow",
+		GlobalPolicies:      map[string]string{"web_search": "deny"},
+		GlobalDefaultPolicy: "allow",
+	}
+
+	got, policyMap := FilterToolsByPolicy(allPolicyTools(), "system", cfg)
+
+	for _, t := range got {
+		if t.Name() == "web_search" {
+			panic("web_search must be removed when globally denied")
+		}
+	}
+	if _, exists := policyMap["web_search"]; exists {
+		panic("denied tool must not appear in policyMap")
+	}
+}
+
+// TestFilterToolsByPolicy_GlobalAsk_AgentAllow_EffectiveAsk verifies that when
+// global policy is "ask" and agent policy is "allow", the effective result is "ask"
+// (strictest wins: ask > allow).
+//
+// BDD: Given global policy "ask" for "web_search" and agent policy "allow",
+// When FilterToolsByPolicy is called,
+// Then "web_search" is in the result with policy "ask".
+//
+// Traces to: compositor.go resolveEffective — ask > allow.
+func TestFilterToolsByPolicy_GlobalAsk_AgentAllow_EffectiveAsk(t *testing.T) {
+	cfg := &ToolPolicyCfg{
+		DefaultPolicy:       "allow",
+		Policies:            map[string]string{"web_search": "allow"},
+		GlobalPolicies:      map[string]string{"web_search": "ask"},
+		GlobalDefaultPolicy: "allow",
+	}
+
+	_, policyMap := FilterToolsByPolicy(allPolicyTools(), "system", cfg)
+
+	if p, ok := policyMap["web_search"]; !ok || p != "ask" {
+		t.Errorf("expected effective policy 'ask' for web_search, got %q (ok=%v)", p, ok)
+	}
+}
+
+// TestFilterToolsByPolicy_GlobalAllow_AgentDeny_EffectiveDeny verifies that
+// agent-level "deny" wins over global "allow".
+//
+// BDD: Given global policy "allow" and agent policy "deny" for "web_search",
+// When FilterToolsByPolicy is called,
+// Then "web_search" is absent from the result.
+//
+// Traces to: compositor.go resolveEffective — deny always wins.
+func TestFilterToolsByPolicy_GlobalAllow_AgentDeny_EffectiveDeny(t *testing.T) {
+	cfg := &ToolPolicyCfg{
+		DefaultPolicy:       "allow",
+		Policies:            map[string]string{"web_search": "deny"},
+		GlobalPolicies:      map[string]string{},
+		GlobalDefaultPolicy: "allow",
+	}
+
+	got, _ := FilterToolsByPolicy(allPolicyTools(), "system", cfg)
+
+	for _, tool := range got {
+		if tool.Name() == "web_search" {
+			t.Error("web_search must be absent when agent policy is deny")
+		}
+	}
+}
+
+// TestFilterToolsByPolicy_GlobalAllow_AgentAsk_EffectiveAsk verifies that
+// agent "ask" + global "allow" yields "ask".
+//
+// BDD: Given global "allow" and agent "ask" for "web_search",
+// When FilterToolsByPolicy is called,
+// Then "web_search" is in the result with policy "ask".
+//
+// Traces to: compositor.go resolveEffective — ask > allow.
+func TestFilterToolsByPolicy_GlobalAllow_AgentAsk_EffectiveAsk(t *testing.T) {
+	cfg := &ToolPolicyCfg{
+		DefaultPolicy:       "allow",
+		Policies:            map[string]string{"web_search": "ask"},
+		GlobalPolicies:      map[string]string{},
+		GlobalDefaultPolicy: "allow",
+	}
+
+	_, policyMap := FilterToolsByPolicy(allPolicyTools(), "system", cfg)
+
+	if p, ok := policyMap["web_search"]; !ok || p != "ask" {
+		t.Errorf("expected effective policy 'ask' for web_search, got %q (ok=%v)", p, ok)
+	}
+}
+
+// TestFilterToolsByPolicy_AllAllow verifies that global "allow" + agent "allow"
+// yields effective "allow".
+//
+// BDD: Given both global and agent policies are "allow" for "web_search",
+// When FilterToolsByPolicy is called,
+// Then "web_search" is in the result with policy "allow".
+//
+// Traces to: compositor.go resolveEffective — allow + allow = allow.
+func TestFilterToolsByPolicy_AllAllow(t *testing.T) {
+	cfg := &ToolPolicyCfg{
+		DefaultPolicy:       "allow",
+		Policies:            map[string]string{"web_search": "allow"},
+		GlobalPolicies:      map[string]string{"web_search": "allow"},
+		GlobalDefaultPolicy: "allow",
+	}
+
+	_, policyMap := FilterToolsByPolicy(allPolicyTools(), "system", cfg)
+
+	if p, ok := policyMap["web_search"]; !ok || p != "allow" {
+		t.Errorf("expected effective policy 'allow' for web_search, got %q (ok=%v)", p, ok)
+	}
+}
+
+// TestFilterToolsByPolicy_ScopeSystem_BlockedForNonSystem verifies that a
+// ScopeSystem tool is never returned for a non-system agent type, regardless of
+// policy settings.
+//
+// BDD: Given a system-scoped tool "system.agent.list" and a "core" agent,
+// When FilterToolsByPolicy is called with global+agent allow policies,
+// Then "system.agent.list" is absent from the result.
+//
+// Traces to: compositor.go FilterToolsByPolicy — scope gate blocks ScopeSystem for non-system.
+func TestFilterToolsByPolicy_ScopeSystem_BlockedForNonSystem(t *testing.T) {
+	cfg := &ToolPolicyCfg{
+		DefaultPolicy:       "allow",
+		GlobalDefaultPolicy: "allow",
+	}
+
+	got, _ := FilterToolsByPolicy(allPolicyTools(), "core", cfg)
+
+	for _, tool := range got {
+		if tool.Name() == "system.agent.list" {
+			t.Error("system-scoped tool must not appear for a core agent")
+		}
+	}
+}
+
+// TestFilterToolsByPolicy_ScopeCore_BlockedForCustomUnlessExplicit verifies that
+// a ScopeCore tool is blocked for a custom agent when the effective policy is
+// "deny", but allowed when the effective policy is "allow".
+//
+// BDD: Given a core-scoped tool "exec" and a "custom" agent,
+// When global policy is "allow" and agent policy is "deny" for "exec",
+// Then "exec" is absent from the result.
+// When both policies are "allow",
+// Then "exec" is in the result.
+//
+// Traces to: compositor.go FilterToolsByPolicy — ScopeCore custom agent gate checks effective policy.
+func TestFilterToolsByPolicy_ScopeCore_CustomAgent(t *testing.T) {
+	// Custom agent + deny policy for exec → blocked
+	denyCfg := &ToolPolicyCfg{
+		DefaultPolicy:       "deny",
+		GlobalDefaultPolicy: "allow",
+	}
+	got, _ := FilterToolsByPolicy(allPolicyTools(), "custom", denyCfg)
+	for _, tool := range got {
+		if tool.Name() == "exec" {
+			t.Error("core-scoped tool must be blocked for custom agent with deny policy")
+		}
+	}
+
+	// Custom agent + allow policy for exec → allowed through
+	allowCfg := &ToolPolicyCfg{
+		DefaultPolicy:       "allow",
+		GlobalDefaultPolicy: "allow",
+	}
+	_, policyMap := FilterToolsByPolicy(allPolicyTools(), "custom", allowCfg)
+	if _, ok := policyMap["exec"]; !ok {
+		t.Error("core-scoped tool must be allowed for custom agent with allow policy")
+	}
+}
+
+// TestFilterToolsByPolicy_EmptyConfig_DefaultsToAllow verifies that a nil config
+// defaults to allow-all (the safe default for non-security-critical agents).
+//
+// BDD: Given a nil ToolPolicyCfg,
+// When FilterToolsByPolicy is called for a system agent,
+// Then all system + core + general tools pass with "allow" policy.
+//
+// Traces to: compositor.go FilterToolsByPolicy — nil cfg defaults to allow.
+func TestFilterToolsByPolicy_EmptyConfig_DefaultsToAllow(t *testing.T) {
+	got, policyMap := FilterToolsByPolicy(allPolicyTools(), "system", nil)
+
+	// All three scope tools must be present for system agent.
+	if len(got) != 3 {
+		t.Errorf("expected 3 tools for system agent with nil config, got %d", len(got))
+	}
+	for _, name := range []string{"system.agent.list", "exec", "web_search"} {
+		if p, ok := policyMap[name]; !ok || p != "allow" {
+			t.Errorf("expected policy 'allow' for %q, got %q (ok=%v)", name, p, ok)
+		}
+	}
+}
+
+// TestFilterToolsByPolicy_UnknownScope_Denied verifies that a tool with an
+// unknown/zero-value scope is denied (fail-closed, CLAUDE.md hard constraint 6).
+//
+// BDD: Given a tool with scope "" (unknown),
+// When FilterToolsByPolicy is called,
+// Then the tool is absent from the result regardless of policy.
+//
+// Traces to: compositor.go FilterToolsByPolicy — passesScopeGate returns false for unknown scope.
+func TestFilterToolsByPolicy_UnknownScope_Denied(t *testing.T) {
+	unknownScopeTool := makeScopedTool("mystery_tool", ToolScope("unknown"))
+	tools := []Tool{unknownScopeTool, makeScopedTool("web_search", ScopeGeneral)}
+
+	cfg := &ToolPolicyCfg{
+		DefaultPolicy:       "allow",
+		GlobalDefaultPolicy: "allow",
+	}
+
+	got, _ := FilterToolsByPolicy(tools, "system", cfg)
+
+	for _, tool := range got {
+		if tool.Name() == "mystery_tool" {
+			t.Error("tool with unknown scope must be denied (fail-closed)")
+		}
+	}
+	// web_search with ScopeGeneral must still pass
+	found := false
+	for _, tool := range got {
+		if tool.Name() == "web_search" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("general-scope tool must still pass alongside an unknown-scope tool")
+	}
+}
+
 // TestMCPContentText_ConcatenatesTextContent verifies that mcpContentText
 // joins TextContent entries without a separator and silently skips non-text items.
 //

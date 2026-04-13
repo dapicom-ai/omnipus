@@ -39,6 +39,7 @@ export function useAutoSave<T>(
   const initializedRef = useRef(false)
   const previousJsonRef = useRef<string>('')
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const latestDataRef = useRef<T>(data)
   const saveFnRef = useRef(saveFn)
   saveFnRef.current = saveFn
@@ -51,8 +52,13 @@ export function useAutoSave<T>(
     try {
       await saveFnRef.current(latestDataRef.current)
       setStatus('saved')
-      // Fade back to idle after 2s
-      setTimeout(() => setStatus((s) => (s === 'saved' ? 'idle' : s)), 2000)
+      // Fade back to idle after 2s. Cancel any previous fade timer first to
+      // avoid leaking setTimeouts when saves happen in quick succession.
+      if (fadeTimerRef.current) clearTimeout(fadeTimerRef.current)
+      fadeTimerRef.current = setTimeout(() => {
+        setStatus((s) => (s === 'saved' ? 'idle' : s))
+        fadeTimerRef.current = null
+      }, 2000)
     } catch (err) {
       setStatus('error')
       setError(err instanceof Error ? err.message : String(err))
@@ -86,10 +92,27 @@ export function useAutoSave<T>(
     }
   }, [data, debounceMs, disabled, doSave])
 
-  // Cleanup on unmount.
+  // Cleanup on unmount: cancel timers and flush any pending save so changes
+  // made just before navigation/unmount are not silently dropped.
   useEffect(() => {
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current)
+      // Clear debounce timer
+      if (timerRef.current) {
+        clearTimeout(timerRef.current)
+        timerRef.current = null
+      }
+      // Clear "fade to idle" timer
+      if (fadeTimerRef.current) {
+        clearTimeout(fadeTimerRef.current)
+        fadeTimerRef.current = null
+      }
+      // Flush pending save (fire-and-forget — component is unmounting)
+      if (initializedRef.current) {
+        const currentJson = JSON.stringify(latestDataRef.current)
+        if (currentJson !== previousJsonRef.current) {
+          saveFnRef.current(latestDataRef.current).catch(() => {})
+        }
+      }
     }
   }, [])
 

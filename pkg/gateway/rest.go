@@ -1564,6 +1564,16 @@ func (a *restAPI) updateConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Block security-sensitive top-level keys — changes to these must go through
+	// their dedicated endpoints to ensure policy validation and audit logging.
+	blocked := map[string]bool{"sandbox": true, "credentials": true, "security": true}
+	for k := range updates {
+		if blocked[k] {
+			jsonErr(w, http.StatusForbidden, fmt.Sprintf("key %q cannot be modified via config endpoint — use the dedicated security endpoints", k))
+			return
+		}
+	}
+
 	// Use safeUpdateConfigJSON to hold configMu during the read-modify-write cycle.
 	// Deep merge nested objects so partial updates don't wipe sibling keys
 	// (e.g., updating gateway.port must not delete gateway.users).
@@ -2851,61 +2861,6 @@ func toolToMap(t tools.Tool, defaultCategory string) map[string]any {
 		"category":    category,
 		"description": t.Description(),
 	}
-}
-
-// builtinToolCatalog is DEPRECATED — use tools.CatalogAsMapSlice() instead.
-// Kept temporarily to avoid breaking tests; will be removed in cleanup.
-var builtinToolCatalog_DEPRECATED = []map[string]any{
-	// File & Code
-	{"name": "read_file", "description": "Read file contents from the workspace", "scope": "core", "category": "file"},
-	{"name": "write_file", "description": "Write or create files in the workspace", "scope": "core", "category": "file"},
-	{"name": "edit_file", "description": "Edit existing files using find and replace", "scope": "core", "category": "file"},
-	{"name": "append_file", "description": "Append content to an existing file", "scope": "core", "category": "file"},
-	{"name": "list_dir", "description": "List directory contents", "scope": "core", "category": "file"},
-	{"name": "exec", "description": "Execute shell commands", "scope": "core", "category": "code"},
-
-	// Web & Search
-	{"name": "web_search", "description": "Search the web using configured search engines", "scope": "general", "category": "web"},
-	{"name": "web_fetch", "description": "Fetch and read web page content", "scope": "general", "category": "web"},
-
-	// Browser Automation
-	{"name": "browser.navigate", "description": "Navigate to a URL in the browser", "scope": "core", "category": "browser"},
-	{"name": "browser.click", "description": "Click an element on the page", "scope": "core", "category": "browser"},
-	{"name": "browser.type", "description": "Type text into an input element", "scope": "core", "category": "browser"},
-	{"name": "browser.screenshot", "description": "Take a screenshot of the page", "scope": "core", "category": "browser"},
-	{"name": "browser.get_text", "description": "Extract text content from the page", "scope": "core", "category": "browser"},
-	{"name": "browser.wait", "description": "Wait for an element or condition", "scope": "core", "category": "browser"},
-	{"name": "browser.evaluate", "description": "Execute JavaScript in the browser (requires explicit opt-in)", "scope": "core", "category": "browser"},
-
-	// Communication
-	{"name": "message", "description": "Send messages to other agents or channels", "scope": "general", "category": "communication"},
-	{"name": "send_file", "description": "Send a file to a channel or agent", "scope": "general", "category": "communication"},
-
-	// Task Management
-	{"name": "task_create", "description": "Create and assign tasks to agents", "scope": "general", "category": "task"},
-	{"name": "task_update", "description": "Update task status (running, completed, failed)", "scope": "general", "category": "task"},
-	{"name": "task_list", "description": "List tasks by role (assignee or delegator)", "scope": "general", "category": "task"},
-	{"name": "task_delete", "description": "Delete a task by ID", "scope": "general", "category": "task"},
-	{"name": "agent_list", "description": "List all available agents with IDs and names", "scope": "general", "category": "task"},
-
-	// Automation
-	{"name": "cron", "description": "Schedule recurring tasks with cron expressions", "scope": "core", "category": "automation"},
-	{"name": "spawn", "description": "Spawn a background process", "scope": "core", "category": "automation"},
-	{"name": "spawn_status", "description": "Check status of spawned background processes", "scope": "core", "category": "automation"},
-	{"name": "subagent", "description": "Delegate work to a sub-agent with a focused task", "scope": "core", "category": "automation"},
-
-	// Search & Discovery
-	{"name": "regex_search", "description": "Search files using regular expressions", "scope": "core", "category": "search"},
-	{"name": "bm25_search", "description": "Semantic search across files using BM25 ranking", "scope": "core", "category": "search"},
-
-	// Skills
-	{"name": "install_skill", "description": "Install a skill from URL or local path", "scope": "core", "category": "skills"},
-	{"name": "remove_skill", "description": "Remove an installed skill", "scope": "core", "category": "skills"},
-	{"name": "find_skills", "description": "Search for available skills", "scope": "core", "category": "skills"},
-
-	// Hardware (IoT)
-	{"name": "i2c", "description": "Communicate with I2C devices (Linux only)", "scope": "core", "category": "hardware"},
-	{"name": "spi", "description": "Communicate with SPI devices (Linux only)", "scope": "core", "category": "hardware"},
 }
 
 // HandleBuiltinTools handles GET /api/v1/tools/builtin — returns the full
