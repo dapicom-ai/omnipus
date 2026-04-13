@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/dialog'
 import { Progress } from '@/components/ui/progress'
 import { Separator } from '@/components/ui/separator'
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from '@/components/ui/accordion'
 import {
   fetchConfig,
   updateConfig,
@@ -384,250 +385,332 @@ export function SecuritySection() {
         <AutoSaveIndicator status={saveStatus} error={saveError} />
       </div>
 
-      {/* Tool Access — Global Policies */}
-      <section className="space-y-3">
-        <h3 className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-wider">Tool Access — Global Policies</h3>
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4">
-          <GlobalToolPoliciesSection />
-        </div>
-      </section>
-
-      <Separator className="my-6" />
-
-      {/* Policy */}
-      <section className="space-y-3">
-        <h3 className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-wider">Policy</h3>
-
-        <div className="space-y-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-[var(--color-secondary)]">Default policy mode</p>
-              <p className="text-xs text-[var(--color-muted)]">Whether agents are allowed or denied by default</p>
+      <Accordion
+        type="multiple"
+        defaultValue={['tool-access']}
+        className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden"
+      >
+        {/* Tool Access — Global Policies */}
+        <AccordionItem value="tool-access" className="border-0">
+          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+            Tool Access — Global Policies
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="px-4 space-y-3">
+              <GlobalToolPoliciesSection />
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-[var(--color-muted)]">Deny</span>
-              <Switch
-                checked={policyMode === 'allow'}
-                onCheckedChange={(v) => { markDirty(); setPolicyMode(v ? 'allow' : 'deny') }}
-              />
-              <span className="text-xs text-[var(--color-secondary)]">Allow</span>
-            </div>
-          </div>
+          </AccordionContent>
+        </AccordionItem>
 
-          <Separator />
+        {/* Policy */}
+        <AccordionItem value="policy" className="border-0">
+          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+            Policy
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="px-4 space-y-3">
+              <div className="space-y-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-[var(--color-secondary)]">Default policy mode</p>
+                    <p className="text-xs text-[var(--color-muted)]">Whether agents are allowed or denied by default</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-[var(--color-muted)]">Deny</span>
+                    <Switch
+                      checked={policyMode === 'allow'}
+                      onCheckedChange={(v) => { markDirty(); setPolicyMode(v ? 'allow' : 'deny') }}
+                    />
+                    <span className="text-xs text-[var(--color-secondary)]">Allow</span>
+                  </div>
+                </div>
 
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-[var(--color-secondary)]">Exec approval</p>
-              <p className="text-xs text-[var(--color-muted)]">How shell command execution is handled</p>
-            </div>
-            <SmartSelect
-              value={execApproval}
-              onValueChange={(v) => { markDirty(); setExecApproval(v as typeof execApproval) }}
-              triggerClassName="w-[120px] h-8 text-xs"
-              items={[
-                { value: 'auto', label: 'Auto-allow' },
-                { value: 'ask', label: 'Ask each time' },
-                { value: 'deny', label: 'Always deny' },
-              ]}
-            />
-          </div>
-        </div>
-      </section>
+                <Separator />
 
-      {/* ── Process Sandbox — most fundamental security feature, shown first ── */}
-      <Separator className="my-6" />
-      <SandboxSection />
-
-      {/* Prompt Injection Defense — dedicated section with per-level explanations */}
-      <PromptGuardSection />
-
-      {/* Rate limits & cost */}
-      <section className="space-y-3">
-        <h3 className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-wider">Rate Limits & Cost Control</h3>
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-4">
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-sm text-[var(--color-secondary)]">Daily cost cap</p>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-[var(--color-muted)]">$</span>
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.5"
-                  value={dailyCostCap}
-                  onChange={(e) => { markDirty(); setDailyCostCap(e.target.value) }}
-                  className="w-24 h-7 text-xs font-mono"
-                  placeholder="10.00"
-                />
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-[var(--color-secondary)]">Exec approval</p>
+                    <p className="text-xs text-[var(--color-muted)]">How shell command execution is handled</p>
+                  </div>
+                  <SmartSelect
+                    value={execApproval}
+                    onValueChange={(v) => { markDirty(); setExecApproval(v as typeof execApproval) }}
+                    triggerClassName="w-[120px] h-8 text-xs"
+                    items={[
+                      { value: 'auto', label: 'Auto-allow' },
+                      { value: 'ask', label: 'Ask each time' },
+                      { value: 'deny', label: 'Always deny' },
+                    ]}
+                  />
+                </div>
               </div>
             </div>
-            <div className="space-y-1">
-              <div className="flex justify-between text-[10px] text-[var(--color-muted)]">
-                <span>
-                  {gatewayStatusError
-                    ? 'Today\'s spend: unavailable'
-                    : `Today's spend: $${todaySpend.toFixed(2)}`}
-                </span>
-                <span>Cap: ${capValue.toFixed(2)}</span>
+          </AccordionContent>
+        </AccordionItem>
+
+        {/* Rate Limits & Cost Control */}
+        <AccordionItem value="rate-limits" className="border-0">
+          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+            Rate Limits & Cost Control
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="px-4 space-y-3">
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-4">
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm text-[var(--color-secondary)]">Daily cost cap</p>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-[var(--color-muted)]">$</span>
+                      <Input
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        value={dailyCostCap}
+                        onChange={(e) => { markDirty(); setDailyCostCap(e.target.value) }}
+                        className="w-24 h-7 text-xs font-mono"
+                        placeholder="10.00"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-[10px] text-[var(--color-muted)]">
+                      <span>
+                        {gatewayStatusError
+                          ? "Today's spend: unavailable"
+                          : `Today's spend: $${todaySpend.toFixed(2)}`}
+                      </span>
+                      <span>Cap: ${capValue.toFixed(2)}</span>
+                    </div>
+                    <Progress value={spendPercent} className="h-1.5" />
+                  </div>
+                </div>
+
+                <Separator />
+
+                <div className="space-y-3">
+                  <p className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-wider">Per-Agent Defaults</p>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-[var(--color-secondary)]">LLM calls / hour</p>
+                      <p className="text-xs text-[var(--color-muted)]">Default limit per agent</p>
+                    </div>
+                    <Input
+                      type="number"
+                      min="0"
+                      value={agentLlmCallsPerHour}
+                      onChange={(e) => { markDirty(); setAgentLlmCallsPerHour(e.target.value) }}
+                      className="w-24 h-7 text-xs font-mono"
+                      placeholder="Unlimited"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm text-[var(--color-secondary)]">Tool calls / minute</p>
+                      <p className="text-xs text-[var(--color-muted)]">Default limit per agent</p>
+                    </div>
+                    <Input
+                      type="number"
+                      min="0"
+                      value={agentToolCallsPerMin}
+                      onChange={(e) => { markDirty(); setAgentToolCallsPerMin(e.target.value) }}
+                      className="w-24 h-7 text-xs font-mono"
+                      placeholder="Unlimited"
+                    />
+                  </div>
+                </div>
               </div>
-              <Progress value={spendPercent} className="h-1.5" />
             </div>
-          </div>
+          </AccordionContent>
+        </AccordionItem>
 
-          <Separator />
+        {/* Command Execution */}
+        <AccordionItem value="command-execution" className="border-0">
+          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+            Command Execution
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="px-4 space-y-3">
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-[var(--color-secondary)]">Exec timeout (seconds)</p>
+                    <p className="text-xs text-[var(--color-muted)]">Max time for a single command, 0 = no limit</p>
+                  </div>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={execTimeoutSecs}
+                    onChange={(e) => { markDirty(); setExecTimeoutSecs(e.target.value) }}
+                    className="w-24 h-7 text-xs font-mono"
+                    placeholder="0"
+                  />
+                </div>
 
-          {/* Per-agent default rate limits */}
-          <div className="space-y-3">
-            <p className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-wider">Per-Agent Defaults</p>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-[var(--color-secondary)]">LLM calls / hour</p>
-                <p className="text-xs text-[var(--color-muted)]">Default limit per agent</p>
+                <Separator />
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-[var(--color-secondary)]">Background timeout (seconds)</p>
+                    <p className="text-xs text-[var(--color-muted)]">Max time for background processes, 0 = no limit</p>
+                  </div>
+                  <Input
+                    type="number"
+                    min="0"
+                    value={maxBackgroundSecs}
+                    onChange={(e) => { markDirty(); setMaxBackgroundSecs(e.target.value) }}
+                    className="w-24 h-7 text-xs font-mono"
+                    placeholder="0"
+                  />
+                </div>
+
+                <Separator />
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-[var(--color-secondary)]">Enable deny patterns</p>
+                    <p className="text-xs text-[var(--color-muted)]">Block commands matching configured deny patterns</p>
+                  </div>
+                  <Switch
+                    checked={enableDenyPatterns}
+                    onCheckedChange={(v) => { markDirty(); setEnableDenyPatterns(v) }}
+                  />
+                </div>
               </div>
-              <Input
-                type="number"
-                min="0"
-                value={agentLlmCallsPerHour}
-                onChange={(e) => { markDirty(); setAgentLlmCallsPerHour(e.target.value) }}
-                className="w-24 h-7 text-xs font-mono"
-                placeholder="Unlimited"
-              />
             </div>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-[var(--color-secondary)]">Tool calls / minute</p>
-                <p className="text-xs text-[var(--color-muted)]">Default limit per agent</p>
+          </AccordionContent>
+        </AccordionItem>
+
+        {/* Credential Vault */}
+        <AccordionItem value="credential-vault" className="border-0">
+          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+            <span className="flex-1 text-left">Credential Vault</span>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-2 gap-1 text-xs mr-2"
+              onClick={(e) => { e.stopPropagation(); setCredModalOpen(true) }}
+            >
+              <Plus size={11} weight="bold" />
+              Add key
+            </Button>
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="px-4 space-y-3">
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] divide-y divide-[var(--color-border)]">
+                {credentialsError && (
+                  <div className="p-4 text-sm text-red-400">Failed to load credentials. Please try again.</div>
+                )}
+                {!credentialsError && credentials.length === 0 && (
+                  <div className="p-4 text-sm text-[var(--color-muted)] flex items-center gap-2">
+                    <Key size={14} />
+                    No credentials stored. Add your first key above.
+                  </div>
+                )}
+                {credentials.map((cred) => (
+                  <div key={cred.key} className="flex items-center justify-between px-4 py-2.5">
+                    <div>
+                      <p className="text-sm font-mono text-[var(--color-secondary)]">{cred.key}</p>
+                      <p className="text-[10px] text-[var(--color-muted)] font-mono">••••••••••••</p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 p-0 text-[var(--color-muted)] hover:text-[var(--color-error)]"
+                      onClick={() => setDeletingKey(cred.key)}
+                    >
+                      <Trash size={13} />
+                    </Button>
+                  </div>
+                ))}
               </div>
-              <Input
-                type="number"
-                min="0"
-                value={agentToolCallsPerMin}
-                onChange={(e) => { markDirty(); setAgentToolCallsPerMin(e.target.value) }}
-                className="w-24 h-7 text-xs font-mono"
-                placeholder="Unlimited"
-              />
             </div>
-          </div>
-        </div>
-      </section>
+          </AccordionContent>
+        </AccordionItem>
 
-      {/* Command Execution */}
-      <section className="space-y-3">
-        <h3 className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-wider">Command Execution</h3>
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-[var(--color-secondary)]">Exec timeout (seconds)</p>
-              <p className="text-xs text-[var(--color-muted)]">Max time for a single command, 0 = no limit</p>
+        {/* Process Sandbox */}
+        <AccordionItem value="sandbox" className="border-0">
+          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+            Process Sandbox
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="px-4 space-y-3">
+              <SandboxSection />
             </div>
-            <Input
-              type="number"
-              min="0"
-              value={execTimeoutSecs}
-              onChange={(e) => { markDirty(); setExecTimeoutSecs(e.target.value) }}
-              className="w-24 h-7 text-xs font-mono"
-              placeholder="0"
-            />
-          </div>
+          </AccordionContent>
+        </AccordionItem>
 
-          <Separator />
-
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-[var(--color-secondary)]">Background timeout (seconds)</p>
-              <p className="text-xs text-[var(--color-muted)]">Max time for background processes, 0 = no limit</p>
+        {/* Prompt Guard */}
+        <AccordionItem value="prompt-guard" className="border-0">
+          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+            Prompt Injection Defense
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="px-4 space-y-3">
+              <PromptGuardSection />
             </div>
-            <Input
-              type="number"
-              min="0"
-              value={maxBackgroundSecs}
-              onChange={(e) => { markDirty(); setMaxBackgroundSecs(e.target.value) }}
-              className="w-24 h-7 text-xs font-mono"
-              placeholder="0"
-            />
-          </div>
+          </AccordionContent>
+        </AccordionItem>
 
-          <Separator />
-
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-[var(--color-secondary)]">Enable deny patterns</p>
-              <p className="text-xs text-[var(--color-muted)]">Block commands matching configured deny patterns</p>
+        {/* Exec Binary Allowlist */}
+        <AccordionItem value="exec-allowlist" className="border-0">
+          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+            Exec Binary Allowlist
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="px-4 space-y-3">
+              <ExecAllowlistSection />
             </div>
-            <Switch
-              checked={enableDenyPatterns}
-              onCheckedChange={(v) => { markDirty(); setEnableDenyPatterns(v) }}
-            />
-          </div>
-        </div>
-      </section>
+          </AccordionContent>
+        </AccordionItem>
 
-      {/* Credential Vault */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-wider">Credential Vault</h3>
-          <Button size="sm" variant="outline" className="h-7 px-2 gap-1 text-xs" onClick={() => setCredModalOpen(true)}>
-            <Plus size={11} weight="bold" />
-            Add key
-          </Button>
-        </div>
-        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] divide-y divide-[var(--color-border)]">
-          {credentialsError && (
-            <div className="p-4 text-sm text-red-400">Failed to load credentials. Please try again.</div>
-          )}
-          {!credentialsError && credentials.length === 0 && (
-            <div className="p-4 text-sm text-[var(--color-muted)] flex items-center gap-2">
-              <Key size={14} />
-              No credentials stored. Add your first key above.
+        {/* Exec HTTP Proxy Status */}
+        <AccordionItem value="exec-proxy" className="border-0">
+          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+            Exec HTTP Proxy
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="px-4 space-y-3">
+              <ExecProxyStatusCard />
             </div>
-          )}
-          {credentials.map((cred) => (
-            <div key={cred.key} className="flex items-center justify-between px-4 py-2.5">
-              <div>
-                <p className="text-sm font-mono text-[var(--color-secondary)]">{cred.key}</p>
-                <p className="text-[10px] text-[var(--color-muted)] font-mono">••••••••••••</p>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 w-7 p-0 text-[var(--color-muted)] hover:text-[var(--color-error)]"
-                onClick={() => setDeletingKey(cred.key)}
-              >
-                <Trash size={13} />
-              </Button>
+          </AccordionContent>
+        </AccordionItem>
+
+        {/* Audit Log */}
+        <AccordionItem value="audit-log" className="border-0">
+          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+            <span className="flex-1 text-left">Audit Log</span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-xs mr-2"
+              onClick={(e) => { e.stopPropagation(); setAuditLogOpen(true) }}
+            >
+              View Log
+            </Button>
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="px-4 pb-2">
+              <p className="text-xs text-[var(--color-muted)]">
+                Security events, policy decisions, and tool executions. Use the button above to open the full viewer.
+              </p>
             </div>
-          ))}
-        </div>
-      </section>
+          </AccordionContent>
+        </AccordionItem>
 
-      {/* ── Exec Binary Allowlist ──────────────────────────── */}
-      <Separator className="my-6" />
-      <ExecAllowlistSection />
+        {/* Diagnostics */}
+        <AccordionItem value="diagnostics" className="border-0">
+          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+            Diagnostics
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="px-4 space-y-3">
+              <DiagnosticsSection />
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
 
-      {/* ── Exec HTTP Proxy Status ─────────────────────────── */}
-      <Separator className="my-6" />
-      <ExecProxyStatusCard />
-
-      {/* ── Audit Log ─────────────────────────────────────── */}
-      <Separator className="my-6" />
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-sm font-medium text-[var(--color-secondary)]">Audit Log</h3>
-          <p className="text-xs text-[var(--color-muted)] mt-1">
-            Security events, policy decisions, and tool executions
-          </p>
-        </div>
-        <Button variant="outline" size="sm" onClick={() => setAuditLogOpen(true)}>
-          View Audit Log
-        </Button>
-      </div>
       <AuditLogViewer open={auditLogOpen} onOpenChange={setAuditLogOpen} />
-
-      <Separator />
-
-      {/* US-10: Doctor diagnostics panel */}
-      <DiagnosticsSection />
 
       {/* Add credential modal */}
       <Dialog open={credModalOpen} onOpenChange={setCredModalOpen}>
