@@ -2188,24 +2188,29 @@ func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.Resolv
 	registry := al.GetRegistry()
 
 	// Check session-level agent override set by the handoff tool.
-	// The session key from msg.SessionKey mirrors what processMessage computes
-	// via resolveScopeKey; for channel messages the route has not been resolved
-	// yet, so we use msg.SessionKey directly. This is sufficient because
-	// handoff stores the key it received from the tool context, which is the
-	// same value we want to match here.
-	if msg.SessionKey != "" {
-		if activeAgent, ok := al.sessionActiveAgent.Load(msg.SessionKey); ok {
+	// Check by both sessionKey and chatID ("chat:"+chatID) since webchat
+	// messages don't carry a SessionKey, but handoff stores by chatID.
+	// This takes PRIORITY over the explicit agent_id from the webchat dropdown
+	// because the handoff already updated the dropdown via the agent_switched frame.
+	for _, lookupKey := range []string{msg.SessionKey, "chat:" + msg.ChatID} {
+		if lookupKey == "" || lookupKey == "chat:" {
+			continue
+		}
+		if activeAgent, ok := al.sessionActiveAgent.Load(lookupKey); ok {
 			agentID := activeAgent.(string)
 			if agentID != "" {
 				if agent, ok := registry.GetAgent(agentID); ok {
 					logger.InfoCF("agent", "Session handoff override active", map[string]any{
-						"session_key": msg.SessionKey,
+						"lookup_key": lookupKey,
 						"agent_id":   agentID,
 					})
-					return routing.ResolvedRoute{AgentID: agentID, SessionKey: msg.SessionKey}, agent, nil
+					sk := msg.SessionKey
+					if sk == "" {
+						sk = lookupKey
+					}
+					return routing.ResolvedRoute{AgentID: agentID, SessionKey: sk}, agent, nil
 				}
-				// Override points to an agent that no longer exists — clear it.
-				al.sessionActiveAgent.Delete(msg.SessionKey)
+				al.sessionActiveAgent.Delete(lookupKey)
 			}
 		}
 	}
@@ -2502,6 +2507,10 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 	// SEC-15: Inject agent ID so audit entries carry the agent identity.
 	turnCtx = tools.WithAgentID(turnCtx, ts.agent.ID)
 	// Inject session key so handoff/return_to_default tools can address the session.
+	if ts.sessionKey == "" {
+		logger.WarnCF("agent", "runTurn: sessionKey is empty — handoff tool will not work",
+			map[string]any{"agent_id": ts.agentID, "chat_id": ts.chatID})
+	}
 	turnCtx = tools.WithSessionKey(turnCtx, ts.sessionKey)
 
 	al.registerActiveTurn(ts)
