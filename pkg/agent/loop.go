@@ -619,11 +619,22 @@ func registerSharedTools(
 			} else {
 				al.sessionActiveAgent.Store(sessionKey, agentID)
 			}
+			// Also store by chatID (from tool context) for WebSocket frame lookup.
+			// For webchat, chatID is "webchat:xxx" — different from sessionKey.
 		}
 		getRegistryReader := func() tools.AgentRegistryReader {
 			return al.GetRegistry()
 		}
-		agent.Tools.Register(tools.NewHandoffTool(getRegistryReader, setActiveAgent))
+		agent.Tools.Register(tools.NewHandoffTool(getRegistryReader, setActiveAgent,
+			func(chatID, agentID, agentName string) {
+				// Store chatID → agentID so the WebSocket handler can look it up.
+				if agentID == "" {
+					al.sessionActiveAgent.Delete("chat:" + chatID)
+				} else {
+					al.sessionActiveAgent.Store("chat:"+chatID, agentID)
+				}
+			},
+		))
 		agent.Tools.Register(tools.NewReturnToDefaultTool(setActiveAgent))
 
 		// Send file tool (outbound media via MediaStore — store injected later by SetMediaStore)
@@ -1654,6 +1665,15 @@ func (al *AgentLoop) GetConfig() *config.Config {
 	al.mu.RLock()
 	defer al.mu.RUnlock()
 	return al.cfg
+}
+
+// GetSessionActiveAgent returns the active agent ID for a chat session (set by handoff tool).
+// Returns ("", false) if no handoff override is active.
+func (al *AgentLoop) GetSessionActiveAgent(chatID string) (string, bool) {
+	if v, ok := al.sessionActiveAgent.Load("chat:" + chatID); ok {
+		return v.(string), true
+	}
+	return "", false
 }
 
 // SwapConfig atomically replaces the in-memory config with the supplied,

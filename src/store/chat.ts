@@ -449,6 +449,17 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         queryClient.invalidateQueries({ queryKey: ['tasks'] })
         break
 
+      case 'agent_switched': {
+        // Handoff tool switched the active agent — update the session store
+        // so the dropdown reflects the new agent and subsequent messages route correctly.
+        const newAgentId = (frame as { agent_id?: string }).agent_id
+        if (newAgentId) {
+          const sessionStore = useSessionStore.getState()
+          sessionStore.setActiveSession(sessionStore.activeSessionId, newAgentId)
+        }
+        break
+      }
+
       case 'replay_message': {
         const replayFrame = frame as WsReplayMessageFrame
         const role = (replayFrame.role || 'assistant') as 'user' | 'assistant'

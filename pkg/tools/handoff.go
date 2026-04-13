@@ -21,6 +21,7 @@ type AgentRegistryReader interface {
 type HandoffTool struct {
 	getRegistry func() AgentRegistryReader
 	setActive   func(sessionKey, agentID string)
+	onHandoff   func(chatID, agentID, agentName string) // notify frontend of agent switch
 }
 
 // NewHandoffTool creates a HandoffTool.
@@ -31,10 +32,12 @@ type HandoffTool struct {
 func NewHandoffTool(
 	getRegistry func() AgentRegistryReader,
 	setActive func(sessionKey, agentID string),
+	onHandoff func(chatID, agentID, agentName string),
 ) *HandoffTool {
 	return &HandoffTool{
 		getRegistry: getRegistry,
 		setActive:   setActive,
+		onHandoff:   onHandoff,
 	}
 }
 
@@ -86,6 +89,14 @@ func (t *HandoffTool) Execute(ctx context.Context, args map[string]any) *ToolRes
 	}
 
 	t.setActive(sessionKey, agentID)
+
+	// Notify the frontend to switch the active agent in the UI.
+	if t.onHandoff != nil {
+		chatID := ToolChatID(ctx)
+		if chatID != "" {
+			t.onHandoff(chatID, agentID, agentName)
+		}
+	}
 
 	forUI := userMsg
 	if forUI == "" {

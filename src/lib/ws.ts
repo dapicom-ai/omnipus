@@ -127,6 +127,11 @@ export interface WsMediaFrame {
   parts: WsMediaPart[]
 }
 
+export interface WsAgentSwitchedFrame {
+  type: 'agent_switched'
+  agent_id: string
+}
+
 export type WsReceiveFrame =
   | WsTokenFrame
   | WsDoneFrame
@@ -138,6 +143,7 @@ export type WsReceiveFrame =
   | WsReplayMessageFrame
   | WsRateLimitFrame
   | WsMediaFrame
+  | WsAgentSwitchedFrame
 
 function isValidFrame(frame: unknown): frame is WsReceiveFrame {
   if (typeof frame !== 'object' || frame === null) return false

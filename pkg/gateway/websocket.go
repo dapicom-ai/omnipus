@@ -953,6 +953,21 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 				Status:     status,
 				DurationMs: p.Duration.Milliseconds(),
 			})
+			// When the handoff tool succeeds, notify the frontend to switch agents.
+			if p.Tool == "handoff" && status == "success" {
+				if activeAgent, ok := h.agentLoop.GetSessionActiveAgent(chatID); ok {
+					sendConnFrame(wc, wsServerFrame{
+						Type:    "agent_switched",
+						AgentID: activeAgent,
+					})
+				}
+			}
+			if p.Tool == "return_to_default" && status == "success" {
+				sendConnFrame(wc, wsServerFrame{
+					Type:    "agent_switched",
+					AgentID: "", // empty = return to default
+				})
+			}
 		case agent.EventKindRateLimit:
 			// SEC-26: forward rate-limit denials to the browser so the chat UI
 			// can display an inline indicator. Global-scope events (daily cost
