@@ -132,7 +132,7 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
     queryFn: fetchBuiltinTools,
   })
 
-  const { data: globalPolicies } = useQuery({
+  const { data: globalPolicies, isError: globalPoliciesError } = useQuery({
     queryKey: ['global-tool-policies'],
     queryFn: fetchGlobalToolPolicies,
   })
@@ -288,6 +288,11 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
         {globalPolicies && (
           <p className="text-[10px] text-[var(--color-muted)]">
             Tools blocked by global security policies are shown greyed out
+          </p>
+        )}
+        {globalPoliciesError && (
+          <p className="text-[10px] text-[var(--color-warning)]">
+            Could not load global security policies — restrictions may not be shown
           </p>
         )}
         {Object.entries(grouped).map(([category, catTools]) => (

@@ -312,7 +312,7 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 		},
 	}
 	if err := agentLoop.WireAvaAgentTools(avaDeps); err != nil {
-		slog.Warn("gateway: failed to wire Ava agent tools", "error", err)
+		slog.Error("gateway: failed to wire Ava agent tools — Ava cannot create agents", "error", err)
 	}
 
 	fmt.Println("\n📦 Agent Status:")

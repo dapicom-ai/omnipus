@@ -453,12 +453,12 @@ func (t *AgentUpdateTool) Execute(_ context.Context, args map[string]any) *tools
 	}
 	wsPath := omnipusHome + "/agents/" + id
 	if v, ok := args["soul"].(string); ok && strings.TrimSpace(v) != "" {
-		if err := os.MkdirAll(wsPath, 0o700); err == nil {
-			if err := os.WriteFile(wsPath+"/SOUL.md", []byte(v), 0o644); err != nil {
-				slog.Warn("sysagent: could not write SOUL.md", "id", id, "error", err)
-			} else {
-				updated = append(updated, "soul")
-			}
+		if err := os.MkdirAll(wsPath, 0o700); err != nil {
+			slog.Warn("sysagent: could not create workspace for SOUL.md update", "id", id, "error", err)
+		} else if err := os.WriteFile(wsPath+"/SOUL.md", []byte(v), 0o644); err != nil {
+			slog.Warn("sysagent: could not write SOUL.md", "id", id, "error", err)
+		} else {
+			updated = append(updated, "soul")
 		}
 	}
 	if v, ok := args["heartbeat"].(string); ok && strings.TrimSpace(v) != "" {
@@ -606,7 +606,11 @@ func (t *AgentListTool) Execute(_ context.Context, args map[string]any) *tools.T
 		result = append(result, agentSummary{
 			ID:     a.ID,
 			Name:   a.Name,
-			Type:   string(a.ResolveType(nil)),
+			Type:   string(a.ResolveType(func(id string) bool {
+				// Check if agent has Type explicitly set to "core" in config.
+				// This avoids importing coreagent (would create import cycle).
+				return a.Type == config.AgentTypeCore
+			})),
 			Status: status,
 			Model:  model,
 		})

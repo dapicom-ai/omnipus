@@ -5127,17 +5127,22 @@ func (al *AgentLoop) WireAvaAgentTools(deps *systools.Deps, reg ...*AgentRegistr
 	}
 
 	wired := 0
+	var missing []string
 	fullRegistry := systools.BuildRegistry(deps, nil)
 	for _, name := range agentToolNames {
 		t, exists := fullRegistry.Get(name)
 		if !exists {
-			logger.WarnCF("agent", "WireAvaAgentTools: tool not found in registry", map[string]any{"tool": name})
+			missing = append(missing, name)
 			continue
 		}
 		guarded := sysagent.NewGuardedTool(t, handler, sysagent.RoleSingleUser, "gateway").
 			WithScopeOverride(tools.ScopeCore)
 		avaInst.Tools.Register(guarded)
 		wired++
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("WireAvaAgentTools: %d/%d tools not found in registry: %v",
+			len(missing), len(agentToolNames), missing)
 	}
 
 	// Inject available resources (tools, providers, defaults) into Ava's context

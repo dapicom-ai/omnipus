@@ -251,13 +251,20 @@ func (t *ModelsListTool) Execute(_ context.Context, args map[string]any) *tools.
 	// Fetch models from each provider's upstream API.
 	var models []modelEntry
 	seen := map[string]bool{}
+	var warnings []string
 	for _, pi := range providersSeen {
 		baseURL := providers.GetDefaultAPIBase(pi.name)
-		if baseURL == "" || pi.apiKey == "" {
+		if baseURL == "" {
+			warnings = append(warnings, fmt.Sprintf("%s: no API base URL configured", pi.name))
+			continue
+		}
+		if pi.apiKey == "" {
+			warnings = append(warnings, fmt.Sprintf("%s: no API key configured", pi.name))
 			continue
 		}
 		upstream, err := fetchProviderModels(baseURL, pi.apiKey)
 		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: failed to fetch models: %v", pi.name, err))
 			slog.Warn("system.models.list: failed to fetch models", "provider", pi.name, "error", err)
 			continue
 		}
@@ -274,11 +281,15 @@ func (t *ModelsListTool) Execute(_ context.Context, args map[string]any) *tools.
 		}
 	}
 
-	return tools.NewToolResult(successJSON(map[string]any{
+	result := map[string]any{
 		"models":        models,
 		"default_model": defaultModel,
 		"total":         len(models),
-	}))
+	}
+	if len(warnings) > 0 {
+		result["warnings"] = warnings
+	}
+	return tools.NewToolResult(successJSON(result))
 }
 
 // fetchProviderModels fetches models from an OpenAI-compatible /models endpoint.

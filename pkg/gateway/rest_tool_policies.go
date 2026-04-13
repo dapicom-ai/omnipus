@@ -50,6 +50,7 @@ func (a *restAPI) HandleToolPolicies(w http.ResponseWriter, r *http.Request) {
 		})
 
 	case http.MethodPut:
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB limit
 		var body struct {
 			DefaultPolicy string            `json:"default_policy"`
 			Policies      map[string]string `json:"policies"`

@@ -199,13 +199,15 @@ func FilterToolsByVisibility(allTools []Tool, agentType string, cfg *ToolVisibil
 		cfg = &ToolVisibilityCfg{Mode: "inherit"}
 	}
 
-	// Warn on unrecognized mode — treated as "inherit" (scope-only filtering).
+	// Unrecognized mode → treat as "explicit" with empty list (deny all).
+	// This is safer than defaulting to "inherit" which would grant MORE access.
 	switch cfg.Mode {
 	case "explicit", "inherit", "":
 		// valid
 	default:
-		slog.Warn("FilterToolsByVisibility: unrecognized mode, treating as inherit",
+		slog.Warn("FilterToolsByVisibility: unrecognized mode, treating as explicit (deny-by-default)",
 			"mode", cfg.Mode)
+		cfg.Mode = "explicit"
 	}
 
 	// Build a fast lookup set for explicit mode. Always build the set when
