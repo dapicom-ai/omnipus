@@ -228,6 +228,11 @@ export interface Config {
       enable_proxy?: boolean
     }
   }
+  agents?: {
+    defaults?: {
+      default_agent_id?: string
+    }
+  }
 }
 
 const VALID_AUTH_MODES = ['none', 'token'] as const
@@ -252,6 +257,8 @@ function rawToFrontendConfig(raw: Record<string, unknown>): Config {
   const retention = cast<Record<string, unknown>>(storage.retention, {})
   const security = cast<Record<string, unknown>>(raw.security, {})
   const rateLimits = cast<Record<string, unknown>>(security.rate_limits, {})
+  const agents = cast<Record<string, unknown>>(raw.agents, {})
+  const agentDefaults = cast<Record<string, unknown>>(agents.defaults, {})
   return {
     gateway: {
       bind_address: cast<string>(gateway.host, '127.0.0.1'),
@@ -278,6 +285,11 @@ function rawToFrontendConfig(raw: Record<string, unknown>): Config {
     },
     data: {
       session_retention_days: cast<number>(retention.session_days, 90),
+    },
+    agents: {
+      defaults: {
+        default_agent_id: agentDefaults.default_agent_id as string | undefined,
+      },
     },
   }
 }

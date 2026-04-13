@@ -18,9 +18,18 @@ const DefaultAgentID = "main"
 
 // AgentRegistry manages multiple agent instances and routes messages to them.
 type AgentRegistry struct {
-	agents   map[string]*AgentInstance
-	resolver *routing.RouteResolver
-	mu       sync.RWMutex
+	agents               map[string]*AgentInstance
+	resolver             *routing.RouteResolver
+	mu                   sync.RWMutex
+	defaultAgentOverride string // from config.Agents.Defaults.DefaultAgentID
+}
+
+// SetDefaultAgentOverride sets the agent ID to use as the default agent.
+// When set, GetDefaultAgent returns this agent instead of the "main" agent.
+func (r *AgentRegistry) SetDefaultAgentOverride(agentID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.defaultAgentOverride = agentID
 }
 
 // NewAgentRegistry creates a registry from config, instantiating all agents.
@@ -135,6 +144,23 @@ func (r *AgentRegistry) ForEachTool(name string, fn func(tools.Tool)) {
 	}
 }
 
+// GetAgentName returns the display name for agentID and true if the agent
+// exists in the registry. It satisfies the tools.AgentRegistryReader interface
+// used by HandoffTool to avoid an import cycle.
+func (r *AgentRegistry) GetAgentName(agentID string) (string, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	agent, ok := r.agents[agentID]
+	if !ok {
+		return "", false
+	}
+	name := agent.Name
+	if name == "" {
+		name = agentID
+	}
+	return name, true
+}
+
 // Close releases resources held by all registered agents and clears the map (M9).
 func (r *AgentRegistry) Close() {
 	r.mu.Lock()
@@ -152,11 +178,19 @@ func (r *AgentRegistry) Close() {
 }
 
 // GetDefaultAgent returns the default agent instance.
-// "main" is preferred; otherwise the agent with the lexicographically first ID is
-// returned to give deterministic selection regardless of map iteration order (M10).
+// If a defaultAgentOverride is set (from config.Agents.Defaults.DefaultAgentID),
+// that agent is returned when it exists. Otherwise "main" is preferred; if absent,
+// the agent with the lexicographically first ID is returned for deterministic
+// selection regardless of map iteration order (M10).
 func (r *AgentRegistry) GetDefaultAgent() *AgentInstance {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	// Check configurable override first.
+	if r.defaultAgentOverride != "" {
+		if agent, ok := r.agents[r.defaultAgentOverride]; ok {
+			return agent
+		}
+	}
 	if agent, ok := r.agents[DefaultAgentID]; ok {
 		return agent
 	}

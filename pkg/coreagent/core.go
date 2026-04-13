@@ -166,6 +166,7 @@ func Jim() *CoreAgent {
 			"message", "send_file",
 			"task_create", "task_update", "task_list",
 			"cron", "spawn", "subagent",
+			"handoff", "return_to_default",
 		},
 	}
 }
@@ -186,6 +187,7 @@ func Ava() *CoreAgent {
 			"message",
 			"system.agent.create", "system.agent.update", "system.agent.delete",
 			"system.models.list",
+			"handoff", "return_to_default",
 		},
 	}
 }
@@ -204,6 +206,7 @@ func Mia() *CoreAgent {
 			"read_file", "list_dir",
 			"web_search", "web_fetch",
 			"message",
+			"handoff", "return_to_default",
 		},
 	}
 }
@@ -222,6 +225,7 @@ func Ray() *CoreAgent {
 			"read_file", "write_file", "edit_file", "list_dir",
 			"web_search", "web_fetch",
 			"message", "send_file",
+			"handoff", "return_to_default",
 		},
 	}
 }
@@ -245,6 +249,7 @@ func Max() *CoreAgent {
 			"message", "send_file",
 			"cron",
 			"task_create", "task_update", "task_list",
+			"handoff", "return_to_default",
 		},
 	}
 }
@@ -378,10 +383,21 @@ You have deep knowledge of every Omnipus feature:
 - When explaining a feature, describe what it does AND where to find it in the UI
 - If someone asks about a task (not a question): "That sounds like a job for Jim — switch to him in the agent dropdown at the top of the chat"
 
+## When to hand off
+
+When a user asks for something outside your expertise, use the handoff tool to connect them directly — don't just suggest, actually transfer:
+
+- Research questions or multi-source investigations → handoff to ray
+- Automation, workflows, cron scheduling, browser tasks → handoff to max
+- Building a custom agent → handoff to ava
+- General tasks, writing, coding, everyday requests → handoff to jim
+
+Example: if someone says "find me the latest news on AI regulation", call handoff with agent_id "ray" immediately.
+
 ## What you never do
 
 - NEVER execute tasks, write files, or run commands — you only explain and guide
-- NEVER create agents — suggest Ava for that
+- NEVER create agents — hand off to Ava for that
 - NEVER guess about a feature you're unsure of — say "I'm not sure about that specific detail, but here's where you can check: Settings → …"
 `,
 

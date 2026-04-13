@@ -12,7 +12,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { fetchChannels, configureChannel } from '@/lib/api'
+import { fetchChannels, configureChannel, fetchAgents } from '@/lib/api'
 
 type DmPolicy = 'allow' | 'deny' | 'known_only'
 
@@ -21,6 +21,7 @@ interface ChannelRoute {
   name: string
   allow_from: string
   dm_policy: DmPolicy
+  default_agent_id: string
 }
 
 export function RoutingSection() {
@@ -35,6 +36,11 @@ export function RoutingSection() {
     queryFn: fetchChannels,
   })
 
+  const { data: agents } = useQuery({
+    queryKey: ['agents'],
+    queryFn: fetchAgents,
+  })
+
   useEffect(() => {
     if (!channels) return
     if (isDirtyRef.current) return
@@ -44,6 +50,7 @@ export function RoutingSection() {
         name: ch.name,
         allow_from: '',
         dm_policy: 'allow' as DmPolicy,
+        default_agent_id: '',
       }))
     )
   }, [channels])
@@ -59,6 +66,7 @@ export function RoutingSection() {
               .map((s) => s.trim())
               .filter(Boolean),
             dm_policy: r.dm_policy,
+            default_agent_id: r.default_agent_id || null,
           })
         )
       )
@@ -100,6 +108,7 @@ export function RoutingSection() {
             <TableHeader>
               <TableRow className="border-[var(--color-border)] hover:bg-transparent">
                 <TableHead className="text-xs text-[var(--color-muted)]">Channel</TableHead>
+                <TableHead className="text-xs text-[var(--color-muted)]">Default Agent</TableHead>
                 <TableHead className="text-xs text-[var(--color-muted)]">
                   Allow From
                   <span className="ml-1 font-normal">(comma-separated IDs)</span>
@@ -112,6 +121,18 @@ export function RoutingSection() {
                 <TableRow key={route.id} className="border-[var(--color-border)]">
                   <TableCell className="text-sm text-[var(--color-secondary)] font-medium">
                     {route.name}
+                  </TableCell>
+                  <TableCell>
+                    <SmartSelect
+                      value={route.default_agent_id}
+                      onValueChange={(v) => updateRoute(route.id, 'default_agent_id', v)}
+                      triggerClassName="w-[160px] h-7 text-xs"
+                      placeholder="(global default)"
+                      items={[
+                        { value: '', label: '(global default)' },
+                        ...(agents ?? []).map((a) => ({ value: a.id, label: a.name })),
+                      ]}
+                    />
                   </TableCell>
                   <TableCell>
                     <Input

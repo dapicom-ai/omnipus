@@ -72,8 +72,9 @@ type AgentLoop struct {
 	mu             sync.RWMutex
 
 	// Concurrent turn management
-	activeTurnStates sync.Map     // key: sessionKey (string), value: *turnState
-	subTurnCounter   atomic.Int64 // Counter for generating unique SubTurn IDs
+	activeTurnStates   sync.Map     // key: sessionKey (string), value: *turnState
+	subTurnCounter     atomic.Int64 // Counter for generating unique SubTurn IDs
+	sessionActiveAgent sync.Map     // key: sessionKey (string), value: agentID (string); "" clears override
 
 	// Turn tracking
 	turnSeq        atomic.Uint64
@@ -175,6 +176,11 @@ func NewAgentLoop(
 	provider providers.LLMProvider,
 ) *AgentLoop {
 	registry := NewAgentRegistry(cfg, provider)
+
+	// Apply configurable default agent override.
+	if cfg.Agents.Defaults.DefaultAgentID != "" {
+		registry.SetDefaultAgentOverride(cfg.Agents.Defaults.DefaultAgentID)
+	}
 
 	// Set up shared fallback chain
 	cooldown := providers.NewCooldownTracker()
@@ -604,6 +610,21 @@ func registerSharedTools(
 			})
 			agent.Tools.Register(messageTool)
 		}
+
+		// Handoff tools — always registered (ScopeGeneral). The setActive
+		// callback writes to al.sessionActiveAgent which is safe from any goroutine.
+		setActiveAgent := func(sessionKey, agentID string) {
+			if agentID == "" {
+				al.sessionActiveAgent.Delete(sessionKey)
+			} else {
+				al.sessionActiveAgent.Store(sessionKey, agentID)
+			}
+		}
+		getRegistryReader := func() tools.AgentRegistryReader {
+			return al.GetRegistry()
+		}
+		agent.Tools.Register(tools.NewHandoffTool(getRegistryReader, setActiveAgent))
+		agent.Tools.Register(tools.NewReturnToDefaultTool(setActiveAgent))
 
 		// Send file tool (outbound media via MediaStore — store injected later by SetMediaStore)
 		if cfg.Tools.IsToolEnabled("send_file") {
@@ -1557,6 +1578,11 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 		return fmt.Errorf("context canceled after registry creation: %w", err)
 	}
 
+	// Apply configurable default agent override on the new registry.
+	if cfg.Agents.Defaults.DefaultAgentID != "" {
+		registry.SetDefaultAgentOverride(cfg.Agents.Defaults.DefaultAgentID)
+	}
+
 	// Ensure shared tools are re-registered on the new registry
 	registerSharedTools(al, cfg, al.bus, registry, provider)
 
@@ -2141,6 +2167,29 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.ResolvedRoute, *AgentInstance, error) {
 	registry := al.GetRegistry()
 
+	// Check session-level agent override set by the handoff tool.
+	// The session key from msg.SessionKey mirrors what processMessage computes
+	// via resolveScopeKey; for channel messages the route has not been resolved
+	// yet, so we use msg.SessionKey directly. This is sufficient because
+	// handoff stores the key it received from the tool context, which is the
+	// same value we want to match here.
+	if msg.SessionKey != "" {
+		if activeAgent, ok := al.sessionActiveAgent.Load(msg.SessionKey); ok {
+			agentID := activeAgent.(string)
+			if agentID != "" {
+				if agent, ok := registry.GetAgent(agentID); ok {
+					logger.InfoCF("agent", "Session handoff override active", map[string]any{
+						"session_key": msg.SessionKey,
+						"agent_id":   agentID,
+					})
+					return routing.ResolvedRoute{AgentID: agentID, SessionKey: msg.SessionKey}, agent, nil
+				}
+				// Override points to an agent that no longer exists — clear it.
+				al.sessionActiveAgent.Delete(msg.SessionKey)
+			}
+		}
+	}
+
 	// If the message carries an explicit agent_id (e.g., webchat agent selector),
 	// use it directly instead of going through routing rules.
 	if explicitID := inboundMetadata(msg, "agent_id"); explicitID != "" {
@@ -2432,6 +2481,8 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 	turnCtx = WithAgentLoop(turnCtx, al)
 	// SEC-15: Inject agent ID so audit entries carry the agent identity.
 	turnCtx = tools.WithAgentID(turnCtx, ts.agent.ID)
+	// Inject session key so handoff/return_to_default tools can address the session.
+	turnCtx = tools.WithSessionKey(turnCtx, ts.sessionKey)
 
 	al.registerActiveTurn(ts)
 	defer al.clearActiveTurn(ts)
