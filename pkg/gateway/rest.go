@@ -1274,12 +1274,17 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 			return
 		}
 	}
-	// Now trigger reload so the new AgentInstance picks up the updated files.
-	// The "warning" field signals a partial success — frontend must check this field.
+	// Only trigger a full reload when structural changes require it (SOUL.md, HEARTBEAT.md,
+	// agent creation/deletion). Model, rate limit, timeout, and steering mode changes are
+	// config-only and do NOT need a reload — avoiding the WebSocket drop and context loss
+	// that a full reload causes mid-conversation.
+	needsReload := req.Soul != nil || req.Heartbeat != nil || req.Instructions != nil
 	var reloadWarning string
-	if err := a.agentLoop.TriggerReload(); err != nil {
-		slog.Error("config reload after agent update failed", "error", err)
-		reloadWarning = fmt.Sprintf("config reload failed: %v", err)
+	if needsReload {
+		if err := a.agentLoop.TriggerReload(); err != nil {
+			slog.Error("config reload after agent update failed", "error", err)
+			reloadWarning = fmt.Sprintf("config reload failed: %v", err)
+		}
 	}
 	// Re-read the files so the response reflects what was just persisted.
 	soul, heartbeat, instructions := readAgentFiles(workspace)
@@ -3111,14 +3116,11 @@ func (a *restAPI) updateAgentTools(w http.ResponseWriter, r *http.Request, agent
 		return
 	}
 
+	// Tool policy changes are config-only — no reload needed. The policy is
+	// resolved at request time from the live config, not baked into agent instances.
 	var reloadWarning string
-	if err := a.agentLoop.TriggerReload(); err != nil {
-		slog.Error("config reload after agent tools update failed", "agent_id", agentID, "error", err)
-		reloadWarning = fmt.Sprintf("config saved but runtime reload failed: %v", err)
-	}
 
-	// Return the updated state. If reload failed, include a warning so the
-	// client knows the effective_tools may be stale until next restart.
+	// Return the updated state.
 	if reloadWarning != "" {
 		// Still return 200 — the config was saved, just the live reload failed.
 		// The frontend can show a warning banner.
