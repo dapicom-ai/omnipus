@@ -116,6 +116,12 @@ class TextPartErrorBoundary extends React.Component<{ children: React.ReactNode 
     this.state = { hasError: false }
   }
   static getDerivedStateFromError() { return { hasError: true } }
+  componentDidCatch(error: Error) {
+    // Only suppress the known AssistantUI error; log everything else.
+    if (!error.message?.includes('MessagePartText')) {
+      console.error('[TextPartErrorBoundary] Unexpected error:', error)
+    }
+  }
   render() { return this.state.hasError ? null : this.props.children }
 }
 

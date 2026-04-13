@@ -291,6 +291,10 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 
 	// Wire agent CRUD tools (system.agent.create/update/delete) to Ava so she
 	// can create custom agents through her structured interview flow.
+	// reloadFuncRef is set after services start; the closure captures the pointer
+	// so avaDeps.ReloadFunc is safe to call even if invoked before assignment
+	// (returns "reload not yet available" instead of nil panic).
+	var reloadFuncRef func() error
 	avaDeps := &systools.Deps{
 		Home:       homePath,
 		ConfigPath: configPath,
@@ -300,6 +304,12 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 			return config.SaveConfig(configPath, cfg)
 		},
 		CredStore: credStore,
+		ReloadFunc: func() error {
+			if reloadFuncRef == nil {
+				return fmt.Errorf("reload not yet available — gateway still starting")
+			}
+			return reloadFuncRef()
+		},
 	}
 	if err := agentLoop.WireAvaAgentTools(avaDeps); err != nil {
 		slog.Warn("gateway: failed to wire Ava agent tools", "error", err)
@@ -349,7 +359,7 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	runningServices.HealthServer.SetReloadFunc(reloadTrigger)
 	agentLoop.SetReloadFunc(reloadTrigger)
 	// Wire reload trigger into Ava's deps so agent create triggers hot-reload.
-	avaDeps.ReloadFunc = reloadTrigger
+	reloadFuncRef = reloadTrigger
 	runningServices.HealthServer.SetDegradedFunc(func() (bool, string) {
 		runningServices.reloadMu.Lock()
 		defer runningServices.reloadMu.Unlock()

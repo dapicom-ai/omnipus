@@ -241,21 +241,30 @@ func (t *AgentCreateTool) Execute(_ context.Context, args map[string]any) *tools
 		return tools.ErrorResult(errorJSON("SAVE_FAILED", msg, "Check disk space and permissions"))
 	}
 
-	// Create agent workspace directory. Use the same resolution as the REST API
-	// (~/.omnipus/agents/{id}) so SOUL.md is found at the path the API reads from.
-	homeDir, _ := os.UserHomeDir()
-	wsPath := fmt.Sprintf("%s/.omnipus/agents/%s", homeDir, finalID)
-	if err := os.MkdirAll(wsPath, 0o700); err != nil {
-		slog.Warn("sysagent: could not create agent workspace", "id", finalID, "error", err)
+	// Create agent workspace and write personality files.
+	// Use deps.Home (OMNIPUS_HOME) as base — reliable in containers where HOME may be unset.
+	omnipusHome := t.deps.Home
+	if omnipusHome == "" {
+		if h, err := os.UserHomeDir(); err == nil {
+			omnipusHome = h + "/.omnipus"
+		} else {
+			return tools.ErrorResult(errorJSON("WORKSPACE_ERROR",
+				"cannot determine home directory: "+err.Error(),
+				"Set OMNIPUS_HOME environment variable"))
+		}
 	}
-	// Also init the data model subdirs (memory, sessions, skills).
-	if err := datamodel.InitAgentWorkspace(homeDir+"/.omnipus", finalID); err != nil {
-		slog.Warn("sysagent: could not init agent workspace subdirs", "id", finalID, "error", err)
+	wsPath := omnipusHome + "/agents/" + finalID
+	if err := datamodel.InitAgentWorkspace(omnipusHome, finalID); err != nil {
+		return tools.ErrorResult(errorJSON("WORKSPACE_ERROR",
+			"could not create agent workspace: "+err.Error(),
+			"Check disk space and permissions"))
 	}
 
-	// Write SOUL.md (personality/instructions).
+	// Write SOUL.md — this is the agent's personality and is mandatory.
 	if err := os.WriteFile(wsPath+"/SOUL.md", []byte(soul), 0o644); err != nil {
-		slog.Warn("sysagent: could not write SOUL.md", "id", finalID, "error", err)
+		return tools.ErrorResult(errorJSON("WRITE_ERROR",
+			"could not write SOUL.md: "+err.Error(),
+			"Check disk space and permissions"))
 	}
 	// Write HEARTBEAT.md if provided.
 	if hb, ok := args["heartbeat"].(string); ok && strings.TrimSpace(hb) != "" {
@@ -267,7 +276,8 @@ func (t *AgentCreateTool) Execute(_ context.Context, args map[string]any) *tools
 	// Trigger hot-reload so the new agent is immediately available for chat.
 	if t.deps.ReloadFunc != nil {
 		if err := t.deps.ReloadFunc(); err != nil {
-			slog.Warn("sysagent: hot-reload after agent create failed", "id", finalID, "error", err)
+			slog.Warn("sysagent: hot-reload after agent create failed — agent available after restart",
+				"id", finalID, "error", err)
 		}
 	}
 
@@ -322,6 +332,10 @@ func (t *AgentUpdateTool) Execute(_ context.Context, args map[string]any) *tools
 	id, _ := args["id"].(string)
 	if id == "" {
 		return tools.ErrorResult(errorJSON("INVALID_INPUT", "id is required", ""))
+	}
+	// Path traversal protection: validate id contains no path separators.
+	if err := validateID(id); err != nil {
+		return tools.ErrorResult(errorJSON("INVALID_INPUT", err.Error(), ""))
 	}
 
 	// Validate color and icon before any mutation.
@@ -430,9 +444,14 @@ func (t *AgentUpdateTool) Execute(_ context.Context, args map[string]any) *tools
 		))
 	}
 
-	// Write workspace files if provided. Use ~/.omnipus/agents/{id} to match REST API resolution.
-	homeDir, _ := os.UserHomeDir()
-	wsPath := fmt.Sprintf("%s/.omnipus/agents/%s", homeDir, id)
+	// Write workspace files if provided. Use deps.Home as base.
+	omnipusHome := t.deps.Home
+	if omnipusHome == "" {
+		if h, err := os.UserHomeDir(); err == nil {
+			omnipusHome = h + "/.omnipus"
+		}
+	}
+	wsPath := omnipusHome + "/agents/" + id
 	if v, ok := args["soul"].(string); ok && strings.TrimSpace(v) != "" {
 		if err := os.MkdirAll(wsPath, 0o700); err == nil {
 			if err := os.WriteFile(wsPath+"/SOUL.md", []byte(v), 0o644); err != nil {

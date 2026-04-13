@@ -1666,12 +1666,28 @@ func (t *ToolsConfig) IsToolEnabled(name string) bool {
 	case "mcp":
 		return t.MCP.Enabled
 
-	// All other tools are always available — per-agent policy controls access.
-	// These tools have no external infrastructure dependency.
-	case "exec", "cron", "skills", "media_cleanup",
-		"append_file", "edit_file", "find_skills", "install_skill",
-		"list_dir", "message", "read_file", "spawn", "spawn_status",
-		"subagent", "send_file", "write_file",
+	// Security-sensitive tools — respect operator's explicit disable.
+	// These can execute code, write files, or spawn processes.
+	case "exec":
+		return t.Exec.Enabled
+	case "cron":
+		return t.Cron.Enabled
+	case "spawn":
+		return t.Spawn.Enabled
+	case "spawn_status":
+		return t.SpawnStatus.Enabled
+	case "subagent":
+		return t.Subagent.Enabled
+	case "write_file":
+		return t.WriteFile.Enabled
+	case "edit_file":
+		return t.EditFile.Enabled
+	case "append_file":
+		return t.AppendFile.Enabled
+
+	// Low-risk tools — always available; per-agent policy controls access.
+	case "skills", "media_cleanup", "find_skills", "install_skill",
+		"list_dir", "message", "read_file", "send_file",
 		"task_list", "task_create", "task_update":
 		return true
 
