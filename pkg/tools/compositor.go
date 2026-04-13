@@ -268,6 +268,74 @@ type ToolVisibilityCfg struct {
 	Visible []string // tool names when Mode == "explicit"
 }
 
+// ToolPolicyCfg is the per-agent tool policy configuration.
+// Used by FilterToolsByPolicy.
+type ToolPolicyCfg struct {
+	DefaultPolicy string            // "allow", "ask", or "deny"
+	Policies      map[string]string // per-tool overrides
+}
+
+// FilterToolsByPolicy returns the subset of tools that pass the scope gate
+// and are not denied by policy. Also returns a map of tool name → resolved
+// policy ("allow" or "ask") for tools that passed the filter.
+// Tools with policy "deny" are removed from the result.
+func FilterToolsByPolicy(allTools []Tool, agentType string, cfg *ToolPolicyCfg) ([]Tool, map[string]string) {
+	if cfg == nil {
+		cfg = &ToolPolicyCfg{DefaultPolicy: "allow"}
+	}
+	defaultPolicy := cfg.DefaultPolicy
+	if defaultPolicy == "" {
+		defaultPolicy = "allow"
+	}
+
+	resolvePolicy := func(toolName string) string {
+		if p, ok := cfg.Policies[toolName]; ok {
+			return p
+		}
+		return defaultPolicy
+	}
+
+	out := make([]Tool, 0, len(allTools))
+	policyMap := make(map[string]string)
+
+	for _, t := range allTools {
+		scope := t.Scope()
+
+		// Layer 1: scope gate (unchanged — structural constraint).
+		switch scope {
+		case ScopeSystem:
+			if agentType != "system" {
+				continue
+			}
+		case ScopeCore:
+			switch agentType {
+			case "system", "core":
+				// allowed
+			default:
+				// Custom agents get core tools only if their policy is allow/ask.
+				p := resolvePolicy(t.Name())
+				if p == "deny" {
+					continue
+				}
+			}
+		case ScopeGeneral:
+			// allowed for all
+		default:
+			continue
+		}
+
+		// Layer 2: policy gate — deny removes the tool entirely.
+		policy := resolvePolicy(t.Name())
+		if policy == "deny" {
+			continue
+		}
+
+		out = append(out, t)
+		policyMap[t.Name()] = policy
+	}
+	return out, policyMap
+}
+
 // mcpToolAdapter wraps a single MCP tool as a Tool, forwarding Execute calls
 // through the MCPCaller.  It is registered as a hidden tool (requires TTL
 // promotion before the agent loop exposes it).

@@ -429,13 +429,43 @@ type AgentToolsCfg struct {
 	MCP     AgentMCPToolsCfg     `json:"mcp,omitempty"`
 }
 
-// AgentBuiltinToolsCfg controls which builtin tools are visible to an agent.
+// ToolPolicy defines the access policy for a tool on a specific agent.
+type ToolPolicy string
+
+const (
+	ToolPolicyAllow ToolPolicy = "allow" // Tool runs immediately, no confirmation
+	ToolPolicyAsk   ToolPolicy = "ask"   // Tool requires user approval before execution
+	ToolPolicyDeny  ToolPolicy = "deny"  // Tool is blocked — agent cannot use it
+)
+
+// AgentBuiltinToolsCfg controls which builtin tools an agent can use and how.
 type AgentBuiltinToolsCfg struct {
-	// Mode determines how the tool set is computed:
-	//   - "inherit": agent inherits tools based on its type (default)
-	//   - "explicit": only tools listed in Visible are available
-	Mode    VisibilityMode `json:"mode"`
-	Visible []string       `json:"visible,omitempty"` // tool names when Mode=explicit
+	// DefaultPolicy applies to tools not listed in Policies.
+	// Default: "allow" (all scope-appropriate tools available).
+	DefaultPolicy ToolPolicy `json:"default_policy,omitempty"`
+	// Policies is a per-tool override map. Keys are tool names from the catalog.
+	Policies map[string]ToolPolicy `json:"policies,omitempty"`
+
+	// Legacy fields for backward compatibility during migration.
+	// These are read during config load and converted to Policies.
+	Mode    VisibilityMode `json:"mode,omitempty"`
+	Visible []string       `json:"visible,omitempty"`
+}
+
+// ResolvePolicy returns the effective policy for a tool name.
+// Checks per-tool overrides first, then falls back to DefaultPolicy.
+// If DefaultPolicy is empty, defaults to "allow".
+func (c *AgentBuiltinToolsCfg) ResolvePolicy(toolName string) ToolPolicy {
+	if c == nil {
+		return ToolPolicyAllow
+	}
+	if p, ok := c.Policies[toolName]; ok {
+		return p
+	}
+	if c.DefaultPolicy != "" {
+		return c.DefaultPolicy
+	}
+	return ToolPolicyAllow
 }
 
 // AgentMCPToolsCfg controls which MCP servers are available to an agent.
@@ -449,7 +479,7 @@ type AgentMCPServerBinding struct {
 	Tools []string `json:"tools,omitempty"` // empty or ["*"] = all tools from that server
 }
 
-// VisibilityMode determines how an agent's tool set is computed.
+// VisibilityMode is kept for backward compatibility during config migration.
 type VisibilityMode string
 
 const (
@@ -1606,64 +1636,47 @@ func expandMultiKeyModels(models []*ModelConfig) []*ModelConfig {
 	return models
 }
 
+// IsToolAvailable checks if the infrastructure for a tool is available
+// (e.g., Chrome installed for browser, API keys for web search).
+// This is separate from per-agent policy (allow/ask/deny) which controls
+// whether a specific agent can USE the tool.
+func (t *ToolsConfig) IsToolAvailable(name string) bool {
+	return t.IsToolEnabled(name)
+}
+
+// IsToolEnabled is the legacy name for IsToolAvailable. Kept for backward
+// compatibility. New code should use IsToolAvailable.
 func (t *ToolsConfig) IsToolEnabled(name string) bool {
 	switch name {
+	// Infrastructure-dependent tools — require external dependencies to function.
+	// These are the only tools that respect the config enable/disable flag.
 	case "web":
 		return t.Web.Enabled
-	case "cron":
-		return t.Cron.Enabled
-	case "exec":
-		return t.Exec.Enabled
-	case "skills":
-		return t.Skills.Enabled
-	case "media_cleanup":
-		return t.MediaCleanup.Enabled
-	case "append_file":
-		return t.AppendFile.Enabled
-	case "edit_file":
-		return t.EditFile.Enabled
-	case "find_skills":
-		return t.FindSkills.Enabled
-	case "i2c":
-		return t.I2C.Enabled
-	case "install_skill":
-		return t.InstallSkill.Enabled
-	case "list_dir":
-		return t.ListDir.Enabled
-	case "message":
-		return t.Message.Enabled
-	case "read_file":
-		return t.ReadFile.Enabled
-	case "spawn":
-		return t.Spawn.Enabled
-	case "spawn_status":
-		return t.SpawnStatus.Enabled
-	case "spi":
-		return t.SPI.Enabled
-	case "subagent":
-		return t.Subagent.Enabled
 	case "web_fetch":
 		return t.WebFetch.Enabled
-	case "send_file":
-		return t.SendFile.Enabled
-	case "write_file":
-		return t.WriteFile.Enabled
-	case "mcp":
-		return t.MCP.Enabled
-	case "task_list":
-		return t.TaskList.Enabled
-	case "task_create":
-		return t.TaskCreate.Enabled
-	case "task_update":
-		return t.TaskUpdate.Enabled
 	case "browser", "browser.navigate", "browser.click", "browser.type",
 		"browser.screenshot", "browser.get_text", "browser.wait":
 		return t.Browser.Enabled
 	case "browser.evaluate":
 		return t.Browser.Enabled && t.Browser.EvaluateEnabled
+	case "i2c":
+		return t.I2C.Enabled
+	case "spi":
+		return t.SPI.Enabled
+	case "mcp":
+		return t.MCP.Enabled
+
+	// All other tools are always available — per-agent policy controls access.
+	// These tools have no external infrastructure dependency.
+	case "exec", "cron", "skills", "media_cleanup",
+		"append_file", "edit_file", "find_skills", "install_skill",
+		"list_dir", "message", "read_file", "spawn", "spawn_status",
+		"subagent", "send_file", "write_file",
+		"task_list", "task_create", "task_update":
+		return true
+
 	default:
 		// Deny-by-default for unrecognized tool names (CLAUDE.md constraint).
-		// Log at debug level so operators can detect typos in tool names.
 		logger.DebugCF("config", "IsToolEnabled: unrecognized tool name; returning false (deny-by-default)",
 			map[string]any{"tool": name})
 		return false

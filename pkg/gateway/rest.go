@@ -2944,27 +2944,29 @@ func (a *restAPI) getAgentTools(w http.ResponseWriter, agentID string) {
 
 	effectiveTools := []map[string]any{}
 	if agent != nil {
-		filtered := tools.FilterToolsByVisibility(agent.Tools.GetAll(), agentType, toolsCfgToVisibility(toolsCfg))
+		filtered, policyMap := tools.FilterToolsByPolicy(agent.Tools.GetAll(), agentType, toolsCfgToPolicy(toolsCfg))
 		for _, t := range filtered {
-			effectiveTools = append(effectiveTools, toolToMap(t, "general"))
+			entry := toolToMap(t, "general")
+			if p, ok := policyMap[t.Name()]; ok {
+				entry["policy"] = p
+			}
+			effectiveTools = append(effectiveTools, entry)
 		}
 	}
 
-	// Build the response config. Return the stored config or a default.
-	respCfg := map[string]any{
-		"builtin": map[string]any{"mode": "inherit"},
-		"mcp":     map[string]any{"servers": []any{}},
-	}
+	// Build the response config with policy format.
+	defaultPolicy := "allow"
+	policies := map[string]string{}
 	if toolsCfg != nil {
-		mode := string(toolsCfg.Builtin.Mode)
-		if mode == "" {
-			mode = "inherit"
+		if toolsCfg.Builtin.DefaultPolicy != "" {
+			defaultPolicy = string(toolsCfg.Builtin.DefaultPolicy)
 		}
-		visible := toolsCfg.Builtin.Visible
-		if visible == nil {
-			visible = []string{}
+		for k, v := range toolsCfg.Builtin.Policies {
+			policies[k] = string(v)
 		}
-		servers := make([]map[string]any, 0, len(toolsCfg.MCP.Servers))
+	}
+	servers := make([]map[string]any, 0)
+	if toolsCfg != nil {
 		for _, s := range toolsCfg.MCP.Servers {
 			srv := map[string]any{"id": s.ID}
 			if len(s.Tools) > 0 {
@@ -2972,10 +2974,13 @@ func (a *restAPI) getAgentTools(w http.ResponseWriter, agentID string) {
 			}
 			servers = append(servers, srv)
 		}
-		respCfg = map[string]any{
-			"builtin": map[string]any{"mode": mode, "visible": visible},
-			"mcp":     map[string]any{"servers": servers},
-		}
+	}
+	respCfg := map[string]any{
+		"builtin": map[string]any{
+			"default_policy": defaultPolicy,
+			"policies":       policies,
+		},
+		"mcp": map[string]any{"servers": servers},
 	}
 
 	jsonOK(w, map[string]any{
@@ -3109,7 +3114,7 @@ func (a *restAPI) updateAgentTools(w http.ResponseWriter, r *http.Request, agent
 }
 
 // toolsCfgToVisibility converts a config.AgentToolsCfg to the tools package's
-// ToolVisibilityCfg for use with FilterToolsByVisibility.
+// ToolVisibilityCfg for use with FilterToolsByVisibility (legacy).
 func toolsCfgToVisibility(cfg *config.AgentToolsCfg) *tools.ToolVisibilityCfg {
 	if cfg == nil {
 		return &tools.ToolVisibilityCfg{Mode: "inherit"}
@@ -3121,6 +3126,37 @@ func toolsCfgToVisibility(cfg *config.AgentToolsCfg) *tools.ToolVisibilityCfg {
 	return &tools.ToolVisibilityCfg{
 		Mode:    mode,
 		Visible: cfg.Builtin.Visible,
+	}
+}
+
+// toolsCfgToPolicy converts a config.AgentToolsCfg to ToolPolicyCfg.
+// Handles both new (DefaultPolicy+Policies) and legacy (Mode+Visible) formats.
+func toolsCfgToPolicy(cfg *config.AgentToolsCfg) *tools.ToolPolicyCfg {
+	if cfg == nil {
+		return &tools.ToolPolicyCfg{DefaultPolicy: "allow"}
+	}
+	// New format: use policies directly.
+	if len(cfg.Builtin.Policies) > 0 || cfg.Builtin.DefaultPolicy != "" {
+		policies := make(map[string]string, len(cfg.Builtin.Policies))
+		for k, v := range cfg.Builtin.Policies {
+			policies[k] = string(v)
+		}
+		dp := string(cfg.Builtin.DefaultPolicy)
+		if dp == "" {
+			dp = "allow"
+		}
+		return &tools.ToolPolicyCfg{DefaultPolicy: dp, Policies: policies}
+	}
+	// Legacy format: convert mode+visible to policies.
+	switch cfg.Builtin.Mode {
+	case config.VisibilityExplicit:
+		policies := make(map[string]string, len(cfg.Builtin.Visible))
+		for _, name := range cfg.Builtin.Visible {
+			policies[name] = "allow"
+		}
+		return &tools.ToolPolicyCfg{DefaultPolicy: "deny", Policies: policies}
+	default: // "inherit" or empty
+		return &tools.ToolPolicyCfg{DefaultPolicy: "allow"}
 	}
 }
 
