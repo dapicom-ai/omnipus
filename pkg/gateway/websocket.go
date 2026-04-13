@@ -1067,8 +1067,10 @@ func (s *wsStreamer) Finalize(_ context.Context, _ string) error {
 	stats["duration_ms"] = s.statsDuration.Milliseconds()
 	s.statsMu.Unlock()
 	sendConnFrame(s.conn, wsServerFrame{Type: "done", Stats: stats})
-	// Mark this chatID as streamed so webchatChannel.Send() skips the duplicate.
-	if s.channel != nil {
+	// Only mark as streamed if we actually sent content. If the LLM failed
+	// before producing any tokens, let the outbound Send path deliver the
+	// error message — otherwise the user sees a stuck "thinking" spinner.
+	if s.channel != nil && s.accumulated.Len() > 0 {
 		s.channel.markStreamed(s.chatID)
 	}
 	// Record the full assistant response to the session transcript.
