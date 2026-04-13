@@ -421,10 +421,43 @@ export function SecuritySection() {
           </AccordionTrigger>
           <AccordionContent>
             <div className="px-4 space-y-3">
-              <p className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-wider mt-4">
-                Timeouts & Patterns
-              </p>
               <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-[var(--color-secondary)]">Exec approval mode</p>
+                    <p className="text-xs text-[var(--color-muted)]">How shell command execution is handled</p>
+                  </div>
+                  <SmartSelect
+                    value={execApproval}
+                    onValueChange={(v) => { markDirty(); setExecApproval(v as typeof execApproval) }}
+                    triggerClassName="w-[120px] h-8 text-xs"
+                    items={[
+                      { value: 'auto', label: 'Auto-allow' },
+                      { value: 'ask', label: 'Ask each time' },
+                      { value: 'deny', label: 'Always deny' },
+                    ]}
+                  />
+                </div>
+
+                <Separator />
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm text-[var(--color-secondary)]">Default policy mode</p>
+                    <p className="text-xs text-[var(--color-muted)]">Whether agents are allowed or denied by default</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-[var(--color-muted)]">Deny</span>
+                    <Switch
+                      checked={policyMode === 'allow'}
+                      onCheckedChange={(v) => { markDirty(); setPolicyMode(v ? 'allow' : 'deny') }}
+                    />
+                    <span className="text-xs text-[var(--color-secondary)]">Allow</span>
+                  </div>
+                </div>
+
+                <Separator />
+
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm text-[var(--color-secondary)]">Exec timeout (seconds)</p>
@@ -512,50 +545,7 @@ export function SecuritySection() {
         </AccordionItem>
 
         {/* Policy */}
-        <AccordionItem value="policy" className="border-0">
-          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
-            Policy
-          </AccordionTrigger>
-          <AccordionContent>
-            <div className="px-4 space-y-3">
-              <div className="space-y-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-[var(--color-secondary)]">Default policy mode</p>
-                    <p className="text-xs text-[var(--color-muted)]">Whether agents are allowed or denied by default</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-[var(--color-muted)]">Deny</span>
-                    <Switch
-                      checked={policyMode === 'allow'}
-                      onCheckedChange={(v) => { markDirty(); setPolicyMode(v ? 'allow' : 'deny') }}
-                    />
-                    <span className="text-xs text-[var(--color-secondary)]">Allow</span>
-                  </div>
-                </div>
-
-                <Separator />
-
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-[var(--color-secondary)]">Exec approval</p>
-                    <p className="text-xs text-[var(--color-muted)]">How shell command execution is handled</p>
-                  </div>
-                  <SmartSelect
-                    value={execApproval}
-                    onValueChange={(v) => { markDirty(); setExecApproval(v as typeof execApproval) }}
-                    triggerClassName="w-[120px] h-8 text-xs"
-                    items={[
-                      { value: 'auto', label: 'Auto-allow' },
-                      { value: 'ask', label: 'Ask each time' },
-                      { value: 'deny', label: 'Always deny' },
-                    ]}
-                  />
-                </div>
-              </div>
-            </div>
-          </AccordionContent>
-        </AccordionItem>
+        {/* Policy section merged into Command Execution above */}
 
         {/* Rate Limits & Cost Control */}
         <AccordionItem value="rate-limits" className="border-0">
