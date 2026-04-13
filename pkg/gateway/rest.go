@@ -659,7 +659,7 @@ type agentResponse struct {
 // workspace could not be created and the returned path may be unusable.
 func agentWorkspacePath(cfg interface {
 	WorkspacePath() string
-}, agentID, agentWorkspace string,
+}, agentID, agentWorkspace, omnipusHome string,
 ) (string, error) {
 	if agentWorkspace != "" {
 		// AgentConfig.Workspace may contain "~"; expand it the same way config does.
@@ -676,18 +676,22 @@ func agentWorkspacePath(cfg interface {
 		}
 		return agentWorkspace, nil
 	}
-	// Per-agent isolated workspace (FUNC-11). System agent uses default workspace.
+	// Per-agent isolated workspace (FUNC-11). Use OMNIPUS_HOME/agents/{id}
+	// to match where system.agent.create writes SOUL.md.
 	if agentID != "" && agentID != "omnipus-system" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			slog.Error("rest: agentWorkspacePath: UserHomeDir failed", "error", err)
-			return cfg.WorkspacePath(), fmt.Errorf("UserHomeDir: %w", err)
+		base := omnipusHome
+		if base == "" {
+			// Fallback to ~/.omnipus if homePath not provided.
+			home, err := os.UserHomeDir()
+			if err != nil {
+				slog.Error("rest: agentWorkspacePath: UserHomeDir failed", "error", err)
+				return cfg.WorkspacePath(), fmt.Errorf("UserHomeDir: %w", err)
+			}
+			base = filepath.Join(home, ".omnipus")
 		}
-		// Path traversal guard: agentID has already been validated by validateEntityID
-		// at call sites, but we do a final check here as defense-in-depth.
-		agentDir := filepath.Join(home, ".omnipus", "agents", agentID)
+		agentDir := filepath.Join(base, "agents", agentID)
 		cleaned := filepath.Clean(agentDir)
-		safePrefix := filepath.Join(home, ".omnipus")
+		safePrefix := filepath.Clean(base)
 		if !strings.HasPrefix(cleaned, safePrefix) {
 			return "", fmt.Errorf("agent workspace path escapes omnipus home: %s", cleaned)
 		}
@@ -856,7 +860,7 @@ func (a *restAPI) listAgents(w http.ResponseWriter) {
 		if ac.Model != nil && ac.Model.Primary != "" {
 			model = ac.Model.Primary
 		}
-		workspace, wsErr := agentWorkspacePath(cfg, ac.ID, ac.Workspace)
+		workspace, wsErr := agentWorkspacePath(cfg, ac.ID, ac.Workspace, a.homePath)
 		if wsErr != nil {
 			slog.Warn("rest: listAgents: could not resolve workspace", "agent_id", ac.ID, "error", wsErr)
 		}
@@ -893,7 +897,7 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 			if ac.Model != nil && ac.Model.Primary != "" {
 				model = ac.Model.Primary
 			}
-			workspace, wsErr := agentWorkspacePath(cfg, ac.ID, ac.Workspace)
+			workspace, wsErr := agentWorkspacePath(cfg, ac.ID, ac.Workspace, a.homePath)
 			if wsErr != nil {
 				slog.Warn("rest: getAgent: could not resolve workspace", "agent_id", ac.ID, "error", wsErr)
 			}
@@ -1201,7 +1205,7 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 	// Capture agentWorkspace into a local to avoid TOCTOU on cfg.Agents.List (M1).
 	capturedWorkspace := cfg.Agents.List[foundIdx].Workspace
 	capturedName := cfg.Agents.List[foundIdx].Name
-	workspace, wsErr := agentWorkspacePath(cfg, id, capturedWorkspace)
+	workspace, wsErr := agentWorkspacePath(cfg, id, capturedWorkspace, a.homePath)
 	if wsErr != nil {
 		slog.Error("rest: agentWorkspacePath for update", "agent_id", id, "error", wsErr)
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not resolve workspace: %v", wsErr))
