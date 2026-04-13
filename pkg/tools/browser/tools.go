@@ -214,8 +214,27 @@ func (t *ScreenshotTool) Execute(ctx context.Context, args map[string]any) *tool
 	tabCtx, timeoutCancel := context.WithTimeout(tabCtx, t.mgr.PageTimeout())
 	defer timeoutCancel()
 
+	// Wait for the page to finish rendering before capturing.
+	// chromedp.Navigate waits for DOMContentLoaded, but CSS/images may still
+	// be loading. Poll until document.readyState is "complete" or timeout.
 	var buf []byte
-	err = chromedp.Run(tabCtx, chromedp.FullScreenshot(&buf, 90))
+	err = chromedp.Run(tabCtx,
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			// Wait up to 3 seconds for readyState == "complete"
+			for i := 0; i < 30; i++ {
+				var state string
+				if evalErr := chromedp.Evaluate(`document.readyState`, &state).Do(ctx); evalErr != nil {
+					return nil // ignore eval errors, proceed with screenshot
+				}
+				if state == "complete" {
+					return nil
+				}
+				chromedp.Sleep(100 * time.Millisecond).Do(ctx)
+			}
+			return nil // timeout — take screenshot anyway
+		}),
+		chromedp.FullScreenshot(&buf, 90),
+	)
 	if err != nil {
 		return tools.ErrorResult(fmt.Sprintf("browser.screenshot: %s", err))
 	}
