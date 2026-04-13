@@ -3404,7 +3404,9 @@ turnLoop:
 				return al.abortTurn(ts)
 			}
 
-			toolName := tc.Name
+			// Unsanitize tool name from LLM — dots were replaced with underscores
+			// for Anthropic/Azure API compatibility (e.g., "browser_navigate" → "browser.navigate").
+			toolName := ts.agent.Tools.UnsanitizeToolName(tc.Name)
 			toolArgs := cloneStringAnyMap(tc.Arguments)
 
 			if al.hooks != nil {
