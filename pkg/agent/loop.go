@@ -2300,7 +2300,10 @@ func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.Resolv
 				"agent_id":  explicitID,
 				"workspace": agent.Workspace,
 			})
-			return routing.ResolvedRoute{AgentID: explicitID}, agent, nil
+			// Build a session key from the agent + channel + chatID so the
+			// handoff tool can address this session.
+			sk := fmt.Sprintf("agent:%s:webchat:%s", explicitID, msg.ChatID)
+			return routing.ResolvedRoute{AgentID: explicitID, SessionKey: sk}, agent, nil
 		}
 		// H12: An explicit agent_id was provided but no matching agent is registered.
 		// Return a hard error rather than silently falling through to default routing,
