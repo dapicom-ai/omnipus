@@ -1545,12 +1545,23 @@ func (a *restAPI) updateConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Use safeUpdateConfigJSON to hold configMu during the read-modify-write cycle
+	// Use safeUpdateConfigJSON to hold configMu during the read-modify-write cycle.
+	// Deep merge nested objects so partial updates don't wipe sibling keys
+	// (e.g., updating gateway.port must not delete gateway.users).
 	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
 		for k, v := range updates {
 			var parsed any
 			if err := json.Unmarshal(v, &parsed); err != nil {
 				return fmt.Errorf("invalid value for %q: %w", k, err)
+			}
+			// Deep merge maps; replace scalars/arrays.
+			if existingMap, ok := m[k].(map[string]any); ok {
+				if newMap, ok := parsed.(map[string]any); ok {
+					for nk, nv := range newMap {
+						existingMap[nk] = nv
+					}
+					continue // merged into existing map
+				}
 			}
 			m[k] = parsed
 		}
