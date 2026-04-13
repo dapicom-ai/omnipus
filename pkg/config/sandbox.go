@@ -57,6 +57,15 @@ type OmnipusSandboxConfig struct {
 	// RateLimits configures per-agent LLM/tool call limits and the global
 	// daily cost cap (SEC-26). All fields default to 0 (no limit).
 	RateLimits OmnipusRateLimitsConfig `json:"rate_limits,omitempty"`
+
+	// ToolPolicies holds global per-tool access policies. Keys are tool names;
+	// values are "allow", "ask", or "deny". Takes precedence over agent-level
+	// policies when stricter (deny > ask > allow).
+	ToolPolicies map[string]string `json:"tool_policies,omitempty"`
+
+	// DefaultToolPolicy is the fallback global policy for tools not listed in
+	// ToolPolicies. Valid values: "allow" (default), "ask", "deny".
+	DefaultToolPolicy string `json:"default_tool_policy,omitempty"`
 }
 
 // OmnipusRateLimitsConfig holds Wave 4 rate limit configuration (SEC-26).

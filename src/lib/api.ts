@@ -899,6 +899,24 @@ export function updateAgentTools(agentId: string, cfg: AgentToolsCfg): Promise<{
   })
 }
 
+// ── Global Tool Policies ──────────────────────────────────────────────────────
+
+export interface GlobalToolPolicies {
+  default_policy: 'allow' | 'ask' | 'deny'
+  policies: Record<string, 'allow' | 'ask' | 'deny'>
+}
+
+export function fetchGlobalToolPolicies(): Promise<GlobalToolPolicies> {
+  return request<GlobalToolPolicies>('/security/tool-policies')
+}
+
+export function updateGlobalToolPolicies(cfg: GlobalToolPolicies): Promise<GlobalToolPolicies> {
+  return request<GlobalToolPolicies>('/security/tool-policies', {
+    method: 'PUT',
+    body: JSON.stringify(cfg),
+  })
+}
+
 // ── Sandbox Status ────────────────────────────────────────────────────────────
 
 export interface SandboxStatus {

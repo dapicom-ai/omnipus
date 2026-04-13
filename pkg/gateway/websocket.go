@@ -304,12 +304,23 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		timeout:  wsApprovalTimeout,
 		policyResolver: func(toolName string, agentID string) string {
 			cfg := h.agentLoop.GetConfig()
+			// Global policy (floor) — derived from sandbox config.
+			globalPolicy := "allow"
+			if p, ok := cfg.Sandbox.ToolPolicies[toolName]; ok {
+				globalPolicy = p
+			} else if cfg.Sandbox.DefaultToolPolicy != "" {
+				globalPolicy = cfg.Sandbox.DefaultToolPolicy
+			}
+			// Agent-level policy.
+			agentPolicy := "allow"
 			for _, ac := range cfg.Agents.List {
 				if ac.ID == agentID && ac.Tools != nil {
-					return string(ac.Tools.Builtin.ResolvePolicy(toolName))
+					agentPolicy = string(ac.Tools.Builtin.ResolvePolicy(toolName))
+					break
 				}
 			}
-			return "allow"
+			// Strictest wins: deny > ask > allow.
+			return resolveEffectivePolicy(globalPolicy, agentPolicy)
 		},
 	}
 	if err := h.agentLoop.MountHook(agent.NamedHook(hookName, approvalHook)); err != nil {

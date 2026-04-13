@@ -8,6 +8,7 @@ import {
   fetchAgentTools,
   fetchMcpServersForAgent,
   updateAgentTools,
+  fetchGlobalToolPolicies,
   type AgentToolsCfg,
   type BuiltinTool,
 } from '@/lib/api'
@@ -61,7 +62,17 @@ const POLICY_PRESETS: Record<string, { label: string; description: string; defau
   },
 }
 
-function PolicyBadge({ policy, onClick, active }: { policy: ToolPolicy; onClick: () => void; active: boolean }) {
+function PolicyBadge({
+  policy,
+  onClick,
+  active,
+  disabled,
+}: {
+  policy: ToolPolicy
+  onClick: () => void
+  active: boolean
+  disabled?: boolean
+}) {
   const configs: Record<ToolPolicy, { icon: typeof ShieldCheck; label: string; color: string; activeColor: string }> = {
     allow: { icon: ShieldCheck, label: 'Allow', color: 'text-[var(--color-muted)]', activeColor: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' },
     ask: { icon: ShieldWarning, label: 'Ask', color: 'text-[var(--color-muted)]', activeColor: 'bg-amber-500/20 text-amber-400 border-amber-500/40' },
@@ -73,7 +84,8 @@ function PolicyBadge({ policy, onClick, active }: { policy: ToolPolicy; onClick:
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border transition-colors ${
+      disabled={disabled}
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
         active ? cfg.activeColor : `border-transparent ${cfg.color} hover:bg-[var(--color-surface-2)]`
       }`}
     >
@@ -118,6 +130,11 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
   const { data: builtinTools = [], isLoading: toolsLoading, isError: toolsError } = useQuery({
     queryKey: ['tools-builtin'],
     queryFn: fetchBuiltinTools,
+  })
+
+  const { data: globalPolicies } = useQuery({
+    queryKey: ['global-tool-policies'],
+    queryFn: fetchGlobalToolPolicies,
   })
 
   const { data: mcpServers = [], isError: mcpError } = useQuery({
@@ -268,6 +285,11 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
             <span className="text-[var(--color-warning)] ml-2">(MCP servers unavailable)</span>
           )}
         </p>
+        {globalPolicies && (
+          <p className="text-[10px] text-[var(--color-muted)]">
+            Tools blocked by global security policies are shown greyed out
+          </p>
+        )}
         {Object.entries(grouped).map(([category, catTools]) => (
           <div key={category} className="space-y-1">
             <p className="text-[10px] font-semibold text-[var(--color-secondary)] uppercase tracking-wider">
@@ -277,18 +299,37 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
               {catTools.map((tool) => {
                 const currentPolicy = resolvePolicy(tool.name, policies, defaultPolicy)
                 const isOverridden = tool.name in policies
+
+                // Determine effective global policy for this tool
+                const globalDefaultPolicy = globalPolicies?.default_policy ?? 'allow'
+                const globalToolPolicy = globalPolicies?.policies?.[tool.name] ?? globalDefaultPolicy
+                const isGloballyDenied = globalToolPolicy === 'deny'
+                const isGloballyAsked = globalToolPolicy === 'ask'
+
                 return (
                   <div
                     key={tool.name}
-                    className="flex items-center justify-between py-1 px-2 rounded hover:bg-[var(--color-surface-2)] transition-colors"
+                    className={`flex items-center justify-between py-1 px-2 rounded transition-colors ${
+                      isGloballyDenied
+                        ? 'opacity-50 cursor-not-allowed'
+                        : 'hover:bg-[var(--color-surface-2)]'
+                    }`}
                   >
                     <div className="flex-1 min-w-0">
-                      <span className={`text-xs font-mono ${isOverridden ? 'text-[var(--color-secondary)]' : 'text-[var(--color-muted)]'}`}>
+                      <span className={`text-xs font-mono ${isOverridden && !isGloballyDenied ? 'text-[var(--color-secondary)]' : 'text-[var(--color-muted)]'}`}>
                         {tool.name}
                       </span>
-                      <span className="text-[10px] text-[var(--color-muted)] ml-2 hidden sm:inline">
-                        {tool.description?.slice(0, 50)}{(tool.description?.length ?? 0) > 50 ? '...' : ''}
-                      </span>
+                      {isGloballyDenied ? (
+                        <span className="text-[10px] text-red-400 ml-2">Blocked by security policy</span>
+                      ) : isGloballyAsked ? (
+                        <span className="text-[10px] text-amber-400 ml-2" title="Global policy: Ask — agent cannot override to Allow">
+                          Global: Ask
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-[var(--color-muted)] ml-2 hidden sm:inline">
+                          {tool.description?.slice(0, 50)}{(tool.description?.length ?? 0) > 50 ? '...' : ''}
+                        </span>
+                      )}
                     </div>
                     <div className="flex gap-0.5 shrink-0">
                       {(['allow', 'ask', 'deny'] as ToolPolicy[]).map((p) => (
@@ -297,6 +338,9 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
                           policy={p}
                           active={currentPolicy === p}
                           onClick={() => setToolPolicy(tool.name, p)}
+                          // When globally denied: all buttons disabled
+                          // When globally asked: Allow button disabled (can't upgrade past Ask)
+                          disabled={isGloballyDenied || (isGloballyAsked && p === 'allow')}
                         />
                       ))}
                     </div>

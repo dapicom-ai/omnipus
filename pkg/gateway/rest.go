@@ -1842,6 +1842,8 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	cm.RegisterHTTPHandler("/api/v1/security/rate-limits", a.withAuth(a.HandleRateLimits))
 	// Wave 5 security endpoints (SEC-01/02/03).
 	cm.RegisterHTTPHandler("/api/v1/security/sandbox-status", a.withAuth(a.HandleSandboxStatus))
+	// Global tool policies endpoint.
+	cm.RegisterHTTPHandler("/api/v1/security/tool-policies", a.withAuth(a.HandleToolPolicies))
 	cm.RegisterHTTPHandler("/api/v1/credentials", a.withAuth(a.HandleCredentials))
 	cm.RegisterHTTPHandler("/api/v1/credentials/", a.withAuth(a.HandleCredentials))
 	cm.RegisterHTTPHandler("/api/v1/media/", a.withOptionalAuth(a.HandleMedia))

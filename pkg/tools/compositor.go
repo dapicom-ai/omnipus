@@ -273,26 +273,58 @@ type ToolVisibilityCfg struct {
 type ToolPolicyCfg struct {
 	DefaultPolicy string            // "allow", "ask", or "deny"
 	Policies      map[string]string // per-tool overrides
+
+	// GlobalPolicies holds the operator-level global tool policy overrides.
+	// Applied before agent-level policies; deny always wins (deny > ask > allow).
+	GlobalPolicies        map[string]string // per-tool global overrides
+	GlobalDefaultPolicy   string            // fallback global policy when tool not in GlobalPolicies
 }
 
 // FilterToolsByPolicy returns the subset of tools that pass the scope gate
 // and are not denied by policy. Also returns a map of tool name → resolved
 // policy ("allow" or "ask") for tools that passed the filter.
-// Tools with policy "deny" are removed from the result.
+// Tools with policy "deny" (globally or by agent config) are removed from the result.
+//
+// Resolution order (strictest wins: deny > ask > allow):
+//  1. Global policy (GlobalPolicies / GlobalDefaultPolicy)
+//  2. Agent policy (Policies / DefaultPolicy)
 func FilterToolsByPolicy(allTools []Tool, agentType string, cfg *ToolPolicyCfg) ([]Tool, map[string]string) {
 	if cfg == nil {
 		cfg = &ToolPolicyCfg{DefaultPolicy: "allow"}
 	}
-	defaultPolicy := cfg.DefaultPolicy
-	if defaultPolicy == "" {
-		defaultPolicy = "allow"
+	defaultAgentPolicy := cfg.DefaultPolicy
+	if defaultAgentPolicy == "" {
+		defaultAgentPolicy = "allow"
+	}
+	defaultGlobalPolicy := cfg.GlobalDefaultPolicy
+	if defaultGlobalPolicy == "" {
+		defaultGlobalPolicy = "allow"
 	}
 
-	resolvePolicy := func(toolName string) string {
+	resolveGlobal := func(toolName string) string {
+		if p, ok := cfg.GlobalPolicies[toolName]; ok {
+			return p
+		}
+		return defaultGlobalPolicy
+	}
+
+	resolveAgent := func(toolName string) string {
 		if p, ok := cfg.Policies[toolName]; ok {
 			return p
 		}
-		return defaultPolicy
+		return defaultAgentPolicy
+	}
+
+	resolveEffective := func(toolName string) string {
+		g := resolveGlobal(toolName)
+		a := resolveAgent(toolName)
+		if g == "deny" || a == "deny" {
+			return "deny"
+		}
+		if g == "ask" || a == "ask" {
+			return "ask"
+		}
+		return "allow"
 	}
 
 	out := make([]Tool, 0, len(allTools))
@@ -312,8 +344,8 @@ func FilterToolsByPolicy(allTools []Tool, agentType string, cfg *ToolPolicyCfg) 
 			case "system", "core":
 				// allowed
 			default:
-				// Custom agents get core tools only if their policy is allow/ask.
-				p := resolvePolicy(t.Name())
+				// Custom agents get core tools only if their effective policy is allow/ask.
+				p := resolveEffective(t.Name())
 				if p == "deny" {
 					continue
 				}
@@ -324,14 +356,14 @@ func FilterToolsByPolicy(allTools []Tool, agentType string, cfg *ToolPolicyCfg) 
 			continue
 		}
 
-		// Layer 2: policy gate — deny removes the tool entirely.
-		policy := resolvePolicy(t.Name())
-		if policy == "deny" {
+		// Layer 2: effective policy gate — deny removes the tool entirely.
+		effectivePolicy := resolveEffective(t.Name())
+		if effectivePolicy == "deny" {
 			continue
 		}
 
 		out = append(out, t)
-		policyMap[t.Name()] = policy
+		policyMap[t.Name()] = effectivePolicy
 	}
 	return out, policyMap
 }

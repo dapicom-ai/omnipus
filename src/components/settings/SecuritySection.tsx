@@ -4,7 +4,7 @@ import { ExecAllowlistSection } from './ExecAllowlistSection'
 import { PromptGuardSection } from './PromptGuardSection'
 import { ExecProxyStatusCard } from './ExecProxyStatusCard'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { FloppyDisk, Plus, Trash, Key } from '@phosphor-icons/react'
+import { FloppyDisk, Plus, Trash, Key, ShieldCheck, ShieldWarning, Prohibit } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
@@ -18,10 +18,239 @@ import {
 } from '@/components/ui/dialog'
 import { Progress } from '@/components/ui/progress'
 import { Separator } from '@/components/ui/separator'
-import { fetchConfig, updateConfig, fetchGatewayStatus, fetchCredentials, addCredential, deleteCredential } from '@/lib/api'
+import {
+  fetchConfig,
+  updateConfig,
+  fetchGatewayStatus,
+  fetchCredentials,
+  addCredential,
+  deleteCredential,
+  fetchBuiltinTools,
+  fetchGlobalToolPolicies,
+  updateGlobalToolPolicies,
+  type GlobalToolPolicies,
+  type BuiltinTool,
+} from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { DiagnosticsSection } from './DiagnosticsSection'
 import { SandboxSection } from './SandboxSection'
+
+// ── Tool Access — Global Policies ─────────────────────────────────────────────
+
+type ToolPolicy = 'allow' | 'ask' | 'deny'
+
+const CATEGORY_LABELS: Record<string, string> = {
+  file: 'File & Code',
+  code: 'Code Execution',
+  web: 'Web & Search',
+  browser: 'Browser Automation',
+  communication: 'Communication',
+  task: 'Task Management',
+  automation: 'Automation',
+  search: 'Search & Discovery',
+  skills: 'Skills',
+  hardware: 'Hardware (IoT)',
+}
+
+function PolicyBadge({
+  policy,
+  onClick,
+  active,
+  disabled,
+}: {
+  policy: ToolPolicy
+  onClick: () => void
+  active: boolean
+  disabled?: boolean
+}) {
+  const configs: Record<ToolPolicy, { icon: typeof ShieldCheck; label: string; color: string; activeColor: string }> = {
+    allow: { icon: ShieldCheck, label: 'Allow', color: 'text-[var(--color-muted)]', activeColor: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' },
+    ask: { icon: ShieldWarning, label: 'Ask', color: 'text-[var(--color-muted)]', activeColor: 'bg-amber-500/20 text-amber-400 border-amber-500/40' },
+    deny: { icon: Prohibit, label: 'Deny', color: 'text-[var(--color-muted)]', activeColor: 'bg-red-500/20 text-red-400 border-red-500/40' },
+  }
+  const cfg = configs[policy]
+  const Icon = cfg.icon
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+        active ? cfg.activeColor : `border-transparent ${cfg.color} hover:bg-[var(--color-surface-2)]`
+      }`}
+    >
+      <Icon size={11} weight="bold" />
+      {cfg.label}
+    </button>
+  )
+}
+
+function groupByCategory(tools: BuiltinTool[]): Record<string, BuiltinTool[]> {
+  const groups: Record<string, BuiltinTool[]> = {}
+  for (const t of tools) {
+    const cat = t.category || 'other'
+    if (!groups[cat]) groups[cat] = []
+    groups[cat].push(t)
+  }
+  return groups
+}
+
+function GlobalToolPoliciesSection() {
+  const { addToast } = useUiStore()
+  const queryClient = useQueryClient()
+
+  const { data: builtinTools = [], isLoading: toolsLoading, isError: toolsError } = useQuery({
+    queryKey: ['tools-builtin'],
+    queryFn: fetchBuiltinTools,
+  })
+
+  const { data: globalPolicies, isLoading: policiesLoading, isError: policiesError } = useQuery({
+    queryKey: ['global-tool-policies'],
+    queryFn: fetchGlobalToolPolicies,
+  })
+
+  // Local draft state — initialised from server data
+  const [defaultPolicy, setDefaultPolicy] = useState<ToolPolicy>('ask')
+  const [perToolPolicies, setPerToolPolicies] = useState<Record<string, ToolPolicy>>({})
+  const isDraftInitialised = useRef(false)
+
+  useEffect(() => {
+    if (!globalPolicies || isDraftInitialised.current) return
+    setDefaultPolicy(globalPolicies.default_policy)
+    setPerToolPolicies(globalPolicies.policies ?? {})
+    isDraftInitialised.current = true
+  }, [globalPolicies])
+
+  const { mutate: doSave, isPending: isSaving } = useMutation({
+    mutationFn: (cfg: GlobalToolPolicies) => updateGlobalToolPolicies(cfg),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['global-tool-policies'] })
+      addToast({ message: 'Global tool policies saved', variant: 'success' })
+    },
+    onError: (err: Error) => addToast({ message: `Failed to save: ${err.message}`, variant: 'error' }),
+  })
+
+  function handleSetDefaultPolicy(p: ToolPolicy) {
+    setDefaultPolicy(p)
+  }
+
+  function handleSetToolPolicy(toolName: string, p: ToolPolicy) {
+    setPerToolPolicies((prev) => {
+      const next = { ...prev }
+      if (p === defaultPolicy) {
+        delete next[toolName]
+      } else {
+        next[toolName] = p
+      }
+      return next
+    })
+  }
+
+  const displayTools = builtinTools.filter((t) => t.scope !== 'system')
+  const grouped = groupByCategory(displayTools)
+
+  const isLoading = toolsLoading || policiesLoading
+
+  if (isLoading) {
+    return (
+      <div className="space-y-2 py-4">
+        {[1, 2, 3].map((i) => (
+          <div key={i} className="h-8 rounded-md bg-[var(--color-surface-2)] animate-pulse" />
+        ))}
+      </div>
+    )
+  }
+
+  if (toolsError || policiesError) {
+    return (
+      <p className="text-xs text-red-400 py-4">
+        Failed to load tool policies. Check that the backend is running.
+      </p>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-[var(--color-muted)]">
+        These policies apply globally across all agents. Per-agent policies shown in the Agent Profile cannot
+        override a global "Deny". Tools blocked here are greyed out in each agent's tool list.
+      </p>
+
+      {/* Default policy */}
+      <div className="space-y-1.5">
+        <p className="text-xs text-[var(--color-muted)]">Default policy for unlisted tools</p>
+        <div className="flex gap-1.5">
+          {(['allow', 'ask', 'deny'] as ToolPolicy[]).map((p) => (
+            <PolicyBadge
+              key={p}
+              policy={p}
+              active={defaultPolicy === p}
+              onClick={() => handleSetDefaultPolicy(p)}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* Per-tool policies grouped by category */}
+      <div className="space-y-3">
+        <p className="text-xs text-[var(--color-muted)]">Per-tool policies ({displayTools.length} tools)</p>
+        {Object.entries(grouped).map(([category, catTools]) => (
+          <div key={category} className="space-y-1">
+            <p className="text-[10px] font-semibold text-[var(--color-secondary)] uppercase tracking-wider">
+              {CATEGORY_LABELS[category] || category}
+            </p>
+            <div className="space-y-0.5">
+              {catTools.map((tool) => {
+                const resolved: ToolPolicy = perToolPolicies[tool.name] ?? defaultPolicy
+                const isOverridden = tool.name in perToolPolicies
+                return (
+                  <div
+                    key={tool.name}
+                    className="flex items-center justify-between py-1 px-2 rounded hover:bg-[var(--color-surface-2)] transition-colors"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <span className={`text-xs font-mono ${isOverridden ? 'text-[var(--color-secondary)]' : 'text-[var(--color-muted)]'}`}>
+                        {tool.name}
+                      </span>
+                      <span className="text-[10px] text-[var(--color-muted)] ml-2 hidden sm:inline">
+                        {tool.description?.slice(0, 50)}{(tool.description?.length ?? 0) > 50 ? '...' : ''}
+                      </span>
+                    </div>
+                    <div className="flex gap-0.5 shrink-0">
+                      {(['allow', 'ask', 'deny'] as ToolPolicy[]).map((p) => (
+                        <PolicyBadge
+                          key={p}
+                          policy={p}
+                          active={resolved === p}
+                          onClick={() => handleSetToolPolicy(tool.name, p)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="pt-2 flex items-center gap-3">
+        <Button
+          size="sm"
+          onClick={() => doSave({ default_policy: defaultPolicy, policies: perToolPolicies })}
+          disabled={isSaving}
+          className="gap-2"
+        >
+          <FloppyDisk size={13} weight="bold" />
+          {isSaving ? 'Saving...' : 'Save Global Policies'}
+        </Button>
+        <span className="text-[10px] text-[var(--color-muted)]">
+          {Object.keys(perToolPolicies).length} override{Object.keys(perToolPolicies).length !== 1 ? 's' : ''} | Default: {defaultPolicy}
+        </span>
+      </div>
+    </div>
+  )
+}
 
 export function SecuritySection() {
   const { addToast } = useUiStore()
@@ -155,6 +384,16 @@ export function SecuritySection() {
           {isSaving ? 'Saving...' : 'Save'}
         </Button>
       </div>
+
+      {/* Tool Access — Global Policies */}
+      <section className="space-y-3">
+        <h3 className="text-xs font-semibold text-[var(--color-muted)] uppercase tracking-wider">Tool Access — Global Policies</h3>
+        <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4">
+          <GlobalToolPoliciesSection />
+        </div>
+      </section>
+
+      <Separator className="my-6" />
 
       {/* Policy */}
       <section className="space-y-3">

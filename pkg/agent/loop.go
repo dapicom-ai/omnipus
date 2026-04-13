@@ -261,6 +261,15 @@ func NewAgentLoop(
 	if len(cfg.Tools.Exec.AllowedBinaries) > 0 {
 		defaultPolicy = policy.PolicyDeny
 	}
+	// Convert global tool policies from config (map[string]string) to the
+	// typed map[string]ToolPolicy that SecurityConfig expects.
+	var globalToolPolicies map[string]policy.ToolPolicy
+	if len(cfg.Sandbox.ToolPolicies) > 0 {
+		globalToolPolicies = make(map[string]policy.ToolPolicy, len(cfg.Sandbox.ToolPolicies))
+		for k, v := range cfg.Sandbox.ToolPolicies {
+			globalToolPolicies[k] = policy.ToolPolicy(v)
+		}
+	}
 	secCfg := &policy.SecurityConfig{
 		DefaultPolicy: defaultPolicy,
 		Policy: policy.PolicySection{
@@ -269,6 +278,8 @@ func NewAgentLoop(
 				Approval:        cfg.Tools.Exec.Approval,
 			},
 		},
+		ToolPolicies:      globalToolPolicies,
+		DefaultToolPolicy: policy.ToolPolicy(cfg.Sandbox.DefaultToolPolicy),
 	}
 	policyEval := policy.NewEvaluator(secCfg)
 
