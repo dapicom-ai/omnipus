@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
 import { Circle, ChatCircle, ListChecks, Trash, MagnifyingGlass } from '@phosphor-icons/react'
+import { IconRenderer } from '@/components/shared/IconRenderer'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from '@/components/ui/accordion'
 import { Badge } from '@/components/ui/badge'
@@ -202,7 +203,9 @@ function AgentAccordionItem({
             className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0"
             style={{ backgroundColor: agent.color ?? 'var(--color-surface-3)' }}
           >
-            {agent.name.charAt(0).toUpperCase()}
+            {agent.icon
+              ? <IconRenderer icon={agent.icon} size={11} />
+              : agent.name.charAt(0).toUpperCase()}
           </div>
           <span className="truncate text-sm">{agent.name}</span>
           {agent.status === 'active' && (
