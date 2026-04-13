@@ -91,7 +91,12 @@ export function SessionBar() {
           <Button
             variant="ghost"
             size="sm"
-            className="flex items-center gap-2 h-7 px-2 text-xs font-medium max-w-[180px]"
+            className="flex items-center gap-2 h-7 px-2 text-xs font-medium max-w-[280px]"
+            title={activeAgent
+              ? activeAgent.type === 'core' && activeAgent.description
+                ? `${activeAgent.name} — ${activeAgent.description}`
+                : activeAgent.name
+              : 'Select agent'}
           >
             <div
               className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0"
@@ -108,19 +113,27 @@ export function SessionBar() {
             <span className="truncate">
               {activeAgent
                 ? activeAgent.type === 'core' && activeAgent.description
-                  ? `${activeAgent.name} — ${activeAgent.description.split(' — ')[0].slice(0, 20)}`
+                  ? `${activeAgent.name} — ${activeAgent.description.split(' — ')[0].slice(0, 25)}`
                   : activeAgent.name
                 : 'Select agent'}
             </span>
             <CaretDown size={11} className="shrink-0 opacity-60" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-48">
-          {chatAgents.map((agent) => (
+        <DropdownMenuContent align="start" className="w-96">
+          {chatAgents.map((agent) => {
+            const displayName = agent.type === 'core' && agent.description
+              ? `${agent.name} — ${agent.description.split(' — ')[0].slice(0, 40)}`
+              : agent.name
+            const fullName = agent.type === 'core' && agent.description
+              ? `${agent.name} — ${agent.description}`
+              : agent.name
+            return (
             <DropdownMenuItem
               key={agent.id}
               onClick={() => handleAgentSelect(agent.id)}
               className="flex items-center gap-2"
+              title={fullName}
             >
               <div
                 className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0"
@@ -130,16 +143,13 @@ export function SessionBar() {
                   ? <IconRenderer icon={agent.icon} size={11} />
                   : agent.name.charAt(0).toUpperCase()}
               </div>
-              <span className="truncate">
-                {agent.type === 'core' && agent.description
-                  ? `${agent.name} — ${agent.description.split(' — ')[0].slice(0, 20)}`
-                  : agent.name}
-              </span>
+              <span className="truncate">{displayName}</span>
               {agent.id === effectiveAgentId && (
-                <span className="ml-auto text-[var(--color-success)] text-[10px]">active</span>
+                <span className="ml-auto shrink-0 text-[var(--color-success)] text-[10px]">active</span>
               )}
             </DropdownMenuItem>
-          ))}
+            )
+          })}
         </DropdownMenuContent>
       </DropdownMenu>
 
