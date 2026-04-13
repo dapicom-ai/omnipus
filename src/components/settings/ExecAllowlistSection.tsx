@@ -1,14 +1,14 @@
 import { useState, useEffect } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Terminal, Plus, Trash, FloppyDisk } from '@phosphor-icons/react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Terminal, Plus, Trash } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { fetchExecAllowlist, updateExecAllowlist } from '@/lib/api'
-import { useUiStore } from '@/store/ui'
+import { useAutoSave } from '@/hooks/useAutoSave'
+import { AutoSaveIndicator } from '@/components/ui/AutoSaveIndicator'
 
 export function ExecAllowlistSection(): React.ReactElement {
-  const { addToast } = useUiStore()
   const queryClient = useQueryClient()
 
   const { data, isLoading, isError } = useQuery({
@@ -32,35 +32,19 @@ export function ExecAllowlistSection(): React.ReactElement {
     setAddError('')
   }, [data, isDirty])
 
-  const { mutate: doSave, isPending: isSaving } = useMutation({
-    mutationFn: () => updateExecAllowlist(patterns),
-    onSuccess: (serverResp) => {
-      // Trust the server response — it may have normalised (trimmed, deduped)
-      // the patterns we submitted. Using local state would cause UI drift.
+  const { status: saveStatus, error: saveError } = useAutoSave(
+    patterns,
+    async (data) => {
+      const serverResp = await updateExecAllowlist(data)
       setPatterns(serverResp.allowed_binaries ?? [])
       setIsDirty(false)
-      setNewPattern('')
-      setAddError('')
-      // restartRequired is sticky: only upgrade, never downgrade. The GET
-      // endpoint returns restart_required=false which would otherwise
-      // clobber the badge on the next refetch.
       if (serverResp.restart_required) {
         setRestartRequired(true)
       }
-      // Seed the cache with the mutation response rather than invalidating;
-      // invalidation triggers a GET that returns restart_required=false and
-      // races with our local state.
       queryClient.setQueryData(['exec-allowlist'], serverResp)
-      addToast({
-        message: serverResp.restart_required
-          ? 'Allowlist saved — restart Omnipus for changes to take effect'
-          : 'Binary allowlist saved',
-        variant: 'success',
-      })
     },
-    onError: (err: Error) =>
-      addToast({ message: err.message, variant: 'error' }),
-  })
+    { disabled: !isDirty },
+  )
 
   function handleAdd() {
     const trimmed = newPattern.trim()
@@ -126,17 +110,7 @@ export function ExecAllowlistSection(): React.ReactElement {
             denies any command that does not match a pattern.
           </p>
         </div>
-        {isDirty && (
-          <Button
-            size="sm"
-            onClick={() => doSave()}
-            disabled={isSaving}
-            className="gap-1.5 shrink-0"
-          >
-            <FloppyDisk size={13} weight="bold" />
-            {isSaving ? 'Saving...' : 'Save'}
-          </Button>
-        )}
+        <AutoSaveIndicator status={saveStatus} error={saveError} />
       </div>
 
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-3">
