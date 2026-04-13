@@ -213,7 +213,11 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
       // Guard: do not save before the server data has been hydrated into state.
       // Saving before hydration would overwrite real data with empty defaults.
       if (!hasHydrated.current) return
-      await updateAgent(agentId, data)
+      // Locked agents (core): strip identity fields the backend rejects.
+      const payload = agent?.locked
+        ? (({ name: _n, description: _d, soul: _s, color: _c, icon: _i, heartbeat: _h, instructions: _ins, ...rest }) => rest)(data)
+        : data
+      await updateAgent(agentId, payload)
       isDirtyRef.current = false
       queryClient.invalidateQueries({ queryKey: ['agent', agentId] })
       queryClient.invalidateQueries({ queryKey: ['agents'] })
