@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Robot, CaretLeft, CurrencyDollar, ArrowsClockwise, CaretDown, PencilSimpleLine } from '@phosphor-icons/react'
+import { Robot, CurrencyDollar, ArrowsClockwise, CaretDown, PencilSimpleLine } from '@phosphor-icons/react'
 import { IconRenderer } from '@/components/shared/IconRenderer'
 import {
   DropdownMenu,
@@ -11,7 +11,6 @@ import {
 import { Button } from '@/components/ui/button'
 import { useChatStore } from '@/store/chat'
 import { useSessionStore } from '@/store/session'
-import { useUiStore } from '@/store/ui'
 import { fetchAgents } from '@/lib/api'
 
 function formatCost(cost: number): string {
@@ -28,7 +27,6 @@ function formatTokens(tokens: number): string {
 export function SessionBar() {
   const { activeAgentId, setActiveSession } = useSessionStore()
   const { sessionTokens, sessionCost, isStreaming } = useChatStore()
-  const { openSessionPanel } = useUiStore()
 
   const { data: agents = [], isError: agentsError } = useQuery({
     queryKey: ['agents'],
@@ -86,17 +84,6 @@ export function SessionBar() {
 
   return (
     <div className="flex items-center gap-3 min-w-0 w-full">
-      {/* Sessions button — left side */}
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={openSessionPanel}
-        className="h-7 px-2 text-xs gap-0.5 shrink-0"
-      >
-        <CaretLeft size={11} />
-        <span>Sessions</span>
-      </Button>
-
       {/* Agent selector + New chat icon */}
       <div className="flex items-center gap-0.5">
       <DropdownMenu>
@@ -118,7 +105,13 @@ export function SessionBar() {
                   : activeAgent.name.charAt(0).toUpperCase()
                 : <Robot size={11} />}
             </div>
-            <span className="truncate">{activeAgent?.name ?? 'Select agent'}</span>
+            <span className="truncate">
+              {activeAgent
+                ? activeAgent.type === 'core' && activeAgent.description
+                  ? `${activeAgent.name} — ${activeAgent.description.split(' — ')[0].slice(0, 20)}`
+                  : activeAgent.name
+                : 'Select agent'}
+            </span>
             <CaretDown size={11} className="shrink-0 opacity-60" />
           </Button>
         </DropdownMenuTrigger>
@@ -137,7 +130,11 @@ export function SessionBar() {
                   ? <IconRenderer icon={agent.icon} size={11} />
                   : agent.name.charAt(0).toUpperCase()}
               </div>
-              <span className="truncate">{agent.name}</span>
+              <span className="truncate">
+                {agent.type === 'core' && agent.description
+                  ? `${agent.name} — ${agent.description.split(' — ')[0].slice(0, 20)}`
+                  : agent.name}
+              </span>
               {agent.id === effectiveAgentId && (
                 <span className="ml-auto text-[var(--color-success)] text-[10px]">active</span>
               )}

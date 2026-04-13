@@ -1,6 +1,6 @@
-import { useEffect, useCallback } from 'react'
-import { Outlet, useLocation, useNavigate } from '@tanstack/react-router'
-import { List, SignOut } from '@phosphor-icons/react'
+import { useEffect } from 'react'
+import { Outlet, useLocation } from '@tanstack/react-router'
+import { List, CaretLeft } from '@phosphor-icons/react'
 import { Sidebar } from './Sidebar'
 import { useSidebarStore } from '@/store/sidebar'
 import { SessionBar } from '@/components/chat/SessionBar'
@@ -9,21 +9,16 @@ import { OmnipusRuntimeProvider } from '@/components/chat/OmnipusRuntimeProvider
 import { ErrorBoundary } from '@/components/ui/error-boundary'
 import { queryClient } from '@/lib/queryClient'
 import { fetchTasks, fetchAgents } from '@/lib/api'
-import { useAuthStore } from '@/store/auth'
 import { useConnectionStore } from '@/store/connection'
+import { useUiStore } from '@/store/ui'
 
 // US-4: Application shell — hamburger + sidebar + main content area
 export function AppShell() {
   const { toggle } = useSidebarStore()
   const location = useLocation()
-  const navigate = useNavigate()
   const connectionError = useConnectionStore((s) => s.connectionError)
   const reconnect = useConnectionStore((s) => s.reconnect)
-
-  const handleLogout = useCallback(() => {
-    useAuthStore.getState().clearAuth()
-    navigate({ to: '/login' })
-  }, [navigate])
+  const { openSessionPanel } = useUiStore()
 
   // Prefetch command center data on app load so it's cached when the user navigates there
   useEffect(() => {
@@ -43,18 +38,30 @@ export function AppShell() {
       <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
         {/* OmnipusRuntimeProvider: AssistantUI context + WebSocket connection for entire app */}
         <OmnipusRuntimeProvider>
-          {/* Top bar with hamburger + session bar slot */}
+          {/* Top bar: on chat screen, left button is Sessions back-arrow; elsewhere it is the hamburger */}
           <header className="flex items-center gap-3 px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] flex-shrink-0">
-            {/* US-5: Hamburger — always visible, toggles sidebar open/close */}
-            <button
-              id="sidebar-hamburger"
-              onClick={toggle}
-              aria-label="Toggle navigation sidebar"
-              aria-expanded={undefined /* updated by Sidebar via aria pattern */}
-              className="flex items-center justify-center h-8 w-8 rounded-md text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors flex-shrink-0"
-            >
-              <List size={20} />
-            </button>
+            {isChatScreen ? (
+              /* Sessions back-arrow — replaces hamburger on the chat screen */
+              <button
+                type="button"
+                onClick={openSessionPanel}
+                aria-label="Open sessions panel"
+                className="flex items-center justify-center h-8 px-2 gap-1 rounded-md text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors flex-shrink-0 text-xs"
+              >
+                <CaretLeft size={14} />
+                <span className="hidden sm:inline">Sessions</span>
+              </button>
+            ) : (
+              /* Hamburger — shown on all other screens */
+              <button
+                id="sidebar-hamburger"
+                onClick={toggle}
+                aria-label="Toggle navigation sidebar"
+                className="flex items-center justify-center h-8 w-8 rounded-md text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors flex-shrink-0"
+              >
+                <List size={20} />
+              </button>
+            )}
 
             {/* Session bar — wired only on chat screen */}
             <div className="flex-1 min-w-0">
@@ -64,16 +71,6 @@ export function AppShell() {
                 <div id="session-bar-slot" className="flex-1" />
               )}
             </div>
-
-            {/* Logout button */}
-            <button
-              onClick={handleLogout}
-              title="Sign out"
-              aria-label="Sign out"
-              className="flex items-center justify-center h-8 w-8 rounded-md text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors flex-shrink-0"
-            >
-              <SignOut size={20} />
-            </button>
           </header>
 
           {/* Global connection error banner — visible on every screen */}

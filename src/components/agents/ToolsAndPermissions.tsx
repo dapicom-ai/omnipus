@@ -242,6 +242,14 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
 
   return (
     <div className="space-y-5">
+      {/* Auto-save status — top of section for visibility */}
+      <div className="flex items-center gap-3">
+        <AutoSaveIndicator status={saveStatus} error={saveError} />
+        <span className="text-[10px] text-[var(--color-muted)]">
+          {Object.keys(policies).length} override{Object.keys(policies).length !== 1 ? 's' : ''} | Default: {defaultPolicy}
+        </span>
+      </div>
+
       {/* Preset row */}
       <div className="space-y-2">
         <p className="text-xs text-[var(--color-muted)]">Policy presets</p>
@@ -364,13 +372,6 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
         />
       </div>
 
-      {/* Auto-save status */}
-      <div className="pt-2 flex items-center gap-3">
-        <AutoSaveIndicator status={saveStatus} error={saveError} />
-        <span className="text-[10px] text-[var(--color-muted)]">
-          {Object.keys(policies).length} override{Object.keys(policies).length !== 1 ? 's' : ''} | Default: {defaultPolicy}
-        </span>
-      </div>
     </div>
   )
 }

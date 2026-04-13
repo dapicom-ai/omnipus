@@ -218,7 +218,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
       queryClient.invalidateQueries({ queryKey: ['agent', agentId] })
       queryClient.invalidateQueries({ queryKey: ['agents'] })
     },
-    { disabled: agent?.locked === true },
+    // Locked agents can still save model and tool changes — do not disable auto-save
   )
 
   function addFallbackModel() {
@@ -333,11 +333,9 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
             <span className="text-xs text-[var(--color-muted)]">{agent.description}</span>
           </div>
         </div>
-        {canEdit && (
-          <div className="ml-auto">
-            <AutoSaveIndicator status={saveStatus} error={saveError} />
-          </div>
-        )}
+        <div className="ml-auto">
+          <AutoSaveIndicator status={saveStatus} error={saveError} />
+        </div>
       </div>
 
       <Separator />
@@ -419,7 +417,6 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
                 value={model}
                 onChange={(v) => { markDirty(); setModel(v) }}
                 placeholder="Provider default"
-                disabled={!canEdit}
               />
               {canEdit && (
                 <div className="space-y-1.5">
