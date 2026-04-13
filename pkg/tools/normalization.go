@@ -68,12 +68,18 @@ func normalizeToolResult(
 
 	result.ForLLM = sanitizeToolLLMContent(result.ForLLM)
 
+	// Append notes to ForLLM, but only if ForLLM is plain text.
+	// If ForLLM is already JSON (starts with '{'), don't append notes as raw text
+	// because that would produce invalid JSON and break providers like Anthropic/Azure.
 	if len(result.Media) > 0 && len(notes) > 0 {
-		if strings.TrimSpace(result.ForLLM) == "" {
+		trimmed := strings.TrimSpace(result.ForLLM)
+		if trimmed == "" {
 			result.ForLLM = strings.Join(notes, "\n")
-		} else {
-			result.ForLLM = strings.TrimSpace(result.ForLLM) + "\n" + strings.Join(notes, "\n")
+		} else if !strings.HasPrefix(trimmed, "{") {
+			result.ForLLM = trimmed + "\n" + strings.Join(notes, "\n")
 		}
+		// If ForLLM is JSON, notes are skipped — the JSON placeholder already
+		// tells the LLM that media was delivered.
 	}
 	if len(result.Media) > 0 && strings.TrimSpace(result.ForLLM) == "" {
 		result.ForLLM = `{"status":"success","message":"Media content delivered to user. Do not repeat or describe it."}`
