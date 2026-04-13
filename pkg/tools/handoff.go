@@ -127,14 +127,20 @@ func (t *HandoffTool) Execute(ctx context.Context, args map[string]any) *ToolRes
 		return ErrorResult(fmt.Sprintf("agent %q not found — check the agent ID", agentID))
 	}
 
-	// Step 3: Get session key from context.
-	sessionKey := ToolSessionKey(ctx)
-	if sessionKey == "" {
+	// Step 3: Get session ID from context.
+	// Use the transcript session ID (actual directory name like "session_01KP...")
+	// rather than the routing session key (like "agent:mia:webchat:...").
+	sessionID := ToolTranscriptSessionID(ctx)
+	if sessionID == "" {
+		// Fallback to routing session key if transcript ID not available.
+		sessionID = ToolSessionKey(ctx)
+	}
+	if sessionID == "" {
 		return ErrorResult("handoff is not available in this context (no session key)")
 	}
 
 	// Step 4: Atomic switch (idempotent via ErrAlreadyActive) (MAJ-005, MAJ-006, FR-005, FR-015).
-	if err := t.sessionStore.SwitchAgent(sessionKey, agentID); err != nil {
+	if err := t.sessionStore.SwitchAgent(sessionID, agentID); err != nil {
 		if errors.Is(err, ErrAlreadyActive) {
 			return NewToolResult(fmt.Sprintf("Already connected to %s.", agentName))
 		}
@@ -145,7 +151,7 @@ func (t *HandoffTool) Execute(ctx context.Context, args map[string]any) *ToolRes
 	contextWindow := t.getContextWindow(agentID)
 	budget := int(float64(contextWindow) * 0.50)
 
-	transcript, err := t.sessionStore.ReadTranscript(sessionKey)
+	transcript, err := t.sessionStore.ReadTranscript(sessionID)
 	if err != nil {
 		// Non-fatal: proceed with empty context rather than failing the handoff.
 		transcript = nil
@@ -163,7 +169,7 @@ func (t *HandoffTool) Execute(ctx context.Context, args map[string]any) *ToolRes
 	// Step 7: Log handoff event in transcript as an audit trail (FR-016).
 	currentAgentID := ToolAgentID(ctx)
 	handoffContent := fmt.Sprintf("Handoff: %s → %s. Context: %s", currentAgentID, agentName, contextMsg)
-	appendErr := t.sessionStore.AppendTranscript(sessionKey, session.TranscriptEntry{
+	appendErr := t.sessionStore.AppendTranscript(sessionID, session.TranscriptEntry{
 		ID:        fmt.Sprintf("handoff-%d", time.Now().UnixNano()),
 		Type:      session.EntryTypeSystem,
 		Role:      "system",
@@ -297,8 +303,11 @@ func (t *ReturnToDefaultTool) Parameters() map[string]any {
 }
 
 func (t *ReturnToDefaultTool) Execute(ctx context.Context, args map[string]any) *ToolResult {
-	sessionKey := ToolSessionKey(ctx)
-	if sessionKey == "" {
+	sessionID := ToolTranscriptSessionID(ctx)
+	if sessionID == "" {
+		sessionID = ToolSessionKey(ctx)
+	}
+	if sessionID == "" {
 		return ErrorResult("return_to_default is not available in this context (no session key)")
 	}
 
@@ -307,7 +316,7 @@ func (t *ReturnToDefaultTool) Execute(ctx context.Context, args map[string]any) 
 		return ErrorResult("no default agent configured")
 	}
 
-	if err := t.sessionStore.SwitchAgent(sessionKey, defaultAgentID); err != nil && !errors.Is(err, ErrAlreadyActive) {
+	if err := t.sessionStore.SwitchAgent(sessionID, defaultAgentID); err != nil && !errors.Is(err, ErrAlreadyActive) {
 		return ErrorResult(fmt.Sprintf("failed to return to default agent: %v", err))
 	}
 
@@ -318,7 +327,7 @@ func (t *ReturnToDefaultTool) Execute(ctx context.Context, args map[string]any) 
 	if summary != "" {
 		logContent = fmt.Sprintf("Returned to default agent (%s). Summary: %s", defaultAgentID, summary)
 	}
-	appendErr := t.sessionStore.AppendTranscript(sessionKey, session.TranscriptEntry{
+	appendErr := t.sessionStore.AppendTranscript(sessionID, session.TranscriptEntry{
 		ID:        fmt.Sprintf("return-%d", time.Now().UnixNano()),
 		Type:      session.EntryTypeSystem,
 		Role:      "system",

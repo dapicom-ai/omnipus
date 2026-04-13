@@ -2591,6 +2591,10 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 			map[string]any{"agent_id": ts.agentID, "chat_id": ts.chatID})
 	}
 	turnCtx = tools.WithSessionKey(turnCtx, ts.sessionKey)
+	// Inject the actual session ID (directory name) for the handoff tool.
+	// The session key is a routing key; the transcript session ID is the
+	// real session directory (e.g., "session_01KP30THP63YFESKGECYYHYQWY").
+	turnCtx = tools.WithTranscriptSessionID(turnCtx, ts.opts.TranscriptSessionID)
 
 	al.registerActiveTurn(ts)
 	defer al.clearActiveTurn(ts)
