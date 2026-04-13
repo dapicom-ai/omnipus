@@ -112,14 +112,14 @@ function GlobalToolPoliciesSection() {
   // Local draft state — initialised from server data
   const [defaultPolicy, setDefaultPolicy] = useState<ToolPolicy>('ask')
   const [perToolPolicies, setPerToolPolicies] = useState<Record<string, ToolPolicy>>({})
-  const isDraftInitialised = useRef(false)
+  const [isDraftReady, setIsDraftReady] = useState(false)
 
   useEffect(() => {
-    if (!globalPolicies || isDraftInitialised.current) return
+    if (!globalPolicies || isDraftReady) return
     setDefaultPolicy(globalPolicies.default_policy)
     setPerToolPolicies(globalPolicies.policies ?? {})
-    isDraftInitialised.current = true
-  }, [globalPolicies])
+    setIsDraftReady(true)
+  }, [globalPolicies, isDraftReady])
 
   const policiesData = useMemo(
     () => ({ default_policy: defaultPolicy, policies: perToolPolicies }),
@@ -132,7 +132,7 @@ function GlobalToolPoliciesSection() {
       await updateGlobalToolPolicies(cfg)
       queryClient.invalidateQueries({ queryKey: ['global-tool-policies'] })
     },
-    { disabled: !isDraftInitialised.current },
+    { disabled: !isDraftReady },
   )
 
   function handleSetDefaultPolicy(p: ToolPolicy) {

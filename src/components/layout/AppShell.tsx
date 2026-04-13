@@ -40,28 +40,15 @@ export function AppShell() {
         <OmnipusRuntimeProvider>
           {/* Top bar: on chat screen, left button is Sessions back-arrow; elsewhere it is the hamburger */}
           <header className="flex items-center gap-3 px-4 py-3 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] flex-shrink-0">
-            {isChatScreen ? (
-              /* Sessions back-arrow — replaces hamburger on the chat screen */
-              <button
-                type="button"
-                onClick={openSessionPanel}
-                aria-label="Open sessions panel"
-                className="flex items-center justify-center h-8 px-2 gap-1 rounded-md text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors flex-shrink-0 text-xs"
-              >
-                <CaretLeft size={14} />
-                <span className="hidden sm:inline">Sessions</span>
-              </button>
-            ) : (
-              /* Hamburger — shown on all other screens */
-              <button
-                id="sidebar-hamburger"
-                onClick={toggle}
-                aria-label="Toggle navigation sidebar"
-                className="flex items-center justify-center h-8 w-8 rounded-md text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors flex-shrink-0"
-              >
-                <List size={20} />
-              </button>
-            )}
+            {/* Hamburger — always on left */}
+            <button
+              id="sidebar-hamburger"
+              onClick={toggle}
+              aria-label="Toggle navigation sidebar"
+              className="flex items-center justify-center h-8 w-8 rounded-md text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors flex-shrink-0"
+            >
+              <List size={20} />
+            </button>
 
             {/* Session bar — wired only on chat screen */}
             <div className="flex-1 min-w-0">
@@ -71,6 +58,19 @@ export function AppShell() {
                 <div id="session-bar-slot" className="flex-1" />
               )}
             </div>
+
+            {/* Sessions button — top-right on chat screen, opens session drawer */}
+            {isChatScreen && (
+              <button
+                type="button"
+                onClick={openSessionPanel}
+                aria-label="Open sessions panel"
+                className="flex items-center justify-center h-8 px-2 gap-1 rounded-md text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors flex-shrink-0 text-xs"
+              >
+                <span className="hidden sm:inline">Sessions</span>
+                <CaretLeft size={14} className="rotate-180" />
+              </button>
+            )}
           </header>
 
           {/* Global connection error banner — visible on every screen */}
