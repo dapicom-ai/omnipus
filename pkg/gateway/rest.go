@@ -634,6 +634,8 @@ type agentResponse struct {
 	Name              string `json:"name"`
 	Type              string `json:"type"` // "system" | "core" | "custom"
 	Locked            bool   `json:"locked"`
+	Color             string `json:"color,omitempty"`
+	Icon              string `json:"icon,omitempty"`
 	Model             string `json:"model,omitempty"`
 	Description       string `json:"description,omitempty"`
 	Status            string `json:"status"` // "active" | "idle" | "draft"
@@ -875,6 +877,8 @@ func (a *restAPI) listAgents(w http.ResponseWriter) {
 		ag.ID = ac.ID
 		ag.Name = ac.Name
 		ag.Description = ac.Description
+		ag.Color = ac.Color
+		ag.Icon = ac.Icon
 		ag.Type = string(ac.ResolveType(coreagent.IsCoreAgent))
 		ag.Locked = ac.Locked
 		ag.Model = model
@@ -910,6 +914,8 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 			ag.ID = ac.ID
 			ag.Name = ac.Name
 			ag.Description = ac.Description
+			ag.Color = ac.Color
+			ag.Icon = ac.Icon
 			ag.Type = string(ac.ResolveType(coreagent.IsCoreAgent))
 			ag.Locked = ac.Locked
 			ag.Model = model
@@ -1062,6 +1068,8 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 	ag.ID = ac.ID
 	ag.Name = ac.Name
 	ag.Description = ac.Description
+	ag.Color = ac.Color
+	ag.Icon = ac.Icon
 	ag.Type = "custom"
 	ag.Model = model
 	ag.Status = "draft"
