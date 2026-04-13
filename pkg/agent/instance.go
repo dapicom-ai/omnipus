@@ -362,7 +362,7 @@ func (a *AgentInstance) Close() error {
 // initSessionStore creates the unified session store for an agent.
 // Falls back to the JSONL backend if the unified store cannot be initialized.
 func initSessionStore(dir, agentID string) session.SessionStore {
-	us, err := session.NewUnifiedStore(dir, agentID)
+	us, err := session.NewUnifiedStore(dir)
 	if err != nil {
 		logger.ErrorCF("agent", "UnifiedStore init failed; falling back to JSONL backend",
 			map[string]any{"dir": dir, "error": err.Error()})

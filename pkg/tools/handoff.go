@@ -2,8 +2,17 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
+	"time"
+
+	"github.com/dapicom-ai/omnipus/pkg/session"
 )
+
+// ErrAlreadyActive is returned by SessionStore.SwitchAgent when the session is
+// already assigned to the requested agent. Treat as a no-op success.
+var ErrAlreadyActive = errors.New("agent is already active on this session")
 
 // AgentRegistryReader is a minimal interface for looking up agents by ID.
 // It is satisfied by *agent.AgentRegistry — using an interface here avoids
@@ -15,34 +24,65 @@ type AgentRegistryReader interface {
 	GetAgentName(agentID string) (string, bool)
 }
 
+// HandoffSessionStore is the subset of *session.UnifiedStore that HandoffTool
+// and ReturnToDefaultTool require. Defining it as an interface decouples the
+// tools package from the concrete store type, which is being refactored by the
+// session-store subagent in parallel.
+//
+// *session.UnifiedStore satisfies this interface once SwitchAgent is added to it.
+type HandoffSessionStore interface {
+	// SwitchAgent atomically changes the active agent on the session.
+	// Returns ErrAlreadyActive (tools.ErrAlreadyActive) when the session is
+	// already on the requested agent — callers MUST treat this as success.
+	SwitchAgent(sessionID, newAgentID string) error
+
+	// ReadTranscript returns all transcript entries for the session.
+	ReadTranscript(sessionID string) ([]session.TranscriptEntry, error)
+
+	// AppendTranscript appends a single entry to the session transcript.
+	AppendTranscript(sessionID string, entry session.TranscriptEntry) error
+}
+
 // HandoffTool transfers the active session to a specialist agent.
-// After a successful handoff, subsequent messages on the same session key
-// are routed to the target agent instead of the default one.
+//
+// On a successful handoff it:
+//  1. Validates the target agent against the registry.
+//  2. Atomically switches the active agent on the session (idempotent).
+//  3. Reads the session transcript and applies a 50% token-budget split so the
+//     target agent receives recent context without overflowing its context window.
+//  4. Appends a system entry to the transcript as an audit-trail record.
+//  5. Notifies the frontend so the UI can update its active-agent indicator.
 type HandoffTool struct {
-	getRegistry func() AgentRegistryReader
-	setActive   func(sessionKey, agentID string)
-	onHandoff   func(chatID, agentID, agentName string) // notify frontend of agent switch
+	getRegistry      func() AgentRegistryReader
+	sessionStore     HandoffSessionStore
+	getContextWindow func(agentID string) int
+	onHandoff        func(chatID, agentID, agentName string)
 }
 
 // NewHandoffTool creates a HandoffTool.
 //
-//   - getRegistry is called at Execute time (not construction time) so that hot
-//     reloads are automatically reflected without rebuilding the tool.
-//   - setActive updates the per-session agent override in the agent loop.
+//   - getRegistry is called at Execute time (not construction time) so hot reloads
+//     are automatically reflected without rebuilding the tool.
+//   - sessionStore provides atomic agent switching and transcript access.
+//   - getContextWindow resolves the target agent's context window for budget math;
+//     it should follow: agent-specific → defaults → 8192.
+//   - onHandoff notifies the frontend of the agent switch; may be nil.
 func NewHandoffTool(
 	getRegistry func() AgentRegistryReader,
-	setActive func(sessionKey, agentID string),
+	sessionStore HandoffSessionStore,
+	getContextWindow func(agentID string) int,
 	onHandoff func(chatID, agentID, agentName string),
 ) *HandoffTool {
 	return &HandoffTool{
-		getRegistry: getRegistry,
-		setActive:   setActive,
-		onHandoff:   onHandoff,
+		getRegistry:      getRegistry,
+		sessionStore:     sessionStore,
+		getContextWindow: getContextWindow,
+		onHandoff:        onHandoff,
 	}
 }
 
-func (t *HandoffTool) Name() string        { return "handoff" }
-func (t *HandoffTool) Scope() ToolScope    { return ScopeGeneral }
+func (t *HandoffTool) Name() string     { return "handoff" }
+func (t *HandoffTool) Scope() ToolScope { return ScopeGeneral }
 
 func (t *HandoffTool) Description() string {
 	return "Hand off the conversation to a specialist agent. The user's subsequent messages will go to the target agent."
@@ -60,70 +100,184 @@ func (t *HandoffTool) Parameters() map[string]any {
 				"type":        "string",
 				"description": "Context or instructions to give the target agent about this conversation",
 			},
-			"message": map[string]any{
-				"type":        "string",
-				"description": "Optional message to show the user (e.g. \"Connecting you with Ray...\")",
-			},
 		},
 		"required": []string{"agent_id", "context"},
 	}
 }
 
 func (t *HandoffTool) Execute(ctx context.Context, args map[string]any) *ToolResult {
+	// Overall 10-second timeout (FR-009, SC-006).
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
 	agentID, ok := args["agent_id"].(string)
 	if !ok || agentID == "" {
 		return ErrorResult("agent_id is required")
 	}
 	contextMsg, _ := args["context"].(string)
-	userMsg, _ := args["message"].(string)
 
-	registry := t.getRegistry()
-	agentName, exists := registry.GetAgentName(agentID)
+	// Step 1: Block handoff to the system agent (FR-013).
+	if agentID == "omnipus-system" {
+		return ErrorResult("cannot hand off to the system agent")
+	}
+
+	// Step 2: Validate target agent exists (FR-012).
+	agentName, exists := t.getRegistry().GetAgentName(agentID)
 	if !exists {
 		return ErrorResult(fmt.Sprintf("agent %q not found — check the agent ID", agentID))
 	}
 
+	// Step 3: Get session key from context.
 	sessionKey := ToolSessionKey(ctx)
 	if sessionKey == "" {
 		return ErrorResult("handoff is not available in this context (no session key)")
 	}
 
-	t.setActive(sessionKey, agentID)
+	// Step 4: Atomic switch (idempotent via ErrAlreadyActive) (MAJ-005, MAJ-006, FR-005, FR-015).
+	if err := t.sessionStore.SwitchAgent(sessionKey, agentID); err != nil {
+		if errors.Is(err, ErrAlreadyActive) {
+			return NewToolResult(fmt.Sprintf("Already connected to %s.", agentName))
+		}
+		return ErrorResult(fmt.Sprintf("failed to switch agent: %v", err))
+	}
 
-	// Notify the frontend to switch the active agent in the UI.
+	// Step 5: Token-budget-aware context transfer (FR-004, FR-011).
+	contextWindow := t.getContextWindow(agentID)
+	budget := int(float64(contextWindow) * 0.50)
+
+	transcript, err := t.sessionStore.ReadTranscript(sessionKey)
+	if err != nil {
+		// Non-fatal: proceed with empty context rather than failing the handoff.
+		transcript = nil
+	}
+	recent, older := splitByTokenBudget(transcript, budget)
+
+	// Step 6: Build summary for older messages (tiered summarization).
+	// Simple truncation fallback — LLM summarization can be layered on later once
+	// provider access is available in the tool layer without import cycles.
+	var summaryLine string
+	if len(older) > 0 {
+		summaryLine = fmt.Sprintf("[%d earlier messages not shown]", len(older))
+	}
+
+	// Step 7: Log handoff event in transcript as an audit trail (FR-016).
+	currentAgentID := ToolAgentID(ctx)
+	handoffContent := fmt.Sprintf("Handoff: %s → %s. Context: %s", currentAgentID, agentName, contextMsg)
+	appendErr := t.sessionStore.AppendTranscript(sessionKey, session.TranscriptEntry{
+		ID:        fmt.Sprintf("handoff-%d", time.Now().UnixNano()),
+		Type:      session.EntryTypeSystem,
+		Role:      "system",
+		Content:   handoffContent,
+		Timestamp: time.Now().UTC(),
+	})
+	if appendErr != nil {
+		// Best-effort: log loss is non-fatal for the handoff itself.
+		_ = appendErr
+	}
+
+	// Step 8: Notify frontend (so the UI can update its active-agent indicator).
 	if t.onHandoff != nil {
 		chatID := ToolChatID(ctx)
-		if chatID != "" {
-			t.onHandoff(chatID, agentID, agentName)
-		}
+		t.onHandoff(chatID, agentID, agentName)
 	}
 
-	forUI := userMsg
-	if forUI == "" {
-		forUI = fmt.Sprintf("Handing off to %s...", agentName)
+	// Step 9: Return context for the target agent.
+	forLLMParts := []string{
+		fmt.Sprintf("Handoff complete. %s is now active.", agentName),
 	}
-
-	_ = contextMsg // context is available to the LLM in its own message history
+	if summaryLine != "" {
+		forLLMParts = append(forLLMParts, summaryLine)
+	}
+	if len(recent) > 0 {
+		forLLMParts = append(forLLMParts, "Recent context:")
+		forLLMParts = append(forLLMParts, formatRecentMessages(recent))
+	}
 
 	return &ToolResult{
-		ForUser:  forUI,
-		ForLLM: fmt.Sprintf("Handoff complete. The user is now connected to %s (%s). Continue the conversation from their perspective.", agentName, agentID),
+		ForUser: fmt.Sprintf("Connecting you with %s...", agentName),
+		ForLLM:  strings.Join(forLLMParts, "\n"),
 	}
 }
 
-// ReturnToDefaultTool clears the session-level agent override, returning
-// routing to the normal binding cascade (and ultimately the default agent).
+// splitByTokenBudget partitions entries so that the entries in recent fit within
+// budgetTokens (counting from the end of the transcript). Entries that do not
+// fit are returned as older.
+//
+// The algorithm walks backward from the newest entry, accumulating estimated
+// token counts until the budget is exhausted. All entries before the cutoff
+// point are "older"; entries at or after the cutoff are "recent".
+func splitByTokenBudget(entries []session.TranscriptEntry, budgetTokens int) (recent, older []session.TranscriptEntry) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	tokensSoFar := 0
+	cutoff := 0
+	for i := len(entries) - 1; i >= 0; i-- {
+		tokens := estimateEntryTokens(entries[i])
+		if tokensSoFar+tokens > budgetTokens {
+			cutoff = i + 1
+			break
+		}
+		tokensSoFar += tokens
+	}
+	return entries[cutoff:], entries[:cutoff]
+}
+
+// estimateEntryTokens returns a fast token-count estimate for a transcript entry.
+// When the entry carries a pre-computed Tokens value, that is used directly.
+// Otherwise, content length is divided by 2.5 chars/token (matching context_budget.go).
+func estimateEntryTokens(e session.TranscriptEntry) int {
+	if e.Tokens > 0 {
+		return e.Tokens
+	}
+	// ~2.5 chars per token — same heuristic as context_budget.go.
+	return len(e.Content)/2 + 1
+}
+
+// formatRecentMessages renders a slice of transcript entries as a compact
+// text block suitable for injection into the LLM's context.
+func formatRecentMessages(entries []session.TranscriptEntry) string {
+	if len(entries) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for _, e := range entries {
+		agentTag := ""
+		if e.AgentID != "" {
+			agentTag = fmt.Sprintf(" [%s]", e.AgentID)
+		}
+		sb.WriteString(fmt.Sprintf("%s%s: %s\n", e.Role, agentTag, e.Content))
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+// ReturnToDefaultTool clears the session-level agent override by switching the
+// active agent back to the configured default.
 type ReturnToDefaultTool struct {
-	setActive func(sessionKey, agentID string)
+	sessionStore    HandoffSessionStore
+	getDefaultAgent func() string
+	onHandoff       func(chatID, agentID, agentName string)
 }
 
 // NewReturnToDefaultTool creates a ReturnToDefaultTool.
-func NewReturnToDefaultTool(setActive func(sessionKey, agentID string)) *ReturnToDefaultTool {
-	return &ReturnToDefaultTool{setActive: setActive}
+//
+//   - sessionStore is used to switch the active agent atomically.
+//   - getDefaultAgent resolves the default agent ID from config at call time.
+//   - onHandoff notifies the frontend of the agent switch; may be nil.
+func NewReturnToDefaultTool(
+	sessionStore HandoffSessionStore,
+	getDefaultAgent func() string,
+	onHandoff func(chatID, agentID, agentName string),
+) *ReturnToDefaultTool {
+	return &ReturnToDefaultTool{
+		sessionStore:    sessionStore,
+		getDefaultAgent: getDefaultAgent,
+		onHandoff:       onHandoff,
+	}
 }
 
-func (t *ReturnToDefaultTool) Name() string        { return "return_to_default" }
-func (t *ReturnToDefaultTool) Scope() ToolScope    { return ScopeGeneral }
+func (t *ReturnToDefaultTool) Name() string     { return "return_to_default" }
+func (t *ReturnToDefaultTool) Scope() ToolScope { return ScopeGeneral }
 
 func (t *ReturnToDefaultTool) Description() string {
 	return "Return the conversation to the default agent. Clears any active handoff override for this session."
@@ -148,17 +302,48 @@ func (t *ReturnToDefaultTool) Execute(ctx context.Context, args map[string]any) 
 		return ErrorResult("return_to_default is not available in this context (no session key)")
 	}
 
-	// Clear the override by setting agentID to "".
-	t.setActive(sessionKey, "")
+	defaultAgentID := t.getDefaultAgent()
+	if defaultAgentID == "" {
+		return ErrorResult("no default agent configured")
+	}
 
+	if err := t.sessionStore.SwitchAgent(sessionKey, defaultAgentID); err != nil && !errors.Is(err, ErrAlreadyActive) {
+		return ErrorResult(fmt.Sprintf("failed to return to default agent: %v", err))
+	}
+
+	// Log the return event as an audit trail (FR-016).
 	summary, _ := args["summary"].(string)
-	forLLM := "Returned to default agent."
+	currentAgentID := ToolAgentID(ctx)
+	logContent := fmt.Sprintf("Returned to default agent (%s)", defaultAgentID)
 	if summary != "" {
-		forLLM = fmt.Sprintf("Returned to default agent. Summary: %s", summary)
+		logContent = fmt.Sprintf("Returned to default agent (%s). Summary: %s", defaultAgentID, summary)
+	}
+	appendErr := t.sessionStore.AppendTranscript(sessionKey, session.TranscriptEntry{
+		ID:        fmt.Sprintf("return-%d", time.Now().UnixNano()),
+		Type:      session.EntryTypeSystem,
+		Role:      "system",
+		Content:   logContent,
+		AgentID:   currentAgentID,
+		Timestamp: time.Now().UTC(),
+	})
+	if appendErr != nil {
+		// Best-effort: transcript append failure does not block the return.
+		_ = appendErr
+	}
+
+	// Notify the frontend.
+	if t.onHandoff != nil {
+		chatID := ToolChatID(ctx)
+		t.onHandoff(chatID, defaultAgentID, defaultAgentID)
+	}
+
+	forLLM := fmt.Sprintf("Returned to default agent (%s).", defaultAgentID)
+	if summary != "" {
+		forLLM = fmt.Sprintf("Returned to default agent (%s). Summary: %s", defaultAgentID, summary)
 	}
 
 	return &ToolResult{
-		ForUser:  "Returning to default agent.",
-		ForLLM: forLLM,
+		ForUser: "Returning to default agent.",
+		ForLLM:  forLLM,
 	}
 }

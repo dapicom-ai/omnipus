@@ -29,7 +29,7 @@ import (
 // Callers are responsible for closing it if needed.
 func newTestStore(t *testing.T) *UnifiedStore {
 	t.Helper()
-	store, err := NewUnifiedStore(t.TempDir(), "test-agent")
+	store, err := NewUnifiedStore(t.TempDir())
 	require.NoError(t, err, "NewUnifiedStore must succeed")
 	return store
 }
@@ -46,7 +46,7 @@ func TestDeleteSession_Success(t *testing.T) {
 	store := newTestStore(t)
 
 	// Given — create a real session.
-	meta, err := store.NewSession(SessionTypeChat, "")
+	meta, err := store.NewSession(SessionTypeChat, "", "test-agent")
 	require.NoError(t, err, "NewSession must succeed")
 	sessionID := meta.ID
 
@@ -75,9 +75,9 @@ func TestDeleteSession_DifferentSessions(t *testing.T) {
 	store := newTestStore(t)
 
 	// Create two sessions.
-	meta1, err := store.NewSession(SessionTypeChat, "")
+	meta1, err := store.NewSession(SessionTypeChat, "", "test-agent")
 	require.NoError(t, err)
-	meta2, err := store.NewSession(SessionTypeChat, "")
+	meta2, err := store.NewSession(SessionTypeChat, "", "test-agent")
 	require.NoError(t, err)
 
 	id1 := meta1.ID
@@ -180,7 +180,7 @@ func TestDeleteSession_PersistenceCheck(t *testing.T) {
 	store := newTestStore(t)
 
 	// Create, verify readable, delete, verify unreadable.
-	meta, err := store.NewSession(SessionTypeChat, "")
+	meta, err := store.NewSession(SessionTypeChat, "", "test-agent")
 	require.NoError(t, err)
 
 	// Read before deletion — must succeed.

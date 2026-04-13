@@ -110,6 +110,11 @@ export interface Session {
   message_count: number
   total_tokens?: number
   total_cost?: number
+  // Multi-agent session fields — present on sessions created with the joined
+  // session model. For legacy single-agent sessions these are absent; callers
+  // should fall back to [agent_id] when agent_ids is undefined.
+  agent_ids?: string[]      // all agents that participated in this session
+  active_agent_id?: string  // the agent currently handling this session
 }
 
 interface RawSession {
@@ -121,6 +126,8 @@ interface RawSession {
   task_id?: string
   created_at: string
   updated_at: string
+  agent_ids?: string[]
+  active_agent_id?: string
   stats?: {
     tokens_in: number
     tokens_out: number
@@ -145,6 +152,8 @@ function rawToSession(raw: RawSession): Session {
     message_count: raw.stats?.message_count ?? 0,
     total_tokens: raw.stats?.tokens_total,
     total_cost: raw.stats?.cost,
+    agent_ids: raw.agent_ids,
+    active_agent_id: raw.active_agent_id,
   }
 }
 

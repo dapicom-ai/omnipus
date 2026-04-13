@@ -112,7 +112,7 @@ func (te *TaskExecutor) runTask(ctx context.Context, task *taskstore.TaskEntity,
 	// Create a task session in the agent's unified store so the UI can display it.
 	var taskSessionID string
 	if taskStore != nil {
-		if meta, err := taskStore.NewSession(session.SessionTypeTask, "system"); err != nil {
+		if meta, err := taskStore.NewSession(session.SessionTypeTask, "system", task.AgentID); err != nil {
 			logger.ErrorCF("task_executor", "Could not create task session",
 				map[string]any{"task_id": task.ID, "error": err.Error()})
 		} else {

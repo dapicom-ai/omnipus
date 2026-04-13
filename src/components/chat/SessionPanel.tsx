@@ -1,9 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query'
-import { Circle, ChatCircle, ListChecks, Trash, MagnifyingGlass } from '@phosphor-icons/react'
+import { Circle, ListChecks, Trash, MagnifyingGlass } from '@phosphor-icons/react'
 import { IconRenderer } from '@/components/shared/IconRenderer'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
-import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from '@/components/ui/accordion'
 import { Badge } from '@/components/ui/badge'
 import { useUiStore } from '@/store/ui'
 import { useSessionStore } from '@/store/session'
@@ -17,18 +16,76 @@ function sessionButtonClass(isActive: boolean): string {
     : 'text-[var(--color-muted)] hover:bg-[var(--color-surface-2)] hover:text-[var(--color-secondary)]'
 }
 
-// ── Inline rename + delete session item ──────────────────────────────────────
-
 const UNTITLED_SESSION = 'Untitled Session'
+
+// ── Agent participation badges ────────────────────────────────────────────────
+
+interface AgentBadgesProps {
+  agentIds: string[]
+  agents: Agent[]
+}
+
+function AgentBadges({ agentIds, agents }: AgentBadgesProps) {
+  if (agentIds.length === 0) return null
+  return (
+    <div className="flex -space-x-1 shrink-0">
+      {agentIds.map((id) => {
+        const agent = agents.find((a) => a.id === id)
+        return (
+          <div
+            key={id}
+            className="w-4 h-4 rounded-full border border-[var(--color-primary)] flex items-center justify-center text-[7px]"
+            style={{ backgroundColor: agent?.color ?? 'var(--color-surface-3)' }}
+            title={agent?.name ?? '[removed agent]'}
+          >
+            {agent?.icon ? (
+              <IconRenderer icon={agent.icon} size={8} />
+            ) : (
+              <span className="text-[var(--color-secondary)] font-bold">?</span>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── Inline rename + delete session item ──────────────────────────────────────
 
 interface SessionItemProps {
   session: Session
+  agents: Agent[]
   isActive: boolean
   onSelect: () => void
   onDeleted: (sessionId: string) => void
 }
 
-function SessionItem({ session, isActive, onSelect, onDeleted }: SessionItemProps) {
+function taskStatusStyle(status: string | undefined): { color: string; label: string } {
+  switch (status) {
+    case 'archived':
+      return { color: 'text-[var(--color-success)]', label: 'completed' }
+    case 'interrupted':
+      return { color: 'text-[var(--color-error)]', label: 'failed' }
+    default:
+      return { color: 'text-[var(--color-warning)]', label: 'running' }
+  }
+}
+
+function formatRelativeTime(dateStr: string): string {
+  const date = new Date(dateStr)
+  if (isNaN(date.getTime())) return ''
+  const diffMs = Date.now() - date.getTime()
+  const diffMins = Math.floor(diffMs / 60_000)
+  if (diffMins < 1) return 'just now'
+  if (diffMins < 60) return `${diffMins}m ago`
+  const diffHours = Math.floor(diffMins / 60)
+  if (diffHours < 24) return `${diffHours}h ago`
+  const diffDays = Math.floor(diffHours / 24)
+  if (diffDays < 7) return `${diffDays}d ago`
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
+
+function SessionItem({ session, agents, isActive, onSelect, onDeleted }: SessionItemProps) {
   const { addToast } = useUiStore()
   const queryClient = useQueryClient()
 
@@ -43,6 +100,13 @@ function SessionItem({ session, isActive, onSelect, onDeleted }: SessionItemProp
       inputRef.current.select()
     }
   }, [isEditing])
+
+  // Keep edit value in sync when session title changes externally
+  useEffect(() => {
+    if (!isEditing) {
+      setEditValue(session.title || UNTITLED_SESSION)
+    }
+  }, [session.title, isEditing])
 
   const { mutate: doRename, isPending: isRenaming } = useMutation({
     mutationFn: (title: string) => renameSession(session.id, title),
@@ -71,7 +135,7 @@ function SessionItem({ session, isActive, onSelect, onDeleted }: SessionItemProp
     const trimmed = editValue.trim()
     if (!trimmed || trimmed === session.title) {
       setIsEditing(false)
-      setEditValue(session.title || 'Untitled Session')
+      setEditValue(session.title || UNTITLED_SESSION)
       return
     }
     doRename(trimmed)
@@ -88,9 +152,19 @@ function SessionItem({ session, isActive, onSelect, onDeleted }: SessionItemProp
     }
   }
 
+  // Resolve which agent IDs to show — use agent_ids if present, fall back to [agent_id]
+  const participantIds =
+    session.agent_ids && session.agent_ids.length > 0
+      ? session.agent_ids
+      : session.agent_id
+        ? [session.agent_id]
+        : []
+
+  const isTask = session.type === 'task'
+
   if (confirmDelete) {
     return (
-      <div className="flex items-center gap-1 px-10 py-2 text-xs">
+      <div className="flex items-center gap-1 px-4 py-2 text-xs">
         <span className="text-[var(--color-secondary)] flex-1 truncate">Delete?</span>
         <button
           type="button"
@@ -112,182 +186,85 @@ function SessionItem({ session, isActive, onSelect, onDeleted }: SessionItemProp
   }
 
   return (
-    <div className={cn('group/item flex items-center gap-1 rounded-sm transition-colors', sessionButtonClass(isActive))}>
-      {isEditing ? (
-        <input
-          ref={inputRef}
-          value={editValue}
-          onChange={(e) => setEditValue(e.target.value)}
-          onBlur={commitRename}
-          onKeyDown={handleTitleKeyDown}
-          disabled={isRenaming}
-          className="flex-1 ml-10 mr-2 py-2 text-xs bg-transparent border-b border-[var(--color-accent)]/50 outline-none text-[var(--color-secondary)] disabled:opacity-50"
-        />
-      ) : (
-        <button
-          type="button"
-          onClick={onSelect}
-          onDoubleClick={(e) => {
-            e.preventDefault()
-            setIsEditing(true)
-          }}
-          aria-label={`Open session: ${session.title || UNTITLED_SESSION}`}
-          className="flex-1 text-left px-10 py-2 text-xs transition-colors"
-          title="Click to open, double-click to rename"
-        >
-          <div className="flex items-center gap-2">
-            {isActive && (
-              <Circle size={5} weight="fill" className="text-[var(--color-success)] shrink-0" />
-            )}
-            <span className="truncate">{session.title || UNTITLED_SESSION}</span>
-          </div>
-        </button>
+    <div
+      className={cn(
+        'group/item flex items-center gap-2 px-3 py-2 rounded-sm transition-colors',
+        sessionButtonClass(isActive),
       )}
+    >
+      {/* Agent participation badges */}
+      <AgentBadges agentIds={participantIds} agents={agents} />
+
+      {/* Title / rename input */}
+      <div className="flex-1 min-w-0">
+        {isEditing ? (
+          <input
+            ref={inputRef}
+            value={editValue}
+            onChange={(e) => setEditValue(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={handleTitleKeyDown}
+            disabled={isRenaming}
+            className="w-full text-xs bg-transparent border-b border-[var(--color-accent)]/50 outline-none text-[var(--color-secondary)] disabled:opacity-50"
+          />
+        ) : (
+          <button
+            type="button"
+            onClick={onSelect}
+            onDoubleClick={(e) => {
+              e.preventDefault()
+              setIsEditing(true)
+            }}
+            aria-label={`Open session: ${session.title || UNTITLED_SESSION}`}
+            title="Click to open, double-click to rename"
+            className="w-full text-left"
+          >
+            <div className="flex items-center gap-1.5 min-w-0">
+              {isActive && (
+                <Circle size={5} weight="fill" className="text-[var(--color-success)] shrink-0" />
+              )}
+              {isTask && (
+                <ListChecks size={10} className="text-[var(--color-accent)] shrink-0" />
+              )}
+              <span className="truncate text-xs">{session.title || UNTITLED_SESSION}</span>
+            </div>
+          </button>
+        )}
+      </div>
+
+      {/* Right side: task status badge + relative time + delete */}
       {!isEditing && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation()
-            setConfirmDelete(true)
-          }}
-          className="shrink-0 mr-2 p-1 rounded opacity-0 group-hover/item:opacity-100 text-[var(--color-muted)] hover:text-[var(--color-error)] hover:bg-[var(--color-error)]/10 transition-all"
-          aria-label={`Delete session: ${session.title || UNTITLED_SESSION}`}
-          title="Delete session"
-        >
-          <Trash size={11} />
-        </button>
+        <div className="flex items-center gap-1.5 shrink-0">
+          {isTask && (
+            <Badge
+              variant="outline"
+              className={cn('text-[9px] h-4 px-1', taskStatusStyle(session.status).color)}
+            >
+              {taskStatusStyle(session.status).label}
+            </Badge>
+          )}
+          <span className="text-[10px] text-[var(--color-muted)] tabular-nums">
+            {formatRelativeTime(session.updated_at)}
+          </span>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              setConfirmDelete(true)
+            }}
+            className="p-1 rounded opacity-0 group-hover/item:opacity-100 text-[var(--color-muted)] hover:text-[var(--color-error)] hover:bg-[var(--color-error)]/10 transition-all"
+            aria-label={`Delete session: ${session.title || UNTITLED_SESSION}`}
+            title="Delete session"
+          >
+            <Trash size={11} />
+          </button>
+        </div>
       )}
     </div>
   )
 }
 
-// ── Per-agent accordion with conversations + tasks sub-sections ───────────────
-
-interface AgentAccordionItemProps {
-  agent: Agent
-  chatSessions: Session[]
-  taskSessions: Session[]
-  activeSessionId: string | null
-  onSelectChat: (sessionId: string, agentId: string) => void
-  onSelectTask: (session: Session) => void
-  onSessionDeleted: (deletedId: string) => void
-}
-
-function taskStatusStyle(status: string | undefined): { color: string; label: string } {
-  switch (status) {
-    case 'archived':
-      return { color: 'text-[var(--color-success)]', label: 'completed' }
-    case 'interrupted':
-      return { color: 'text-[var(--color-error)]', label: 'failed' }
-    default:
-      return { color: 'text-[var(--color-warning)]', label: 'running' }
-  }
-}
-
-function AgentAccordionItem({
-  agent,
-  chatSessions,
-  taskSessions,
-  activeSessionId,
-  onSelectChat,
-  onSelectTask,
-  onSessionDeleted,
-}: AgentAccordionItemProps) {
-  const hasTasks = taskSessions.length > 0
-
-  return (
-    <AccordionItem value={agent.id}>
-      <AccordionTrigger className="px-4 hover:no-underline">
-        <div className="flex items-center gap-2 min-w-0">
-          <div
-            className="w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0"
-            style={{ backgroundColor: agent.color ?? 'var(--color-surface-3)' }}
-          >
-            {agent.icon
-              ? <IconRenderer icon={agent.icon} size={11} />
-              : agent.name.charAt(0).toUpperCase()}
-          </div>
-          <span className="truncate text-sm">{agent.name}</span>
-          {agent.status === 'active' && (
-            <Circle size={6} weight="fill" className="text-[var(--color-success)] shrink-0" />
-          )}
-        </div>
-      </AccordionTrigger>
-      <AccordionContent className="pb-1">
-        {/* Conversations sub-section */}
-        <div className="mb-1">
-          <div className="flex items-center gap-1.5 px-4 pt-1 pb-0.5">
-            <ChatCircle size={10} className="text-[var(--color-accent)] shrink-0" />
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-muted)]">
-              Conversations
-            </span>
-          </div>
-          <div className="space-y-0.5">
-            {chatSessions.length === 0 ? (
-              <p className="px-10 py-1.5 text-[11px] text-[var(--color-muted)] italic">No sessions yet.</p>
-            ) : (
-              chatSessions.map((session) => (
-                <SessionItem
-                  key={session.id}
-                  session={session}
-                  isActive={session.id === activeSessionId}
-                  onSelect={() => onSelectChat(session.id, agent.id)}
-                  onDeleted={onSessionDeleted}
-                />
-              ))
-            )}
-          </div>
-        </div>
-
-        {/* Tasks sub-section — only shown when the agent has task sessions */}
-        {hasTasks && (
-          <div className="mt-1">
-            <div className="flex items-center gap-1.5 px-4 pt-1 pb-0.5">
-              <ListChecks size={10} className="text-[var(--color-accent)] shrink-0" />
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-muted)]">
-                Tasks
-              </span>
-            </div>
-            <div className="space-y-0.5 pb-1">
-              {taskSessions.map((session) => (
-                <button
-                  key={session.id}
-                  type="button"
-                  onClick={() => onSelectTask(session)}
-                  aria-label={`Open task: ${session.title || 'Untitled Task'}`}
-                  className={`w-full text-left px-4 py-2 text-xs transition-colors rounded-sm ${sessionButtonClass(session.id === activeSessionId)}`}
-                >
-                  <div className="flex items-center gap-2 min-w-0 px-6">
-                    <span className="truncate flex-1">
-                      {session.title || 'Untitled Task'}
-                    </span>
-                    <Badge
-                      variant="outline"
-                      className={cn(
-                        'text-[9px] h-4 px-1 shrink-0',
-                        taskStatusStyle(session.status).color,
-                      )}
-                    >
-                      {taskStatusStyle(session.status).label}
-                    </Badge>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-      </AccordionContent>
-    </AccordionItem>
-  )
-}
-
 // ── Main panel ────────────────────────────────────────────────────────────────
-
-function defaultAccordionValue(activeAgentId: string | null, visibleAgents: Agent[]): string[] {
-  if (activeAgentId) return [activeAgentId]
-  if (visibleAgents.length > 0) return [visibleAgents[0].id]
-  return []
-}
 
 export function SessionPanel() {
   const { sessionPanelOpen, closeSessionPanel } = useUiStore()
@@ -323,14 +300,14 @@ export function SessionPanel() {
     enabled: sessionPanelOpen,
   })
 
-  const handleSelectSession = (sessionId: string, agentId: string) => {
-    const agent = agents.find((a) => a.id === agentId)
-    setActiveSession(sessionId, agentId, agent?.type ?? null)
-    closeSessionPanel()
-  }
-
-  const handleSelectTaskSession = (session: Session) => {
-    attachToSession(session.id, 'task', session.title, session.agent_id)
+  const handleSelectSession = (session: Session) => {
+    if (session.type === 'task') {
+      attachToSession(session.id, 'task', session.title, session.agent_id)
+    } else {
+      const agentId = session.active_agent_id ?? session.agent_id
+      const agent = agents.find((a) => a.id === agentId)
+      setActiveSession(session.id, agentId, agent?.type ?? null)
+    }
     closeSessionPanel()
   }
 
@@ -341,59 +318,54 @@ export function SessionPanel() {
     }
   }
 
-  // Normalise legacy agent IDs for sessions that were created under 'default' or 'main'
-  // (pre-core-roster sessions used these placeholder IDs). Map to the first core agent, or
-  // keep the raw ID if no core agent is available yet.
-  const defaultAgentId = agents.find((a) => a.type === 'core')?.id ?? agents[0]?.id ?? 'unknown'
+  // Sort sessions by updated_at descending (most recent first)
+  const sortedSessions = [...sessions].sort(
+    (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+  )
 
-  const chatSessions = sessions.filter((s) => !s.type || s.type === 'chat')
-  const taskSessions = sessions.filter((s) => s.type === 'task')
-
-  // Group sessions by agent, normalising legacy agent IDs
-  function groupByAgent(items: Session[]): Record<string, Session[]> {
-    return items.reduce<Record<string, Session[]>>((acc, s) => {
-      const agentId = (s.agent_id === 'default' || s.agent_id === 'main') ? defaultAgentId : s.agent_id
-      if (!acc[agentId]) acc[agentId] = []
-      acc[agentId].push(s)
-      return acc
-    }, {})
-  }
-
-  const chatByAgent = groupByAgent(chatSessions)
-  const tasksByAgent = groupByAgent(taskSessions)
-
-  // Show only agents that have at least one session (chat or task)
-  const agentsWithContent = new Set([...Object.keys(chatByAgent), ...Object.keys(tasksByAgent)])
-  const visibleAgents = agents.filter((a) => agentsWithContent.has(a.id))
-
-  // Apply search filter
+  // Apply search filter: match title, or any participating agent's name
   const searchLower = debouncedSearch.toLowerCase().trim()
 
-  function getFilteredSessions(group: Record<string, Session[]>, agentId: string): Session[] {
-    const agentSessions = group[agentId] ?? []
-    if (!searchLower) return agentSessions
-    return agentSessions.filter((s) => (s.title ?? '').toLowerCase().includes(searchLower))
-  }
-
-  // When searching, show agent if agent name matches OR it has matching sessions
-  const filteredAgents = searchLower
-    ? visibleAgents.filter((agent) => {
-        const agentNameMatches = agent.name.toLowerCase().includes(searchLower)
-        return (
-          agentNameMatches ||
-          getFilteredSessions(chatByAgent, agent.id).length > 0 ||
-          getFilteredSessions(tasksByAgent, agent.id).length > 0
+  const filteredSessions = searchLower
+    ? sortedSessions.filter((session) => {
+        const titleMatch = (session.title ?? '').toLowerCase().includes(searchLower)
+        if (titleMatch) return true
+        // Also match any participating agent name
+        const participantIds =
+          session.agent_ids && session.agent_ids.length > 0
+            ? session.agent_ids
+            : session.agent_id ? [session.agent_id] : []
+        return participantIds.some((id) =>
+          agents.find((a) => a.id === id)?.name.toLowerCase().includes(searchLower),
         )
       })
-    : visibleAgents
+    : sortedSessions
 
-  const hasAnyResults = filteredAgents.length > 0
+  // Resolve the default agent ID (used for active indicator in header)
+  const activeAgent = agents.find((a) => a.id === activeAgentId)
 
   return (
     <Sheet open={sessionPanelOpen} onOpenChange={(open) => !open && closeSessionPanel()}>
       <SheetContent side="right" className="w-72 p-0 flex flex-col" overlay={false}>
         <SheetHeader className="px-4 pt-5 pb-3 border-b border-[var(--color-border)]">
-          <SheetTitle>Sessions</SheetTitle>
+          <div className="flex items-center gap-2">
+            <SheetTitle className="flex-1">Sessions</SheetTitle>
+            {activeAgent && (
+              <div
+                className="w-5 h-5 rounded-full flex items-center justify-center shrink-0"
+                style={{ backgroundColor: activeAgent.color ?? 'var(--color-surface-3)' }}
+                title={`Active: ${activeAgent.name}`}
+              >
+                {activeAgent.icon ? (
+                  <IconRenderer icon={activeAgent.icon} size={11} />
+                ) : (
+                  <span className="text-[9px] font-bold text-[var(--color-secondary)]">
+                    {activeAgent.name.charAt(0).toUpperCase()}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
         </SheetHeader>
 
         {/* Search input */}
@@ -418,34 +390,23 @@ export function SessionPanel() {
             </div>
           )}
 
-          {!hasAnyResults ? (
+          {filteredSessions.length === 0 ? (
             <div className="px-4 py-6 text-xs text-[var(--color-muted)] text-center">
               {searchLower ? 'No results.' : 'No sessions yet. Start a conversation to begin.'}
             </div>
           ) : (
-            <Accordion
-              type="multiple"
-              defaultValue={defaultAccordionValue(activeAgentId, visibleAgents)}
-            >
-              {filteredAgents.map((agent) => {
-                const agentChatSessions = getFilteredSessions(chatByAgent, agent.id)
-                const agentTaskSessions = getFilteredSessions(tasksByAgent, agent.id)
-                // When searching, skip agents where name matches but nothing else does
-                // (they still need to be shown so user can start a new session)
-                return (
-                  <AgentAccordionItem
-                    key={agent.id}
-                    agent={agent}
-                    chatSessions={agentChatSessions}
-                    taskSessions={agentTaskSessions}
-                    activeSessionId={activeSessionId}
-                    onSelectChat={handleSelectSession}
-                    onSelectTask={handleSelectTaskSession}
-                    onSessionDeleted={handleSessionDeleted}
-                  />
-                )
-              })}
-            </Accordion>
+            <div className="py-1 space-y-0.5 px-2">
+              {filteredSessions.map((session) => (
+                <SessionItem
+                  key={session.id}
+                  session={session}
+                  agents={agents}
+                  isActive={session.id === activeSessionId}
+                  onSelect={() => handleSelectSession(session)}
+                  onDeleted={handleSessionDeleted}
+                />
+              ))}
+            </div>
           )}
         </div>
       </SheetContent>

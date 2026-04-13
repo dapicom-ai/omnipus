@@ -211,11 +211,17 @@ func (h *WSHandler) GetStreamer(_ context.Context, channel, chatID string) (bus.
 
 	// Resolve the agent store for transcript recording.
 	// The session is associated with a specific agent; look up that agent's store.
-	// agentID is stored in the session meta — we use "main" as default for webchat.
 	var agentStore *session.UnifiedStore
 	if sid != "" {
 		// Try to find which agent owns this session by scanning agent stores.
 		agentStore = h.resolveSessionStore(sid)
+	}
+
+	// Resolve the active agent for this chat session so the transcript entry
+	// can be tagged with the correct agent ID (FR-002).
+	activeAgentID := ""
+	if aid, ok := h.agentLoop.GetSessionActiveAgent(chatID); ok {
+		activeAgentID = aid
 	}
 
 	return &wsStreamer{
@@ -223,6 +229,7 @@ func (h *WSHandler) GetStreamer(_ context.Context, channel, chatID string) (bus.
 		chatID:     chatID,
 		sessionID:  sid,
 		agentStore: agentStore,
+		agentID:    activeAgentID,
 		channel:    h.webchatCh,
 	}, true
 }
@@ -516,18 +523,23 @@ func (h *WSHandler) handleChatMessage(
 	agentID string,
 	wc *wsConn,
 ) {
-	// Resolve the agent store to use. If agentID is provided, use that agent's store;
-	// otherwise fall back to the main agent's store.
+	// Resolve the creating agent ID. If agentID is provided, use it;
+	// otherwise fall back to the main agent.
 	targetAgentID := agentID
 	if targetAgentID == "" {
 		targetAgentID = "main"
 	}
-	store := h.agentLoop.GetAgentStore(targetAgentID)
+	// Use the shared session store for new sessions (joined session model).
+	// Fall back to the per-agent store if the shared store is unavailable.
+	store := h.agentLoop.GetSessionStore()
+	if store == nil {
+		store = h.agentLoop.GetAgentStore(targetAgentID)
+	}
 
 	if store != nil {
 		// Create the session on the first message of this WebSocket connection.
 		if *sessionID == "" {
-			meta, err := store.NewSession(session.SessionTypeChat, "webchat")
+			meta, err := store.NewSession(session.SessionTypeChat, "webchat", targetAgentID)
 			if err != nil {
 				slog.Warn("ws: could not create session — conversation will not be saved", "error", err)
 				sendConnFrame(wc, wsServerFrame{
@@ -556,10 +568,12 @@ func (h *WSHandler) handleChatMessage(
 		}
 
 		// Record every user message to the transcript, not just the first one.
+		// AgentID on user entries identifies the agent the message was directed to.
 		if *sessionID != "" {
 			entry := session.TranscriptEntry{
 				ID:        uuid.New().String(),
 				Role:      "user",
+				AgentID:   targetAgentID,
 				Content:   content,
 				Timestamp: time.Now().UTC(),
 			}
@@ -1000,6 +1014,7 @@ type wsStreamer struct {
 	chatID      string
 	sessionID   string                // for recording assistant message
 	agentStore  *session.UnifiedStore // for recording assistant message
+	agentID     string                // active agent at streamer creation time (for transcript AgentID)
 	channel     *webchatChannel       // to mark streaming complete and suppress duplicate Send()
 	accumulated strings.Builder       // accumulates full response text
 
@@ -1063,6 +1078,7 @@ func (s *wsStreamer) Finalize(_ context.Context, _ string) error {
 			entry := session.TranscriptEntry{
 				ID:        uuid.New().String(),
 				Role:      "assistant",
+				AgentID:   s.agentID,
 				Content:   content,
 				Timestamp: time.Now().UTC(),
 			}

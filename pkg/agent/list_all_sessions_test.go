@@ -47,11 +47,11 @@ func TestListAllSessions_PartialErrors(t *testing.T) {
 	al := NewAgentLoop(cfg, msgBus, &mockProvider{})
 
 	// Wire a valid UnifiedStore for the "main" agent and create one session.
-	goodStore, err := session.NewUnifiedStore(t.TempDir(), "main")
+	goodStore, err := session.NewUnifiedStore(t.TempDir())
 	if err != nil {
 		t.Fatalf("NewUnifiedStore(main): %v", err)
 	}
-	if _, sessErr := goodStore.NewSession(session.SessionTypeChat, "webchat"); sessErr != nil {
+	if _, sessErr := goodStore.NewSession(session.SessionTypeChat, "webchat", "main"); sessErr != nil {
 		t.Fatalf("NewSession: %v", sessErr)
 	}
 	mainAgent, ok := al.GetRegistry().GetAgent("main")
@@ -63,7 +63,7 @@ func TestListAllSessions_PartialErrors(t *testing.T) {
 	// Wire a broken UnifiedStore for "agent-good": create the store then remove
 	// its base directory so ListSessions fails.
 	brokenBaseDir := t.TempDir()
-	brokenStore, err := session.NewUnifiedStore(brokenBaseDir, "agent-good")
+	brokenStore, err := session.NewUnifiedStore(brokenBaseDir)
 	if err != nil {
 		t.Fatalf("NewUnifiedStore(agent-good): %v", err)
 	}

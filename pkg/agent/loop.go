@@ -128,6 +128,11 @@ type AgentLoop struct {
 	// cfg.Sandbox.RateLimits.* > 0 to decide whether to enforce.
 	rateLimiter *security.RateLimiterRegistry
 	costTracker *security.CostTracker
+
+	// sharedSessionStore is the single UnifiedStore at $OMNIPUS_HOME/sessions/
+	// used for all new sessions (joined session model). Legacy per-agent stores
+	// remain accessible via GetAgentStore for read-only access to old sessions.
+	sharedSessionStore *session.UnifiedStore
 }
 
 // processOptions configures how a message is processed
@@ -212,6 +217,22 @@ func NewAgentLoop(
 	homePath := filepath.Dir(cfg.WorkspacePath())
 	al.taskStore = taskstore.New(filepath.Join(homePath, "tasks"))
 	al.taskExecutor = newTaskExecutor(al, al.taskStore)
+
+	// Initialize shared session store at $OMNIPUS_HOME/sessions/.
+	// All new chat sessions are created here (joined session model).
+	sharedDir := filepath.Join(homePath, "sessions")
+	if err := os.MkdirAll(sharedDir, 0o700); err != nil {
+		logger.ErrorCF("agent", "Failed to create shared sessions dir; shared store disabled",
+			map[string]any{"dir": sharedDir, "error": err.Error()})
+	} else {
+		sharedStore, ssErr := session.NewUnifiedStore(sharedDir)
+		if ssErr != nil {
+			logger.ErrorCF("agent", "Failed to init shared session store; new sessions will fall back to per-agent store",
+				map[string]any{"dir": sharedDir, "error": ssErr.Error()})
+		} else {
+			al.sharedSessionStore = sharedStore
+		}
+	}
 
 	// SEC-15: Initialize structured audit logging (optional) and policy
 	// evaluation (always on). Audit directory is ~/.omnipus/system/ (sibling of
@@ -611,31 +632,42 @@ func registerSharedTools(
 			agent.Tools.Register(messageTool)
 		}
 
-		// Handoff tools — always registered (ScopeGeneral). The setActive
-		// callback writes to al.sessionActiveAgent which is safe from any goroutine.
-		setActiveAgent := func(sessionKey, agentID string) {
-			if agentID == "" {
-				al.sessionActiveAgent.Delete(sessionKey)
-			} else {
-				al.sessionActiveAgent.Store(sessionKey, agentID)
-			}
-			// Also store by chatID (from tool context) for WebSocket frame lookup.
-			// For webchat, chatID is "webchat:xxx" — different from sessionKey.
-		}
+		// Handoff tools — always registered (ScopeGeneral).
+		// NOTE: al.GetSessionStore() is provided by the session-store refactor
+		// subagent (joined-session-store-spec.md). Until that lands, GetSessionStore
+		// returns nil and the tools fall back to no-op store behaviour at runtime.
+		// The compile error here is expected until both subagents are integrated.
 		getRegistryReader := func() tools.AgentRegistryReader {
 			return al.GetRegistry()
 		}
-		agent.Tools.Register(tools.NewHandoffTool(getRegistryReader, setActiveAgent,
-			func(chatID, agentID, agentName string) {
-				// Store chatID → agentID so the WebSocket handler can look it up.
-				if agentID == "" {
-					al.sessionActiveAgent.Delete("chat:" + chatID)
-				} else {
-					al.sessionActiveAgent.Store("chat:"+chatID, agentID)
-				}
-			},
-		))
-		agent.Tools.Register(tools.NewReturnToDefaultTool(setActiveAgent))
+		onHandoffFrontend := func(chatID, newAgentID, agentName string) {
+			// Store chatID → agentID so the WebSocket handler can look it up.
+			if newAgentID == "" {
+				al.sessionActiveAgent.Delete("chat:" + chatID)
+			} else {
+				al.sessionActiveAgent.Store("chat:"+newAgentID, newAgentID)
+				al.sessionActiveAgent.Store("chat:"+chatID, newAgentID)
+			}
+		}
+		getContextWindow := func(targetAgentID string) int {
+			currentCfg := al.GetConfig()
+			if currentCfg.Agents.Defaults.ContextWindow > 0 {
+				return currentCfg.Agents.Defaults.ContextWindow
+			}
+			return 8192
+		}
+		getDefaultAgent := func() string {
+			currentCfg := al.GetConfig()
+			if currentCfg.Agents.Defaults.DefaultAgentID != "" {
+				return currentCfg.Agents.Defaults.DefaultAgentID
+			}
+			return DefaultAgentID
+		}
+		// sharedStore is nil until GetSessionStore() is added by the session-store
+		// refactor subagent. The tools handle a nil store by skipping transcript ops.
+		sharedStore := al.GetSessionStore()
+		agent.Tools.Register(tools.NewHandoffTool(getRegistryReader, sharedStore, getContextWindow, onHandoffFrontend))
+		agent.Tools.Register(tools.NewReturnToDefaultTool(sharedStore, getDefaultAgent, onHandoffFrontend))
 
 		// Send file tool (outbound media via MediaStore — store injected later by SetMediaStore)
 		if cfg.Tools.IsToolEnabled("send_file") {
@@ -1713,8 +1745,16 @@ func GetTaskExecutor(al *AgentLoop) *TaskExecutor {
 	return al.taskExecutor
 }
 
+// GetSessionStore returns the shared UnifiedStore for new sessions. May be nil
+// in tests or when the shared sessions directory could not be initialized.
+func (al *AgentLoop) GetSessionStore() *session.UnifiedStore {
+	return al.sharedSessionStore
+}
+
 // GetAgentStore returns the UnifiedStore for a given agent, or nil if not found
 // or if the agent's session store is not a UnifiedStore.
+// Use GetSessionStore() for creating new sessions; GetAgentStore is kept for
+// legacy per-agent session access.
 func (al *AgentLoop) GetAgentStore(agentID string) *session.UnifiedStore {
 	agent, ok := al.GetRegistry().GetAgent(agentID)
 	if !ok {
@@ -1729,17 +1769,29 @@ func (al *AgentLoop) GetAgentStore(agentID string) *session.UnifiedStore {
 	return us
 }
 
-// ResolveSessionStore finds which agent's UnifiedStore owns the given sessionID.
-// Checks the main agent first (most common case), then falls back to scanning all agents.
-// Returns nil if the session cannot be found across any agent.
+// getLegacyAgentStore returns the per-agent UnifiedStore for legacy session
+// access. It is an internal alias for GetAgentStore used by ListAllSessions.
+func (al *AgentLoop) getLegacyAgentStore(agentID string) *session.UnifiedStore {
+	return al.GetAgentStore(agentID)
+}
+
+// ResolveSessionStore finds which UnifiedStore owns the given sessionID.
+// Checks the shared store first, then the main agent's legacy store, then
+// all other per-agent stores. Returns nil if the session cannot be found.
 func (al *AgentLoop) ResolveSessionStore(sessionID string) *session.UnifiedStore {
-	// Fast path: main agent owns most sessions.
+	// Fast path: shared store owns new sessions.
+	if al.sharedSessionStore != nil {
+		if _, err := al.sharedSessionStore.GetMeta(sessionID); err == nil {
+			return al.sharedSessionStore
+		}
+	}
+	// Legacy fast path: main agent owns most old sessions.
 	if store := al.GetAgentStore(DefaultAgentID); store != nil {
 		if _, err := store.GetMeta(sessionID); err == nil {
 			return store
 		}
 	}
-	// Slow path: scan all agents.
+	// Slow path: scan all per-agent stores.
 	for _, id := range al.GetRegistry().ListAgentIDs() {
 		if id == DefaultAgentID {
 			continue
@@ -1755,15 +1807,34 @@ func (al *AgentLoop) ResolveSessionStore(sessionID string) *session.UnifiedStore
 	return nil
 }
 
-// ListAllSessions returns sessions from all agent stores merged and sorted by UpdatedAt descending.
-// The second return value collects per-agent errors so callers can distinguish
-// "no sessions" from "all agents failed". Callers should surface partial errors
+// ListAllSessions returns sessions from the shared store merged with legacy
+// per-agent stores, deduplicated and sorted by UpdatedAt descending.
+// The second return value collects per-store errors so callers can distinguish
+// "no sessions" from "all stores failed". Callers should surface partial errors
 // as warnings rather than treating the entire response as a failure.
 func (al *AgentLoop) ListAllSessions() ([]*session.UnifiedMeta, []error) {
 	var all []*session.UnifiedMeta
 	var errs []error
+
+	// 1. Shared store (new sessions).
+	sharedIDs := make(map[string]bool)
+	if al.sharedSessionStore != nil {
+		shared, err := al.sharedSessionStore.ListSessions()
+		if err != nil {
+			logger.WarnCF("agent", "ListAllSessions: could not list shared sessions",
+				map[string]any{"error": err.Error()})
+			errs = append(errs, fmt.Errorf("shared: %w", err))
+		} else {
+			for _, s := range shared {
+				sharedIDs[s.ID] = true
+				all = append(all, s)
+			}
+		}
+	}
+
+	// 2. Legacy per-agent stores — deduplicate against shared.
 	for _, id := range al.GetRegistry().ListAgentIDs() {
-		store := al.GetAgentStore(id)
+		store := al.getLegacyAgentStore(id)
 		if store == nil {
 			continue
 		}
@@ -1774,8 +1845,13 @@ func (al *AgentLoop) ListAllSessions() ([]*session.UnifiedMeta, []error) {
 			errs = append(errs, fmt.Errorf("agent=%s: %w", id, err))
 			continue
 		}
-		all = append(all, sessions...)
+		for _, s := range sessions {
+			if !sharedIDs[s.ID] {
+				all = append(all, s)
+			}
+		}
 	}
+
 	sort.Slice(all, func(i, j int) bool {
 		return all[i].UpdatedAt.After(all[j].UpdatedAt)
 	})

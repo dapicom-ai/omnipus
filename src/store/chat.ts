@@ -457,6 +457,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           const sessionStore = useSessionStore.getState()
           sessionStore.setActiveSession(sessionStore.activeSessionId, newAgentId)
         }
+        // Invalidate sessions so the panel refreshes agent_ids / active_agent_id
+        queryClient.invalidateQueries({ queryKey: ['sessions'] })
         break
       }
 

@@ -399,10 +399,21 @@ func (a *restAPI) createSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "invalid agent_id")
 		return
 	}
-	store := a.agentLoop.GetAgentStore(agentID)
-	if store == nil {
+	// Validate the agent exists before creating the session.
+	if agentStore := a.agentLoop.GetAgentStore(agentID); agentStore == nil {
 		jsonErr(w, http.StatusBadRequest, fmt.Sprintf("agent %q not found", agentID))
 		return
+	}
+
+	// Use the shared session store for new sessions (joined session model).
+	// Fall back to the per-agent store if the shared store is unavailable.
+	store := a.agentLoop.GetSessionStore()
+	if store == nil {
+		store = a.agentLoop.GetAgentStore(agentID)
+		if store == nil {
+			jsonErr(w, http.StatusInternalServerError, "session store unavailable")
+			return
+		}
 	}
 
 	var sessionType session.UnifiedSessionType
@@ -415,7 +426,7 @@ func (a *restAPI) createSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		sessionType = session.SessionTypeChat
 	}
 
-	meta, err := store.NewSession(sessionType, "webchat")
+	meta, err := store.NewSession(sessionType, "webchat", agentID)
 	if err != nil {
 		slog.Error("rest: create session", "error", err)
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not create session: %v", err))

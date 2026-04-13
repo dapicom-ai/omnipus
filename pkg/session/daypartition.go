@@ -81,6 +81,22 @@ type SessionMeta struct {
 	Partitions []string      `json:"partitions"`
 
 	LastCompactionSummary string `json:"last_compaction_summary,omitempty"`
+
+	// v2 multi-agent fields (joined session model)
+	AgentIDs            []string          `json:"agent_ids,omitempty"`
+	ActiveAgentID       string            `json:"active_agent_id,omitempty"`
+	CompactionSummaries map[string]string `json:"compaction_summaries,omitempty"` // per-agent compaction
+}
+
+// PostLoad backfills v2 multi-agent fields from the legacy AgentID field.
+// Call after every JSON unmarshal of SessionMeta.
+func (m *SessionMeta) PostLoad() {
+	if len(m.AgentIDs) == 0 && m.AgentID != "" {
+		m.AgentIDs = []string{m.AgentID}
+	}
+	if m.ActiveAgentID == "" && m.AgentID != "" {
+		m.ActiveAgentID = m.AgentID
+	}
 }
 
 // SessionStats aggregates usage across all partitions.
@@ -106,6 +122,7 @@ type TranscriptEntry struct {
 	Status      string       `json:"status,omitempty"` // "ok" | "error" | "interrupted"
 	Attachments []Attachment `json:"attachments,omitempty"`
 	ToolCalls   []ToolCall   `json:"tool_calls,omitempty"`
+	AgentID     string       `json:"agent_id"` // which agent produced this entry (FR-002)
 
 	// For compaction entries.
 	MessagesCompacted int `json:"messages_compacted,omitempty"`
@@ -309,6 +326,7 @@ func readMeta(sessionDir string) (*SessionMeta, error) {
 	if err := json.Unmarshal(data, &meta); err != nil {
 		return nil, fmt.Errorf("session: parse meta.json in %q: %w", sessionDir, err)
 	}
+	meta.PostLoad()
 	return &meta, nil
 }
 
