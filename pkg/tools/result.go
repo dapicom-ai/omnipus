@@ -73,15 +73,13 @@ func (tr *ToolResult) ContentForLLM() string {
 	}
 	if tr.ResponseHandled {
 		if content == "" {
-			return `{"status":"success","message":"` + handledToolLLMNote + `"}`
+			return handledToolLLMNote
 		}
-		// Don't append plain text after JSON content — it breaks providers
-		// that parse tool results as JSON (Anthropic, Azure).
-		if !strings.Contains(content, handledToolLLMNote) && !strings.HasPrefix(strings.TrimSpace(content), "{") {
+		if !strings.Contains(content, handledToolLLMNote) {
 			content += "\n" + handledToolLLMNote
 		}
 	}
-	if len(tr.ArtifactTags) > 0 && !strings.HasPrefix(strings.TrimSpace(content), "{") {
+	if len(tr.ArtifactTags) > 0 {
 		artifactNote := "Local artifact paths: " + strings.Join(tr.ArtifactTags, " ") + "\n" + artifactPathsLLMNote
 		if content == "" {
 			content = artifactNote

@@ -227,9 +227,9 @@ func (t *ScreenshotTool) Execute(ctx context.Context, args map[string]any) *tool
 		return tools.ErrorResult(fmt.Sprintf("browser.screenshot: failed to save: %s", err))
 	}
 
-	// Return the screenshot as a data: URL. normalizeToolResult detects it,
-	// stores via MediaStore, replaces ForLLM with a JSON placeholder, and
-	// sets ResponseHandled=true for media delivery.
+	// Return the screenshot as a data: URL. normalizeToolResult will detect it,
+	// store the image via MediaStore, add media refs, and replace ForLLM with a
+	// placeholder — which triggers ResponseHandled=true for media delivery.
 	dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf)
 	return &tools.ToolResult{
 		ForLLM:       dataURL,
