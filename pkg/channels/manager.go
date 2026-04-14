@@ -98,7 +98,7 @@ type Manager struct {
 	secrets        credentials.SecretBundle // resolved plaintext secrets; never written to env
 	mediaStore     media.MediaStore
 	dispatchTask   *asyncTask
-	dispatchCtx    context.Context    // stored so RegisterChannel can spin up workers after Start
+	dispatchCtx    context.Context // stored so RegisterChannel can spin up workers after Start
 	mux            *dynamicServeMux
 	httpServer     *http.Server
 	mu             sync.RWMutex

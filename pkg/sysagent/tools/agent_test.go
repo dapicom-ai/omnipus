@@ -828,7 +828,17 @@ func TestConcurrentRESTAndSysagentConfigWrite(t *testing.T) {
 			<-done
 			return
 		default:
-			createTool.Execute(ctx, map[string]any{"name": "concurrent-bot", "description": "test", "soul": "test", "model": "test/model", "color": "#22C55E", "icon": "robot"})
+			createTool.Execute(
+				ctx,
+				map[string]any{
+					"name":        "concurrent-bot",
+					"description": "test",
+					"soul":        "test",
+					"model":       "test/model",
+					"color":       "#22C55E",
+					"icon":        "robot",
+				},
+			)
 		}
 	}
 }

@@ -329,7 +329,10 @@ func TestBuildSystemPrompt_CoreAgentUsesCompiledPrompt(t *testing.T) {
 
 	// Must contain the compiled prompt content for Jim
 	if !strings.Contains(prompt, "You are Jim") {
-		t.Errorf("expected compiled prompt to contain 'You are Jim', got first 500 chars:\n%s", prompt[:min(len(prompt), 500)])
+		t.Errorf(
+			"expected compiled prompt to contain 'You are Jim', got first 500 chars:\n%s",
+			prompt[:min(len(prompt), 500)],
+		)
 	}
 
 	// Must NOT contain the default identity fallback

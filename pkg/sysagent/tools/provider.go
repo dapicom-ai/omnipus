@@ -189,7 +189,7 @@ func (t *ProviderTestTool) Execute(_ context.Context, args map[string]any) *tool
 // Used by Ava (Agent Builder) to help users select a model for new agents.
 type ModelsListTool struct{ deps *Deps }
 
-func NewModelsListTool(d *Deps) *ModelsListTool { return &ModelsListTool{deps: d} }
+func NewModelsListTool(d *Deps) *ModelsListTool  { return &ModelsListTool{deps: d} }
 func (t *ModelsListTool) Name() string           { return "system.models.list" }
 func (t *ModelsListTool) Scope() tools.ToolScope { return tools.ScopeSystem }
 func (t *ModelsListTool) Description() string {
@@ -201,7 +201,10 @@ func (t *ModelsListTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"provider": map[string]any{"type": "string", "description": "Filter by provider name (e.g. 'openrouter'). Omit to show all."},
+			"provider": map[string]any{
+				"type":        "string",
+				"description": "Filter by provider name (e.g. 'openrouter'). Omit to show all.",
+			},
 		},
 	}
 }

@@ -126,22 +126,65 @@ func (t *AgentCreateTool) Parameters() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			// Mandatory
-			"name":        map[string]any{"type": "string", "description": "Display name for the new agent"},
-			"description": map[string]any{"type": "string", "description": "One-line description of the agent's purpose"},
-			"soul":        map[string]any{"type": "string", "description": "The agent's personality, role, and behavioral instructions (written to SOUL.md)"},
-			"model":       map[string]any{"type": "string", "description": "Primary LLM model slug (e.g. 'z-ai/glm-5-turbo')"},
-			"color":       map[string]any{"type": "string", "description": "Hex avatar color (e.g. '#22C55E')"},
-			"icon":        map[string]any{"type": "string", "description": "Phosphor icon name (e.g. 'robot', 'pencil', 'book')"},
+			"name": map[string]any{"type": "string", "description": "Display name for the new agent"},
+			"description": map[string]any{
+				"type":        "string",
+				"description": "One-line description of the agent's purpose",
+			},
+			"soul": map[string]any{
+				"type":        "string",
+				"description": "The agent's personality, role, and behavioral instructions (written to SOUL.md)",
+			},
+			"model": map[string]any{
+				"type":        "string",
+				"description": "Primary LLM model slug (e.g. 'z-ai/glm-5-turbo')",
+			},
+			"color": map[string]any{"type": "string", "description": "Hex avatar color (e.g. '#22C55E')"},
+			"icon": map[string]any{
+				"type":        "string",
+				"description": "Phosphor icon name (e.g. 'robot', 'pencil', 'book')",
+			},
 			// Optional
-			"provider":              map[string]any{"type": "string", "description": "Provider name for the primary model (e.g. 'openrouter')"},
-			"model_fallbacks":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Fallback model slugs tried in order if primary fails"},
-			"heartbeat":             map[string]any{"type": "string", "description": "Proactive scheduling instructions (written to HEARTBEAT.md)"},
-			"can_delegate_to":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Agent IDs this agent can delegate tasks to. Use ['*'] for all."},
-			"tools_mode":            map[string]any{"type": "string", "enum": []string{"inherit", "explicit"}, "description": "Tool visibility: 'inherit' = all scope-appropriate tools, 'explicit' = only named tools"},
-			"tools_visible":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Tool names to enable when tools_mode='explicit'"},
-			"max_tool_iterations":   map[string]any{"type": "integer", "description": "Max tool calls per turn (0 = system default)"},
-			"timeout_seconds":       map[string]any{"type": "integer", "description": "Per-turn timeout in seconds (0 = disabled)"},
-			"restrict_to_workspace": map[string]any{"type": "boolean", "description": "Sandbox file access to agent's workspace only"},
+			"provider": map[string]any{
+				"type":        "string",
+				"description": "Provider name for the primary model (e.g. 'openrouter')",
+			},
+			"model_fallbacks": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string"},
+				"description": "Fallback model slugs tried in order if primary fails",
+			},
+			"heartbeat": map[string]any{
+				"type":        "string",
+				"description": "Proactive scheduling instructions (written to HEARTBEAT.md)",
+			},
+			"can_delegate_to": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string"},
+				"description": "Agent IDs this agent can delegate tasks to. Use ['*'] for all.",
+			},
+			"tools_mode": map[string]any{
+				"type":        "string",
+				"enum":        []string{"inherit", "explicit"},
+				"description": "Tool visibility: 'inherit' = all scope-appropriate tools, 'explicit' = only named tools",
+			},
+			"tools_visible": map[string]any{
+				"type":        "array",
+				"items":       map[string]any{"type": "string"},
+				"description": "Tool names to enable when tools_mode='explicit'",
+			},
+			"max_tool_iterations": map[string]any{
+				"type":        "integer",
+				"description": "Max tool calls per turn (0 = system default)",
+			},
+			"timeout_seconds": map[string]any{
+				"type":        "integer",
+				"description": "Per-turn timeout in seconds (0 = disabled)",
+			},
+			"restrict_to_workspace": map[string]any{
+				"type":        "boolean",
+				"description": "Sandbox file access to agent's workspace only",
+			},
 		},
 		"required": []string{"name", "description", "soul", "model", "color", "icon"},
 	}
@@ -155,11 +198,19 @@ func (t *AgentCreateTool) Execute(_ context.Context, args map[string]any) *tools
 	}
 	description, _ := args["description"].(string)
 	if strings.TrimSpace(description) == "" {
-		return tools.ErrorResult(errorJSON("INVALID_INPUT", "description is required", "Provide a one-line description"))
+		return tools.ErrorResult(
+			errorJSON("INVALID_INPUT", "description is required", "Provide a one-line description"),
+		)
 	}
 	soul, _ := args["soul"].(string)
 	if strings.TrimSpace(soul) == "" {
-		return tools.ErrorResult(errorJSON("INVALID_INPUT", "soul is required", "Provide the agent's personality and behavioral instructions"))
+		return tools.ErrorResult(
+			errorJSON(
+				"INVALID_INPUT",
+				"soul is required",
+				"Provide the agent's personality and behavioral instructions",
+			),
+		)
 	}
 	model, _ := args["model"].(string)
 	if strings.TrimSpace(model) == "" {
@@ -310,21 +361,24 @@ func (t *AgentUpdateTool) Parameters() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"id":                    map[string]any{"type": "string", "description": "Agent ID to update"},
-			"name":                  map[string]any{"type": "string"},
-			"description":          map[string]any{"type": "string"},
-			"soul":                  map[string]any{"type": "string", "description": "New personality/instructions (overwrites SOUL.md)"},
-			"model":                map[string]any{"type": "string", "description": "New primary model slug"},
-			"model_fallbacks":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-			"provider":             map[string]any{"type": "string"},
-			"color":                map[string]any{"type": "string"},
-			"icon":                 map[string]any{"type": "string"},
-			"heartbeat":            map[string]any{"type": "string", "description": "New HEARTBEAT.md content"},
-			"can_delegate_to":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-			"tools_mode":           map[string]any{"type": "string", "enum": []string{"inherit", "explicit"}},
-			"tools_visible":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-			"max_tool_iterations":  map[string]any{"type": "integer"},
-			"timeout_seconds":      map[string]any{"type": "integer"},
+			"id":          map[string]any{"type": "string", "description": "Agent ID to update"},
+			"name":        map[string]any{"type": "string"},
+			"description": map[string]any{"type": "string"},
+			"soul": map[string]any{
+				"type":        "string",
+				"description": "New personality/instructions (overwrites SOUL.md)",
+			},
+			"model":                 map[string]any{"type": "string", "description": "New primary model slug"},
+			"model_fallbacks":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"provider":              map[string]any{"type": "string"},
+			"color":                 map[string]any{"type": "string"},
+			"icon":                  map[string]any{"type": "string"},
+			"heartbeat":             map[string]any{"type": "string", "description": "New HEARTBEAT.md content"},
+			"can_delegate_to":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"tools_mode":            map[string]any{"type": "string", "enum": []string{"inherit", "explicit"}},
+			"tools_visible":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			"max_tool_iterations":   map[string]any{"type": "integer"},
+			"timeout_seconds":       map[string]any{"type": "integer"},
 			"restrict_to_workspace": map[string]any{"type": "boolean"},
 		},
 		"required": []string{"id"},
@@ -607,9 +661,9 @@ func (t *AgentListTool) Execute(_ context.Context, args map[string]any) *tools.T
 			model = a.Model.Primary
 		}
 		result = append(result, agentSummary{
-			ID:     a.ID,
-			Name:   a.Name,
-			Type:   string(a.ResolveType(func(id string) bool {
+			ID:   a.ID,
+			Name: a.Name,
+			Type: string(a.ResolveType(func(id string) bool {
 				// Check if agent has Type explicitly set to "core" in config.
 				// This avoids importing coreagent (would create import cycle).
 				return a.Type == config.AgentTypeCore

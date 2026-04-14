@@ -1574,7 +1574,11 @@ func (a *restAPI) updateConfig(w http.ResponseWriter, r *http.Request) {
 	blocked := map[string]bool{"sandbox": true, "credentials": true, "security": true}
 	for k := range updates {
 		if blocked[k] {
-			jsonErr(w, http.StatusForbidden, fmt.Sprintf("key %q cannot be modified via config endpoint — use the dedicated security endpoints", k))
+			jsonErr(
+				w,
+				http.StatusForbidden,
+				fmt.Sprintf("key %q cannot be modified via config endpoint — use the dedicated security endpoints", k),
+			)
 			return
 		}
 	}
@@ -3119,22 +3123,6 @@ func (a *restAPI) updateAgentTools(w http.ResponseWriter, r *http.Request, agent
 	// Tool policy changes are config-only — no reload needed. The policy is
 	// resolved at request time from the live config, not baked into agent instances.
 	a.getAgentTools(w, agentID)
-}
-
-// toolsCfgToVisibility converts a config.AgentToolsCfg to the tools package's
-// ToolVisibilityCfg for use with FilterToolsByVisibility (legacy).
-func toolsCfgToVisibility(cfg *config.AgentToolsCfg) *tools.ToolVisibilityCfg {
-	if cfg == nil {
-		return &tools.ToolVisibilityCfg{Mode: "inherit"}
-	}
-	mode := string(cfg.Builtin.Mode)
-	if mode == "" {
-		mode = "inherit"
-	}
-	return &tools.ToolVisibilityCfg{
-		Mode:    mode,
-		Visible: cfg.Builtin.Visible,
-	}
 }
 
 // toolsCfgToPolicy converts a config.AgentToolsCfg to ToolPolicyCfg.

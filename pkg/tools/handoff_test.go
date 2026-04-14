@@ -200,8 +200,8 @@ func TestSplitByTokenBudget_Empty(t *testing.T) {
 
 func TestSplitByTokenBudget_AllFit(t *testing.T) {
 	entries := []session.TranscriptEntry{
-		{Content: "hello"},    // ~3 tokens
-		{Content: "world"},    // ~3 tokens
+		{Content: "hello"}, // ~3 tokens
+		{Content: "world"}, // ~3 tokens
 	}
 	recent, older := splitByTokenBudget(entries, 1000)
 	if len(recent) != 2 {

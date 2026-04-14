@@ -291,8 +291,8 @@ type ToolPolicyCfg struct {
 
 	// GlobalPolicies holds the operator-level global tool policy overrides.
 	// Applied before agent-level policies; deny always wins (deny > ask > allow).
-	GlobalPolicies        map[string]string // per-tool global overrides
-	GlobalDefaultPolicy   string            // fallback global policy when tool not in GlobalPolicies
+	GlobalPolicies      map[string]string // per-tool global overrides
+	GlobalDefaultPolicy string            // fallback global policy when tool not in GlobalPolicies
 }
 
 // FilterToolsByPolicy returns the subset of tools that pass the scope gate

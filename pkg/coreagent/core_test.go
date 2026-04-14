@@ -59,12 +59,14 @@ func TestCoreAgentIDs(t *testing.T) {
 		id   coreagent.CoreAgentID
 		name string
 	}{
-		// Dataset: core agent roster (issue #45)
-		{coreagent.IDJim, "Jim"},
-		{coreagent.IDAva, "Ava"},
-		{coreagent.IDMia, "Mia"},
-		{coreagent.IDRay, "Ray"},
-		{coreagent.IDMax, "Max"},
+		// Dataset: core agent roster (issue #45). Names are the full display
+		// strings seeded into config (e.g. "Jim — General Purpose") so users see
+		// the role alongside the name in the roster card.
+		{coreagent.IDJim, "Jim — General Purpose"},
+		{coreagent.IDAva, "Ava — Agent Builder"},
+		{coreagent.IDMia, "Mia — Omnipus Guide"},
+		{coreagent.IDRay, "Ray — Researcher"},
+		{coreagent.IDMax, "Max — Automator"},
 	}
 
 	for _, tc := range tests {

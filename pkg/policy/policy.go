@@ -140,16 +140,16 @@ const (
 
 // SecurityConfig is the primary security configuration type.
 type SecurityConfig struct {
-	DefaultPolicy    DefaultPolicy          `json:"default_policy,omitempty"`
-	Agents           map[string]AgentPolicy `json:"agents,omitempty"`
-	SSRF             SSRFPolicy             `json:"ssrf,omitempty"`
-	Audit            AuditPolicy            `json:"audit,omitempty"`
-	Policy           PolicySection          `json:"policy,omitempty"`
-	RateLimits       RateLimitsPolicy       `json:"rate_limits,omitempty"`
-	SkillTrust       SkillTrustPolicy       `json:"skill_trust,omitempty"`
-	PromptGuard      PromptGuardConfig      `json:"prompt_guard,omitempty"`
-	ToolPolicies     map[string]ToolPolicy  `json:"tool_policies,omitempty"`
-	DefaultToolPolicy ToolPolicy            `json:"default_tool_policy,omitempty"`
+	DefaultPolicy     DefaultPolicy          `json:"default_policy,omitempty"`
+	Agents            map[string]AgentPolicy `json:"agents,omitempty"`
+	SSRF              SSRFPolicy             `json:"ssrf,omitempty"`
+	Audit             AuditPolicy            `json:"audit,omitempty"`
+	Policy            PolicySection          `json:"policy,omitempty"`
+	RateLimits        RateLimitsPolicy       `json:"rate_limits,omitempty"`
+	SkillTrust        SkillTrustPolicy       `json:"skill_trust,omitempty"`
+	PromptGuard       PromptGuardConfig      `json:"prompt_guard,omitempty"`
+	ToolPolicies      map[string]ToolPolicy  `json:"tool_policies,omitempty"`
+	DefaultToolPolicy ToolPolicy             `json:"default_tool_policy,omitempty"`
 }
 
 // ResolveToolPolicy returns the effective global policy for a tool name.

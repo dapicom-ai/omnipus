@@ -583,7 +583,7 @@ type AgentDefaults struct {
 	SplitOnMarker             bool               `json:"split_on_marker"                 env:"OMNIPUS_AGENTS_DEFAULTS_SPLIT_ON_MARKER"` // split messages on <|[SPLIT]|> marker
 	TimeoutSeconds            int                `json:"timeout_seconds"                 env:"OMNIPUS_AGENTS_DEFAULTS_TIMEOUT_SECONDS"` // per-turn timeout in seconds; 0 = disabled
 	CanDelegateTo             []string           `json:"can_delegate_to,omitempty"`
-	DefaultAgentID            string             `json:"default_agent_id,omitempty"          env:"OMNIPUS_DEFAULT_AGENT_ID"`
+	DefaultAgentID            string             `json:"default_agent_id,omitempty"      env:"OMNIPUS_DEFAULT_AGENT_ID"`
 }
 
 const DefaultMaxMediaSize = 20 * 1024 * 1024 // 20 MB

@@ -149,7 +149,11 @@ func (us *UnifiedStore) migrateLegacy() {
 // NewSession creates a new session directory with meta.json and empty files.
 // creatingAgentID is the agent that owns this session initially; it is stored
 // as AgentID (legacy compat), AgentIDs[0], and ActiveAgentID.
-func (us *UnifiedStore) NewSession(sessionType UnifiedSessionType, channel string, creatingAgentID string) (*UnifiedMeta, error) {
+func (us *UnifiedStore) NewSession(
+	sessionType UnifiedSessionType,
+	channel string,
+	creatingAgentID string,
+) (*UnifiedMeta, error) {
 	us.mu.Lock()
 	defer us.mu.Unlock()
 

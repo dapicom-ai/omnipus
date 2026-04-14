@@ -197,7 +197,10 @@ type ScreenshotTool struct {
 
 func (t *ScreenshotTool) Name() string           { return "browser.screenshot" }
 func (t *ScreenshotTool) Scope() tools.ToolScope { return tools.ScopeCore }
-func (t *ScreenshotTool) Description() string    { return "Capture a screenshot of the current page as a JPEG image." }
+func (t *ScreenshotTool) Description() string {
+	return "Capture a screenshot of the current page as a JPEG image."
+}
+
 func (t *ScreenshotTool) Parameters() map[string]any {
 	return map[string]any{
 		"type":       "object",
@@ -221,19 +224,22 @@ func (t *ScreenshotTool) Execute(ctx context.Context, args map[string]any) *tool
 	var buf []byte
 	err = chromedp.Run(tabCtx,
 		chromedp.ActionFunc(func(ctx context.Context) error {
+			// Best-effort readyState poll. Any error during the poll is
+			// non-fatal — we fall through and let FullScreenshot try anyway.
 			for i := 0; i < 30; i++ {
 				var state string
-				if evalErr := chromedp.Evaluate(`document.readyState`, &state).Do(ctx); evalErr != nil {
-					return nil
+				evalErr := chromedp.Evaluate(`document.readyState`, &state).Do(ctx)
+				if evalErr != nil {
+					break
 				}
 				if state == "complete" {
 					// Extra settle time for JS frameworks (React hydration, etc.)
-					chromedp.Sleep(500 * time.Millisecond).Do(ctx)
-					return nil
+					_ = chromedp.Sleep(500 * time.Millisecond).Do(ctx)
+					break
 				}
-				chromedp.Sleep(100 * time.Millisecond).Do(ctx)
+				_ = chromedp.Sleep(100 * time.Millisecond).Do(ctx)
 			}
-			return nil
+			return nil //nolint:nilerr // poll errors are non-fatal by design
 		}),
 		chromedp.FullScreenshot(&buf, 90),
 	)

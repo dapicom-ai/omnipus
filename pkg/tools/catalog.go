@@ -52,7 +52,12 @@ var builtinCatalog = []CatalogEntry{
 	{"exec", "Execute shell commands", ScopeCore, CategoryCode},
 
 	// ── Web & Search ─────────────────────────────────────────────────────
-	{"web_search", "Search the web using configured search engines (Brave, Tavily, DuckDuckGo, etc.)", ScopeGeneral, CategoryWeb},
+	{
+		"web_search",
+		"Search the web using configured search engines (Brave, Tavily, DuckDuckGo, etc.)",
+		ScopeGeneral,
+		CategoryWeb,
+	},
 	{"web_fetch", "Fetch and read web page content", ScopeGeneral, CategoryWeb},
 
 	// ── Browser Automation ───────────────────────────────────────────────
@@ -95,7 +100,12 @@ var builtinCatalog = []CatalogEntry{
 	{"spi", "Communicate with SPI devices (Linux only)", ScopeCore, CategoryHardware},
 
 	// ── System Tools (used by core agents, not assignable to custom agents) ──
-	{"system.agent.create", "Create a new custom agent with personality and configuration", ScopeSystem, CategorySystem},
+	{
+		"system.agent.create",
+		"Create a new custom agent with personality and configuration",
+		ScopeSystem,
+		CategorySystem,
+	},
 	{"system.agent.update", "Update an existing agent's configuration", ScopeSystem, CategorySystem},
 	{"system.agent.delete", "Delete an agent and all its data", ScopeSystem, CategorySystem},
 	{"system.agent.list", "List all agents with status and model", ScopeSystem, CategorySystem},
@@ -164,10 +174,6 @@ func CatalogAsMapSlice() []map[string]any {
 // System tools are excluded since they aren't assignable to custom agents.
 func CatalogMarkdown() string {
 	// Group by category, preserving insertion order.
-	type catGroup struct {
-		label   string
-		entries []CatalogEntry
-	}
 	order := []ToolCategory{
 		CategoryFile, CategoryCode, CategoryWeb, CategoryBrowser,
 		CategoryCommunication, CategoryTask, CategoryAutomation,

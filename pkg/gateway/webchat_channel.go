@@ -115,7 +115,11 @@ func (c *webchatChannel) SendMedia(_ context.Context, msg bus.OutboundMediaMessa
 		})
 	}
 	if len(parts) == 0 {
-		return fmt.Errorf("webchat: all %d media parts had invalid refs — nothing sent for chat %s", len(msg.Parts), msg.ChatID)
+		return fmt.Errorf(
+			"webchat: all %d media parts had invalid refs — nothing sent for chat %s",
+			len(msg.Parts),
+			msg.ChatID,
+		)
 	}
 
 	slog.Debug("webchat: sending media frame", "chat_id", msg.ChatID, "parts", len(parts))

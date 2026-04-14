@@ -120,7 +120,6 @@ type AgentLoop struct {
 	// Ava agent CRUD deps — stored so WireAvaAgentTools can re-run on hot reload.
 	avaDeps *systools.Deps
 
-
 	// Wave 4: Per-agent rate limiting and global daily cost cap (SEC-26).
 	// rateLimiter manages sliding-window counters; costTracker persists the
 	// daily cost accumulator across restarts. Both are always non-nil after
@@ -1630,7 +1629,11 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 	// Re-wire Ava's agent CRUD tools on the new registry.
 	if al.avaDeps != nil {
 		if err := al.WireAvaAgentTools(al.avaDeps, registry); err != nil {
-			logger.WarnCF("agent", "hot-reload: failed to re-wire Ava agent tools", map[string]any{"error": err.Error()})
+			logger.WarnCF(
+				"agent",
+				"hot-reload: failed to re-wire Ava agent tools",
+				map[string]any{"error": err.Error()},
+			)
 		}
 	}
 
@@ -5328,7 +5331,9 @@ func (al *AgentLoop) WireAvaAgentTools(deps *systools.Deps, reg ...*AgentRegistr
 		sb.WriteString("## System Defaults\n")
 		sb.WriteString(fmt.Sprintf("- Default model: `%s`\n", cfg.Agents.Defaults.ModelName))
 		if len(cfg.Agents.Defaults.ModelFallbacks) > 0 {
-			sb.WriteString(fmt.Sprintf("- Default fallbacks: %s\n", strings.Join(cfg.Agents.Defaults.ModelFallbacks, ", ")))
+			sb.WriteString(
+				fmt.Sprintf("- Default fallbacks: %s\n", strings.Join(cfg.Agents.Defaults.ModelFallbacks, ", ")),
+			)
 		}
 		sb.WriteString("\n")
 

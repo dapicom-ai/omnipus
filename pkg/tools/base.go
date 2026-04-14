@@ -40,11 +40,11 @@ type Tool interface {
 type toolCtxKey struct{ name string }
 
 var (
-	ctxKeyChannel              = &toolCtxKey{"channel"}
-	ctxKeyChatID               = &toolCtxKey{"chatID"}
-	ctxKeyAgentID              = &toolCtxKey{"agentID"}
-	ctxKeySessionKey           = &toolCtxKey{"sessionKey"}
-	ctxKeyTranscriptSessionID  = &toolCtxKey{"transcriptSessionID"}
+	ctxKeyChannel             = &toolCtxKey{"channel"}
+	ctxKeyChatID              = &toolCtxKey{"chatID"}
+	ctxKeyAgentID             = &toolCtxKey{"agentID"}
+	ctxKeySessionKey          = &toolCtxKey{"sessionKey"}
+	ctxKeyTranscriptSessionID = &toolCtxKey{"transcriptSessionID"}
 )
 
 // WithToolContext returns a child context carrying channel and chatID.

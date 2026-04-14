@@ -43,19 +43,19 @@ import (
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/whatsapp"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/whatsapp_native"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/coreagent"
 	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/cron"
 	"github.com/dapicom-ai/omnipus/pkg/datamodel"
 	"github.com/dapicom-ai/omnipus/pkg/devices"
 	"github.com/dapicom-ai/omnipus/pkg/health"
 	"github.com/dapicom-ai/omnipus/pkg/heartbeat"
-	"github.com/dapicom-ai/omnipus/pkg/coreagent"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
-	systools "github.com/dapicom-ai/omnipus/pkg/sysagent/tools"
 	"github.com/dapicom-ai/omnipus/pkg/media"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/state"
+	systools "github.com/dapicom-ai/omnipus/pkg/sysagent/tools"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 	"github.com/dapicom-ai/omnipus/pkg/voice"
 )
@@ -281,8 +281,8 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	// in the REST API with type "core". SeedConfig is idempotent — it only adds
 	// agents that are not already present (checked by ID).
 	if coreagent.SeedConfig(cfg) {
-		if err := config.SaveConfig(configPath, cfg); err != nil {
-			return fmt.Errorf("gateway: failed to persist seeded core agents: %w", err)
+		if saveErr := config.SaveConfig(configPath, cfg); saveErr != nil {
+			return fmt.Errorf("gateway: failed to persist seeded core agents: %w", saveErr)
 		}
 	}
 
@@ -296,9 +296,9 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	// (returns "reload not yet available" instead of nil panic).
 	var reloadFuncRef func() error
 	avaDeps := &systools.Deps{
-		Home:       homePath,
-		ConfigPath: configPath,
-		GetCfg:     agentLoop.GetConfig,
+		Home:         homePath,
+		ConfigPath:   configPath,
+		GetCfg:       agentLoop.GetConfig,
 		MutateConfig: agentLoop.MutateConfig,
 		SaveConfigLocked: func(cfg *config.Config) error {
 			return config.SaveConfig(configPath, cfg)
@@ -311,8 +311,8 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 			return reloadFuncRef()
 		},
 	}
-	if err := agentLoop.WireAvaAgentTools(avaDeps); err != nil {
-		slog.Error("gateway: failed to wire Ava agent tools — Ava cannot create agents", "error", err)
+	if wireErr := agentLoop.WireAvaAgentTools(avaDeps); wireErr != nil {
+		slog.Error("gateway: failed to wire Ava agent tools — Ava cannot create agents", "error", wireErr)
 	}
 
 	fmt.Println("\n📦 Agent Status:")
