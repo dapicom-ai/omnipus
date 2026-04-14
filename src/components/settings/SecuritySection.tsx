@@ -544,7 +544,6 @@ export function SecuritySection() {
           </AccordionContent>
         </AccordionItem>
 
-        {/* Policy */}
         {/* Policy section merged into Command Execution above */}
 
         {/* Rate Limits & Cost Control */}

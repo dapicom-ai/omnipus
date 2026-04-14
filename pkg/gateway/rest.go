@@ -3118,14 +3118,6 @@ func (a *restAPI) updateAgentTools(w http.ResponseWriter, r *http.Request, agent
 
 	// Tool policy changes are config-only — no reload needed. The policy is
 	// resolved at request time from the live config, not baked into agent instances.
-	var reloadWarning string
-
-	// Return the updated state.
-	if reloadWarning != "" {
-		// Still return 200 — the config was saved, just the live reload failed.
-		// The frontend can show a warning banner.
-		w.Header().Set("X-Omnipus-Warning", reloadWarning)
-	}
 	a.getAgentTools(w, agentID)
 }
 

@@ -158,7 +158,7 @@ func (t *InstallSkillTool) Execute(ctx context.Context, args map[string]any) *To
 				"slug":     slug,
 				"version":  result.Version,
 			})
-		_ = err
+		// Non-fatal: skill is installed, metadata just won't appear in audits.
 	}
 
 	// Build result with moderation warning if suspicious.

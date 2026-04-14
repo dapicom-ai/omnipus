@@ -40,6 +40,7 @@ export interface Agent {
   icon?: string
   color?: string
   tools?: string[]
+  tools_cfg?: AgentToolsCfg
   soul?: string
   heartbeat?: string
   instructions?: string

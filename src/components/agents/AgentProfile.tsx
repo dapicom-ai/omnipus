@@ -213,7 +213,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
       // Guard: do not save before the server data has been hydrated into state.
       // Saving before hydration would overwrite real data with empty defaults.
       if (!hasHydrated.current) return
-      // Locked agents (core): strip identity fields the backend rejects.
+      // Read-only agents: strip identity fields the backend rejects on locked agents.
       const payload = agent?.locked
         ? (({ name: _n, description: _d, soul: _s, color: _c, icon: _i, heartbeat: _h, instructions: _ins, ...rest }) => rest)(data)
         : data

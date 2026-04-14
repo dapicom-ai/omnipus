@@ -197,7 +197,7 @@ type ScreenshotTool struct {
 
 func (t *ScreenshotTool) Name() string           { return "browser.screenshot" }
 func (t *ScreenshotTool) Scope() tools.ToolScope { return tools.ScopeCore }
-func (t *ScreenshotTool) Description() string    { return "Capture a PNG screenshot of the current page." }
+func (t *ScreenshotTool) Description() string    { return "Capture a screenshot of the current page as a JPEG image." }
 func (t *ScreenshotTool) Parameters() map[string]any {
 	return map[string]any{
 		"type":       "object",
@@ -216,22 +216,24 @@ func (t *ScreenshotTool) Execute(ctx context.Context, args map[string]any) *tool
 
 	// Wait for the page to finish rendering before capturing.
 	// chromedp.Navigate waits for DOMContentLoaded, but CSS/images may still
-	// be loading. Poll until document.readyState is "complete" or timeout.
+	// be loading. Poll until document.readyState is "complete", then wait an
+	// additional 500ms for client-side JS frameworks to finish painting.
 	var buf []byte
 	err = chromedp.Run(tabCtx,
 		chromedp.ActionFunc(func(ctx context.Context) error {
-			// Wait up to 3 seconds for readyState == "complete"
 			for i := 0; i < 30; i++ {
 				var state string
 				if evalErr := chromedp.Evaluate(`document.readyState`, &state).Do(ctx); evalErr != nil {
-					return nil // ignore eval errors, proceed with screenshot
+					return nil
 				}
 				if state == "complete" {
+					// Extra settle time for JS frameworks (React hydration, etc.)
+					chromedp.Sleep(500 * time.Millisecond).Do(ctx)
 					return nil
 				}
 				chromedp.Sleep(100 * time.Millisecond).Do(ctx)
 			}
-			return nil // timeout — take screenshot anyway
+			return nil
 		}),
 		chromedp.FullScreenshot(&buf, 90),
 	)
@@ -240,16 +242,16 @@ func (t *ScreenshotTool) Execute(ctx context.Context, args map[string]any) *tool
 	}
 
 	tmpDir := os.TempDir()
-	filename := fmt.Sprintf("omnipus-screenshot-%d.png", time.Now().UnixMilli())
+	filename := fmt.Sprintf("omnipus-screenshot-%d.jpg", time.Now().UnixMilli())
 	path := filepath.Join(tmpDir, filename)
 	if err := os.WriteFile(path, buf, 0o600); err != nil {
 		return tools.ErrorResult(fmt.Sprintf("browser.screenshot: failed to save: %s", err))
 	}
 
-	// Return the screenshot as a data: URL. normalizeToolResult will detect it,
-	// store the image via MediaStore, add media refs, and replace ForLLM with a
-	// placeholder — which triggers ResponseHandled=true for media delivery.
-	dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf)
+	// FullScreenshot with quality>0 produces JPEG. Return as data URL so
+	// normalizeToolResult can extract it, store via MediaStore, and deliver
+	// inline as a media frame.
+	dataURL := "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(buf)
 	return &tools.ToolResult{
 		ForLLM:       dataURL,
 		ArtifactTags: []string{fmt.Sprintf("[file:%s]", path)},

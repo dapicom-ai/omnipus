@@ -140,7 +140,9 @@ var builtinCatalog = []CatalogEntry{
 // Callers outside this package must use this function — the underlying variable
 // is unexported to prevent accidental mutation.
 func GetBuiltinCatalog() []CatalogEntry {
-	return builtinCatalog
+	c := make([]CatalogEntry, len(builtinCatalog))
+	copy(c, builtinCatalog)
+	return c
 }
 
 // CatalogAsMapSlice returns the catalog as []map[string]any for the REST API.

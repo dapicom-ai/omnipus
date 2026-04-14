@@ -280,7 +280,7 @@ func successJSON(v any) string {
 
 // errorJSON returns a consistent error response per D.10.1.
 func errorJSON(code, message, suggestion string) string {
-	b, _ := json.MarshalIndent(map[string]any{
+	b, err := json.MarshalIndent(map[string]any{
 		"success": false,
 		"error": map[string]any{
 			"code":       code,
@@ -288,5 +288,8 @@ func errorJSON(code, message, suggestion string) string {
 			"suggestion": suggestion,
 		},
 	}, "", "  ")
+	if err != nil {
+		return `{"success":false,"error":{"code":"` + code + `","message":"` + message + `"}}`
+	}
 	return string(b)
 }

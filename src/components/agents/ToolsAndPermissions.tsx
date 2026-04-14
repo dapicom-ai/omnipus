@@ -1,8 +1,9 @@
 import { useEffect, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 
-import { ShieldCheck, ShieldWarning, Prohibit } from '@phosphor-icons/react'
 import { MCPServerPicker } from './MCPServerPicker'
+import { PolicyBadge, type ToolPolicy } from '@/components/shared/PolicyBadge'
+import { CATEGORY_LABELS, groupByCategory, resolvePolicy } from '@/lib/toolCategories'
 import {
   fetchBuiltinTools,
   fetchAgentTools,
@@ -10,12 +11,9 @@ import {
   updateAgentTools,
   fetchGlobalToolPolicies,
   type AgentToolsCfg,
-  type BuiltinTool,
 } from '@/lib/api'
 import { useAutoSave } from '@/hooks/useAutoSave'
 import { AutoSaveIndicator } from '@/components/ui/AutoSaveIndicator'
-
-type ToolPolicy = 'allow' | 'ask' | 'deny'
 
 interface ToolsAndPermissionsProps {
   agentId: string | null
@@ -61,67 +59,6 @@ const POLICY_PRESETS: Record<string, { label: string; description: string; defau
       agent_list: 'allow',
     },
   },
-}
-
-function PolicyBadge({
-  policy,
-  onClick,
-  active,
-  disabled,
-}: {
-  policy: ToolPolicy
-  onClick: () => void
-  active: boolean
-  disabled?: boolean
-}) {
-  const configs: Record<ToolPolicy, { icon: typeof ShieldCheck; label: string; color: string; activeColor: string }> = {
-    allow: { icon: ShieldCheck, label: 'Allow', color: 'text-[var(--color-muted)]', activeColor: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40' },
-    ask: { icon: ShieldWarning, label: 'Ask', color: 'text-[var(--color-muted)]', activeColor: 'bg-amber-500/20 text-amber-400 border-amber-500/40' },
-    deny: { icon: Prohibit, label: 'Deny', color: 'text-[var(--color-muted)]', activeColor: 'bg-red-500/20 text-red-400 border-red-500/40' },
-  }
-  const cfg = configs[policy]
-  const Icon = cfg.icon
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-        active ? cfg.activeColor : `border-transparent ${cfg.color} hover:bg-[var(--color-surface-2)]`
-      }`}
-    >
-      <Icon size={11} weight="bold" />
-      {cfg.label}
-    </button>
-  )
-}
-
-function resolvePolicy(toolName: string, policies: Record<string, ToolPolicy> | undefined, defaultPolicy: ToolPolicy): ToolPolicy {
-  return policies?.[toolName] ?? defaultPolicy
-}
-
-function groupByCategory(tools: BuiltinTool[]): Record<string, BuiltinTool[]> {
-  const groups: Record<string, BuiltinTool[]> = {}
-  for (const t of tools) {
-    const cat = t.category || 'other'
-    if (!groups[cat]) groups[cat] = []
-    groups[cat].push(t)
-  }
-  return groups
-}
-
-const CATEGORY_LABELS: Record<string, string> = {
-  file: 'File & Code',
-  code: 'Code Execution',
-  web: 'Web & Search',
-  browser: 'Browser Automation',
-  communication: 'Communication',
-  task: 'Task Management',
-  automation: 'Automation',
-  search: 'Search & Discovery',
-  skills: 'Skills',
-  hardware: 'Hardware (IoT)',
-  system: 'System',
 }
 
 export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onChange }: ToolsAndPermissionsProps) {
@@ -220,7 +157,7 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
     return 'custom'
   }, [defaultPolicy, policies])
 
-  // Filter out system tools for non-system agents
+  // Filter out system-scope tools — never shown in agent tool configuration
   const displayTools = builtinTools.filter((t) => {
     if (t.scope === 'system') return false // system tools not shown in agent config
     return true

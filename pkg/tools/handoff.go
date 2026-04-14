@@ -13,7 +13,8 @@ import (
 
 // ErrAlreadyActive is returned by SessionStore.SwitchAgent when the session is
 // already assigned to the requested agent. Treat as a no-op success.
-var ErrAlreadyActive = errors.New("agent is already active on this session")
+// (Aliased from session.ErrAlreadyActive — both packages share the same sentinel.)
+var ErrAlreadyActive = session.ErrAlreadyActive
 
 // AgentRegistryReader is a minimal interface for looking up agents by ID.
 // It is satisfied by *agent.AgentRegistry — using an interface here avoids
@@ -33,7 +34,7 @@ type AgentRegistryReader interface {
 // *session.UnifiedStore satisfies this interface once SwitchAgent is added to it.
 type HandoffSessionStore interface {
 	// SwitchAgent atomically changes the active agent on the session.
-	// Returns ErrAlreadyActive (tools.ErrAlreadyActive) when the session is
+	// Returns ErrAlreadyActive (session.ErrAlreadyActive) when the session is
 	// already on the requested agent — callers MUST treat this as success.
 	SwitchAgent(sessionID, newAgentID string) error
 
@@ -129,13 +130,7 @@ func (t *HandoffTool) Execute(ctx context.Context, args map[string]any) *ToolRes
 	}
 
 	// Step 3: Get session ID from context.
-	// Use the transcript session ID (actual directory name like "session_01KP...")
-	// rather than the routing session key (like "agent:mia:webchat:...").
-	sessionID := ToolTranscriptSessionID(ctx)
-	if sessionID == "" {
-		// Fallback to routing session key if transcript ID not available.
-		sessionID = ToolSessionKey(ctx)
-	}
+	sessionID := resolveSessionID(ctx)
 	if sessionID == "" {
 		return ErrorResult("handoff is not available in this context (no session key)")
 	}
@@ -204,6 +199,15 @@ func (t *HandoffTool) Execute(ctx context.Context, args map[string]any) *ToolRes
 		ForUser: fmt.Sprintf("Connecting you with %s...", agentName),
 		ForLLM:  strings.Join(forLLMParts, "\n"),
 	}
+}
+
+// resolveSessionID returns the session ID from context, preferring the transcript
+// session ID (actual directory name) over the routing session key.
+func resolveSessionID(ctx context.Context) string {
+	if sid := ToolTranscriptSessionID(ctx); sid != "" {
+		return sid
+	}
+	return ToolSessionKey(ctx)
 }
 
 // splitByTokenBudget partitions entries so that the entries in recent fit within
@@ -304,10 +308,7 @@ func (t *ReturnToDefaultTool) Parameters() map[string]any {
 }
 
 func (t *ReturnToDefaultTool) Execute(ctx context.Context, args map[string]any) *ToolResult {
-	sessionID := ToolTranscriptSessionID(ctx)
-	if sessionID == "" {
-		sessionID = ToolSessionKey(ctx)
-	}
+	sessionID := resolveSessionID(ctx)
 	if sessionID == "" {
 		return ErrorResult("return_to_default is not available in this context (no session key)")
 	}
@@ -321,18 +322,20 @@ func (t *ReturnToDefaultTool) Execute(ctx context.Context, args map[string]any) 
 		return ErrorResult(fmt.Sprintf("failed to return to default agent: %v", err))
 	}
 
-	// Log the return event as an audit trail (FR-016).
+	// Build the message once for both audit trail and LLM response.
 	summary, _ := args["summary"].(string)
-	currentAgentID := ToolAgentID(ctx)
-	logContent := fmt.Sprintf("Returned to default agent (%s)", defaultAgentID)
+	message := fmt.Sprintf("Returned to default agent (%s).", defaultAgentID)
 	if summary != "" {
-		logContent = fmt.Sprintf("Returned to default agent (%s). Summary: %s", defaultAgentID, summary)
+		message = fmt.Sprintf("Returned to default agent (%s). Summary: %s", defaultAgentID, summary)
 	}
+
+	// Log the return event as an audit trail (FR-016).
+	currentAgentID := ToolAgentID(ctx)
 	appendErr := t.sessionStore.AppendTranscript(sessionID, session.TranscriptEntry{
 		ID:        fmt.Sprintf("return-%d", time.Now().UnixNano()),
 		Type:      session.EntryTypeSystem,
 		Role:      "system",
-		Content:   logContent,
+		Content:   message,
 		AgentID:   currentAgentID,
 		Timestamp: time.Now().UTC(),
 	})
@@ -346,13 +349,8 @@ func (t *ReturnToDefaultTool) Execute(ctx context.Context, args map[string]any) 
 		t.onHandoff(chatID, defaultAgentID, defaultAgentID)
 	}
 
-	forLLM := fmt.Sprintf("Returned to default agent (%s).", defaultAgentID)
-	if summary != "" {
-		forLLM = fmt.Sprintf("Returned to default agent (%s). Summary: %s", defaultAgentID, summary)
-	}
-
 	return &ToolResult{
 		ForUser: "Returning to default agent.",
-		ForLLM:  forLLM,
+		ForLLM:  message,
 	}
 }

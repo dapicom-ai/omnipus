@@ -43,7 +43,12 @@ func toChannelHashes(cfg *config.Config) map[string]string {
 		if !enabled {
 			continue
 		}
-		valueBytes, _ := json.Marshal(value)
+		valueBytes, err := json.Marshal(value)
+		if err != nil {
+			logger.WarnCF("channels", "toChannelHashes: failed to marshal channel config",
+				map[string]any{"channel": key, "error": err.Error()})
+			valueBytes = []byte("{}")
+		}
 		hash := md5.Sum(valueBytes)
 		result[key] = hex.EncodeToString(hash[:])
 	}

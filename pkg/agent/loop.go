@@ -637,7 +637,8 @@ func registerSharedTools(
 			return al.GetRegistry()
 		}
 		onHandoffFrontend := func(chatID, newAgentID, agentName string) {
-			// Store chatID → agentID so the WebSocket handler can look it up.
+			// Store both chatID and agentID keys so GetSessionActiveAgent can look up
+			// by either key. Also clear when newAgentID is empty.
 			if newAgentID == "" {
 				al.sessionActiveAgent.Delete("chat:" + chatID)
 			} else {
@@ -659,8 +660,8 @@ func registerSharedTools(
 			}
 			return DefaultAgentID
 		}
-		// sharedStore is nil until GetSessionStore() is added by the session-store
-		// refactor subagent. The tools handle a nil store by skipping transcript ops.
+		// sharedStore is the shared session store; tools handle a nil store by
+		// skipping transcript ops (nil only occurs in tests without a store).
 		sharedStore := al.GetSessionStore()
 		agent.Tools.Register(tools.NewHandoffTool(getRegistryReader, sharedStore, getContextWindow, onHandoffFrontend))
 		agent.Tools.Register(tools.NewReturnToDefaultTool(sharedStore, getDefaultAgent, onHandoffFrontend))

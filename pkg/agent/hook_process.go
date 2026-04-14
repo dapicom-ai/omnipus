@@ -167,7 +167,11 @@ func (ph *ProcessHook) Close() error {
 		case <-ph.done:
 		case <-time.After(processHookCloseTimeout):
 			if ph.cmd != nil && ph.cmd.Process != nil {
-				_ = ph.cmd.Process.Kill()
+				if err := ph.cmd.Process.Kill(); err != nil {
+					logger.WarnCF("agent", "ProcessHook: forced kill failed", map[string]any{
+						"error": err.Error(),
+					})
+				}
 			}
 			<-ph.done
 		}

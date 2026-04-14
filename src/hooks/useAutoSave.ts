@@ -110,7 +110,9 @@ export function useAutoSave<T>(
       if (initializedRef.current) {
         const currentJson = JSON.stringify(latestDataRef.current)
         if (currentJson !== previousJsonRef.current) {
-          saveFnRef.current(latestDataRef.current).catch(() => {})
+          saveFnRef.current(latestDataRef.current).catch((err) => {
+            console.error('[useAutoSave] unmount flush save failed:', err)
+          })
         }
       }
     }
