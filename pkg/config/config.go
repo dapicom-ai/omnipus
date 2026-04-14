@@ -1688,11 +1688,16 @@ func (t *ToolsConfig) IsToolEnabled(name string) bool {
 		return t.AppendFile.Enabled
 	case "send_file":
 		return t.SendFile.Enabled
+	case "task_list":
+		return t.TaskList.Enabled
+	case "task_create":
+		return t.TaskCreate.Enabled
+	case "task_update":
+		return t.TaskUpdate.Enabled
 
 	// Low-risk tools — always available; per-agent policy controls access.
 	case "skills", "media_cleanup", "find_skills", "install_skill",
-		"list_dir", "message", "read_file",
-		"task_list", "task_create", "task_update":
+		"list_dir", "message", "read_file":
 		return true
 
 	default:

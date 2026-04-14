@@ -258,6 +258,7 @@ function AssistantMessageAvatar() {
   )
 }
 
+
 function AssistantMessage() {
   const activeAgentId = useSessionStore((s) => s.activeAgentId)
   const { data: agents = [] } = useQuery({ queryKey: ['agents'], queryFn: fetchAgents })

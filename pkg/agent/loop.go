@@ -120,6 +120,7 @@ type AgentLoop struct {
 	// Ava agent CRUD deps — stored so WireAvaAgentTools can re-run on hot reload.
 	avaDeps *systools.Deps
 
+
 	// Wave 4: Per-agent rate limiting and global daily cost cap (SEC-26).
 	// rateLimiter manages sliding-window counters; costTracker persists the
 	// daily cost accumulator across restarts. Both are always non-nil after
