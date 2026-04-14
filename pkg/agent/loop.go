@@ -1918,6 +1918,16 @@ func (al *AgentLoop) SetMediaStore(s media.MediaStore) {
 	}
 }
 
+// GetMediaStore returns the currently injected media store. Callers that serve
+// media over HTTP must use this getter (not a cached reference) because the
+// store is replaced on every restartServices — a cached pointer goes stale.
+func (al *AgentLoop) GetMediaStore() media.MediaStore {
+	if al == nil {
+		return nil
+	}
+	return al.mediaStore
+}
+
 // SetTranscriber injects a voice transcriber for agent-level audio transcription.
 func (al *AgentLoop) SetTranscriber(t voice.Transcriber) {
 	al.transcriber = t

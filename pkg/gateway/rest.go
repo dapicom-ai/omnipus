@@ -3843,7 +3843,14 @@ func (a *restAPI) HandleMedia(w http.ResponseWriter, r *http.Request) {
 	}
 	a.setCORSHeaders(w, r)
 
-	if a.mediaStore == nil {
+	// Always read the current store via the agent loop. The store is replaced
+	// on every restartServices, so a.mediaStore would go stale after the first
+	// reload (screenshots stored in the new store are invisible to the old one).
+	store := a.agentLoop.GetMediaStore()
+	if store == nil {
+		store = a.mediaStore
+	}
+	if store == nil {
 		jsonErr(w, http.StatusServiceUnavailable, "media store not available")
 		return
 	}
@@ -3854,7 +3861,7 @@ func (a *restAPI) HandleMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	localPath, meta, err := a.mediaStore.ResolveWithMeta("media://" + refID)
+	localPath, meta, err := store.ResolveWithMeta("media://" + refID)
 	if err != nil {
 		slog.Warn("rest: media ref not found", "ref", refID, "error", err.Error())
 		jsonErr(w, http.StatusNotFound, "media not found")
