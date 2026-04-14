@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, KeyboardEvent } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState, useEffect, useRef, useMemo, KeyboardEvent } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowLeft,
   Robot,
@@ -12,7 +12,6 @@ import {
   Gear,
   Shield,
   Rocket,
-  FloppyDisk,
   X,
   CaretDown,
   CaretUp,
@@ -20,6 +19,8 @@ import {
   NotePencil,
   UploadSimple,
 } from '@phosphor-icons/react'
+import { useAutoSave } from '@/hooks/useAutoSave'
+import { AutoSaveIndicator } from '@/components/ui/AutoSaveIndicator'
 import { useNavigate } from '@tanstack/react-router'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -107,8 +108,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
   const markDirty = () => { isDirtyRef.current = true }
 
   // Tracks whether the initial hydration from the server has completed.
-  // Guards handleSave / section saves from firing with default (empty) state
-  // before the first fetch resolves.
+  // Guards auto-save from firing with default (empty) state before the first fetch resolves.
   const hasHydrated = useRef(false)
 
   // Reset flags when navigating to a different agent
@@ -176,61 +176,54 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     hasHydrated.current = true
   }, [agentId, agent])
 
-  const { mutate: doUpdate, isPending: isSaving } = useMutation({
-    mutationFn: (data: Parameters<typeof updateAgent>[1]) => updateAgent(agentId, data),
-    onSuccess: () => {
+  const formData = useMemo(() => ({
+    name,
+    description,
+    model,
+    color: selectedColor,
+    icon: selectedIcon,
+    fallback_models: fallbackModels.length > 0 ? fallbackModels : undefined,
+    model_params: { temperature, max_tokens: maxTokens, top_p: topP },
+    rate_limits: {
+      use_global_defaults: useGlobalRateLimits,
+      max_llm_calls_per_hour: maxLlmCallsPerHour !== '' ? maxLlmCallsPerHour : undefined,
+      max_tool_calls_per_minute: maxToolCallsPerMinute !== '' ? maxToolCallsPerMinute : undefined,
+      max_cost_per_day: maxCostPerDay !== '' ? maxCostPerDay : undefined,
+    },
+    soul,
+    instructions,
+    heartbeat,
+    timeout_seconds: timeoutSeconds > 0 ? timeoutSeconds : undefined,
+    max_tool_iterations: maxToolIterations,
+    steering_mode: steeringMode,
+    tool_feedback: toolFeedback,
+    heartbeat_enabled: heartbeatEnabled,
+    heartbeat_interval: heartbeatInterval,
+  }), [
+    name, description, model, selectedColor, selectedIcon, fallbackModels,
+    temperature, maxTokens, topP, useGlobalRateLimits, maxLlmCallsPerHour,
+    maxToolCallsPerMinute, maxCostPerDay, soul, instructions, heartbeat,
+    timeoutSeconds, maxToolIterations, steeringMode, toolFeedback,
+    heartbeatEnabled, heartbeatInterval,
+  ])
+
+  const { status: saveStatus, error: saveError } = useAutoSave(
+    formData,
+    async (data) => {
+      // Guard: do not save before the server data has been hydrated into state.
+      // Saving before hydration would overwrite real data with empty defaults.
+      if (!hasHydrated.current) return
+      // Read-only agents: strip identity fields the backend rejects on locked agents.
+      const payload = agent?.locked
+        ? (({ name: _n, description: _d, soul: _s, color: _c, icon: _i, heartbeat: _h, instructions: _ins, ...rest }) => rest)(data)
+        : data
+      await updateAgent(agentId, payload)
       isDirtyRef.current = false
       queryClient.invalidateQueries({ queryKey: ['agent', agentId] })
       queryClient.invalidateQueries({ queryKey: ['agents'] })
-      addToast({ message: 'Agent saved', variant: 'success' })
     },
-    onError: (err: Error) => {
-      // Check HTTP status via response status embedded in error, or fall back to message text.
-      // Using a status code check is more robust than string-matching localised error messages.
-      const isNotImplemented =
-        (err as Error & { status?: number }).status === 501 || err.message.includes('501')
-      addToast({
-        message: isNotImplemented
-          ? 'Agent changes require editing config.json and restarting the gateway'
-          : err.message,
-        variant: 'error',
-      })
-    },
-  })
-
-  function buildFullPayload() {
-    return {
-      name,
-      description,
-      model,
-      color: selectedColor,
-      icon: selectedIcon,
-      fallback_models: fallbackModels.length > 0 ? fallbackModels : undefined,
-      model_params: { temperature, max_tokens: maxTokens, top_p: topP },
-      rate_limits: {
-        use_global_defaults: useGlobalRateLimits,
-        max_llm_calls_per_hour: maxLlmCallsPerHour !== '' ? maxLlmCallsPerHour : undefined,
-        max_tool_calls_per_minute: maxToolCallsPerMinute !== '' ? maxToolCallsPerMinute : undefined,
-        max_cost_per_day: maxCostPerDay !== '' ? maxCostPerDay : undefined,
-      },
-      soul,
-      instructions,
-      heartbeat,
-      timeout_seconds: timeoutSeconds > 0 ? timeoutSeconds : undefined,
-      max_tool_iterations: maxToolIterations,
-      steering_mode: steeringMode,
-      tool_feedback: toolFeedback,
-      heartbeat_enabled: heartbeatEnabled,
-      heartbeat_interval: heartbeatInterval,
-    }
-  }
-
-  function handleSave() {
-    // Guard: do not save before the server data has been hydrated into state.
-    // Saving before hydration would overwrite real data with empty defaults.
-    if (!hasHydrated.current) return
-    doUpdate(buildFullPayload())
-  }
+    // Locked agents can still save model and tool changes — do not disable auto-save
+  )
 
   function addFallbackModel() {
     const trimmed = fallbackInput.trim()
@@ -248,52 +241,38 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     }
   }
 
-  function SaveAllButton({ onUpload }: { onUpload?: (content: string) => void }) {
+  function UploadButton({ onUpload }: { onUpload: (content: string) => void }) {
     return (
-      <div className="flex items-center gap-2">
-        <Button
-          size="sm"
-          variant="outline"
-          disabled={isSaving || !hasHydrated.current}
-          onClick={handleSave}
-        >
-          <FloppyDisk size={13} weight="bold" className="mr-1.5" />
-          Save All
-        </Button>
-        {onUpload && (
-          <button
-            type="button"
-            onClick={() => {
-              const input = document.createElement('input')
-              input.type = 'file'
-              input.accept = '.md,.markdown,.txt'
-              input.onchange = (e) => {
-                const file = (e.target as HTMLInputElement).files?.[0]
-                if (!file) return
-                if (file.size > 1_000_000) {
-                  addToast({ message: `File too large (${(file.size / 1_000_000).toFixed(1)}MB). Max 1MB for markdown files.`, variant: 'error' })
-                  return
-                }
-                const reader = new FileReader()
-                reader.onload = () => {
-                  onUpload(reader.result as string)
-                  markDirty()
-                }
-                reader.onerror = () => {
-                  addToast({ message: `Failed to read ${file.name}: ${reader.error?.message ?? 'unknown error'}`, variant: 'error' })
-                }
-                reader.readAsText(file)
-              }
-              input.click()
-            }}
-            className="h-7 px-2 text-xs rounded border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors flex items-center gap-1"
-          >
-            <UploadSimple size={12} />
-            Upload .md
-          </button>
-        )}
-        <span className="text-[10px] text-[var(--color-muted)]">Saves all agent fields</span>
-      </div>
+      <button
+        type="button"
+        onClick={() => {
+          const input = document.createElement('input')
+          input.type = 'file'
+          input.accept = '.md,.markdown,.txt'
+          input.onchange = (e) => {
+            const file = (e.target as HTMLInputElement).files?.[0]
+            if (!file) return
+            if (file.size > 1_000_000) {
+              addToast({ message: `File too large (${(file.size / 1_000_000).toFixed(1)}MB). Max 1MB for markdown files.`, variant: 'error' })
+              return
+            }
+            const reader = new FileReader()
+            reader.onload = () => {
+              onUpload(reader.result as string)
+              markDirty()
+            }
+            reader.onerror = () => {
+              addToast({ message: `Failed to read ${file.name}: ${reader.error?.message ?? 'unknown error'}`, variant: 'error' })
+            }
+            reader.readAsText(file)
+          }
+          input.click()
+        }}
+        className="h-7 px-2 text-xs rounded border border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors flex items-center gap-1"
+      >
+        <UploadSimple size={12} />
+        Upload .md
+      </button>
     )
   }
 
@@ -319,7 +298,8 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     )
   }
 
-  const canEdit = agent.type !== 'system'
+  const isLocked = agent.locked === true
+  const canEdit = !isLocked
 
   return (
     <div className="absolute inset-0 overflow-y-auto">
@@ -346,24 +326,20 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
         <div className="min-w-0">
           <h1 className="font-headline text-xl font-bold text-[var(--color-secondary)]">{agent.name}</h1>
           <div className="flex items-center gap-2 mt-1">
-            <Badge variant={
-              agent.type === 'system' ? 'warning' : agent.type === 'core' ? 'secondary' : 'outline'
-            }>
+            <Badge variant={agent.type === 'core' ? 'secondary' : 'outline'}>
               {agent.type}
             </Badge>
+            {agent.locked && (
+              <Badge variant="outline" className="text-[var(--color-muted)] border-[var(--color-border)]">
+                read-only
+              </Badge>
+            )}
             <span className="text-xs text-[var(--color-muted)]">{agent.description}</span>
           </div>
         </div>
-        {canEdit && (
-          <Button
-            className="ml-auto gap-2"
-            onClick={handleSave}
-            disabled={isSaving}
-          >
-            <FloppyDisk size={14} weight="bold" />
-            {isSaving ? 'Saving...' : 'Save'}
-          </Button>
-        )}
+        <div className="ml-auto">
+          <AutoSaveIndicator status={saveStatus} error={saveError} />
+        </div>
       </div>
 
       <Separator />
@@ -445,7 +421,6 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
                 value={model}
                 onChange={(v) => { markDirty(); setModel(v) }}
                 placeholder="Provider default"
-                disabled={!canEdit}
               />
               {canEdit && (
                 <div className="space-y-1.5">
@@ -525,7 +500,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
         </AccordionItem>
 
         {/* Rate Limits — default CLOSED */}
-        {agent.type !== 'system' && (
+        {!isLocked && (
           <AccordionItem value="rate-limits" className="border-0">
             <AccordionTrigger className="px-4 font-headline font-bold text-sm">
               Rate Limits
@@ -613,7 +588,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
                     rows={6}
                     className="text-xs font-mono resize-none"
                   />
-                  <SaveAllButton onUpload={setSoul} />
+                  <UploadButton onUpload={setSoul} />
                 </div>
 
                 <Separator />
@@ -634,7 +609,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
                     rows={4}
                     className="text-xs font-mono resize-none"
                   />
-                  <SaveAllButton onUpload={setInstructions} />
+                  <UploadButton onUpload={setInstructions} />
                 </div>
 
                 <Separator />
@@ -676,13 +651,13 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
                     rows={4}
                     className="text-xs font-mono resize-none"
                   />
-                  <SaveAllButton onUpload={setHeartbeat} />
+                  <UploadButton onUpload={setHeartbeat} />
                 </div>
 
                 <Separator />
 
                 {/* Execution */}
-                {agent.type !== 'system' && (
+                {!isLocked && (
                   <div className="space-y-2">
                     <p className="text-xs font-medium text-[var(--color-secondary)]">Execution</p>
                     <div className="space-y-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4">
@@ -741,8 +716,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
         )}
 
         {/* Tools & Permissions — default CLOSED */}
-        {agent.type !== 'system' && (
-          <AccordionItem value="tools" className="border-0">
+        <AccordionItem value="tools" className="border-0">
             <AccordionTrigger className="px-4 font-headline font-bold text-sm">
               <span>Tools &amp; Permissions</span>
               {toolsCfg.builtin.mode === 'explicit' && (
@@ -762,7 +736,6 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
               </div>
             </AccordionContent>
           </AccordionItem>
-        )}
 
         {/* Sessions — default CLOSED */}
         <AccordionItem value="sessions" className="border-0">

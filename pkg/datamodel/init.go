@@ -28,6 +28,7 @@ type dirEntry struct {
 var omnipusDirs = []dirEntry{
 	{"agents", 0o700},
 	{"projects", 0o700},
+	{"sessions", 0o700},
 	{"tasks", 0o700},
 	{"pins", 0o700},
 	{"channels", 0o700},

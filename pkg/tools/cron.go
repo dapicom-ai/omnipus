@@ -74,7 +74,7 @@ func (t *CronTool) Description() string {
 }
 
 // Scope returns the tool's privilege level.
-func (t *CronTool) Scope() ToolScope { return ScopeGeneral }
+func (t *CronTool) Scope() ToolScope { return ScopeCore }
 
 // Parameters returns the tool parameters schema
 func (t *CronTool) Parameters() map[string]any {

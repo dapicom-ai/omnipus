@@ -63,6 +63,9 @@ type Deps struct {
 	SaveConfigLocked func(cfg *config.Config) error
 	// CredStore is the encrypted credential store.
 	CredStore *credentials.Store
+	// ReloadFunc triggers a hot-reload of the agent loop so newly created agents
+	// become available immediately. Nil in tests or when not wired.
+	ReloadFunc func() error
 }
 
 // clearMaps recursively walks v and zeros every map field it finds. Called
@@ -277,7 +280,7 @@ func successJSON(v any) string {
 
 // errorJSON returns a consistent error response per D.10.1.
 func errorJSON(code, message, suggestion string) string {
-	b, _ := json.MarshalIndent(map[string]any{
+	b, err := json.MarshalIndent(map[string]any{
 		"success": false,
 		"error": map[string]any{
 			"code":       code,
@@ -285,5 +288,8 @@ func errorJSON(code, message, suggestion string) string {
 			"suggestion": suggestion,
 		},
 	}, "", "  ")
+	if err != nil {
+		return `{"success":false,"error":{"code":"` + code + `","message":"` + message + `"}}`
+	}
 	return string(b)
 }

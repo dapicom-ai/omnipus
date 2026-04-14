@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { generateId } from '@/lib/constants'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -25,6 +25,7 @@ import {
   X,
 } from '@phosphor-icons/react'
 import OmnipusAvatar from '@/assets/logo/omnipus-avatar.svg?url'
+import { IconRenderer } from '@/components/shared/IconRenderer'
 import { SessionPanel } from './SessionPanel'
 import { GenericToolCall } from './tools/GenericToolCall'
 import { ExecApprovalBlock } from './ExecApprovalBlock'
@@ -106,15 +107,35 @@ function ThinkingIndicator() {
   )
 }
 
-// Custom text renderer with streaming cursor
+// Custom text renderer with streaming cursor.
+// Wrapped in ErrorBoundary because MessagePartPrimitive.InProgress throws
+// "MessagePartText can only be used inside text or reasoning message parts"
+// when AssistantUI calls this component for a tool-call-only message.
+class TextPartErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props)
+    this.state = { hasError: false }
+  }
+  static getDerivedStateFromError() { return { hasError: true } }
+  componentDidCatch(error: Error) {
+    // Only suppress the known AssistantUI error; log everything else.
+    if (!error.message?.includes('MessagePartText')) {
+      console.error('[TextPartErrorBoundary] Unexpected error:', error)
+    }
+  }
+  render() { return this.state.hasError ? null : this.props.children }
+}
+
 function AssistantTextPart() {
   return (
-    <div>
-      <MarkdownText />
-      <MessagePartPrimitive.InProgress>
-        <span className="inline-block w-1.5 h-4 bg-[var(--color-accent)] ml-0.5 animate-pulse align-text-bottom" />
-      </MessagePartPrimitive.InProgress>
-    </div>
+    <TextPartErrorBoundary>
+      <div>
+        <MarkdownText />
+        <MessagePartPrimitive.InProgress>
+          <span className="inline-block w-1.5 h-4 bg-[var(--color-accent)] ml-0.5 animate-pulse align-text-bottom" />
+        </MessagePartPrimitive.InProgress>
+      </div>
+    </TextPartErrorBoundary>
   )
 }
 
@@ -217,13 +238,39 @@ function InlineMedia() {
   )
 }
 
+function AssistantMessageAvatar() {
+  const activeAgentId = useSessionStore((s) => s.activeAgentId)
+  const { data: agents = [] } = useQuery({ queryKey: ['agents'], queryFn: fetchAgents })
+  const agent = agents.find((a) => a.id === activeAgentId)
+
+  return (
+    <div
+      className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-[var(--color-secondary)]"
+      style={{ backgroundColor: agent?.color ?? 'var(--color-surface-3)' }}
+      title={agent?.name}
+    >
+      {agent?.icon ? (
+        <IconRenderer icon={agent.icon} size={14} />
+      ) : (
+        <Robot size={14} weight="bold" />
+      )}
+    </div>
+  )
+}
+
+
 function AssistantMessage() {
+  const activeAgentId = useSessionStore((s) => s.activeAgentId)
+  const { data: agents = [] } = useQuery({ queryKey: ['agents'], queryFn: fetchAgents })
+  const agent = agents.find((a) => a.id === activeAgentId)
+
   return (
     <MessagePrimitive.Root className="group flex gap-3 px-4 py-3">
-      <div className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center bg-[var(--color-surface-3)] text-[var(--color-secondary)]">
-        <Robot size={14} weight="bold" />
-      </div>
+      <AssistantMessageAvatar />
       <div className="flex flex-col gap-1 max-w-[85%] min-w-0 flex-1">
+        {agent && (
+          <span className="text-[10px] text-[var(--color-muted)]">{agent.name}</span>
+        )}
         <div className="text-sm leading-relaxed text-[var(--color-secondary)]">
           <InlineThinkingIndicator />
           {/* Use components prop so AssistantUI can inject registered tool UIs

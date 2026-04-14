@@ -111,6 +111,7 @@ function SkillsScreen() {
   })
 
   return (
+    <div className="absolute inset-0 overflow-y-auto">
     <div className="max-w-4xl mx-auto px-4 py-6">
       <div className="mb-6">
         <h1 className="font-headline text-2xl font-bold text-[var(--color-secondary)]">Skills & Tools</h1>
@@ -457,6 +458,7 @@ function SkillsScreen() {
           }}
         />
       )}
+    </div>
     </div>
   )
 }

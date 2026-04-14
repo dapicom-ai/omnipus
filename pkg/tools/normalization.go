@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"mime"
 	"os"
 	"path/filepath"
@@ -39,6 +40,15 @@ func normalizeToolResult(
 	notes := make([]string, 0, 2)
 	seen := make(map[string]struct{})
 
+	if store == nil || channel == "" || chatID == "" {
+		slog.Warn("normalizeToolResult: media extraction skipped — missing context",
+			"tool", toolName,
+			"has_store", store != nil,
+			"channel", channel,
+			"chat_id", chatID,
+			"has_media_payload", strings.Contains(result.ForLLM, "data:"),
+		)
+	}
 	if store != nil && channel != "" && chatID != "" {
 		var refs []string
 		var extractedNotes []string
@@ -278,10 +288,8 @@ func extensionForMIMEType(mimeType string) string {
 	if mimeType == "" {
 		return ".bin"
 	}
-	if exts, err := mime.ExtensionsByType(mimeType); err == nil && len(exts) > 0 {
-		return exts[0]
-	}
-
+	// Prefer well-known extensions — mime.ExtensionsByType returns the OS mime DB
+	// ordering, which on many systems puts .jfif before .jpg for image/jpeg.
 	switch strings.ToLower(mimeType) {
 	case "image/jpeg":
 		return ".jpg"
@@ -299,7 +307,9 @@ func extensionForMIMEType(mimeType string) string {
 		return ".ogg"
 	case "video/mp4":
 		return ".mp4"
-	default:
-		return filepath.Ext(mimeType)
 	}
+	if exts, err := mime.ExtensionsByType(mimeType); err == nil && len(exts) > 0 {
+		return exts[0]
+	}
+	return filepath.Ext(mimeType)
 }

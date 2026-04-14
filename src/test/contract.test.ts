@@ -55,18 +55,20 @@ describe('API contract: mock shapes satisfy TypeScript interfaces', () => {
 
   // ── Agent ─────────────────────────────────────────────────────────────────
 
-  it('Agent (system type) mock shape satisfies interface', () => {
+  it('Agent (locked core type) mock shape satisfies interface', () => {
     const mock = {
-      id: 'omnipus-system',
-      name: 'Omnipus System',
-      description: 'Built-in system agent',
-      type: 'system' as const,
+      id: 'mia',
+      name: 'Mia',
+      description: 'Built-in core agent with compiled prompt',
+      type: 'core' as const,
+      locked: true,
       model: 'claude-opus-4-6',
       status: 'active' as const,
     } satisfies Agent
 
-    expect(mock.id).toBe('omnipus-system')
-    expect(mock.type).toBe('system')
+    expect(mock.id).toBe('mia')
+    expect(mock.type).toBe('core')
+    expect(mock.locked).toBe(true)
     expect(mock.status).toBe('active')
   })
 

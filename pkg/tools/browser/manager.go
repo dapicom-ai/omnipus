@@ -151,6 +151,7 @@ func (m *BrowserManager) ensureStarted() error {
 		chromedp.DisableGPU,
 		chromedp.Flag("no-first-run", true),
 		chromedp.Flag("no-default-browser-check", true),
+		chromedp.WindowSize(1280, 720),
 	)
 
 	if m.cfg.Headless {
@@ -195,6 +196,15 @@ func (m *BrowserManager) Session(sessionID string) (context.Context, error) {
 	}
 
 	ctx, cancel := chromedp.NewContext(m.allocCtx)
+	// Eagerly create the target on this ctx. Without this, the first
+	// chromedp.Run binds the target to whichever (possibly timeout-wrapped)
+	// ctx a tool passes — and when that wrapper is canceled, the tab dies.
+	// The next tool call then silently creates a fresh blank tab, so e.g.
+	// screenshot-after-navigate returns a blank page.
+	if err := chromedp.Run(ctx); err != nil {
+		cancel()
+		return nil, fmt.Errorf("browser: failed to initialize tab: %w", err)
+	}
 	m.sessions[sessionID] = &sessionEntry{ctx: ctx, cancel: cancel}
 	return ctx, nil
 }

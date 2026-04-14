@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Shield, FloppyDisk } from '@phosphor-icons/react'
-import { Button } from '@/components/ui/button'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Shield } from '@phosphor-icons/react'
 import { fetchPromptGuard, updatePromptGuard } from '@/lib/api'
 import type { PromptGuardStrictness } from '@/lib/api'
-import { useUiStore } from '@/store/ui'
+import { useAutoSave } from '@/hooks/useAutoSave'
+import { AutoSaveIndicator } from '@/components/ui/AutoSaveIndicator'
 
 // ── Level metadata ────────────────────────────────────────────────────────────
 
@@ -36,7 +36,6 @@ const LEVELS: {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function PromptGuardSection(): React.ReactElement {
-  const { addToast } = useUiStore()
   const queryClient = useQueryClient()
 
   const { data, isLoading, isError } = useQuery({
@@ -63,29 +62,19 @@ export function PromptGuardSection(): React.ReactElement {
     }
   }, [data, isDirty])
 
-  const { mutate: doSave, isPending: isSaving } = useMutation({
-    mutationFn: () => updatePromptGuard(selected),
-    onSuccess: (serverResp) => {
-      // Trust the server response — it is the source of truth for strictness.
+  const { status: saveStatus, error: saveError } = useAutoSave(
+    selected,
+    async (level) => {
+      const serverResp = await updatePromptGuard(level)
       setSelected(serverResp.strictness)
       setIsDirty(false)
       if (serverResp.restart_required) {
         setRestartRequired(true)
       }
-      // Update the query cache directly with the mutation response instead of
-      // invalidating: the GET endpoint returns restart_required=false, which
-      // would otherwise race with our local state and clear the badge.
       queryClient.setQueryData(['prompt-guard'], serverResp)
-      addToast({
-        message: serverResp.restart_required
-          ? 'Prompt guard level saved — restart Omnipus for changes to take effect'
-          : 'Prompt injection defense level saved',
-        variant: 'success',
-      })
     },
-    onError: (err: Error) =>
-      addToast({ message: err.message, variant: 'error' }),
-  })
+    { disabled: !isDirty },
+  )
 
   if (isLoading) {
     return (
@@ -120,17 +109,7 @@ export function PromptGuardSection(): React.ReactElement {
             Controls how untrusted tool output is sanitised before passing to the agent.
           </p>
         </div>
-        {isDirty && (
-          <Button
-            size="sm"
-            onClick={() => doSave()}
-            disabled={isSaving}
-            className="gap-1.5 shrink-0"
-          >
-            <FloppyDisk size={13} weight="bold" />
-            {isSaving ? 'Saving...' : 'Save'}
-          </Button>
-        )}
+        <AutoSaveIndicator status={saveStatus} error={saveError} />
       </div>
 
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-3">

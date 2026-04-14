@@ -181,6 +181,28 @@ func (tc *ToolCompositor) ComposeAndRegister(agentID string) int {
 	return registered
 }
 
+// passesScopeGate reports whether a tool with the given scope is structurally
+// accessible to agentType. This is the outer guard — it cannot be bypassed by
+// policy or visibility configuration.
+//
+//   - ScopeSystem: only the system agent may use these tools.
+//   - ScopeCore: system and core agents pass by default; custom agents require an
+//     explicit override (callers check their own visibility/policy layer).
+//   - ScopeGeneral: any agent type passes.
+//   - Unknown/zero-value scopes: denied (fail-closed, per CLAUDE.md hard constraint 6).
+func passesScopeGate(scope ToolScope, agentType string) bool {
+	switch scope {
+	case ScopeSystem:
+		return agentType == "system"
+	case ScopeCore:
+		return agentType == "system" || agentType == "core"
+	case ScopeGeneral:
+		return true
+	default:
+		return false // deny unknown scopes
+	}
+}
+
 // FilterToolsByVisibility returns the subset of tools that the given agent type
 // and tools config allow. It implements a 2-layer scope + visibility filter:
 //
@@ -199,13 +221,15 @@ func FilterToolsByVisibility(allTools []Tool, agentType string, cfg *ToolVisibil
 		cfg = &ToolVisibilityCfg{Mode: "inherit"}
 	}
 
-	// Warn on unrecognized mode — treated as "inherit" (scope-only filtering).
+	// Unrecognized mode → treat as "explicit" with empty list (deny all).
+	// This is safer than defaulting to "inherit" which would grant MORE access.
 	switch cfg.Mode {
 	case "explicit", "inherit", "":
 		// valid
 	default:
-		slog.Warn("FilterToolsByVisibility: unrecognized mode, treating as inherit",
+		slog.Warn("FilterToolsByVisibility: unrecognized mode, treating as explicit (deny-by-default)",
 			"mode", cfg.Mode)
+		cfg.Mode = "explicit"
 	}
 
 	// Build a fast lookup set for explicit mode. Always build the set when
@@ -224,28 +248,19 @@ func FilterToolsByVisibility(allTools []Tool, agentType string, cfg *ToolVisibil
 		scope := t.Scope()
 
 		// Layer 1: scope gate based on agent type.
-		switch scope {
-		case ScopeSystem:
-			if agentType != "system" {
+		// For core-scoped tools, custom agents are allowed through only if the
+		// tool is explicitly listed in the visibility set (callers set visibleSet
+		// when cfg.Mode == "explicit"). This is checked here rather than in
+		// passesScopeGate so the helper remains a pure structural gate.
+		if scope == ScopeCore && !passesScopeGate(scope, agentType) {
+			// Custom (non-system, non-core) agent: only allow if explicitly listed.
+			if visibleSet == nil {
 				continue
 			}
-		case ScopeCore:
-			switch agentType {
-			case "system", "core":
-				// allowed by default
-			default:
-				// Custom agents only get core tools if explicitly listed.
-				if visibleSet == nil {
-					continue
-				}
-				if _, ok := visibleSet[t.Name()]; !ok {
-					continue
-				}
+			if _, ok := visibleSet[t.Name()]; !ok {
+				continue
 			}
-		case ScopeGeneral:
-			// allowed for all agent types
-		default:
-			// Unknown or zero-value scope: deny by default (hard constraint 6).
+		} else if !passesScopeGate(scope, agentType) {
 			continue
 		}
 
@@ -266,6 +281,96 @@ func FilterToolsByVisibility(allTools []Tool, agentType string, cfg *ToolVisibil
 type ToolVisibilityCfg struct {
 	Mode    string   // "inherit" or "explicit"
 	Visible []string // tool names when Mode == "explicit"
+}
+
+// ToolPolicyCfg is the per-agent tool policy configuration.
+// Used by FilterToolsByPolicy.
+type ToolPolicyCfg struct {
+	DefaultPolicy string            // "allow", "ask", or "deny"
+	Policies      map[string]string // per-tool overrides
+
+	// GlobalPolicies holds the operator-level global tool policy overrides.
+	// Applied before agent-level policies; deny always wins (deny > ask > allow).
+	GlobalPolicies      map[string]string // per-tool global overrides
+	GlobalDefaultPolicy string            // fallback global policy when tool not in GlobalPolicies
+}
+
+// FilterToolsByPolicy returns the subset of tools that pass the scope gate
+// and are not denied by policy. Also returns a map of tool name → resolved
+// policy ("allow" or "ask") for tools that passed the filter.
+// Tools with policy "deny" (globally or by agent config) are removed from the result.
+//
+// Resolution order (strictest wins: deny > ask > allow):
+//  1. Global policy (GlobalPolicies / GlobalDefaultPolicy)
+//  2. Agent policy (Policies / DefaultPolicy)
+func FilterToolsByPolicy(allTools []Tool, agentType string, cfg *ToolPolicyCfg) ([]Tool, map[string]string) {
+	if cfg == nil {
+		cfg = &ToolPolicyCfg{DefaultPolicy: "allow"}
+	}
+	defaultAgentPolicy := cfg.DefaultPolicy
+	if defaultAgentPolicy == "" {
+		defaultAgentPolicy = "allow"
+	}
+	defaultGlobalPolicy := cfg.GlobalDefaultPolicy
+	if defaultGlobalPolicy == "" {
+		defaultGlobalPolicy = "allow"
+	}
+
+	resolveGlobal := func(toolName string) string {
+		if p, ok := cfg.GlobalPolicies[toolName]; ok {
+			return p
+		}
+		return defaultGlobalPolicy
+	}
+
+	resolveAgent := func(toolName string) string {
+		if p, ok := cfg.Policies[toolName]; ok {
+			return p
+		}
+		return defaultAgentPolicy
+	}
+
+	resolveEffective := func(toolName string) string {
+		g := resolveGlobal(toolName)
+		a := resolveAgent(toolName)
+		if g == "deny" || a == "deny" {
+			return "deny"
+		}
+		if g == "ask" || a == "ask" {
+			return "ask"
+		}
+		return "allow"
+	}
+
+	out := make([]Tool, 0, len(allTools))
+	policyMap := make(map[string]string)
+
+	for _, t := range allTools {
+		scope := t.Scope()
+
+		// Layer 1: scope gate (structural constraint — cannot be bypassed by policy).
+		// For core-scoped tools, custom agents are allowed through only if their
+		// effective policy is allow or ask (not deny).
+		if scope == ScopeCore && !passesScopeGate(scope, agentType) {
+			// Custom agent: allowed only if effective policy is not "deny".
+			p := resolveEffective(t.Name())
+			if p == "deny" {
+				continue
+			}
+		} else if !passesScopeGate(scope, agentType) {
+			continue
+		}
+
+		// Layer 2: effective policy gate — deny removes the tool entirely.
+		effectivePolicy := resolveEffective(t.Name())
+		if effectivePolicy == "deny" {
+			continue
+		}
+
+		out = append(out, t)
+		policyMap[t.Name()] = effectivePolicy
+	}
+	return out, policyMap
 }
 
 // mcpToolAdapter wraps a single MCP tool as a Tool, forwarding Execute calls

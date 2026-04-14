@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -413,13 +414,42 @@ func (r *ToolRegistry) ToProviderDefs() []providers.ToolDefinition {
 		definitions = append(definitions, providers.ToolDefinition{
 			Type: "function",
 			Function: providers.ToolFunctionDefinition{
-				Name:        name,
+				Name:        SanitizeToolName(name),
 				Description: desc,
 				Parameters:  params,
 			},
 		})
 	}
 	return definitions
+}
+
+// SanitizeToolName replaces characters invalid for LLM APIs (dots, colons)
+// with underscores. Anthropic/Azure require ^[a-zA-Z0-9_-]{1,128}$.
+func SanitizeToolName(name string) string {
+	return strings.ReplaceAll(name, ".", "_")
+}
+
+// UnsanitizeToolName reverses SanitizeToolName — maps LLM tool names back
+// to internal names (e.g., "browser_navigate" → "browser.navigate").
+// Only applies to known prefixes to avoid false positives.
+func (r *ToolRegistry) UnsanitizeToolName(name string) string {
+	// Try the name as-is first (most tools have no dots).
+	if _, ok := r.tools[name]; ok {
+		return name
+	}
+	// Try replacing underscores with dots for known prefixes.
+	dotName := strings.ReplaceAll(name, "_", ".")
+	if _, ok := r.tools[dotName]; ok {
+		return dotName
+	}
+	// Try just the first underscore → dot (e.g., "browser_navigate" → "browser.navigate").
+	if idx := strings.IndexByte(name, '_'); idx > 0 {
+		candidate := name[:idx] + "." + name[idx+1:]
+		if _, ok := r.tools[candidate]; ok {
+			return candidate
+		}
+	}
+	return name // no mapping found — return as-is
 }
 
 // List returns a list of all registered tool names.

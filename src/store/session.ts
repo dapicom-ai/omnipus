@@ -5,13 +5,13 @@ import { useConnectionStore } from '@/store/connection'
 interface SessionStore {
   activeSessionId: string | null
   activeAgentId: string | null
-  /** The type of the currently active agent ('system' | 'core' | 'custom' | null).
+  /** The type of the currently active agent ('core' | 'custom' | null).
    *  Set by setActiveSession so all callers stay in sync without manual tracking. */
-  activeAgentType: 'system' | 'core' | 'custom' | null
+  activeAgentType: 'core' | 'custom' | null
   setActiveSession: (
     sessionId: string | null,
     agentId?: string | null,
-    agentType?: 'system' | 'core' | 'custom' | null
+    agentType?: 'core' | 'custom' | null
   ) => void
 
   // Attached session context — tracks when viewing a task/channel session

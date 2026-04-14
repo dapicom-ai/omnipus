@@ -399,10 +399,21 @@ func (a *restAPI) createSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusBadRequest, "invalid agent_id")
 		return
 	}
-	store := a.agentLoop.GetAgentStore(agentID)
-	if store == nil {
+	// Validate the agent exists before creating the session.
+	if agentStore := a.agentLoop.GetAgentStore(agentID); agentStore == nil {
 		jsonErr(w, http.StatusBadRequest, fmt.Sprintf("agent %q not found", agentID))
 		return
+	}
+
+	// Use the shared session store for new sessions (joined session model).
+	// Fall back to the per-agent store if the shared store is unavailable.
+	store := a.agentLoop.GetSessionStore()
+	if store == nil {
+		store = a.agentLoop.GetAgentStore(agentID)
+		if store == nil {
+			jsonErr(w, http.StatusInternalServerError, "session store unavailable")
+			return
+		}
 	}
 
 	var sessionType session.UnifiedSessionType
@@ -415,7 +426,7 @@ func (a *restAPI) createSessionHTTP(w http.ResponseWriter, r *http.Request) {
 		sessionType = session.SessionTypeChat
 	}
 
-	meta, err := store.NewSession(sessionType, "webchat")
+	meta, err := store.NewSession(sessionType, "webchat", agentID)
 	if err != nil {
 		slog.Error("rest: create session", "error", err)
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not create session: %v", err))
@@ -633,6 +644,9 @@ type agentResponse struct {
 	ID                string `json:"id"`
 	Name              string `json:"name"`
 	Type              string `json:"type"` // "system" | "core" | "custom"
+	Locked            bool   `json:"locked"`
+	Color             string `json:"color,omitempty"`
+	Icon              string `json:"icon,omitempty"`
 	Model             string `json:"model,omitempty"`
 	Description       string `json:"description,omitempty"`
 	Status            string `json:"status"` // "active" | "idle" | "draft"
@@ -658,7 +672,7 @@ type agentResponse struct {
 // workspace could not be created and the returned path may be unusable.
 func agentWorkspacePath(cfg interface {
 	WorkspacePath() string
-}, agentID, agentWorkspace string,
+}, agentID, agentWorkspace, omnipusHome string,
 ) (string, error) {
 	if agentWorkspace != "" {
 		// AgentConfig.Workspace may contain "~"; expand it the same way config does.
@@ -675,18 +689,22 @@ func agentWorkspacePath(cfg interface {
 		}
 		return agentWorkspace, nil
 	}
-	// Per-agent isolated workspace (FUNC-11). System agent uses default workspace.
+	// Per-agent isolated workspace (FUNC-11). Use OMNIPUS_HOME/agents/{id}
+	// to match where system.agent.create writes SOUL.md.
 	if agentID != "" && agentID != "omnipus-system" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			slog.Error("rest: agentWorkspacePath: UserHomeDir failed", "error", err)
-			return cfg.WorkspacePath(), fmt.Errorf("UserHomeDir: %w", err)
+		base := omnipusHome
+		if base == "" {
+			// Fallback to ~/.omnipus if homePath not provided.
+			home, err := os.UserHomeDir()
+			if err != nil {
+				slog.Error("rest: agentWorkspacePath: UserHomeDir failed", "error", err)
+				return cfg.WorkspacePath(), fmt.Errorf("UserHomeDir: %w", err)
+			}
+			base = filepath.Join(home, ".omnipus")
 		}
-		// Path traversal guard: agentID has already been validated by validateEntityID
-		// at call sites, but we do a final check here as defense-in-depth.
-		agentDir := filepath.Join(home, ".omnipus", "agents", agentID)
+		agentDir := filepath.Join(base, "agents", agentID)
 		cleaned := filepath.Clean(agentDir)
-		safePrefix := filepath.Join(home, ".omnipus")
+		safePrefix := filepath.Clean(base)
 		if !strings.HasPrefix(cleaned, safePrefix) {
 			return "", fmt.Errorf("agent workspace path escapes omnipus home: %s", cleaned)
 		}
@@ -791,10 +809,14 @@ func (a *restAPI) activeAgentIDSet() map[string]bool {
 }
 
 // computeAgentStatus determines the agent status based on whether it is active,
-// has a non-empty SOUL.md, or is a system agent.
-func computeAgentStatus(agentID string, activeIDs map[string]bool, soul string) string {
+// has a non-empty SOUL.md, or is a locked core agent.
+func computeAgentStatus(agentID string, activeIDs map[string]bool, soul string, locked bool) string {
 	if activeIDs[agentID] {
 		return "active"
+	}
+	// Core agents (locked) have compiled prompts — always idle (never draft).
+	if locked {
+		return "idle"
 	}
 	if strings.TrimSpace(soul) == "" {
 		return "draft"
@@ -841,39 +863,37 @@ func (a *restAPI) readChannelConfigRaw(channelID string) (map[string]any, error)
 
 func (a *restAPI) listAgents(w http.ResponseWriter) {
 	cfg := a.agentLoop.GetConfig()
-	agents := make([]agentResponse, 0, len(cfg.Agents.List)+1)
+	agents := make([]agentResponse, 0, len(cfg.Agents.List))
 	activeIDs := a.activeAgentIDSet()
 
-	// System agent is always present and always active.
 	defaults := buildAgentDefaults(cfg)
 	defaultModel := cfg.Agents.Defaults.ModelName
-	sysAgent := defaults
-	sysAgent.ID = "omnipus-system"
-	sysAgent.Name = "Omnipus"
-	sysAgent.Type = "system"
-	sysAgent.Model = defaultModel
-	sysAgent.Status = "active"
-	agents = append(agents, sysAgent)
-
 	for _, ac := range cfg.Agents.List {
 		model := defaultModel
 		if ac.Model != nil && ac.Model.Primary != "" {
 			model = ac.Model.Primary
 		}
-		workspace, wsErr := agentWorkspacePath(cfg, ac.ID, ac.Workspace)
+		workspace, wsErr := agentWorkspacePath(cfg, ac.ID, ac.Workspace, a.homePath)
 		if wsErr != nil {
 			slog.Warn("rest: listAgents: could not resolve workspace", "agent_id", ac.ID, "error", wsErr)
 		}
 		// M2: listAgents only needs SOUL.md to determine draft status — avoid reading
 		// HEARTBEAT.md and AGENT.md unnecessarily in the list endpoint.
-		soul := readSoulMD(workspace)
+		// Core agents have compiled prompts — do not expose them via SOUL.md.
+		var soul string
+		if !ac.Locked {
+			soul = readSoulMD(workspace)
+		}
 		ag := defaults
 		ag.ID = ac.ID
 		ag.Name = ac.Name
 		ag.Description = ac.Description
-		ag.Type = "custom"
+		ag.Color = ac.Color
+		ag.Icon = ac.Icon
+		ag.Type = string(ac.ResolveType(coreagent.IsCoreAgent))
+		ag.Locked = ac.Locked
 		ag.Model = model
-		ag.Status = computeAgentStatus(ac.ID, activeIDs, soul)
+		ag.Status = computeAgentStatus(ac.ID, activeIDs, soul, ac.Locked)
 		ag.Soul = soul
 		agents = append(agents, ag)
 	}
@@ -884,27 +904,6 @@ func (a *restAPI) listAgents(w http.ResponseWriter) {
 func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 	cfg := a.agentLoop.GetConfig()
 	defaults := buildAgentDefaults(cfg)
-
-	// System agent is always present and always active.
-	if id == "omnipus-system" {
-		workspace, wsErr := agentWorkspacePath(cfg, "omnipus-system", "")
-		if wsErr != nil {
-			slog.Warn("rest: getAgent: could not resolve system agent workspace", "error", wsErr)
-		}
-		soul, heartbeat, instructions := readAgentFiles(workspace)
-		ag := defaults
-		ag.ID = "omnipus-system"
-		ag.Name = "Omnipus"
-		ag.Type = "system"
-		ag.Model = cfg.Agents.Defaults.ModelName
-		ag.Status = "active"
-		ag.Soul = soul
-		ag.Heartbeat = heartbeat
-		ag.Instructions = instructions
-		jsonOK(w, ag)
-		return
-	}
-
 	activeIDs := a.activeAgentIDSet()
 
 	for _, ac := range cfg.Agents.List {
@@ -913,18 +912,25 @@ func (a *restAPI) getAgent(w http.ResponseWriter, id string) {
 			if ac.Model != nil && ac.Model.Primary != "" {
 				model = ac.Model.Primary
 			}
-			workspace, wsErr := agentWorkspacePath(cfg, ac.ID, ac.Workspace)
+			workspace, wsErr := agentWorkspacePath(cfg, ac.ID, ac.Workspace, a.homePath)
 			if wsErr != nil {
 				slog.Warn("rest: getAgent: could not resolve workspace", "agent_id", ac.ID, "error", wsErr)
 			}
 			soul, heartbeat, instructions := readAgentFiles(workspace)
+			// Core agents have compiled prompts — do not expose them.
+			if ac.Locked {
+				soul = ""
+			}
 			ag := defaults
 			ag.ID = ac.ID
 			ag.Name = ac.Name
 			ag.Description = ac.Description
-			ag.Type = "custom"
+			ag.Color = ac.Color
+			ag.Icon = ac.Icon
+			ag.Type = string(ac.ResolveType(coreagent.IsCoreAgent))
+			ag.Locked = ac.Locked
 			ag.Model = model
-			ag.Status = computeAgentStatus(ac.ID, activeIDs, soul)
+			ag.Status = computeAgentStatus(ac.ID, activeIDs, soul, ac.Locked)
 			ag.Soul = soul
 			ag.Heartbeat = heartbeat
 			ag.Instructions = instructions
@@ -1073,6 +1079,8 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 	ag.ID = ac.ID
 	ag.Name = ac.Name
 	ag.Description = ac.Description
+	ag.Color = ac.Color
+	ag.Icon = ac.Icon
 	ag.Type = "custom"
 	ag.Model = model
 	ag.Status = "draft"
@@ -1112,12 +1120,25 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
+	// Locked core agents: reject identity and prompt mutations.
+	// Allowed: model selection, heartbeat schedule (enabled/interval), tools (via updateAgentTools).
+	foundAgent := cfg.Agents.List[foundIdx]
+	if foundAgent.Locked {
+		// Protected: name, description, soul (prompt content), heartbeat (HEARTBEAT.md content), instructions.
+		// Color and icon are not in the update request struct so they are implicitly
+		// protected. If color/icon fields are ever added, gate them here too.
+		if req.Name != nil || req.Description != nil ||
+			req.Soul != nil || req.Heartbeat != nil || req.Instructions != nil {
+			jsonErr(w, http.StatusForbidden, "cannot modify locked agent identity or prompt")
+			return
+		}
+	}
 	// Persist to config.json BEFORE mutating the live config.
 	// Capture the new values to apply after persistence succeeds.
-	newName := cfg.Agents.List[foundIdx].Name
+	newName := foundAgent.Name
 	newModel := ""
-	if cfg.Agents.List[foundIdx].Model != nil {
-		newModel = cfg.Agents.List[foundIdx].Model.Primary
+	if foundAgent.Model != nil {
+		newModel = foundAgent.Model.Primary
 	}
 	if req.Name != nil {
 		newName = *req.Name
@@ -1203,7 +1224,7 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 	// Capture agentWorkspace into a local to avoid TOCTOU on cfg.Agents.List (M1).
 	capturedWorkspace := cfg.Agents.List[foundIdx].Workspace
 	capturedName := cfg.Agents.List[foundIdx].Name
-	workspace, wsErr := agentWorkspacePath(cfg, id, capturedWorkspace)
+	workspace, wsErr := agentWorkspacePath(cfg, id, capturedWorkspace, a.homePath)
 	if wsErr != nil {
 		slog.Error("rest: agentWorkspacePath for update", "agent_id", id, "error", wsErr)
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not resolve workspace: %v", wsErr))
@@ -1253,12 +1274,17 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 			return
 		}
 	}
-	// Now trigger reload so the new AgentInstance picks up the updated files.
-	// The "warning" field signals a partial success — frontend must check this field.
+	// Only trigger a full reload when structural changes require it (SOUL.md, HEARTBEAT.md,
+	// agent creation/deletion). Model, rate limit, timeout, and steering mode changes are
+	// config-only and do NOT need a reload — avoiding the WebSocket drop and context loss
+	// that a full reload causes mid-conversation.
+	needsReload := req.Soul != nil || req.Heartbeat != nil || req.Instructions != nil
 	var reloadWarning string
-	if err := a.agentLoop.TriggerReload(); err != nil {
-		slog.Error("config reload after agent update failed", "error", err)
-		reloadWarning = fmt.Sprintf("config reload failed: %v", err)
+	if needsReload {
+		if err := a.agentLoop.TriggerReload(); err != nil {
+			slog.Error("config reload after agent update failed", "error", err)
+			reloadWarning = fmt.Sprintf("config reload failed: %v", err)
+		}
 	}
 	// Re-read the files so the response reflects what was just persisted.
 	soul, heartbeat, instructions := readAgentFiles(workspace)
@@ -1288,9 +1314,14 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 			}
 		}
 	}
-	ag.Type = "custom"
+	ag.Type = string(foundAgent.ResolveType(coreagent.IsCoreAgent))
+	ag.Locked = foundAgent.Locked
 	ag.Model = model
-	ag.Status = computeAgentStatus(agentID, activeIDs, soul)
+	ag.Status = computeAgentStatus(agentID, activeIDs, soul, foundAgent.Locked)
+	// Hide compiled prompts for locked (core) agents.
+	if foundAgent.Locked {
+		soul = ""
+	}
 	ag.Soul = soul
 	ag.Heartbeat = heartbeat
 	ag.Instructions = instructions
@@ -1538,12 +1569,37 @@ func (a *restAPI) updateConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Use safeUpdateConfigJSON to hold configMu during the read-modify-write cycle
+	// Block security-sensitive top-level keys — changes to these must go through
+	// their dedicated endpoints to ensure policy validation and audit logging.
+	blocked := map[string]bool{"sandbox": true, "credentials": true, "security": true}
+	for k := range updates {
+		if blocked[k] {
+			jsonErr(
+				w,
+				http.StatusForbidden,
+				fmt.Sprintf("key %q cannot be modified via config endpoint — use the dedicated security endpoints", k),
+			)
+			return
+		}
+	}
+
+	// Use safeUpdateConfigJSON to hold configMu during the read-modify-write cycle.
+	// Deep merge nested objects so partial updates don't wipe sibling keys
+	// (e.g., updating gateway.port must not delete gateway.users).
 	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
 		for k, v := range updates {
 			var parsed any
 			if err := json.Unmarshal(v, &parsed); err != nil {
 				return fmt.Errorf("invalid value for %q: %w", k, err)
+			}
+			// Deep merge maps; replace scalars/arrays.
+			if existingMap, ok := m[k].(map[string]any); ok {
+				if newMap, ok := parsed.(map[string]any); ok {
+					for nk, nv := range newMap {
+						existingMap[nk] = nv
+					}
+					continue // merged into existing map
+				}
 			}
 			m[k] = parsed
 		}
@@ -1839,6 +1895,8 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	cm.RegisterHTTPHandler("/api/v1/security/rate-limits", a.withAuth(a.HandleRateLimits))
 	// Wave 5 security endpoints (SEC-01/02/03).
 	cm.RegisterHTTPHandler("/api/v1/security/sandbox-status", a.withAuth(a.HandleSandboxStatus))
+	// Global tool policies endpoint.
+	cm.RegisterHTTPHandler("/api/v1/security/tool-policies", a.withAuth(a.HandleToolPolicies))
 	cm.RegisterHTTPHandler("/api/v1/credentials", a.withAuth(a.HandleCredentials))
 	cm.RegisterHTTPHandler("/api/v1/credentials/", a.withAuth(a.HandleCredentials))
 	cm.RegisterHTTPHandler("/api/v1/media/", a.withOptionalAuth(a.HandleMedia))
@@ -2814,37 +2872,15 @@ func toolToMap(t tools.Tool, defaultCategory string) map[string]any {
 	}
 }
 
-// HandleBuiltinTools handles GET /api/v1/tools/builtin — returns tools from the
-// default agent and the system agent (omnipus-system) merged into a single list,
-// each annotated with scope and category, for the tool picker UI.
+// HandleBuiltinTools handles GET /api/v1/tools/builtin — returns the full
+// catalog of all tools available in the system, regardless of which are
+// currently enabled or assigned to agents.
 func (a *restAPI) HandleBuiltinTools(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	registry := a.agentLoop.GetRegistry()
-	defaultAgent := registry.GetDefaultAgent()
-	if defaultAgent == nil {
-		jsonOK(w, []map[string]any{})
-		return
-	}
-	seen := make(map[string]struct{})
-	result := make([]map[string]any, 0)
-	for _, t := range defaultAgent.Tools.GetAll() {
-		seen[t.Name()] = struct{}{}
-		result = append(result, toolToMap(t, "general"))
-	}
-	// Also include system agent tools if they exist, deduplicating by name.
-	if sysAgent, ok := registry.GetAgent("omnipus-system"); ok && sysAgent != nil {
-		for _, t := range sysAgent.Tools.GetAll() {
-			if _, dup := seen[t.Name()]; dup {
-				continue
-			}
-			seen[t.Name()] = struct{}{}
-			result = append(result, toolToMap(t, "system"))
-		}
-	}
-	jsonOK(w, result)
+	jsonOK(w, tools.CatalogAsMapSlice())
 }
 
 // HandleMCPTools handles GET /api/v1/tools/mcp — returns all configured MCP
@@ -2908,27 +2944,25 @@ func (a *restAPI) getAgentTools(w http.ResponseWriter, agentID string) {
 
 	effectiveTools := []map[string]any{}
 	if agent != nil {
-		filtered := tools.FilterToolsByVisibility(agent.Tools.GetAll(), agentType, toolsCfgToVisibility(toolsCfg))
+		filtered, policyMap := tools.FilterToolsByPolicy(agent.Tools.GetAll(), agentType, toolsCfgToPolicy(toolsCfg))
 		for _, t := range filtered {
-			effectiveTools = append(effectiveTools, toolToMap(t, "general"))
+			entry := toolToMap(t, "general")
+			if p, ok := policyMap[t.Name()]; ok {
+				entry["policy"] = p
+			}
+			effectiveTools = append(effectiveTools, entry)
 		}
 	}
 
-	// Build the response config. Return the stored config or a default.
-	respCfg := map[string]any{
-		"builtin": map[string]any{"mode": "inherit"},
-		"mcp":     map[string]any{"servers": []any{}},
+	// Build the response config with policy format (handles legacy conversion).
+	policyCfg := toolsCfgToPolicy(toolsCfg)
+	defaultPolicy := policyCfg.DefaultPolicy
+	policies := policyCfg.Policies
+	if policies == nil {
+		policies = map[string]string{}
 	}
+	servers := make([]map[string]any, 0)
 	if toolsCfg != nil {
-		mode := string(toolsCfg.Builtin.Mode)
-		if mode == "" {
-			mode = "inherit"
-		}
-		visible := toolsCfg.Builtin.Visible
-		if visible == nil {
-			visible = []string{}
-		}
-		servers := make([]map[string]any, 0, len(toolsCfg.MCP.Servers))
 		for _, s := range toolsCfg.MCP.Servers {
 			srv := map[string]any{"id": s.ID}
 			if len(s.Tools) > 0 {
@@ -2936,10 +2970,13 @@ func (a *restAPI) getAgentTools(w http.ResponseWriter, agentID string) {
 			}
 			servers = append(servers, srv)
 		}
-		respCfg = map[string]any{
-			"builtin": map[string]any{"mode": mode, "visible": visible},
-			"mcp":     map[string]any{"servers": servers},
-		}
+	}
+	respCfg := map[string]any{
+		"builtin": map[string]any{
+			"default_policy": defaultPolicy,
+			"policies":       policies,
+		},
+		"mcp": map[string]any{"servers": servers},
 	}
 
 	jsonOK(w, map[string]any{
@@ -2952,8 +2989,10 @@ func (a *restAPI) getAgentTools(w http.ResponseWriter, agentID string) {
 // updateAgentTools handles PUT /api/v1/agents/{id}/tools — replaces the
 // agent's tool visibility config.
 func (a *restAPI) updateAgentTools(w http.ResponseWriter, r *http.Request, agentID string) {
+	// Legacy system agent ID returns 404 since it no longer exists.
+	// Core agents are protected by the Locked check below.
 	if agentID == "omnipus-system" {
-		jsonErr(w, http.StatusForbidden, "cannot modify system agent tools")
+		jsonErr(w, http.StatusNotFound, fmt.Sprintf("agent %q not found", agentID))
 		return
 	}
 
@@ -2961,10 +3000,6 @@ func (a *restAPI) updateAgentTools(w http.ResponseWriter, r *http.Request, agent
 	found := false
 	for _, ac := range cfg.Agents.List {
 		if ac.ID == agentID {
-			if ac.ResolveType(coreagent.IsCoreAgent) == config.AgentTypeCore {
-				jsonErr(w, http.StatusForbidden, "cannot modify core agent tools")
-				return
-			}
 			found = true
 			break
 		}
@@ -2976,6 +3011,10 @@ func (a *restAPI) updateAgentTools(w http.ResponseWriter, r *http.Request, agent
 
 	var req struct {
 		Builtin struct {
+			// New policy format
+			DefaultPolicy string            `json:"default_policy"`
+			Policies      map[string]string `json:"policies"`
+			// Legacy format (backward compat)
 			Mode    string   `json:"mode"`
 			Visible []string `json:"visible"`
 		} `json:"builtin"`
@@ -2991,14 +3030,34 @@ func (a *restAPI) updateAgentTools(w http.ResponseWriter, r *http.Request, agent
 		return
 	}
 
-	// Validate mode.
-	mode := req.Builtin.Mode
-	if mode == "" {
-		mode = "inherit"
+	// Convert legacy format to policy format if needed.
+	if req.Builtin.DefaultPolicy == "" && req.Builtin.Mode != "" {
+		switch req.Builtin.Mode {
+		case "explicit":
+			req.Builtin.DefaultPolicy = "deny"
+			req.Builtin.Policies = make(map[string]string, len(req.Builtin.Visible))
+			for _, name := range req.Builtin.Visible {
+				req.Builtin.Policies[name] = "allow"
+			}
+		case "inherit":
+			req.Builtin.DefaultPolicy = "allow"
+		}
 	}
-	if mode != "inherit" && mode != "explicit" {
-		jsonErr(w, http.StatusUnprocessableEntity, "builtin.mode must be 'inherit' or 'explicit'")
+	if req.Builtin.DefaultPolicy == "" {
+		req.Builtin.DefaultPolicy = "allow"
+	}
+
+	// Validate policy values.
+	validPolicies := map[string]bool{"allow": true, "ask": true, "deny": true}
+	if !validPolicies[req.Builtin.DefaultPolicy] {
+		jsonErr(w, http.StatusUnprocessableEntity, "builtin.default_policy must be 'allow', 'ask', or 'deny'")
 		return
+	}
+	for name, p := range req.Builtin.Policies {
+		if !validPolicies[p] {
+			jsonErr(w, http.StatusUnprocessableEntity, fmt.Sprintf("invalid policy %q for tool %q", p, name))
+			return
+		}
 	}
 
 	// Validate MCP server IDs reference configured servers.
@@ -3029,11 +3088,14 @@ func (a *restAPI) updateAgentTools(w http.ResponseWriter, r *http.Request, agent
 				continue
 			}
 			if agentMap["id"] == agentID {
+				builtinCfg := map[string]any{
+					"default_policy": req.Builtin.DefaultPolicy,
+				}
+				if len(req.Builtin.Policies) > 0 {
+					builtinCfg["policies"] = req.Builtin.Policies
+				}
 				toolsCfg := map[string]any{
-					"builtin": map[string]any{
-						"mode":    mode,
-						"visible": req.Builtin.Visible,
-					},
+					"builtin": builtinCfg,
 				}
 				if len(req.MCP.Servers) > 0 {
 					servers := make([]map[string]any, 0, len(req.MCP.Servers))
@@ -3058,35 +3120,39 @@ func (a *restAPI) updateAgentTools(w http.ResponseWriter, r *http.Request, agent
 		return
 	}
 
-	var reloadWarning string
-	if err := a.agentLoop.TriggerReload(); err != nil {
-		slog.Error("config reload after agent tools update failed", "agent_id", agentID, "error", err)
-		reloadWarning = fmt.Sprintf("config saved but runtime reload failed: %v", err)
-	}
-
-	// Return the updated state. If reload failed, include a warning so the
-	// client knows the effective_tools may be stale until next restart.
-	if reloadWarning != "" {
-		// Still return 200 — the config was saved, just the live reload failed.
-		// The frontend can show a warning banner.
-		w.Header().Set("X-Omnipus-Warning", reloadWarning)
-	}
+	// Tool policy changes are config-only — no reload needed. The policy is
+	// resolved at request time from the live config, not baked into agent instances.
 	a.getAgentTools(w, agentID)
 }
 
-// toolsCfgToVisibility converts a config.AgentToolsCfg to the tools package's
-// ToolVisibilityCfg for use with FilterToolsByVisibility.
-func toolsCfgToVisibility(cfg *config.AgentToolsCfg) *tools.ToolVisibilityCfg {
+// toolsCfgToPolicy converts a config.AgentToolsCfg to ToolPolicyCfg.
+// Handles both new (DefaultPolicy+Policies) and legacy (Mode+Visible) formats.
+func toolsCfgToPolicy(cfg *config.AgentToolsCfg) *tools.ToolPolicyCfg {
 	if cfg == nil {
-		return &tools.ToolVisibilityCfg{Mode: "inherit"}
+		return &tools.ToolPolicyCfg{DefaultPolicy: "allow"}
 	}
-	mode := string(cfg.Builtin.Mode)
-	if mode == "" {
-		mode = "inherit"
+	// New format: use policies directly.
+	if len(cfg.Builtin.Policies) > 0 || cfg.Builtin.DefaultPolicy != "" {
+		policies := make(map[string]string, len(cfg.Builtin.Policies))
+		for k, v := range cfg.Builtin.Policies {
+			policies[k] = string(v)
+		}
+		dp := string(cfg.Builtin.DefaultPolicy)
+		if dp == "" {
+			dp = "allow"
+		}
+		return &tools.ToolPolicyCfg{DefaultPolicy: dp, Policies: policies}
 	}
-	return &tools.ToolVisibilityCfg{
-		Mode:    mode,
-		Visible: cfg.Builtin.Visible,
+	// Legacy format: convert mode+visible to policies.
+	switch cfg.Builtin.Mode {
+	case config.VisibilityExplicit:
+		policies := make(map[string]string, len(cfg.Builtin.Visible))
+		for _, name := range cfg.Builtin.Visible {
+			policies[name] = "allow"
+		}
+		return &tools.ToolPolicyCfg{DefaultPolicy: "deny", Policies: policies}
+	default: // "inherit" or empty
+		return &tools.ToolPolicyCfg{DefaultPolicy: "allow"}
 	}
 }
 
@@ -3765,18 +3831,25 @@ func (a *restAPI) HandleMedia(w http.ResponseWriter, r *http.Request) {
 	}
 	a.setCORSHeaders(w, r)
 
-	if a.mediaStore == nil {
+	// Always read the current store via the agent loop. The store is replaced
+	// on every restartServices, so a.mediaStore would go stale after the first
+	// reload (screenshots stored in the new store are invisible to the old one).
+	store := a.agentLoop.GetMediaStore()
+	if store == nil {
+		store = a.mediaStore
+	}
+	if store == nil {
 		jsonErr(w, http.StatusServiceUnavailable, "media store not available")
 		return
 	}
 
-	refID := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/api/v1/media/"), "/")
+	refID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/media/"), "/")
 	if refID == "" || strings.ContainsAny(refID, "/\\") || strings.Contains(refID, "..") {
 		jsonErr(w, http.StatusBadRequest, "invalid media ref")
 		return
 	}
 
-	localPath, meta, err := a.mediaStore.ResolveWithMeta("media://" + refID)
+	localPath, meta, err := store.ResolveWithMeta("media://" + refID)
 	if err != nil {
 		slog.Warn("rest: media ref not found", "ref", refID, "error", err.Error())
 		jsonErr(w, http.StatusNotFound, "media not found")

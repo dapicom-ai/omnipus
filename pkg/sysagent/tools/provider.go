@@ -6,8 +6,16 @@ package systools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"sort"
+	"strings"
+	"time"
 
+	"github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 )
 
@@ -173,4 +181,160 @@ func (t *ProviderTestTool) Execute(_ context.Context, args map[string]any) *tool
 		"status":     "ok",
 		"latency_ms": 0,
 	}))
+}
+
+// ---- system.models.list ----
+
+// ModelsListTool lists available models from configured providers.
+// Used by Ava (Agent Builder) to help users select a model for new agents.
+type ModelsListTool struct{ deps *Deps }
+
+func NewModelsListTool(d *Deps) *ModelsListTool  { return &ModelsListTool{deps: d} }
+func (t *ModelsListTool) Name() string           { return "system.models.list" }
+func (t *ModelsListTool) Scope() tools.ToolScope { return tools.ScopeSystem }
+func (t *ModelsListTool) Description() string {
+	return "List available models from configured providers. " +
+		"Optional: filter by provider name. Returns model slugs, provider, and whether it's the system default."
+}
+
+func (t *ModelsListTool) Parameters() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"provider": map[string]any{
+				"type":        "string",
+				"description": "Filter by provider name (e.g. 'openrouter'). Omit to show all.",
+			},
+		},
+	}
+}
+
+func (t *ModelsListTool) Execute(_ context.Context, args map[string]any) *tools.ToolResult {
+	filterProvider, _ := args["provider"].(string)
+	cfg := t.deps.GetCfg()
+
+	type modelEntry struct {
+		Model    string `json:"model"`
+		Provider string `json:"provider"`
+		Default  bool   `json:"default,omitempty"`
+	}
+
+	defaultModel := cfg.Agents.Defaults.ModelName
+
+	// Collect unique providers and resolve their API keys.
+	type providerInfo struct {
+		name   string
+		apiKey string
+	}
+	providersSeen := map[string]*providerInfo{}
+	for _, p := range cfg.Providers {
+		if p == nil {
+			continue
+		}
+		name := p.Provider
+		if name == "" {
+			name = providerFromModelRef(p.Model)
+		}
+		if name == "" || providersSeen[name] != nil {
+			continue
+		}
+		if filterProvider != "" && name != filterProvider {
+			continue
+		}
+		// Resolve API key.
+		apiKey := p.APIKey()
+		if apiKey == "" && p.APIKeyRef != "" && t.deps.CredStore != nil {
+			if v, err := t.deps.CredStore.Get(p.APIKeyRef); err == nil {
+				apiKey = v
+			}
+		}
+		providersSeen[name] = &providerInfo{name: name, apiKey: apiKey}
+	}
+
+	// Fetch models from each provider's upstream API.
+	var models []modelEntry
+	seen := map[string]bool{}
+	var warnings []string
+	for _, pi := range providersSeen {
+		baseURL := providers.GetDefaultAPIBase(pi.name)
+		if baseURL == "" {
+			warnings = append(warnings, fmt.Sprintf("%s: no API base URL configured", pi.name))
+			continue
+		}
+		if pi.apiKey == "" {
+			warnings = append(warnings, fmt.Sprintf("%s: no API key configured", pi.name))
+			continue
+		}
+		upstream, err := fetchProviderModels(baseURL, pi.apiKey)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: could not fetch model list", pi.name))
+			slog.Warn("system.models.list: failed to fetch models", "provider", pi.name, "error", err)
+			continue
+		}
+		for _, m := range upstream {
+			if seen[m] {
+				continue
+			}
+			seen[m] = true
+			models = append(models, modelEntry{
+				Model:    m,
+				Provider: pi.name,
+				Default:  m == defaultModel,
+			})
+		}
+	}
+
+	result := map[string]any{
+		"models":        models,
+		"default_model": defaultModel,
+		"total":         len(models),
+	}
+	if len(warnings) > 0 {
+		result["warnings"] = warnings
+	}
+	return tools.NewToolResult(successJSON(result))
+}
+
+// fetchProviderModels fetches models from an OpenAI-compatible /models endpoint.
+func fetchProviderModels(baseURL, apiKey string) ([]string, error) {
+	client := &http.Client{Timeout: 15 * time.Second}
+	req, err := http.NewRequest("GET", strings.TrimSuffix(baseURL, "/")+"/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("X-Api-Key", apiKey)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, err
+	}
+
+	models := make([]string, 0, len(result.Data))
+	for _, m := range result.Data {
+		if m.ID != "" {
+			models = append(models, m.ID)
+		}
+	}
+	sort.Strings(models)
+	return models, nil
 }

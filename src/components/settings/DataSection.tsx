@@ -1,6 +1,8 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Database, FloppyDisk, Archive, ArrowCounterClockwise, Trash } from '@phosphor-icons/react'
+import { Database, Archive, ArrowCounterClockwise, Trash } from '@phosphor-icons/react'
+import { useAutoSave } from '@/hooks/useAutoSave'
+import { AutoSaveIndicator } from '@/components/ui/AutoSaveIndicator'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -54,23 +56,19 @@ export function DataSection() {
     setRetentionDays(config.data.session_retention_days.toString())
   }, [config])
 
-  const { mutate: doSave, isPending: isSaving } = useMutation({
-    mutationFn: () =>
-      updateConfig({
-        data: { session_retention_days: parseInt(retentionDays, 10) },
-      }),
-    onSuccess: () => {
+  const dataFormData = useMemo(() => ({
+    session_retention_days: parseInt(retentionDays, 10) || 90,
+  }), [retentionDays])
+
+  const { status: saveStatus, error: saveError } = useAutoSave(
+    dataFormData,
+    async (data) => {
+      await updateConfig({ data })
       isDirtyRef.current = false
       queryClient.invalidateQueries({ queryKey: ['config'] })
-      addToast({ message: 'Data settings saved', variant: 'success' })
     },
-    onError: (err: Error) => addToast({
-      message: err.message.includes('501')
-        ? 'Settings changes require editing config.json and restarting the gateway'
-        : err.message,
-      variant: 'error',
-    }),
-  })
+    { disabled: !config },
+  )
 
   const { mutate: doBackup, isPending: isCreatingBackup } = useMutation({
     mutationFn: createBackup,
@@ -113,10 +111,7 @@ export function DataSection() {
             Manage session retention, storage, and backups.
           </p>
         </div>
-        <Button size="sm" onClick={() => doSave()} disabled={isSaving} className="gap-1.5">
-          <FloppyDisk size={13} weight="bold" />
-          {isSaving ? 'Saving...' : 'Save'}
-        </Button>
+        <AutoSaveIndicator status={saveStatus} error={saveError} />
       </div>
 
       {/* Storage stats */}

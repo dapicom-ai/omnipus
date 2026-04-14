@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -42,6 +43,11 @@ type UnifiedMeta struct {
 	Type UnifiedSessionType `json:"type"`
 }
 
+// ErrAlreadyActive is returned by SwitchAgent when the session's ActiveAgentID
+// already matches the requested newAgentID. Callers should treat this as success
+// (idempotent operation).
+var ErrAlreadyActive = errors.New("agent already active on this session")
+
 // UnifiedStore manages per-session directories under a base directory.
 // Each session has: meta.json, context.jsonl (agent loop), transcript.jsonl (UI).
 //
@@ -50,7 +56,6 @@ type UnifiedMeta struct {
 type UnifiedStore struct {
 	mu      sync.Mutex
 	baseDir string // {workspace}/sessions/
-	agentID string
 	backend *memory.JSONLStore
 }
 
@@ -65,7 +70,9 @@ func validateSessionID(id string) error {
 
 // NewUnifiedStore creates a UnifiedStore rooted at baseDir.
 // It migrates legacy flat JSONL files if any are found.
-func NewUnifiedStore(baseDir, agentID string) (*UnifiedStore, error) {
+// The agentID is no longer baked into the store — callers pass it per-operation
+// (e.g., NewSession receives creatingAgentID).
+func NewUnifiedStore(baseDir string) (*UnifiedStore, error) {
 	if err := os.MkdirAll(baseDir, 0o700); err != nil {
 		return nil, fmt.Errorf("unified_store: create base dir %q: %w", baseDir, err)
 	}
@@ -80,7 +87,6 @@ func NewUnifiedStore(baseDir, agentID string) (*UnifiedStore, error) {
 
 	us := &UnifiedStore{
 		baseDir: baseDir,
-		agentID: agentID,
 		backend: store,
 	}
 
@@ -123,14 +129,13 @@ func (us *UnifiedStore) migrateLegacy() {
 		meta := &UnifiedMeta{
 			SessionMeta: SessionMeta{
 				ID:        name,
-				AgentID:   us.agentID,
 				Status:    StatusActive,
 				CreatedAt: now,
 				UpdatedAt: now,
 			},
 			Type: SessionTypeChat,
 		}
-		if writeMetaErr := writeUnifiedMeta(sessionDir, meta); writeMetaErr != nil {
+		if writeMetaErr := writeUnifiedMetaDirect(sessionDir, meta); writeMetaErr != nil {
 			slog.Warn("unified_store: migrate: could not write meta.json", "name", name, "error", writeMetaErr)
 			continue
 		}
@@ -142,7 +147,13 @@ func (us *UnifiedStore) migrateLegacy() {
 }
 
 // NewSession creates a new session directory with meta.json and empty files.
-func (us *UnifiedStore) NewSession(sessionType UnifiedSessionType, channel string) (*UnifiedMeta, error) {
+// creatingAgentID is the agent that owns this session initially; it is stored
+// as AgentID (legacy compat), AgentIDs[0], and ActiveAgentID.
+func (us *UnifiedStore) NewSession(
+	sessionType UnifiedSessionType,
+	channel string,
+	creatingAgentID string,
+) (*UnifiedMeta, error) {
 	us.mu.Lock()
 	defer us.mu.Unlock()
 
@@ -154,12 +165,14 @@ func (us *UnifiedStore) NewSession(sessionType UnifiedSessionType, channel strin
 	now := time.Now().UTC()
 	meta := &UnifiedMeta{
 		SessionMeta: SessionMeta{
-			ID:        sessionID,
-			AgentID:   us.agentID,
-			Status:    StatusActive,
-			Channel:   channel,
-			CreatedAt: now,
-			UpdatedAt: now,
+			ID:            sessionID,
+			AgentID:       creatingAgentID,
+			AgentIDs:      []string{creatingAgentID},
+			ActiveAgentID: creatingAgentID,
+			Status:        StatusActive,
+			Channel:       channel,
+			CreatedAt:     now,
+			UpdatedAt:     now,
 		},
 		Type: sessionType,
 	}
@@ -168,7 +181,7 @@ func (us *UnifiedStore) NewSession(sessionType UnifiedSessionType, channel strin
 	if err := os.MkdirAll(sessionDir, 0o700); err != nil {
 		return nil, fmt.Errorf("unified_store: create session dir: %w", err)
 	}
-	if err := writeUnifiedMeta(sessionDir, meta); err != nil {
+	if err := us.writeMetaLocked(sessionID, meta); err != nil {
 		return nil, err
 	}
 	// Create empty transcript so readers don't error on first access.
@@ -179,7 +192,7 @@ func (us *UnifiedStore) NewSession(sessionType UnifiedSessionType, channel strin
 		}
 	}
 
-	slog.Debug("unified_store: created session", "id", sessionID, "type", sessionType, "agent", us.agentID)
+	slog.Debug("unified_store: created session", "id", sessionID, "type", sessionType, "agent", creatingAgentID)
 	return meta, nil
 }
 
@@ -190,7 +203,7 @@ func (us *UnifiedStore) GetMeta(sessionID string) (*UnifiedMeta, error) {
 	}
 	us.mu.Lock()
 	defer us.mu.Unlock()
-	return readUnifiedMeta(filepath.Join(us.baseDir, sessionID))
+	return us.readMetaLocked(sessionID)
 }
 
 // SetMeta applies a partial update to a session's meta.json.
@@ -201,8 +214,7 @@ func (us *UnifiedStore) SetMeta(sessionID string, patch MetaPatch) error {
 	us.mu.Lock()
 	defer us.mu.Unlock()
 
-	sessionDir := filepath.Join(us.baseDir, sessionID)
-	meta, err := readUnifiedMeta(sessionDir)
+	meta, err := us.readMetaLocked(sessionID)
 	if err != nil {
 		return err
 	}
@@ -216,7 +228,60 @@ func (us *UnifiedStore) SetMeta(sessionID string, patch MetaPatch) error {
 		meta.TaskID = *patch.TaskID
 	}
 	meta.UpdatedAt = time.Now().UTC()
-	return writeUnifiedMeta(sessionDir, meta)
+	return us.writeMetaLocked(sessionID, meta)
+}
+
+// SwitchAgent atomically updates the ActiveAgentID on a session.
+// The caller must NOT hold us.mu. Returns ErrAlreadyActive if the session
+// is already on newAgentID (idempotent — callers should treat this as success).
+// newAgentID is appended to AgentIDs if not already present.
+func (us *UnifiedStore) SwitchAgent(sessionID, newAgentID string) error {
+	if err := validateSessionID(sessionID); err != nil {
+		return err
+	}
+	us.mu.Lock()
+	defer us.mu.Unlock()
+
+	meta, err := us.readMetaLocked(sessionID)
+	if err != nil {
+		return err
+	}
+	if meta.ActiveAgentID == newAgentID {
+		return ErrAlreadyActive
+	}
+	meta.ActiveAgentID = newAgentID
+
+	found := false
+	for _, id := range meta.AgentIDs {
+		if id == newAgentID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		meta.AgentIDs = append(meta.AgentIDs, newAgentID)
+	}
+	meta.UpdatedAt = time.Now().UTC()
+	return us.writeMetaLocked(sessionID, meta)
+}
+
+// readMetaLocked reads meta.json for sessionID without acquiring the mutex.
+// Caller must hold us.mu.
+func (us *UnifiedStore) readMetaLocked(sessionID string) (*UnifiedMeta, error) {
+	return readUnifiedMeta(filepath.Join(us.baseDir, sessionID))
+}
+
+// writeMetaLocked atomically writes meta.json for sessionID, acquiring an OS
+// flock for cross-process defense-in-depth. Caller must hold us.mu.
+func (us *UnifiedStore) writeMetaLocked(sessionID string, meta *UnifiedMeta) error {
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("unified_store: marshal meta: %w", err)
+	}
+	metaPath := filepath.Join(us.baseDir, sessionID, "meta.json")
+	return fileutil.WithFlock(metaPath, func() error {
+		return fileutil.WriteFileAtomic(metaPath, data, 0o600)
+	})
 }
 
 // AppendTranscript appends an entry to {session-id}/transcript.jsonl.
@@ -237,8 +302,7 @@ func (us *UnifiedStore) AppendTranscript(sessionID string, entry TranscriptEntry
 	}
 
 	// Update stats and UpdatedAt in meta (best-effort).
-	sessionDir := filepath.Join(us.baseDir, sessionID)
-	meta, err := readUnifiedMeta(sessionDir)
+	meta, err := us.readMetaLocked(sessionID)
 	if err != nil {
 		slog.Warn("unified_store: could not update meta stats", "session_id", sessionID, "error", err)
 		return nil
@@ -255,7 +319,7 @@ func (us *UnifiedStore) AppendTranscript(sessionID string, entry TranscriptEntry
 		meta.Stats.MessageCount++
 	}
 	meta.UpdatedAt = entry.Timestamp
-	if writeErr := writeUnifiedMeta(sessionDir, meta); writeErr != nil {
+	if writeErr := us.writeMetaLocked(sessionID, meta); writeErr != nil {
 		slog.Warn(
 			"unified_store: could not write meta after transcript append",
 			"session_id",
@@ -463,18 +527,21 @@ func readUnifiedMeta(sessionDir string) (*UnifiedMeta, error) {
 	if meta.Type == "" {
 		meta.Type = SessionTypeChat
 	}
+	meta.PostLoad()
 	return &meta, nil
 }
 
-// writeUnifiedMeta atomically writes meta.json.
-func writeUnifiedMeta(sessionDir string, meta *UnifiedMeta) error {
+// writeUnifiedMetaDirect atomically writes meta.json to sessionDir with an OS
+// flock for cross-process defense-in-depth. This is a package-level helper used
+// during migration (called before the store is fully constructed). Normal writes
+// go through UnifiedStore.writeMetaLocked which also holds the in-process mutex.
+func writeUnifiedMetaDirect(sessionDir string, meta *UnifiedMeta) error {
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return fmt.Errorf("unified_store: marshal meta: %w", err)
 	}
-	path := filepath.Join(sessionDir, "meta.json")
-	if err := fileutil.WriteFileAtomic(path, data, 0o600); err != nil {
-		return fmt.Errorf("unified_store: write meta.json: %w", err)
-	}
-	return nil
+	metaPath := filepath.Join(sessionDir, "meta.json")
+	return fileutil.WithFlock(metaPath, func() error {
+		return fileutil.WriteFileAtomic(metaPath, data, 0o600)
+	})
 }

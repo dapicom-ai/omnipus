@@ -42,6 +42,7 @@ var toolConfirmation = map[string]ConfirmationLevel{
 	"system.provider.configure": ConfirmationNone,
 	"system.provider.list":      ConfirmationNone,
 	"system.provider.test":      ConfirmationNone,
+	"system.models.list":        ConfirmationNone,
 	"system.pin.list":           ConfirmationNone,
 	"system.pin.create":         ConfirmationNone,
 	"system.config.get":         ConfirmationNone,

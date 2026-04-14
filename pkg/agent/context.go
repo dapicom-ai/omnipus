@@ -14,6 +14,7 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/coreagent"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/skills"
@@ -47,6 +48,18 @@ type ContextBuilder struct {
 	// build time. This catches nested file creations/deletions/mtime changes
 	// that may not update the top-level skill root directory mtime.
 	skillFilesAtCache map[string]time.Time
+
+	// resourcesInjector is an optional callback that returns additional context
+	// to inject into the system prompt. Used by Ava (Agent Builder) to inject
+	// available tools, skills, providers, and system defaults.
+	resourcesInjector func() string
+}
+
+// WithResourcesInjector sets a callback that provides additional context sections
+// to inject into the system prompt (e.g., available tools catalog for Ava).
+func (cb *ContextBuilder) WithResourcesInjector(fn func() string) *ContextBuilder {
+	cb.resourcesInjector = fn
+	return cb
 }
 
 func (cb *ContextBuilder) WithToolDiscovery(useBM25, useRegex bool) *ContextBuilder {
@@ -204,17 +217,30 @@ func (cb *ContextBuilder) BuildSystemPrompt() string {
 	// definition to avoid a second LoadAgentDefinition call inside.
 	bootstrapContent := cb.loadBootstrapFilesWithDef(agentDef)
 
-	// Core identity: if the agent has a SOUL.md, it defines the personality —
-	// skip the hardcoded "You are omnipus" identity and only inject workspace info.
-	// If no SOUL.md exists, use the full default identity.
-	if agentDef.Soul != nil && strings.TrimSpace(agentDef.Soul.Content) != "" {
+	// Core agents have compiled prompts (not on disk). Check for a compiled
+	// prompt first; if found, inject it as the SOUL content and use workspace-only
+	// identity. This keeps the prompt invisible to users (no SOUL.md file).
+	compiledPrompt := coreagent.GetPrompt(cb.agentID)
+	if compiledPrompt != "" {
+		parts = append(parts, cb.getWorkspaceInfo())
+		bootstrapContent = fmt.Sprintf("## SOUL\n\n%s\n\n", compiledPrompt) + bootstrapContent
+	} else if agentDef.Soul != nil && strings.TrimSpace(agentDef.Soul.Content) != "" {
+		// Custom agent with SOUL.md on disk — use workspace-only identity.
 		parts = append(parts, cb.getWorkspaceInfo())
 	} else {
+		// No SOUL.md and not a core agent — use the full default identity.
 		parts = append(parts, cb.getIdentity())
 	}
 
 	if bootstrapContent != "" {
 		parts = append(parts, bootstrapContent)
+	}
+
+	// Agent-specific resource injection (e.g., available tools catalog for Ava).
+	if cb.resourcesInjector != nil {
+		if resources := cb.resourcesInjector(); resources != "" {
+			parts = append(parts, resources)
+		}
 	}
 
 	// Skills - show summary, AI can read full content with read_file tool

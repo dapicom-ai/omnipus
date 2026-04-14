@@ -452,6 +452,7 @@ func (ts *turnState) appendToolCallTranscript(tc session.ToolCall) {
 	entry := session.TranscriptEntry{
 		ID:        tc.ID,
 		Type:      session.EntryTypeToolCall,
+		AgentID:   ts.agentID,
 		Timestamp: time.Now().UTC(),
 		ToolCalls: []session.ToolCall{tc},
 	}

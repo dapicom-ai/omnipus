@@ -72,8 +72,9 @@ type AgentLoop struct {
 	mu             sync.RWMutex
 
 	// Concurrent turn management
-	activeTurnStates sync.Map     // key: sessionKey (string), value: *turnState
-	subTurnCounter   atomic.Int64 // Counter for generating unique SubTurn IDs
+	activeTurnStates   sync.Map     // key: sessionKey (string), value: *turnState
+	subTurnCounter     atomic.Int64 // Counter for generating unique SubTurn IDs
+	sessionActiveAgent sync.Map     // key: sessionKey (string), value: agentID (string); "" clears override
 
 	// Turn tracking
 	turnSeq        atomic.Uint64
@@ -116,6 +117,9 @@ type AgentLoop struct {
 	// tools are disabled. Shutdown() is called in AgentLoop.Close().
 	browserMgr *browser.BrowserManager
 
+	// Ava agent CRUD deps — stored so WireAvaAgentTools can re-run on hot reload.
+	avaDeps *systools.Deps
+
 	// Wave 4: Per-agent rate limiting and global daily cost cap (SEC-26).
 	// rateLimiter manages sliding-window counters; costTracker persists the
 	// daily cost accumulator across restarts. Both are always non-nil after
@@ -124,6 +128,11 @@ type AgentLoop struct {
 	// cfg.Sandbox.RateLimits.* > 0 to decide whether to enforce.
 	rateLimiter *security.RateLimiterRegistry
 	costTracker *security.CostTracker
+
+	// sharedSessionStore is the single UnifiedStore at $OMNIPUS_HOME/sessions/
+	// used for all new sessions (joined session model). Legacy per-agent stores
+	// remain accessible via GetAgentStore for read-only access to old sessions.
+	sharedSessionStore *session.UnifiedStore
 }
 
 // processOptions configures how a message is processed
@@ -173,6 +182,11 @@ func NewAgentLoop(
 ) *AgentLoop {
 	registry := NewAgentRegistry(cfg, provider)
 
+	// Apply configurable default agent override.
+	if cfg.Agents.Defaults.DefaultAgentID != "" {
+		registry.SetDefaultAgentOverride(cfg.Agents.Defaults.DefaultAgentID)
+	}
+
 	// Set up shared fallback chain
 	cooldown := providers.NewCooldownTracker()
 	fallbackChain := providers.NewFallbackChain(cooldown)
@@ -203,6 +217,22 @@ func NewAgentLoop(
 	homePath := filepath.Dir(cfg.WorkspacePath())
 	al.taskStore = taskstore.New(filepath.Join(homePath, "tasks"))
 	al.taskExecutor = newTaskExecutor(al, al.taskStore)
+
+	// Initialize shared session store at $OMNIPUS_HOME/sessions/.
+	// All new chat sessions are created here (joined session model).
+	sharedDir := filepath.Join(homePath, "sessions")
+	if err := os.MkdirAll(sharedDir, 0o700); err != nil {
+		logger.ErrorCF("agent", "Shared session store unavailable — new sessions will use per-agent stores",
+			map[string]any{"dir": sharedDir, "error": err.Error()})
+	} else {
+		sharedStore, ssErr := session.NewUnifiedStore(sharedDir)
+		if ssErr != nil {
+			logger.ErrorCF("agent", "Shared session store init failed — new sessions will use per-agent stores",
+				map[string]any{"dir": sharedDir, "error": ssErr.Error()})
+		} else {
+			al.sharedSessionStore = sharedStore
+		}
+	}
 
 	// SEC-15: Initialize structured audit logging (optional) and policy
 	// evaluation (always on). Audit directory is ~/.omnipus/system/ (sibling of
@@ -258,6 +288,15 @@ func NewAgentLoop(
 	if len(cfg.Tools.Exec.AllowedBinaries) > 0 {
 		defaultPolicy = policy.PolicyDeny
 	}
+	// Convert global tool policies from config (map[string]string) to the
+	// typed map[string]ToolPolicy that SecurityConfig expects.
+	var globalToolPolicies map[string]policy.ToolPolicy
+	if len(cfg.Sandbox.ToolPolicies) > 0 {
+		globalToolPolicies = make(map[string]policy.ToolPolicy, len(cfg.Sandbox.ToolPolicies))
+		for k, v := range cfg.Sandbox.ToolPolicies {
+			globalToolPolicies[k] = policy.ToolPolicy(v)
+		}
+	}
 	secCfg := &policy.SecurityConfig{
 		DefaultPolicy: defaultPolicy,
 		Policy: policy.PolicySection{
@@ -266,6 +305,8 @@ func NewAgentLoop(
 				Approval:        cfg.Tools.Exec.Approval,
 			},
 		},
+		ToolPolicies:      globalToolPolicies,
+		DefaultToolPolicy: policy.ToolPolicy(cfg.Sandbox.DefaultToolPolicy),
 	}
 	policyEval := policy.NewEvaluator(secCfg)
 
@@ -590,6 +631,40 @@ func registerSharedTools(
 			})
 			agent.Tools.Register(messageTool)
 		}
+
+		// Handoff tools — always registered (ScopeCore).
+		getRegistryReader := func() tools.AgentRegistryReader {
+			return al.GetRegistry()
+		}
+		onHandoffFrontend := func(chatID, newAgentID, agentName string) {
+			// Store both chatID and agentID keys so GetSessionActiveAgent can look up
+			// by either key. Also clear when newAgentID is empty.
+			if newAgentID == "" {
+				al.sessionActiveAgent.Delete("chat:" + chatID)
+			} else {
+				al.sessionActiveAgent.Store("chat:"+newAgentID, newAgentID)
+				al.sessionActiveAgent.Store("chat:"+chatID, newAgentID)
+			}
+		}
+		getContextWindow := func(targetAgentID string) int {
+			currentCfg := al.GetConfig()
+			if currentCfg.Agents.Defaults.ContextWindow > 0 {
+				return currentCfg.Agents.Defaults.ContextWindow
+			}
+			return 8192
+		}
+		getDefaultAgent := func() string {
+			currentCfg := al.GetConfig()
+			if currentCfg.Agents.Defaults.DefaultAgentID != "" {
+				return currentCfg.Agents.Defaults.DefaultAgentID
+			}
+			return DefaultAgentID
+		}
+		// sharedStore is the shared session store; tools handle a nil store by
+		// skipping transcript ops (nil only occurs in tests without a store).
+		sharedStore := al.GetSessionStore()
+		agent.Tools.Register(tools.NewHandoffTool(getRegistryReader, sharedStore, getContextWindow, onHandoffFrontend))
+		agent.Tools.Register(tools.NewReturnToDefaultTool(sharedStore, getDefaultAgent, onHandoffFrontend))
 
 		// Send file tool (outbound media via MediaStore — store injected later by SetMediaStore)
 		if cfg.Tools.IsToolEnabled("send_file") {
@@ -1543,8 +1618,24 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 		return fmt.Errorf("context canceled after registry creation: %w", err)
 	}
 
+	// Apply configurable default agent override on the new registry.
+	if cfg.Agents.Defaults.DefaultAgentID != "" {
+		registry.SetDefaultAgentOverride(cfg.Agents.Defaults.DefaultAgentID)
+	}
+
 	// Ensure shared tools are re-registered on the new registry
 	registerSharedTools(al, cfg, al.bus, registry, provider)
+
+	// Re-wire Ava's agent CRUD tools on the new registry.
+	if al.avaDeps != nil {
+		if err := al.WireAvaAgentTools(al.avaDeps, registry); err != nil {
+			logger.WarnCF(
+				"agent",
+				"hot-reload: failed to re-wire Ava agent tools",
+				map[string]any{"error": err.Error()},
+			)
+		}
+	}
 
 	// Atomically swap the config and registry under write lock
 	// This ensures readers see a consistent pair
@@ -1609,6 +1700,15 @@ func (al *AgentLoop) GetConfig() *config.Config {
 	return al.cfg
 }
 
+// GetSessionActiveAgent returns the active agent ID for a chat session (set by handoff tool).
+// Returns ("", false) if no handoff override is active.
+func (al *AgentLoop) GetSessionActiveAgent(chatID string) (string, bool) {
+	if v, ok := al.sessionActiveAgent.Load("chat:" + chatID); ok {
+		return v.(string), true
+	}
+	return "", false
+}
+
 // SwapConfig atomically replaces the in-memory config with the supplied,
 // fully-initialized *config.Config (credentials resolved, sensitive values
 // registered). Callers are responsible for calling credentials.ResolveBundle
@@ -1646,8 +1746,16 @@ func GetTaskExecutor(al *AgentLoop) *TaskExecutor {
 	return al.taskExecutor
 }
 
+// GetSessionStore returns the shared UnifiedStore for new sessions. May be nil
+// in tests or when the shared sessions directory could not be initialized.
+func (al *AgentLoop) GetSessionStore() *session.UnifiedStore {
+	return al.sharedSessionStore
+}
+
 // GetAgentStore returns the UnifiedStore for a given agent, or nil if not found
 // or if the agent's session store is not a UnifiedStore.
+// Use GetSessionStore() for creating new sessions; GetAgentStore is kept for
+// legacy per-agent session access.
 func (al *AgentLoop) GetAgentStore(agentID string) *session.UnifiedStore {
 	agent, ok := al.GetRegistry().GetAgent(agentID)
 	if !ok {
@@ -1662,17 +1770,29 @@ func (al *AgentLoop) GetAgentStore(agentID string) *session.UnifiedStore {
 	return us
 }
 
-// ResolveSessionStore finds which agent's UnifiedStore owns the given sessionID.
-// Checks the main agent first (most common case), then falls back to scanning all agents.
-// Returns nil if the session cannot be found across any agent.
+// getLegacyAgentStore returns the per-agent UnifiedStore for legacy session
+// access. It is an internal alias for GetAgentStore used by ListAllSessions.
+func (al *AgentLoop) getLegacyAgentStore(agentID string) *session.UnifiedStore {
+	return al.GetAgentStore(agentID)
+}
+
+// ResolveSessionStore finds which UnifiedStore owns the given sessionID.
+// Checks the shared store first, then the main agent's legacy store, then
+// all other per-agent stores. Returns nil if the session cannot be found.
 func (al *AgentLoop) ResolveSessionStore(sessionID string) *session.UnifiedStore {
-	// Fast path: main agent owns most sessions.
+	// Fast path: shared store owns new sessions.
+	if al.sharedSessionStore != nil {
+		if _, err := al.sharedSessionStore.GetMeta(sessionID); err == nil {
+			return al.sharedSessionStore
+		}
+	}
+	// Legacy fast path: main agent owns most old sessions.
 	if store := al.GetAgentStore(DefaultAgentID); store != nil {
 		if _, err := store.GetMeta(sessionID); err == nil {
 			return store
 		}
 	}
-	// Slow path: scan all agents.
+	// Slow path: scan all per-agent stores.
 	for _, id := range al.GetRegistry().ListAgentIDs() {
 		if id == DefaultAgentID {
 			continue
@@ -1688,15 +1808,34 @@ func (al *AgentLoop) ResolveSessionStore(sessionID string) *session.UnifiedStore
 	return nil
 }
 
-// ListAllSessions returns sessions from all agent stores merged and sorted by UpdatedAt descending.
-// The second return value collects per-agent errors so callers can distinguish
-// "no sessions" from "all agents failed". Callers should surface partial errors
+// ListAllSessions returns sessions from the shared store merged with legacy
+// per-agent stores, deduplicated and sorted by UpdatedAt descending.
+// The second return value collects per-store errors so callers can distinguish
+// "no sessions" from "all stores failed". Callers should surface partial errors
 // as warnings rather than treating the entire response as a failure.
 func (al *AgentLoop) ListAllSessions() ([]*session.UnifiedMeta, []error) {
 	var all []*session.UnifiedMeta
 	var errs []error
+
+	// 1. Shared store (new sessions).
+	sharedIDs := make(map[string]bool)
+	if al.sharedSessionStore != nil {
+		shared, err := al.sharedSessionStore.ListSessions()
+		if err != nil {
+			logger.WarnCF("agent", "ListAllSessions: could not list shared sessions",
+				map[string]any{"error": err.Error()})
+			errs = append(errs, fmt.Errorf("shared: %w", err))
+		} else {
+			for _, s := range shared {
+				sharedIDs[s.ID] = true
+				all = append(all, s)
+			}
+		}
+	}
+
+	// 2. Legacy per-agent stores — deduplicate against shared.
 	for _, id := range al.GetRegistry().ListAgentIDs() {
-		store := al.GetAgentStore(id)
+		store := al.getLegacyAgentStore(id)
 		if store == nil {
 			continue
 		}
@@ -1707,8 +1846,13 @@ func (al *AgentLoop) ListAllSessions() ([]*session.UnifiedMeta, []error) {
 			errs = append(errs, fmt.Errorf("agent=%s: %w", id, err))
 			continue
 		}
-		all = append(all, sessions...)
+		for _, s := range sessions {
+			if !sharedIDs[s.ID] {
+				all = append(all, s)
+			}
+		}
 	}
+
 	sort.Slice(all, func(i, j int) bool {
 		return all[i].UpdatedAt.After(all[j].UpdatedAt)
 	})
@@ -1776,6 +1920,16 @@ func (al *AgentLoop) SetMediaStore(s media.MediaStore) {
 			agent.Tools.SetMediaStore(s)
 		}
 	}
+}
+
+// GetMediaStore returns the currently injected media store. Callers that serve
+// media over HTTP must use this getter (not a cached reference) because the
+// store is replaced on every restartServices — a cached pointer goes stale.
+func (al *AgentLoop) GetMediaStore() media.MediaStore {
+	if al == nil {
+		return nil
+	}
+	return al.mediaStore
 }
 
 // SetTranscriber injects a voice transcriber for agent-level audio transcription.
@@ -2120,6 +2274,34 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.ResolvedRoute, *AgentInstance, error) {
 	registry := al.GetRegistry()
 
+	// Check session-level agent override set by the handoff tool.
+	// Check by both sessionKey and chatID ("chat:"+chatID) since webchat
+	// messages don't carry a SessionKey, but handoff stores by chatID.
+	// This takes PRIORITY over the explicit agent_id from the webchat dropdown
+	// because the handoff already updated the dropdown via the agent_switched frame.
+	for _, lookupKey := range []string{msg.SessionKey, "chat:" + msg.ChatID} {
+		if lookupKey == "" || lookupKey == "chat:" {
+			continue
+		}
+		if activeAgent, ok := al.sessionActiveAgent.Load(lookupKey); ok {
+			agentID := activeAgent.(string)
+			if agentID != "" {
+				if agent, ok := registry.GetAgent(agentID); ok {
+					logger.InfoCF("agent", "Session handoff override active", map[string]any{
+						"lookup_key": lookupKey,
+						"agent_id":   agentID,
+					})
+					sk := msg.SessionKey
+					if sk == "" {
+						sk = lookupKey
+					}
+					return routing.ResolvedRoute{AgentID: agentID, SessionKey: sk}, agent, nil
+				}
+				al.sessionActiveAgent.Delete(lookupKey)
+			}
+		}
+	}
+
 	// If the message carries an explicit agent_id (e.g., webchat agent selector),
 	// use it directly instead of going through routing rules.
 	if explicitID := inboundMetadata(msg, "agent_id"); explicitID != "" {
@@ -2129,7 +2311,10 @@ func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.Resolv
 				"agent_id":  explicitID,
 				"workspace": agent.Workspace,
 			})
-			return routing.ResolvedRoute{AgentID: explicitID}, agent, nil
+			// Build a session key from the agent + channel + chatID so the
+			// handoff tool can address this session.
+			sk := fmt.Sprintf("agent:%s:webchat:%s", explicitID, msg.ChatID)
+			return routing.ResolvedRoute{AgentID: explicitID, SessionKey: sk}, agent, nil
 		}
 		// H12: An explicit agent_id was provided but no matching agent is registered.
 		// Return a hard error rather than silently falling through to default routing,
@@ -2411,6 +2596,16 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 	turnCtx = WithAgentLoop(turnCtx, al)
 	// SEC-15: Inject agent ID so audit entries carry the agent identity.
 	turnCtx = tools.WithAgentID(turnCtx, ts.agent.ID)
+	// Inject session key so handoff/return_to_default tools can address the session.
+	if ts.sessionKey == "" {
+		logger.WarnCF("agent", "runTurn: sessionKey is empty — handoff tool will not work",
+			map[string]any{"agent_id": ts.agentID, "chat_id": ts.chatID})
+	}
+	turnCtx = tools.WithSessionKey(turnCtx, ts.sessionKey)
+	// Inject the actual session ID (directory name) for the handoff tool.
+	// The session key is a routing key; the transcript session ID is the
+	// real session directory (e.g., "session_01KP30THP63YFESKGECYYHYQWY").
+	turnCtx = tools.WithTranscriptSessionID(turnCtx, ts.opts.TranscriptSessionID)
 
 	al.registerActiveTurn(ts)
 	defer al.clearActiveTurn(ts)
@@ -3383,7 +3578,9 @@ turnLoop:
 				return al.abortTurn(ts)
 			}
 
-			toolName := tc.Name
+			// Unsanitize tool name from LLM — dots were replaced with underscores
+			// for Anthropic/Azure API compatibility (e.g., "browser_navigate" → "browser.navigate").
+			toolName := ts.agent.Tools.UnsanitizeToolName(tc.Name)
 			toolArgs := cloneStringAnyMap(tc.Arguments)
 
 			if al.hooks != nil {
@@ -5068,5 +5265,109 @@ func (al *AgentLoop) WireSystemTools(deps *systools.Deps, navCb systools.Navigat
 	}
 	logger.InfoCF("agent", "System tools wired into system agent (guarded)",
 		map[string]any{"agent_id": DefaultAgentID, "tool_count": len(sysRegistry.List())})
+	return nil
+}
+
+// WireAvaAgentTools registers the 4 agent tools (system.agent.create,
+// system.agent.update, system.agent.delete, system.models.list) on the "ava"
+// core agent so she can create custom agents through her structured interview
+// flow. These are wrapped with GuardedTool for RBAC + rate limiting + audit.
+// If reg is nil, the current registry is used. Pass a specific registry
+// during hot-reload when the new registry hasn't been swapped yet.
+func (al *AgentLoop) WireAvaAgentTools(deps *systools.Deps, reg ...*AgentRegistry) error {
+	al.avaDeps = deps
+	var r *AgentRegistry
+	if len(reg) > 0 && reg[0] != nil {
+		r = reg[0]
+	} else {
+		r = al.GetRegistry()
+	}
+	avaInst, ok := r.GetAgent("ava")
+	if !ok || avaInst == nil {
+		return fmt.Errorf("WireAvaAgentTools: agent 'ava' not found in registry")
+	}
+
+	handler := sysagent.NewSystemToolHandler(sysagent.HandlerConfig{
+		Registry: systools.BuildRegistry(deps, nil),
+		Audit:    al.auditLogger,
+		Confirm:  nil,
+	})
+
+	// Wire agent CRUD tools + model lookup — Ava doesn't get the other system tools.
+	agentToolNames := []string{
+		"system.agent.create",
+		"system.agent.update",
+		"system.agent.delete",
+		"system.models.list",
+	}
+
+	wired := 0
+	var missing []string
+	fullRegistry := systools.BuildRegistry(deps, nil)
+	for _, name := range agentToolNames {
+		t, exists := fullRegistry.Get(name)
+		if !exists {
+			missing = append(missing, name)
+			continue
+		}
+		guarded := sysagent.NewGuardedTool(t, handler, sysagent.RoleSingleUser, "gateway").
+			WithScopeOverride(tools.ScopeCore)
+		avaInst.Tools.Register(guarded)
+		wired++
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("WireAvaAgentTools: %d/%d tools not found in registry: %v",
+			len(missing), len(agentToolNames), missing)
+	}
+
+	// Inject available resources (tools, providers, defaults) into Ava's context
+	// so she can recommend tools and models during the agent creation interview.
+	avaInst.ContextBuilder.WithResourcesInjector(func() string {
+		cfg := deps.GetCfg()
+		var sb strings.Builder
+		sb.WriteString("# Available Resources\n\n")
+
+		// System defaults.
+		sb.WriteString("## System Defaults\n")
+		sb.WriteString(fmt.Sprintf("- Default model: `%s`\n", cfg.Agents.Defaults.ModelName))
+		if len(cfg.Agents.Defaults.ModelFallbacks) > 0 {
+			sb.WriteString(
+				fmt.Sprintf("- Default fallbacks: %s\n", strings.Join(cfg.Agents.Defaults.ModelFallbacks, ", ")),
+			)
+		}
+		sb.WriteString("\n")
+
+		// Connected providers.
+		sb.WriteString("## Connected Providers\n")
+		providersSeen := map[string]bool{}
+		for _, p := range cfg.Providers {
+			if p == nil {
+				continue
+			}
+			name := p.Provider
+			if name == "" {
+				if idx := strings.IndexByte(p.Model, '/'); idx > 0 {
+					name = p.Model[:idx]
+				}
+			}
+			if name == "" || providersSeen[name] {
+				continue
+			}
+			providersSeen[name] = true
+			sb.WriteString(fmt.Sprintf("- %s\n", name))
+		}
+		if len(providersSeen) == 0 {
+			sb.WriteString("- (none configured)\n")
+		}
+		sb.WriteString("\nUse `system.models.list` to see all available models from these providers.\n\n")
+
+		// Builtin tools — from the centralized catalog (pkg/tools/catalog.go).
+		sb.WriteString(tools.CatalogMarkdown())
+
+		return sb.String()
+	})
+
+	logger.InfoCF("agent", "Agent CRUD tools wired into Ava (guarded)",
+		map[string]any{"agent_id": "ava", "tool_count": wired})
 	return nil
 }

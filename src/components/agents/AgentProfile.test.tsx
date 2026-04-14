@@ -7,7 +7,7 @@ import type { Agent } from '@/lib/api'
 // test_agent_profile_sections (test #13)
 // Traces to: wave5a-wire-ui-spec.md — Scenario: Agent profile renders with type-appropriate sections
 //             wave5a-wire-ui-spec.md — US-7 AC2: core agent sections
-//             wave5a-wire-ui-spec.md — US-7 AC3: system agent sections
+//             wave5a-wire-ui-spec.md — US-7 AC3: locked core agent read-only sections
 
 const mockNavigate = vi.fn()
 
@@ -35,13 +35,14 @@ const mockCoreAgent: Agent = {
   stats: { total_sessions: 5, total_tokens: 12000, total_cost: 0.05 },
 }
 
-const mockSystemAgent: Agent = {
-  id: 'omnipus-system',
-  name: 'Omnipus System',
-  type: 'system',
+const mockLockedCoreAgent: Agent = {
+  id: 'mia',
+  name: 'Mia',
+  type: 'core',
+  locked: true,
   status: 'active',
   model: 'claude-opus-4-6',
-  description: 'System agent with exclusive system.* tools',
+  description: 'Core agent with compiled prompt — identity is read-only',
 }
 
 function makeClient() {
@@ -121,22 +122,22 @@ describe('AgentProfile — core agent sections (test #13)', () => {
   })
 })
 
-describe('AgentProfile — system agent sections (test #13)', () => {
+describe('AgentProfile — locked core agent sections (test #13)', () => {
   beforeEach(() => {
-    vi.mocked(fetchAgent).mockResolvedValue(mockSystemAgent)
+    vi.mocked(fetchAgent).mockResolvedValue(mockLockedCoreAgent)
   })
 
-  it('does NOT show Rate Limits for system agents', async () => {
-    // Traces to: wave5a-wire-ui-spec.md — US-7 AC3: system agent sections
-    renderProfile('omnipus-system')
-    await screen.findByText('Omnipus System')
+  it('does NOT show Rate Limits for locked core agents', async () => {
+    // Traces to: wave5a-wire-ui-spec.md — US-7 AC3: locked agents hide rate limits
+    renderProfile('mia')
+    await screen.findByText('Mia')
     expect(screen.queryByText(/Rate Limits/i)).toBeNull()
   })
 
-  it('does NOT show Save button for system agent', async () => {
-    // Traces to: wave5a-wire-ui-spec.md — US-7 AC3: system agents are not editable
-    renderProfile('omnipus-system')
-    await screen.findByText('Omnipus System')
+  it('does NOT show Save button for locked core agent', async () => {
+    // Traces to: wave5a-wire-ui-spec.md — US-7 AC3: locked agents are not editable
+    renderProfile('mia')
+    await screen.findByText('Mia')
     expect(screen.queryByRole('button', { name: /save/i })).toBeNull()
   })
 })

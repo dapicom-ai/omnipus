@@ -1,14 +1,16 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Copy, ArrowsClockwise, FloppyDisk, CheckCircle, CaretDown, CaretRight } from '@phosphor-icons/react'
+import { Copy, ArrowsClockwise, CheckCircle, CaretDown, CaretRight } from '@phosphor-icons/react'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { SmartSelect } from '@/components/ui/smart-select'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { fetchConfig, updateConfig, rotateGatewayToken, fetchGatewayStatus } from '@/lib/api'
+import { fetchConfig, updateConfig, rotateGatewayToken, fetchGatewayStatus, fetchAgents } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
+import { useAutoSave } from '@/hooks/useAutoSave'
+import { AutoSaveIndicator } from '@/components/ui/AutoSaveIndicator'
 
 export function GatewaySection() {
   const { addToast } = useUiStore()
@@ -35,6 +37,12 @@ export function GatewaySection() {
   const [authMode, setAuthMode] = useState<'none' | 'token'>('none')
   const [hotReload, setHotReload] = useState(false)
   const [logLevel, setLogLevel] = useState('info')
+  const [defaultAgentId, setDefaultAgentId] = useState('')
+
+  const { data: agents } = useQuery({
+    queryKey: ['agents'],
+    queryFn: fetchAgents,
+  })
 
   useEffect(() => {
     if (!config) return
@@ -44,11 +52,22 @@ export function GatewaySection() {
     setAuthMode(config.gateway.auth_mode)
     setHotReload(config.gateway.hot_reload ?? false)
     setLogLevel(config.gateway.log_level ?? 'info')
+    setDefaultAgentId(config.agents?.defaults?.default_agent_id ?? '')
   }, [config])
 
-  const { mutate: doSave, isPending: isSaving } = useMutation({
-    mutationFn: () =>
-      updateConfig({
+  const gatewayFormData = useMemo(() => ({
+    bind_address: bindAddress,
+    port,
+    auth_mode: authMode,
+    hot_reload: hotReload,
+    log_level: logLevel,
+    default_agent_id: defaultAgentId,
+  }), [bindAddress, port, authMode, hotReload, logLevel, defaultAgentId])
+
+  const { status: saveStatus, error: saveError } = useAutoSave(
+    gatewayFormData,
+    async () => {
+      await updateConfig({
         gateway: {
           bind_address: bindAddress,
           port: parseInt(port, 10),
@@ -56,19 +75,17 @@ export function GatewaySection() {
           hot_reload: hotReload,
           log_level: logLevel,
         },
-      }),
-    onSuccess: () => {
+        agents: {
+          defaults: {
+            default_agent_id: defaultAgentId || undefined,
+          },
+        },
+      })
       isDirtyRef.current = false
       queryClient.invalidateQueries({ queryKey: ['config'] })
-      addToast({ message: 'Gateway settings saved. Restart required to apply.', variant: 'default' })
     },
-    onError: (err: Error) => addToast({
-      message: err.message.includes('501')
-        ? 'Settings changes require editing config.json and restarting the gateway'
-        : err.message,
-      variant: 'error',
-    }),
-  })
+    { disabled: !config },
+  )
 
   const { mutate: doRotate, isPending: isRotating } = useMutation({
     mutationFn: rotateGatewayToken,
@@ -116,10 +133,7 @@ export function GatewaySection() {
             Configure how the gateway listens. Restart required for changes to take effect.
           </p>
         </div>
-        <Button size="sm" onClick={() => doSave()} disabled={isSaving} className="gap-1.5">
-          <FloppyDisk size={13} weight="bold" />
-          {isSaving ? 'Saving...' : 'Save'}
-        </Button>
+        <AutoSaveIndicator status={saveStatus} error={saveError} />
       </div>
 
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-4">
@@ -168,6 +182,24 @@ export function GatewaySection() {
             items={[
               { value: 'none', label: 'None' },
               { value: 'token', label: 'Bearer token' },
+            ]}
+          />
+        </div>
+
+        {/* Default Agent */}
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-[var(--color-secondary)]">Default Agent</p>
+            <p className="text-xs text-[var(--color-muted)]">The agent that handles messages when no specific routing applies</p>
+          </div>
+          <SmartSelect
+            value={defaultAgentId}
+            onValueChange={(v) => { markDirty(); setDefaultAgentId(v) }}
+            triggerClassName="w-[180px] h-8 text-xs"
+            placeholder="(none set)"
+            items={[
+              { value: '', label: '(none set)' },
+              ...(agents ?? []).map((a) => ({ value: a.id, label: a.name })),
             ]}
           />
         </div>

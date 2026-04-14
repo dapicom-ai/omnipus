@@ -1,0 +1,648 @@
+- generic [ref=e33]:
+  - banner [ref=e34]:
+    - button "Toggle navigation sidebar" [ref=e35]:
+      - img [ref=e36]
+  - main [ref=e66]:
+    - generic [ref=e91]:
+      - generic [ref=e92]:
+        - heading "Settings" [level=1] [ref=e93]
+        - paragraph [ref=e94]: Configure gateway, credentials, security, and data management.
+      - generic [ref=e95]:
+        - tablist [ref=e96]:
+          - tab "Providers" [ref=e97]
+          - tab "Security" [active] [selected] [ref=e98]
+          - tab "Gateway" [ref=e99]
+          - tab "Data" [ref=e100]
+          - tab "Routing" [ref=e101]
+          - tab "Profile" [ref=e102]
+          - tab "Devices" [ref=e103]
+          - tab "Policy Approvals" [ref=e104]
+          - tab "About" [ref=e105]
+        - tabpanel "Security" [ref=e124]:
+          - generic [ref=e125]:
+            - generic [ref=e127]:
+              - heading "Security & Policy" [level=2] [ref=e128]
+              - paragraph [ref=e129]: Control agent behavior boundaries and resource limits.
+            - generic [ref=e130]:
+              - heading "Tool Access — Global Policies" [level=3] [ref=e131]
+              - generic [ref=e133]:
+                - paragraph [ref=e134]: These policies apply globally across all agents. Per-agent policies shown in the Agent Profile cannot override a global "Deny". Tools blocked here are greyed out in each agent's tool list.
+                - generic [ref=e135]:
+                  - paragraph [ref=e136]: Default policy for unlisted tools
+                  - generic [ref=e137]:
+                    - button "Allow" [ref=e138]:
+                      - img [ref=e139]
+                      - text: Allow
+                    - button "Ask" [ref=e141]:
+                      - img [ref=e142]
+                      - text: Ask
+                    - button "Deny" [ref=e144]:
+                      - img [ref=e145]
+                      - text: Deny
+                - generic [ref=e147]:
+                  - paragraph [ref=e148]: Per-tool policies (33 tools)
+                  - generic [ref=e149]:
+                    - paragraph [ref=e150]: File & Code
+                    - generic [ref=e151]:
+                      - generic [ref=e152]:
+                        - generic [ref=e153]: read_fileRead file contents from the workspace
+                        - generic [ref=e154]:
+                          - button "Allow" [ref=e155]:
+                            - img [ref=e156]
+                            - text: Allow
+                          - button "Ask" [ref=e158]:
+                            - img [ref=e159]
+                            - text: Ask
+                          - button "Deny" [ref=e161]:
+                            - img [ref=e162]
+                            - text: Deny
+                      - generic [ref=e164]:
+                        - generic [ref=e165]: write_fileWrite or create files in the workspace
+                        - generic [ref=e166]:
+                          - button "Allow" [ref=e167]:
+                            - img [ref=e168]
+                            - text: Allow
+                          - button "Ask" [ref=e170]:
+                            - img [ref=e171]
+                            - text: Ask
+                          - button "Deny" [ref=e173]:
+                            - img [ref=e174]
+                            - text: Deny
+                      - generic [ref=e176]:
+                        - generic [ref=e177]: edit_fileEdit existing files using find and replace
+                        - generic [ref=e178]:
+                          - button "Allow" [ref=e179]:
+                            - img [ref=e180]
+                            - text: Allow
+                          - button "Ask" [ref=e182]:
+                            - img [ref=e183]
+                            - text: Ask
+                          - button "Deny" [ref=e185]:
+                            - img [ref=e186]
+                            - text: Deny
+                      - generic [ref=e188]:
+                        - generic [ref=e189]: append_fileAppend content to an existing file
+                        - generic [ref=e190]:
+                          - button "Allow" [ref=e191]:
+                            - img [ref=e192]
+                            - text: Allow
+                          - button "Ask" [ref=e194]:
+                            - img [ref=e195]
+                            - text: Ask
+                          - button "Deny" [ref=e197]:
+                            - img [ref=e198]
+                            - text: Deny
+                      - generic [ref=e200]:
+                        - generic [ref=e201]: list_dirList directory contents
+                        - generic [ref=e202]:
+                          - button "Allow" [ref=e203]:
+                            - img [ref=e204]
+                            - text: Allow
+                          - button "Ask" [ref=e206]:
+                            - img [ref=e207]
+                            - text: Ask
+                          - button "Deny" [ref=e209]:
+                            - img [ref=e210]
+                            - text: Deny
+                  - generic [ref=e212]:
+                    - paragraph [ref=e213]: Code Execution
+                    - generic [ref=e215]:
+                      - generic [ref=e216]: execExecute shell commands
+                      - generic [ref=e217]:
+                        - button "Allow" [ref=e218]:
+                          - img [ref=e219]
+                          - text: Allow
+                        - button "Ask" [ref=e221]:
+                          - img [ref=e222]
+                          - text: Ask
+                        - button "Deny" [ref=e224]:
+                          - img [ref=e225]
+                          - text: Deny
+                  - generic [ref=e227]:
+                    - paragraph [ref=e228]: Web & Search
+                    - generic [ref=e229]:
+                      - generic [ref=e230]:
+                        - generic [ref=e231]:
+                          - text: web_search
+                          - generic [ref=e232]: Search the web using configured search engines (Br...
+                        - generic [ref=e233]:
+                          - button "Allow" [ref=e234]:
+                            - img [ref=e235]
+                            - text: Allow
+                          - button "Ask" [ref=e237]:
+                            - img [ref=e238]
+                            - text: Ask
+                          - button "Deny" [ref=e240]:
+                            - img [ref=e241]
+                            - text: Deny
+                      - generic [ref=e243]:
+                        - generic [ref=e244]: web_fetchFetch and read web page content
+                        - generic [ref=e245]:
+                          - button "Allow" [ref=e246]:
+                            - img [ref=e247]
+                            - text: Allow
+                          - button "Ask" [ref=e249]:
+                            - img [ref=e250]
+                            - text: Ask
+                          - button "Deny" [ref=e252]:
+                            - img [ref=e253]
+                            - text: Deny
+                  - generic [ref=e255]:
+                    - paragraph [ref=e256]: Browser Automation
+                    - generic [ref=e257]:
+                      - generic [ref=e258]:
+                        - generic [ref=e259]: browser.navigateNavigate to a URL in the browser
+                        - generic [ref=e260]:
+                          - button "Allow" [ref=e261]:
+                            - img [ref=e262]
+                            - text: Allow
+                          - button "Ask" [ref=e264]:
+                            - img [ref=e265]
+                            - text: Ask
+                          - button "Deny" [ref=e267]:
+                            - img [ref=e268]
+                            - text: Deny
+                      - generic [ref=e270]:
+                        - generic [ref=e271]: browser.clickClick an element on the page
+                        - generic [ref=e272]:
+                          - button "Allow" [ref=e273]:
+                            - img [ref=e274]
+                            - text: Allow
+                          - button "Ask" [ref=e276]:
+                            - img [ref=e277]
+                            - text: Ask
+                          - button "Deny" [ref=e279]:
+                            - img [ref=e280]
+                            - text: Deny
+                      - generic [ref=e282]:
+                        - generic [ref=e283]: browser.typeType text into an input element
+                        - generic [ref=e284]:
+                          - button "Allow" [ref=e285]:
+                            - img [ref=e286]
+                            - text: Allow
+                          - button "Ask" [ref=e288]:
+                            - img [ref=e289]
+                            - text: Ask
+                          - button "Deny" [ref=e291]:
+                            - img [ref=e292]
+                            - text: Deny
+                      - generic [ref=e294]:
+                        - generic [ref=e295]: browser.screenshotTake a screenshot of the page
+                        - generic [ref=e296]:
+                          - button "Allow" [ref=e297]:
+                            - img [ref=e298]
+                            - text: Allow
+                          - button "Ask" [ref=e300]:
+                            - img [ref=e301]
+                            - text: Ask
+                          - button "Deny" [ref=e303]:
+                            - img [ref=e304]
+                            - text: Deny
+                      - generic [ref=e306]:
+                        - generic [ref=e307]: browser.get_textExtract text content from the page
+                        - generic [ref=e308]:
+                          - button "Allow" [ref=e309]:
+                            - img [ref=e310]
+                            - text: Allow
+                          - button "Ask" [ref=e312]:
+                            - img [ref=e313]
+                            - text: Ask
+                          - button "Deny" [ref=e315]:
+                            - img [ref=e316]
+                            - text: Deny
+                      - generic [ref=e318]:
+                        - generic [ref=e319]: browser.waitWait for an element or condition
+                        - generic [ref=e320]:
+                          - button "Allow" [ref=e321]:
+                            - img [ref=e322]
+                            - text: Allow
+                          - button "Ask" [ref=e324]:
+                            - img [ref=e325]
+                            - text: Ask
+                          - button "Deny" [ref=e327]:
+                            - img [ref=e328]
+                            - text: Deny
+                      - generic [ref=e330]:
+                        - generic [ref=e331]:
+                          - text: browser.evaluate
+                          - generic [ref=e332]: Execute JavaScript in the browser (requires explic...
+                        - generic [ref=e333]:
+                          - button "Allow" [ref=e334]:
+                            - img [ref=e335]
+                            - text: Allow
+                          - button "Ask" [ref=e337]:
+                            - img [ref=e338]
+                            - text: Ask
+                          - button "Deny" [ref=e340]:
+                            - img [ref=e341]
+                            - text: Deny
+                  - generic [ref=e343]:
+                    - paragraph [ref=e344]: Communication
+                    - generic [ref=e345]:
+                      - generic [ref=e346]:
+                        - generic [ref=e347]: messageSend messages to other agents or channels
+                        - generic [ref=e348]:
+                          - button "Allow" [ref=e349]:
+                            - img [ref=e350]
+                            - text: Allow
+                          - button "Ask" [ref=e352]:
+                            - img [ref=e353]
+                            - text: Ask
+                          - button "Deny" [ref=e355]:
+                            - img [ref=e356]
+                            - text: Deny
+                      - generic [ref=e358]:
+                        - generic [ref=e359]: send_fileSend a file to a channel or agent
+                        - generic [ref=e360]:
+                          - button "Allow" [ref=e361]:
+                            - img [ref=e362]
+                            - text: Allow
+                          - button "Ask" [ref=e364]:
+                            - img [ref=e365]
+                            - text: Ask
+                          - button "Deny" [ref=e367]:
+                            - img [ref=e368]
+                            - text: Deny
+                  - generic [ref=e370]:
+                    - paragraph [ref=e371]: Task Management
+                    - generic [ref=e372]:
+                      - generic [ref=e373]:
+                        - generic [ref=e374]: task_createCreate and assign tasks to agents
+                        - generic [ref=e375]:
+                          - button "Allow" [ref=e376]:
+                            - img [ref=e377]
+                            - text: Allow
+                          - button "Ask" [ref=e379]:
+                            - img [ref=e380]
+                            - text: Ask
+                          - button "Deny" [ref=e382]:
+                            - img [ref=e383]
+                            - text: Deny
+                      - generic [ref=e385]:
+                        - generic [ref=e386]: task_updateUpdate task status (running, completed, failed)
+                        - generic [ref=e387]:
+                          - button "Allow" [ref=e388]:
+                            - img [ref=e389]
+                            - text: Allow
+                          - button "Ask" [ref=e391]:
+                            - img [ref=e392]
+                            - text: Ask
+                          - button "Deny" [ref=e394]:
+                            - img [ref=e395]
+                            - text: Deny
+                      - generic [ref=e397]:
+                        - generic [ref=e398]: task_listList tasks by role (assignee or delegator)
+                        - generic [ref=e399]:
+                          - button "Allow" [ref=e400]:
+                            - img [ref=e401]
+                            - text: Allow
+                          - button "Ask" [ref=e403]:
+                            - img [ref=e404]
+                            - text: Ask
+                          - button "Deny" [ref=e406]:
+                            - img [ref=e407]
+                            - text: Deny
+                      - generic [ref=e409]:
+                        - generic [ref=e410]: task_deleteDelete a task by ID
+                        - generic [ref=e411]:
+                          - button "Allow" [ref=e412]:
+                            - img [ref=e413]
+                            - text: Allow
+                          - button "Ask" [ref=e415]:
+                            - img [ref=e416]
+                            - text: Ask
+                          - button "Deny" [ref=e418]:
+                            - img [ref=e419]
+                            - text: Deny
+                      - generic [ref=e421]:
+                        - generic [ref=e422]: agent_listList all available agents with IDs and names
+                        - generic [ref=e423]:
+                          - button "Allow" [ref=e424]:
+                            - img [ref=e425]
+                            - text: Allow
+                          - button "Ask" [ref=e427]:
+                            - img [ref=e428]
+                            - text: Ask
+                          - button "Deny" [ref=e430]:
+                            - img [ref=e431]
+                            - text: Deny
+                  - generic [ref=e433]:
+                    - paragraph [ref=e434]: Automation
+                    - generic [ref=e435]:
+                      - generic [ref=e436]:
+                        - generic [ref=e437]: cronSchedule recurring tasks with cron expressions
+                        - generic [ref=e438]:
+                          - button "Allow" [ref=e439]:
+                            - img [ref=e440]
+                            - text: Allow
+                          - button "Ask" [ref=e442]:
+                            - img [ref=e443]
+                            - text: Ask
+                          - button "Deny" [ref=e445]:
+                            - img [ref=e446]
+                            - text: Deny
+                      - generic [ref=e448]:
+                        - generic [ref=e449]: spawnSpawn a background process
+                        - generic [ref=e450]:
+                          - button "Allow" [ref=e451]:
+                            - img [ref=e452]
+                            - text: Allow
+                          - button "Ask" [ref=e454]:
+                            - img [ref=e455]
+                            - text: Ask
+                          - button "Deny" [ref=e457]:
+                            - img [ref=e458]
+                            - text: Deny
+                      - generic [ref=e460]:
+                        - generic [ref=e461]: spawn_statusCheck status of spawned background processes
+                        - generic [ref=e462]:
+                          - button "Allow" [ref=e463]:
+                            - img [ref=e464]
+                            - text: Allow
+                          - button "Ask" [ref=e466]:
+                            - img [ref=e467]
+                            - text: Ask
+                          - button "Deny" [ref=e469]:
+                            - img [ref=e470]
+                            - text: Deny
+                      - generic [ref=e472]:
+                        - generic [ref=e473]: subagentDelegate work to a sub-agent with a focused task
+                        - generic [ref=e474]:
+                          - button "Allow" [ref=e475]:
+                            - img [ref=e476]
+                            - text: Allow
+                          - button "Ask" [ref=e478]:
+                            - img [ref=e479]
+                            - text: Ask
+                          - button "Deny" [ref=e481]:
+                            - img [ref=e482]
+                            - text: Deny
+                  - generic [ref=e484]:
+                    - paragraph [ref=e485]: Search & Discovery
+                    - generic [ref=e486]:
+                      - generic [ref=e487]:
+                        - generic [ref=e488]: regex_searchSearch files using regular expressions
+                        - generic [ref=e489]:
+                          - button "Allow" [ref=e490]:
+                            - img [ref=e491]
+                            - text: Allow
+                          - button "Ask" [ref=e493]:
+                            - img [ref=e494]
+                            - text: Ask
+                          - button "Deny" [ref=e496]:
+                            - img [ref=e497]
+                            - text: Deny
+                      - generic [ref=e499]:
+                        - generic [ref=e500]: bm25_searchSemantic search across files using BM25 ranking
+                        - generic [ref=e501]:
+                          - button "Allow" [ref=e502]:
+                            - img [ref=e503]
+                            - text: Allow
+                          - button "Ask" [ref=e505]:
+                            - img [ref=e506]
+                            - text: Ask
+                          - button "Deny" [ref=e508]:
+                            - img [ref=e509]
+                            - text: Deny
+                  - generic [ref=e511]:
+                    - paragraph [ref=e512]: Skills
+                    - generic [ref=e513]:
+                      - generic [ref=e514]:
+                        - generic [ref=e515]: install_skillInstall a skill from ClawHub or local path
+                        - generic [ref=e516]:
+                          - button "Allow" [ref=e517]:
+                            - img [ref=e518]
+                            - text: Allow
+                          - button "Ask" [ref=e520]:
+                            - img [ref=e521]
+                            - text: Ask
+                          - button "Deny" [ref=e523]:
+                            - img [ref=e524]
+                            - text: Deny
+                      - generic [ref=e526]:
+                        - generic [ref=e527]: remove_skillRemove an installed skill
+                        - generic [ref=e528]:
+                          - button "Allow" [ref=e529]:
+                            - img [ref=e530]
+                            - text: Allow
+                          - button "Ask" [ref=e532]:
+                            - img [ref=e533]
+                            - text: Ask
+                          - button "Deny" [ref=e535]:
+                            - img [ref=e536]
+                            - text: Deny
+                      - generic [ref=e538]:
+                        - generic [ref=e539]: find_skillsSearch for available skills on ClawHub
+                        - generic [ref=e540]:
+                          - button "Allow" [ref=e541]:
+                            - img [ref=e542]
+                            - text: Allow
+                          - button "Ask" [ref=e544]:
+                            - img [ref=e545]
+                            - text: Ask
+                          - button "Deny" [ref=e547]:
+                            - img [ref=e548]
+                            - text: Deny
+                  - generic [ref=e550]:
+                    - paragraph [ref=e551]: Hardware (IoT)
+                    - generic [ref=e552]:
+                      - generic [ref=e553]:
+                        - generic [ref=e554]: i2cCommunicate with I2C devices (Linux only)
+                        - generic [ref=e555]:
+                          - button "Allow" [ref=e556]:
+                            - img [ref=e557]
+                            - text: Allow
+                          - button "Ask" [ref=e559]:
+                            - img [ref=e560]
+                            - text: Ask
+                          - button "Deny" [ref=e562]:
+                            - img [ref=e563]
+                            - text: Deny
+                      - generic [ref=e565]:
+                        - generic [ref=e566]: spiCommunicate with SPI devices (Linux only)
+                        - generic [ref=e567]:
+                          - button "Allow" [ref=e568]:
+                            - img [ref=e569]
+                            - text: Allow
+                          - button "Ask" [ref=e571]:
+                            - img [ref=e572]
+                            - text: Ask
+                          - button "Deny" [ref=e574]:
+                            - img [ref=e575]
+                            - text: Deny
+                - generic [ref=e578]: "0 overrides | Default: allow"
+            - generic [ref=e579]:
+              - heading "Policy" [level=3] [ref=e580]
+              - generic [ref=e581]:
+                - generic [ref=e582]:
+                  - generic [ref=e583]:
+                    - paragraph [ref=e584]: Default policy mode
+                    - paragraph [ref=e585]: Whether agents are allowed or denied by default
+                  - generic [ref=e586]:
+                    - generic [ref=e587]: Deny
+                    - switch [ref=e588] [cursor=pointer]
+                    - generic [ref=e589]: Allow
+                - generic [ref=e590]:
+                  - generic [ref=e591]:
+                    - paragraph [ref=e592]: Exec approval
+                    - paragraph [ref=e593]: How shell command execution is handled
+                  - combobox [ref=e594]:
+                    - generic: Ask each time
+                    - img [ref=e595]
+            - generic [ref=e597]:
+              - generic [ref=e598]:
+                - heading "Process Sandbox" [level=3] [ref=e599]:
+                  - img [ref=e600]
+                  - text: Process Sandbox
+                - button "Refresh sandbox status" [ref=e602]:
+                  - img [ref=e603]
+              - generic [ref=e605]:
+                - generic [ref=e606]:
+                  - img [ref=e608]
+                  - generic [ref=e611]: landlock-v4
+                - paragraph [ref=e612]: Child processes are restricted at the kernel level using Linux Landlock and seccomp-BPF. This provides strong isolation.
+                - paragraph [ref=e614]: "Note: sandbox backend is capable of kernel-level enforcement but Apply() has not been called on the Omnipus process; child processes are not currently restricted by Landlock or seccomp"
+                - button "Show capabilities" [ref=e615]:
+                  - img [ref=e616]
+                  - text: Show capabilities
+            - generic [ref=e618]:
+              - generic [ref=e620]:
+                - heading "Prompt Injection Defense" [level=3] [ref=e621]:
+                  - img [ref=e622]
+                  - text: Prompt Injection Defense
+                - paragraph [ref=e624]: Controls how untrusted tool output is sanitised before passing to the agent.
+              - generic [ref=e625]:
+                - radiogroup "Prompt injection defense level" [ref=e626]:
+                  - radio "Low" [ref=e627]:
+                    - generic [ref=e630]: Low
+                  - radio "Medium (Default) Wraps untrusted content AND escapes known injection phrases like \"ignore previous instructions\" using zero-width characters." [checked] [ref=e631]:
+                    - generic [ref=e634]: Medium
+                    - paragraph [ref=e635]: (Default) Wraps untrusted content AND escapes known injection phrases like "ignore previous instructions" using zero-width characters.
+                  - radio "High" [ref=e636]:
+                    - generic [ref=e639]: High
+                - paragraph [ref=e640]: "Applies to results from: web_search, web_fetch, browser_*, read_file"
+            - generic [ref=e641]:
+              - heading "Rate Limits & Cost Control" [level=3] [ref=e642]
+              - generic [ref=e643]:
+                - generic [ref=e644]:
+                  - generic [ref=e645]:
+                    - paragraph [ref=e646]: Daily cost cap
+                    - generic [ref=e647]:
+                      - generic [ref=e648]: $
+                      - spinbutton [ref=e649]
+                  - generic [ref=e650]:
+                    - generic [ref=e651]:
+                      - generic [ref=e652]: "Today's spend: $0.00"
+                      - generic [ref=e653]: "Cap: $10.00"
+                    - progressbar [ref=e654]
+                - generic [ref=e656]:
+                  - paragraph [ref=e657]: Per-Agent Defaults
+                  - generic [ref=e658]:
+                    - generic [ref=e659]:
+                      - paragraph [ref=e660]: LLM calls / hour
+                      - paragraph [ref=e661]: Default limit per agent
+                    - spinbutton [ref=e662]
+                  - generic [ref=e663]:
+                    - generic [ref=e664]:
+                      - paragraph [ref=e665]: Tool calls / minute
+                      - paragraph [ref=e666]: Default limit per agent
+                    - spinbutton [ref=e667]
+            - generic [ref=e668]:
+              - heading "Command Execution" [level=3] [ref=e669]
+              - generic [ref=e670]:
+                - generic [ref=e671]:
+                  - generic [ref=e672]:
+                    - paragraph [ref=e673]: Exec timeout (seconds)
+                    - paragraph [ref=e674]: Max time for a single command, 0 = no limit
+                  - spinbutton [ref=e675]
+                - generic [ref=e676]:
+                  - generic [ref=e677]:
+                    - paragraph [ref=e678]: Background timeout (seconds)
+                    - paragraph [ref=e679]: Max time for background processes, 0 = no limit
+                  - spinbutton [ref=e680]
+                - generic [ref=e681]:
+                  - generic [ref=e682]:
+                    - paragraph [ref=e683]: Enable deny patterns
+                    - paragraph [ref=e684]: Block commands matching configured deny patterns
+                  - switch [ref=e685] [cursor=pointer]
+            - generic [ref=e686]:
+              - generic [ref=e687]:
+                - heading "Credential Vault" [level=3] [ref=e688]
+                - button "Add key" [ref=e689]:
+                  - img [ref=e690]
+                  - text: Add key
+              - generic [ref=e693]:
+                - generic [ref=e694]:
+                  - paragraph
+                  - paragraph [ref=e695]: ••••••••••••
+                - button [ref=e696]:
+                  - img [ref=e697]
+            - generic [ref=e699]:
+              - generic [ref=e701]:
+                - heading "Command Binary Allowlist" [level=3] [ref=e702]:
+                  - img [ref=e703]
+                  - text: Command Binary Allowlist
+                - paragraph [ref=e705]: Glob patterns for binaries that exec may run. E.g. git *, npm run *. When non-empty, exec denies any command that does not match a pattern.
+              - generic [ref=e706]:
+                - paragraph [ref=e707]: No patterns configured. Exec runs without the binary allowlist restriction (existing deny-pattern safety checks still apply).
+                - generic [ref=e708]:
+                  - textbox "New binary pattern" [ref=e709]:
+                    - /placeholder: e.g. git or npm run *
+                  - button "Add" [ref=e710]:
+                    - img [ref=e711]
+                    - text: Add
+            - generic [ref=e713]:
+              - generic [ref=e714]:
+                - heading "Exec HTTP Proxy" [level=3] [ref=e715]:
+                  - img [ref=e716]
+                  - text: Exec HTTP Proxy
+                - button "Refresh exec proxy status" [ref=e718]:
+                  - img [ref=e719]
+              - generic [ref=e721]:
+                - generic [ref=e724]: Disabled
+                - paragraph [ref=e725]: Enable via config.tools.exec.enable_proxy
+                - paragraph [ref=e726]: Routes exec tool child process HTTP/HTTPS traffic through an SSRF-protected loopback proxy (SEC-28).
+            - generic [ref=e727]:
+              - generic [ref=e728]:
+                - heading "Audit Log" [level=3] [ref=e729]
+                - paragraph [ref=e730]: Security events, policy decisions, and tool executions
+              - button "View Audit Log" [ref=e731]
+            - generic [ref=e732]:
+              - generic [ref=e733]:
+                - generic [ref=e734]:
+                  - heading "Diagnostics" [level=3] [ref=e735]
+                  - paragraph [ref=e736]: "Last run: Apr 13, 04:18 AM"
+                - button "Run diagnostics" [ref=e737]:
+                  - img [ref=e738]
+                  - text: Run diagnostics
+              - generic [ref=e740]:
+                - generic [ref=e741]:
+                  - generic [ref=e742]:
+                    - generic [ref=e743]:
+                      - img [ref=e744]
+                      - generic [ref=e746]: Risk Score
+                    - generic [ref=e747]:
+                      - generic [ref=e748]: "90"
+                      - generic [ref=e749]: /100
+                      - generic [ref=e750]: Critical
+                  - generic [ref=e754]:
+                    - generic [ref=e755]: No issues
+                    - generic [ref=e756]: Critical
+                  - generic [ref=e757]:
+                    - generic [ref=e758]:
+                      - img [ref=e759]
+                      - text: 0 high
+                    - generic [ref=e761]:
+                      - img [ref=e762]
+                      - text: 1 medium
+                    - generic [ref=e764]:
+                      - img [ref=e765]
+                      - text: 0 low
+                - generic [ref=e768]:
+                  - generic [ref=e769]:
+                    - img [ref=e770]
+                    - generic [ref=e772]: Medium — 1 issue
+                  - button "Sandbox is disabled" [ref=e773] [cursor=pointer]:
+                    - generic [ref=e774]:
+                      - paragraph [ref=e775]: Sandbox is disabled
+                      - img [ref=e776]

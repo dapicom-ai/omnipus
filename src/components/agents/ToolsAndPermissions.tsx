@@ -1,58 +1,86 @@
 import { useEffect, useMemo } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { FloppyDisk } from '@phosphor-icons/react'
-import { Button } from '@/components/ui/button'
-import { ToolPickerPreset } from './ToolPickerPreset'
-import { ToolGroupList } from './ToolGroupList'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+
 import { MCPServerPicker } from './MCPServerPicker'
+import { PolicyBadge, type ToolPolicy } from '@/components/shared/PolicyBadge'
+import { CATEGORY_LABELS, groupByCategory, resolvePolicy } from '@/lib/toolCategories'
 import {
   fetchBuiltinTools,
   fetchAgentTools,
   fetchMcpServersForAgent,
   updateAgentTools,
+  fetchGlobalToolPolicies,
   type AgentToolsCfg,
-  type BuiltinTool,
 } from '@/lib/api'
-import { useUiStore } from '@/store/ui'
-import { TOOL_PRESETS, type PresetKey } from '@/lib/agentToolPresets'
+import { useAutoSave } from '@/hooks/useAutoSave'
+import { AutoSaveIndicator } from '@/components/ui/AutoSaveIndicator'
 
 interface ToolsAndPermissionsProps {
   agentId: string | null
-  agentType: 'system' | 'core' | 'custom'
+  agentType: 'core' | 'custom'
   tools: AgentToolsCfg
   onChange: (tools: AgentToolsCfg) => void
 }
 
-function detectPreset(visible: string[] | undefined, allTools: BuiltinTool[]): PresetKey {
-  if (!visible) return 'custom'
-  const sorted = [...visible].sort().join(',')
-
-  // Check "unrestricted" first — its tool set is derived from allTools at runtime.
-  const unrestrictedNames = allTools
-    .filter((t) => t.scope !== 'system')
-    .map((t) => t.name)
-    .sort()
-    .join(',')
-  if (sorted === unrestrictedNames) return 'unrestricted'
-
-  // Check named presets (skip unrestricted and custom which have no static list).
-  const namedPresets = (Object.keys(TOOL_PRESETS) as PresetKey[]).filter(
-    (k) => k !== 'unrestricted' && k !== 'custom',
-  )
-  for (const key of namedPresets) {
-    const presetSorted = [...(TOOL_PRESETS[key].tools as string[])].sort().join(',')
-    if (sorted === presetSorted) return key
-  }
-  return 'custom'
+// Presets for quick policy configuration
+const POLICY_PRESETS: Record<string, { label: string; description: string; defaultPolicy: ToolPolicy; overrides?: Record<string, ToolPolicy> }> = {
+  unrestricted: {
+    label: 'Unrestricted',
+    description: 'All tools allowed without confirmation',
+    defaultPolicy: 'allow',
+  },
+  cautious: {
+    label: 'Cautious',
+    description: 'All tools require approval before use',
+    defaultPolicy: 'ask',
+  },
+  standard: {
+    label: 'Standard',
+    description: 'Safe tools allowed, exec and browser require approval',
+    defaultPolicy: 'allow',
+    overrides: {
+      exec: 'ask',
+      'browser.navigate': 'ask',
+      'browser.click': 'ask',
+      'browser.type': 'ask',
+      'browser.evaluate': 'deny',
+    },
+  },
+  minimal: {
+    label: 'Minimal',
+    description: 'Only reading and search allowed, everything else denied',
+    defaultPolicy: 'deny',
+    overrides: {
+      read_file: 'allow',
+      list_dir: 'allow',
+      web_search: 'allow',
+      web_fetch: 'allow',
+      task_list: 'allow',
+      agent_list: 'allow',
+    },
+  },
 }
 
-export function ToolsAndPermissions({ agentId, agentType, tools, onChange }: ToolsAndPermissionsProps) {
-  const { addToast } = useUiStore()
+export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onChange }: ToolsAndPermissionsProps) {
   const queryClient = useQueryClient()
+
+  const { status: saveStatus, error: saveError } = useAutoSave(
+    tools,
+    (data) => updateAgentTools(agentId!, data).then((result) => {
+      onChange(result.config)
+      queryClient.invalidateQueries({ queryKey: ['agent-tools', agentId] })
+    }),
+    { disabled: !agentId },
+  )
 
   const { data: builtinTools = [], isLoading: toolsLoading, isError: toolsError } = useQuery({
     queryKey: ['tools-builtin'],
     queryFn: fetchBuiltinTools,
+  })
+
+  const { data: globalPolicies, isError: globalPoliciesError } = useQuery({
+    queryKey: ['global-tool-policies'],
+    queryFn: fetchGlobalToolPolicies,
   })
 
   const { data: mcpServers = [], isError: mcpError } = useQuery({
@@ -60,74 +88,88 @@ export function ToolsAndPermissions({ agentId, agentType, tools, onChange }: Too
     queryFn: fetchMcpServersForAgent,
   })
 
-  // When editing an existing agent, load its tool config from the server
   const { data: agentToolsData } = useQuery({
     queryKey: ['agent-tools', agentId],
     queryFn: () => fetchAgentTools(agentId!),
     enabled: !!agentId,
   })
 
-  // Sync server-loaded config into parent state on first load
   useEffect(() => {
     if (agentToolsData && agentId) {
-      onChange(agentToolsData.config)
+      // Only propagate when the incoming config actually differs from what is
+      // already in state — prevents a spurious auto-save on the initial load.
+      const incoming = JSON.stringify(agentToolsData.config)
+      const current = JSON.stringify(tools)
+      if (incoming !== current) {
+        onChange(agentToolsData.config)
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentToolsData, agentId])
 
-  const { mutate: doSave, isPending: isSaving } = useMutation({
-    mutationFn: (cfg: AgentToolsCfg) => updateAgentTools(agentId!, cfg),
-    onSuccess: (result) => {
-      onChange(result.config)
-      queryClient.invalidateQueries({ queryKey: ['agent-tools', agentId] })
-      addToast({ message: 'Tool permissions saved', variant: 'success' })
-    },
-    onError: (err: Error) => {
-      addToast({ message: `Failed to save tools: ${err.message}`, variant: 'error' })
-    },
+  const defaultPolicy: ToolPolicy = (tools.builtin?.default_policy as ToolPolicy) || 'allow'
+  const policies: Record<string, ToolPolicy> = (tools.builtin?.policies as Record<string, ToolPolicy>) || {}
+
+  function setDefaultPolicy(p: ToolPolicy) {
+    onChange({
+      ...tools,
+      builtin: { ...tools.builtin, default_policy: p, policies },
+    })
+  }
+
+  function setToolPolicy(toolName: string, p: ToolPolicy) {
+    const newPolicies = { ...policies }
+    if (p === defaultPolicy) {
+      delete newPolicies[toolName] // matches default, no override needed
+    } else {
+      newPolicies[toolName] = p
+    }
+    onChange({
+      ...tools,
+      builtin: { ...tools.builtin, default_policy: defaultPolicy, policies: newPolicies },
+    })
+  }
+
+  function applyPreset(key: string) {
+    const preset = POLICY_PRESETS[key]
+    if (!preset) return
+    onChange({
+      ...tools,
+      builtin: {
+        default_policy: preset.defaultPolicy,
+        policies: preset.overrides ? { ...preset.overrides } : {},
+      },
+    })
+  }
+
+  // Detect which preset matches current config
+  const activePreset = useMemo(() => {
+    for (const [key, preset] of Object.entries(POLICY_PRESETS)) {
+      if (preset.defaultPolicy !== defaultPolicy) continue
+      const overrideCount = Object.keys(preset.overrides || {}).length
+      const currentOverrideCount = Object.keys(policies).length
+      if (overrideCount === 0 && currentOverrideCount === 0) return key
+      if (overrideCount === currentOverrideCount) {
+        const matches = Object.entries(preset.overrides || {}).every(([k, v]) => policies[k] === v)
+        if (matches) return key
+      }
+    }
+    return 'custom'
+  }, [defaultPolicy, policies])
+
+  // Filter out system-scope tools — never shown in agent tool configuration
+  const displayTools = builtinTools.filter((t) => {
+    if (t.scope === 'system') return false // system tools not shown in agent config
+    return true
   })
 
-  const visibleTools = tools.builtin.visible ?? []
-
-  const activePreset = useMemo(
-    () => detectPreset(visibleTools, builtinTools),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [visibleTools.join(','), builtinTools]
-  )
-
-  function applyPreset(key: PresetKey) {
-    const preset = TOOL_PRESETS[key]
-    if (preset.tools === 'all') {
-      const allVisible = builtinTools
-        .filter((t) => t.scope !== 'system')
-        .map((t) => t.name)
-      onChange({ ...tools, builtin: { mode: 'explicit', visible: allVisible } })
-    } else if (key === 'custom') {
-      onChange({ ...tools, builtin: { mode: 'explicit', visible: visibleTools } })
-    } else {
-      onChange({
-        ...tools,
-        builtin: { mode: 'explicit', visible: [...(preset.tools as string[])] },
-      })
-    }
-  }
-
-  function toggleTool(toolName: string) {
-    const current = tools.builtin.visible ?? []
-    const next = current.includes(toolName)
-      ? current.filter((n) => n !== toolName)
-      : [...current, toolName]
-    onChange({ ...tools, builtin: { mode: 'explicit', visible: next } })
-  }
+  const grouped = groupByCategory(displayTools)
 
   if (toolsLoading) {
     return (
       <div className="space-y-2 py-4">
         {[1, 2, 3].map((i) => (
-          <div
-            key={i}
-            className="h-9 rounded-md bg-[var(--color-surface-2)] animate-pulse"
-          />
+          <div key={i} className="h-9 rounded-md bg-[var(--color-surface-2)] animate-pulse" />
         ))}
       </div>
     )
@@ -143,26 +185,127 @@ export function ToolsAndPermissions({ agentId, agentType, tools, onChange }: Too
 
   return (
     <div className="space-y-5">
-      {/* Preset row */}
-      <div className="space-y-2">
-        <p className="text-xs text-[var(--color-muted)]">Quick-select a preset</p>
-        <ToolPickerPreset activePreset={activePreset} onSelect={applyPreset} />
+      {/* Auto-save status — top of section for visibility */}
+      <div className="flex items-center gap-3">
+        <AutoSaveIndicator status={saveStatus} error={saveError} />
+        <span className="text-[10px] text-[var(--color-muted)]">
+          {Object.keys(policies).length} override{Object.keys(policies).length !== 1 ? 's' : ''} | Default: {defaultPolicy}
+        </span>
       </div>
 
-      {/* Tool list */}
+      {/* Preset row */}
+      <div className="space-y-2">
+        <p className="text-xs text-[var(--color-muted)]">Policy presets</p>
+        <div className="flex gap-2 flex-wrap">
+          {Object.entries(POLICY_PRESETS).map(([key, preset]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => applyPreset(key)}
+              className={`px-3 py-1.5 rounded-md text-[11px] font-medium border transition-colors ${
+                activePreset === key
+                  ? 'bg-[var(--color-accent)]/20 text-[var(--color-accent)] border-[var(--color-accent)]/40'
+                  : 'border-[var(--color-border)] text-[var(--color-muted)] hover:text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)]'
+              }`}
+              title={preset.description}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Default policy */}
       <div className="space-y-1.5">
+        <p className="text-xs text-[var(--color-muted)]">Default policy for unlisted tools</p>
+        <div className="flex gap-1.5">
+          {(['allow', 'ask', 'deny'] as ToolPolicy[]).map((p) => (
+            <PolicyBadge key={p} policy={p} active={defaultPolicy === p} onClick={() => setDefaultPolicy(p)} />
+          ))}
+        </div>
+      </div>
+
+      {/* Per-tool policies grouped by category */}
+      <div className="space-y-3">
         <p className="text-xs text-[var(--color-muted)]">
-          Tools available to this agent
+          Per-tool policies ({displayTools.length} tools)
           {mcpError && (
             <span className="text-[var(--color-warning)] ml-2">(MCP servers unavailable)</span>
           )}
         </p>
-        <ToolGroupList
-          tools={builtinTools}
-          selected={visibleTools}
-          agentType={agentType}
-          onToggle={toggleTool}
-        />
+        {globalPolicies && (
+          <p className="text-[10px] text-[var(--color-muted)]">
+            Tools blocked by global security policies are shown greyed out
+          </p>
+        )}
+        {globalPoliciesError && (
+          <p className="text-[10px] text-[var(--color-warning)]">
+            Could not load global security policies — restrictions may not be shown
+          </p>
+        )}
+        {Object.entries(grouped).map(([category, catTools]) => (
+          <div key={category} className="space-y-1">
+            <p className="text-[10px] font-semibold text-[var(--color-secondary)] uppercase tracking-wider">
+              {CATEGORY_LABELS[category] || category}
+            </p>
+            <div className="space-y-0.5">
+              {catTools.map((tool) => {
+                const currentPolicy = resolvePolicy(tool.name, policies, defaultPolicy)
+                const isOverridden = tool.name in policies
+
+                // Determine effective global policy for this tool.
+                // When the fetch failed, default to 'deny' (deny-by-default security posture).
+                const globalDefaultPolicy = globalPoliciesError ? 'deny' : (globalPolicies?.default_policy ?? 'allow')
+                const globalToolPolicy = globalPoliciesError
+                  ? 'deny'
+                  : (globalPolicies?.policies?.[tool.name] ?? globalDefaultPolicy)
+                const isGloballyDenied = globalToolPolicy === 'deny'
+                const isGloballyAsked = globalToolPolicy === 'ask'
+
+                return (
+                  <div
+                    key={tool.name}
+                    className={`flex items-center justify-between py-1 px-2 rounded transition-colors ${
+                      isGloballyDenied
+                        ? 'opacity-50 cursor-not-allowed'
+                        : 'hover:bg-[var(--color-surface-2)]'
+                    }`}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <span className={`text-xs font-mono ${isOverridden && !isGloballyDenied ? 'text-[var(--color-secondary)]' : 'text-[var(--color-muted)]'}`}>
+                        {tool.name}
+                      </span>
+                      {isGloballyDenied ? (
+                        <span className="text-[10px] text-red-400 ml-2">Blocked by security policy</span>
+                      ) : isGloballyAsked ? (
+                        <span className="text-[10px] text-amber-400 ml-2" title="Global policy: Ask — agent cannot override to Allow">
+                          Global: Ask
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-[var(--color-muted)] ml-2 hidden sm:inline">
+                          {tool.description?.slice(0, 50)}{(tool.description?.length ?? 0) > 50 ? '...' : ''}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex gap-0.5 shrink-0">
+                      {(['allow', 'ask', 'deny'] as ToolPolicy[]).map((p) => (
+                        <PolicyBadge
+                          key={p}
+                          policy={p}
+                          active={currentPolicy === p}
+                          onClick={() => setToolPolicy(tool.name, p)}
+                          // When globally denied: all buttons disabled
+                          // When globally asked: Allow button disabled (can't upgrade past Ask)
+                          disabled={isGloballyDenied || (isGloballyAsked && p === 'allow')}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* MCP section */}
@@ -175,23 +318,6 @@ export function ToolsAndPermissions({ agentId, agentType, tools, onChange }: Too
         />
       </div>
 
-      {/* Save — only shown when editing an existing agent */}
-      {agentId && (
-        <div className="pt-2 flex items-center gap-3">
-          <Button
-            size="sm"
-            onClick={() => doSave(tools)}
-            disabled={isSaving}
-            className="gap-2"
-          >
-            <FloppyDisk size={13} weight="bold" />
-            {isSaving ? 'Saving...' : 'Save Tool Permissions'}
-          </Button>
-          <span className="text-[10px] text-[var(--color-muted)]">
-            Selected: {visibleTools.length} tool{visibleTools.length !== 1 ? 's' : ''}
-          </span>
-        </div>
-      )}
     </div>
   )
 }

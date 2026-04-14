@@ -8,9 +8,11 @@ import (
 // Evaluator checks tool invocations against security policies.
 // Immutable after construction — safe for concurrent use (SEC-12).
 type Evaluator struct {
-	defaultPolicy   DefaultPolicy
-	agents          map[string]AgentPolicy
-	execAllowedBins []string
+	defaultPolicy     DefaultPolicy
+	agents            map[string]AgentPolicy
+	execAllowedBins   []string
+	toolPolicies      map[string]ToolPolicy
+	defaultToolPolicy ToolPolicy
 }
 
 // NewEvaluator creates a policy evaluator from a SecurityConfig.
@@ -24,9 +26,11 @@ func NewEvaluator(cfg *SecurityConfig) *Evaluator {
 		dp = cfg.DefaultPolicy
 	}
 	return &Evaluator{
-		defaultPolicy:   dp,
-		agents:          cfg.Agents,
-		execAllowedBins: cfg.Policy.Exec.AllowedBinaries,
+		defaultPolicy:     dp,
+		agents:            cfg.Agents,
+		execAllowedBins:   cfg.Policy.Exec.AllowedBinaries,
+		toolPolicies:      cfg.ToolPolicies,
+		defaultToolPolicy: cfg.DefaultToolPolicy,
 	}
 }
 
@@ -38,22 +42,68 @@ func NewEvaluator(cfg *SecurityConfig) *Evaluator {
 // policy is used instead of config lookup.
 //
 // Evaluation order (SEC-04, SEC-07):
-//  1. Check agent-level tools.deny — if listed, deny (deny always wins)
-//  2. Check agent-level tools.allow — if list exists and tool not in it, deny
-//  3. If tools.allow is empty array, deny all (explicit empty = no tools)
-//  4. If default_policy is "deny" and no explicit allow, deny
+//  1. Check global tool_policies — deny wins outright; ask is held as a floor
+//  2. Check agent-level tools.deny — if listed, deny (deny always wins)
+//  3. Check agent-level tools.allow — if list exists and tool not in it, deny
+//  4. If tools.allow is empty array, deny all (explicit empty = no tools)
+//  5. If default_policy is "deny" and no explicit allow, deny
 func (e *Evaluator) EvaluateTool(agentID, toolName string, agentPolicy ...*AgentPolicy) Decision {
+	// Step 0: Check global tool policy (floor constraint).
+	// Global "deny" blocks immediately, regardless of agent policy.
+	// Global "ask" is the minimum — agent policy can only raise to "deny",
+	// not lower back to "allow" (strictest wins).
+	globalPolicy := e.resolveGlobalToolPolicy(toolName)
+	if globalPolicy == ToolPolicyDeny {
+		return Decision{
+			Allowed:    false,
+			Policy:     string(ToolPolicyDeny),
+			PolicyRule: fmt.Sprintf("tool '%s' denied by global tool policy", toolName),
+		}
+	}
+
 	// Use explicit policy if provided
 	if len(agentPolicy) > 0 && agentPolicy[0] != nil {
-		return e.evaluateWithPolicy(agentID, toolName, agentPolicy[0])
+		d := e.evaluateWithPolicy(agentID, toolName, agentPolicy[0])
+		// Elevate to "ask" if global floor requires it and agent policy said "allow".
+		if d.Allowed && d.Policy == "" && globalPolicy == ToolPolicyAsk {
+			d.Policy = string(ToolPolicyAsk)
+		} else if d.Policy == "" {
+			d.Policy = string(ToolPolicyAllow)
+		}
+		return d
 	}
 
 	// Look up from config
 	if ap, ok := e.agents[agentID]; ok {
-		return e.evaluateWithPolicy(agentID, toolName, &ap)
+		d := e.evaluateWithPolicy(agentID, toolName, &ap)
+		if d.Allowed && d.Policy == "" && globalPolicy == ToolPolicyAsk {
+			d.Policy = string(ToolPolicyAsk)
+		} else if d.Policy == "" {
+			d.Policy = string(ToolPolicyAllow)
+		}
+		return d
 	}
 
-	return e.evaluateDefault(agentID, toolName)
+	d := e.evaluateDefault(agentID, toolName)
+	if d.Allowed && globalPolicy == ToolPolicyAsk {
+		d.Policy = string(ToolPolicyAsk)
+	} else if d.Allowed {
+		d.Policy = string(ToolPolicyAllow)
+	} else {
+		d.Policy = string(ToolPolicyDeny)
+	}
+	return d
+}
+
+// resolveGlobalToolPolicy returns the effective global policy for a tool name.
+func (e *Evaluator) resolveGlobalToolPolicy(toolName string) ToolPolicy {
+	if p, ok := e.toolPolicies[toolName]; ok {
+		return p
+	}
+	if e.defaultToolPolicy != "" {
+		return e.defaultToolPolicy
+	}
+	return ToolPolicyAllow
 }
 
 func (e *Evaluator) evaluateWithPolicy(agentID, toolName string, ap *AgentPolicy) Decision {
@@ -67,6 +117,7 @@ func (e *Evaluator) evaluateWithPolicy(agentID, toolName string, ap *AgentPolicy
 				if allowed == toolName {
 					return Decision{
 						Allowed: false,
+						Policy:  string(ToolPolicyDeny),
 						PolicyRule: fmt.Sprintf(
 							"tool '%s' in tools.deny for agent '%s' (deny takes precedence over allow)",
 							toolName,
@@ -77,6 +128,7 @@ func (e *Evaluator) evaluateWithPolicy(agentID, toolName string, ap *AgentPolicy
 			}
 			return Decision{
 				Allowed:    false,
+				Policy:     string(ToolPolicyDeny),
 				PolicyRule: fmt.Sprintf("tool '%s' in tools.deny for agent '%s'", toolName, agentID),
 			}
 		}
@@ -87,6 +139,7 @@ func (e *Evaluator) evaluateWithPolicy(agentID, toolName string, ap *AgentPolicy
 		if len(allow) == 0 {
 			return Decision{
 				Allowed:    false,
+				Policy:     string(ToolPolicyDeny),
 				PolicyRule: fmt.Sprintf("tools.allow is empty for agent '%s' (no tools permitted)", agentID),
 			}
 		}
@@ -94,12 +147,14 @@ func (e *Evaluator) evaluateWithPolicy(agentID, toolName string, ap *AgentPolicy
 			if allowed == toolName {
 				return Decision{
 					Allowed:    true,
+					Policy:     string(ToolPolicyAllow),
 					PolicyRule: fmt.Sprintf("tools.allow matched '%s' for agent '%s'", toolName, agentID),
 				}
 			}
 		}
 		return Decision{
 			Allowed:    false,
+			Policy:     string(ToolPolicyDeny),
 			PolicyRule: fmt.Sprintf("tool '%s' not in tools.allow for agent '%s'", toolName, agentID),
 		}
 	}
@@ -144,6 +199,7 @@ func (e *Evaluator) evaluateDefault(agentID, toolName string) Decision {
 	if e.defaultPolicy == PolicyDeny {
 		return Decision{
 			Allowed: false,
+			Policy:  string(ToolPolicyDeny),
 			PolicyRule: fmt.Sprintf(
 				"default_policy is 'deny', no allow rule for tool '%s' (agent '%s')",
 				toolName,
@@ -154,6 +210,7 @@ func (e *Evaluator) evaluateDefault(agentID, toolName string) Decision {
 
 	return Decision{
 		Allowed:    true,
+		Policy:     string(ToolPolicyAllow),
 		PolicyRule: fmt.Sprintf("security.default_policy is 'allow', no deny rule matched for tool '%s'", toolName),
 	}
 }

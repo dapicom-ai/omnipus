@@ -50,10 +50,11 @@ func AllTools(d *Deps, navCb NavigateCallback) []tools.Tool {
 		NewMCPRemoveTool(d),
 		NewMCPListTool(d),
 
-		// Provider management (3)
+		// Provider management (4)
 		NewProviderConfigureTool(d),
 		NewProviderListTool(d),
 		NewProviderTestTool(d),
+		NewModelsListTool(d),
 
 		// Pin management (3)
 		NewPinListTool(d),

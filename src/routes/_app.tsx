@@ -27,10 +27,11 @@ export const Route = createFileRoute('/_app')({
     // Validate token by calling /auth/validate
     try {
       await validateToken()
-    } catch {
+    } catch (err) {
       // Token is invalid or expired — clear it and redirect to login
       sessionStorage.removeItem('omnipus_auth_token')
       localStorage.removeItem('omnipus_auth_token')
+      console.warn('[auth] Token validation failed:', err)
       throw redirect({ to: '/login' })
     }
   },

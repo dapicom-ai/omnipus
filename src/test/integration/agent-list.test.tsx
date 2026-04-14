@@ -24,7 +24,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
 import { fetchAgents } from '@/lib/api'
 
 const mockAgents = [
-  { id: 'omnipus-system', name: 'Omnipus System', type: 'system' as const, status: 'active' as const, model: 'claude-opus-4-6', description: 'System agent' },
+  { id: 'mia', name: 'Mia', type: 'core' as const, locked: true, color: '#6366f1', status: 'active' as const, model: 'claude-opus-4-6', description: 'General purpose assistant' },
   { id: 'general-assistant', name: 'General Assistant', type: 'core' as const, color: 'green', status: 'active' as const, model: 'claude-sonnet-4-6', description: 'General assistant' },
   { id: 'researcher', name: 'Researcher', type: 'core' as const, color: 'blue', status: 'idle' as const, model: 'claude-opus-4-6', description: 'Research specialist' },
   { id: 'content-creator', name: 'Content Creator', type: 'custom' as const, color: 'purple', status: 'idle' as const, model: 'claude-sonnet-4-6', description: 'Content writer' },

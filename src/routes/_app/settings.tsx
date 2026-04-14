@@ -9,7 +9,6 @@ import { ProfileSection } from '@/components/settings/ProfileSection'
 import { AboutSection } from '@/components/settings/AboutSection'
 import { useAuthStore } from '@/store/auth'
 import { DevicesSection } from '@/components/settings/DevicesSection'
-import { PolicyApprovalsSection } from '@/components/settings/PolicyApprovalsSection'
 
 function SettingsScreen() {
   const role = useAuthStore((s) => s.role)
@@ -36,7 +35,6 @@ function SettingsScreen() {
             <TabsTrigger value="routing">Routing</TabsTrigger>
             <TabsTrigger value="profile">Profile</TabsTrigger>
             {isAdmin && <TabsTrigger value="devices">Devices</TabsTrigger>}
-            {isAdmin && <TabsTrigger value="policy-approvals">Policy Approvals</TabsTrigger>}
             <TabsTrigger value="about">About</TabsTrigger>
           </TabsList>
 
@@ -67,12 +65,6 @@ function SettingsScreen() {
           {isAdmin && (
             <TabsContent value="devices">
               <DevicesSection />
-            </TabsContent>
-          )}
-
-          {isAdmin && (
-            <TabsContent value="policy-approvals">
-              <PolicyApprovalsSection />
             </TabsContent>
           )}
 

@@ -6,7 +6,7 @@ import type { BuiltinTool } from '@/lib/api'
 interface ToolGroupListProps {
   tools: BuiltinTool[]
   selected: string[]
-  agentType: 'system' | 'core' | 'custom'
+  agentType: 'core' | 'custom'
   onToggle: (toolName: string) => void
 }
 

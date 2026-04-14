@@ -33,12 +33,14 @@ export interface Agent {
   id: string
   name: string
   description: string
-  type: 'system' | 'core' | 'custom'
+  type: 'core' | 'custom'
   model: string
   status: 'active' | 'idle' | 'error' | 'draft'
+  locked?: boolean
   icon?: string
   color?: string
   tools?: string[]
+  tools_cfg?: AgentToolsCfg
   soul?: string
   heartbeat?: string
   instructions?: string
@@ -109,6 +111,11 @@ export interface Session {
   message_count: number
   total_tokens?: number
   total_cost?: number
+  // Multi-agent session fields — present on sessions created with the joined
+  // session model. For legacy single-agent sessions these are absent; callers
+  // should fall back to [agent_id] when agent_ids is undefined.
+  agent_ids?: string[]      // all agents that participated in this session
+  active_agent_id?: string  // the agent currently handling this session
 }
 
 interface RawSession {
@@ -120,6 +127,8 @@ interface RawSession {
   task_id?: string
   created_at: string
   updated_at: string
+  agent_ids?: string[]
+  active_agent_id?: string
   stats?: {
     tokens_in: number
     tokens_out: number
@@ -144,6 +153,8 @@ function rawToSession(raw: RawSession): Session {
     message_count: raw.stats?.message_count ?? 0,
     total_tokens: raw.stats?.tokens_total,
     total_cost: raw.stats?.cost,
+    agent_ids: raw.agent_ids,
+    active_agent_id: raw.active_agent_id,
   }
 }
 
@@ -222,6 +233,16 @@ export interface Config {
   data: {
     session_retention_days: number
   }
+  tools?: {
+    exec?: {
+      enable_proxy?: boolean
+    }
+  }
+  agents?: {
+    defaults?: {
+      default_agent_id?: string
+    }
+  }
 }
 
 const VALID_AUTH_MODES = ['none', 'token'] as const
@@ -246,6 +267,8 @@ function rawToFrontendConfig(raw: Record<string, unknown>): Config {
   const retention = cast<Record<string, unknown>>(storage.retention, {})
   const security = cast<Record<string, unknown>>(raw.security, {})
   const rateLimits = cast<Record<string, unknown>>(security.rate_limits, {})
+  const agents = cast<Record<string, unknown>>(raw.agents, {})
+  const agentDefaults = cast<Record<string, unknown>>(agents.defaults, {})
   return {
     gateway: {
       bind_address: cast<string>(gateway.host, '127.0.0.1'),
@@ -272,6 +295,11 @@ function rawToFrontendConfig(raw: Record<string, unknown>): Config {
     },
     data: {
       session_retention_days: cast<number>(retention.session_days, 90),
+    },
+    agents: {
+      defaults: {
+        default_agent_id: agentDefaults.default_agent_id as string | undefined,
+      },
     },
   }
 }
@@ -869,7 +897,13 @@ export interface BuiltinTool {
 }
 
 export interface AgentToolsCfg {
-  builtin: { mode: 'explicit' | 'inherit'; visible?: string[] }
+  builtin: {
+    default_policy?: 'allow' | 'ask' | 'deny'
+    policies?: Record<string, 'allow' | 'ask' | 'deny'>
+    // Legacy fields (backward compat)
+    mode?: 'explicit' | 'inherit'
+    visible?: string[]
+  }
   mcp?: { servers: { id: string; tools?: string[] }[] }
 }
 
@@ -887,6 +921,24 @@ export function fetchAgentTools(agentId: string): Promise<{ config: AgentToolsCf
 
 export function updateAgentTools(agentId: string, cfg: AgentToolsCfg): Promise<{ config: AgentToolsCfg; effective_tools: BuiltinTool[] }> {
   return request<{ config: AgentToolsCfg; effective_tools: BuiltinTool[] }>(`/agents/${encodeURIComponent(agentId)}/tools`, {
+    method: 'PUT',
+    body: JSON.stringify(cfg),
+  })
+}
+
+// ── Global Tool Policies ──────────────────────────────────────────────────────
+
+export interface GlobalToolPolicies {
+  default_policy: 'allow' | 'ask' | 'deny'
+  policies: Record<string, 'allow' | 'ask' | 'deny'>
+}
+
+export function fetchGlobalToolPolicies(): Promise<GlobalToolPolicies> {
+  return request<GlobalToolPolicies>('/security/tool-policies')
+}
+
+export function updateGlobalToolPolicies(cfg: GlobalToolPolicies): Promise<GlobalToolPolicies> {
+  return request<GlobalToolPolicies>('/security/tool-policies', {
     method: 'PUT',
     body: JSON.stringify(cfg),
   })

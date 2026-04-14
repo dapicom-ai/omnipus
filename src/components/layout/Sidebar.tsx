@@ -10,7 +10,6 @@ import {
   PushPin,
   PushPinSlash,
   SignOut,
-  ShieldCheck,
 } from '@phosphor-icons/react'
 import { useSidebarStore, SIDEBAR_PIN_BREAKPOINT } from '@/store/sidebar'
 import { useChatStore } from '@/store/chat'
@@ -23,7 +22,6 @@ const NAV_ITEMS = [
   { to: '/command-center', label: 'Command Center', Icon: Gauge },
   { to: '/agents', label: 'Agents', Icon: Robot },
   { to: '/skills', label: 'Skills & Tools', Icon: PuzzlePiece },
-  { to: '/policies', label: 'Policies', Icon: ShieldCheck },
 ] as const
 
 // US-5: Sidebar — overlay default, pin option, Framer Motion, Zustand

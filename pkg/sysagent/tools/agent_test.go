@@ -117,9 +117,12 @@ func TestAgentCreate_WithColorAndIcon(t *testing.T) {
 	tool := systools.NewAgentCreateTool(deps)
 
 	result := tool.Execute(context.Background(), map[string]any{
-		"name":  "Research Bot",
-		"color": "#22C55E",
-		"icon":  "robot",
+		"name":        "Research Bot",
+		"description": "A research assistant",
+		"soul":        "You are a research bot.",
+		"model":       "test/model",
+		"color":       "#22C55E",
+		"icon":        "robot",
 	})
 
 	if result.IsError {
@@ -421,9 +424,12 @@ func TestAgentCreate_PersistsToDisk(t *testing.T) {
 	deps, cfgPath := newTestDepsWithRealSave(t)
 
 	result := systools.NewAgentCreateTool(deps).Execute(context.Background(), map[string]any{
-		"name":  "Disk Bot",
-		"color": "#22C55E",
-		"icon":  "robot",
+		"name":        "Disk Bot",
+		"description": "A disk bot",
+		"soul":        "You are a disk bot.",
+		"model":       "test/model",
+		"color":       "#22C55E",
+		"icon":        "robot",
 	})
 	if result.IsError {
 		t.Fatalf("create failed: %s", result.ForLLM)
@@ -527,8 +533,11 @@ func TestAgentCreate_RejectsInvalidColor(t *testing.T) {
 	deps, _ := newTestDeps()
 	for _, bad := range []string{"red", "#GGGGGG", "#12345", "22C55E", "#22C55E00"} {
 		result := systools.NewAgentCreateTool(deps).Execute(context.Background(), map[string]any{
-			"name":  "Bot",
-			"color": bad,
+			"name":        "Bot",
+			"description": "A test bot",
+			"soul":        "You are a test bot.",
+			"model":       "test/model",
+			"color":       bad,
 		})
 		if !result.IsError {
 			t.Errorf("create with color=%q should fail, got success", bad)
@@ -546,8 +555,11 @@ func TestAgentCreate_RejectsInvalidIcon(t *testing.T) {
 	deps, _ := newTestDeps()
 	for _, bad := range []string{"my icon", "icon!", "icon/sub", "icon..bad"} {
 		result := systools.NewAgentCreateTool(deps).Execute(context.Background(), map[string]any{
-			"name": "Bot",
-			"icon": bad,
+			"name":        "Bot",
+			"description": "A test bot",
+			"soul":        "You are a test bot.",
+			"model":       "test/model",
+			"icon":        bad,
 		})
 		if !result.IsError {
 			t.Errorf("create with icon=%q should fail, got success", bad)
@@ -643,7 +655,12 @@ func TestWithConfig_SerializesReaderWriter(t *testing.T) {
 					return
 				default:
 					createTool.Execute(ctx, map[string]any{
-						"name": fmt.Sprintf("Bot %d", i),
+						"name":        fmt.Sprintf("Bot %d", i),
+						"description": "A test bot",
+						"soul":        "You are a test bot.",
+						"model":       "test/model",
+						"color":       "#22C55E",
+						"icon":        "robot",
 					})
 				}
 			}
@@ -811,7 +828,17 @@ func TestConcurrentRESTAndSysagentConfigWrite(t *testing.T) {
 			<-done
 			return
 		default:
-			createTool.Execute(ctx, map[string]any{"name": "concurrent-bot"})
+			createTool.Execute(
+				ctx,
+				map[string]any{
+					"name":        "concurrent-bot",
+					"description": "test",
+					"soul":        "test",
+					"model":       "test/model",
+					"color":       "#22C55E",
+					"icon":        "robot",
+				},
+			)
 		}
 	}
 }

@@ -19,7 +19,6 @@ import (
 	"path/filepath"
 	runtimedebug "runtime/debug"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -44,6 +43,7 @@ import (
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/whatsapp"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/whatsapp_native"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/coreagent"
 	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/cron"
 	"github.com/dapicom-ai/omnipus/pkg/datamodel"
@@ -269,70 +269,50 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 		return fmt.Errorf("error creating provider: %w", err)
 	}
 
-	if modelID != "" {
+	// Only override ModelName if it was empty (first boot / migration).
+	// Don't overwrite an alias (e.g. "openrouter-auto") with the raw model slug
+	// (e.g. "z-ai/glm-5-turbo") — the alias is what GetModelConfig looks up by.
+	if modelID != "" && cfg.Agents.Defaults.ModelName == "" {
 		cfg.Agents.Defaults.ModelName = modelID
+	}
+
+	// Seed core agents into config on first boot. Core agents are stored in
+	// cfg.Agents.List with Locked=true so they appear alongside custom agents
+	// in the REST API with type "core". SeedConfig is idempotent — it only adds
+	// agents that are not already present (checked by ID).
+	if coreagent.SeedConfig(cfg) {
+		if saveErr := config.SaveConfig(configPath, cfg); saveErr != nil {
+			return fmt.Errorf("gateway: failed to persist seeded core agents: %w", saveErr)
+		}
 	}
 
 	msgBus := bus.NewMessageBus()
 	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider)
 
-	// Wire the 35 system.* tools into the system agent (omnipus-system / "main").
-	// GetCfg always delegates to agentLoop.GetConfig() so that hot-reloaded configs
-	// (via SwapConfig) are immediately visible to system tools without a restart.
-	//
-	// SaveConfigLocked is called from within MutateConfig's fn, so al.mu (write
-	// lock) is already held by the caller. It must NOT acquire any other mutex —
-	// doing so would create an AB-BA deadlock with the REST path:
-	//
-	//   REST path:     safeUpdateConfigJSON → refreshConfigAndRewireServices → SwapConfig → al.mu
-	//   Sysagent path: MutateConfig → al.mu (already held) → SaveConfigLocked (no extra lock)
-	//
-	// The old gatewayConfigMu approach produced:
-	//   REST:     gatewayConfigMu → al.mu
-	//   Sysagent: al.mu → gatewayConfigMu  ← deadlock
-	//
-	// WireSystemTools is deliberately separate from NewAgentLoop so that configPath
-	// and credStore (gateway-level concerns) do not leak into the core agent
-	// constructor. Callers that construct an AgentLoop in tests or non-gateway
-	// contexts can skip this wiring.
-	sysToolDeps := &systools.Deps{
+	// Wire agent CRUD tools (system.agent.create/update/delete) to Ava so she
+	// can create custom agents through her structured interview flow.
+	// reloadFuncRef is set after services start; the closure captures the pointer
+	// so avaDeps.ReloadFunc is safe to call even if invoked before assignment
+	// (returns "reload not yet available" instead of nil panic).
+	var reloadFuncRef func() error
+	avaDeps := &systools.Deps{
 		Home:         homePath,
 		ConfigPath:   configPath,
 		GetCfg:       agentLoop.GetConfig,
 		MutateConfig: agentLoop.MutateConfig,
-		// SaveConfigLocked: al.mu is held by MutateConfig; no extra locking needed.
 		SaveConfigLocked: func(cfg *config.Config) error {
 			return config.SaveConfig(configPath, cfg)
 		},
 		CredStore: credStore,
-	}
-	wireErr := agentLoop.WireSystemTools(sysToolDeps, nil)
-	if wireErr != nil {
-		return fmt.Errorf("wire system tools: %w", wireErr)
-	}
-
-	// Boot-invariant: assert the system agent received all expected system.* tools.
-	// expectedSysTools derives the count from the canonical AllTools registry so it
-	// self-updates when new tools are added — no more hardcoded 30-tool threshold.
-	// This converts a silent misconfiguration into a loud boot failure.
-	{
-		expectedSysTools := len(systools.AllTools(sysToolDeps, nil))
-		sysReg := agentLoop.GetRegistry()
-		if sysAgent, ok := sysReg.GetAgent(agent.DefaultAgentID); ok && sysAgent != nil {
-			count := 0
-			for _, name := range sysAgent.Tools.List() {
-				if strings.HasPrefix(name, "system.") {
-					count++
-				}
+		ReloadFunc: func() error {
+			if reloadFuncRef == nil {
+				return fmt.Errorf("reload not yet available — gateway still starting")
 			}
-			if count < expectedSysTools {
-				return fmt.Errorf(
-					"sysagent wiring: expected at least %d system.* tools, got %d",
-					expectedSysTools,
-					count,
-				)
-			}
-		}
+			return reloadFuncRef()
+		},
+	}
+	if wireErr := agentLoop.WireAvaAgentTools(avaDeps); wireErr != nil {
+		slog.Error("gateway: failed to wire Ava agent tools — Ava cannot create agents", "error", wireErr)
 	}
 
 	fmt.Println("\n📦 Agent Status:")
@@ -378,6 +358,8 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	}
 	runningServices.HealthServer.SetReloadFunc(reloadTrigger)
 	agentLoop.SetReloadFunc(reloadTrigger)
+	// Wire reload trigger into Ava's deps so agent create triggers hot-reload.
+	reloadFuncRef = reloadTrigger
 	runningServices.HealthServer.SetDegradedFunc(func() (bool, string) {
 		runningServices.reloadMu.Lock()
 		defer runningServices.reloadMu.Unlock()
@@ -831,7 +813,7 @@ func handleConfigReload(
 		return fmt.Errorf("error creating new provider: %w", err)
 	}
 
-	if newModelID != "" {
+	if newModelID != "" && newCfg.Agents.Defaults.ModelName == "" {
 		newCfg.Agents.Defaults.ModelName = newModelID
 	}
 

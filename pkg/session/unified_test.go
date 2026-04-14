@@ -29,7 +29,7 @@ import (
 // Callers are responsible for closing it if needed.
 func newTestStore(t *testing.T) *UnifiedStore {
 	t.Helper()
-	store, err := NewUnifiedStore(t.TempDir(), "test-agent")
+	store, err := NewUnifiedStore(t.TempDir())
 	require.NoError(t, err, "NewUnifiedStore must succeed")
 	return store
 }
@@ -46,7 +46,7 @@ func TestDeleteSession_Success(t *testing.T) {
 	store := newTestStore(t)
 
 	// Given — create a real session.
-	meta, err := store.NewSession(SessionTypeChat, "")
+	meta, err := store.NewSession(SessionTypeChat, "", "test-agent")
 	require.NoError(t, err, "NewSession must succeed")
 	sessionID := meta.ID
 
@@ -75,9 +75,9 @@ func TestDeleteSession_DifferentSessions(t *testing.T) {
 	store := newTestStore(t)
 
 	// Create two sessions.
-	meta1, err := store.NewSession(SessionTypeChat, "")
+	meta1, err := store.NewSession(SessionTypeChat, "", "test-agent")
 	require.NoError(t, err)
-	meta2, err := store.NewSession(SessionTypeChat, "")
+	meta2, err := store.NewSession(SessionTypeChat, "", "test-agent")
 	require.NoError(t, err)
 
 	id1 := meta1.ID
@@ -170,6 +170,116 @@ func TestDeleteSession_DoubleDot(t *testing.T) {
 		"error must mention 'invalid session ID', got: %q", err.Error())
 }
 
+// --- SwitchAgent tests ---
+
+// TestSwitchAgent_UpdatesActiveAgentID verifies that SwitchAgent updates the
+// ActiveAgentID field and adds the new agent to AgentIDs.
+//
+// BDD: Given a session created with "agent-a",
+// When SwitchAgent is called with "agent-b",
+// Then ActiveAgentID == "agent-b" and AgentIDs contains "agent-b".
+//
+// Traces to: pkg/session/unified.go SwitchAgent
+func TestSwitchAgent_UpdatesActiveAgentID(t *testing.T) {
+	store := newTestStore(t)
+
+	meta, err := store.NewSession(SessionTypeChat, "", "agent-a")
+	require.NoError(t, err)
+	sessionID := meta.ID
+
+	err = store.SwitchAgent(sessionID, "agent-b")
+	require.NoError(t, err, "SwitchAgent must succeed")
+
+	updated, err := store.GetMeta(sessionID)
+	require.NoError(t, err)
+
+	assert.Equal(t, "agent-b", updated.ActiveAgentID, "ActiveAgentID must be updated to agent-b")
+
+	found := false
+	for _, id := range updated.AgentIDs {
+		if id == "agent-b" {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found, "AgentIDs must contain the new agent-b")
+}
+
+// TestSwitchAgent_SameAgent_ReturnsErrAlreadyActive verifies that switching to
+// the already-active agent returns ErrAlreadyActive (idempotent guard).
+//
+// BDD: Given a session where ActiveAgentID == "agent-a",
+// When SwitchAgent("agent-a") is called,
+// Then ErrAlreadyActive is returned.
+//
+// Traces to: pkg/session/unified.go SwitchAgent — ErrAlreadyActive guard
+func TestSwitchAgent_SameAgent_ReturnsErrAlreadyActive(t *testing.T) {
+	store := newTestStore(t)
+
+	meta, err := store.NewSession(SessionTypeChat, "", "agent-a")
+	require.NoError(t, err)
+
+	err = store.SwitchAgent(meta.ID, "agent-a")
+
+	assert.ErrorIs(t, err, ErrAlreadyActive,
+		"switching to the already-active agent must return ErrAlreadyActive")
+}
+
+// TestSwitchAgent_NonExistentSession_ReturnsError verifies that SwitchAgent
+// returns an error when the session does not exist.
+//
+// BDD: Given no session with ID "nonexistent-session",
+// When SwitchAgent is called,
+// Then an error is returned.
+//
+// Traces to: pkg/session/unified.go SwitchAgent — readMetaLocked error path
+func TestSwitchAgent_NonExistentSession_ReturnsError(t *testing.T) {
+	store := newTestStore(t)
+
+	err := store.SwitchAgent("nonexistent-session-id-xyz", "agent-b")
+
+	assert.Error(t, err, "SwitchAgent on a nonexistent session must return an error")
+	// Must NOT be ErrAlreadyActive — this is a different error class.
+	assert.NotErrorIs(t, err, ErrAlreadyActive,
+		"error for nonexistent session must not be ErrAlreadyActive")
+}
+
+// TestSwitchAgent_AgentIDs_NoDuplicates verifies that switching back and forth
+// between agents does not create duplicate entries in AgentIDs.
+//
+// BDD: Given a session with AgentIDs ["agent-a"],
+// When SwitchAgent("agent-b") then SwitchAgent("agent-a") are called,
+// Then AgentIDs contains exactly ["agent-a", "agent-b"] (no duplicates).
+//
+// Traces to: pkg/session/unified.go SwitchAgent — deduplication guard
+func TestSwitchAgent_AgentIDs_NoDuplicates(t *testing.T) {
+	store := newTestStore(t)
+
+	meta, err := store.NewSession(SessionTypeChat, "", "agent-a")
+	require.NoError(t, err)
+	sessionID := meta.ID
+
+	// Switch a → b
+	require.NoError(t, store.SwitchAgent(sessionID, "agent-b"))
+	// Switch b → a (agent-a already in AgentIDs)
+	require.NoError(t, store.SwitchAgent(sessionID, "agent-a"))
+
+	updated, err := store.GetMeta(sessionID)
+	require.NoError(t, err)
+
+	// Count occurrences of each agent ID.
+	counts := make(map[string]int)
+	for _, id := range updated.AgentIDs {
+		counts[id]++
+	}
+	if counts["agent-a"] != 1 {
+		t.Errorf("agent-a appears %d times in AgentIDs, want exactly 1", counts["agent-a"])
+	}
+	if counts["agent-b"] != 1 {
+		t.Errorf("agent-b appears %d times in AgentIDs, want exactly 1", counts["agent-b"])
+	}
+}
+
 // TestDeleteSession_PersistenceCheck verifies the read-back contract:
 // after deletion, GetMeta must fail.
 //
@@ -180,7 +290,7 @@ func TestDeleteSession_PersistenceCheck(t *testing.T) {
 	store := newTestStore(t)
 
 	// Create, verify readable, delete, verify unreadable.
-	meta, err := store.NewSession(SessionTypeChat, "")
+	meta, err := store.NewSession(SessionTypeChat, "", "test-agent")
 	require.NoError(t, err)
 
 	// Read before deletion — must succeed.

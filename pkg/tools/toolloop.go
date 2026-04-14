@@ -146,8 +146,11 @@ func RunToolLoop(
 			go func(idx int, tc providers.ToolCall) {
 				defer wg.Done()
 
-				argsJSON, _ := json.Marshal(tc.Arguments)
-				argsPreview := utils.Truncate(string(argsJSON), 200)
+				argsJSON, err := json.Marshal(tc.Arguments)
+				argsPreview := "[unserializable arguments]"
+				if err == nil {
+					argsPreview = utils.Truncate(string(argsJSON), 200)
+				}
 				logger.InfoCF("toolloop", fmt.Sprintf("Tool call: %s(%s)", tc.Name, argsPreview),
 					map[string]any{
 						"tool":      tc.Name,

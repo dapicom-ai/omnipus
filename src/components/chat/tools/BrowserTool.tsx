@@ -41,6 +41,8 @@ interface GenericBrowserResult {
 const RAW_STRING_RESULT_TOOLS = new Set([
   'browser.get_text',
   'browser_get_text',
+  'browser.screenshot',
+  'browser_screenshot',
 ])
 
 function parseResult(result: unknown, toolName: string): GenericBrowserResult {

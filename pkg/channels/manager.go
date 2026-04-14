@@ -98,6 +98,7 @@ type Manager struct {
 	secrets        credentials.SecretBundle // resolved plaintext secrets; never written to env
 	mediaStore     media.MediaStore
 	dispatchTask   *asyncTask
+	dispatchCtx    context.Context // stored so RegisterChannel can spin up workers after Start
 	mux            *dynamicServeMux
 	httpServer     *http.Server
 	mu             sync.RWMutex
@@ -657,6 +658,7 @@ func (m *Manager) StartAll(ctx context.Context) error {
 
 	dispatchCtx, cancel := context.WithCancel(ctx)
 	m.dispatchTask = &asyncTask{cancel: cancel}
+	m.dispatchCtx = dispatchCtx
 
 	startedCount := 0
 	configuredCount := len(m.channels)
@@ -1326,6 +1328,16 @@ func (m *Manager) RegisterChannel(name string, channel Channel) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.registerChannelLocked(name, channel)
+
+	// Spin up a worker so SendMessage/SendMedia can route to this channel.
+	// Without a worker, synchronous delivery (e.g., media frames) fails with
+	// "channel has no active worker".
+	if _, hasWorker := m.workers[name]; !hasWorker && m.dispatchCtx != nil {
+		w := newChannelWorker(name, channel)
+		m.workers[name] = w
+		go m.runWorker(m.dispatchCtx, name, w)
+		go m.runMediaWorker(m.dispatchCtx, name, w)
+	}
 }
 
 // registerChannelLocked registers a channel. Caller must hold m.mu.
