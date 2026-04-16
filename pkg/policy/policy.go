@@ -152,14 +152,36 @@ type SecurityConfig struct {
 	DefaultToolPolicy ToolPolicy             `json:"default_tool_policy,omitempty"`
 }
 
+// builtinToolPolicies bakes in safety defaults that survive missing/empty
+// security config. Operators override by adding an entry under
+// security.tool_policies in config.json.
+//
+// browser.evaluate executes arbitrary JavaScript in a real browser context —
+// a capability too dangerous to default to "allow" (SEC-04/SEC-06). An
+// operator who needs it can explicitly set security.tool_policies["browser.evaluate"]
+// to "ask" or "allow".
+var builtinToolPolicies = map[string]ToolPolicy{
+	"browser.evaluate": ToolPolicyDeny,
+}
+
 // ResolveToolPolicy returns the effective global policy for a tool name.
-// Checks per-tool overrides first, then falls back to DefaultToolPolicy.
-// If DefaultToolPolicy is empty, defaults to ToolPolicyAllow.
+// Resolution order:
+//  1. explicit user override in sc.ToolPolicies
+//  2. baked-in safety default in builtinToolPolicies
+//  3. sc.DefaultToolPolicy
+//  4. ToolPolicyAllow
 func (sc *SecurityConfig) ResolveToolPolicy(toolName string) ToolPolicy {
 	if sc == nil {
+		// No config loaded (tests, early boot): still honor builtin safety defaults.
+		if p, ok := builtinToolPolicies[toolName]; ok {
+			return p
+		}
 		return ToolPolicyAllow
 	}
 	if p, ok := sc.ToolPolicies[toolName]; ok {
+		return p
+	}
+	if p, ok := builtinToolPolicies[toolName]; ok {
 		return p
 	}
 	if sc.DefaultToolPolicy != "" {

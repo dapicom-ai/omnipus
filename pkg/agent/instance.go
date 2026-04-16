@@ -89,32 +89,23 @@ func NewAgentInstance(
 
 	toolsRegistry := tools.NewToolRegistry()
 
-	if cfg.Tools.IsToolEnabled("read_file") {
-		maxReadFileSize := cfg.Tools.ReadFile.MaxReadFileSize
-		toolsRegistry.Register(tools.NewReadFileTool(workspace, readRestrict, maxReadFileSize, allowReadPaths))
-	}
-	if cfg.Tools.IsToolEnabled("write_file") {
-		toolsRegistry.Register(tools.NewWriteFileTool(workspace, restrict, allowWritePaths))
-	}
-	if cfg.Tools.IsToolEnabled("list_dir") {
-		toolsRegistry.Register(tools.NewListDirTool(workspace, readRestrict, allowReadPaths))
-	}
-	if cfg.Tools.IsToolEnabled("exec") {
-		execTool, err := tools.NewExecToolWithConfig(workspace, restrict, cfg, allowReadPaths)
-		if err != nil {
-			logger.ErrorCF("agent", "Failed to initialize exec tool; continuing without exec",
-				map[string]any{"error": err.Error()})
-		} else {
-			toolsRegistry.Register(execTool)
-		}
+	// All file-system and exec tools register unconditionally. Policy
+	// (allow / ask / deny) decides whether an agent can actually invoke them.
+	maxReadFileSize := cfg.Tools.ReadFile.MaxReadFileSize
+	toolsRegistry.Register(tools.NewReadFileTool(workspace, readRestrict, maxReadFileSize, allowReadPaths))
+	toolsRegistry.Register(tools.NewWriteFileTool(workspace, restrict, allowWritePaths))
+	toolsRegistry.Register(tools.NewListDirTool(workspace, readRestrict, allowReadPaths))
+
+	execTool, err := tools.NewExecToolWithConfig(workspace, restrict, cfg, allowReadPaths)
+	if err != nil {
+		logger.ErrorCF("agent", "Failed to initialize exec tool; continuing without exec",
+			map[string]any{"error": err.Error()})
+	} else {
+		toolsRegistry.Register(execTool)
 	}
 
-	if cfg.Tools.IsToolEnabled("edit_file") {
-		toolsRegistry.Register(tools.NewEditFileTool(workspace, restrict, allowWritePaths))
-	}
-	if cfg.Tools.IsToolEnabled("append_file") {
-		toolsRegistry.Register(tools.NewAppendFileTool(workspace, restrict, allowWritePaths))
-	}
+	toolsRegistry.Register(tools.NewEditFileTool(workspace, restrict, allowWritePaths))
+	toolsRegistry.Register(tools.NewAppendFileTool(workspace, restrict, allowWritePaths))
 
 	// Resolve agentID early so the session store can tag sessions with the correct owner.
 	agentID := routing.DefaultAgentID

@@ -390,6 +390,143 @@ func TestHandleCompleteOnboarding_PersistsAdmin(t *testing.T) {
 	assert.Equal(t, "admin", user["role"])
 }
 
+// TestHandleCompleteOnboarding_WritesActualModelAsAlias verifies the fix for
+// the "agents show 'openrouter' instead of the selected model" bug.
+//
+// The provider entry created during onboarding must use the actual model
+// string as its model_name (the alias that agents.defaults.model_name
+// references), not the provider ID. Otherwise the Agent Profile UI shows
+// a generic name (e.g. "openrouter") instead of the model the user picked
+// (e.g. "z-ai/glm-5-turbo"), and subsequent onboardings with a different
+// model from the same provider would stomp on the existing entry.
+//
+// BDD: Given a fresh install,
+// When POST /api/v1/onboarding/complete with {provider.id=openrouter, provider.model=z-ai/glm-5-turbo},
+// Then config.providers contains an entry with model_name="z-ai/glm-5-turbo"
+//
+//	AND config.agents.defaults.model_name == "z-ai/glm-5-turbo"
+//	AND the provider entry keeps provider="openrouter" for API routing.
+func TestHandleCompleteOnboarding_WritesActualModelAsAlias(t *testing.T) {
+	tmpDir := t.TempDir()
+	minimalCfg := []byte(`{"version":1,"agents":{"defaults":{},"list":[]},"providers":[]}`)
+	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
+
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{Host: "127.0.0.1", Port: 8080},
+		Agents: config.AgentsConfig{
+			Defaults: config.AgentDefaults{
+				Workspace: tmpDir,
+				MaxTokens: 4096,
+			},
+		},
+	}
+	msgBus := bus.NewMessageBus()
+	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	api := newOnboardingTestAPI(t, tmpDir, al)
+
+	body := `{"provider":{"id":"openrouter","api_key":"sk-or-v1-test","model":"z-ai/glm-5-turbo"},` +
+		`"admin":{"username":"admin","password":"secret123"}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/onboarding/complete", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	api.HandleCompleteOnboarding(w, req)
+	require.Equal(t, http.StatusOK, w.Code, "onboarding must succeed (body=%s)", w.Body.String())
+
+	configData, err := os.ReadFile(tmpDir + "/config.json")
+	require.NoError(t, err)
+	var configMap map[string]any
+	require.NoError(t, json.Unmarshal(configData, &configMap))
+
+	// 1. agents.defaults.model_name is the actual model, not the provider ID.
+	agents, ok := configMap["agents"].(map[string]any)
+	require.True(t, ok)
+	defaults, ok := agents["defaults"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "z-ai/glm-5-turbo", defaults["model_name"],
+		"agents.defaults.model_name must be the actual model the user selected, not the provider ID")
+
+	// 2. The new provider entry uses the actual model as model_name,
+	//    keeps provider=openrouter for API routing, and stores the api_key_ref.
+	providers, ok := configMap["providers"].([]any)
+	require.True(t, ok)
+	var match map[string]any
+	for _, p := range providers {
+		entry, _ := p.(map[string]any)
+		if entry["provider"] == "openrouter" && entry["model"] == "z-ai/glm-5-turbo" {
+			match = entry
+			break
+		}
+	}
+	require.NotNil(t, match, "provider entry for (openrouter, z-ai/glm-5-turbo) must exist")
+	assert.Equal(t, "z-ai/glm-5-turbo", match["model_name"],
+		"provider.model_name must mirror the model, matching the alias convention used by seeded entries")
+	assert.Equal(t, "openrouter", match["provider"])
+	assert.Equal(t, "z-ai/glm-5-turbo", match["model"])
+	assert.Equal(t, "openrouter_API_KEY", match["api_key_ref"])
+	// No plaintext api_key leaked to config.json
+	_, hasPlaintext := match["api_key"]
+	assert.False(t, hasPlaintext, "api_key must not appear in config.json (credentials in encrypted store)")
+}
+
+// TestHandleCompleteOnboarding_SecondModelSameProviderCreatesNewEntry verifies
+// that if an operator runs onboarding twice against the same provider but with
+// different models, a distinct provider entry is created each time — instead
+// of the second onboarding overwriting the first (the old behavior when the
+// dedup key was the provider ID alias).
+//
+// In practice users don't re-run onboarding; the same invariant guards the
+// Settings → Providers UI that adds a second model from the same provider.
+func TestHandleCompleteOnboarding_SecondModelSameProviderCreatesNewEntry(t *testing.T) {
+	tmpDir := t.TempDir()
+	// Pre-populate config with one openrouter entry to simulate a prior onboarding.
+	existing := []byte(`{"version":1,"agents":{"defaults":{"model_name":"z-ai/glm-5-turbo"},"list":[]},` +
+		`"providers":[{"model_name":"z-ai/glm-5-turbo","model":"z-ai/glm-5-turbo",` +
+		`"provider":"openrouter","api_key_ref":"openrouter_API_KEY"}]}`)
+	require.NoError(t, os.WriteFile(tmpDir+"/config.json", existing, 0o600))
+
+	cfg := &config.Config{
+		Gateway: config.GatewayConfig{Host: "127.0.0.1", Port: 8080},
+		Agents: config.AgentsConfig{
+			Defaults: config.AgentDefaults{
+				Workspace: tmpDir,
+				MaxTokens: 4096,
+			},
+		},
+	}
+	msgBus := bus.NewMessageBus()
+	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	api := newOnboardingTestAPI(t, tmpDir, al)
+
+	body := `{"provider":{"id":"openrouter","api_key":"sk-or-v1-test","model":"anthropic/claude-sonnet-4.6"},` +
+		`"admin":{"username":"admin","password":"secret123"}}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/onboarding/complete", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	api.HandleCompleteOnboarding(w, req)
+	require.Equal(t, http.StatusOK, w.Code, "onboarding must succeed (body=%s)", w.Body.String())
+
+	configData, err := os.ReadFile(tmpDir + "/config.json")
+	require.NoError(t, err)
+	var configMap map[string]any
+	require.NoError(t, json.Unmarshal(configData, &configMap))
+
+	// Both provider entries must survive — distinct models, same provider, shared api_key_ref.
+	providers, _ := configMap["providers"].([]any)
+	var hasGLM, hasClaude bool
+	for _, p := range providers {
+		e, _ := p.(map[string]any)
+		if e["model"] == "z-ai/glm-5-turbo" && e["provider"] == "openrouter" {
+			hasGLM = true
+		}
+		if e["model"] == "anthropic/claude-sonnet-4.6" && e["provider"] == "openrouter" {
+			hasClaude = true
+			assert.Equal(t, "anthropic/claude-sonnet-4.6", e["model_name"])
+		}
+	}
+	assert.True(t, hasGLM, "original provider entry must not be stomped")
+	assert.True(t, hasClaude, "new provider entry must be created for the second model")
+}
+
 // --- Concurrency tests ---
 
 // TestHandleCompleteOnboarding_Concurrent verifies that concurrent calls to

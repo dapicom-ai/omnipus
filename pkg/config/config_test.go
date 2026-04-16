@@ -1453,65 +1453,32 @@ func TestAgentToolsCfg_JSONRoundTrip(t *testing.T) {
 	}
 }
 
-// TestIsToolEnabled_Browser verifies that the browser tool and all sub-tools
-// are gated by the Browser.Enabled config field.
+// TestDeprecatedEnableFlagsAreIgnored documents the post-refactor behavior:
+// tools.<name>.enabled is no longer consulted for gating. Tools always register
+// and the policy engine (pkg/policy) controls invocation via allow/ask/deny.
+// The legacy field remains in ToolsConfig so old configs still parse, but
+// warnDeprecatedEnableFlags emits a one-time WARN on load when any sub-flag
+// is explicitly false.
 //
-// BDD: Given a ToolsConfig with Browser.Enabled = true,
+// BDD: Given a ToolsConfig with Browser.Enabled = false (legacy),
 //
-//	When IsToolEnabled is called with "browser" and each sub-tool name,
-//	Then it returns true. When Browser.Enabled = false, it returns false.
+//	When warnDeprecatedEnableFlags is called,
+//	Then no panic occurs and the flag has no runtime effect.
 //
-// Traces to: issue #22 — wire browser tools into agent loop
-func TestIsToolEnabled_Browser(t *testing.T) {
-	// Standard browser tools gated by Browser.Enabled only.
-	names := []string{
-		"browser",
-		"browser.navigate",
-		"browser.click",
-		"browser.type",
-		"browser.screenshot",
-		"browser.get_text",
-		"browser.wait",
+// Traces to: the tool-enable refactor that removed IsToolEnabled.
+func TestDeprecatedEnableFlagsAreIgnored(t *testing.T) {
+	cfg := &ToolsConfig{}
+	cfg.Browser.Enabled = false
+	cfg.Browser.EvaluateEnabled = false
+	// Must not panic. We can't easily assert on the WARN log without a
+	// test logger, but the call exercises the entire scan path.
+	cfg.warnDeprecatedEnableFlags()
+
+	// Flag stays on the struct (back-compat for serialization).
+	if cfg.Browser.Enabled {
+		t.Error("Browser.Enabled should remain whatever the caller set (false here)")
 	}
-
-	t.Run("enabled", func(t *testing.T) {
-		cfg := &ToolsConfig{}
-		cfg.Browser.Enabled = true
-		for _, name := range names {
-			if !cfg.IsToolEnabled(name) {
-				t.Errorf("IsToolEnabled(%q) = false, want true when browser is enabled", name)
-			}
-		}
-	})
-
-	t.Run("disabled", func(t *testing.T) {
-		cfg := &ToolsConfig{}
-		cfg.Browser.Enabled = false
-		for _, name := range names {
-			if cfg.IsToolEnabled(name) {
-				t.Errorf("IsToolEnabled(%q) = true, want false when browser is disabled", name)
-			}
-		}
-	})
-
-	// browser.evaluate requires both Browser.Enabled AND EvaluateEnabled (SEC-04/SEC-06).
-	t.Run("evaluate_denied_by_default", func(t *testing.T) {
-		cfg := &ToolsConfig{}
-		cfg.Browser.Enabled = true
-		cfg.Browser.EvaluateEnabled = false
-		if cfg.IsToolEnabled("browser.evaluate") {
-			t.Error("IsToolEnabled(browser.evaluate) = true, want false when EvaluateEnabled is false")
-		}
-	})
-
-	t.Run("evaluate_explicitly_enabled", func(t *testing.T) {
-		cfg := &ToolsConfig{}
-		cfg.Browser.Enabled = true
-		cfg.Browser.EvaluateEnabled = true
-		if !cfg.IsToolEnabled("browser.evaluate") {
-			t.Error(
-				"IsToolEnabled(browser.evaluate) = false, want true when both Browser.Enabled and EvaluateEnabled are true",
-			)
-		}
-	})
+	// There is no behavioral contract to test here — that's the whole point.
+	// The matching behavioral contract lives in pkg/policy tests (browser.evaluate
+	// is denied by default via builtinToolPolicies).
 }

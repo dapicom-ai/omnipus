@@ -63,14 +63,11 @@ func (r *mcpRuntime) hasManager() bool {
 }
 
 // ensureMCPInitialized loads MCP servers/tools once so both Run() and direct
-// agent mode share the same initialization path.
+// agent mode share the same initialization path. Returns early (without error)
+// when no MCP servers are configured — MCP is operator-configured by adding
+// servers under tools.mcp.servers, not by a separate enable flag.
 func (al *AgentLoop) ensureMCPInitialized(ctx context.Context) error {
-	if !al.cfg.Tools.IsToolEnabled("mcp") {
-		return nil
-	}
-
 	if al.cfg.Tools.MCP.Servers == nil || len(al.cfg.Tools.MCP.Servers) == 0 {
-		logger.WarnCF("agent", "MCP is enabled but no servers are configured, skipping MCP initialization", nil)
 		return nil
 	}
 

@@ -96,8 +96,13 @@ func (e *Evaluator) EvaluateTool(agentID, toolName string, agentPolicy ...*Agent
 }
 
 // resolveGlobalToolPolicy returns the effective global policy for a tool name.
+// Resolution order mirrors SecurityConfig.ResolveToolPolicy:
+// user override → builtin safety default → DefaultToolPolicy → ToolPolicyAllow.
 func (e *Evaluator) resolveGlobalToolPolicy(toolName string) ToolPolicy {
 	if p, ok := e.toolPolicies[toolName]; ok {
+		return p
+	}
+	if p, ok := builtinToolPolicies[toolName]; ok {
 		return p
 	}
 	if e.defaultToolPolicy != "" {

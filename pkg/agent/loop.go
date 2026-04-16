@@ -483,7 +483,7 @@ func (al *AgentLoop) wireExecToolDeps() {
 		return
 	}
 	cfg := al.cfg
-	if cfg == nil || !cfg.Tools.IsToolEnabled("exec") {
+	if cfg == nil {
 		return
 	}
 	allowReadPaths := buildAllowReadPatterns(cfg)
@@ -561,76 +561,71 @@ func registerSharedTools(
 			continue
 		}
 
-		if cfg.Tools.IsToolEnabled("web") {
-			searchTool, err := tools.NewWebSearchTool(tools.WebSearchToolOptions{
-				BraveAPIKeys:          braveKeys(cfg.Tools.Web.Brave.APIKey()),
-				BraveMaxResults:       cfg.Tools.Web.Brave.MaxResults,
-				BraveEnabled:          cfg.Tools.Web.Brave.Enabled,
-				TavilyAPIKeys:         tavilyKeys(cfg.Tools.Web.Tavily.APIKey()),
-				TavilyBaseURL:         cfg.Tools.Web.Tavily.BaseURL,
-				TavilyMaxResults:      cfg.Tools.Web.Tavily.MaxResults,
-				TavilyEnabled:         cfg.Tools.Web.Tavily.Enabled,
-				DuckDuckGoMaxResults:  cfg.Tools.Web.DuckDuckGo.MaxResults,
-				DuckDuckGoEnabled:     cfg.Tools.Web.DuckDuckGo.Enabled,
-				PerplexityAPIKeys:     perplexityKeys(cfg.Tools.Web.Perplexity.APIKey()),
-				PerplexityMaxResults:  cfg.Tools.Web.Perplexity.MaxResults,
-				PerplexityEnabled:     cfg.Tools.Web.Perplexity.Enabled,
-				SearXNGBaseURL:        cfg.Tools.Web.SearXNG.BaseURL,
-				SearXNGMaxResults:     cfg.Tools.Web.SearXNG.MaxResults,
-				SearXNGEnabled:        cfg.Tools.Web.SearXNG.Enabled,
-				GLMSearchAPIKey:       cfg.Tools.Web.GLMSearch.APIKey(),
-				GLMSearchBaseURL:      cfg.Tools.Web.GLMSearch.BaseURL,
-				GLMSearchEngine:       cfg.Tools.Web.GLMSearch.SearchEngine,
-				GLMSearchMaxResults:   cfg.Tools.Web.GLMSearch.MaxResults,
-				GLMSearchEnabled:      cfg.Tools.Web.GLMSearch.Enabled,
-				BaiduSearchAPIKey:     cfg.Tools.Web.BaiduSearch.APIKey(),
-				BaiduSearchBaseURL:    cfg.Tools.Web.BaiduSearch.BaseURL,
-				BaiduSearchMaxResults: cfg.Tools.Web.BaiduSearch.MaxResults,
-				BaiduSearchEnabled:    cfg.Tools.Web.BaiduSearch.Enabled,
-				Proxy:                 cfg.Tools.Web.Proxy,
-			})
-			if err != nil {
-				logger.ErrorCF("agent", "Failed to create web search tool", map[string]any{"error": err.Error()})
-			} else if searchTool != nil {
-				agent.Tools.Register(searchTool)
-			}
-		}
-		if cfg.Tools.IsToolEnabled("web_fetch") {
-			fetchTool, err := tools.NewWebFetchToolWithProxy(
-				50000,
-				cfg.Tools.Web.Proxy,
-				cfg.Tools.Web.Format,
-				cfg.Tools.Web.FetchLimitBytes,
-				cfg.Tools.Web.PrivateHostWhitelist)
-			if err != nil {
-				logger.ErrorCF("agent", "Failed to create web fetch tool", map[string]any{"error": err.Error()})
-			} else {
-				agent.Tools.Register(fetchTool)
-			}
+		// Web search tool — always registered; policy decides invocation.
+		// Per-provider Enabled sub-flags (Brave, Tavily, etc.) are retained because
+		// they select which upstream API is used, not whether the tool exists.
+		searchTool, err := tools.NewWebSearchTool(tools.WebSearchToolOptions{
+			BraveAPIKeys:          braveKeys(cfg.Tools.Web.Brave.APIKey()),
+			BraveMaxResults:       cfg.Tools.Web.Brave.MaxResults,
+			BraveEnabled:          cfg.Tools.Web.Brave.Enabled,
+			TavilyAPIKeys:         tavilyKeys(cfg.Tools.Web.Tavily.APIKey()),
+			TavilyBaseURL:         cfg.Tools.Web.Tavily.BaseURL,
+			TavilyMaxResults:      cfg.Tools.Web.Tavily.MaxResults,
+			TavilyEnabled:         cfg.Tools.Web.Tavily.Enabled,
+			DuckDuckGoMaxResults:  cfg.Tools.Web.DuckDuckGo.MaxResults,
+			DuckDuckGoEnabled:     cfg.Tools.Web.DuckDuckGo.Enabled,
+			PerplexityAPIKeys:     perplexityKeys(cfg.Tools.Web.Perplexity.APIKey()),
+			PerplexityMaxResults:  cfg.Tools.Web.Perplexity.MaxResults,
+			PerplexityEnabled:     cfg.Tools.Web.Perplexity.Enabled,
+			SearXNGBaseURL:        cfg.Tools.Web.SearXNG.BaseURL,
+			SearXNGMaxResults:     cfg.Tools.Web.SearXNG.MaxResults,
+			SearXNGEnabled:        cfg.Tools.Web.SearXNG.Enabled,
+			GLMSearchAPIKey:       cfg.Tools.Web.GLMSearch.APIKey(),
+			GLMSearchBaseURL:      cfg.Tools.Web.GLMSearch.BaseURL,
+			GLMSearchEngine:       cfg.Tools.Web.GLMSearch.SearchEngine,
+			GLMSearchMaxResults:   cfg.Tools.Web.GLMSearch.MaxResults,
+			GLMSearchEnabled:      cfg.Tools.Web.GLMSearch.Enabled,
+			BaiduSearchAPIKey:     cfg.Tools.Web.BaiduSearch.APIKey(),
+			BaiduSearchBaseURL:    cfg.Tools.Web.BaiduSearch.BaseURL,
+			BaiduSearchMaxResults: cfg.Tools.Web.BaiduSearch.MaxResults,
+			BaiduSearchEnabled:    cfg.Tools.Web.BaiduSearch.Enabled,
+			Proxy:                 cfg.Tools.Web.Proxy,
+		})
+		if err != nil {
+			logger.ErrorCF("agent", "Failed to create web search tool", map[string]any{"error": err.Error()})
+		} else if searchTool != nil {
+			agent.Tools.Register(searchTool)
 		}
 
-		// Hardware tools (I2C, SPI) - Linux only, returns error on other platforms
-		if cfg.Tools.IsToolEnabled("i2c") {
-			agent.Tools.Register(tools.NewI2CTool())
-		}
-		if cfg.Tools.IsToolEnabled("spi") {
-			agent.Tools.Register(tools.NewSPITool())
+		fetchTool, err := tools.NewWebFetchToolWithProxy(
+			50000,
+			cfg.Tools.Web.Proxy,
+			cfg.Tools.Web.Format,
+			cfg.Tools.Web.FetchLimitBytes,
+			cfg.Tools.Web.PrivateHostWhitelist)
+		if err != nil {
+			logger.ErrorCF("agent", "Failed to create web fetch tool", map[string]any{"error": err.Error()})
+		} else {
+			agent.Tools.Register(fetchTool)
 		}
 
-		// Message tool
-		if cfg.Tools.IsToolEnabled("message") {
-			messageTool := tools.NewMessageTool()
-			messageTool.SetSendCallback(func(channel, chatID, content string) error {
-				pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer pubCancel()
-				return msgBus.PublishOutbound(pubCtx, bus.OutboundMessage{
-					Channel: channel,
-					ChatID:  chatID,
-					Content: content,
-				})
+		// Hardware tools (I2C, SPI) — Linux-only; their Execute methods return
+		// a clear error on non-Linux. Registered unconditionally.
+		agent.Tools.Register(tools.NewI2CTool())
+		agent.Tools.Register(tools.NewSPITool())
+
+		// Message tool — outbound inter-agent message via bus.
+		messageTool := tools.NewMessageTool()
+		messageTool.SetSendCallback(func(channel, chatID, content string) error {
+			pubCtx, pubCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer pubCancel()
+			return msgBus.PublishOutbound(pubCtx, bus.OutboundMessage{
+				Channel: channel,
+				ChatID:  chatID,
+				Content: content,
 			})
-			agent.Tools.Register(messageTool)
-		}
+		})
+		agent.Tools.Register(messageTool)
 
 		// Handoff tools — always registered (ScopeCore).
 		getRegistryReader := func() tools.AgentRegistryReader {
@@ -666,23 +661,20 @@ func registerSharedTools(
 		agent.Tools.Register(tools.NewHandoffTool(getRegistryReader, sharedStore, getContextWindow, onHandoffFrontend))
 		agent.Tools.Register(tools.NewReturnToDefaultTool(sharedStore, getDefaultAgent, onHandoffFrontend))
 
-		// Send file tool (outbound media via MediaStore — store injected later by SetMediaStore)
-		if cfg.Tools.IsToolEnabled("send_file") {
-			sendFileTool := tools.NewSendFileTool(
-				agent.Workspace,
-				cfg.Agents.Defaults.RestrictToWorkspace,
-				cfg.Agents.Defaults.GetMaxMediaSize(),
-				nil,
-				allowReadPaths,
-			)
-			agent.Tools.Register(sendFileTool)
-		}
+		// Send file tool (outbound media via MediaStore — store injected later by SetMediaStore).
+		sendFileTool := tools.NewSendFileTool(
+			agent.Workspace,
+			cfg.Agents.Defaults.RestrictToWorkspace,
+			cfg.Agents.Defaults.GetMaxMediaSize(),
+			nil,
+			allowReadPaths,
+		)
+		agent.Tools.Register(sendFileTool)
 
-		// Skill discovery and installation tools
-		skillsEnabled := cfg.Tools.IsToolEnabled("skills")
-		findSkillsEnabled := cfg.Tools.IsToolEnabled("find_skills")
-		installSkillsEnabled := cfg.Tools.IsToolEnabled("install_skill")
-		if skillsEnabled && (findSkillsEnabled || installSkillsEnabled) {
+		// Skill discovery and installation tools — always registered.
+		// Runtime failures (ClawHub unreachable, no auth token) surface at call
+		// time with clear errors.
+		{
 			clawHubConfig := cfg.Tools.Skills.Registries.ClawHub
 			registryMgr := skills.NewRegistryManagerFromConfig(skills.RegistryConfig{
 				MaxConcurrentSearches: cfg.Tools.Skills.MaxConcurrentSearches,
@@ -699,24 +691,18 @@ func registerSharedTools(
 				},
 			})
 
-			if findSkillsEnabled {
-				searchCache := skills.NewSearchCache(
-					cfg.Tools.Skills.SearchCache.MaxSize,
-					time.Duration(cfg.Tools.Skills.SearchCache.TTLSeconds)*time.Second,
-				)
-				agent.Tools.Register(tools.NewFindSkillsTool(registryMgr, searchCache))
-			}
-
-			if installSkillsEnabled {
-				agent.Tools.Register(tools.NewInstallSkillTool(registryMgr, agent.Workspace))
-			}
+			searchCache := skills.NewSearchCache(
+				cfg.Tools.Skills.SearchCache.MaxSize,
+				time.Duration(cfg.Tools.Skills.SearchCache.TTLSeconds)*time.Second,
+			)
+			agent.Tools.Register(tools.NewFindSkillsTool(registryMgr, searchCache))
+			agent.Tools.Register(tools.NewInstallSkillTool(registryMgr, agent.Workspace))
 		}
 
-		// Spawn and spawn_status tools share a SubagentManager.
-		// Construct it when either tool is enabled (both require subagent).
-		spawnEnabled := cfg.Tools.IsToolEnabled("spawn")
-		spawnStatusEnabled := cfg.Tools.IsToolEnabled("spawn_status")
-		if (spawnEnabled || spawnStatusEnabled) && cfg.Tools.IsToolEnabled("subagent") {
+		// Spawn, spawn_status, and subagent share a SubagentManager. All three
+		// are registered unconditionally — the subagent→spawn coupling is a
+		// semantic invariant, not a user-visible toggle.
+		{
 			subagentManager := tools.NewSubagentManager(provider, agent.Model, agent.Workspace)
 			subagentManager.SetLLMOptions(agent.MaxTokens, agent.Temperature)
 
@@ -789,26 +775,21 @@ func registerSharedTools(
 			// spawn_status which are added below — preventing recursive
 			// subagent spawning.
 			subagentManager.SetTools(agent.Tools.Clone())
-			if spawnEnabled {
-				spawnTool := tools.NewSpawnTool(subagentManager)
-				spawnTool.SetSpawner(NewSubTurnSpawner(al))
-				currentAgentID := agentID
-				spawnTool.SetAllowlistChecker(func(targetAgentID string) bool {
-					return registry.CanSpawnSubagent(currentAgentID, targetAgentID)
-				})
+			spawnTool := tools.NewSpawnTool(subagentManager)
+			spawnTool.SetSpawner(NewSubTurnSpawner(al))
+			currentAgentID := agentID
+			spawnTool.SetAllowlistChecker(func(targetAgentID string) bool {
+				return registry.CanSpawnSubagent(currentAgentID, targetAgentID)
+			})
 
-				agent.Tools.Register(spawnTool)
+			agent.Tools.Register(spawnTool)
 
-				// Also register the synchronous subagent tool
-				subagentTool := tools.NewSubagentTool(subagentManager)
-				subagentTool.SetSpawner(NewSubTurnSpawner(al))
-				agent.Tools.Register(subagentTool)
-			}
-			if spawnStatusEnabled {
-				agent.Tools.Register(tools.NewSpawnStatusTool(subagentManager))
-			}
-		} else if (spawnEnabled || spawnStatusEnabled) && !cfg.Tools.IsToolEnabled("subagent") {
-			logger.WarnCF("agent", "spawn/spawn_status tools require subagent to be enabled", nil)
+			// Also register the synchronous subagent tool
+			subagentTool := tools.NewSubagentTool(subagentManager)
+			subagentTool.SetSpawner(NewSubTurnSpawner(al))
+			agent.Tools.Register(subagentTool)
+
+			agent.Tools.Register(tools.NewSpawnStatusTool(subagentManager))
 		}
 
 		// Task tools — require a task store (available after first NewAgentLoop call).
@@ -816,21 +797,18 @@ func registerSharedTools(
 			currentAgentID := agentID
 			agentCfg := findAgentConfig(cfg, currentAgentID)
 
-			if cfg.Tools.IsToolEnabled("task_list") {
-				agent.Tools.Register(tools.NewTaskListTool(al.taskStore))
+			agent.Tools.Register(tools.NewTaskListTool(al.taskStore))
+
+			taskCreate := tools.NewTaskCreateTool(al.taskStore)
+			taskCreate.SetDelegateChecker(buildDelegateChecker(agentCfg, cfg.Agents.Defaults))
+			agent.Tools.Register(taskCreate)
+
+			taskUpdate := tools.NewTaskUpdateTool(al.taskStore)
+			if al.taskExecutor != nil {
+				taskUpdate.SetOnComplete(al.taskExecutor.onTaskComplete)
 			}
-			if cfg.Tools.IsToolEnabled("task_create") {
-				t := tools.NewTaskCreateTool(al.taskStore)
-				t.SetDelegateChecker(buildDelegateChecker(agentCfg, cfg.Agents.Defaults))
-				agent.Tools.Register(t)
-			}
-			if cfg.Tools.IsToolEnabled("task_update") {
-				t := tools.NewTaskUpdateTool(al.taskStore)
-				if al.taskExecutor != nil {
-					t.SetOnComplete(al.taskExecutor.onTaskComplete)
-				}
-				agent.Tools.Register(t)
-			}
+			agent.Tools.Register(taskUpdate)
+
 			agent.Tools.Register(tools.NewTaskDeleteTool(al.taskStore))
 			agent.Tools.Register(tools.NewAgentListTool(func() []tools.AgentInfo {
 				var infos []tools.AgentInfo
@@ -843,14 +821,17 @@ func registerSharedTools(
 			}))
 		}
 
-		// Browser automation tools (Wave 4, US-4/US-6/US-7; see wave4-whatsapp-browser-spec.md).
-		if cfg.Tools.IsToolEnabled("browser") {
+		// Browser automation tools (Wave 4, US-4/US-6/US-7).
+		// Tools are always registered; whether an agent can actually invoke them
+		// is determined by the policy engine. Chromium presence is checked lazily
+		// at first use and produces a clear error if missing.
+		// browser.evaluate is denied by default via builtinToolPolicies in pkg/policy.
+		{
 			browserCfg, cfgErr := browser.DefaultConfig()
 			if cfgErr != nil {
 				logger.ErrorCF("agent", "Browser tools: cannot determine defaults — skipping",
 					map[string]any{"error": cfgErr.Error()})
 			} else {
-				browserCfg.Enabled = true
 				// DefaultConfig sets Headless=true; only override if config explicitly sets fields.
 				if cfg.Tools.Browser.CDPURL != "" {
 					browserCfg.CDPURL = cfg.Tools.Browser.CDPURL
@@ -868,11 +849,9 @@ func registerSharedTools(
 
 				ssrfChecker := security.NewSSRFChecker(nil)
 				mgr, regErr := browser.RegisterTools(agent.Tools, browserCfg, ssrfChecker)
-				// browser.evaluate runs arbitrary JS — deny by default (SEC-04/SEC-06).
-				// Requires explicit opt-in via tools.browser.evaluate_enabled.
-				if !cfg.Tools.Browser.EvaluateEnabled {
-					agent.Tools.Unregister("browser.evaluate")
-				}
+				// Note: browser.evaluate stays registered. Policy (see pkg/policy
+				// builtinToolPolicies) denies it by default; operators who need
+				// it set security.tool_policies["browser.evaluate"] = "ask".
 				if regErr != nil {
 					logger.ErrorCF("agent", "Failed to register browser tools — "+
 						"ensure Chromium/Chrome is installed or set tools.browser.cdp_url",

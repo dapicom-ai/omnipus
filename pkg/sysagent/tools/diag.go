@@ -49,7 +49,8 @@ func (t *DoctorRunTool) Execute(_ context.Context, _ map[string]any) *tools.Tool
 	// the enforcement state the operator configured.
 	currentCfg := t.deps.GetCfg()
 	execCfg := security.DiagnosticConfig{
-		ExecToolEnabled:     currentCfg.Tools.IsToolEnabled("exec"),
+		// Tools are always registered; policy (allow/ask/deny) decides invocation.
+		ExecToolEnabled:     true,
 		ExecProxyEnabled:    currentCfg.Tools.Exec.EnableProxy,
 		ExecAllowedBinaries: currentCfg.Tools.Exec.AllowedBinaries,
 	}

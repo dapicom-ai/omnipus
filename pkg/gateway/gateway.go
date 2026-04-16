@@ -1044,16 +1044,12 @@ func setupCronTool(
 
 	cronService := cron.NewCronService(cronStorePath, nil)
 
-	var cronTool *tools.CronTool
-	if cfg.Tools.IsToolEnabled("cron") {
-		var err error
-		cronTool, err = tools.NewCronTool(cronService, agentLoop, msgBus, workspace, restrict, execTimeout, cfg)
-		if err != nil {
-			return nil, fmt.Errorf("critical error during CronTool initialization: %w", err)
-		}
-
-		agentLoop.RegisterTool(cronTool)
+	// Cron tool — always registered. Policy controls whether an agent can invoke it.
+	cronTool, err := tools.NewCronTool(cronService, agentLoop, msgBus, workspace, restrict, execTimeout, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("critical error during CronTool initialization: %w", err)
 	}
+	agentLoop.RegisterTool(cronTool)
 
 	if cronTool != nil {
 		cronService.SetOnJob(func(job *cron.CronJob) (string, error) {

@@ -1439,6 +1439,10 @@ func loadConfigInternal(path string, store CredentialStore) (*Config, error) {
 	}
 
 	migrateProviderFields(cfg)
+	// Post-refactor: tools.<name>.enabled is deprecated. If the loaded config
+	// carries explicit false values, warn once so operators know their flag has
+	// no effect and should migrate to security.tool_policies for "deny".
+	cfg.Tools.warnDeprecatedEnableFlags()
 	return cfg, nil
 }
 
@@ -1638,72 +1642,64 @@ func expandMultiKeyModels(models []*ModelConfig) []*ModelConfig {
 	return models
 }
 
-// IsToolAvailable checks if the infrastructure for a tool is available
-// (e.g., Chrome installed for browser, API keys for web search).
-// This is separate from per-agent policy (allow/ask/deny) which controls
-// whether a specific agent can USE the tool.
-func (t *ToolsConfig) IsToolAvailable(name string) bool {
-	return t.IsToolEnabled(name)
-}
+// Tool enablement is no longer gated by per-subsystem config flags.
+// Every implemented tool is registered unconditionally at boot; whether an
+// agent can actually invoke it is determined by the policy engine
+// (allow / ask / deny) in pkg/policy. The old IsToolEnabled() /
+// IsToolAvailable() functions were removed because the two-layer model
+// (infrastructure enable + policy) was redundant and caused UI/behavior
+// mismatches (the UI would show a tool as enabled via policy while the
+// infrastructure flag silently kept it out of the agent's registry).
+//
+// For the rare case of "globally disable tool X", set its entry in
+// security.tool_policies to "deny".
+//
+// Sub-structs in ToolsConfig (e.g. Browser.MaxTabs, Exec.TimeoutSeconds)
+// are retained — they carry non-enable configuration like timeouts and
+// limits that the tools still read at runtime.
 
-// IsToolEnabled is the legacy name for IsToolAvailable. Kept for backward
-// compatibility. New code should use IsToolAvailable.
-func (t *ToolsConfig) IsToolEnabled(name string) bool {
-	switch name {
-	// Infrastructure-dependent tools — require external dependencies to function.
-	// These are the only tools that respect the config enable/disable flag.
-	case "web":
-		return t.Web.Enabled
-	case "web_fetch":
-		return t.WebFetch.Enabled
-	case "browser", "browser.navigate", "browser.click", "browser.type",
-		"browser.screenshot", "browser.get_text", "browser.wait":
-		return t.Browser.Enabled
-	case "browser.evaluate":
-		return t.Browser.Enabled && t.Browser.EvaluateEnabled
-	case "i2c":
-		return t.I2C.Enabled
-	case "spi":
-		return t.SPI.Enabled
-	case "mcp":
-		return t.MCP.Enabled
-
-	// Security-sensitive tools — respect operator's explicit disable.
-	// These can execute code, write files, or spawn processes.
-	case "exec":
-		return t.Exec.Enabled
-	case "cron":
-		return t.Cron.Enabled
-	case "spawn":
-		return t.Spawn.Enabled
-	case "spawn_status":
-		return t.SpawnStatus.Enabled
-	case "subagent":
-		return t.Subagent.Enabled
-	case "write_file":
-		return t.WriteFile.Enabled
-	case "edit_file":
-		return t.EditFile.Enabled
-	case "append_file":
-		return t.AppendFile.Enabled
-	case "send_file":
-		return t.SendFile.Enabled
-	case "task_list":
-		return t.TaskList.Enabled
-	case "task_create":
-		return t.TaskCreate.Enabled
-	case "task_update":
-		return t.TaskUpdate.Enabled
-
-	// Low-risk tools — always available; per-agent policy controls access.
-	case "skills", "media_cleanup", "find_skills", "install_skill",
-		"list_dir", "message", "read_file":
-		return true
-
-	default:
-		// Deny-by-default for unrecognized tool names (CLAUDE.md constraint).
-		logger.DebugCF("config", "IsToolEnabled: unrecognized tool name; returning false (deny-by-default)",
-			map[string]any{"tool": name})
-		return false
+// warnDeprecatedEnableFlags emits a single warning per boot if a loaded
+// config still carries any tools.<name>.enabled field set to false. Users
+// relying on the flag are quietly migrated to policy-based disablement.
+func (t *ToolsConfig) warnDeprecatedEnableFlags() {
+	if t == nil {
+		return
+	}
+	deprecated := []struct {
+		name    string
+		enabled bool
+	}{
+		{"web", t.Web.Enabled},
+		{"web_fetch", t.WebFetch.Enabled},
+		{"browser", t.Browser.Enabled},
+		{"i2c", t.I2C.Enabled},
+		{"spi", t.SPI.Enabled},
+		{"mcp", t.MCP.Enabled},
+		{"exec", t.Exec.Enabled},
+		{"cron", t.Cron.Enabled},
+		{"spawn", t.Spawn.Enabled},
+		{"spawn_status", t.SpawnStatus.Enabled},
+		{"subagent", t.Subagent.Enabled},
+		{"write_file", t.WriteFile.Enabled},
+		{"edit_file", t.EditFile.Enabled},
+		{"append_file", t.AppendFile.Enabled},
+		{"send_file", t.SendFile.Enabled},
+		{"task_list", t.TaskList.Enabled},
+		{"task_create", t.TaskCreate.Enabled},
+		{"task_update", t.TaskUpdate.Enabled},
+	}
+	var disabled []string
+	for _, d := range deprecated {
+		// The flag is deprecated; a false value indicates an operator
+		// tried to disable the tool via the legacy path. Surface once.
+		if !d.enabled {
+			disabled = append(disabled, d.name)
+		}
+	}
+	if len(disabled) > 0 {
+		logger.WarnCF("config",
+			"tools.<name>.enabled is deprecated and has no effect; "+
+				"use security.tool_policies to disable tools (set value to \"deny\")",
+			map[string]any{"disabled_fields_ignored": disabled})
 	}
 }
