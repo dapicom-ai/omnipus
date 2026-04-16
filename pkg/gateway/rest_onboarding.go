@@ -114,8 +114,14 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 			providerModel = "gpt-4o"
 		}
 	}
+	// model_name is the user-facing alias that agents.defaults.model_name
+	// references to resolve a provider entry. It is also what the Agent Profile
+	// UI shows as the agent's model. Using the provider ID here (e.g.
+	// "openrouter") would display as the agent's model — non-descriptive and
+	// inconsistent with seeded entries, which set model_name == model.
+	// Use the actual model string so the alias matches what the user picked.
 	newProviderEntry := map[string]any{
-		"model_name":  body.Provider.ID,
+		"model_name":  providerModel,
 		"provider":    body.Provider.ID,
 		"model":       providerModel,
 		"api_key_ref": credRefName,
@@ -162,13 +168,16 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 		}
 
 		// Check if provider already exists; update or append.
+		// Dedup key is the (provider, model) pair. Running onboarding twice with
+		// the same model is idempotent; running with a different model from the
+		// same provider creates a new entry sharing the api_key_ref.
 		found := false
 		for i, entry := range providerList {
 			entryMap, isMap := entry.(map[string]any)
 			if !isMap {
 				continue
 			}
-			if entryMap["model_name"] == body.Provider.ID || entryMap["model"] == body.Provider.ID {
+			if entryMap["provider"] == body.Provider.ID && entryMap["model"] == providerModel {
 				// Update existing entry.
 				if credRefName != "" {
 					entryMap["api_key_ref"] = credRefName
@@ -177,9 +186,8 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 				} else {
 					entryMap["api_key"] = body.Provider.APIKey
 				}
-				if body.Provider.Model != "" {
-					entryMap["model"] = body.Provider.Model
-				}
+				entryMap["model"] = providerModel
+				entryMap["model_name"] = providerModel
 				entryMap["provider"] = body.Provider.ID
 				providerList[i] = entryMap
 				found = true
@@ -192,8 +200,10 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 		m["providers"] = providerList
 
 		// --- Set default model ---
-		// The provider's model_name becomes the default agent model so the
-		// gateway doesn't start in limited mode after onboarding.
+		// The actual model the user selected becomes the default agent model.
+		// This matches the model_name on the provider entry created above, so
+		// the Agent Profile UI and LLM routing both show the model the user
+		// picked (not a generic provider alias).
 		agentsMap, ok := m["agents"].(map[string]any)
 		if !ok {
 			agentsMap = map[string]any{}
@@ -202,7 +212,7 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 		if !ok {
 			defaultsMap = map[string]any{}
 		}
-		defaultsMap["model_name"] = body.Provider.ID
+		defaultsMap["model_name"] = providerModel
 		agentsMap["defaults"] = defaultsMap
 		m["agents"] = agentsMap
 

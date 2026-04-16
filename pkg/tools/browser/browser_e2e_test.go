@@ -224,24 +224,33 @@ func TestBrowserToolRegistration_WithScope(t *testing.T) {
 	}
 }
 
-// TestBrowserToolsDisabledByDefault verifies that browser tools are not registered
-// when the config has browser disabled (default state).
-func TestBrowserToolsDisabledByDefault(t *testing.T) {
+// TestBrowserToolsAlwaysRegisterRegardlessOfLegacyFlag verifies the post-refactor
+// contract: RegisterTools always adds browser tools to the registry. The legacy
+// BrowserConfig.Enabled flag is retained for back-compat but has no runtime
+// effect on registration. Whether an agent can actually INVOKE browser tools is
+// decided by the policy engine (pkg/policy).
+func TestBrowserToolsAlwaysRegisterRegardlessOfLegacyFlag(t *testing.T) {
 	cfg := BrowserConfig{Enabled: false}
 	ssrf := security.NewSSRFChecker(nil)
 	registry := tools.NewToolRegistry()
 
-	// RegisterTools should still succeed but the manager won't start until a tool is called.
+	// RegisterTools succeeds; the browser manager is created but Chromium is
+	// not launched until the first tool is invoked (lazy start).
 	mgr, err := RegisterTools(registry, cfg, ssrf)
 	require.NoError(t, err)
 	require.NotNil(t, mgr)
 
-	// The tools are registered in the registry (RegisterTools always registers them),
-	// but IsToolEnabled("browser") would prevent this call from happening in production.
-	// This test verifies that the config gate is the enforcement point, not RegisterTools.
+	// The tools are registered regardless of the legacy Enabled flag — policy
+	// (allow/ask/deny) is the single enablement mechanism under the refactor.
 	tool, ok := registry.Get("browser.navigate")
 	assert.True(t, ok, "RegisterTools registers tools regardless of Enabled flag")
 	assert.NotNil(t, tool)
+
+	// browser.evaluate must also register; policy denies it by default via
+	// pkg/policy.builtinToolPolicies. Operators opt in explicitly.
+	evalTool, ok := registry.Get("browser.evaluate")
+	assert.True(t, ok, "browser.evaluate stays registered; policy controls invocation")
+	assert.NotNil(t, evalTool)
 }
 
 // TestSSRFBlocksPrivateNavigation verifies that browser.navigate rejects private IPs.
