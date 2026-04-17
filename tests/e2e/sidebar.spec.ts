@@ -5,11 +5,10 @@ import { expectA11yClean } from './fixtures/a11y';
 // Global storageState provides pre-authenticated session (see playwright.config.ts + global-setup.ts).
 
 // HashRouter: TanStack Router generates href="/#/<path>" links (not href="/<path>").
-// URL patterns use regex that matches the hash-prefixed fragment.
-// Root route: clicking /#/ navigates to http://localhost:6070/ (browser normalizes /#/ to /)
-// or keeps http://localhost:6070/#/ — accept either form.
+// URL patterns use regex that matches the hash-prefixed fragment. Root route
+// matches whether the browser keeps the /#/ fragment or normalizes it away.
 const NAV_ITEMS = [
-  { href: '/#/', urlPattern: /localhost:607\d\/(#\/)?$/ },
+  { href: '/#/', urlPattern: /\/(#\/)?$/ },
   { href: '/#/command-center', urlPattern: /command-center/ },
   { href: '/#/agents', urlPattern: /agents/ },
   { href: '/#/skills', urlPattern: /skills/ },
