@@ -27,12 +27,22 @@ export const agentPicker = (page: Page) =>
   page.getByRole('banner').locator('button').filter({ hasText: '—' }).first();
 
 /**
- * Assistant messages — AssistantUI renders each message inside
- * MessagePrimitive.Root which produces a <div> with data-message-role set by
- * the primitive. The role for assistant messages is "assistant".
+ * Assistant messages — ChatScreen renders each message as a row with
+ * data-message-id, using `flex-row-reverse` only for user messages. Assistant
+ * messages are `[data-message-id]:not(.flex-row-reverse)`.
+ *
+ * Ground truth: ChatScreen wraps MessagePrimitive.Root in a custom <div>
+ * that exposes data-message-id but not data-message-role, so we key off
+ * the row-reversal class the UI uses to right-align user bubbles.
  */
 export const assistantMessages = (page: Page) =>
-  page.locator('[data-message-role="assistant"]');
+  page.locator('[data-message-id]:not(.flex-row-reverse)');
+
+/**
+ * User messages — complement of assistantMessages; row uses `flex-row-reverse`.
+ */
+export const userMessages = (page: Page) =>
+  page.locator('[data-message-id].flex-row-reverse');
 
 /**
  * Nav link helper — sidebar must be open before calling this.
