@@ -103,6 +103,9 @@ type TestGateway struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 
+	// t is the test that owns this gateway. Used by Close to report errors.
+	t *testing.T
+
 	// bootErr captures any error returned by RunContext so Close can surface it.
 	bootErr atomic.Pointer[error]
 }
@@ -153,6 +156,12 @@ func StartTestGateway(t *testing.T, opts ...Option) *TestGateway {
 	// Set the master key in the test environment so credentials unlock cleanly.
 	t.Setenv("OMNIPUS_MASTER_KEY", testMasterKey)
 
+	// Wire bearer token into the environment so checkBearerAuth's legacy
+	// OMNIPUS_BEARER_TOKEN path accepts requests from gw.NewRequest.
+	if hc.bearerAuth {
+		t.Setenv("OMNIPUS_BEARER_TOKEN", testBearerToken)
+	}
+
 	homeDir := t.TempDir()
 	configPath := filepath.Join(homeDir, "config.json")
 
@@ -191,6 +200,7 @@ func StartTestGateway(t *testing.T, opts ...Option) *TestGateway {
 		ConfigPath: configPath,
 		cancel:     cancel,
 		done:       done,
+		t:          t,
 	}
 
 	if hc.bearerAuth {
@@ -219,11 +229,6 @@ func StartTestGateway(t *testing.T, opts ...Option) *TestGateway {
 		}
 	}()
 
-	// Clear the override after the goroutine is launched (see comment above).
-	if clearOverride != nil {
-		clearOverride()
-	}
-
 	// Poll until /health returns 200 or the deadline expires.
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -247,6 +252,14 @@ func StartTestGateway(t *testing.T, opts ...Option) *TestGateway {
 		time.Sleep(50 * time.Millisecond)
 	}
 
+	// Clear the provider override now that the gateway is live and has read it.
+	// RunContext reads testProviderOverride during boot, before the health
+	// endpoint becomes ready. By the time we reach here, the boot path has
+	// completed and the override is no longer needed.
+	if clearOverride != nil {
+		clearOverride()
+	}
+
 	t.Cleanup(func() {
 		gw.Close()
 	})
@@ -257,6 +270,10 @@ func StartTestGateway(t *testing.T, opts ...Option) *TestGateway {
 // Close stops the gateway. Normally you rely on t.Cleanup; call Close only when
 // you need to stop the gateway before the test ends (e.g. restart tests).
 // Close is idempotent — calling it multiple times is safe.
+//
+// Close reports a test failure via t.Errorf if:
+//   - RunContext returned a non-nil error after the gateway was considered ready.
+//   - The gateway goroutine did not stop within 10 s (goroutine leak).
 func (g *TestGateway) Close() {
 	g.mu.Lock()
 	if g.closed {
@@ -274,9 +291,17 @@ func (g *TestGateway) Close() {
 	select {
 	case <-g.done:
 	case <-time.After(10 * time.Second):
-		// Goroutine did not exit within budget — log a warning. The test has
-		// already completed; this is informational only.
-		_ = "testutil.TestGateway.Close: RunContext goroutine did not exit within 10s"
+		if g.t != nil {
+			g.t.Errorf("testutil.TestGateway.Close: gateway goroutine did not stop within 10s — goroutine leaked")
+		}
+		return
+	}
+
+	// Surface any boot error that occurred after the gateway became ready.
+	if p := g.bootErr.Load(); p != nil && *p != nil {
+		if g.t != nil {
+			g.t.Errorf("testutil.TestGateway.Close: gateway exited with error: %v", *p)
+		}
 	}
 }
 

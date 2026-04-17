@@ -23,7 +23,9 @@ import (
 //
 // Traces to: temporal-puzzling-melody.md §4 Axis-1 — TestVersionEndpointReturnsBuildSHA
 func TestVersionEndpointReturnsBuildSHA(t *testing.T) {
-	t.Skip("gated on /api/v1/version endpoint implementation — tracked in Plan 3 §4 Axis-1; implement after the endpoint lands in rest.go")
+	t.Skip(
+		"gated on /api/v1/version endpoint implementation — tracked in Plan 3 §4 Axis-1; implement after the endpoint lands in rest.go",
+	)
 	// When /api/v1/version exists:
 	//   api, cleanup := newTestRestAPI(t)
 	//   defer cleanup()

@@ -12,60 +12,66 @@ package credentials_test
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 )
 
 // TestMasterKeyMode0644RejectsBoot verifies that a master.key file with overly
-// permissive mode (0644) is detected as insecure.
+// permissive mode (0644) is rejected by the production Unlock path.
 //
-// The actual boot rejection lives in the gateway startup path; this test validates
-// the filesystem permission check itself: that 0644 produces detectable group/other
-// read bits, which is the signal the boot guard reads.
+// Unlock reads OMNIPUS_KEY_FILE (mode 2 of the boot contract). If the key file
+// has group- or world-readable bits set, loadKeyFile returns an error with the
+// phrase "unsafe permissions". This test exercises that production code path.
 //
 // Traces to: temporal-puzzling-melody.md §4 Axis-1 — TestMasterKeyMode0644RejectsBoot
 func TestMasterKeyMode0644RejectsBoot(t *testing.T) {
 	tmpDir := t.TempDir()
-	keyPath := tmpDir + "/master.key"
+	keyPath := filepath.Join(tmpDir, "master.key")
 
 	// BDD: Given a master.key file written at mode 0644.
-	err := os.WriteFile(keyPath, []byte("0123456789abcdef0123456789abcdef"), 0o644)
+	// The key must be valid hex (32 bytes = 64 hex chars) so the rejection
+	// is purely permission-based, not content-based.
+	hexKey := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	err := os.WriteFile(keyPath, []byte(hexKey), 0o644)
 	require.NoError(t, err, "writing test key file must not fail")
 
 	info, err := os.Stat(keyPath)
 	require.NoError(t, err)
 
-	actualMode := info.Mode().Perm()
-
-	// On some filesystems (e.g., NTFS via WSL) the OS masks the permission bits.
-	// If that happens we cannot verify the check, so skip cleanly.
-	if (actualMode & 0o044) == 0 {
+	// On some filesystems (e.g. NTFS via WSL) the OS masks the permission bits.
+	if (info.Mode().Perm() & 0o044) == 0 {
 		t.Skip("OS masked 0644 permissions — cannot verify security check on this platform")
 	}
 
-	// BDD: When the boot guard reads the file mode.
-	// BDD: Then group or other read bits are present (0o040 or 0o004).
-	groupReadable := (actualMode & 0o040) != 0
-	otherReadable := (actualMode & 0o004) != 0
-	insecure := groupReadable || otherReadable
+	// BDD: When Unlock is called with OMNIPUS_KEY_FILE pointing at the 0644 file.
+	// Redirect OMNIPUS_KEY_FILE and unset OMNIPUS_MASTER_KEY so mode 2 fires.
+	t.Setenv("OMNIPUS_KEY_FILE", keyPath)
+	t.Setenv("OMNIPUS_MASTER_KEY", "")
 
-	assert.True(t, insecure,
-		"mode 0644 must have group-readable or other-readable bit — this is what the boot guard detects")
+	credStore := credentials.NewStore(filepath.Join(tmpDir, "credentials.json"))
+	unlockErr := credentials.Unlock(credStore)
 
-	// Differentiation: mode 0600 must NOT be detected as insecure.
-	keyPath2 := tmpDir + "/master2.key"
-	err = os.WriteFile(keyPath2, []byte("0123456789abcdef0123456789abcdef"), 0o600)
+	// BDD: Then Unlock must return an error mentioning the unsafe permissions.
+	require.Error(t, unlockErr, "Unlock must fail when key file has mode 0644")
+	assert.True(t,
+		strings.Contains(unlockErr.Error(), "unsafe permissions") ||
+			strings.Contains(unlockErr.Error(), "0600") ||
+			strings.Contains(unlockErr.Error(), "permission"),
+		"error must describe the permission problem; got: %v", unlockErr)
+
+	// Differentiation: mode 0600 must succeed (content is a valid 64-char hex key).
+	keyPath2 := filepath.Join(tmpDir, "master2.key")
+	err = os.WriteFile(keyPath2, []byte(hexKey), 0o600)
 	require.NoError(t, err)
 
-	info2, err := os.Stat(keyPath2)
-	require.NoError(t, err)
-	mode2 := info2.Mode().Perm()
-
-	insecure2 := (mode2 & 0o044) != 0
-	assert.False(t, insecure2,
-		"mode 0600 must NOT be detected as insecure — it has no group/other read bits")
-	assert.NotEqual(t, insecure, insecure2,
-		"differentiation: 0644 is insecure, 0600 is secure — they must produce different results")
+	t.Setenv("OMNIPUS_KEY_FILE", keyPath2)
+	credStore2 := credentials.NewStore(filepath.Join(tmpDir, "credentials2.json"))
+	unlockErr2 := credentials.Unlock(credStore2)
+	assert.NoError(t, unlockErr2, "Unlock must succeed when key file has mode 0600")
 }

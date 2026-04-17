@@ -118,14 +118,19 @@ func TestRotationBySizeAndDaily(t *testing.T) {
 	t.Run("retention limits to 10 files", func(t *testing.T) {
 		dir := t.TempDir()
 
-		// Pre-create 12 rotated audit files with old timestamps.
+		// Pre-create 12 rotated audit files with backdated timestamps.
 		// A real rotation creates files named audit-<date>.jsonl; we simulate this.
+		// The files must have mod times older than RetentionDays so cleanupExpired
+		// treats them as eligible for deletion (it checks ModTime, not filename date).
 		baseDate := time.Now().UTC().AddDate(0, 0, -15)
 		for i := 0; i < 12; i++ {
 			day := baseDate.AddDate(0, 0, i)
 			name := fmt.Sprintf("audit-%s.jsonl", day.Format("2006-01-02"))
 			path := filepath.Join(dir, name)
 			require.NoError(t, os.WriteFile(path, []byte(`{"event":"startup"}`+"\n"), 0o600))
+			// Backdate the mtime so cleanupExpired sees it as old.
+			require.NoError(t, os.Chtimes(path, day, day),
+				"backdating mtime on %s must succeed", name)
 		}
 
 		// Create a new logger in the same directory. It runs cleanupExpired() on
@@ -149,9 +154,10 @@ func TestRotationBySizeAndDaily(t *testing.T) {
 
 		// The acceptance contract is: files beyond the retention period are deleted.
 		// With RetentionDays=1 and all 12 files being 3+ days old, all should be gone.
-		// In practice, the implementation keeps files <= retDays days old and the newest
-		// entries; verify we don't have all 12 remaining.
-		assert.LessOrEqual(t, len(rotated), 12,
-			"retention cleanup must not leave more files than were created (implementation smoke test)")
+		// Assert strictly: fewer than 12 must remain (cleanup actually happened).
+		assert.Less(t, len(rotated), 12,
+			"retention cleanup must delete at least one expired file; all 12 are >1 day old")
+		assert.LessOrEqual(t, len(rotated), 10,
+			"retention cleanup must enforce the 10-file ceiling")
 	})
 }

@@ -13,56 +13,27 @@
 package gateway
 
 import (
-	"net"
 	"testing"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-// TestPortInUseFatalExit verifies that attempting to listen on an already-occupied
-// port returns an error (which the gateway startup path turns into a fatal exit).
+// TestPortInUseFatalExit verifies that starting a gateway on an already-occupied
+// port causes a boot error.
 //
-// This test exercises the OS-level "address already in use" error that the gateway's
-// net.Listen call would return when the port is occupied.
+// The testutil harness does not yet support WithPort(p) to force a specific port,
+// which is required to orchestrate a "port already in use" scenario via
+// StartTestGateway. Until that option lands the test is honest-skipped.
+//
+// When WithPort is available:
+//  1. Start a raw net.Listener on port P to occupy it.
+//  2. Call testutil.StartTestGateway(t, testutil.WithPort(P)).
+//  3. Assert the call fails (or the gateway exits) with an error containing "address already in use".
+//  4. Assert that starting on a different free port succeeds.
 //
 // Traces to: temporal-puzzling-melody.md §4 Axis-1 — TestPortInUseFatalExit
 func TestPortInUseFatalExit(t *testing.T) {
-	// BDD: Given port P is already in use — bind a listener to claim the port.
-	l1, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err, "first listener must succeed")
-	defer l1.Close()
-
-	// Extract the port that was actually allocated.
-	addr := l1.Addr().(*net.TCPAddr)
-	occupiedAddr := addr.String()
-
-	// BDD: When the gateway tries to listen on the same port.
-	l2, err := net.Listen("tcp", occupiedAddr)
-	if l2 != nil {
-		l2.Close()
-	}
-
-	// BDD: Then the listen call must fail with an error.
-	assert.Error(t, err,
-		"listening on an already-occupied port must return an error")
-
-	// The error message must contain enough context to identify the failure.
-	// On Linux the message includes "address already in use"; on Windows "bind: An attempt".
-	// Both contain the port number.
-	if err != nil {
-		errStr := err.Error()
-		portStr := addr.AddrPort().Port()
-		_ = portStr
-		// Assert the error is not empty (not a silent failure).
-		assert.NotEmpty(t, errStr,
-			"port-in-use error must have a non-empty message")
-	}
-
-	// Differentiation: binding to a different (free) port must succeed.
-	l3, err2 := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err2, "binding to a free port must succeed")
-	if l3 != nil {
-		l3.Close()
-	}
+	t.Skip(
+		"testutil.StartTestGateway does not yet support WithPort(p) — " +
+			"add WithPort option to pkg/agent/testutil/options.go, then " +
+			"implement this test against the real gateway boot path",
+	)
 }

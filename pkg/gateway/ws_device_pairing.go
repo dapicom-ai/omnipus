@@ -4,8 +4,9 @@
 // License: MIT
 // Copyright (c) 2026 Omnipus contributors
 
-// Package gateway implements the WebSocket handler and device pairing flow.
 package gateway
+
+// WebSocket handler and device pairing flow.
 
 import (
 	"crypto/rand"

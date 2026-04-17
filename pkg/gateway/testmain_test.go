@@ -1,11 +1,10 @@
 //go:build !cgo
 
-// Package gateway — test entry point.
-//
+package gateway
+
 // TestMain registers the real gateway.RunContext and provider-override hooks
 // into pkg/agent/testutil so that StartTestGateway can boot the full gateway
 // without creating an import cycle (testutil does not import pkg/gateway).
-package gateway
 
 import (
 	"os"

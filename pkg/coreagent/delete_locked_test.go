@@ -19,6 +19,16 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/coreagent"
 )
 
+// findAgent returns a pointer to the agent with the given ID in cfg.Agents.List, or nil.
+func findAgent(cfg *config.Config, id string) *config.AgentConfig {
+	for i := range cfg.Agents.List {
+		if cfg.Agents.List[i].ID == id {
+			return &cfg.Agents.List[i]
+		}
+	}
+	return nil
+}
+
 // TestDeleteLockedCoreAgentRejected verifies that all 5 core agents carry Locked=true
 // after SeedConfig, meaning any handler that checks Locked before deletion will block
 // the request.
@@ -39,13 +49,7 @@ func TestDeleteLockedCoreAgentRejected(t *testing.T) {
 
 	for _, id := range coreIDs {
 		t.Run(id, func(t *testing.T) {
-			var found *config.AgentConfig
-			for i := range cfg.Agents.List {
-				if cfg.Agents.List[i].ID == id {
-					found = &cfg.Agents.List[i]
-					break
-				}
-			}
+			found := findAgent(cfg, id)
 			require.NotNilf(t, found, "core agent %q must be in cfg.Agents.List after SeedConfig", id)
 
 			// BDD: When system.agent.delete reads the Locked field to decide whether to proceed.
@@ -60,14 +64,7 @@ func TestDeleteLockedCoreAgentRejected(t *testing.T) {
 
 			coreagent.SeedConfig(cfg)
 
-			// Re-find after re-seed.
-			var refound *config.AgentConfig
-			for i := range cfg.Agents.List {
-				if cfg.Agents.List[i].ID == id {
-					refound = &cfg.Agents.List[i]
-					break
-				}
-			}
+			refound := findAgent(cfg, id)
 			require.NotNilf(t, refound, "core agent %q must remain in list after re-seed", id)
 			assert.Truef(t, refound.Locked,
 				"SeedConfig must restore Locked=true on %q after tamper — delete will be refused", id)
@@ -83,13 +80,7 @@ func TestDeleteLockedCoreAgentRejected(t *testing.T) {
 		Locked:  false,
 		Enabled: &enabled,
 	})
-	var penny *config.AgentConfig
-	for i := range cfg.Agents.List {
-		if cfg.Agents.List[i].ID == "penny-custom" {
-			penny = &cfg.Agents.List[i]
-			break
-		}
-	}
+	penny := findAgent(cfg, "penny-custom")
 	require.NotNil(t, penny)
 	assert.False(t, penny.Locked,
 		"custom agents must have Locked=false — they are deletable (contrast with core agents)")

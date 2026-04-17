@@ -7,31 +7,17 @@ type Option func(*harnessConfig)
 
 // harnessConfig holds the pre-boot settings assembled by Option functions.
 type harnessConfig struct {
-	scenario       *ScenarioProvider
-	agents         []config.AgentConfig
-	sandbox        *config.OmnipusSandboxConfig
-	bearerAuth     bool
-	allowEmpty     bool
-	providersEntry *providerEntry
-}
-
-type providerEntry struct {
-	model    string
-	provider string
+	scenario   *ScenarioProvider
+	agents     []config.AgentConfig
+	sandbox    *config.OmnipusSandboxConfig
+	bearerAuth bool
+	allowEmpty bool
 }
 
 // WithScenario uses the provided ScenarioProvider instead of a fresh empty one.
 func WithScenario(s *ScenarioProvider) Option {
 	return func(hc *harnessConfig) {
 		hc.scenario = s
-	}
-}
-
-// WithProvidersEntry adds a providers[] entry (e.g. to satisfy default model resolution).
-// By default the harness injects one entry referencing the ScenarioProvider.
-func WithProvidersEntry(model, provider string) Option {
-	return func(hc *harnessConfig) {
-		hc.providersEntry = &providerEntry{model: model, provider: provider}
 	}
 }
 

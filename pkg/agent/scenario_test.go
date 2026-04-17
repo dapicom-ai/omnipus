@@ -12,7 +12,6 @@
 package agent
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -50,6 +49,16 @@ func newScenarioCfg(t *testing.T) (*config.Config, string) {
 	return cfg, tmpDir
 }
 
+// findAgent returns a pointer to the agent with the given ID in cfg.Agents.List, or nil.
+func findAgent(cfg *config.Config, id string) *config.AgentConfig {
+	for i := range cfg.Agents.List {
+		if cfg.Agents.List[i].ID == id {
+			return &cfg.Agents.List[i]
+		}
+	}
+	return nil
+}
+
 // ==================================================================================
 // Scenario 1: HandoffRayToMaxPreservesTranscript
 // BDD: Given an active session with Ray, When handoff to Max is triggered,
@@ -59,7 +68,9 @@ func newScenarioCfg(t *testing.T) (*config.Config, string) {
 // Traces to: temporal-puzzling-melody.md §Layer 2, scenario 1
 // ==================================================================================
 func TestScenario1HandoffRayToMaxPreservesTranscript(t *testing.T) {
-	t.Skip("harness ready (A1 complete); test body not yet implemented — requires full WS chat pipeline, tracked in Plan 3 §Layer 2, scenario 1")
+	t.Skip(
+		"harness ready (A1 complete); test body not yet implemented — requires full WS chat pipeline, tracked in Plan 3 §Layer 2, scenario 1",
+	)
 	// When StartTestGateway lands in pkg/agent/testutil/gateway_harness.go:
 	//   gw := testutil.StartTestGateway(t, testutil.WithAgents(rayMaxAgents), testutil.WithScenario(...))
 	//   Initiate a session with Ray, send a message, trigger handoff to Max.
@@ -82,13 +93,7 @@ func TestScenario2AvaCreatesAgentPenny(t *testing.T) {
 	cfg, tmpDir := newScenarioCfg(t)
 
 	// Verify Ava is present and locked (seeded by SeedConfig).
-	var ava *config.AgentConfig
-	for i := range cfg.Agents.List {
-		if cfg.Agents.List[i].ID == "ava" {
-			ava = &cfg.Agents.List[i]
-			break
-		}
-	}
+	ava := findAgent(cfg, "ava")
 	require.NotNil(t, ava, "Ava must be seeded into Agents.List by coreagent.SeedConfig")
 	assert.True(t, ava.Locked, "Ava must be locked (core agent identity protection)")
 
@@ -105,13 +110,7 @@ func TestScenario2AvaCreatesAgentPenny(t *testing.T) {
 	cfg.Agents.List = append(cfg.Agents.List, penny)
 
 	// Verify penny was added with Locked=false.
-	var found *config.AgentConfig
-	for i := range cfg.Agents.List {
-		if cfg.Agents.List[i].ID == "penny" {
-			found = &cfg.Agents.List[i]
-			break
-		}
-	}
+	found := findAgent(cfg, "penny")
 	require.NotNil(t, found, "penny must appear in cfg.Agents.List after creation")
 	assert.False(t, found.Locked, "custom agent penny must have Locked=false")
 
@@ -292,7 +291,9 @@ func TestScenario6BrowserNavigateThenScreenshotChain(t *testing.T) {
 // Traces to: temporal-puzzling-melody.md §Layer 2, scenario 7
 // ==================================================================================
 func TestScenario7SessionCompactionPreservesKeyFacts(t *testing.T) {
-	t.Skip("harness ready (A1 complete); blocked on multi-turn RunTurn API with accessible session metadata (lastCompactionSummary) — tracked in Plan 3 §Layer 2, scenario 7")
+	t.Skip(
+		"harness ready (A1 complete); blocked on multi-turn RunTurn API with accessible session metadata (lastCompactionSummary) — tracked in Plan 3 §Layer 2, scenario 7",
+	)
 	// When session compaction metadata is accessible:
 	//   Run N turns > SummarizeMessageThreshold.
 	//   Assert: session.Meta().LastCompactionSummary != "".
@@ -346,13 +347,7 @@ func TestScenario9CoreAgentLockedIdentityRejectsRename(t *testing.T) {
 	cfg, _ := newScenarioCfg(t)
 
 	// Find Jim and tamper with his name and lock status.
-	var jim *config.AgentConfig
-	for i := range cfg.Agents.List {
-		if cfg.Agents.List[i].ID == "jim" {
-			jim = &cfg.Agents.List[i]
-			break
-		}
-	}
+	jim := findAgent(cfg, "jim")
 	require.NotNil(t, jim, "Jim must be seeded by SeedConfig")
 	originalName := jim.Name
 
@@ -363,14 +358,7 @@ func TestScenario9CoreAgentLockedIdentityRejectsRename(t *testing.T) {
 	// SeedConfig re-enforces identity (tamper protection).
 	coreagent.SeedConfig(cfg)
 
-	// Re-look up Jim after re-seeding.
-	var jimAfter *config.AgentConfig
-	for i := range cfg.Agents.List {
-		if cfg.Agents.List[i].ID == "jim" {
-			jimAfter = &cfg.Agents.List[i]
-			break
-		}
-	}
+	jimAfter := findAgent(cfg, "jim")
 	require.NotNil(t, jimAfter)
 	assert.Equal(t, originalName, jimAfter.Name,
 		"SeedConfig must restore Jim's locked name after tampering")
@@ -428,6 +416,4 @@ func TestScenario10SpawnSubagentReturnsResult(t *testing.T) {
 
 	// Full subturn spawn through a real runTurn is covered by the gateway E2E tests
 	// once StartTestGateway lands; here we validate the prerequisite wiring.
-	_ = context.Background()
-	_ = time.Second
 }

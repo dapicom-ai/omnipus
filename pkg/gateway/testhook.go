@@ -1,37 +1,38 @@
-//go:build !cgo
+//go:build !cgo && test_harness
 
-// Package gateway — in-process test provider hook.
+// Package gateway — in-process test provider hook (test_harness build only).
 //
-// This file is compiled into the production binary but only activated during
-// in-process integration tests. It is NOT a test file (no _test.go suffix)
-// because the harness in pkg/agent/testutil is a different package and cannot
-// set unexported package-level variables in gateway via a _test.go file.
+// This file is compiled ONLY when the test_harness build tag is present.
+// Normal `go build` uses testhook_stub.go instead, which provides a nil-returning
+// stub so gateway.go:307 compiles without conditional compilation.
 //
 // Usage: set testProviderOverride before calling RunContext; clear it in
 // t.Cleanup. The harness in pkg/agent/testutil/gateway_harness.go manages
 // this via SetTestProviderOverride / ClearTestProviderOverride.
-//
-// In production: testProviderOverride is always nil — the branch in RunContext
-// is a single pointer-nil check and adds no measurable overhead.
 
 package gateway
 
-import "github.com/dapicom-ai/omnipus/pkg/providers"
+import (
+	"sync/atomic"
 
-// testProviderOverride, when non-nil, is called by RunContext instead of
-// createStartupProvider. This hook exists solely for in-process integration
-// testing. Never set this in production code.
-var testProviderOverride func() providers.LLMProvider
+	"github.com/dapicom-ai/omnipus/pkg/providers"
+)
+
+// testProviderOverride holds a pointer to a provider factory function.
+// When non-nil, RunContext calls it instead of createStartupProvider.
+// Using atomic.Pointer eliminates the data race between the goroutine that
+// sets/clears the override and the goroutine running RunContext.
+var testProviderOverride atomic.Pointer[func() providers.LLMProvider]
 
 // SetTestProviderOverride installs a provider factory function that RunContext
 // will call instead of the real createStartupProvider. Call
 // ClearTestProviderOverride in t.Cleanup to avoid cross-test contamination.
 func SetTestProviderOverride(fn func() providers.LLMProvider) {
-	testProviderOverride = fn
+	testProviderOverride.Store(&fn)
 }
 
 // ClearTestProviderOverride removes the test provider override, restoring the
 // production createStartupProvider path.
 func ClearTestProviderOverride() {
-	testProviderOverride = nil
+	testProviderOverride.Store(nil)
 }

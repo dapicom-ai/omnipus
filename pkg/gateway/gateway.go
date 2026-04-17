@@ -233,7 +233,7 @@ func bootCredentials(
 // Run starts the gateway runtime using the configuration loaded from configPath.
 // It installs OS signal handlers (SIGINT, SIGTERM) and blocks until one fires,
 // then delegates to RunContext for the actual boot and serve logic.
-// Zero behaviour change from the caller's perspective — the CLI entry point
+// Zero behavior change from the caller's perspective — the CLI entry point
 // continues to call Run unchanged.
 func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -296,16 +296,19 @@ func RunContext(ctx context.Context, debug bool, homePath, configPath string, al
 		fmt.Println("🔍 Debug mode enabled")
 	}
 
-	provider, modelID, err := createStartupProvider(cfg, allowEmptyStartup)
-	if err != nil {
-		return fmt.Errorf("error creating provider: %w", err)
-	}
-
-	// Apply the test provider override if one has been installed. This hook is
-	// set only during in-process integration tests; it is always nil in
-	// production. See pkg/gateway/testhook.go.
-	if override := testProviderOverride; override != nil {
-		provider = override()
+	// Check for a test provider override BEFORE calling createStartupProvider.
+	// If one is installed, bypass the real provider creation entirely — the
+	// override factory supplies the provider directly. This hook is always nil
+	// in production. See pkg/gateway/testhook.go / testhook_stub.go.
+	var provider providers.LLMProvider
+	var modelID string
+	if overridePtr := testProviderOverride.Load(); overridePtr != nil {
+		provider = (*overridePtr)()
+	} else {
+		provider, modelID, err = createStartupProvider(cfg, allowEmptyStartup)
+		if err != nil {
+			return fmt.Errorf("error creating provider: %w", err)
+		}
 	}
 
 	// Only override ModelName if it was empty (first boot / migration).
@@ -399,14 +402,6 @@ func RunContext(ctx context.Context, debug bool, homePath, configPath string, al
 	agentLoop.SetReloadFunc(reloadTrigger)
 	// Wire reload trigger into Ava's deps so agent create triggers hot-reload.
 	reloadFuncRef = reloadTrigger
-	runningServices.HealthServer.SetDegradedFunc(func() (bool, string) {
-		runningServices.reloadMu.Lock()
-		defer runningServices.reloadMu.Unlock()
-		if runningServices.reloadDegraded {
-			return true, fmt.Sprintf("config reload failed: %v", runningServices.reloadError)
-		}
-		return false, ""
-	})
 
 	fmt.Printf("✓ Gateway started on %s:%d\n", cfg.Gateway.Host, cfg.Gateway.Port)
 	fmt.Println("Press Ctrl+C to stop")
@@ -416,15 +411,41 @@ func RunContext(ctx context.Context, debug bool, homePath, configPath string, al
 	agentLoopCtx, agentLoopCancel := context.WithCancel(ctx)
 	defer agentLoopCancel()
 
+	// agentLoopDead is set when the agent loop exits (normally or via panic).
+	// The /health endpoint returns 503 when this flag is set, signalling to
+	// load-balancers and monitors that the gateway is no longer functional.
+	var agentLoopDead atomic.Bool
+
 	go func() {
 		defer agentLoopCancel()
 		defer func() {
 			if r := recover(); r != nil {
-				slog.Error("agent loop panicked", "panic", r, "stack", string(runtimedebug.Stack()))
+				stack := runtimedebug.Stack()
+				slog.Error("agent loop panicked — gateway is now non-functional",
+					"panic", r, "stack", string(stack))
+				// Append to the panic log file so ops can find the crash.
+				if f, openErr := os.OpenFile(panicPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600); openErr == nil {
+					fmt.Fprintf(f, "\n\nagent loop panic: %v\n%s\n", r, stack)
+					f.Close()
+				}
+				agentLoopDead.Store(true)
 			}
 		}()
-		agentLoop.Run(ctx)
+		agentLoop.Run(agentLoopCtx)
 	}()
+
+	// Wire a second degraded check: report 503 when the agent loop has died.
+	runningServices.HealthServer.SetDegradedFunc(func() (bool, string) {
+		if agentLoopDead.Load() {
+			return true, "agent loop exited unexpectedly — gateway requires restart"
+		}
+		runningServices.reloadMu.Lock()
+		defer runningServices.reloadMu.Unlock()
+		if runningServices.reloadDegraded {
+			return true, fmt.Sprintf("config reload failed: %v", runningServices.reloadError)
+		}
+		return false, ""
+	})
 
 	var configReloadChan <-chan *config.Config
 	stopWatch := func() {}

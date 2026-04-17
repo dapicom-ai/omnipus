@@ -13,6 +13,7 @@ package browser
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -87,13 +88,8 @@ func TestBlockedSchemesRejectedRegardlessOfSSRF(t *testing.T) {
 // containsAny returns true if s contains any of the given substrings.
 func containsAny(s string, subs ...string) bool {
 	for _, sub := range subs {
-		if len(sub) == 0 {
-			continue
-		}
-		for i := 0; i <= len(s)-len(sub); i++ {
-			if s[i:i+len(sub)] == sub {
-				return true
-			}
+		if sub != "" && strings.Contains(s, sub) {
+			return true
 		}
 	}
 	return false

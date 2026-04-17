@@ -91,14 +91,22 @@ func (s *ScenarioProvider) WithModelName(name string) *ScenarioProvider {
 }
 
 // Chat pops the next scripted step. Returns ErrNoMoreResponses once exhausted.
+// If ctx is already done when Chat is called, ctx.Err() is returned immediately.
 // Implements providers.LLMProvider.
 func (s *ScenarioProvider) Chat(
-	_ context.Context,
+	ctx context.Context,
 	_ []providers.Message,
 	_ []providers.ToolDefinition,
 	_ string,
 	_ map[string]any,
 ) (*providers.LLMResponse, error) {
+	// Respect context cancellation before doing any work.
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
 	s.mu.Lock()
 	if s.idx >= len(s.steps) {
 		s.mu.Unlock()

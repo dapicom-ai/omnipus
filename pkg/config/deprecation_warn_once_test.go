@@ -11,9 +11,13 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -21,17 +25,28 @@ import (
 )
 
 // TestDeprecatedEnableFlagsWarnOnce verifies that a config carrying
-// tools.browser.enabled=false (the legacy gate removed by Plan 2) is loaded
-// without error and that the deprecation-warn logic does not panic or produce
-// invalid config state.
+// tools.browser.enabled=false (the legacy gate removed by Plan 2) emits exactly one
+// deprecation warning when warnDeprecatedEnableFlags is called multiple times.
 //
-// We test the warning infrastructure (warnDeprecatedEnableFlags) by exercising
-// it directly via a ToolsConfig with Enabled=false in one subsystem and verifying
-// the overall ToolsConfig is still valid after the call.
+// We capture slog output by replacing the default handler for the duration of the
+// test, then assert strings.Count(output, "deprecated") == 1.
 //
 // Traces to: temporal-puzzling-melody.md §4 Axis-1 — TestDeprecatedEnableFlagsWarnOnce
 func TestDeprecatedEnableFlagsWarnOnce(t *testing.T) {
-	// BDD: Given a ToolsConfig with tools.browser.enabled=false (legacy format).
+	// Reset the once guard so this test is independent of other tests in the package
+	// that may have already triggered the warning (e.g. TestLegacyConfigLoadsWithDeprecatedFlag).
+	deprecatedEnableFlagsWarnOnce = sync.Once{}
+
+	// Capture slog output by installing a JSON handler on a buffer.
+	var buf bytes.Buffer
+	handler := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})
+	oldDefault := slog.Default()
+	slog.SetDefault(slog.New(handler))
+	t.Cleanup(func() {
+		slog.SetDefault(oldDefault)
+	})
+
+	// BDD: Given a ToolsConfig with tools.browser.enabled=false AND tools.exec.enabled=false.
 	tc := &ToolsConfig{
 		Browser: BrowserToolConfig{
 			ToolConfig: ToolConfig{Enabled: false}, // deprecated field
@@ -41,21 +56,33 @@ func TestDeprecatedEnableFlagsWarnOnce(t *testing.T) {
 		},
 	}
 
-	// BDD: When warnDeprecatedEnableFlags is called.
-	// This must not panic, must not mutate the struct in a way that breaks loading.
-	require.NotPanics(t, func() {
-		tc.warnDeprecatedEnableFlags()
-	}, "warnDeprecatedEnableFlags must not panic on legacy config")
+	// BDD: When warnDeprecatedEnableFlags is called twice.
+	require.NotPanics(t, func() { tc.warnDeprecatedEnableFlags() }, "first call must not panic")
+	require.NotPanics(t, func() { tc.warnDeprecatedEnableFlags() }, "second call must not panic")
+
+	// BDD: Then exactly one WARN containing "deprecated" is emitted.
+	output := buf.String()
+	count := strings.Count(output, "deprecated")
+	assert.Equal(t, 1, count,
+		"warnDeprecatedEnableFlags must emit the deprecation warning exactly once; "+
+			"got count=%d in output: %q", count, output)
 
 	// The config struct is unchanged (warning is advisory, not mutating).
 	assert.False(t, tc.Browser.Enabled,
 		"Enabled field must retain its original value — warnDeprecated is read-only")
 
-	// Differentiation: A ToolsConfig with no deprecated flags emits no warning either.
-	tcClean := &ToolsConfig{}
-	require.NotPanics(t, func() {
-		tcClean.warnDeprecatedEnableFlags()
-	}, "warnDeprecatedEnableFlags must not panic on clean config (no deprecated fields)")
+	// Differentiation: calling once more after reset fires again exactly once (not twice).
+	// Reset the once and buffer to verify independent behavior.
+	deprecatedEnableFlagsWarnOnce = sync.Once{}
+	buf.Reset()
+
+	// Two more calls with the deprecated config: must still emit exactly one warning.
+	require.NotPanics(t, func() { tc.warnDeprecatedEnableFlags() }, "third call must not panic")
+	require.NotPanics(t, func() { tc.warnDeprecatedEnableFlags() }, "fourth call must not panic")
+
+	count2 := strings.Count(buf.String(), "deprecated")
+	assert.Equal(t, 1, count2,
+		"after reset, warnDeprecatedEnableFlags must emit exactly one warning on two calls; got count=%d", count2)
 }
 
 // TestLegacyConfigLoadsWithDeprecatedFlag verifies that a config.json file
@@ -117,7 +144,9 @@ func TestLegacyConfigLoadsWithDeprecatedFlag(t *testing.T) {
 	require.NoError(t, loadErr2, "LoadConfig must succeed on clean config (no deprecated flags)")
 	require.NotNil(t, cfg2)
 
-	// The two configs parse to different Browser.Enabled values — proving differentiation.
-	assert.NotEqual(t, cfg.Tools.Browser.Enabled, true,
-		"legacy config has Enabled=false; clean config has Enabled=false (default) — load path differs not value")
+	// Both configs parse with Enabled=false (legacy explicit, clean via default).
+	assert.False(t, cfg.Tools.Browser.Enabled,
+		"legacy config preserves Enabled=false from disk")
+	assert.False(t, cfg2.Tools.Browser.Enabled,
+		"clean config defaults Enabled=false")
 }

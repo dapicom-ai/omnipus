@@ -1658,9 +1658,16 @@ func expandMultiKeyModels(models []*ModelConfig) []*ModelConfig {
 // are retained — they carry non-enable configuration like timeouts and
 // limits that the tools still read at runtime.
 
+// deprecatedEnableFlagsWarnOnce ensures the deprecation warning fires at most once
+// per process lifetime, even when multiple config files are loaded (e.g. hot-reload).
+var deprecatedEnableFlagsWarnOnce sync.Once
+
 // warnDeprecatedEnableFlags emits a single warning per boot if a loaded
 // config still carries any tools.<name>.enabled field set to false. Users
 // relying on the flag are quietly migrated to policy-based disablement.
+//
+// The warning fires at most once per process (sync.Once guard) and is emitted
+// via slog.Warn so that tests can intercept it by replacing the default slog handler.
 func (t *ToolsConfig) warnDeprecatedEnableFlags() {
 	if t == nil {
 		return
@@ -1697,9 +1704,11 @@ func (t *ToolsConfig) warnDeprecatedEnableFlags() {
 		}
 	}
 	if len(disabled) > 0 {
-		logger.WarnCF("config",
-			"tools.<name>.enabled is deprecated and has no effect; "+
+		deprecatedEnableFlagsWarnOnce.Do(func() {
+			slog.Warn("tools.<name>.enabled is deprecated and has no effect; "+
 				"use security.tool_policies to disable tools (set value to \"deny\")",
-			map[string]any{"disabled_fields_ignored": disabled})
+				"component", "config",
+				"disabled_fields_ignored", disabled)
+		})
 	}
 }
