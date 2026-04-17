@@ -231,7 +231,39 @@ func bootCredentials(
 }
 
 // Run starts the gateway runtime using the configuration loaded from configPath.
+// It installs OS signal handlers (SIGINT, SIGTERM) and blocks until one fires,
+// then delegates to RunContext for the actual boot and serve logic.
+// Zero behavior change from the caller's perspective — the CLI entry point
+// continues to call Run unchanged.
 func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
+
+	go func() {
+		select {
+		case <-sigChan:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	return RunContext(ctx, debug, homePath, configPath, allowEmptyStartup)
+}
+
+// RunContext is the context-cancellable entry point for the gateway runtime.
+// Run is a thin signal-driven wrapper around this function. Tests call RunContext
+// directly with a context they control, enabling in-process integration testing
+// without signal wiring.
+//
+// The caller is responsible for canceling ctx when the gateway should shut down.
+// RunContext blocks until ctx is canceled or a fatal error occurs, then performs
+// the full graceful shutdown sequence (channels → agent loop → background services
+// → provider) before returning.
+func RunContext(ctx context.Context, debug bool, homePath, configPath string, allowEmptyStartup bool) error {
 	// Bootstrap ~/.omnipus/ directory tree on every start (idempotent, US-1).
 	if err := datamodel.Init(homePath); err != nil {
 		return fmt.Errorf("directory initialization failed: %w", err)
@@ -264,9 +296,19 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 		fmt.Println("🔍 Debug mode enabled")
 	}
 
-	provider, modelID, err := createStartupProvider(cfg, allowEmptyStartup)
-	if err != nil {
-		return fmt.Errorf("error creating provider: %w", err)
+	// Check for a test provider override BEFORE calling createStartupProvider.
+	// If one is installed, bypass the real provider creation entirely — the
+	// override factory supplies the provider directly. This hook is always nil
+	// in production. See pkg/gateway/testhook.go / testhook_stub.go.
+	var provider providers.LLMProvider
+	var modelID string
+	if overridePtr := testProviderOverride.Load(); overridePtr != nil {
+		provider = (*overridePtr)()
+	} else {
+		provider, modelID, err = createStartupProvider(cfg, allowEmptyStartup)
+		if err != nil {
+			return fmt.Errorf("error creating provider: %w", err)
+		}
 	}
 
 	// Only override ModelName if it was empty (first boot / migration).
@@ -360,7 +402,43 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	agentLoop.SetReloadFunc(reloadTrigger)
 	// Wire reload trigger into Ava's deps so agent create triggers hot-reload.
 	reloadFuncRef = reloadTrigger
+
+	fmt.Printf("✓ Gateway started on %s:%d\n", cfg.Gateway.Host, cfg.Gateway.Port)
+	fmt.Println("Press Ctrl+C to stop")
+
+	// agentLoopCtx is canceled if the agent loop exits unexpectedly (e.g. panic
+	// recovery). The outer select below treats this the same as ctx cancellation.
+	agentLoopCtx, agentLoopCancel := context.WithCancel(ctx)
+	defer agentLoopCancel()
+
+	// agentLoopDead is set when the agent loop exits (normally or via panic).
+	// The /health endpoint returns 503 when this flag is set, signaling to
+	// load-balancers and monitors that the gateway is no longer functional.
+	var agentLoopDead atomic.Bool
+
+	go func() {
+		defer agentLoopCancel()
+		defer func() {
+			if r := recover(); r != nil {
+				stack := runtimedebug.Stack()
+				slog.Error("agent loop panicked — gateway is now non-functional",
+					"panic", r, "stack", string(stack))
+				// Append to the panic log file so ops can find the crash.
+				if f, openErr := os.OpenFile(panicPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600); openErr == nil {
+					fmt.Fprintf(f, "\n\nagent loop panic: %v\n%s\n", r, stack)
+					f.Close()
+				}
+				agentLoopDead.Store(true)
+			}
+		}()
+		agentLoop.Run(agentLoopCtx)
+	}()
+
+	// Wire a second degraded check: report 503 when the agent loop has died.
 	runningServices.HealthServer.SetDegradedFunc(func() (bool, string) {
+		if agentLoopDead.Load() {
+			return true, "agent loop exited unexpectedly — gateway requires restart"
+		}
 		runningServices.reloadMu.Lock()
 		defer runningServices.reloadMu.Unlock()
 		if runningServices.reloadDegraded {
@@ -368,22 +446,6 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 		}
 		return false, ""
 	})
-
-	fmt.Printf("✓ Gateway started on %s:%d\n", cfg.Gateway.Host, cfg.Gateway.Port)
-	fmt.Println("Press Ctrl+C to stop")
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	go func() {
-		defer cancel()
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("agent loop panicked", "panic", r, "stack", string(runtimedebug.Stack()))
-			}
-		}()
-		agentLoop.Run(ctx)
-	}()
 
 	var configReloadChan <-chan *config.Config
 	stopWatch := func() {}
@@ -393,12 +455,9 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	}
 	defer stopWatch()
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
 	for {
 		select {
-		case <-sigChan:
+		case <-agentLoopCtx.Done():
 			logger.Info("Shutting down...")
 			omnipusGracefulShutdown(runningServices, agentLoop, provider, cfg)
 			return nil
