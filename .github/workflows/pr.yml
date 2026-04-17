@@ -265,16 +265,25 @@ jobs:
             || (echo "Gateway did not become ready within 60 s — check gateway-log artifact" >&2 && exit 1)
 
       - name: Complete onboarding via API
-        # Drive onboarding programmatically to skip the UI wizard, which would
-        # otherwise require a live OpenRouter key to enable the "Connect & Load
-        # Models" button. The admin credentials below match the ones used by
-        # tests/e2e/fixtures/login.ts.
+        # Drive onboarding programmatically to skip the UI wizard. Must pass
+        # the REAL OpenRouter key: the onboarding handler appends a second
+        # provider entry (with api_key_ref="openrouter_API_KEY" — mixed case)
+        # and the agent's model lookup picks this newer entry. If a placeholder
+        # key goes in here, every LLM call 401s even though the seed provider
+        # has a valid key.
+        # Model must match the seeded provider's model_name alias so the
+        # onboarding handler updates the existing entry instead of overwriting
+        # agent defaults with a non-aliased model path.
         run: |
           set -euo pipefail
-          curl -sf -X POST http://localhost:6060/api/v1/onboarding/complete \
-            -H 'Content-Type: application/json' \
-            -d '{"provider":{"id":"openrouter","api_key":"sk-test-placeholder","model":"openrouter/z-ai/glm-5-turbo"},"admin":{"username":"admin","password":"admin123"}}' \
-            > /dev/null
+          jq -n --arg key "${OPENROUTER_API_KEY_CI}" \
+            '{provider:{id:"openrouter",api_key:$key,model:"openrouter-glm"},admin:{username:"admin",password:"admin123"}}' \
+            | curl -sf -X POST http://localhost:6060/api/v1/onboarding/complete \
+                -H 'Content-Type: application/json' \
+                -d @- \
+                > /dev/null
+        env:
+          OPENROUTER_API_KEY_CI: ${{ secrets.OPENROUTER_API_KEY_CI }}
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
