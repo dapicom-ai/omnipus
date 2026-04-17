@@ -277,7 +277,7 @@ jobs:
         run: |
           set -euo pipefail
           jq -n --arg key "${OPENROUTER_API_KEY_CI}" \
-            '{provider:{id:"openrouter",api_key:$key,model:"openrouter-glm"},admin:{username:"admin",password:"admin123"}}' \
+            '{provider:{id:"openrouter",api_key:$key,model:"openrouter/z-ai/glm-5-turbo"},admin:{username:"admin",password:"admin123"}}' \
             | curl -sf -X POST http://localhost:6060/api/v1/onboarding/complete \
                 -H 'Content-Type: application/json' \
                 -d @- \
