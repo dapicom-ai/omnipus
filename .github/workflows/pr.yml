@@ -3,6 +3,10 @@ name: PR
 on:
   pull_request: { }
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   lint:
     name: Linter
@@ -26,13 +30,14 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
-          node-version: "24"
+          node-version: "20"
 
       - name: Build SPA
         # pkg/gateway/embed.go has //go:embed all:spa and pkg/gateway/spa/ is
         # gitignored. Vite builds into dist/spa; we copy it into the embed
         # target so go vet/build/lint can compile the !cgo gateway files.
         run: |
+          set -euo pipefail
           npm ci
           npm run build
           rm -rf pkg/gateway/spa
@@ -68,12 +73,13 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
-          node-version: "24"
+          node-version: "20"
 
       - name: Build SPA
         # govulncheck runs a build under the hood; the gateway embed target
         # must exist for that build to succeed.
         run: |
+          set -euo pipefail
           npm ci
           npm run build
           rm -rf pkg/gateway/spa
@@ -102,10 +108,11 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v5
         with:
-          node-version: "24"
+          node-version: "20"
 
       - name: Build SPA
         run: |
+          set -euo pipefail
           npm ci
           npm run build
           rm -rf pkg/gateway/spa
@@ -125,3 +132,176 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: go test -race -tags goolm,stdjson -count=1 -timeout 240s ./pkg/sysagent/... ./pkg/config/... ./pkg/credentials/... ./pkg/gateway/... ./pkg/channels/...
+
+  playwright:
+    name: Playwright E2E
+    runs-on: ubuntu-latest
+    needs: [test]
+    env:
+      OMNIPUS_HOME: /tmp/omnipus-e2e
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install Node dependencies
+        run: npm ci
+
+      - name: Build SPA
+        # Vite outputs to dist/spa/. Must be synced into pkg/gateway/spa/ before
+        # go build so the //go:embed directive in pkg/gateway/embed.go resolves.
+        # The assets/ subdir contains hashed bundles that change every build;
+        # remove it first to avoid stale hashed chunks being embedded alongside
+        # the new ones. See CLAUDE.md "Build & E2E Testing" for full rationale.
+        run: npm run build
+
+      - name: Sync SPA into embed target
+        run: |
+          set -euo pipefail
+          rm -rf pkg/gateway/spa/assets
+          cp -r dist/spa/* pkg/gateway/spa/
+
+      - name: Verify SPA sync
+        # Fail fast if the sync produced an empty embed target. An empty assets/
+        # directory means go build would embed a broken SPA and Playwright tests
+        # would load a blank page — better to catch this here than in test output.
+        run: |
+          set -euo pipefail
+          if [ -z "$(ls -A pkg/gateway/spa/assets 2>/dev/null)" ]; then
+            echo "SPA sync failed: pkg/gateway/spa/assets is empty or missing" >&2
+            exit 1
+          fi
+
+      - name: Build gateway binary
+        run: CGO_ENABLED=0 go build -o omnipus ./cmd/omnipus/
+
+      - name: Prepare gateway home directory
+        # Fresh directory every run — never reuse state between jobs.
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/omnipus-e2e
+          mkdir -p /tmp/omnipus-e2e
+
+      - name: Seed gateway config
+        # Port 6060 matches the Playwright baseURL. dev_mode_bypass unblocks
+        # onboarding endpoints that require bearer auth before an admin account
+        # exists — documented workaround in CLAUDE.md "Build & E2E Testing".
+        # glm-5-turbo is a tool-capable model per CLAUDE.md known-blockers #3.
+        run: |
+          set -euo pipefail
+          cat > /tmp/omnipus-e2e/config.json <<'EOF'
+          {
+            "gateway": {
+              "port": 6060,
+              "dev_mode_bypass": true
+            },
+            "agents": {
+              "defaults": {
+                "model_name": "glm-5-turbo"
+              }
+            },
+            "providers": {
+              "openrouter": {
+                "enabled": true,
+                "api_key_ref": "openrouter_api_key",
+                "default_model": "z-ai/glm-5-turbo"
+              }
+            }
+          }
+          EOF
+
+      - name: Seed OpenRouter credential
+        # omnipus credentials set writes the key into credentials.json (AES-256-GCM).
+        # OMNIPUS_MASTER_KEY is a 64-char hex key; auto-generate fires on fresh
+        # installs when the env var is absent, but CI supplies it explicitly so
+        # both this step and the gateway share the same key. The provider status
+        # is verified after boot (see "Verify provider connection" step).
+        run: |
+          set -euo pipefail
+          ./omnipus credentials set openrouter_api_key "${OPENROUTER_API_KEY_CI}"
+        env:
+          OPENROUTER_API_KEY_CI: ${{ secrets.OPENROUTER_API_KEY_CI }}
+          OMNIPUS_MASTER_KEY: ${{ secrets.OMNIPUS_MASTER_KEY_CI }}
+
+      - name: Start gateway
+        # Redirect all output to a log file so the step does not block.
+        # The PID is captured so the teardown step can kill it cleanly.
+        # --allow-empty permits gateway boot without a fully configured provider,
+        # which is needed in case the credential seed step is extended in future.
+        run: |
+          set -euo pipefail
+          OMNIPUS_MASTER_KEY=${{ secrets.OMNIPUS_MASTER_KEY_CI }} \
+            ./omnipus gateway --allow-empty > /tmp/omnipus.log 2>&1 &
+          GATEWAY_PID=$!
+          echo "${GATEWAY_PID}" > /tmp/omnipus.pid
+
+          sleep 0.5
+          if ! kill -0 "${GATEWAY_PID}" 2>/dev/null; then
+            echo "Gateway process died immediately. Panic log:" >&2
+            cat /tmp/omnipus-e2e/logs/gateway_panic.log 2>/dev/null || echo "(no panic log)" >&2
+            cat /tmp/omnipus.log >&2
+            exit 1
+          fi
+
+      - name: Wait for gateway to be ready
+        # Poll /health every second for up to 60 s. The 60 s ceiling is a
+        # generous safety net for CI runner cold-start latency, not an accepted
+        # budget. If the gateway does not respond, the gateway-log artifact
+        # (uploaded below) contains the full output.
+        run: |
+          set -euo pipefail
+          timeout 60 bash -c 'until curl -sf http://localhost:6060/health; do sleep 1; done' \
+            || (echo "Gateway did not become ready within 60 s — check gateway-log artifact" >&2 && exit 1)
+
+      - name: Verify provider connection
+        # Confirm the OpenRouter credential was injected and the provider reports
+        # Connected. A non-200 response means the credential seed failed silently.
+        run: |
+          set -euo pipefail
+          curl -sf http://localhost:6060/api/v1/providers/status \
+            || (echo "Provider status check failed — credential injection may have failed" >&2 && exit 1)
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright tests
+        env:
+          OMNIPUS_URL: http://localhost:6060
+        run: npx playwright test
+
+      - name: Upload Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
+      - name: Upload gateway logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gateway-logs
+          path: |
+            /tmp/omnipus.log
+            /tmp/omnipus-e2e/logs/
+          retention-days: 7
+
+      - name: Stop gateway
+        if: always()
+        run: |
+          if [ -f /tmp/omnipus.pid ]; then
+            kill "$(cat /tmp/omnipus.pid)" 2>/dev/null || true
+          fi

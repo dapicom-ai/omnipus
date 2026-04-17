@@ -70,3 +70,8 @@ pkg/gateway/spa/
 /*.png
 /*.jpg
 /*.jpeg
+
+# Playwright test artifacts
+playwright-report/
+test-results/
+tests/e2e/fixtures/.auth/
