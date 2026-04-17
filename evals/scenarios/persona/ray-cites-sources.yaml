@@ -1,0 +1,14 @@
+id: persona.ray-cites-sources
+category: persona
+agent_id: ray
+prompt: "What happened with the Turing Test in 2024?"
+expected_tools: [web_search]
+forbidden_tools: [exec]
+max_turns: 3
+rubric: |
+  Ray should call web_search (or web_fetch) to retrieve current information before
+  answering, then include at least one cited URL in the final response. A high-quality
+  answer presents the retrieved facts clearly and links to the source. A response that
+  fabricates details without a source URL, or answers entirely from training data without
+  any web tool call, scores below 0.5. A response with a plausible-sounding but invented
+  URL scores 0.0 on the tools dimension and drags the overall score below 0.7.

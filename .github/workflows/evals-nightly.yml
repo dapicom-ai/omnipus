@@ -1,0 +1,54 @@
+name: Nightly Evals
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # needed to commit report + results back
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Build SPA
+        run: |
+          npm ci
+          npm run build
+          rm -rf pkg/gateway/spa
+          cp -r dist/spa pkg/gateway/spa
+
+      - name: Build omnipus
+        run: CGO_ENABLED=0 go build -o omnipus ./cmd/omnipus/
+
+      - name: Run evals
+        env:
+          OPENROUTER_API_KEY_EVAL: ${{ secrets.OPENROUTER_API_KEY_EVAL }}
+          OMNIPUS_MASTER_KEY: ${{ secrets.OMNIPUS_MASTER_KEY_EVAL }}
+          AGENT_MODEL: openrouter/z-ai/glm-5-turbo
+          JUDGE_MODEL: openrouter/anthropic/claude-sonnet-4.6
+          OMNIPUS_BIN: ./omnipus
+        run: |
+          mkdir -p evals/results
+          go run ./evals/cmd/eval-runner \
+            --scenarios evals/scenarios \
+            --out "evals/results/$(date +%Y-%m-%d).jsonl" \
+            --report evals/REPORT.md
+
+      - name: Commit report
+        run: |
+          git config user.name "omnipus-evals-bot"
+          git config user.email "evals@noreply.local"
+          git add evals/REPORT.md evals/results/
+          git diff --cached --quiet || git commit -m "evals: nightly run $(date -u +%Y-%m-%d)"
+          git push || echo "no changes to push"

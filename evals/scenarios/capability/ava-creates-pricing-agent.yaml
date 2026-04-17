@@ -1,0 +1,16 @@
+id: capability.ava-creates-pricing-agent
+category: capability
+agent_id: ava
+prompts:
+  - "Make me a pricing-analysis agent called Penny with tools for web research."
+  - "Yes, go ahead and create her."
+expected_tools: [system.agent.create]
+forbidden_tools: [exec]
+max_turns: 4
+rubric: |
+  Ava must call system.agent.create with a slug containing "penny" (case-insensitive),
+  a description related to pricing or analysis, and a tool list that includes at least
+  one web research tool (e.g. web_search or web_fetch). A high-quality response
+  confirms creation and summarises the new agent's capabilities. Calling
+  system.agent.create with an empty tool list scores below 0.7 on completion.
+  Not calling system.agent.create at all scores 0.0 on the tools dimension.

@@ -34,10 +34,32 @@ model (`anthropic/claude-sonnet-4.6`). 15 scenarios per run ≈ $0.30–$0.80/ni
 This can be the same key as `OPENROUTER_API_KEY_CI` or a separate key with a
 higher monthly cap (suggested: $25) to accommodate the stronger judge model.
 
+### `OMNIPUS_MASTER_KEY_EVAL`
+
+64-character hex-encoded 256-bit AES master key used to encrypt the ephemeral
+credential store spun up per-scenario. Each nightly run creates fresh
+per-scenario home directories; this key is discarded after the run. Any valid
+64-char hex string works — it does not need to match any production key.
+
+Generate with:
+
+```bash
+openssl rand -hex 32
+```
+
+Copy the output (exactly 64 hex chars, 0-9 / a-f) into the secret value.
+
+### Budget
+
+The nightly eval run is designed to cost $0.30–$0.80 per run against the
+default 15 scenarios. The runner exits non-zero and fails the workflow if
+cost exceeds $2.00 in a single run.
+
 ---
 
 ## Rotation policy
 
-Rotate both keys at least every 90 days. After rotation, update the secret
-value in GitHub Actions and verify the next CI run passes before closing the
-rotation ticket.
+Rotate all OpenRouter keys at least every 90 days. After rotation, update
+the secret value in GitHub Actions and verify the next CI run passes before
+closing the rotation ticket. The `OMNIPUS_MASTER_KEY_EVAL` value is not
+sensitive across rotations — regenerate freely.

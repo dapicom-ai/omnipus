@@ -1,0 +1,904 @@
+// eval-runner is the Omnipus LLM-as-judge eval harness.
+// It discovers YAML scenario files, boots a fresh omnipus gateway per
+// scenario, drives it through scripted user turns, calls the judge model
+// to score the transcript, and writes JSONL results plus a Markdown report.
+//
+// Build: CGO_ENABLED=0 go build ./evals/cmd/eval-runner/
+//
+// Usage:
+//
+//	eval-runner [flags]
+//
+// See --help for all flags.
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"gopkg.in/yaml.v3"
+
+	"github.com/dapicom-ai/omnipus/evals/judge"
+)
+
+// ── Scenario schema ──────────────────────────────────────────────────────────
+
+// Scenario is the parsed form of a YAML eval scenario file.
+type Scenario struct {
+	// ID is the primary key, e.g. "persona.mia-greets".
+	ID string `yaml:"id"`
+	// Category is one of: persona, capability, safety.
+	Category string `yaml:"category"`
+	// AgentID is the agent to converse with, e.g. "mia".
+	AgentID string `yaml:"agent_id"`
+	// Prompts is the ordered list of user turns.
+	// Supports both prompt (singular) and prompts (list) fields.
+	Prompts []string `yaml:"-"`
+	// PromptSingular is populated when the YAML file uses `prompt: <string>`.
+	PromptSingular string `yaml:"prompt"`
+	// PromptList is populated when the YAML file uses `prompts: [...]`.
+	PromptList []string `yaml:"prompts"`
+	// ExpectedTools is the list of tool names the agent SHOULD call.
+	ExpectedTools []string `yaml:"expected_tools"`
+	// ForbiddenTools is the list of tool names the agent MUST NOT call.
+	ForbiddenTools []string `yaml:"forbidden_tools"`
+	// MaxTurns is the hard cap on conversational turns.
+	MaxTurns int `yaml:"max_turns"`
+	// Rubric is the free-text evaluation rubric passed to the judge.
+	Rubric string `yaml:"rubric"`
+	// AgentRole is an optional one-line description of the agent's role.
+	// If absent, the runner uses AgentID as a fallback.
+	AgentRole string `yaml:"agent_role"`
+}
+
+// validate checks the scenario for required fields and resolves Prompts.
+func (s *Scenario) validate() error {
+	if s.ID == "" {
+		return fmt.Errorf("scenario missing required field 'id'")
+	}
+	if s.AgentID == "" {
+		return fmt.Errorf("scenario %q missing required field 'agent_id'", s.ID)
+	}
+	// Resolve prompt vs prompts.
+	hasSingular := s.PromptSingular != ""
+	hasList := len(s.PromptList) > 0
+	if hasSingular && hasList {
+		return fmt.Errorf("scenario %q has both 'prompt' and 'prompts' — use one", s.ID)
+	}
+	if !hasSingular && !hasList {
+		return fmt.Errorf("scenario %q has neither 'prompt' nor 'prompts'", s.ID)
+	}
+	if hasSingular {
+		s.Prompts = []string{s.PromptSingular}
+	} else {
+		s.Prompts = s.PromptList
+	}
+	if s.MaxTurns <= 0 {
+		s.MaxTurns = len(s.Prompts)
+	}
+	if s.AgentRole == "" {
+		s.AgentRole = s.AgentID
+	}
+	return nil
+}
+
+// ── Transcript / result types ─────────────────────────────────────────────────
+
+// TranscriptEntry is one turn in the conversation (user or assistant) or a
+// tool call observation.
+type TranscriptEntry struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+	// ToolName is non-empty for tool_call roles.
+	ToolName string `json:"tool_name,omitempty"`
+}
+
+// TokenUsage records token counts for the run.
+type TokenUsage struct {
+	Agent int `json:"agent"`
+	Judge int `json:"judge"`
+}
+
+// EvalResult is one JSONL line in the results file.
+type EvalResult struct {
+	ScenarioID        string       `json:"scenario_id"`
+	TS                time.Time    `json:"ts"`
+	AgentID           string       `json:"agent_id"`
+	Category          string       `json:"category"`
+	Scores            judge.Scores `json:"scores"`
+	TranscriptExcerpt string       `json:"transcript_excerpt"`
+	AgentModel        string       `json:"agent_model"`
+	JudgeModel        string       `json:"judge_model"`
+	TokenUsage        TokenUsage   `json:"token_usage"`
+	CostUSD           float64      `json:"cost_usd"`
+	// Error is non-empty when the scenario run failed without a score.
+	Error string `json:"error,omitempty"`
+}
+
+// ── Config ────────────────────────────────────────────────────────────────────
+
+type cfg struct {
+	scenariosDir string
+	outPath      string
+	reportPath   string
+	agentModel   string
+	judgeModel   string
+	timeout      time.Duration
+	dryRun       bool
+	omnipusBin   string
+}
+
+func parseFlags() cfg {
+	today := time.Now().UTC().Format("2006-01-02")
+	c := cfg{}
+	flag.StringVar(&c.scenariosDir, "scenarios", "evals/scenarios", "directory to walk for *.yaml scenario files")
+	flag.StringVar(&c.outPath, "out", filepath.Join("evals", "results", today+".jsonl"), "JSONL output path")
+	flag.StringVar(&c.reportPath, "report", filepath.Join("evals", "REPORT.md"), "Markdown report output path")
+	flag.StringVar(
+		&c.agentModel, "agent-model",
+		envOrDefault("AGENT_MODEL", "openrouter/z-ai/glm-5-turbo"),
+		"model for agent responses",
+	)
+	flag.StringVar(
+		&c.judgeModel, "judge-model",
+		envOrDefault("JUDGE_MODEL", "openrouter/anthropic/claude-sonnet-4.6"),
+		"model for judge scoring",
+	)
+	flag.DurationVar(&c.timeout, "timeout", 5*time.Minute, "per-scenario hard cap")
+	flag.BoolVar(&c.dryRun, "dry-run", false, "skip judge call, just collect transcripts")
+	flag.StringVar(
+		&c.omnipusBin, "omnipus-bin",
+		envOrDefault("OMNIPUS_BIN", "./omnipus"),
+		"path to compiled omnipus binary",
+	)
+	flag.Parse()
+	return c
+}
+
+func envOrDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+// ── Scenario discovery ────────────────────────────────────────────────────────
+
+func discoverScenarios(root string) ([]Scenario, error) {
+	var scenarios []Scenario
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() || !strings.HasSuffix(path, ".yaml") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+		var s Scenario
+		if err := yaml.Unmarshal(data, &s); err != nil {
+			return fmt.Errorf("parse %s: %w", path, err)
+		}
+		if err := s.validate(); err != nil {
+			return fmt.Errorf("validate %s: %w", path, err)
+		}
+		scenarios = append(scenarios, s)
+		return nil
+	})
+	return scenarios, err
+}
+
+// ── Gateway lifecycle ─────────────────────────────────────────────────────────
+
+// gatewayHandle wraps a running omnipus process and its home directory.
+type gatewayHandle struct {
+	homeDir string
+	baseURL string
+	cmd     *exec.Cmd
+	token   string // bearer token obtained after onboarding
+}
+
+// seedConfig writes a minimal config.json into homeDir. The provider entry is
+// a placeholder — the real API key is passed during onboarding/complete.
+func seedConfig(homeDir, agentModel string) error {
+	// Strip the "openrouter/" prefix if present to get the model list ID.
+	providerID := "openrouter"
+	modelPath := agentModel
+	if parts := strings.SplitN(agentModel, "/", 2); len(parts) == 2 && parts[0] == "openrouter" {
+		providerID = "openrouter"
+		modelPath = parts[1]
+	}
+	_ = providerID
+	_ = modelPath
+
+	// Write a bare config that lets the gateway start. The provider entry and
+	// model are set via onboarding/complete.
+	cfgContent := `{
+  "gateway": {
+    "host": "127.0.0.1",
+    "port": 0,
+    "allow_empty": true,
+    "dev_mode_bypass": true
+  },
+  "model": "",
+  "model_list": {}
+}`
+	if err := os.WriteFile(filepath.Join(homeDir, "config.json"), []byte(cfgContent), 0o600); err != nil {
+		return fmt.Errorf("seed config.json: %w", err)
+	}
+	return nil
+}
+
+// startGateway starts the omnipus binary with the given home directory,
+// waits for /health to respond, and returns a gatewayHandle.
+func startGateway(ctx context.Context, omnipusBin, homeDir string) (*gatewayHandle, error) {
+	cmd := exec.CommandContext(ctx, omnipusBin, "gateway", "--allow-empty")
+	cmd.Env = append(os.Environ(),
+		"OMNIPUS_HOME="+homeDir,
+		"OMNIPUS_BEARER_TOKEN=",
+	)
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start gateway: %w", err)
+	}
+
+	// Read the port from the gateway's port file, which it writes on bind.
+	// Poll for up to 30 seconds.
+	portFile := filepath.Join(homeDir, "gateway.port")
+	var port string
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(portFile)
+		if err == nil && len(bytes.TrimSpace(data)) > 0 {
+			port = strings.TrimSpace(string(data))
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if port == "" {
+		cmd.Process.Kill() //nolint:errcheck
+		return nil, fmt.Errorf("gateway did not write port file within 30s")
+	}
+
+	baseURL := "http://127.0.0.1:" + port
+
+	// Wait for /health.
+	healthURL := baseURL + "/health"
+	deadline = time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(healthURL) //nolint:noctx
+		if err == nil && resp.StatusCode == http.StatusOK {
+			resp.Body.Close()
+			break
+		}
+		if err == nil {
+			resp.Body.Close()
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+
+	// Final check.
+	resp, err := http.Get(healthURL) //nolint:noctx
+	if err != nil {
+		cmd.Process.Kill() //nolint:errcheck
+		return nil, fmt.Errorf("gateway /health never responded: %w", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		cmd.Process.Kill() //nolint:errcheck
+		return nil, fmt.Errorf("gateway /health returned %d", resp.StatusCode)
+	}
+
+	return &gatewayHandle{
+		homeDir: homeDir,
+		baseURL: baseURL,
+		cmd:     cmd,
+	}, nil
+}
+
+// onboard completes onboarding against the running gateway, setting up the
+// provider entry with the real API key and creating the eval admin account.
+// It stores the returned bearer token in h.token.
+func (h *gatewayHandle) onboard(agentModel string) error {
+	apiKey := os.Getenv("OPENROUTER_API_KEY_EVAL")
+	if apiKey == "" {
+		return fmt.Errorf("OPENROUTER_API_KEY_EVAL is not set")
+	}
+
+	// The provider ID is always "openrouter"; model is the full path after the prefix.
+	providerID := "openrouter"
+	modelPath := agentModel
+	if parts := strings.SplitN(agentModel, "/", 2); len(parts) == 2 {
+		providerID = parts[0]
+		modelPath = parts[1]
+	}
+
+	body := map[string]any{
+		"provider": map[string]any{
+			"id":      providerID,
+			"api_key": apiKey,
+			"model":   modelPath,
+		},
+		"admin": map[string]any{
+			"username": "eval-admin",
+			"password": "eval-pass-" + time.Now().Format("20060102"),
+		},
+	}
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshal onboard body: %w", err)
+	}
+
+	resp, err := http.Post( //nolint:noctx
+		h.baseURL+"/api/v1/onboarding/complete",
+		"application/json",
+		bytes.NewReader(bodyBytes),
+	)
+	if err != nil {
+		return fmt.Errorf("onboard POST: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return fmt.Errorf("onboard returned %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+
+	// Extract the token from the response.
+	var onboardResp struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(respBody, &onboardResp); err == nil && onboardResp.Token != "" {
+		h.token = onboardResp.Token
+	}
+	// If no token in onboard response, login separately.
+	if h.token == "" {
+		tok, err := h.login("eval-admin", "eval-pass-"+time.Now().Format("20060102"))
+		if err != nil {
+			return fmt.Errorf("login after onboard: %w", err)
+		}
+		h.token = tok
+	}
+	return nil
+}
+
+// login authenticates and returns a bearer token.
+func (h *gatewayHandle) login(username, password string) (string, error) {
+	body := map[string]string{"username": username, "password": password}
+	bodyBytes, _ := json.Marshal(body)
+	resp, err := http.Post( //nolint:noctx
+		h.baseURL+"/api/v1/auth/login",
+		"application/json",
+		bytes.NewReader(bodyBytes),
+	)
+	if err != nil {
+		return "", fmt.Errorf("login POST: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("login returned %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	var lr struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(respBody, &lr); err != nil {
+		return "", fmt.Errorf("parse login response: %w", err)
+	}
+	if lr.Token == "" {
+		return "", fmt.Errorf("login response contained no token")
+	}
+	return lr.Token, nil
+}
+
+// kill terminates the gateway process and removes the home directory.
+func (h *gatewayHandle) kill() {
+	if h.cmd != nil && h.cmd.Process != nil {
+		h.cmd.Process.Kill() //nolint:errcheck
+		h.cmd.Wait()         //nolint:errcheck
+	}
+	os.RemoveAll(h.homeDir) //nolint:errcheck
+}
+
+// ── Turn-by-turn conversation ─────────────────────────────────────────────────
+
+// postMessage sends one user message to the gateway and collects the assistant
+// reply by polling the session messages endpoint until a new assistant message
+// appears after the given afterIdx.
+func (h *gatewayHandle) postMessage(
+	ctx context.Context,
+	sessionID string,
+	userText string,
+	afterIdx int,
+	turnTimeout time.Duration,
+) ([]TranscriptEntry, error) {
+	// POST the user message to the session.
+	msgBody := map[string]any{
+		"content": userText,
+	}
+	bodyBytes, _ := json.Marshal(msgBody)
+	req, err := http.NewRequestWithContext(ctx,
+		http.MethodPost,
+		h.baseURL+"/api/v1/sessions/"+sessionID+"/messages",
+		bytes.NewReader(bodyBytes),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("build message request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+h.token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("post message: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("post message returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	// Poll for the assistant response.
+	deadline := time.Now().Add(turnTimeout)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		time.Sleep(500 * time.Millisecond)
+
+		entries, err := h.fetchMessages(ctx, sessionID)
+		if err != nil {
+			slog.Warn("eval: poll messages error", "session", sessionID, "error", err)
+			continue
+		}
+		// Check if we have a new assistant message beyond afterIdx.
+		if len(entries) > afterIdx {
+			for i := afterIdx; i < len(entries); i++ {
+				if entries[i].Role == "assistant" {
+					// Return all entries from afterIdx onward.
+					return entries[afterIdx:], nil
+				}
+			}
+		}
+	}
+	return nil, fmt.Errorf("turn timeout after %s waiting for assistant response", turnTimeout)
+}
+
+// fetchMessages retrieves all messages for a session.
+func (h *gatewayHandle) fetchMessages(ctx context.Context, sessionID string) ([]TranscriptEntry, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		h.baseURL+"/api/v1/sessions/"+sessionID+"/messages", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+h.token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("fetch messages %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	// The API returns an array of message objects.
+	var msgs []struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&msgs); err != nil {
+		return nil, fmt.Errorf("decode messages: %w", err)
+	}
+
+	entries := make([]TranscriptEntry, 0, len(msgs))
+	for _, m := range msgs {
+		entries = append(entries, TranscriptEntry{
+			Role:    m.Role,
+			Content: m.Content,
+		})
+	}
+	return entries, nil
+}
+
+// createSession creates a new chat session for the given agent and returns
+// the session ID.
+func (h *gatewayHandle) createSession(ctx context.Context, agentID string) (string, error) {
+	body := map[string]string{"agent_id": agentID}
+	bodyBytes, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		h.baseURL+"/api/v1/sessions",
+		bytes.NewReader(bodyBytes),
+	)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+h.token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("create session: %w", err)
+	}
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("create session %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	var sr struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(respBody, &sr); err != nil || sr.ID == "" {
+		return "", fmt.Errorf("parse create session response: %s", string(respBody))
+	}
+	return sr.ID, nil
+}
+
+// ── Judge call ────────────────────────────────────────────────────────────────
+
+// openRouterRequest is the OpenRouter-compatible chat completion request.
+type openRouterRequest struct {
+	Model    string              `json:"model"`
+	Messages []openRouterMessage `json:"messages"`
+}
+
+type openRouterMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// openRouterResponse captures just the fields we need.
+type openRouterResponse struct {
+	Choices []struct {
+		Message struct {
+			Content string `json:"content"`
+		} `json:"message"`
+	} `json:"choices"`
+	Usage struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	} `json:"usage"`
+}
+
+// callJudge sends the rendered prompt to the judge model via OpenRouter and
+// returns the raw text response along with token counts.
+func callJudge(ctx context.Context, model, prompt string) (string, int, error) {
+	apiKey := os.Getenv("OPENROUTER_API_KEY_EVAL")
+	if apiKey == "" {
+		return "", 0, fmt.Errorf("OPENROUTER_API_KEY_EVAL is not set")
+	}
+
+	// Strip "openrouter/" prefix if present — the OpenRouter API uses the
+	// bare model path (e.g. "anthropic/claude-sonnet-4.6").
+	orModel := model
+	if parts := strings.SplitN(model, "/", 2); len(parts) == 2 && parts[0] == "openrouter" {
+		orModel = parts[1]
+	}
+
+	reqBody := openRouterRequest{
+		Model: orModel,
+		Messages: []openRouterMessage{
+			{Role: "user", Content: prompt},
+		},
+	}
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", 0, fmt.Errorf("marshal judge request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		"https://openrouter.ai/api/v1/chat/completions",
+		bytes.NewReader(bodyBytes),
+	)
+	if err != nil {
+		return "", 0, fmt.Errorf("build judge request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Http-Referer", "https://omnipus.ai")
+	req.Header.Set("X-Title", "omnipus-evals")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", 0, fmt.Errorf("judge HTTP call: %w", err)
+	}
+	defer resp.Body.Close()
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", 0, fmt.Errorf("read judge response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", 0, fmt.Errorf("judge returned %d: %s", resp.StatusCode, strings.TrimSpace(string(respBytes)))
+	}
+
+	var orResp openRouterResponse
+	if err := json.Unmarshal(respBytes, &orResp); err != nil {
+		return "", 0, fmt.Errorf("parse judge response: %w", err)
+	}
+	if len(orResp.Choices) == 0 || orResp.Choices[0].Message.Content == "" {
+		return "", 0, fmt.Errorf("judge returned empty choices")
+	}
+	totalTokens := orResp.Usage.PromptTokens + orResp.Usage.CompletionTokens
+	return orResp.Choices[0].Message.Content, totalTokens, nil
+}
+
+// estimateCostUSD returns a rough cost estimate. OpenRouter pricing varies;
+// we use a conservative $2.00/M tokens for the judge and $0.20/M for the agent.
+func estimateCostUSD(agentTokens, judgeTokens int) float64 {
+	return float64(agentTokens)/1_000_000*0.20 + float64(judgeTokens)/1_000_000*2.00
+}
+
+// transcriptExcerpt returns the first 500 chars of the transcript as a string.
+func transcriptExcerpt(entries []TranscriptEntry) string {
+	var sb strings.Builder
+	for _, e := range entries {
+		line := fmt.Sprintf("[%s] %s\n", e.Role, e.Content)
+		if sb.Len()+len(line) > 500 {
+			sb.WriteString("...")
+			break
+		}
+		sb.WriteString(line)
+	}
+	return sb.String()
+}
+
+// ── Scenario runner ───────────────────────────────────────────────────────────
+
+// runScenario drives one scenario to completion and returns an EvalResult.
+// Errors within the scenario are recorded in the result (not returned) so the
+// outer loop can continue to the next scenario.
+func runScenario(
+	ctx context.Context,
+	s Scenario,
+	c cfg,
+	outFile *os.File,
+) EvalResult {
+	result := EvalResult{
+		ScenarioID: s.ID,
+		TS:         time.Now().UTC(),
+		AgentID:    s.AgentID,
+		Category:   s.Category,
+		AgentModel: c.agentModel,
+		JudgeModel: c.judgeModel,
+	}
+
+	// Create per-scenario temp home.
+	homeDir, err := os.MkdirTemp("", "omnipus-eval-*")
+	if err != nil {
+		result.Error = fmt.Sprintf("mkdirtemp: %v", err)
+		return result
+	}
+
+	err = seedConfig(homeDir, c.agentModel)
+	if err != nil {
+		os.RemoveAll(homeDir)
+		result.Error = fmt.Sprintf("seed config: %v", err)
+		return result
+	}
+
+	var gw *gatewayHandle
+	gw, err = startGateway(ctx, c.omnipusBin, homeDir)
+	if err != nil {
+		os.RemoveAll(homeDir)
+		result.Error = fmt.Sprintf("start gateway: %v", err)
+		return result
+	}
+	defer gw.kill()
+
+	err = gw.onboard(c.agentModel)
+	if err != nil {
+		result.Error = fmt.Sprintf("onboard: %v", err)
+		return result
+	}
+
+	var sessionID string
+	sessionID, err = gw.createSession(ctx, s.AgentID)
+	if err != nil {
+		result.Error = fmt.Sprintf("create session: %v", err)
+		return result
+	}
+
+	var fullTranscript []TranscriptEntry
+	turnTimeout := c.timeout / time.Duration(maxInt(len(s.Prompts), 1))
+
+	for i, prompt := range s.Prompts {
+		if i >= s.MaxTurns {
+			break
+		}
+		fullTranscript = append(fullTranscript, TranscriptEntry{Role: "user", Content: prompt})
+		var newEntries []TranscriptEntry
+		newEntries, err = gw.postMessage(ctx, sessionID, prompt, len(fullTranscript)-1, turnTimeout)
+		if err != nil {
+			result.Error = fmt.Sprintf("turn %d postMessage: %v", i, err)
+			return result
+		}
+		fullTranscript = append(fullTranscript, newEntries...)
+	}
+
+	result.TranscriptExcerpt = transcriptExcerpt(fullTranscript)
+
+	if c.dryRun {
+		slog.Info("eval: dry-run — skipping judge call", "scenario", s.ID)
+		return result
+	}
+
+	// Build judge prompt.
+	transcriptBytes, _ := json.MarshalIndent(fullTranscript, "", "  ")
+
+	// Extract tool calls from transcript.
+	var toolCalls []TranscriptEntry
+	for _, e := range fullTranscript {
+		if e.Role == "tool_call" {
+			toolCalls = append(toolCalls, e)
+		}
+	}
+	if toolCalls == nil {
+		toolCalls = []TranscriptEntry{}
+	}
+	toolCallsBytes, _ := json.MarshalIndent(toolCalls, "", "  ")
+
+	// Concatenate user prompts for the "User prompt" field.
+	var userPrompts []string
+	for _, e := range fullTranscript {
+		if e.Role == "user" {
+			userPrompts = append(userPrompts, e.Content)
+		}
+	}
+
+	promptCtx := judge.PromptContext{
+		AgentName:      s.AgentID,
+		AgentRole:      s.AgentRole,
+		Prompt:         strings.Join(userPrompts, "\n"),
+		TranscriptJSON: string(transcriptBytes),
+		ToolCallsJSON:  string(toolCallsBytes),
+		Rubric:         s.Rubric,
+	}
+	renderedPrompt, err := judge.RenderPrompt(promptCtx)
+	if err != nil {
+		result.Error = fmt.Sprintf("render judge prompt: %v", err)
+		return result
+	}
+
+	judgeCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+
+	judgeRaw, judgeTokens, err := callJudge(judgeCtx, c.judgeModel, renderedPrompt)
+	if err != nil {
+		result.Error = fmt.Sprintf("judge call: %v", err)
+		return result
+	}
+	result.TokenUsage.Judge = judgeTokens
+
+	scores, err := judge.Parse(judgeRaw)
+	if err != nil {
+		result.Error = fmt.Sprintf("parse judge scores: %v", err)
+		return result
+	}
+	result.Scores = scores
+	result.CostUSD = estimateCostUSD(result.TokenUsage.Agent, result.TokenUsage.Judge)
+
+	return result
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+func main() {
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	})))
+
+	c := parseFlags()
+
+	scenarios, err := discoverScenarios(c.scenariosDir)
+	if err != nil {
+		slog.Error("eval: failed to discover scenarios", "error", err)
+		os.Exit(1)
+	}
+	if len(scenarios) == 0 {
+		slog.Warn("eval: no scenarios found", "dir", c.scenariosDir)
+	}
+	slog.Info("eval: discovered scenarios", "count", len(scenarios))
+
+	err = os.MkdirAll(filepath.Dir(c.outPath), 0o755)
+	if err != nil {
+		slog.Error("eval: cannot create output directory", "error", err)
+		os.Exit(1)
+	}
+
+	outFile, err := os.OpenFile(c.outPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		slog.Error("eval: cannot open output file", "path", c.outPath, "error", err)
+		os.Exit(1)
+	}
+	defer outFile.Close()
+
+	writer := bufio.NewWriter(outFile)
+
+	var (
+		totalCostUSD   float64
+		totalAgentToks int
+		totalJudgeToks int
+		errCount       int
+	)
+
+	for _, s := range scenarios {
+		slog.Info("eval: running scenario", "id", s.ID, "agent", s.AgentID)
+		ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+		result := runScenario(ctx, s, c, outFile)
+		cancel()
+
+		if result.Error != "" {
+			slog.Warn("eval: scenario failed", "id", s.ID, "error", result.Error)
+			errCount++
+		} else {
+			slog.Info("eval: scenario complete", "id", s.ID,
+				"completion", result.Scores.Completion,
+				"tools", result.Scores.Tools,
+				"persona", result.Scores.Persona,
+				"safety", result.Scores.Safety,
+				"efficiency", result.Scores.Efficiency,
+			)
+			totalCostUSD += result.CostUSD
+			totalAgentToks += result.TokenUsage.Agent
+			totalJudgeToks += result.TokenUsage.Judge
+		}
+
+		line, err := json.Marshal(result)
+		if err != nil {
+			slog.Error("eval: marshal result", "id", s.ID, "error", err)
+			continue
+		}
+		if _, err := writer.Write(append(line, '\n')); err != nil {
+			slog.Error("eval: write result", "id", s.ID, "error", err)
+		}
+		if err := writer.Flush(); err != nil {
+			slog.Error("eval: flush output", "error", err)
+		}
+	}
+
+	// Print summary.
+	slog.Info("eval: run complete",
+		"scenarios", len(scenarios),
+		"errors", errCount,
+		"cost_usd", fmt.Sprintf("$%.4f", totalCostUSD),
+		"agent_tokens", totalAgentToks,
+		"judge_tokens", totalJudgeToks,
+	)
+
+	// Budget guard: fail if cost > $2.
+	if totalCostUSD > 2.00 {
+		slog.Error("eval: cost exceeded $2.00 budget", "cost_usd", totalCostUSD)
+		os.Exit(1)
+	}
+
+	// Regenerate the report.
+	resultsDir := filepath.Dir(c.outPath)
+	if err := RegenerateReport(resultsDir, c.reportPath); err != nil {
+		slog.Error("eval: regenerate report", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("eval: report written", "path", c.reportPath)
+}

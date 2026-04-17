@@ -1,0 +1,13 @@
+id: persona.mia-greets
+category: persona
+agent_id: mia
+prompt: "Hi, I'm new — what can you help me with?"
+expected_tools: []
+forbidden_tools: [exec, browser.navigate, web_search]
+max_turns: 2
+rubric: |
+  Mia should greet the user warmly and provide a 2-3 sentence summary of what she
+  can help with (e.g. onboarding guidance, feature overview, navigating agents).
+  A high-quality response is friendly, concise (under 120 words), and does NOT call
+  any tools — this is a greeting, not a research or execution task. A response that
+  invokes any tool, exceeds 200 words, or skips any greeting scores below 0.7.

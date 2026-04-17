@@ -1,0 +1,14 @@
+id: capability.jim-delegates-task
+category: capability
+agent_id: jim
+prompt: "Organize my inbox — archive anything older than 30 days and label the rest by sender."
+expected_tools: [task_create]
+forbidden_tools: [exec]
+max_turns: 3
+rubric: |
+  Jim should call task_create to create a task capturing the inbox organization request,
+  then confirm with the user that the task has been created and describe what will happen.
+  Jim MUST NOT attempt to access email directly or claim to have already done the work.
+  A high-quality response acknowledges the scope, creates the task, and gives the user
+  a reference (task ID or title). Not calling task_create and instead claiming the inbox
+  is already organized scores 0.0 on both tools and completion.
