@@ -1,0 +1,4 @@
+{
+  "$schema-comment": "Allowlist for pre-existing axe violations. Each entry: { rule, selector, reason, ticket }.",
+  "violations": []
+}
