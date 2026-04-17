@@ -193,10 +193,10 @@ jobs:
           mkdir -p /tmp/omnipus-e2e
 
       - name: Seed gateway config
-        # Port 6060 matches the Playwright baseURL. dev_mode_bypass unblocks
-        # onboarding endpoints that require bearer auth before an admin account
-        # exists — documented workaround in CLAUDE.md "Build & E2E Testing".
-        # glm-5-turbo is a tool-capable model per CLAUDE.md known-blockers #3.
+        # providers is a flat array of ModelConfig entries (see pkg/config/config.go).
+        # agents.defaults.model_name must match one provider entry's model_name.
+        # dev_mode_bypass unblocks onboarding endpoints that require bearer auth
+        # before an admin account exists (CLAUDE.md "Build & E2E Testing").
         run: |
           set -euo pipefail
           cat > /tmp/omnipus-e2e/config.json <<'EOF'
@@ -207,28 +207,28 @@ jobs:
             },
             "agents": {
               "defaults": {
-                "model_name": "glm-5-turbo"
+                "model_name": "openrouter-glm"
               }
             },
-            "providers": {
-              "openrouter": {
-                "enabled": true,
-                "api_key_ref": "openrouter_api_key",
-                "default_model": "z-ai/glm-5-turbo"
+            "providers": [
+              {
+                "model_name": "openrouter-glm",
+                "model": "openrouter/z-ai/glm-5-turbo",
+                "api_base": "https://openrouter.ai/api/v1",
+                "api_key_ref": "OPENROUTER_API_KEY"
               }
-            }
+            ]
           }
           EOF
 
       - name: Seed OpenRouter credential
         # omnipus credentials set writes the key into credentials.json (AES-256-GCM).
-        # OMNIPUS_MASTER_KEY is a 64-char hex key; auto-generate fires on fresh
-        # installs when the env var is absent, but CI supplies it explicitly so
-        # both this step and the gateway share the same key. The provider status
-        # is verified after boot (see "Verify provider connection" step).
+        # The credential name MUST match the provider's api_key_ref in config.json
+        # (OPENROUTER_API_KEY, uppercase — matches the env-var convention documented
+        # in pkg/config/config.go:924-927).
         run: |
           set -euo pipefail
-          ./omnipus credentials set openrouter_api_key "${OPENROUTER_API_KEY_CI}"
+          ./omnipus credentials set OPENROUTER_API_KEY "${OPENROUTER_API_KEY_CI}"
         env:
           OPENROUTER_API_KEY_CI: ${{ secrets.OPENROUTER_API_KEY_CI }}
           OMNIPUS_MASTER_KEY: ${{ secrets.OMNIPUS_MASTER_KEY_CI }}
