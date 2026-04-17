@@ -201,6 +201,7 @@ jobs:
           set -euo pipefail
           cat > /tmp/omnipus-e2e/config.json <<'EOF'
           {
+            "version": 1,
             "gateway": {
               "port": 6060,
               "dev_mode_bypass": true
