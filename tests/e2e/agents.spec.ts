@@ -6,7 +6,8 @@ import { agentCards } from './fixtures/selectors';
 // Global storageState provides pre-authenticated session (see playwright.config.ts + global-setup.ts).
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/agents');
+  // HashRouter: routes live in the fragment, not the pathname.
+  await page.goto('/#/agents');
 });
 
 test('(a) roster loads with 5 core agents (Mia/Jim/Ava/Ray/Max) plus any custom', async ({
@@ -99,9 +100,10 @@ test('(f) name collision on Create Agent surfaces server 409 error in UI', async
   await expect(modal).toBeVisible({ timeout: 10_000 });
 
   // Find the name input within the modal
+  // pressSequentially() required — fill() doesn't fire React onChange on controlled inputs
   const nameInput = modal.locator('input').first();
   await expect(nameInput).toBeVisible({ timeout: 10_000 });
-  await nameInput.fill('Mia');
+  await nameInput.pressSequentially('Mia');
 
   // Intercept the POST to return 409
   await page.route('**/api/v1/agents**', async (route) => {
@@ -121,9 +123,11 @@ test('(f) name collision on Create Agent surfaces server 409 error in UI', async
   await expect(submitBtn).toBeVisible({ timeout: 5_000 });
   await submitBtn.click();
 
-  // Error should appear — either role="alert" or text containing the error
-  const errorEl = page.locator('[role="alert"]').first();
-  await expect(errorEl).toBeVisible({ timeout: 10_000 });
+  // Error appears as a toast (ToastContainer in AppShell — no role="alert").
+  // The api.ts request() helper throws new Error(`${status}: ${body}`) so the message is
+  // "409: {\"error\": \"agent name already exists\"}". Match on the 409 status prefix.
+  const errorToast = page.locator('text=409').first();
+  await expect(errorToast).toBeVisible({ timeout: 10_000 });
 });
 
 test.fixme(

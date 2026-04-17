@@ -6,12 +6,15 @@ export interface Credentials {
 }
 
 /**
- * Return true when the user is already authenticated (nav is visible).
- * This is the single authoritative signal — no URL guessing.
+ * Return true when the user is already authenticated.
+ * Uses the banner landmark (the top-level <header> element rendered by AppShell) —
+ * always present on authenticated routes. The element is a plain <header> tag;
+ * HTML5 gives it the implicit ARIA role "banner" so we match by role, not attribute.
+ * The sidebar nav is only visible while the overlay drawer is open, so
+ * nav[aria-label="Main navigation"] is NOT a reliable auth indicator.
  */
 async function isAuthenticated(page: Page): Promise<boolean> {
-  const nav = page.locator('nav[aria-label="Main navigation"]');
-  return nav.isVisible();
+  return page.getByRole('banner').isVisible({ timeout: 2_000 });
 }
 
 /**
@@ -25,6 +28,10 @@ async function isAuthenticated(page: Page): Promise<boolean> {
  *
  * The API key is sourced from OPENROUTER_API_KEY_CI env var; tests will fail
  * with a real connection error if it is absent — that is intentional.
+ *
+ * IMPORTANT: pressSequentially() is used instead of fill() because React's synthetic
+ * onChange is not triggered by fill() on controlled inputs — the submit button stays
+ * disabled={!username.trim() || !password} without real keystroke events.
  */
 async function completeOnboarding(page: Page, creds: Credentials): Promise<void> {
   const apiKey = process.env.OPENROUTER_API_KEY_CI ?? 'sk-test-placeholder';
@@ -39,7 +46,7 @@ async function completeOnboarding(page: Page, creds: Credentials): Promise<void>
 
   // Enter the API key using the ID selector confirmed in onboarding.tsx:562
   await expect(page.locator('#onboarding-api-key')).toBeVisible({ timeout: 8_000 });
-  await page.locator('#onboarding-api-key').fill(apiKey);
+  await page.locator('#onboarding-api-key').pressSequentially(apiKey);
 
   // "Connect & Load Models" is the CTA before model selection (onboarding.tsx:609)
   await page.getByRole('button', { name: 'Connect & Load Models' }).click();
@@ -51,37 +58,45 @@ async function completeOnboarding(page: Page, creds: Credentials): Promise<void>
   await continueBtn.click();
 
   // ── Step 3 — Admin account ────────────────────────────────────────────────
+  // pressSequentially() required — fill() does not trigger React onChange on these inputs
   await expect(page.locator('#admin-username')).toBeVisible({ timeout: 10_000 });
-  await page.locator('#admin-username').fill(creds.username);
-  await page.locator('#admin-password').fill(creds.password);
-  await page.locator('#admin-password-confirm').fill(creds.password);
+  await page.locator('#admin-username').pressSequentially(creds.username);
+  await page.locator('#admin-password').pressSequentially(creds.password);
+  await page.locator('#admin-password-confirm').pressSequentially(creds.password);
   await page.getByRole('button', { name: 'Create Account' }).click();
 
   // ── Step 4 — Done ─────────────────────────────────────────────────────────
   await expect(page.getByRole('button', { name: 'Start Exploring' })).toBeVisible({ timeout: 15_000 });
   await page.getByRole('button', { name: 'Start Exploring' }).click();
 
-  // Post-condition: nav is visible = authenticated
-  await expect(page.locator('nav[aria-label="Main navigation"]')).toBeVisible({ timeout: 15_000 });
+  // Post-condition: banner landmark visible = authenticated
+  await expect(page.getByRole('banner')).toBeVisible({ timeout: 15_000 });
 }
 
 async function completeLoginForm(page: Page, creds: Credentials): Promise<void> {
   // Use the exact IDs confirmed in login.tsx:110 and :130
   await expect(page.locator('#login-username')).toBeVisible({ timeout: 10_000 });
-  await page.locator('#login-username').fill(creds.username);
-  await page.locator('#login-password').fill(creds.password);
+
+  // pressSequentially() is required — fill() does not fire React synthetic onChange,
+  // leaving the Sign-in button disabled={!username.trim() || !password}.
+  await page.locator('#login-username').pressSequentially(creds.username);
+  await page.locator('#login-password').pressSequentially(creds.password);
 
   // Submit button text is "Sign in" (login.tsx:168)
   await page.getByRole('button', { name: 'Sign in' }).click();
 
-  await expect(page).not.toHaveURL(/login/, { timeout: 15_000 });
+  // After successful login the URL leaves the login page
+  await expect(page).not.toHaveURL(/\/#\/login/, { timeout: 15_000 });
 }
 
 /**
  * Bring the page to an authenticated state.
  *
- * Idempotent: if the nav is already visible, returns immediately.
+ * Idempotent: if the header banner is already visible, returns immediately.
  * Detects onboarding vs login form and handles both paths.
+ *
+ * NOTE: The SPA uses HashRouter — routes appear as /#/login, /#/onboarding etc.
+ * URL checks must use fragment-aware patterns.
  */
 export async function loginAs(page: Page, username = 'admin', password = 'admin123'): Promise<void> {
   const creds: Credentials = { username, password };
@@ -100,7 +115,7 @@ export async function loginAs(page: Page, username = 'admin', password = 'admin1
     return;
   }
 
-  // On the login form the URL is /login or the page shows #login-username
+  // On the login form the URL contains /#/login or the page shows #login-username
   const loginUsername = page.locator('#login-username');
   if (await loginUsername.isVisible({ timeout: 5_000 })) {
     await completeLoginForm(page, creds);
@@ -114,6 +129,6 @@ export async function loginAs(page: Page, username = 'admin', password = 'admin1
     return;
   }
 
-  // If we reach here without nav, something is wrong — propagate the failure
-  await expect(page.locator('nav[aria-label="Main navigation"]')).toBeVisible({ timeout: 15_000 });
+  // If we reach here without banner, something is wrong — propagate the failure
+  await expect(page.getByRole('banner')).toBeVisible({ timeout: 15_000 });
 }

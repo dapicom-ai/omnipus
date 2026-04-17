@@ -53,8 +53,8 @@ test.fixme('(a) full happy path: welcome through admin account creation to compl
   });
   await page.getByRole('button', { name: 'Start Exploring' }).click();
 
-  // Post-condition: navigated to chat, nav is visible
-  await expect(page.locator('nav[aria-label="Main navigation"]')).toBeVisible({ timeout: 15_000 });
+  // Post-condition: navigated to chat, banner landmark is visible = authenticated
+  await expect(page.getByRole('banner')).toBeVisible({ timeout: 15_000 });
 
   await expectA11yClean(page);
 });

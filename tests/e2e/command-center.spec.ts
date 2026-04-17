@@ -6,7 +6,8 @@ import { chatInput } from './fixtures/selectors';
 // Global storageState provides pre-authenticated session (see playwright.config.ts + global-setup.ts).
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/command-center');
+  // HashRouter: routes live in the fragment, not the pathname.
+  await page.goto('/#/command-center');
 });
 
 test('(a) all section cards load without console errors', async ({ page }) => {

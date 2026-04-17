@@ -5,7 +5,8 @@ import { expectA11yClean } from './fixtures/a11y';
 // Global storageState provides pre-authenticated session (see playwright.config.ts + global-setup.ts).
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/settings');
+  // HashRouter: routes live in the fragment, not the pathname.
+  await page.goto('/#/settings');
 });
 
 test('(a) Providers tab shows a "Connected" badge next to configured provider', async ({
@@ -29,8 +30,9 @@ test('(b) Security tab loads without console errors', async ({ page }) => {
   await expect(securityTab).toBeVisible({ timeout: 10_000 });
   await securityTab.click();
 
-  // A tabpanel should become visible after click
-  const tabPanel = page.locator('[role="tabpanel"]').first();
+  // Radix Tabs renders ALL tabpanels in the DOM but marks inactive ones with hidden.
+  // Use [data-state="active"] to target the currently visible panel.
+  const tabPanel = page.locator('[role="tabpanel"][data-state="active"]').first();
   await expect(tabPanel).toBeVisible({ timeout: 10_000 });
 });
 
@@ -44,8 +46,8 @@ test('(c) About tab shows build info (version)', async ({ page }) => {
   await expect(page.locator('body')).toContainText(/version/i, { timeout: 10_000 });
 
   // The version value comes from /api/v1/about — wait for it to load
-  // It renders as a <dd> or span in InfoRow — match a semver-ish pattern anywhere in About content
-  const tabPanel = page.locator('[role="tabpanel"]').first();
+  // It renders as a <dd> or span in InfoRow — match a semver-ish pattern in the active panel
+  const tabPanel = page.locator('[role="tabpanel"][data-state="active"]').first();
   await expect(tabPanel).toContainText(/\d+\.\d+/, { timeout: 15_000 });
 });
 
@@ -62,7 +64,8 @@ test('(d) all tabs reachable via keyboard navigation (Tab + Enter)', async ({ pa
     await currentTab.focus();
     await currentTab.press('Enter');
 
-    const tabPanel = page.locator('[role="tabpanel"]').first();
+    // Radix Tabs: active panel has data-state="active" — hidden panels have hidden attribute
+    const tabPanel = page.locator('[role="tabpanel"][data-state="active"]').first();
     await expect(tabPanel).toBeVisible({ timeout: 5_000 });
 
     if (i < tabCount - 1) {

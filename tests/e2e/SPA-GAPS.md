@@ -82,6 +82,15 @@ This file tracks features referenced by E2E tests that are not yet implemented i
 
 ---
 
+- [ ] **LLM chat tests require valid OpenRouter API key** (`chat.spec.ts (a)(b)(d)(e)`, `media.spec.ts (a)`)
+  The local test gateway instance returns 401 from OpenRouter ("Missing Authentication header").
+  No valid OPENROUTER_API_KEY is configured in the local gateway started for Playwright tests.
+  These tests require OPENROUTER_API_KEY_CI set in the CI environment so global-setup can
+  configure the provider with a real key. Until then, tests that wait for LLM responses always
+  time out. Confirmed from gateway log: "LLM call failed: API request failed: Status: 401".
+
+---
+
 ## Routing Gaps
 
 - [ ] `/about` is NOT a separate SPA route — it maps to `/settings?tab=about`.
