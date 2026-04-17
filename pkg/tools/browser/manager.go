@@ -158,6 +158,14 @@ func (m *BrowserManager) ensureStarted() error {
 		opts = append(opts, chromedp.Headless)
 	}
 
+	// GitHub Actions runners restrict unprivileged user namespaces via AppArmor,
+	// which breaks Chromium's zygote sandbox. Opt into --no-sandbox when CI=true
+	// or OMNIPUS_BROWSER_NO_SANDBOX=1 is set explicitly. Not enabled by default
+	// because --no-sandbox reduces isolation for code the browser loads.
+	if os.Getenv("CI") == "true" || os.Getenv("OMNIPUS_BROWSER_NO_SANDBOX") == "1" {
+		opts = append(opts, chromedp.NoSandbox)
+	}
+
 	allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
 	m.allocCtx = allocCtx
 	m.allocCancel = cancel
