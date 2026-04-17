@@ -3,8 +3,10 @@ import { AxeBuilder } from '@axe-core/playwright';
 import { type ImpactValue } from 'axe-core';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { z } from 'zod';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BASELINE_PATH = path.join(__dirname, 'a11y-baseline.json');
 
 const BaselineEntrySchema = z.object({
