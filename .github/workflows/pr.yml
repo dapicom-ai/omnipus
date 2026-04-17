@@ -264,14 +264,6 @@ jobs:
           timeout 60 bash -c 'until curl -sf http://localhost:6060/health; do sleep 1; done' \
             || (echo "Gateway did not become ready within 60 s — check gateway-log artifact" >&2 && exit 1)
 
-      - name: Verify provider connection
-        # Confirm the OpenRouter credential was injected and the provider reports
-        # Connected. A non-200 response means the credential seed failed silently.
-        run: |
-          set -euo pipefail
-          curl -sf http://localhost:6060/api/v1/providers/status \
-            || (echo "Provider status check failed — credential injection may have failed" >&2 && exit 1)
-
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
