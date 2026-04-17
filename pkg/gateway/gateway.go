@@ -412,7 +412,7 @@ func RunContext(ctx context.Context, debug bool, homePath, configPath string, al
 	defer agentLoopCancel()
 
 	// agentLoopDead is set when the agent loop exits (normally or via panic).
-	// The /health endpoint returns 503 when this flag is set, signalling to
+	// The /health endpoint returns 503 when this flag is set, signaling to
 	// load-balancers and monitors that the gateway is no longer functional.
 	var agentLoopDead atomic.Bool
 

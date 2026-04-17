@@ -86,7 +86,7 @@ func TestScenarioProviderConcurrentChat(t *testing.T) {
 		"all steps must be consumed")
 }
 
-// TestScenarioProviderRespectsCtxCancel verifies that a cancelled context causes
+// TestScenarioProviderRespectsCtxCancel verifies that a canceled context causes
 // Chat to return ctx.Err() immediately.
 //
 // Traces to: temporal-puzzling-melody.md §1 acceptance contracts — ScenarioProvider ctx.Done
@@ -98,9 +98,9 @@ func TestScenarioProviderRespectsCtxCancel(t *testing.T) {
 
 	_, err := p.Chat(ctx, nil, nil, "", nil)
 	assert.ErrorIs(t, err, context.Canceled,
-		"Chat with an already-cancelled context must return context.Canceled")
+		"Chat with an already-canceled context must return context.Canceled")
 
 	// The step was not consumed.
-	assert.Equal(t, 0, p.CallCount(), "CallCount must be 0 — cancelled Chat must not consume a step")
-	assert.Equal(t, 1, p.Remaining(), "the step must still be available after cancelled Chat")
+	assert.Equal(t, 0, p.CallCount(), "CallCount must be 0 — canceled Chat must not consume a step")
+	assert.Equal(t, 1, p.Remaining(), "the step must still be available after canceled Chat")
 }
