@@ -9,14 +9,9 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 
-test.fixme(
+test(
   '(a) send a message and receive an LLM response with token/cost update',
   async ({ page }) => {
-    // Reason: local gateway returns 401 from OpenRouter ("Missing Authentication header").
-    // No valid OPENROUTER_API_KEY is configured in the local test gateway instance.
-    // This test requires a real API key via OPENROUTER_API_KEY_CI in CI.
-    // Gateway log confirms: "LLM call failed: API request failed: Status: 401 Missing Authentication header"
-    // See tests/e2e/SPA-GAPS.md — "LLM chat tests require valid OpenRouter API key".
     const input = chatInput(page);
     await expect(input).toBeVisible({ timeout: 15_000 });
     await input.fill('Say exactly: "hello world"');
@@ -33,11 +28,9 @@ test.fixme(
   },
 );
 
-test.fixme(
+test(
   '(b) multi-turn retention: turn 3 references content from turn 1',
   async ({ page }) => {
-    // Reason: local gateway returns 401 from OpenRouter — no valid API key.
-    // Requires OPENROUTER_API_KEY_CI in CI. See SPA-GAPS.md "LLM chat tests require valid OpenRouter API key".
     const input = chatInput(page);
     await expect(input).toBeVisible({ timeout: 15_000 });
 
@@ -90,12 +83,9 @@ test('(c) agent switch via picker: switch to a different agent, header area upda
   void nameBefore;
 });
 
-test.fixme(
+test(
   '(d) new chat button clears message list and picks a fresh session_id',
   async ({ page }) => {
-    // Reason: requires LLM response to seed a message before testing new chat.
-    // Local gateway returns 401 from OpenRouter — no valid API key.
-    // See SPA-GAPS.md "LLM chat tests require valid OpenRouter API key".
     const input = chatInput(page);
     await expect(input).toBeVisible({ timeout: 15_000 });
     await input.fill('First message in session');
@@ -116,12 +106,9 @@ test.fixme(
   },
 );
 
-test.fixme(
+test(
   '(e) cancel streaming mid-reply — stop button appears then disappears, input re-enables',
   async ({ page }) => {
-    // Reason: requires LLM to start streaming before stop button appears.
-    // Local gateway returns 401 from OpenRouter — no valid API key, no streaming.
-    // See SPA-GAPS.md "LLM chat tests require valid OpenRouter API key".
     const input = chatInput(page);
     await expect(input).toBeVisible({ timeout: 15_000 });
     await input.fill(

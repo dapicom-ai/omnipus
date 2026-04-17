@@ -9,13 +9,9 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 
-test.fixme(
+test(
   '(a) screenshot inline render: Max screenshots example.com and renders an img',
   async ({ page }) => {
-    // Reason: requires LLM to respond and invoke the browser screenshot tool.
-    // Local gateway returns 401 from OpenRouter ("Missing Authentication header") —
-    // no valid API key is configured. Requires OPENROUTER_API_KEY_CI in CI.
-    // See tests/e2e/SPA-GAPS.md — "LLM chat tests require valid OpenRouter API key".
 
     // Select Max agent via the agent picker dropdown
     const picker = agentPicker(page);
