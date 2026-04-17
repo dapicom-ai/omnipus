@@ -2,159 +2,156 @@ import { expect } from '@playwright/test';
 import { test } from './fixtures/console-errors';
 import { expectA11yClean } from './fixtures/a11y';
 
-// Onboarding tests reset to a fresh unauthenticated tenant for every test.
+// Onboarding tests run with a clean session — no pre-auth state.
 test.use({ storageState: { cookies: [], origins: [] } });
+
+// Each test navigates to / which redirects to /onboarding on a fresh install
+// OR when dev_mode_bypass is enabled without existing users.
 
 test('(a) full happy path: welcome through admin account creation to completion', async ({
   page,
 }) => {
+  const apiKey = process.env.OPENROUTER_API_KEY_CI ?? 'sk-test-placeholder';
+
   await page.goto('/');
+  await expect(page).toHaveURL(/onboarding/, { timeout: 10_000 });
 
-  await expect(page).toHaveURL(/onboarding|^http:\/\/[^/]+\/$/, { timeout: 10_000 });
+  // Step 1 — Welcome (onboarding.tsx:442-447)
+  await expect(page.getByRole('button', { name: 'Get Started' })).toBeVisible({ timeout: 10_000 });
+  await page.getByRole('button', { name: 'Get Started' }).click();
 
-  const heading = page.locator('h1, h2').first();
-  await expect(heading).toBeVisible({ timeout: 8_000 });
+  // Step 2 — Provider pick: OpenRouter button (display_name from AVAILABLE_PROVIDERS)
+  await expect(page.getByRole('button', { name: /OpenRouter/i })).toBeVisible({ timeout: 10_000 });
+  await page.getByRole('button', { name: /OpenRouter/i }).click();
 
-  const nextBtn = page.getByRole('button', { name: /get started|next|continue/i }).first();
-  await expect(nextBtn).toBeVisible({ timeout: 10_000 });
-  await nextBtn.click();
+  // API key input (onboarding.tsx:562, id="onboarding-api-key")
+  await expect(page.locator('#onboarding-api-key')).toBeVisible({ timeout: 8_000 });
+  await page.locator('#onboarding-api-key').fill(apiKey);
 
-  const providerStep = page.locator('[data-testid*="provider"], h1, h2').first();
-  await expect(providerStep).toBeVisible({ timeout: 10_000 });
+  // "Connect & Load Models" CTA (onboarding.tsx:609)
+  await page.getByRole('button', { name: 'Connect & Load Models' }).click();
 
-  const providerBtn = page.getByRole('button', { name: /openrouter|anthropic|openai/i }).first();
-  if (await providerBtn.isVisible({ timeout: 5_000 })) {
-    await providerBtn.click();
-  } else {
-    await page.getByRole('button', { name: /next|continue|skip/i }).first().click();
-  }
+  // Continue is enabled only after testStatus==='success' + model selected
+  const continueBtn = page.getByRole('button', { name: 'Continue' });
+  await expect(continueBtn).toBeEnabled({ timeout: 30_000 });
+  await continueBtn.click();
 
-  const apiKeyStep = page
-    .locator('input[type="password"], input[name*="key" i], input[placeholder*="key" i]')
-    .first();
-  if (await apiKeyStep.isVisible({ timeout: 5_000 })) {
-    await apiKeyStep.fill('sk-or-test-key-for-e2e-testing');
-    await page.getByRole('button', { name: /next|continue|skip/i }).first().click();
-  }
+  // Step 3 — Admin credentials (onboarding.tsx:749-795)
+  await expect(page.locator('#admin-username')).toBeVisible({ timeout: 10_000 });
+  await page.locator('#admin-username').fill('admin');
+  await page.locator('#admin-password').fill('admin123');
+  await page.locator('#admin-password-confirm').fill('admin123');
+  await page.getByRole('button', { name: 'Create Account' }).click();
 
-  const modelStep = page.locator('select, [role="combobox"], [data-testid*="model"]').first();
-  if (await modelStep.isVisible({ timeout: 5_000 })) {
-    await page.getByRole('button', { name: /next|continue|skip/i }).first().click();
-  }
+  // Step 4 — Done (onboarding.tsx:896-910)
+  await expect(page.getByRole('button', { name: 'Start Exploring' })).toBeVisible({
+    timeout: 15_000,
+  });
+  await page.getByRole('button', { name: 'Start Exploring' }).click();
 
-  const userInput = page
-    .locator('input[name*="user" i], input[placeholder*="user" i], input[id*="user" i], input[type="text"]')
-    .first();
-  await expect(userInput).toBeVisible({ timeout: 10_000 });
-  await userInput.fill('admin');
-
-  const passInput = page.locator('input[type="password"]').first();
-  await passInput.fill('admin123');
-
-  await page.getByRole('button', { name: /create|finish|done|complete/i }).first().click();
-
-  await expect(page).not.toHaveURL(/onboarding/, { timeout: 30_000 });
+  // Post-condition: navigated to chat, nav is visible
+  await expect(page.locator('nav[aria-label="Main navigation"]')).toBeVisible({ timeout: 15_000 });
 
   await expectA11yClean(page);
 });
 
 test('(b) invalid API key shows inline error on the provider step', async ({ page }) => {
   await page.goto('/');
+  await expect(page).toHaveURL(/onboarding/, { timeout: 10_000 });
 
-  const nextBtn = page.getByRole('button', { name: /get started|next|continue/i }).first();
-  await expect(nextBtn).toBeVisible({ timeout: 8_000 });
-  await nextBtn.click();
+  // Step 1
+  await page.getByRole('button', { name: 'Get Started' }).click();
 
-  const providerBtn = page.getByRole('button', { name: /openrouter|anthropic|openai/i }).first();
-  await expect(providerBtn).toBeVisible({ timeout: 8_000 });
-  await providerBtn.click();
+  // Step 2 — pick provider and enter bad key
+  await expect(page.getByRole('button', { name: /OpenRouter/i })).toBeVisible({ timeout: 8_000 });
+  await page.getByRole('button', { name: /OpenRouter/i }).click();
 
-  const apiKeyInput = page
-    .locator('input[type="password"], input[name*="key" i], input[placeholder*="key" i]')
-    .first();
-  await expect(apiKeyInput).toBeVisible({ timeout: 8_000 });
-  await apiKeyInput.fill('invalid-key-xyz-123');
+  await expect(page.locator('#onboarding-api-key')).toBeVisible({ timeout: 8_000 });
+  await page.locator('#onboarding-api-key').fill('invalid-key-xyz-123');
 
-  const validateBtn = page
-    .getByRole('button', { name: /validate|verify|test|next|continue/i })
-    .first();
-  await validateBtn.click();
+  await page.getByRole('button', { name: 'Connect & Load Models' }).click();
 
-  const errorEl = page
-    .locator('[role="alert"], [data-testid="api-key-error"]')
-    .first();
-  await expect(errorEl).toBeVisible({ timeout: 15_000 });
+  // On error testStatus==='error' renders a div styled with color-error (onboarding.tsx:587-591).
+  // The element contains an XCircle icon + error message text — match by colour style.
+  const errorEl = page.locator('div[style*="color-error"], div[style*="var(--color-error)"]').first();
+  await expect(errorEl).toBeVisible({ timeout: 20_000 });
 });
 
-test('(c) "skip to login" works when admin already exists', async ({ page }) => {
+test('(c) "Skip — I know what I\'m doing" navigates to login when admin already exists', async ({
+  page,
+}) => {
   await page.goto('/');
+  await expect(page).toHaveURL(/onboarding/, { timeout: 10_000 });
 
-  // This link only appears when onboarding detects an existing admin
-  const skipLink = page
-    .getByRole('link', { name: /skip|already have|sign in|log in/i })
-    .first();
-  await expect(skipLink).toBeVisible({ timeout: 8_000 });
-  await skipLink.click();
+  // The Skip button is always rendered on Step 1 (onboarding.tsx:449-458).
+  // When an admin already exists, clicking it should land on /login.
+  // If no admin exists yet it still navigates to /login per the SPA routing.
+  const skipBtn = page.getByRole('button', { name: "Skip — I know what I'm doing" });
+  await expect(skipBtn).toBeVisible({ timeout: 8_000 });
+  await skipBtn.click();
 
   await expect(page).toHaveURL(/login/, { timeout: 15_000 });
-  await expect(page.locator('input[type="password"]').first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator('#login-password')).toBeVisible({ timeout: 10_000 });
 });
 
 test('(d) provider timeout on API-key validation triggers retry UI', async ({ page }) => {
   await page.goto('/');
+  await expect(page).toHaveURL(/onboarding/, { timeout: 10_000 });
 
-  const nextBtn = page.getByRole('button', { name: /get started|next|continue/i }).first();
-  await expect(nextBtn).toBeVisible({ timeout: 8_000 });
-  await nextBtn.click();
+  // Step 1
+  await page.getByRole('button', { name: 'Get Started' }).click();
 
-  const providerBtn = page.getByRole('button', { name: /openrouter|anthropic|openai/i }).first();
-  await expect(providerBtn).toBeVisible({ timeout: 8_000 });
-  await providerBtn.click();
+  // Step 2
+  await expect(page.getByRole('button', { name: /OpenRouter/i })).toBeVisible({ timeout: 8_000 });
+  await page.getByRole('button', { name: /OpenRouter/i }).click();
 
-  const apiKeyInput = page
-    .locator('input[type="password"], input[name*="key" i], input[placeholder*="key" i]')
-    .first();
-  await expect(apiKeyInput).toBeVisible({ timeout: 8_000 });
+  await expect(page.locator('#onboarding-api-key')).toBeVisible({ timeout: 8_000 });
 
+  // Intercept provider API calls to simulate a timeout
   await page.route('**/api/v1/providers/**', async (route) => {
     await new Promise<void>((resolve) => setTimeout(resolve, 35_000));
     await route.abort('timedout');
   });
 
-  await apiKeyInput.fill('sk-or-timeout-test-key');
-  await page.getByRole('button', { name: /validate|verify|test|next|continue/i }).first().click();
+  await page.locator('#onboarding-api-key').fill('sk-or-timeout-test-key');
+  await page.getByRole('button', { name: 'Connect & Load Models' }).click();
 
-  const retryEl = page
-    .locator('[data-testid="retry-button"], [class*="retry"], [role="alert"]')
-    .first();
-  await expect(retryEl).toBeVisible({ timeout: 45_000 });
+  // After timeout, testStatus==='error' — the button text changes to "Retry Connection"
+  // (onboarding.tsx:606-608)
+  const retryBtn = page.getByRole('button', { name: 'Retry Connection' });
+  await expect(retryBtn).toBeVisible({ timeout: 45_000 });
 });
 
 test('(e) admin username collision surfaces inline error on last step', async ({ page }) => {
   await page.goto('/');
+  await expect(page).toHaveURL(/onboarding/, { timeout: 10_000 });
 
-  const nextBtn = page.getByRole('button', { name: /get started|next|continue/i }).first();
-  await expect(nextBtn).toBeVisible({ timeout: 8_000 });
-  await nextBtn.click();
+  // Navigate to Step 3 via mocked provider flow
+  await page.getByRole('button', { name: 'Get Started' }).click();
 
-  const providerBtn = page.getByRole('button', { name: /openrouter|anthropic|openai|skip/i }).first();
-  if (await providerBtn.isVisible({ timeout: 5_000 })) {
-    await providerBtn.click();
-  }
+  // Mock provider connection to succeed so we can reach Step 3 quickly
+  await page.route('**/api/v1/providers/**', async (route) => {
+    if (route.request().method() === 'POST') {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true, models: ['openai/gpt-4o'] }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
 
-  const apiKeyInput = page
-    .locator('input[type="password"], input[name*="key" i]')
-    .first();
-  if (await apiKeyInput.isVisible({ timeout: 5_000 })) {
-    await apiKeyInput.fill('sk-or-test');
-    await page.getByRole('button', { name: /next|continue|skip/i }).first().click();
-  }
+  await page.getByRole('button', { name: /OpenRouter/i }).click();
+  await expect(page.locator('#onboarding-api-key')).toBeVisible({ timeout: 8_000 });
+  await page.locator('#onboarding-api-key').fill('sk-or-mock-key');
+  await page.getByRole('button', { name: 'Connect & Load Models' }).click();
 
-  const modelStep = page.locator('select, [role="combobox"]').first();
-  if (await modelStep.isVisible({ timeout: 5_000 })) {
-    await page.getByRole('button', { name: /next|continue|skip/i }).first().click();
-  }
+  const continueBtn = page.getByRole('button', { name: 'Continue' });
+  await expect(continueBtn).toBeEnabled({ timeout: 15_000 });
+  await continueBtn.click();
 
+  // Now on Step 3 — mock setup endpoint to return 409
   await page.route('**/api/v1/auth/setup**', async (route) => {
     await route.fulfill({
       status: 409,
@@ -163,19 +160,14 @@ test('(e) admin username collision surfaces inline error on last step', async ({
     });
   });
 
-  const userInput = page
-    .locator('input[name*="user" i], input[type="text"]')
-    .first();
-  await expect(userInput).toBeVisible({ timeout: 8_000 });
-  await userInput.fill('admin');
+  await expect(page.locator('#admin-username')).toBeVisible({ timeout: 8_000 });
+  await page.locator('#admin-username').fill('admin');
+  await page.locator('#admin-password').fill('admin123');
+  await page.locator('#admin-password-confirm').fill('admin123');
+  await page.getByRole('button', { name: 'Create Account' }).click();
 
-  const passInput = page.locator('input[type="password"]').first();
-  await passInput.fill('admin123');
-
-  await page.getByRole('button', { name: /create|finish|done|complete/i }).first().click();
-
-  const errorEl = page
-    .locator('[role="alert"], [data-testid="setup-error"]')
-    .first();
+  // Error rendered in AdminCredentialsStep (onboarding.tsx:816-820)
+  // style={{ color: 'var(--color-error)' }}
+  const errorEl = page.locator('div[style*="color-error"]').first();
   await expect(errorEl).toBeVisible({ timeout: 15_000 });
 });

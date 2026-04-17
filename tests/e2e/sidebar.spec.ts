@@ -4,26 +4,39 @@ import { expectA11yClean } from './fixtures/a11y';
 
 // Global storageState provides pre-authenticated session (see playwright.config.ts + global-setup.ts).
 
+// Nav item definitions with exact hrefs from Sidebar.tsx NAV_ITEMS + settings Link
 const NAV_ITEMS = [
-  { label: /agents/i, urlPattern: /agents/ },
-  { label: /chat/i, urlPattern: /chat|^\/$/ },
-  { label: /skills/i, urlPattern: /skills/ },
-  { label: /command.?center/i, urlPattern: /command-center/ },
-  { label: /settings/i, urlPattern: /settings/ },
-];
+  { href: '/', urlPattern: /^\/$|^.*\/$/ },
+  { href: '/command-center', urlPattern: /command-center/ },
+  { href: '/agents', urlPattern: /agents/ },
+  { href: '/skills', urlPattern: /skills/ },
+  { href: '/settings', urlPattern: /settings/ },
+] as const;
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 
 test('(a) every nav item routes correctly', async ({ page }) => {
-  const sidebar = page.locator('[data-testid="sidebar"]');
-  await expect(sidebar).toBeVisible({ timeout: 10_000 });
+  // Open sidebar first (it is in overlay mode by default)
+  const hamburger = page.locator('#sidebar-hamburger');
+  await expect(hamburger).toBeVisible({ timeout: 10_000 });
+  await hamburger.click();
+
+  // Wait for the nav to appear
+  const nav = page.locator('nav[aria-label="Main navigation"]');
+  await expect(nav).toBeVisible({ timeout: 5_000 });
 
   for (const item of NAV_ITEMS) {
-    const navLink = sidebar.getByRole('link', { name: item.label }).first();
-    await expect(navLink).toBeVisible({ timeout: 5_000 });
-    await navLink.click();
+    // Re-open sidebar if it closed (overlay mode closes on nav click)
+    if (!(await nav.isVisible())) {
+      await hamburger.click();
+      await expect(nav).toBeVisible({ timeout: 5_000 });
+    }
+
+    const link = nav.locator(`a[href="${item.href}"]`).first();
+    await expect(link).toBeVisible({ timeout: 5_000 });
+    await link.click();
     await expect(page).toHaveURL(item.urlPattern, { timeout: 10_000 });
   }
 
@@ -31,20 +44,27 @@ test('(a) every nav item routes correctly', async ({ page }) => {
 });
 
 test('(b) pinning sidebar persists across reload', async ({ page }) => {
-  const pinBtn = page.locator('[data-testid="sidebar-pin"]');
+  // Open the sidebar first
+  const hamburger = page.locator('#sidebar-hamburger');
+  await expect(hamburger).toBeVisible({ timeout: 10_000 });
+  await hamburger.click();
+
+  const nav = page.locator('nav[aria-label="Main navigation"]');
+  await expect(nav).toBeVisible({ timeout: 5_000 });
+
+  // Pin toggle button: aria-pressed attribute (Sidebar.tsx:185)
+  // title is "Pin sidebar" when not pinned, "Unpin sidebar" when pinned
+  const pinBtn = page.locator('button[aria-pressed][title="Pin sidebar"]');
   await expect(pinBtn).toBeVisible({ timeout: 8_000 });
   await pinBtn.click();
 
-  const sidebar = page.locator('[data-testid="sidebar"]');
-  await expect(sidebar).toBeVisible({ timeout: 5_000 });
-  const widthBefore = await sidebar.boundingBox().then((b) => b?.width ?? 0);
-  expect(widthBefore).toBeGreaterThan(50);
+  // After pinning, nav should remain visible (pinned = permanent aside)
+  await expect(nav).toBeVisible({ timeout: 5_000 });
 
   await page.reload();
   await page.waitForLoadState('networkidle');
 
-  const sidebarAfter = page.locator('[data-testid="sidebar"]');
-  await expect(sidebarAfter).toBeVisible({ timeout: 10_000 });
-  const widthAfter = await sidebarAfter.boundingBox().then((b) => b?.width ?? 0);
-  expect(widthAfter).toBeGreaterThan(50);
+  // After reload, if the sidebar is pinned it is rendered as an <aside> element
+  const pinnedSidebar = page.locator('aside[aria-label="Main navigation"]');
+  await expect(pinnedSidebar).toBeVisible({ timeout: 10_000 });
 });

@@ -5,105 +5,115 @@ export interface Credentials {
   password: string;
 }
 
-type LoginPhase = { kind: 'onboarding' } | { kind: 'login-form' } | { kind: 'authenticated' };
-
-async function detectPhase(page: Page): Promise<LoginPhase> {
-  const url = page.url();
-  if (url.includes('onboarding')) {
-    return { kind: 'onboarding' };
-  }
-  if (url.includes('login')) {
-    return { kind: 'login-form' };
-  }
-  const passwordInput = page.locator('input[type="password"]');
-  const pwCount = await passwordInput.count();
-  if (pwCount > 0 && (await passwordInput.first().isVisible())) {
-    const onboardingIndicator = page.locator('[data-testid="onboarding"], [class*="onboarding"]');
-    if ((await onboardingIndicator.count()) > 0 && (await onboardingIndicator.first().isVisible())) {
-      return { kind: 'onboarding' };
-    }
-    return { kind: 'login-form' };
-  }
-  return { kind: 'authenticated' };
+/**
+ * Return true when the user is already authenticated (nav is visible).
+ * This is the single authoritative signal — no URL guessing.
+ */
+async function isAuthenticated(page: Page): Promise<boolean> {
+  const nav = page.locator('nav[aria-label="Main navigation"]');
+  return nav.isVisible();
 }
 
+/**
+ * Complete the 4-step onboarding wizard with EXACT selectors from the SPA.
+ *
+ * Step 1 — "Get Started"
+ * Step 2 — Pick OpenRouter → fill #onboarding-api-key → "Connect & Load Models"
+ *           (on success the "Continue" button becomes enabled)
+ * Step 3 — Fill #admin-username / #admin-password / #admin-password-confirm → "Create Account"
+ * Step 4 — "Start Exploring"
+ *
+ * The API key is sourced from OPENROUTER_API_KEY_CI env var; tests will fail
+ * with a real connection error if it is absent — that is intentional.
+ */
 async function completeOnboarding(page: Page, creds: Credentials): Promise<void> {
+  const apiKey = process.env.OPENROUTER_API_KEY_CI ?? 'sk-test-placeholder';
+
+  // ── Step 1 ────────────────────────────────────────────────────────────────
   await expect(page).toHaveURL(/onboarding/, { timeout: 15_000 });
+  await page.getByRole('button', { name: 'Get Started' }).click();
 
-  const nextBtn = page.getByRole('button', { name: /get started|next|continue/i }).first();
-  await expect(nextBtn).toBeVisible({ timeout: 10_000 });
-  await nextBtn.click();
+  // ── Step 2 — Provider ─────────────────────────────────────────────────────
+  // Click the OpenRouter provider button (exact display_name from AVAILABLE_PROVIDERS)
+  await page.getByRole('button', { name: /OpenRouter/i }).click();
 
-  const providerBtn = page.getByRole('button', { name: /openrouter|anthropic|openai/i }).first();
-  if (await providerBtn.isVisible({ timeout: 5_000 })) {
-    await providerBtn.click();
-  }
+  // Enter the API key using the ID selector confirmed in onboarding.tsx:562
+  await expect(page.locator('#onboarding-api-key')).toBeVisible({ timeout: 8_000 });
+  await page.locator('#onboarding-api-key').fill(apiKey);
 
-  const skipOrNextBtn = page.getByRole('button', { name: /next|continue|skip/i }).first();
-  if (await skipOrNextBtn.isVisible({ timeout: 5_000 })) {
-    await skipOrNextBtn.click();
-  }
+  // "Connect & Load Models" is the CTA before model selection (onboarding.tsx:609)
+  await page.getByRole('button', { name: 'Connect & Load Models' }).click();
 
-  const apiKeyInput = page
-    .locator('input[type="password"], input[name*="key" i], input[placeholder*="key" i]')
-    .first();
-  if (await apiKeyInput.isVisible({ timeout: 5_000 })) {
-    await apiKeyInput.fill('sk-test-placeholder');
-    await page.getByRole('button', { name: /next|continue|skip/i }).first().click();
-  }
+  // After a successful connection the "Continue" button appears (onboarding.tsx:662-669).
+  // Wait for it to become enabled (disabled until testStatus==='success' && selectedModel).
+  const continueBtn = page.getByRole('button', { name: 'Continue' });
+  await expect(continueBtn).toBeEnabled({ timeout: 30_000 });
+  await continueBtn.click();
 
-  const modelSelect = page.locator('select, [role="combobox"]').first();
-  if (await modelSelect.isVisible({ timeout: 5_000 })) {
-    await page.getByRole('button', { name: /next|continue|skip/i }).first().click();
-  }
+  // ── Step 3 — Admin account ────────────────────────────────────────────────
+  await expect(page.locator('#admin-username')).toBeVisible({ timeout: 10_000 });
+  await page.locator('#admin-username').fill(creds.username);
+  await page.locator('#admin-password').fill(creds.password);
+  await page.locator('#admin-password-confirm').fill(creds.password);
+  await page.getByRole('button', { name: 'Create Account' }).click();
 
-  const usernameInput = page
-    .locator('input[name*="user" i], input[placeholder*="user" i], input[id*="user" i]')
-    .first();
-  await expect(usernameInput).toBeVisible({ timeout: 15_000 });
-  await usernameInput.fill(creds.username);
+  // ── Step 4 — Done ─────────────────────────────────────────────────────────
+  await expect(page.getByRole('button', { name: 'Start Exploring' })).toBeVisible({ timeout: 15_000 });
+  await page.getByRole('button', { name: 'Start Exploring' }).click();
 
-  const passwordInput = page.locator('input[type="password"]').first();
-  await expect(passwordInput).toBeVisible({ timeout: 5_000 });
-  await passwordInput.fill(creds.password);
-
-  await page.getByRole('button', { name: /create|finish|done|complete/i }).first().click();
-
-  await expect(page).not.toHaveURL(/onboarding/, { timeout: 30_000 });
+  // Post-condition: nav is visible = authenticated
+  await expect(page.locator('nav[aria-label="Main navigation"]')).toBeVisible({ timeout: 15_000 });
 }
 
 async function completeLoginForm(page: Page, creds: Credentials): Promise<void> {
-  const usernameInput = page
-    .locator('input[name*="user" i], input[placeholder*="user" i], input[id*="user" i], input[type="text"]')
-    .first();
-  await expect(usernameInput).toBeVisible({ timeout: 10_000 });
-  await usernameInput.fill(creds.username);
+  // Use the exact IDs confirmed in login.tsx:110 and :130
+  await expect(page.locator('#login-username')).toBeVisible({ timeout: 10_000 });
+  await page.locator('#login-username').fill(creds.username);
+  await page.locator('#login-password').fill(creds.password);
 
-  const passwordInput = page.locator('input[type="password"]').first();
-  await expect(passwordInput).toBeVisible({ timeout: 5_000 });
-  await passwordInput.fill(creds.password);
-
-  await page.getByRole('button', { name: /sign in|log in|login/i }).first().click();
+  // Submit button text is "Sign in" (login.tsx:168)
+  await page.getByRole('button', { name: 'Sign in' }).click();
 
   await expect(page).not.toHaveURL(/login/, { timeout: 15_000 });
 }
 
+/**
+ * Bring the page to an authenticated state.
+ *
+ * Idempotent: if the nav is already visible, returns immediately.
+ * Detects onboarding vs login form and handles both paths.
+ */
 export async function loginAs(page: Page, username = 'admin', password = 'admin123'): Promise<void> {
   const creds: Credentials = { username, password };
 
   await page.goto('/');
 
-  const phase = await detectPhase(page);
-
-  if (phase.kind === 'onboarding') {
-    await completeOnboarding(page, creds);
-  } else if (phase.kind === 'login-form') {
-    await completeLoginForm(page, creds);
+  // Fast-path: already authenticated
+  if (await isAuthenticated(page)) {
+    return;
   }
 
-  // Post-condition contract: must be authenticated after return
-  await expect(page).not.toHaveURL(/\/(login|onboarding)/, { timeout: 15_000 });
-  await expect(
-    page.locator('[data-testid="user-menu"], nav').first(),
-  ).toBeVisible({ timeout: 15_000 });
+  const url = page.url();
+
+  if (url.includes('/onboarding')) {
+    await completeOnboarding(page, creds);
+    return;
+  }
+
+  // On the login form the URL is /login or the page shows #login-username
+  const loginUsername = page.locator('#login-username');
+  if (await loginUsername.isVisible({ timeout: 5_000 })) {
+    await completeLoginForm(page, creds);
+    return;
+  }
+
+  // Fallback: check for onboarding button on the root route (redirected)
+  const getStartedBtn = page.getByRole('button', { name: 'Get Started' });
+  if (await getStartedBtn.isVisible({ timeout: 5_000 })) {
+    await completeOnboarding(page, creds);
+    return;
+  }
+
+  // If we reach here without nav, something is wrong — propagate the failure
+  await expect(page.locator('nav[aria-label="Main navigation"]')).toBeVisible({ timeout: 15_000 });
 }

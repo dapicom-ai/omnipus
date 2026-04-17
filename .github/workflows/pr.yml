@@ -270,6 +270,7 @@ jobs:
       - name: Run Playwright tests
         env:
           OMNIPUS_URL: http://localhost:6060
+          OPENROUTER_API_KEY_CI: ${{ secrets.OPENROUTER_API_KEY_CI }}
         run: npx playwright test
 
       - name: Upload Playwright artifacts

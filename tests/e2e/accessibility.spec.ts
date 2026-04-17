@@ -4,14 +4,15 @@ import { expectA11yClean } from './fixtures/a11y';
 
 // Global storageState provides pre-authenticated session (see playwright.config.ts + global-setup.ts).
 
+// Valid SPA routes (confirmed from TanStack Router file-based routes in src/routes/_app/)
+// /about is NOT a separate route — it is /settings?tab=about (confirmed in route map)
 const ROUTES = [
   '/',
   '/agents',
-  '/chat',
   '/skills',
   '/command-center',
   '/settings',
-  '/about',
+  '/settings?tab=about',
 ];
 
 test('all major routes pass axe serious/critical accessibility checks', async ({ page }) => {
@@ -23,7 +24,6 @@ test('all major routes pass axe serious/critical accessibility checks', async ({
       response!.ok(),
       `Route ${route} returned HTTP ${response!.status()} — fix the route before asserting axe`,
     ).toBe(true);
-    expect(response!.status()).toBe(200);
 
     await expectA11yClean(page);
   }
