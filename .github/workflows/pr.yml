@@ -133,6 +133,45 @@ jobs:
           CGO_ENABLED: "1"
         run: go test -race -tags goolm,stdjson -count=1 -timeout 240s ./pkg/sysagent/... ./pkg/config/... ./pkg/credentials/... ./pkg/gateway/... ./pkg/channels/...
 
+  perf-smoke:
+    name: Perf Smoke
+    runs-on: ubuntu-latest
+    needs: [test]
+    timeout-minutes: 10
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Build SPA
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          rm -rf pkg/gateway/spa
+          cp -r dist/spa pkg/gateway/spa
+
+      - name: Run SLO gates (no 2000-session load)
+        # Runs only the *SLO* tests C1 wrote — boot, per-turn, transcript,
+        # media resolve, compaction bounds. Skips the 2000-session load test
+        # (guarded by OMNIPUS_RUN_LOAD_TEST env — not set here).
+        run: |
+          set -euo pipefail
+          CGO_ENABLED=0 go test -tags goolm,stdjson \
+            -run '^(TestBootUnder1Second|TestPerTurnSLO|TestNoTranscriptDataLoss|TestMediaResolveSLO|TestCompactionBoundsMemory)$' \
+            -timeout 5m -v ./tests/perf/...
+
   playwright:
     name: Playwright E2E
     runs-on: ubuntu-latest

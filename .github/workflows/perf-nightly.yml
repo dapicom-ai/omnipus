@@ -1,0 +1,77 @@
+name: Nightly Perf
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch: {}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  perf:
+    name: Perf (benchmarks + SLOs + 2000-session load)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write   # commits perf-nightly results + report
+    env:
+      CGO_ENABLED: "0"
+      OMNIPUS_RUN_LOAD_TEST: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+
+      - name: Build SPA
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+          rm -rf pkg/gateway/spa
+          cp -r dist/spa pkg/gateway/spa
+
+      - name: Raise open-file limit for 2000 concurrent WS sessions
+        # GitHub ubuntu-latest runners default to 1024 open files.
+        # Each WS session uses a file descriptor; raise to 4096 so the OS
+        # does not reject new connections during the load ramp.
+        run: ulimit -n 4096 || true
+
+      - name: Run benchmarks + SLOs + 2000-session load
+        run: |
+          set -euo pipefail
+          mkdir -p tests/perf/results
+          CGO_ENABLED=0 go test -tags goolm,stdjson \
+            -run '^(TestBootUnder1Second|TestPerTurnSLO|TestNoTranscriptDataLoss|TestMediaResolveSLO|TestCompactionBoundsMemory|TestLoad2000Sessions)$' \
+            -timeout 15m -v ./tests/perf/...
+          CGO_ENABLED=0 go test -tags goolm,stdjson \
+            -bench=. -benchtime=3s -benchmem -run='^$' \
+            -timeout 10m ./tests/perf/... | tee tests/perf/results/bench-$(date -u +%Y-%m-%d).txt
+
+      - name: Commit perf results
+        run: |
+          set -euo pipefail
+          git config user.name "omnipus-perf-bot"
+          git config user.email "perf@noreply.local"
+          git add tests/perf/results/
+          git diff --cached --quiet || git commit -m "perf: nightly run $(date -u +%Y-%m-%d)"
+          git push || echo "no changes to push"
+
+      - name: Upload results artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-results
+          path: tests/perf/results/
+          retention-days: 30
