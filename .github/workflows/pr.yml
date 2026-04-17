@@ -168,8 +168,8 @@ jobs:
       - name: Sync SPA into embed target
         run: |
           set -euo pipefail
-          rm -rf pkg/gateway/spa/assets
-          cp -r dist/spa/* pkg/gateway/spa/
+          rm -rf pkg/gateway/spa
+          cp -r dist/spa pkg/gateway/spa
 
       - name: Verify SPA sync
         # Fail fast if the sync produced an empty embed target. An empty assets/
