@@ -59,7 +59,7 @@ func newScenarioCfg(t *testing.T) (*config.Config, string) {
 // Traces to: temporal-puzzling-melody.md §Layer 2, scenario 1
 // ==================================================================================
 func TestScenario1HandoffRayToMaxPreservesTranscript(t *testing.T) {
-	t.Skip("contract pending implementation — tracked in Plan 3 §1; requires gateway harness StartTestGateway (A1)")
+	t.Skip("harness ready (A1 complete); test body not yet implemented — requires full WS chat pipeline, tracked in Plan 3 §Layer 2, scenario 1")
 	// When StartTestGateway lands in pkg/agent/testutil/gateway_harness.go:
 	//   gw := testutil.StartTestGateway(t, testutil.WithAgents(rayMaxAgents), testutil.WithScenario(...))
 	//   Initiate a session with Ray, send a message, trigger handoff to Max.
@@ -269,8 +269,8 @@ func TestScenario5RateLimitFiresOnThirdCall(t *testing.T) {
 // Traces to: temporal-puzzling-melody.md §Layer 2, scenario 6
 // ==================================================================================
 func TestScenario6BrowserNavigateThenScreenshotChain(t *testing.T) {
-	t.Skip("contract pending implementation — tracked in Plan 3 §1; " +
-		"requires real Chromium + gateway harness StartTestGateway (A1)")
+	t.Skip("harness ready (A1 complete); test body not yet implemented — " +
+		"requires real Chromium binary in CI, tracked in Plan 3 §Layer 2, scenario 6")
 	// When gateway harness and real Chromium are available:
 	//   gw := testutil.StartTestGateway(t, testutil.WithScenario(
 	//     testutil.NewScenario().
@@ -292,8 +292,7 @@ func TestScenario6BrowserNavigateThenScreenshotChain(t *testing.T) {
 // Traces to: temporal-puzzling-melody.md §Layer 2, scenario 7
 // ==================================================================================
 func TestScenario7SessionCompactionPreservesKeyFacts(t *testing.T) {
-	t.Skip("contract pending implementation — tracked in Plan 3 §1; " +
-		"requires multi-turn RunTurn API with accessible session metadata (lastCompactionSummary)")
+	t.Skip("harness ready (A1 complete); blocked on multi-turn RunTurn API with accessible session metadata (lastCompactionSummary) — tracked in Plan 3 §Layer 2, scenario 7")
 	// When session compaction metadata is accessible:
 	//   Run N turns > SummarizeMessageThreshold.
 	//   Assert: session.Meta().LastCompactionSummary != "".

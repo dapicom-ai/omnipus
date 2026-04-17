@@ -231,7 +231,39 @@ func bootCredentials(
 }
 
 // Run starts the gateway runtime using the configuration loaded from configPath.
+// It installs OS signal handlers (SIGINT, SIGTERM) and blocks until one fires,
+// then delegates to RunContext for the actual boot and serve logic.
+// Zero behaviour change from the caller's perspective — the CLI entry point
+// continues to call Run unchanged.
 func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigChan)
+
+	go func() {
+		select {
+		case <-sigChan:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+
+	return RunContext(ctx, debug, homePath, configPath, allowEmptyStartup)
+}
+
+// RunContext is the context-cancellable entry point for the gateway runtime.
+// Run is a thin signal-driven wrapper around this function. Tests call RunContext
+// directly with a context they control, enabling in-process integration testing
+// without signal wiring.
+//
+// The caller is responsible for canceling ctx when the gateway should shut down.
+// RunContext blocks until ctx is canceled or a fatal error occurs, then performs
+// the full graceful shutdown sequence (channels → agent loop → background services
+// → provider) before returning.
+func RunContext(ctx context.Context, debug bool, homePath, configPath string, allowEmptyStartup bool) error {
 	// Bootstrap ~/.omnipus/ directory tree on every start (idempotent, US-1).
 	if err := datamodel.Init(homePath); err != nil {
 		return fmt.Errorf("directory initialization failed: %w", err)
@@ -267,6 +299,13 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	provider, modelID, err := createStartupProvider(cfg, allowEmptyStartup)
 	if err != nil {
 		return fmt.Errorf("error creating provider: %w", err)
+	}
+
+	// Apply the test provider override if one has been installed. This hook is
+	// set only during in-process integration tests; it is always nil in
+	// production. See pkg/gateway/testhook.go.
+	if override := testProviderOverride; override != nil {
+		provider = override()
 	}
 
 	// Only override ModelName if it was empty (first boot / migration).
@@ -372,11 +411,13 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	fmt.Printf("✓ Gateway started on %s:%d\n", cfg.Gateway.Host, cfg.Gateway.Port)
 	fmt.Println("Press Ctrl+C to stop")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	// agentLoopCtx is canceled if the agent loop exits unexpectedly (e.g. panic
+	// recovery). The outer select below treats this the same as ctx cancellation.
+	agentLoopCtx, agentLoopCancel := context.WithCancel(ctx)
+	defer agentLoopCancel()
 
 	go func() {
-		defer cancel()
+		defer agentLoopCancel()
 		defer func() {
 			if r := recover(); r != nil {
 				slog.Error("agent loop panicked", "panic", r, "stack", string(runtimedebug.Stack()))
@@ -393,12 +434,9 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 	}
 	defer stopWatch()
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-
 	for {
 		select {
-		case <-sigChan:
+		case <-agentLoopCtx.Done():
 			logger.Info("Shutting down...")
 			omnipusGracefulShutdown(runningServices, agentLoop, provider, cfg)
 			return nil

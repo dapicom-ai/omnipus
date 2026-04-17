@@ -34,7 +34,7 @@ import (
 // Traces to: temporal-puzzling-melody.md §Layer 3, test 1
 // Acceptance: Plan 3 §1 — "Audit log completeness: every LLM request"
 func TestOnboardingToFirstChat(t *testing.T) {
-	t.Skip("blocked on pkg/agent/testutil/gateway_harness.go (A1) — tracked in Plan 3 §Layer 3 test 1")
+	t.Skip("harness ready (A1 complete); test body not yet implemented — tracked in Plan 3 §Layer 3 test 1")
 	// When StartTestGateway lands:
 	//   gw := testutil.StartTestGateway(t, testutil.WithAllowEmpty(), testutil.WithScenario(
 	//     testutil.NewScenario().WithText("Hello from the agent"),
@@ -58,7 +58,7 @@ func TestOnboardingToFirstChat(t *testing.T) {
 // Traces to: temporal-puzzling-melody.md §Layer 3, test 2
 // Regression: commit ebb976d MediaStore pointer staleness bug
 func TestMediaServingAfterHotReload(t *testing.T) {
-	t.Skip("blocked on pkg/agent/testutil/gateway_harness.go (A1) — tracked in Plan 3 §Layer 3 test 2 (regression ebb976d)")
+	t.Skip("harness ready (A1 complete); test body not yet implemented — tracked in Plan 3 §Layer 3 test 2 (regression ebb976d)")
 	// When StartTestGateway lands:
 	//   gw := testutil.StartTestGateway(t, testutil.WithBearerAuth(), testutil.WithScenario(
 	//     testutil.NewScenario().WithText("screenshot stored"),
@@ -80,7 +80,7 @@ func TestMediaServingAfterHotReload(t *testing.T) {
 //
 // Traces to: temporal-puzzling-melody.md §Layer 3, test 3
 func TestSessionPersistsAcrossRestart(t *testing.T) {
-	t.Skip("blocked on pkg/agent/testutil/gateway_harness.go (A1) — tracked in Plan 3 §Layer 3 test 3")
+	t.Skip("harness ready (A1 complete); test body not yet implemented — tracked in Plan 3 §Layer 3 test 3")
 	// When StartTestGateway lands:
 	//   gw1 := testutil.StartTestGateway(t, testutil.WithBearerAuth(), testutil.WithScenario(...))
 	//   Send 3 messages, capture session ID.
@@ -99,7 +99,7 @@ func TestSessionPersistsAcrossRestart(t *testing.T) {
 //
 // Traces to: temporal-puzzling-melody.md §Layer 3, test 4
 func TestConfigReloadUpdatesToolSet(t *testing.T) {
-	t.Skip("blocked on pkg/agent/testutil/gateway_harness.go (A1) — tracked in Plan 3 §Layer 3 test 4")
+	t.Skip("harness ready (A1 complete); test body not yet implemented — tracked in Plan 3 §Layer 3 test 4")
 	// When StartTestGateway lands:
 	//   1. Boot with exec policy = deny.
 	//   2. GET /api/v1/agents/main/tools → verify exec policy == "deny".
@@ -116,7 +116,7 @@ func TestConfigReloadUpdatesToolSet(t *testing.T) {
 // Traces to: temporal-puzzling-melody.md §Layer 3, test 5
 // Acceptance: Plan 3 §1 — per-agent llm_calls_per_hour enforced
 func TestRateLimitHeadersExposed(t *testing.T) {
-	t.Skip("blocked on pkg/agent/testutil/gateway_harness.go (A1) — tracked in Plan 3 §Layer 3 test 5")
+	t.Skip("harness ready (A1 complete); test body not yet implemented — tracked in Plan 3 §Layer 3 test 5")
 	// When StartTestGateway lands:
 	//   Boot with MaxAgentLLMCallsPerHour=1.
 	//   Send 2 chat messages rapidly; second should trigger rate limit.
@@ -137,7 +137,7 @@ func TestRateLimitHeadersExposed(t *testing.T) {
 // Traces to: temporal-puzzling-melody.md §4 Axis-3 test 6
 // Acceptance: Plan 3 §1 — "Retention retroactive: lowering triggers immediate background sweep"
 func TestRetentionRetroactiveSweep(t *testing.T) {
-	t.Skip("blocked on pkg/agent/testutil/gateway_harness.go (A1) — tracked in Plan 3 §4 Axis-3 test 6")
+	t.Skip("harness ready (A1 complete); test body not yet implemented — tracked in Plan 3 §4 Axis-3 test 6")
 	// When StartTestGateway lands:
 	//   1. Create two sessions with transcript files dated 2 days ago (time-spoof or direct JSONL write).
 	//   2. Update config retention.session_days = 1.
@@ -157,7 +157,7 @@ func TestRetentionRetroactiveSweep(t *testing.T) {
 // Traces to: temporal-puzzling-melody.md §4 Axis-3 test 7
 // Acceptance: Plan 3 §1 — "Session with deleted agent: read-only transcript + 'Agent removed' banner"
 func TestDeletedAgentSessionReadOnly(t *testing.T) {
-	t.Skip("blocked on pkg/agent/testutil/gateway_harness.go (A1) — tracked in Plan 3 §4 Axis-3 test 7")
+	t.Skip("harness ready (A1 complete); test body not yet implemented — tracked in Plan 3 §4 Axis-3 test 7")
 	// When StartTestGateway lands:
 	//   1. Create custom agent "alpha" via POST /api/v1/agents.
 	//   2. Create a session with agent "alpha".
@@ -177,7 +177,7 @@ func TestDeletedAgentSessionReadOnly(t *testing.T) {
 // Traces to: temporal-puzzling-melody.md §4 Axis-3 test 8
 // Acceptance: Plan 3 §1 — "Audit log completeness: every tool call, every LLM request, every handoff, every failed auth"
 func TestAuditLogCompleteness(t *testing.T) {
-	t.Skip("blocked on pkg/agent/testutil/gateway_harness.go (A1) — tracked in Plan 3 §4 Axis-3 test 8")
+	t.Skip("harness ready (A1 complete); test body not yet implemented — tracked in Plan 3 §4 Axis-3 test 8")
 	// When StartTestGateway lands with audit_log=true:
 	//   Drive 50 tool calls, 10 LLM calls, 3 handoffs, 5 bad-auth attempts via HTTP.
 	//   Read gw.HomeDir/system/audit.jsonl line by line.
@@ -215,7 +215,7 @@ func TestSPAVersionMismatchHeader(t *testing.T) {
 // Traces to: temporal-puzzling-melody.md §4 Axis-3 test 10
 // Acceptance: Plan 3 §1 — "Multi-device admin sessions: all clients see live updates"
 func TestMultiDeviceLiveSync(t *testing.T) {
-	t.Skip("blocked on pkg/agent/testutil/gateway_harness.go (A1) — tracked in Plan 3 §4 Axis-3 test 10")
+	t.Skip("harness ready (A1 complete); test body not yet implemented — tracked in Plan 3 §4 Axis-3 test 10")
 	// When StartTestGateway lands:
 	//   gw := testutil.StartTestGateway(t, testutil.WithBearerAuth(), testutil.WithScenario(...))
 	//   wsA := dialWS(gw.URL + "/api/v1/ws", gw.BearerToken)
@@ -272,7 +272,7 @@ func TestCredentialPermFatal(t *testing.T) {
 		t.Fatal("BLOCKED: file written at 0644 has no group/other read bits — test cannot exercise security check")
 	}
 
-	t.Skip("blocked on pkg/agent/testutil/gateway_harness.go (A1) for full boot-failure assertion — " +
+	t.Skip("harness ready (A1 complete); full boot-failure assertion not yet implemented — " +
 		"permission bit verification above passes; tracked in Plan 3 §4 Axis-3 test 11")
 	// When StartTestGateway lands:
 	//   Boot with master.key at 0644 → assert gateway exits with error containing "0600".

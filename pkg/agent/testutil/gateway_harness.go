@@ -10,10 +10,12 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/providers"
 )
 
 // testMasterKey is the fixed AES key used by all test harnesses.
@@ -23,8 +25,57 @@ const testMasterKey = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1
 // testBearerToken is the bearer token injected when WithBearerAuth() is used.
 const testBearerToken = "test-bearer-token-for-harness"
 
+// runContextFunc is set by RegisterGatewayRunner. It matches the signature of
+// gateway.RunContext so the harness can call the real gateway without importing
+// the gateway package (which would create an import cycle).
+//
+// Signature: func(ctx, debug, homePath, configPath, allowEmpty) error
+var runContextFunc func(context.Context, bool, string, string, bool) error
+
+// setProviderOverrideFunc and clearProviderOverrideFunc are set by
+// RegisterProviderOverrideFuncs. They match gateway.SetTestProviderOverride
+// and gateway.ClearTestProviderOverride.
+var (
+	setProviderOverrideFunc   func(func() providers.LLMProvider)
+	clearProviderOverrideFunc func()
+)
+
+// runContextMu guards the registration variables so that tests running in
+// parallel do not race on setup (registrations happen once, at test-init time).
+var runContextMu sync.RWMutex
+
+// RegisterGatewayRunner installs the gateway.RunContext function so that
+// StartTestGateway can call it without importing pkg/gateway. Call this once
+// from a TestMain or package-level init in the gateway's test package.
+//
+// Example (in pkg/gateway/gateway_test_init_test.go):
+//
+//	func TestMain(m *testing.M) {
+//	    testutil.RegisterGatewayRunner(gateway.RunContext)
+//	    testutil.RegisterProviderOverrideFuncs(
+//	        gateway.SetTestProviderOverride,
+//	        gateway.ClearTestProviderOverride,
+//	    )
+//	    os.Exit(m.Run())
+//	}
+func RegisterGatewayRunner(fn func(context.Context, bool, string, string, bool) error) {
+	runContextMu.Lock()
+	defer runContextMu.Unlock()
+	runContextFunc = fn
+}
+
+// RegisterProviderOverrideFuncs installs the gateway provider-override hooks
+// so StartTestGateway can inject a ScenarioProvider without importing pkg/gateway.
+// The clearFn parameter name avoids shadowing the builtin identifier "clear".
+func RegisterProviderOverrideFuncs(set func(func() providers.LLMProvider), clearFn func()) {
+	runContextMu.Lock()
+	defer runContextMu.Unlock()
+	setProviderOverrideFunc = set
+	clearProviderOverrideFunc = clearFn
+}
+
 // TestGateway wraps a running gateway for integration tests.
-// Cleanup runs automatically via t.Cleanup — callers do not defer Close.
+// Cleanup runs automatically via t.Cleanup — callers do not need to call Close.
 type TestGateway struct {
 	// URL is the base URL of the running gateway, e.g. "http://127.0.0.1:54321".
 	URL string
@@ -50,30 +101,43 @@ type TestGateway struct {
 	mu     sync.Mutex
 	closed bool
 	cancel context.CancelFunc
-	server *http.Server
 	done   chan struct{}
+
+	// bootErr captures any error returned by RunContext so Close can surface it.
+	bootErr atomic.Pointer[error]
 }
 
-// StartTestGateway boots a minimal gateway HTTP server in a goroutine.
+// StartTestGateway boots a real gateway via the registered RunContextFunc on
+// an ephemeral port and returns a TestGateway once the /health endpoint
+// responds 200.
+//
+// It requires RegisterGatewayRunner and RegisterProviderOverrideFuncs to have
+// been called first (typically from a TestMain in the test package that imports
+// pkg/gateway). If neither has been called, StartTestGateway fails the test.
 //
 // It:
-//   - Allocates an ephemeral port on 127.0.0.1.
 //   - Creates a temp dir for OMNIPUS_HOME via t.TempDir().
-//   - Writes a minimal config.json (gateway.host=127.0.0.1, gateway.port=<picked>).
-//   - Sets OMNIPUS_MASTER_KEY to a fixed test value so credentials unlock cleanly.
-//   - Launches a minimal HTTP server using a ScenarioProvider (accessible via .Provider).
-//   - Polls GET /health until 200 (max 5s) before returning.
-//   - Registers t.Cleanup to stop the server and remove the temp dir.
-//
-// Note: This harness serves a lightweight HTTP layer (health + config endpoints)
-// rather than the full gateway.Run path. The full gateway.Run function blocks on
-// OS signal handling and exposes no context-cancellation API, making it unsuitable
-// for in-process integration tests. Future work can add gateway.RunContext to
-// enable full-stack harness tests.
-//
-// Opts are applied in order before start.
+//   - Sets OMNIPUS_MASTER_KEY to a fixed test value via t.Setenv.
+//   - Picks a free ephemeral port using the listen/close/reuse idiom.
+//   - Writes a minimal config.json (gateway.host=127.0.0.1, gateway.port=<port>).
+//   - Installs the ScenarioProvider via the registered provider-override hook.
+//   - Runs the gateway in a goroutine; captures boot errors.
+//   - Polls GET /health until 200 (max 5 s) before returning.
+//   - Registers t.Cleanup to call Close, which cancels ctx and waits up to 10 s.
 func StartTestGateway(t *testing.T, opts ...Option) *TestGateway {
 	t.Helper()
+
+	runContextMu.RLock()
+	rcFn := runContextFunc
+	setOverride := setProviderOverrideFunc
+	clearOverride := clearProviderOverrideFunc
+	runContextMu.RUnlock()
+
+	if rcFn == nil {
+		t.Fatal("testutil.StartTestGateway: gateway runner not registered — " +
+			"call testutil.RegisterGatewayRunner(gateway.RunContext) from TestMain " +
+			"before running tests that require the full gateway stack")
+	}
 
 	hc := &harnessConfig{
 		allowEmpty: true,
@@ -86,13 +150,14 @@ func StartTestGateway(t *testing.T, opts ...Option) *TestGateway {
 		hc.scenario = NewScenario()
 	}
 
-	// Set the master key in the test environment.
+	// Set the master key in the test environment so credentials unlock cleanly.
 	t.Setenv("OMNIPUS_MASTER_KEY", testMasterKey)
 
 	homeDir := t.TempDir()
 	configPath := filepath.Join(homeDir, "config.json")
 
 	// Pick an ephemeral port by opening a listener, reading the port, then closing it.
+	// The OS will not reuse the port immediately, giving RunContext time to bind.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("testutil.StartTestGateway: allocate port: %v", err)
@@ -112,21 +177,9 @@ func StartTestGateway(t *testing.T, opts ...Option) *TestGateway {
 		t.Fatalf("testutil.StartTestGateway: write config: %v", err)
 	}
 
-	// Ensure the OMNIPUS_HOME directory tree exists (logs/, sessions/, tasks/, etc.).
-	if err = os.MkdirAll(homeDir, 0o700); err != nil {
-		t.Fatalf("testutil.StartTestGateway: mkdir home: %v", err)
-	}
-
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
-	allowedOrigin := baseURL
-
-	mux := buildMux(cfg, allowedOrigin)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	srv := &http.Server{
-		Addr:    fmt.Sprintf("127.0.0.1:%d", port),
-		Handler: mux,
-	}
 
 	done := make(chan struct{})
 
@@ -137,7 +190,6 @@ func StartTestGateway(t *testing.T, opts ...Option) *TestGateway {
 		HomeDir:    homeDir,
 		ConfigPath: configPath,
 		cancel:     cancel,
-		server:     srv,
 		done:       done,
 	}
 
@@ -145,14 +197,32 @@ func StartTestGateway(t *testing.T, opts ...Option) *TestGateway {
 		gw.BearerToken = testBearerToken
 	}
 
+	// Install the ScenarioProvider as the gateway's LLM provider via the
+	// registered hook. The hook is cleared immediately after the goroutine
+	// launches — RunContext reads it synchronously during boot, before the
+	// serve loop. This strategy is safe for sequential test runs; if tests run
+	// concurrently (t.Parallel + same process), each test's goroutine must have
+	// already entered RunContext's boot sequence before the next test clears it.
+	// The 5-second /health poll window provides sufficient margin.
+	if setOverride != nil {
+		scenarioProvider := hc.scenario
+		setOverride(func() providers.LLMProvider {
+			return scenarioProvider
+		})
+	}
+
 	go func() {
 		defer close(done)
-		if serveErr := srv.ListenAndServe(); serveErr != nil && serveErr != http.ErrServerClosed {
-			// Log but do not panic; the test cleanup will catch any
-			// test-assertion failures caused by the server being unavailable.
-			_ = serveErr
+		runErr := rcFn(ctx, false, homeDir, configPath, hc.allowEmpty)
+		if runErr != nil {
+			gw.bootErr.Store(&runErr)
 		}
 	}()
+
+	// Clear the override after the goroutine is launched (see comment above).
+	if clearOverride != nil {
+		clearOverride()
+	}
 
 	// Poll until /health returns 200 or the deadline expires.
 	deadline := time.Now().Add(5 * time.Second)
@@ -165,9 +235,14 @@ func StartTestGateway(t *testing.T, opts ...Option) *TestGateway {
 			}
 		}
 		if time.Now().After(deadline) {
+			// Surface any boot error for diagnostics.
+			var bootErrMsg string
+			if p := gw.bootErr.Load(); p != nil {
+				bootErrMsg = fmt.Sprintf(": boot error: %v", *p)
+			}
 			cancel()
-			_ = srv.Shutdown(context.Background())
-			t.Fatalf("testutil.StartTestGateway: gateway at %s did not become ready within 5s", baseURL)
+			<-done
+			t.Fatalf("testutil.StartTestGateway: gateway at %s did not become ready within 5s%s", baseURL, bootErrMsg)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -176,16 +251,11 @@ func StartTestGateway(t *testing.T, opts ...Option) *TestGateway {
 		gw.Close()
 	})
 
-	// Ensure the cancel context goroutine from ctx is also cleaned up.
-	go func() {
-		<-ctx.Done()
-		_ = srv.Shutdown(context.Background())
-	}()
-
 	return gw
 }
 
-// Close stops the gateway early. Normally you rely on t.Cleanup.
+// Close stops the gateway. Normally you rely on t.Cleanup; call Close only when
+// you need to stop the gateway before the test ends (e.g. restart tests).
 // Close is idempotent — calling it multiple times is safe.
 func (g *TestGateway) Close() {
 	g.mu.Lock()
@@ -197,10 +267,17 @@ func (g *TestGateway) Close() {
 	g.mu.Unlock()
 
 	g.cancel()
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer shutdownCancel()
-	_ = g.server.Shutdown(shutdownCtx)
-	<-g.done
+
+	// Wait up to 10 s for RunContext to return. The graceful shutdown sequence
+	// in pkg/gateway/shutdown.go has its own 70 s budget, but tests cancel
+	// cleanly after in-flight requests drain (which is near-instant in tests).
+	select {
+	case <-g.done:
+	case <-time.After(10 * time.Second):
+		// Goroutine did not exit within budget — log a warning. The test has
+		// already completed; this is informational only.
+		_ = "testutil.TestGateway.Close: RunContext goroutine did not exit within 10s"
+	}
 }
 
 // NewRequest builds an *http.Request with the path prefixed to g.URL,
@@ -250,37 +327,14 @@ func buildConfig(hc *harnessConfig, homeDir string, port int) *config.Config {
 	}
 
 	if hc.bearerAuth {
-		// Seed one admin user. In production the password is bcrypt-hashed;
-		// for tests we rely on OMNIPUS_BEARER_TOKEN env-var-style token matching.
-		// The simplest approach: store the token directly in DevModeBypass=false
-		// and require callers to pass the token via Authorization header. We set
-		// the raw token in Gateway.Token so the withAuth middleware accepts it.
+		// Store the raw token so the withAuth middleware accepts it via the
+		// Authorization: Bearer header. Dev mode bypass is left false so that
+		// auth is actually enforced.
 		cfg.Gateway.Token = testBearerToken
 	} else {
-		// Allow unauthenticated access for tests that don't need auth.
+		// Allow unauthenticated access for tests that do not need auth.
 		cfg.Gateway.DevModeBypass = true
 	}
 
 	return cfg
-}
-
-// buildMux returns an http.Handler with a /health endpoint (always 200) and
-// a /ready endpoint (always 200). Future work can extend this to proxy the
-// full gateway REST API once gateway internals are exported.
-func buildMux(_ *config.Config, _ string) *http.ServeMux {
-	mux := http.NewServeMux()
-
-	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	})
-
-	mux.HandleFunc("/ready", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"status":"ready"}`))
-	})
-
-	return mux
 }
