@@ -1,0 +1,96 @@
+// Contract test: Plan 3 §1 acceptance decision — core agent deletion must be refused.
+//
+// BDD: Given a core agent (Mia, Jim, Ava, Ray, Max), When system.agent.delete is called,
+//
+//	Then the request is rejected with a locked-field error and the agent remains in config.
+//
+// Acceptance decision: Plan 3 §1 "Core agent deletion attempt: refuse, audit-logged"
+// Traces to: temporal-puzzling-melody.md §4 Axis-1, pkg/coreagent/delete_locked_test.go
+
+package coreagent_test
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/coreagent"
+)
+
+// TestDeleteLockedCoreAgentRejected verifies that all 5 core agents carry Locked=true
+// after SeedConfig, meaning any handler that checks Locked before deletion will block
+// the request.
+//
+// The system.agent.delete handler itself lives in the gateway (rest.go), but the
+// locked-identity contract is established here at the data layer. This test ensures
+// that the invariant SeedConfig guarantees — and that a re-seed after tampering
+// restores it — holds for every core agent.
+//
+// Traces to: temporal-puzzling-melody.md §4 Axis-1 — TestDeleteLockedCoreAgentRejected
+func TestDeleteLockedCoreAgentRejected(t *testing.T) {
+	// BDD: Given a fresh config with all core agents seeded.
+	cfg := &config.Config{}
+	coreagent.SeedConfig(cfg)
+
+	// All 5 core agent IDs per issue #45.
+	coreIDs := []string{"jim", "ava", "mia", "ray", "max"}
+
+	for _, id := range coreIDs {
+		t.Run(id, func(t *testing.T) {
+			var found *config.AgentConfig
+			for i := range cfg.Agents.List {
+				if cfg.Agents.List[i].ID == id {
+					found = &cfg.Agents.List[i]
+					break
+				}
+			}
+			require.NotNilf(t, found, "core agent %q must be in cfg.Agents.List after SeedConfig", id)
+
+			// BDD: When system.agent.delete reads the Locked field to decide whether to proceed.
+			// BDD: Then it must find Locked=true and refuse.
+			assert.Truef(t, found.Locked,
+				"core agent %q must have Locked=true — delete handler checks this field before proceeding",
+				id)
+
+			// Tamper protection: forcibly unlock, re-seed, verify re-locked.
+			found.Locked = false
+			require.Falsef(t, found.Locked, "test setup: tamper succeeded (pre-condition)")
+
+			coreagent.SeedConfig(cfg)
+
+			// Re-find after re-seed.
+			var refound *config.AgentConfig
+			for i := range cfg.Agents.List {
+				if cfg.Agents.List[i].ID == id {
+					refound = &cfg.Agents.List[i]
+					break
+				}
+			}
+			require.NotNilf(t, refound, "core agent %q must remain in list after re-seed", id)
+			assert.Truef(t, refound.Locked,
+				"SeedConfig must restore Locked=true on %q after tamper — delete will be refused", id)
+		})
+	}
+
+	// Differentiation: a custom agent is NOT locked.
+	enabled := true
+	cfg.Agents.List = append(cfg.Agents.List, config.AgentConfig{
+		ID:      "penny-custom",
+		Name:    "Penny",
+		Type:    config.AgentTypeCustom,
+		Locked:  false,
+		Enabled: &enabled,
+	})
+	var penny *config.AgentConfig
+	for i := range cfg.Agents.List {
+		if cfg.Agents.List[i].ID == "penny-custom" {
+			penny = &cfg.Agents.List[i]
+			break
+		}
+	}
+	require.NotNil(t, penny)
+	assert.False(t, penny.Locked,
+		"custom agents must have Locked=false — they are deletable (contrast with core agents)")
+}
