@@ -33,10 +33,11 @@ func loadTestGuard(t *testing.T) {
 // loadSLOs are the hard SLO limits enforced by TestLoad2000Sessions.
 const (
 	sloP95FirstToken      = 1 * time.Second
-	sloPeakRSSBytes  uint64 = 500 * 1024 * 1024 // 500 MB
-	sloGoroutineLeakDelta = 10                   // tolerated background goroutines
+	sloGoroutineLeakDelta = 10 // tolerated background goroutines
 	sloDroppedFrames      = 0
 )
+
+const sloPeakRSSBytes uint64 = 500 * 1024 * 1024 // 500 MB
 
 // loadConfig controls the run parameters. Kept as constants so the test is
 // readable and so CI can see the implied runtime budget at a glance.
