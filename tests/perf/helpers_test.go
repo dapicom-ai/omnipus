@@ -1,12 +1,11 @@
 //go:build !cgo
 
-// helpers_test.go provides perf-package-local helpers for all benchmark files.
-//
+package perf
+
 // startPerfGateway mirrors testutil.StartTestGateway but accepts testing.TB so
 // it can be called from both *testing.T (SLO tests) and *testing.B (benchmarks).
 // It boots the real gateway via gateway.RunContext (registered in TestMain) with
 // DevModeBypass=true and a ScenarioProvider so there are no external LLM calls.
-package perf
 
 import (
 	"context"

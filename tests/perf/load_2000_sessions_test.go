@@ -1,9 +1,5 @@
 //go:build !cgo
 
-// Package perf contains performance and SLO tests for the Omnipus gateway.
-// These tests are intentionally separated from the unit-test tree so they
-// can be run under special conditions (environment variables, extended
-// timeouts, resource-limit tuning) without affecting normal CI.
 package perf
 
 import (
@@ -19,11 +15,10 @@ import (
 	"testing"
 	"time"
 
-	// testutil provides StartTestGateway, ScenarioProvider, and functional options.
-	"github.com/dapicom-ai/omnipus/pkg/agent/testutil"
-	// perfutil provides load-specific helpers (Percentile, CountGoroutines, SampleRSS).
-	perfutil "github.com/dapicom-ai/omnipus/pkg/testutil"
 	"github.com/gorilla/websocket"
+
+	"github.com/dapicom-ai/omnipus/pkg/agent/testutil"
+	perfutil "github.com/dapicom-ai/omnipus/pkg/testutil"
 )
 
 // loadTestGuard returns true when OMNIPUS_RUN_LOAD_TEST=1.
@@ -353,7 +348,6 @@ func runSession(
 					latMu.Lock()
 					*latencies = append(*latencies, lat)
 					latMu.Unlock()
-					firstTokenReceived = true
 					atomic.AddInt64(msgRecv, 1)
 				}
 				// Message cycle complete — proceed to hold phase.
@@ -396,7 +390,7 @@ holdPhase:
 		atomic.AddInt64(msgSent, 1)
 	}
 
-	// Cleanly close the WebSocket — server should honour the close frame.
+	// Cleanly close the WebSocket — server should honor the close frame.
 	_ = conn.WriteMessage(websocket.CloseMessage,
 		websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 	<-drainDone

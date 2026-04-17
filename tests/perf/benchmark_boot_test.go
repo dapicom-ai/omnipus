@@ -89,7 +89,8 @@ func TestBootUnder1Second(t *testing.T) {
 
 		if elapsedMs > sloHardMs {
 			t.Errorf(
-				"TestBootUnder1Second run %d: boot took %d ms, exceeds SLO ceiling of %d ms (aspirational target: %d ms)",
+				"TestBootUnder1Second run %d: boot took %d ms, exceeds SLO ceiling of %d ms "+
+					"(aspirational target: %d ms)",
 				i+1, elapsedMs, sloHardMs, sloTargetMs,
 			)
 		}

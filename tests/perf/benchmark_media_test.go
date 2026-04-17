@@ -74,8 +74,8 @@ func TestMediaResolveSLO(t *testing.T) {
 	}
 
 	const (
-		lookups      = 10_000
-		p99BudgetMs  = 10.0 // ms
+		lookups     = 10_000
+		p99BudgetMs = 10.0 // ms
 	)
 
 	dir := t.TempDir()
@@ -125,21 +125,21 @@ func TestMediaResolveSLO(t *testing.T) {
 	sort.Float64s(latenciesMs)
 
 	p99 := computePercentile(latenciesMs, 99)
-	min := latenciesMs[0]
-	max := latenciesMs[len(latenciesMs)-1]
+	minMs := latenciesMs[0]
+	maxMs := latenciesMs[len(latenciesMs)-1]
 	p50 := computePercentile(latenciesMs, 50)
 	p95 := computePercentile(latenciesMs, 95)
 
 	t.Logf("TestMediaResolveSLO: %d lookups over %d refs", lookups, mediaEntries)
 	t.Logf("  min=%.3f ms  p50=%.3f ms  p95=%.3f ms  p99=%.3f ms  max=%.3f ms",
-		min, p50, p95, p99, max)
+		minMs, p50, p95, p99, maxMs)
 
 	if p99 > p99BudgetMs {
 		t.Errorf(
 			"TestMediaResolveSLO FAILED: p99 resolve latency is %.3f ms, exceeds budget of %.0f ms. "+
 				"Distribution: min=%.3f  p50=%.3f  p95=%.3f  p99=%.3f  max=%.3f (all ms). "+
 				"Investigate lock contention in FileMediaStore.Resolve — the RWMutex should be uncontended here.",
-			p99, p99BudgetMs, min, p50, p95, p99, max,
+			p99, p99BudgetMs, minMs, p50, p95, p99, maxMs,
 		)
 	}
 }

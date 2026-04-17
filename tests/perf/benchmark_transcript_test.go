@@ -54,9 +54,9 @@ func BenchmarkTranscriptAppendContention(b *testing.B) {
 						Timestamp: time.Now(),
 						AgentID:   "main",
 					}
-					if err := store.AppendTranscript(sid, entry); err != nil {
+					if appendErr := store.AppendTranscript(sid, entry); appendErr != nil {
 						// Cannot call b.Fatal from goroutine; log and let assertion catch it.
-						_ = err
+						_ = appendErr
 					}
 				}
 			}()
@@ -119,9 +119,9 @@ func TestNoTranscriptDataLossUnderContention(t *testing.T) {
 					Timestamp: time.Now(),
 					AgentID:   "main",
 				}
-				if err := store.AppendTranscript(sid, entry); err != nil {
+				if appendErr := store.AppendTranscript(sid, entry); appendErr != nil {
 					mu.Lock()
-					appendErrs = append(appendErrs, fmt.Errorf("goroutine %d message %d: %w", gNum, m, err))
+					appendErrs = append(appendErrs, fmt.Errorf("goroutine %d message %d: %w", gNum, m, appendErr))
 					mu.Unlock()
 				}
 			}
@@ -153,7 +153,8 @@ func TestNoTranscriptDataLossUnderContention(t *testing.T) {
 		t.Errorf("TestNoTranscriptDataLossUnderContention FAILED: fidelity violation: %v", err)
 	}
 
-	t.Logf("TestNoTranscriptDataLossUnderContention: %d/%d entries verified (no data loss, no duplicates, all parse clean)",
+	t.Logf("TestNoTranscriptDataLossUnderContention: %d/%d entries verified "+
+		"(no data loss, no duplicates, all parse clean)",
 		len(entries), transcriptTotal)
 }
 

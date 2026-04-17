@@ -22,13 +22,13 @@ func compactionTurnText(i int) string {
 			"distinct message bodies rather than repeated identical strings. "+
 			"Paragraph break follows. The agent loop processes each turn sequentially, "+
 			"accumulating transcript entries until the compaction threshold is reached, "+
-			"at which point older messages are summarised and pruned from in-memory context.",
+			"at which point older messages are summarized and pruned from in-memory context.",
 		i,
 	)
 }
 
 // sampleRSS returns the current heap in-use bytes from runtime.MemStats.
-// It calls runtime.GC() first to stabilise the reading by clearing unreachable objects.
+// It calls runtime.GC() first to stabilize the reading by clearing unreachable objects.
 func sampleRSS() uint64 {
 	runtime.GC()
 	var m runtime.MemStats
@@ -140,7 +140,8 @@ func TestCompactionBoundsMemory(t *testing.T) {
 	rss500MB := toMB(rssTurn500)
 	growthMB := rss500MB - rss50MB
 
-	t.Logf("TestCompactionBoundsMemory: RSS at turn 50 = %.2f MB, RSS at turn 500 = %.2f MB, growth = %.2f MB (budget: %.0f MB)",
+	t.Logf("TestCompactionBoundsMemory: RSS at turn 50 = %.2f MB, "+
+		"RSS at turn 500 = %.2f MB, growth = %.2f MB (budget: %.0f MB)",
 		rss50MB, rss500MB, growthMB, rssGrowthBudgetMB)
 
 	if growthMB > rssGrowthBudgetMB {
