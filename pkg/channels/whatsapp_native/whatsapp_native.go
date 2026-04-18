@@ -492,7 +492,7 @@ func (c *WhatsAppNativeChannel) handleLoggedOut() {
 	client.Disconnect()
 
 	// Clear session so the next connect triggers QR pairing.
-	if err := client.Store.Delete(); err != nil {
+	if err := client.Store.Delete(context.Background()); err != nil {
 		logger.ErrorCF("whatsapp", "Failed to clear session for re-pairing", map[string]any{"error": err.Error()})
 		return
 	}
@@ -575,7 +575,7 @@ func (c *WhatsAppNativeChannel) StartTyping(ctx context.Context, chatID string) 
 	}
 
 	// Send initial composing presence
-	if err := client.SendChatPresence(to, types.ChatPresenceComposing, types.ChatPresenceMediaText); err != nil {
+	if err := client.SendChatPresence(ctx, to, types.ChatPresenceComposing, types.ChatPresenceMediaText); err != nil {
 		logger.DebugCF("whatsapp", "Failed to send composing presence", map[string]any{"chat_id": chatID, "error": err.Error()})
 	}
 
@@ -594,7 +594,7 @@ func (c *WhatsAppNativeChannel) StartTyping(ctx context.Context, chatID string) 
 				cl := c.client
 				c.mu.Unlock()
 				if cl != nil && cl.IsConnected() {
-					if err := cl.SendChatPresence(to, types.ChatPresencePaused, types.ChatPresenceMediaText); err != nil {
+					if err := cl.SendChatPresence(maxCtx, to, types.ChatPresencePaused, types.ChatPresenceMediaText); err != nil {
 						logger.DebugCF("whatsapp", "Failed to send paused presence", map[string]any{"chat_id": chatID, "error": err.Error()})
 					}
 				}
@@ -604,7 +604,7 @@ func (c *WhatsAppNativeChannel) StartTyping(ctx context.Context, chatID string) 
 				cl := c.client
 				c.mu.Unlock()
 				if cl != nil && cl.IsConnected() {
-					if err := cl.SendChatPresence(to, types.ChatPresenceComposing, types.ChatPresenceMediaText); err != nil {
+					if err := cl.SendChatPresence(maxCtx, to, types.ChatPresenceComposing, types.ChatPresenceMediaText); err != nil {
 						logger.DebugCF("whatsapp", "Failed to re-send composing presence", map[string]any{"chat_id": chatID, "error": err.Error()})
 					}
 				}
