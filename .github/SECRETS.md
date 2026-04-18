@@ -63,3 +63,26 @@ Rotate all OpenRouter keys at least every 90 days. After rotation, update
 the secret value in GitHub Actions and verify the next CI run passes before
 closing the rotation ticket. The `OMNIPUS_MASTER_KEY_EVAL` value is not
 sensitive across rotations — regenerate freely.
+
+---
+
+## Security CI jobs (`pr.yml` — `security` job, `security-weekly.yml`)
+
+**No new secrets are required** for either the `security` PR job or the
+`security-weekly.yml` weekly audit workflow. Both jobs operate exclusively on
+the repository source tree using public Go tooling and no external API calls.
+
+### Tools used
+
+| Tool | Purpose | Failure threshold |
+|------|---------|-------------------|
+| `govulncheck` (`golang.org/x/vuln`) | Source-level Go vulnerability analysis against the Go vulnerability database (vuln.go.dev). Fails with non-zero exit on any known vulnerability that has a fixed version available. | Any vuln with a fix |
+| `grype` (anchore/grype) | Dependency CVE scan against NVD, GitHub Advisory Database, and OS package databases. | CVSS >= 7.0 (high + critical) — `--fail-on high --only-fixed` in PR job; SARIF-only in weekly job |
+
+### Weekly SARIF upload
+
+The `security-weekly.yml` job uploads `grype.sarif` to GitHub's Security tab
+via `github/codeql-action/upload-sarif`. This requires the `security-events:
+write` permission, which is set at the job level — no additional secret is
+needed. Ensure the repository has **GitHub Advanced Security** enabled (free
+for public repos; required for SARIF ingestion on private repos).

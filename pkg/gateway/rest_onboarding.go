@@ -259,6 +259,16 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 		users = append(users, newUser)
 		gatewayMap["users"] = users
 		m["gateway"] = gatewayMap
+
+		// Mark onboarding complete INSIDE the config lock. This closes the
+		// TOCTOU window between "callback returns with config mutation" and
+		// "CompleteOnboarding runs" that previously let N concurrent callers
+		// all pass the re-check at the top of the callback. After this line,
+		// any other goroutine entering the callback sees IsComplete() = true
+		// and errors cleanly with 409.
+		if completeErr := a.onboardingMgr.CompleteOnboarding(); completeErr != nil {
+			return fmt.Errorf("mark onboarding complete: %w", completeErr)
+		}
 		return nil
 	}); err != nil {
 		if err.Error() == "onboarding already complete" {
@@ -270,15 +280,9 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Config saved successfully. Trigger a reload so in-memory config picks up the new user.
+	// Config + state saved atomically under configMu. Trigger a reload so the
+	// in-memory config picks up the new user.
 	a.awaitReload()
-
-	// Mark onboarding complete.
-	if err := a.onboardingMgr.CompleteOnboarding(); err != nil {
-		slog.Error("onboarding: CompleteOnboarding failed after config persisted", "error", err)
-		jsonErr(w, http.StatusInternalServerError, "onboarding state save failed")
-		return
-	}
 
 	slog.Info("onboarding: completed", "username", body.Admin.Username)
 	resp := map[string]any{

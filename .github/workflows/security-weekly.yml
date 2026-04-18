@@ -1,0 +1,53 @@
+name: Weekly Security
+on:
+  schedule: [{cron: '0 4 * * 1'}]   # Monday 04:00 UTC
+  workflow_dispatch:
+jobs:
+  full-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write  # upload grype SARIF
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+      - name: Build SPA
+        run: |
+          npm ci
+          npm run build
+          rm -rf pkg/gateway/spa
+          cp -r dist/spa pkg/gateway/spa
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: Run govulncheck (full)
+        run: govulncheck -tags goolm,stdjson ./... | tee govulncheck.txt
+      - name: Install grype
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b "$(go env GOPATH)/bin"
+      - name: Run grype (SARIF output)
+        run: |
+          "$(go env GOPATH)/bin/grype" dir:. -o sarif > grype.sarif
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: grype.sarif
+      - name: Run full security test suite
+        run: CGO_ENABLED=0 go test -tags goolm,stdjson -v -count=1 -timeout 25m ./tests/security/...
+      - name: Upload audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-security-audit
+          path: |
+            govulncheck.txt
+            grype.sarif
+          retention-days: 90
