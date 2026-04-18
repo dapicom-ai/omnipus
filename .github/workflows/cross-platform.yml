@@ -81,16 +81,18 @@ jobs:
           PID=$!
           echo "gateway pid=$PID"
 
-          # Discover the chosen port from the log — gateway defaults to 18790
-          # but a platform-local config override could differ. Poll with a
+          # Discover the bound host:port from the log — the datamodel first-run
+          # path writes "localhost:3000" into a default config, while a preset
+          # config might bind 127.0.0.1:18790 or any other host/port. Match
+          # both (host is any non-whitespace up to the colon). Poll with a
           # 30 s budget (boot SLO is <1 s but runner cold-start varies).
-          PORT=""
+          HOSTPORT=""
           for i in $(seq 1 30); do
-            if [ -z "$PORT" ]; then
-              PORT=$(grep -oE 'Gateway started on 127\.0\.0\.1:[0-9]+' omnipus.log 2>/dev/null | grep -oE '[0-9]+$' | head -1 || true)
+            if [ -z "$HOSTPORT" ]; then
+              HOSTPORT=$(grep -oE 'Gateway started on [^[:space:]]+:[0-9]+' omnipus.log 2>/dev/null | sed 's/^Gateway started on //' | head -1 || true)
             fi
-            if [ -n "$PORT" ] && curl -sf "http://127.0.0.1:$PORT/health" > /dev/null 2>&1; then
-              echo "health ok on port $PORT after ${i}s"
+            if [ -n "$HOSTPORT" ] && curl -sf "http://${HOSTPORT}/health" > /dev/null 2>&1; then
+              echo "health ok on ${HOSTPORT} after ${i}s"
               kill "$PID" || true
               exit 0
             fi
