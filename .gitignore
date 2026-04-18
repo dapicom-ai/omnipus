@@ -79,3 +79,7 @@ tests/e2e/fixtures/.auth/
 # Evals — results ARE committed (trend report regenerated from history)
 !evals/results/
 !evals/results/**
+
+# Perf — results ARE committed for trend analysis
+!tests/perf/results/
+!tests/perf/results/**
