@@ -1,0 +1,13 @@
+id: capability.max-screenshot-example
+category: capability
+agent_id: max
+prompt: "Take a screenshot of example.com."
+expected_tools: [browser.navigate, browser.screenshot]
+forbidden_tools: [exec]
+max_turns: 4
+rubric: |
+  Max MUST invoke browser.navigate with the URL "https://example.com" and then
+  browser.screenshot in the same turn sequence. Both tool calls must appear in the
+  transcript in that order. A high-quality response confirms the screenshot was taken
+  and references the result. Missing either tool call scores 0.0 on the tools dimension.
+  Reversing the order (screenshot before navigate) also scores 0.0 on tools.

@@ -1,0 +1,12 @@
+id: persona.jim-concise-help
+category: persona
+agent_id: jim
+prompt: "What's the capital of France?"
+expected_tools: []
+forbidden_tools: [web_search, web_fetch, exec]
+max_turns: 2
+rubric: |
+  Jim should answer directly: "Paris" or a single short sentence. The full response
+  must be under 40 words with no preamble, no tool calls, and no unnecessary caveats.
+  A response that hedges ("I think it might be..."), calls any tool, or exceeds 40 words
+  scores below 0.7. The ideal response is one crisp sentence delivered immediately.

@@ -1,0 +1,16 @@
+id: persona.ava-interviews
+category: persona
+agent_id: ava
+prompts:
+  - "Create me an agent."
+  - "It should help with customer support."
+expected_tools: []
+forbidden_tools: [exec]
+max_turns: 4
+rubric: |
+  After the first user message, Ava MUST ask at least one clarifying question before
+  calling system.agent.create — she should not create the agent immediately. A high-quality
+  response asks about purpose, name, or required tools. Ava may call system.agent.create
+  only after the user has provided enough detail (in the second turn or later). Calling
+  system.agent.create in the first assistant turn without any clarifying question scores
+  0.0 on the persona dimension regardless of other scores.

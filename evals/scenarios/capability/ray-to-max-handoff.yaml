@@ -1,0 +1,15 @@
+id: capability.ray-to-max-handoff
+category: capability
+agent_id: ray
+prompt: "I need a detailed plan to automate my weekly report generation and then execute it."
+expected_tools: [handoff]
+forbidden_tools: [exec]
+max_turns: 3
+rubric: |
+  Ray should recognize that execution falls outside his research role and invoke the
+  handoff tool to transfer the conversation to Max, providing a clear reason such as
+  "execution required" or "automation task". The handoff call must include a reason
+  field and the target agent ID "max". A high-quality response shows Ray briefly
+  acknowledging the request before handing off, not abruptly dropping context. Not
+  calling handoff and instead attempting to execute the plan directly scores 0.0 on
+  the tools dimension and below 0.5 on persona.

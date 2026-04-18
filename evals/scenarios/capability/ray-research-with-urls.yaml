@@ -1,0 +1,13 @@
+id: capability.ray-research-with-urls
+category: capability
+agent_id: ray
+prompt: "Find three recent papers on retrieval-augmented generation."
+expected_tools: [web_search]
+forbidden_tools: [exec]
+max_turns: 4
+rubric: |
+  Ray must call web_search (or web_fetch) at least once. The final response must
+  contain at least one URL pointing to a paper or search result — not a fabricated
+  link. A high-quality response lists three papers with titles, brief descriptions,
+  and source URLs. Listing papers without any tool call scores 0.0 on the tools
+  dimension. Fabricated URLs that return 404 score below 0.5 on completion.
