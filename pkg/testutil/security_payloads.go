@@ -1,15 +1,10 @@
-// Package testutil provides shared performance-test orchestration helpers for
-// the Omnipus load and SLO test suites. It is intentionally not a _test.go
-// file so it can be imported from any _test.go in the repo.
-//
-// All helpers are pure Go stdlib — no external dependencies are required.
 package testutil
 
 // XSSPayloads contains 10 known-dangerous HTML/JS injection strings for use
-// in output-encoding and content-sanitisation tests.
+// in output-encoding and content-sanitization tests.
 //
 // Sources: OWASP XSS Cheat Sheet (https://cheatsheetseries.owasp.org/cheatsheets/XSS_Filter_Evasion_Cheat_Sheet.html),
-// PortSwigger Web Security Academy XSS payload catalogue.
+// PortSwigger Web Security Academy XSS payload catalog.
 var XSSPayloads = []string{
 	// Classic script tag
 	`<script>alert('xss')</script>`,
@@ -141,8 +136,8 @@ var PromptInjectionPayloads = []string{
 // KnownSecretPrefixes contains 8 prefix patterns used by leak-scanner tests
 // to detect accidental credential exposure in logs, responses, and audit trails.
 //
-// Sources: GitHub secret scanning partner programme patterns,
-// truffleHog detector catalogue, OMNIPUS credential naming conventions (ADR-004).
+// Sources: GitHub secret scanning partner program patterns,
+// truffleHog detector catalog, OMNIPUS credential naming conventions (ADR-004).
 var KnownSecretPrefixes = []string{
 	// Anthropic API key (Claude)
 	"sk-ant-",
