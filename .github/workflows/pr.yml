@@ -133,6 +133,43 @@ jobs:
           CGO_ENABLED: "1"
         run: go test -race -tags goolm,stdjson -count=1 -timeout 240s ./pkg/sysagent/... ./pkg/config/... ./pkg/credentials/... ./pkg/gateway/... ./pkg/channels/...
 
+  security:
+    name: Security Tests
+    runs-on: ubuntu-latest
+    needs: [test]
+    timeout-minutes: 15
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+      - name: Build SPA
+        run: |
+          npm ci
+          npm run build
+          rm -rf pkg/gateway/spa
+          cp -r dist/spa pkg/gateway/spa
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: Run govulncheck
+        # govulncheck fails with non-zero on any vulnerability with a fixed version.
+        # Use -mode=source for the full dependency analysis.
+        run: govulncheck -tags goolm,stdjson ./...
+      - name: Install grype
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b "$(go env GOPATH)/bin"
+      - name: Run grype (dependency CVE scan)
+        # Fail on CVSS >= 7.0 (high + critical).
+        run: |
+          "$(go env GOPATH)/bin/grype" dir:. --fail-on high --only-fixed --add-cpes-if-none
+      - name: Run security test suite
+        run: CGO_ENABLED=0 go test -tags goolm,stdjson -v -count=1 -timeout 10m ./tests/security/...
+
   perf-smoke:
     name: Perf Smoke
     runs-on: ubuntu-latest
