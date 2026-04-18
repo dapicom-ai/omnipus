@@ -1,0 +1,91 @@
+name: Cross-Platform
+
+on:
+  pull_request:
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/cross-platform.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  matrix:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: amd64
+          - os: macos-latest
+            arch: arm64
+          - os: windows-latest
+            arch: amd64
+          # ubuntu-24.04-arm is GA as of October 2024 per GitHub's ARM64 announcement.
+          # https://github.blog/2024-10-31-arm64-on-github-actions-powering-faster-more-efficient-build-systems/
+          - os: ubuntu-24.04-arm
+            arch: arm64
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    env:
+      CGO_ENABLED: "0"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+
+      - name: Build SPA
+        shell: bash
+        run: |
+          npm ci
+          npm run build
+          rm -rf pkg/gateway/spa
+          cp -r dist/spa pkg/gateway/spa
+
+      - name: Build
+        shell: bash
+        run: go build -tags goolm,stdjson ./...
+
+      - name: Test
+        # Platform-gated tests skip cleanly via pkg/testutil.SkipIfNotLinux et al.
+        # The suite runs on all 4 OS/arch combinations to catch build-time breakage.
+        shell: bash
+        run: go test -tags goolm,stdjson -short -timeout 10m ./...
+
+      - name: Smoke boot + /health
+        # Run the compiled binary once with --allow-empty on the local runner
+        # to catch any platform-specific boot path (Windows Job Objects,
+        # macOS Keychain, ARM64 assembly, etc.) that goes wrong before we
+        # even reach the test suite.
+        shell: bash
+        run: |
+          set -euo pipefail
+          go build -tags goolm,stdjson -o omnipus ./cmd/omnipus/
+          OMNIPUS_HOME="$(mktemp -d)"
+          export OMNIPUS_HOME
+          ./omnipus gateway --allow-empty > omnipus.log 2>&1 &
+          PID=$!
+          echo "gateway pid=$PID"
+          sleep 2
+          if ! curl -sf http://127.0.0.1:18790/health > /dev/null 2>&1; then
+            # Some platforms pick different ports; grep the log for the actual port.
+            PORT=$(grep -oE 'Gateway started on 127\.0\.0\.1:[0-9]+' omnipus.log | grep -oE '[0-9]+$' | head -1)
+            if [ -n "$PORT" ]; then
+              curl -sf "http://127.0.0.1:$PORT/health" > /dev/null
+            else
+              cat omnipus.log
+              exit 1
+            fi
+          fi
+          kill "$PID" || true
