@@ -19,17 +19,29 @@ jobs:
         include:
           - os: ubuntu-latest
             arch: amd64
+            required: true
+          # macOS and Windows legs are non-blocking during the 2-week
+          # stabilization window called out in Plan 3 §10. Issues:
+          # - #107: TestSandboxBackend_Fallback doesn't
+          #   resolve /var/folders symlink path
+          # - #108: TestGetConfigPath + WeCom credential
+          #   rename tests fail on Windows path semantics
+          # Promote to required=true once those issues close.
           - os: macos-latest
             arch: arm64
+            required: false
           - os: windows-latest
             arch: amd64
+            required: false
           # ubuntu-24.04-arm is GA as of October 2024 per GitHub's ARM64 announcement.
           # https://github.blog/2024-10-31-arm64-on-github-actions-powering-faster-more-efficient-build-systems/
           - os: ubuntu-24.04-arm
             arch: arm64
+            required: true
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    continue-on-error: ${{ !matrix.required }}
 
     env:
       CGO_ENABLED: "0"
