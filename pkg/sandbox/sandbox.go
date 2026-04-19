@@ -164,14 +164,18 @@ func (f *FallbackBackend) Name() string    { return "fallback" }
 func (f *FallbackBackend) Available() bool { return true }
 
 // Apply records allowed paths and their access flags for application-level enforcement.
+// Each path is canonicalized via canonicalizePath (which resolves symlinks with
+// filepath.EvalSymlinks) so that macOS /var → /private/var symlinks and similar
+// platform conventions are normalized before storage. This keeps CheckPath
+// comparisons correct when the OS returns a different representation of the same path.
 func (f *FallbackBackend) Apply(policy SandboxPolicy) error {
 	f.entries = nil
 	for _, rule := range policy.FilesystemRules {
-		abs, err := filepath.Abs(rule.Path)
+		canonical, err := canonicalizePath(rule.Path)
 		if err != nil {
 			return fmt.Errorf("sandbox fallback: cannot resolve path %q: %w", rule.Path, err)
 		}
-		f.entries = append(f.entries, allowedEntry{path: abs, access: rule.Access})
+		f.entries = append(f.entries, allowedEntry{path: canonical, access: rule.Access})
 	}
 	return nil
 }
@@ -220,13 +224,9 @@ func (f *FallbackBackend) ApplyToCmd(cmd *exec.Cmd, pol SandboxPolicy) error {
 
 // CheckPath verifies that path is under one of the allowed paths (ignoring access flags).
 func (f *FallbackBackend) CheckPath(path string) error {
-	abs, err := filepath.Abs(path)
+	resolved, err := canonicalizePath(path)
 	if err != nil {
 		return fmt.Errorf("sandbox fallback: cannot resolve path %q: %w", path, err)
-	}
-	resolved, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		return fmt.Errorf("sandbox fallback: cannot resolve symlinks for %q: %w", path, err)
 	}
 	for _, entry := range f.entries {
 		if pathIsUnder(resolved, entry.path) {
@@ -238,13 +238,9 @@ func (f *FallbackBackend) CheckPath(path string) error {
 
 // CheckPathAccess verifies that path is under an allowed path with the requested access flags.
 func (f *FallbackBackend) CheckPathAccess(path string, access uint64) error {
-	abs, err := filepath.Abs(path)
+	resolved, err := canonicalizePath(path)
 	if err != nil {
 		return fmt.Errorf("sandbox fallback: cannot resolve path %q: %w", path, err)
-	}
-	resolved, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		return fmt.Errorf("sandbox fallback: cannot resolve symlinks for %q: %w", path, err)
 	}
 	for _, entry := range f.entries {
 		if pathIsUnder(resolved, entry.path) && (entry.access&access) == access {
@@ -252,6 +248,35 @@ func (f *FallbackBackend) CheckPathAccess(path string, access uint64) error {
 		}
 	}
 	return fmt.Errorf("sandbox fallback: path %q is outside allowed paths or lacks required access", path)
+}
+
+// canonicalizePath resolves a path to its absolute, symlink-free form.
+// This is necessary on macOS where t.TempDir() returns /var/folders/... but
+// /var is a symlink to /private/var. Without canonicalization, an allowlist
+// entry stored as /var/folders/... would not match the resolved path
+// /private/var/folders/... returned by EvalSymlinks on the input.
+//
+// When the path does not yet exist (e.g. a file being created), EvalSymlinks
+// fails. In that case the nearest existing ancestor is resolved and the
+// remaining path components are appended. This preserves correctness for
+// pre-creation checks while still normalizing the ancestor portion.
+func canonicalizePath(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err == nil {
+		return resolved, nil
+	}
+	// Path may not exist yet (file being created). Resolve the nearest
+	// existing ancestor and rejoin the remaining relative path.
+	dir, base := filepath.Split(abs)
+	if resolvedDir, dirErr := filepath.EvalSymlinks(dir); dirErr == nil {
+		return filepath.Join(resolvedDir, base), nil
+	}
+	// Fall back to the absolute path if ancestor resolution also fails.
+	return abs, nil
 }
 
 // pathIsUnder checks if child is under or equal to parent directory.

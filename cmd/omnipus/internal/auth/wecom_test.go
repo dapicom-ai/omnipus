@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -264,6 +265,12 @@ func TestAuthWeComCmdWithScanner_Overwrite(t *testing.T) {
 // We simulate a SaveConfig failure by making the config path point to a
 // read-only directory, which causes os.Create to fail.
 func TestAuthWeComCmdWithScanner_SaveConfigFailureRollsBackStore(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// POSIX chmod 0555 does not make a directory non-writable on Windows
+		// (Windows uses ACLs, not mode bits). The failure-injection this test
+		// relies on only works on Unix-like systems.
+		t.Skip("read-only directory injection is POSIX-only; see #108")
+	}
 	tmpDir := t.TempDir()
 
 	// Create a nested directory that we will make read-only so that

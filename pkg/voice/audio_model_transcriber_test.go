@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
@@ -181,6 +182,11 @@ func TestAudioModelTranscriberTranscribe(t *testing.T) {
 	})
 
 	t.Run("unsupported audio format", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			// filepath.Join embeds backslashes on Windows; the exact-match
+			// assertion below then breaks. Tracked in #113.
+			t.Skip("POSIX-only path separator assumption (see #113)")
+		}
 		badPath := filepath.Join(tmpDir, "clip.txt")
 		if err := os.WriteFile(badPath, []byte("not-audio"), 0o644); err != nil {
 			t.Fatalf("failed to write fake file: %v", err)

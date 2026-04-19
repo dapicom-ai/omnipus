@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -416,6 +417,9 @@ func createMockCodexCLI(t *testing.T, events []string) string {
 }
 
 func TestCodexCliProvider_MockCLI_Success(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock CLI uses #!/bin/bash shebang with no Windows equivalent: POSIX-specific assumption (see #113)")
+	}
 	scriptPath := createMockCodexCLI(t, []string{
 		`{"type":"thread.started","thread_id":"test-123"}`,
 		`{"type":"turn.started"}`,
@@ -448,6 +452,9 @@ func TestCodexCliProvider_MockCLI_Success(t *testing.T) {
 }
 
 func TestCodexCliProvider_MockCLI_Error(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock CLI uses #!/bin/bash shebang with no Windows equivalent: POSIX-specific assumption (see #113)")
+	}
 	scriptPath := createMockCodexCLI(t, []string{
 		`{"type":"thread.started","thread_id":"test-err"}`,
 		`{"type":"turn.started"}`,
@@ -471,6 +478,9 @@ func TestCodexCliProvider_MockCLI_Error(t *testing.T) {
 }
 
 func TestCodexCliProvider_MockCLI_WithModel(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mock CLI uses #!/bin/bash shebang with no Windows equivalent: POSIX-specific assumption (see #113)")
+	}
 	// Mock script that captures args to verify model flag is passed
 	tmpDir := t.TempDir()
 	scriptPath := filepath.Join(tmpDir, "codex")
