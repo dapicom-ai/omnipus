@@ -8,6 +8,7 @@ package gateway
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -16,28 +17,45 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
+	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 )
 
 // HandleCompleteOnboarding handles POST /api/v1/onboarding/complete.
-// It performs three steps:
-//  1. Stores the API key in the encrypted credentials store (if available).
-//  2. Atomically adds/updates the provider entry and creates the admin user
-//     in config.json via safeUpdateConfigJSON.
-//  3. Marks onboarding as complete in state.json.
 //
-// Steps 1-2 are best-effort atomic: if config write succeeds but state.json
-// save fails, the admin already exists. Re-calling with the same username is
-// idempotent — it updates hashes and retries the state save.
+// Two-phase commit invariant:
+//
+//	Phase 1 — reservation: ReserveComplete() is called BEFORE safeUpdateConfigJSON.
+//	  If onboarding is already complete (or concurrently reserved), it returns
+//	  ErrAlreadyComplete and this handler responds with 409 immediately.
+//	  The reservation sets an in-memory flag that blocks concurrent callers.
+//
+//	Phase 2 — commit: After safeUpdateConfigJSON writes config.json successfully,
+//	  commit() is called to persist state.json (marking onboarding complete) and
+//	  clear the reservation. If safeUpdateConfigJSON fails, ReleaseReservation()
+//	  clears the flag so a retry is possible.
+//
+// This ordering guarantees state.json is NEVER written before config.json,
+// preventing the "bricked instance" scenario where state says complete but
+// config has no admin user (e.g., disk-full mid-write).
 func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
-	// Check if onboarding already complete.
-	if a.onboardingMgr.IsComplete() {
-		jsonErr(w, http.StatusConflict, "onboarding already complete")
+	// Phase 1: Reserve the completion slot BEFORE touching config.json.
+	// This closes the TOCTOU window: concurrent callers racing through the
+	// IsComplete() check all see "already complete" once the first caller
+	// holds the reservation, without needing to wait for disk I/O.
+	commitOnboarding, reserveErr := a.onboardingMgr.ReserveComplete()
+	if reserveErr != nil {
+		if errors.Is(reserveErr, onboarding.ErrAlreadyComplete) {
+			jsonErr(w, http.StatusConflict, "onboarding already complete")
+			return
+		}
+		slog.Error("onboarding: reserve failed unexpectedly", "error", reserveErr)
+		jsonErr(w, http.StatusInternalServerError, "onboarding failed")
 		return
 	}
 
@@ -91,6 +109,7 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 	// Refuses the operation if the store is locked (SEC-23: no plaintext fallback).
 	credRefName, credErr := a.storeCredential(body.Provider.ID+"_API_KEY", body.Provider.APIKey)
 	if credErr != nil {
+		a.onboardingMgr.ReleaseReservation()
 		slog.Error("rest: credential store unavailable during onboarding", "error", credErr)
 		jsonErr(
 			w,
@@ -132,33 +151,33 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 	// avoid holding configMu for ~300ms across three bcrypt operations.
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte(body.Admin.Password), bcrypt.DefaultCost)
 	if err != nil {
+		a.onboardingMgr.ReleaseReservation()
 		slog.Error("onboarding: bcrypt password hash failed", "error", err)
 		jsonErr(w, http.StatusInternalServerError, "onboarding failed")
 		return
 	}
 	token, err := generateUserToken(body.Admin.Username)
 	if err != nil {
+		a.onboardingMgr.ReleaseReservation()
 		slog.Error("onboarding: generate token failed", "error", err)
 		jsonErr(w, http.StatusInternalServerError, "onboarding failed")
 		return
 	}
 	tokenHash, err := bcrypt.GenerateFromPassword([]byte(token), bcrypt.DefaultCost)
 	if err != nil {
+		a.onboardingMgr.ReleaseReservation()
 		slog.Error("onboarding: bcrypt token hash failed", "error", err)
 		jsonErr(w, http.StatusInternalServerError, "onboarding failed")
 		return
 	}
 
-	// Use safeUpdateConfigJSON to atomically:
-	// 1. Add/update provider in providers array
-	// 2. Register admin user
-	// Only after both succeed, call CompleteOnboarding().
+	// Phase 2: Write config.json only (no state.json write inside the callback).
+	// The commit() closure writes state.json after safeUpdateConfigJSON returns.
 	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
-		// Re-check inside the lock to prevent TOCTOU race where concurrent
-		// requests all pass the IsComplete() check before any marks it done.
-		if a.onboardingMgr.IsComplete() {
-			return fmt.Errorf("onboarding already complete")
-		}
+		// The TOCTOU window is now closed by ReserveComplete() above — no need
+		// to re-check IsComplete() here. The reserved flag blocks concurrent
+		// callers before they can reach this callback.
+
 		// --- Provider ---
 		providerList, ok := m["providers"].([]any)
 		if !ok {
@@ -261,28 +280,27 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 		gatewayMap["users"] = users
 		m["gateway"] = gatewayMap
 
-		// Mark onboarding complete INSIDE the config lock. This closes the
-		// TOCTOU window between "callback returns with config mutation" and
-		// "CompleteOnboarding runs" that previously let N concurrent callers
-		// all pass the re-check at the top of the callback. After this line,
-		// any other goroutine entering the callback sees IsComplete() = true
-		// and errors cleanly with 409.
-		if completeErr := a.onboardingMgr.CompleteOnboarding(); completeErr != nil {
-			return fmt.Errorf("mark onboarding complete: %w", completeErr)
-		}
+		// Config mutation only — state.json is written AFTER config.json
+		// succeeds (two-phase commit). Do NOT call CompleteOnboarding() here.
 		return nil
 	}); err != nil {
-		if err.Error() == "onboarding already complete" {
-			jsonErr(w, http.StatusConflict, "onboarding already complete")
-			return
-		}
+		// config.json write failed — release the reservation so a retry is possible.
+		a.onboardingMgr.ReleaseReservation()
 		slog.Error("onboarding: complete transaction failed", "error", err)
 		jsonErr(w, http.StatusInternalServerError, "onboarding failed")
 		return
 	}
 
-	// Config + state saved atomically under configMu. Trigger a reload so the
-	// in-memory config picks up the new user.
+	// config.json written successfully. Now commit state.json (phase 2).
+	// If this fails, the instance is in a recoverable state: next boot
+	// will re-enter onboarding, detect the admin user exists, and succeed.
+	if err := commitOnboarding(); err != nil {
+		slog.Error("onboarding: state.json commit failed (config.json already written — retry will recover)", "error", err)
+		// Do NOT return an error to the caller — config is committed.
+		// The admin user exists and the token is valid.
+	}
+
+	// Trigger a reload so the in-memory config picks up the new user.
 	a.awaitReload()
 
 	// Issue a __Host-csrf cookie so the onboarding client (which up to this
@@ -291,6 +309,8 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 	// can make subsequent state-changing requests without a 403. Issue #97.
 	if err := middleware.IssueCSRFCookie(w); err != nil {
 		slog.Error("onboarding: issue CSRF cookie failed", "error", err)
+		jsonErr(w, http.StatusInternalServerError, "session init failed")
+		return
 	}
 
 	slog.Info("onboarding: completed", "username", body.Admin.Username)

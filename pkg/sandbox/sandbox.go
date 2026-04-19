@@ -269,14 +269,31 @@ func canonicalizePath(p string) (string, error) {
 	if err == nil {
 		return resolved, nil
 	}
-	// Path may not exist yet (file being created). Resolve the nearest
-	// existing ancestor and rejoin the remaining relative path.
-	dir, base := filepath.Split(abs)
-	if resolvedDir, dirErr := filepath.EvalSymlinks(dir); dirErr == nil {
-		return filepath.Join(resolvedDir, base), nil
+	// Path does not fully exist yet (file being created, or deep missing tree).
+	// Walk up the ancestor chain until we find an existing component, resolve
+	// symlinks on that ancestor, then rejoin the remaining tail path segments.
+	// This ensures that /var/folders/x/y/z correctly resolves to
+	// /private/var/folders/x/y/z on macOS even when x/y/z don't exist yet.
+	tail := []string{}
+	current := abs
+	for {
+		parent := filepath.Dir(current)
+		if parent == current {
+			// Hit the filesystem root without finding any existing ancestor.
+			return "", fmt.Errorf("canonicalizePath: no existing ancestor found for %q", abs)
+		}
+		tail = append([]string{filepath.Base(current)}, tail...)
+		current = parent
+		resolvedParent, parentErr := filepath.EvalSymlinks(current)
+		if parentErr == nil {
+			// Found the deepest existing ancestor; rejoin the tail.
+			result := resolvedParent
+			for _, seg := range tail {
+				result = filepath.Join(result, seg)
+			}
+			return result, nil
+		}
 	}
-	// Fall back to the absolute path if ancestor resolution also fails.
-	return abs, nil
 }
 
 // pathIsUnder checks if child is under or equal to parent directory.

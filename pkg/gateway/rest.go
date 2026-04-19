@@ -67,6 +67,12 @@ type restAPI struct {
 
 func (a *restAPI) setCORSHeaders(w http.ResponseWriter, r ...*http.Request) {
 	origin := a.allowedOrigin
+	// isExplicitlyAllowed tracks whether the request origin matched the
+	// configured allowedOrigin exactly. Localhost/loopback fallback does NOT
+	// count — credentials are only sent for origins the operator explicitly
+	// configured, preventing overly broad cookie sharing.
+	isExplicitlyAllowed := false
+
 	// Allow same-origin requests: if the request Origin matches the Host header,
 	// reflect it so the SPA works when accessed via public IP.
 	// Only reflect origins that are same-origin or localhost — never arbitrary origins.
@@ -74,6 +80,11 @@ func (a *restAPI) setCORSHeaders(w http.ResponseWriter, r ...*http.Request) {
 		reqOrigin := r[0].Header.Get("Origin")
 		if reqOrigin != "" && isAllowedOrigin(reqOrigin, r[0].Host, a.allowedOrigin) {
 			origin = reqOrigin
+			// Mark explicit only when the request origin matches the operator-configured
+			// allowedOrigin directly (not merely localhost/same-host fallback).
+			if a.allowedOrigin != "" && reqOrigin == a.allowedOrigin {
+				isExplicitlyAllowed = true
+			}
 		}
 	}
 	// Never fall back to "*" — if no origin is configured and the request origin
@@ -83,7 +94,14 @@ func (a *restAPI) setCORSHeaders(w http.ResponseWriter, r ...*http.Request) {
 	}
 	w.Header().Set("Access-Control-Allow-Origin", origin)
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Csrf-Token")
+	// Access-Control-Allow-Credentials must only be sent when the origin is
+	// explicitly configured — never when falling back to wildcard or localhost
+	// reflection. Per CORS spec, "true" + wildcard is illegal; restricting to
+	// explicit origins is both correct and secure.
+	if isExplicitlyAllowed {
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+	}
 }
 
 // isAllowedOrigin checks whether a request origin should be reflected in CORS headers.

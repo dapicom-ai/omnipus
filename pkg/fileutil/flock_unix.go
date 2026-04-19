@@ -7,6 +7,7 @@
 package fileutil
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -28,17 +29,30 @@ func flockUnlock(f *os.File) error {
 // On Windows this function is provided by flock_windows.go and calls fn
 // directly without opening the file, because an open handle on the destination
 // file prevents WriteFileAtomic from renaming the temp file over it.
-func WithFlock(path string, fn func() error) error {
+//
+// Errors from fn, flockUnlock, and f.Close are all captured and joined so
+// none are silently discarded.
+func WithFlock(path string, fn func() error) (retErr error) {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
 		return fmt.Errorf("fileutil: open for flock %q: %w", path, err)
 	}
-	defer f.Close()
+	// Defer close so it always runs; capture its error and join with retErr.
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("fileutil: close flock %q: %w", path, closeErr))
+		}
+	}()
 
 	if err := flockExclusive(f); err != nil {
 		return fmt.Errorf("fileutil: acquire flock %q: %w", path, err)
 	}
-	defer flockUnlock(f) //nolint:errcheck
+	// Defer unlock so it always runs after fn; capture its error and join with retErr.
+	defer func() {
+		if unlockErr := flockUnlock(f); unlockErr != nil {
+			retErr = errors.Join(retErr, fmt.Errorf("fileutil: release flock %q: %w", path, unlockErr))
+		}
+	}()
 
 	return fn()
 }

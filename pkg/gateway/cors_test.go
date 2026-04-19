@@ -5,9 +5,12 @@
 package gateway
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // --- E3: CORS tests ---
@@ -112,4 +115,73 @@ func TestIsAllowedOrigin(t *testing.T) {
 				"isAllowedOrigin(%q, %q, %q)", tc.reqOrigin, tc.host, tc.configuredOrigin)
 		})
 	}
+}
+
+// TestAllowCORS_CsrfHeaderAndCredentials verifies F7 fixes:
+// (a) X-Csrf-Token appears in Access-Control-Allow-Headers for all allowed origins.
+// (b) Access-Control-Allow-Credentials: true only when origin matches the
+//
+//	explicitly configured allowedOrigin (not for localhost fallback or wildcard).
+//
+// (c) Disallowed origins get no CORS headers at all (no credentials leak).
+//
+// Traces to: Sprint B F7 — CORS preflight must include X-Csrf-Token + Allow-Credentials
+// only for explicitly configured origins.
+func TestAllowCORS_CsrfHeaderAndCredentials(t *testing.T) {
+	const configuredOrigin = "https://app.example.com"
+
+	api := &restAPI{allowedOrigin: configuredOrigin}
+
+	makeRequest := func(origin string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodOptions, "/api/v1/auth/login", nil)
+		req.Header.Set("Origin", origin)
+		req.Host = "app.example.com"
+		rr := httptest.NewRecorder()
+		api.setCORSHeaders(rr, req)
+		return rr
+	}
+
+	t.Run("allowed origin gets X-Csrf-Token and Allow-Credentials=true", func(t *testing.T) {
+		rr := makeRequest(configuredOrigin)
+		require.Equal(t, configuredOrigin, rr.Header().Get("Access-Control-Allow-Origin"),
+			"explicit configured origin must be reflected")
+		allowHeaders := rr.Header().Get("Access-Control-Allow-Headers")
+		assert.Contains(t, allowHeaders, "X-Csrf-Token",
+			"Access-Control-Allow-Headers must include X-Csrf-Token")
+		assert.Equal(t, "true", rr.Header().Get("Access-Control-Allow-Credentials"),
+			"Access-Control-Allow-Credentials must be true for explicitly configured origin")
+	})
+
+	t.Run("localhost fallback does not get Allow-Credentials", func(t *testing.T) {
+		// Localhost is allowed (dev loopback) but is NOT the configured origin,
+		// so credentials must NOT be emitted.
+		rr := makeRequest("http://localhost:3000")
+		// The origin is allowed (reflected), but no credentials header.
+		allowedOriginHeader := rr.Header().Get("Access-Control-Allow-Origin")
+		if allowedOriginHeader != "" {
+			// If the origin was reflected, credentials must NOT be present.
+			assert.NotEqual(t, "true", rr.Header().Get("Access-Control-Allow-Credentials"),
+				"localhost fallback must not get Allow-Credentials header")
+		}
+		// X-Csrf-Token must still appear in Allow-Headers if CORS is active.
+		if allowedOriginHeader != "" {
+			allowHeaders := rr.Header().Get("Access-Control-Allow-Headers")
+			assert.Contains(t, allowHeaders, "X-Csrf-Token",
+				"X-Csrf-Token must be in Allow-Headers even for localhost")
+		}
+	})
+
+	t.Run("disallowed request-origin does not get Allow-Credentials", func(t *testing.T) {
+		// When a request comes from an evil.com origin that is neither the
+		// configured origin nor localhost, the server emits the CONFIGURED origin
+		// in Access-Control-Allow-Origin (this is fine: the browser only uses it
+		// if it matches the request origin). But Access-Control-Allow-Credentials
+		// must NOT be present — credentials must only be sent for explicitly
+		// configured origins, never for mismatched request origins.
+		rr := makeRequest("https://evil.com")
+		assert.NotEqual(t, "https://evil.com", rr.Header().Get("Access-Control-Allow-Origin"),
+			"evil.com must not be reflected as the allowed origin")
+		assert.NotEqual(t, "true", rr.Header().Get("Access-Control-Allow-Credentials"),
+			"Access-Control-Allow-Credentials must not be true for a non-matching request origin")
+	})
 }
