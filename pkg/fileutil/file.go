@@ -169,4 +169,3 @@ func AppendJSONL(path string, record any) error {
 	}
 	return f.Close()
 }
-

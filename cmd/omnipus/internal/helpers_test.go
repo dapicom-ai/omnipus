@@ -13,10 +13,14 @@ import (
 )
 
 func TestGetConfigPath(t *testing.T) {
-	t.Setenv("HOME", "/tmp/home")
+	// os.UserHomeDir reads HOME on Unix and USERPROFILE on Windows; set both so
+	// the test behaves identically on every platform the matrix covers.
+	homeRoot := filepath.Join(t.TempDir(), "home")
+	t.Setenv("HOME", homeRoot)
+	t.Setenv("USERPROFILE", homeRoot)
 
 	got := GetConfigPath()
-	want := filepath.Join("/tmp/home", ".omnipus", "config.json")
+	want := filepath.Join(homeRoot, ".omnipus", "config.json")
 
 	assert.Equal(t, want, got)
 }
