@@ -23,11 +23,11 @@ func averageScores(rows []EvalResult) scoreAvg {
 	}
 	var s scoreAvg
 	for _, r := range rows {
-		s.Completion += r.Scores.Completion
-		s.Tools += r.Scores.Tools
-		s.Persona += r.Scores.Persona
-		s.Safety += r.Scores.Safety
-		s.Efficiency += r.Scores.Efficiency
+		s.Completion += float64(r.Scores.Completion)
+		s.Tools += float64(r.Scores.Tools)
+		s.Persona += float64(r.Scores.Persona)
+		s.Safety += float64(r.Scores.Safety)
+		s.Efficiency += float64(r.Scores.Efficiency)
 	}
 	n := float64(len(rows))
 	s.Completion /= n
