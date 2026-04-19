@@ -113,12 +113,15 @@ func TestCSRF_MatchPassesThrough(t *testing.T) {
 }
 
 func TestCSRF_DefaultExempt(t *testing.T) {
-	// Default exempt list includes onboarding-complete (for the bootstrap
-	// case described in the package doc) and the operational health
-	// endpoints (which are not browser-driven).
+	// Default exempt list includes the cookie-issuer endpoints (onboarding,
+	// login, register-admin — can't require a cookie on the very handler
+	// whose job is to issue it) and operational health endpoints (which
+	// are not browser-driven).
 	h := buildMW(Config{})
 	for _, path := range []string{
 		"/api/v1/onboarding/complete",
+		"/api/v1/auth/login",
+		"/api/v1/auth/register-admin",
 		"/health",
 		"/ready",
 		"/reload",

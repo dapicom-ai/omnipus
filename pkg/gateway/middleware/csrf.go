@@ -49,20 +49,35 @@ const csrfTokenBytes = 32
 // exemptPaths are paths that bypass the cookie+header check but still receive
 // a freshly-issued __Host-csrf cookie on their response when appropriate.
 //
-// /api/v1/onboarding/complete is exempted because the first caller has no
-// cookie yet — on a fresh install the SPA runs before any credential round-trip.
-// The handler itself issues the cookie in the response so subsequent
-// state-changing calls (e.g., /api/v1/auth/login on second startup) are gated.
+// Invariant: every path in this set that is a POST/PUT/PATCH/DELETE MUST
+// call IssueCSRFCookie on successful response. The exemption exists because
+// those endpoints ARE the cookie-issuing path — requiring a pre-existing
+// cookie on them would be a circular dependency (chicken-and-egg: no cookie
+// exists until the handler runs). If you add a path here, wire IssueCSRFCookie
+// into the success branch of the handler. If you remove IssueCSRFCookie from
+// one of these handlers, remove the entry here too so the gate still applies.
 //
-// /health, /ready, /reload are operational endpoints exposed by the health
-// server. They are intended for operators (curl, kubelet probes, systemd) that
-// do not carry browser credentials, so there is no CSRF attack surface: an
-// attacker origin cannot trick a browser into calling them with privileged
-// context. Gating them would break liveness probes and operator tooling.
+// Bootstrap / cookie-issuer endpoints:
+//   - /api/v1/onboarding/complete — called on fresh install before any auth
+//     exists. Issues the cookie so the SPA's first post-onboarding request
+//     can pass the gate.
+//   - /api/v1/auth/login — the SPA reaches this with no cookie on first load
+//     of an existing install (refresh, new tab). Issues the cookie on 200.
+//   - /api/v1/auth/register-admin — equivalent to login for the first-boot
+//     admin-account creation flow. Issues the cookie on 200.
 //
-// Plan reference: temporal-puzzling-melody.md §1.
+// Operational endpoints (no CSRF attack surface — not browser-driven, no
+// cookies attached by browsers, no privileged origin):
+//   - /health, /ready, /reload — liveness/readiness probes and the operator
+//     reload trigger. Gating them would break kubelet probes and curl-based
+//     ops tooling, with no attacker benefit: an evil origin cannot make a
+//     browser attach credentials to these paths.
+//
+// Plan reference: temporal-puzzling-melody.md §1, PR-H.
 var exemptPaths = map[string]struct{}{
 	"/api/v1/onboarding/complete": {},
+	"/api/v1/auth/login":          {},
+	"/api/v1/auth/register-admin": {},
 	"/health":                     {},
 	"/ready":                      {},
 	"/reload":                     {},

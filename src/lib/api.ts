@@ -14,12 +14,22 @@ const CSRF_COOKIE_NAME = '__Host-csrf'
 const CSRF_HEADER_NAME = 'X-CSRF-Token'
 const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
-// Onboarding-complete is the single state-changing endpoint exempt from the
-// CSRF gate because the first caller has no cookie yet; the backend issues
-// one in the response. Keep this list in sync with csrf.go exemptPaths for
-// /api/v1/* entries. Paths here are compared against the /api/v1/-prefixed
-// URL.
-const CSRF_EXEMPT_PATHS = new Set<string>(['/api/v1/onboarding/complete'])
+// CSRF_EXEMPT_PATHS lists state-changing endpoints whose handler's job is to
+// ISSUE the __Host-csrf cookie. They can't require the cookie to be present
+// — that's the chicken-and-egg bootstrap problem. Keep this list in sync
+// with pkg/gateway/middleware/csrf.go `exemptPaths` for /api/v1/* entries.
+// Paths here are compared against the /api/v1/-prefixed URL.
+//
+// Why each entry is here:
+//   - /api/v1/onboarding/complete — called on fresh install (no cookie exists).
+//   - /api/v1/auth/login — called on first load of an existing install
+//     (refresh, new tab); cookie may be absent until the login succeeds.
+//   - /api/v1/auth/register-admin — first-boot admin account creation.
+const CSRF_EXEMPT_PATHS = new Set<string>([
+  '/api/v1/onboarding/complete',
+  '/api/v1/auth/login',
+  '/api/v1/auth/register-admin',
+])
 
 // readCSRFCookie parses document.cookie and returns the __Host-csrf value,
 // or null if the cookie is absent. We intentionally do not cache — cookies
