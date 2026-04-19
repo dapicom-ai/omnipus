@@ -54,9 +54,18 @@ const csrfTokenBytes = 32
 // The handler itself issues the cookie in the response so subsequent
 // state-changing calls (e.g., /api/v1/auth/login on second startup) are gated.
 //
+// /health, /ready, /reload are operational endpoints exposed by the health
+// server. They are intended for operators (curl, kubelet probes, systemd) that
+// do not carry browser credentials, so there is no CSRF attack surface: an
+// attacker origin cannot trick a browser into calling them with privileged
+// context. Gating them would break liveness probes and operator tooling.
+//
 // Plan reference: temporal-puzzling-melody.md §1.
 var exemptPaths = map[string]struct{}{
 	"/api/v1/onboarding/complete": {},
+	"/health":                     {},
+	"/ready":                      {},
+	"/reload":                     {},
 }
 
 // stateChangingMethods lists the HTTP verbs that trigger CSRF enforcement.

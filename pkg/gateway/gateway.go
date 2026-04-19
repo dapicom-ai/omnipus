@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/dapicom-ai/omnipus/pkg/agent"
+	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/dingtalk"
@@ -48,6 +49,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/cron"
 	"github.com/dapicom-ai/omnipus/pkg/datamodel"
 	"github.com/dapicom-ai/omnipus/pkg/devices"
+	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 	"github.com/dapicom-ai/omnipus/pkg/health"
 	"github.com/dapicom-ai/omnipus/pkg/heartbeat"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
@@ -780,6 +782,49 @@ func setupAndStartServices(
 	// request handlers see a consistent config even during hot-reload.
 	if err = runningServices.ChannelManager.WrapHTTPHandler(api.configSnapshotMiddleware); err != nil {
 		return nil, fmt.Errorf("wrapping HTTP handler: %w", err)
+	}
+
+	// Wrap with CSRF double-submit-cookie middleware (SEC / issue #97).
+	//
+	// WrapHTTPHandler semantics: "wrap N times" stacks outermost-last, so the
+	// execution order on a request is:
+	//   CSRF check → configSnapshot injection → mux dispatch → auth check in handler
+	//
+	// The sprint plan (temporal-puzzling-melody.md §1) calls for
+	// "auth → RBAC → CSRF → handler". We place CSRF BEFORE the per-handler
+	// auth gate because (a) auth is currently inlined in withAuth / withOptionalAuth
+	// wrappers rather than a separate middleware, and splitting it would be
+	// substantial collateral damage for this PR; (b) failing fast on a bad
+	// cookie avoids wasting a bcrypt compare on obvious cross-origin forgeries.
+	// The net effect — state-changing requests without a valid cookie+header
+	// get rejected — is identical.
+	csrfMW := middleware.CSRFMiddleware(middleware.Config{
+		ClientIP: clientIP,
+		Reporter: func(r *http.Request, sourceIP, route string) {
+			// Best-effort audit log of CSRF mismatches (SEC-15). Never blocks
+			// or crashes the request path — the middleware already returns 403.
+			logger := api.agentLoop.AuditLogger()
+			if logger == nil {
+				slog.Warn("csrf: token mismatch (no audit logger)",
+					"source_ip", sourceIP, "route", route, "method", r.Method)
+				return
+			}
+			if err := logger.Log(&audit.Entry{
+				Event:    "csrf_mismatch",
+				Decision: audit.DecisionDeny,
+				Details: map[string]any{
+					"source_ip": sourceIP,
+					"route":     route,
+					"method":    r.Method,
+				},
+				PolicyRule: "csrf: cookie/header mismatch on state-changing request",
+			}); err != nil {
+				slog.Warn("csrf: audit log write failed", "error", err)
+			}
+		},
+	})
+	if err = runningServices.ChannelManager.WrapHTTPHandler(csrfMW); err != nil {
+		return nil, fmt.Errorf("wrapping HTTP handler with CSRF: %w", err)
 	}
 
 	if err = runningServices.ChannelManager.StartAll(context.Background()); err != nil {

@@ -112,17 +112,26 @@ func TestCSRF_MatchPassesThrough(t *testing.T) {
 	assert.Equal(t, "next-ran", rec.Body.String())
 }
 
-func TestCSRF_OnboardingExempt(t *testing.T) {
-	// Default exempt list includes /api/v1/onboarding/complete. Even without
-	// a cookie or header the request must pass through — the handler itself
-	// is responsible for seeding the cookie.
+func TestCSRF_DefaultExempt(t *testing.T) {
+	// Default exempt list includes onboarding-complete (for the bootstrap
+	// case described in the package doc) and the operational health
+	// endpoints (which are not browser-driven).
 	h := buildMW(Config{})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/onboarding/complete", bytes.NewReader([]byte(`{}`)))
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
+	for _, path := range []string{
+		"/api/v1/onboarding/complete",
+		"/health",
+		"/ready",
+		"/reload",
+	} {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader([]byte(`{}`)))
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
 
-	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, "next-ran", rec.Body.String())
+			assert.Equal(t, http.StatusOK, rec.Code, "exempt path %s must bypass CSRF gate", path)
+			assert.Equal(t, "next-ran", rec.Body.String())
+		})
+	}
 }
 
 func TestCSRF_CustomExemptReplacesDefault(t *testing.T) {

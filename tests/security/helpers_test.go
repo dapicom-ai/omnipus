@@ -32,9 +32,19 @@ import (
 // the RBAC code path — a role is attached to the user, which matters for
 // authz_matrix_test.go.
 //
-// Returns the gateway, admin plaintext token, and a seeded "user" role
-// plaintext token for the non-admin account.
-func gatewayWithRBAC(t *testing.T) (gw *testutil.TestGateway, adminToken, userToken string) {
+// Returns the gateway, admin plaintext token, a seeded "user" role plaintext
+// token for the non-admin account, and the CSRF cookie value issued by the
+// onboarding response. The CSRF value is the same for both user and admin
+// (it's just the onboarding-seeded cookie — the bearer token is what
+// distinguishes identity at the auth layer). Callers wanting to exercise the
+// CSRF gate on state-changing requests must set both:
+//
+//	Cookie: __Host-csrf=<csrfToken>
+//	X-CSRF-Token: <csrfToken>
+//
+// Tests that deliberately probe CSRF (e.g., csrf_test.go) set these manually;
+// the authz matrix test sets them for every authenticated POST/PUT/DELETE.
+func gatewayWithRBAC(t *testing.T) (gw *testutil.TestGateway, adminToken, userToken, csrfToken string) {
 	t.Helper()
 
 	// Pre-seed the config with two users BEFORE the gateway boots so the
@@ -88,6 +98,17 @@ func gatewayWithRBAC(t *testing.T) (gw *testutil.TestGateway, adminToken, userTo
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&onboardResp))
 	require.NotEmpty(t, onboardResp.Token)
 	adminToken = onboardResp.Token
+
+	// Capture the __Host-csrf cookie issued by the onboarding handler
+	// (see pkg/gateway/rest_onboarding.go). All authenticated callers in the
+	// test harness reuse this value to pass the CSRF middleware (issue #97).
+	for _, c := range resp.Cookies() {
+		if c.Name == "__Host-csrf" {
+			csrfToken = c.Value
+			break
+		}
+	}
+	require.NotEmpty(t, csrfToken, "onboarding response must set __Host-csrf cookie")
 
 	// Now add a second (non-admin) user by patching config.json directly.
 	// This is the simplest path — the HTTP config surface does not expose a
@@ -167,13 +188,31 @@ func gatewayWithRBAC(t *testing.T) (gw *testutil.TestGateway, adminToken, userTo
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	return gw, adminToken, userPlain
+	return gw, adminToken, userPlain, csrfToken
 }
 
 // randSuffix returns a short timestamp-based suffix suitable for making test
 // identifiers unique across parallel runs. It is NOT cryptographic.
 func randSuffix() string {
 	return fmt.Sprintf("%d", time.Now().UnixNano()%1_000_000_000)
+}
+
+// testCSRFToken is the fixed value used by non-browser test clients that
+// just need to satisfy the CSRF double-submit compare (issue #97). The
+// middleware only verifies that cookie == header, not that either matches
+// a server-side secret — a server-issued cookie prevents cross-origin
+// forgery because attackers cannot read it, not because the server
+// remembers it. Same-origin test callers can therefore pick any value,
+// provided they send it on both sides.
+const testCSRFToken = "test-csrf-any-value"
+
+// withCSRF attaches the test CSRF cookie and header to a state-changing
+// request so it passes the CSRF middleware. Pure convenience over the
+// three-line "AddCookie + Header.Set + ..." idiom.
+func withCSRF(req *http.Request) *http.Request {
+	req.AddCookie(&http.Cookie{Name: "__Host-csrf", Value: testCSRFToken})
+	req.Header.Set("X-CSRF-Token", testCSRFToken)
+	return req
 }
 
 // mustHaveRole asserts that the config currently contains a user with the
