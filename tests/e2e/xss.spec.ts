@@ -72,8 +72,10 @@ for (const { name, payload } of xssPayloads) {
       // the main content area where the agent description is rendered.
       const descriptionArea = page.locator('main, [role="main"], .agent-profile, [data-testid="agent-description"]').first();
       const scriptInContent = await descriptionArea.locator('script').count();
-      expect(scriptInContent).toBe(0,
-        `XSS payload "${name}" injected a <script> element into the agent description content area`);
+      expect(
+        scriptInContent,
+        `XSS payload "${name}" injected a <script> element into the agent description content area`,
+      ).toBe(0);
 
       // --- Assert: no on* event handlers in the description area ---
       // Evaluate in page context to detect any on* attributes on rendered elements.
@@ -89,8 +91,10 @@ for (const { name, payload } of xssPayloads) {
         }
         return false;
       });
-      expect(hasOnHandlers).toBe(false,
-        `XSS payload "${name}" injected an on* event handler attribute into the rendered DOM`);
+      expect(
+        hasOnHandlers,
+        `XSS payload "${name}" injected an on* event handler attribute into the rendered DOM`,
+      ).toBe(false);
 
       // --- Assert: no javascript: URIs in href or src attributes in content area ---
       const hasJavascriptURI = await page.evaluate(() => {
@@ -105,8 +109,10 @@ for (const { name, payload } of xssPayloads) {
         }
         return false;
       });
-      expect(hasJavascriptURI).toBe(false,
-        `XSS payload "${name}" injected a javascript: URI into an href or src attribute`);
+      expect(
+        hasJavascriptURI,
+        `XSS payload "${name}" injected a javascript: URI into an href or src attribute`,
+      ).toBe(false);
 
     } finally {
       // Clean up: delete the test agent regardless of pass/fail.
@@ -174,14 +180,15 @@ test('chat message with XSS payload renders as escaped text, not live HTML', asy
 
   // Assert: the XSS did NOT execute (window.__xss_fired should be undefined/false).
   const xssFired = await page.evaluate(() => (window as unknown as Record<string, unknown>)['__xss_fired']);
-  expect(xssFired).toBeFalsy(
-    `XSS payload executed in the chat transcript DOM — the SPA must escape assistant message content`);
+  expect(
+    xssFired,
+    'XSS payload executed in the chat transcript DOM — the SPA must escape assistant message content',
+  ).toBeFalsy();
 
   // Assert: no <script> element inside the messages area.
   const msgArea = page.locator('[data-message-role="assistant"], .assistant-message, [class*="message"]').first();
   if (await msgArea.count() > 0) {
     const scriptInMsg = await msgArea.locator('script').count();
-    expect(scriptInMsg).toBe(0,
-      'Rendered assistant message must not contain live <script> elements');
+    expect(scriptInMsg, 'Rendered assistant message must not contain live <script> elements').toBe(0);
   }
 });
