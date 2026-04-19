@@ -225,7 +225,7 @@ func TestLoadMetrics_PercentileAccessors(t *testing.T) {
 func TestLoadMetrics_PercentileDoesNotMutateInternal(t *testing.T) {
 	m := testutil.NewLoadMetrics(0)
 
-	// Record latencies in descending order to maximise the chance that an
+	// Record latencies in descending order to maximize the chance that an
 	// in-place sort would corrupt subsequent reads.
 	for i := 100; i >= 1; i-- {
 		m.RecordFirstToken(time.Duration(i) * time.Millisecond)

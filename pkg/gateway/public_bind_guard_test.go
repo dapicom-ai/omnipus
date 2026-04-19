@@ -25,7 +25,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/config"
 )
 
-// TestPublicBindNoAuthFatal documents the expected fatal behaviour when a
+// TestPublicBindNoAuthFatal documents the expected fatal behavior when a
 // gateway is configured to listen on a public interface with no authentication.
 //
 // The positive test cases (loopback bind, dev_mode_bypass=true, users present)
@@ -47,10 +47,10 @@ func TestPublicBindNoAuthFatal(t *testing.T) {
 // Traces to: temporal-puzzling-melody.md §4 F33
 func TestPublicBindGuard_Cases(t *testing.T) {
 	type testCase struct {
-		name          string
-		cfg           config.GatewayConfig
-		expectFatal   bool // true = guard must return an error
-		skipReason    string
+		name        string
+		cfg         config.GatewayConfig
+		expectFatal bool // true = guard must return an error
+		skipReason  string
 	}
 
 	cases := []testCase{
@@ -109,7 +109,6 @@ func TestPublicBindGuard_Cases(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Skip(tc.skipReason)
 

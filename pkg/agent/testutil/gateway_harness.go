@@ -425,7 +425,7 @@ func (g *TestGateway) SeedUser(ctx context.Context, u config.UserConfig) error {
 	// swap happens asynchronously. A 300 ms grace period is sufficient for CI.
 	select {
 	case <-ctx.Done():
-		return fmt.Errorf("SeedUser: context cancelled before reload propagated: %w", ctx.Err())
+		return fmt.Errorf("SeedUser: context canceled before reload propagated: %w", ctx.Err())
 	case <-time.After(300 * time.Millisecond):
 	}
 

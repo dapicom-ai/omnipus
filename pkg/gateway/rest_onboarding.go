@@ -295,7 +295,10 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 	// If this fails, the instance is in a recoverable state: next boot
 	// will re-enter onboarding, detect the admin user exists, and succeed.
 	if err := commitOnboarding(); err != nil {
-		slog.Error("onboarding: state.json commit failed (config.json already written — retry will recover)", "error", err)
+		slog.Error(
+			"onboarding: state.json commit failed (config.json already written — retry will recover)",
+			"error", err,
+		)
 		// Do NOT return an error to the caller — config is committed.
 		// The admin user exists and the token is valid.
 	}

@@ -116,7 +116,12 @@ func gatewayWithRBAC(t *testing.T) (gw *testutil.TestGateway, adminToken, userTo
 	// Strategy: boot with DevModeBypass=true (no auth), POST /onboarding/complete
 	// to register the admin, then write the second (non-admin) user directly
 	// into config.json via the config endpoint using the admin token.
-	gw = testutil.StartTestGateway(t)
+	// Seed the system agent so POST /sessions with agent_id=omnipus-system
+	// resolves (otherwise the handler returns 400 "agent not found", masking
+	// whether RBAC / CSRF fired as intended).
+	gw = testutil.StartTestGateway(t, testutil.WithAgents([]config.AgentConfig{
+		{ID: "omnipus-system", Type: config.AgentTypeSystem, Description: "system agent"},
+	}))
 
 	// Onboard to create the admin user with a role.
 	body := map[string]any{

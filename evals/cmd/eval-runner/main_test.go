@@ -206,12 +206,12 @@ func TestJSONLWrittenEvenOnAllErrors(t *testing.T) {
 	}
 
 	for _, r := range results {
-		line, err := json.Marshal(r)
-		if err != nil {
-			t.Fatal(err)
+		line, marshalErr := json.Marshal(r)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
 		}
-		if _, err := f.Write(append(line, '\n')); err != nil {
-			t.Fatal(err)
+		if _, writeErr := f.Write(append(line, '\n')); writeErr != nil {
+			t.Fatal(writeErr)
 		}
 	}
 	f.Close()

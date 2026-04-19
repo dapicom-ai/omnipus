@@ -164,7 +164,12 @@ func parseFlags() cfg {
 		envOrDefault("OMNIPUS_BIN", "./omnipus"),
 		"path to compiled omnipus binary",
 	)
-	flag.BoolVar(&c.allowEmptyScenarios, "allow-empty-scenarios", false, "exit 0 (instead of 2) when no scenario files are found")
+	flag.BoolVar(
+		&c.allowEmptyScenarios,
+		"allow-empty-scenarios",
+		false,
+		"exit 0 (instead of 2) when no scenario files are found",
+	)
 	flag.Parse()
 	return c
 }
@@ -802,12 +807,12 @@ func runScenario(
 	}
 
 	promptCtx := judge.PromptContext{
-		AgentName: s.AgentID,
-		AgentRole: s.AgentRole,
-		Prompt:    strings.Join(userPrompts, "\n"),
+		AgentName:  s.AgentID,
+		AgentRole:  s.AgentRole,
+		Prompt:     strings.Join(userPrompts, "\n"),
 		Transcript: judgeTranscript,
 		ToolCalls:  judgeToolCalls,
-		Rubric:    s.Rubric,
+		Rubric:     s.Rubric,
 	}
 	renderedPrompt, err := judge.RenderPrompt(promptCtx)
 	if err != nil {

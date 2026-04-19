@@ -43,7 +43,7 @@ type ToolCallEntry struct {
 }
 
 // PromptContext holds all values interpolated into JudgeTemplate.
-// Transcript and ToolCalls are strongly-typed slices; JSON serialisation
+// Transcript and ToolCalls are strongly-typed slices; JSON serialization
 // is performed inside RenderPrompt, making it impossible to embed
 // structurally invalid JSON via this type.
 type PromptContext struct {
@@ -64,20 +64,20 @@ type PromptContext struct {
 }
 
 // templateData is the internal struct passed to JudgeTemplate after JSON
-// marshalling has been applied to the typed slices.
+// marshaling has been applied to the typed slices.
 type templateData struct {
-	AgentName     string
-	AgentRole     string
-	Prompt        string
+	AgentName      string
+	AgentRole      string
+	Prompt         string
 	TranscriptJSON string
 	ToolCallsJSON  string
-	Rubric        string
+	Rubric         string
 }
 
 var judgeTemplate = template.Must(template.New("judge").Parse(JudgeTemplate))
 
 // RenderPrompt renders JudgeTemplate with the supplied context.
-// Transcript and ToolCalls are marshalled to indented JSON inside this
+// Transcript and ToolCalls are marshaled to indented JSON inside this
 // function, guaranteeing the output prompt contains structurally valid JSON
 // regardless of the string content of individual entries.
 func RenderPrompt(ctx PromptContext) (string, error) {

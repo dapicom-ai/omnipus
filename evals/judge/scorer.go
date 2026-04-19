@@ -129,9 +129,9 @@ func Parse(judgeResponse string) (Scores, error) {
 		}
 		// Clamp first, then validate with NewScore. The judge may return 1.0000001
 		// due to floating-point; clamping is intentional.
-		score, err := NewScore(clamp(f))
-		if err != nil {
-			return Scores{}, fmt.Errorf("judge response key %q invalid score: %w", key, err)
+		score, scoreErr := NewScore(clamp(f))
+		if scoreErr != nil {
+			return Scores{}, fmt.Errorf("judge response key %q invalid score: %w", key, scoreErr)
 		}
 		vals[key] = score
 	}

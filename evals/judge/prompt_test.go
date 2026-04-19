@@ -61,13 +61,14 @@ func TestRenderPrompt_TranscriptIsValidJSON(t *testing.T) {
 		t.Skip("cannot locate transcript JSON section in prompt")
 	}
 	transcriptSection := strings.TrimSpace(out[transcriptStart:toolCallsStart])
-	var parsed []map[string]interface{}
+	var parsed []map[string]any
 	if err := json.Unmarshal([]byte(transcriptSection), &parsed); err != nil {
 		t.Errorf("transcript section is not valid JSON: %v\ngot:\n%s", err, transcriptSection)
 	}
 }
 
 func TestRenderPrompt_UnicodeAndControlChars(t *testing.T) {
+	//nolint:gosmopolitan // deliberate CJK+emoji probe for JSON-marshal robustness
 	ctx := PromptContext{
 		AgentName: "ava",
 		AgentRole: "Builder",
@@ -150,7 +151,7 @@ func TestRenderPrompt_JSONEscapesSpecialChars(t *testing.T) {
 	toolCallsStart := strings.Index(out, "\n\nTool calls made:")
 	if transcriptStart > 0 && toolCallsStart > transcriptStart {
 		transcriptSection := strings.TrimSpace(out[transcriptStart:toolCallsStart])
-		var parsed []map[string]interface{}
+		var parsed []map[string]any
 		if err := json.Unmarshal([]byte(transcriptSection), &parsed); err != nil {
 			t.Errorf("transcript with special chars is not valid JSON: %v", err)
 		}
