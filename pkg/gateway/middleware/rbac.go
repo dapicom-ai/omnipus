@@ -18,7 +18,7 @@ import (
 // RequireAdmin returns a middleware that enforces admin-only access.
 //
 // Response matrix:
-//   - No role in context (auth middleware skipped or token unrecognised) → 401
+//   - No role in context (auth middleware skipped or token unrecognized) → 401
 //   - Authenticated user with role != admin → 403 + {"error":"admin required"}
 //   - Authenticated admin → delegates to next handler unchanged
 //
@@ -29,7 +29,7 @@ func RequireAdmin(next http.Handler) http.Handler {
 		role, ok := r.Context().Value(ctxkey.RoleContextKey{}).(config.UserRole)
 		if !ok || role == "" {
 			// No role in context means the auth middleware did not run or did
-			// not recognise the token — treat as unauthenticated.
+			// not recognize the token — treat as unauthenticated.
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			if err := json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"}); err != nil {

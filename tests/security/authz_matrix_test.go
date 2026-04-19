@@ -101,7 +101,14 @@ func authzMatrix() []matrixCase {
 		{roleAdmin, http.MethodGet, "/api/v1/security/rate-limits", "", []int{200}, "", ""},
 
 		{role: roleAnon, method: http.MethodGet, path: "/api/v1/audit-log", expectStatus: []int{401}},
-		{role: roleUser, method: http.MethodGet, path: "/api/v1/audit-log", expectStatus: []int{403}, note: "admin-only: user must receive 403 (Issue #98)", wantBodyContains: "admin required"},
+		{
+			role:             roleUser,
+			method:           http.MethodGet,
+			path:             "/api/v1/audit-log",
+			expectStatus:     []int{403},
+			note:             "admin-only: user must receive 403 (Issue #98)",
+			wantBodyContains: "admin required",
+		},
 		{role: roleAdmin, method: http.MethodGet, path: "/api/v1/audit-log", expectStatus: []int{200}},
 
 		// ---- Write surface: createAgent (POST) ----
