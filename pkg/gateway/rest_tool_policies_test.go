@@ -7,6 +7,7 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,7 +16,18 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/dapicom-ai/omnipus/pkg/config"
 )
+
+// withAdminRole injects config.UserRoleAdmin into the request context so that
+// RequireAdmin middleware allows the request through. Unit tests that call
+// handlers directly (bypassing withAuth) must use this helper for PUT/admin
+// endpoints.
+func withAdminRole(r *http.Request) *http.Request {
+	ctx := context.WithValue(r.Context(), RoleContextKey{}, config.UserRoleAdmin)
+	return r.WithContext(ctx)
+}
 
 // TestHandleToolPolicies_GET_EmptyState verifies that GET returns the default
 // shape when no tool policies have been configured.
@@ -44,6 +56,7 @@ func TestHandleToolPolicies_PUT_ReturnsPersistedValues(t *testing.T) {
 	body := `{"default_policy":"ask","policies":{"exec":"deny","web_search":"allow"}}`
 	r := httptest.NewRequest(http.MethodPut, "/api/v1/security/tool-policies", strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
+	r = withAdminRole(r) // RequireAdmin requires admin role in context
 	w := httptest.NewRecorder()
 	api.HandleToolPolicies(w, r)
 
@@ -67,6 +80,7 @@ func TestHandleToolPolicies_PUT_ReadBack(t *testing.T) {
 	putBody := `{"default_policy":"deny","policies":{"browser.evaluate":"ask"}}`
 	putReq := httptest.NewRequest(http.MethodPut, "/api/v1/security/tool-policies", strings.NewReader(putBody))
 	putReq.Header.Set("Content-Type", "application/json")
+	putReq = withAdminRole(putReq) // RequireAdmin requires admin role in context
 	putW := httptest.NewRecorder()
 	api.HandleToolPolicies(putW, putReq)
 	require.Equal(t, http.StatusOK, putW.Code, "PUT must succeed: %s", putW.Body)
@@ -91,6 +105,7 @@ func TestHandleToolPolicies_PUT_InvalidDefaultPolicy(t *testing.T) {
 	body := `{"default_policy":"invalid"}`
 	r := httptest.NewRequest(http.MethodPut, "/api/v1/security/tool-policies", strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
+	r = withAdminRole(r) // RequireAdmin requires admin role in context
 	w := httptest.NewRecorder()
 	api.HandleToolPolicies(w, r)
 
@@ -104,6 +119,7 @@ func TestHandleToolPolicies_PUT_InvalidPerToolPolicy(t *testing.T) {
 	body := `{"default_policy":"allow","policies":{"exec":"maybe"}}`
 	r := httptest.NewRequest(http.MethodPut, "/api/v1/security/tool-policies", strings.NewReader(body))
 	r.Header.Set("Content-Type", "application/json")
+	r = withAdminRole(r) // RequireAdmin requires admin role in context
 	w := httptest.NewRecorder()
 	api.HandleToolPolicies(w, r)
 
@@ -115,6 +131,7 @@ func TestHandleToolPolicies_PUT_BadJSON(t *testing.T) {
 	api := newTestRestAPIWithHome(t)
 	r := httptest.NewRequest(http.MethodPut, "/api/v1/security/tool-policies",
 		strings.NewReader(`not-json`))
+	r = withAdminRole(r) // RequireAdmin requires admin role in context
 	w := httptest.NewRecorder()
 	api.HandleToolPolicies(w, r)
 
