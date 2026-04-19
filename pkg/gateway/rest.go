@@ -34,6 +34,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/coreagent"
 	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/fileutil"
+	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 	"github.com/dapicom-ai/omnipus/pkg/media"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	providers_pkg "github.com/dapicom-ai/omnipus/pkg/providers"
@@ -1351,12 +1352,20 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 // --- Config ---
 
 // HandleConfig handles GET /api/v1/config and PUT /api/v1/config.
+// PUT is restricted to admin-role users (Issue #98): mutating gateway config
+// can change ports, dev_mode_bypass, and provider settings — a critical
+// privilege that must not be available to user-role accounts.
 func (a *restAPI) HandleConfig(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		a.getConfig(w)
 	case http.MethodPut:
-		a.updateConfig(w, r)
+		// Enforce admin-only for config mutations. withAuth has already run and
+		// written the role into the context; RequireAdmin reads it from there.
+		adminGuard := middleware.RequireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			a.updateConfig(w, r)
+		}))
+		adminGuard.ServeHTTP(w, r)
 	default:
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
@@ -1886,7 +1895,12 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	cm.RegisterHTTPHandler("/api/v1/activity", a.withAuth(a.HandleActivity))
 
 	// Settings endpoints (Wave 4).
-	cm.RegisterHTTPHandler("/api/v1/audit-log", a.withAuth(a.HandleAuditLog))
+	// GET /api/v1/audit-log — admin-only: audit log contains every admin
+	// action, tool-use trace, and LLM request. A user-role leak here exposes
+	// the full activity history to non-privileged accounts (Issue #98).
+	// Chain: withAuth (verifies token, writes role into ctx) → RequireAdmin (checks role).
+	cm.RegisterHTTPHandler("/api/v1/audit-log",
+		a.withAuth(middleware.RequireAdmin(http.HandlerFunc(a.HandleAuditLog)).ServeHTTP))
 	cm.RegisterHTTPHandler("/api/v1/security/exec-allowlist", a.withAuth(a.HandleExecAllowlist))
 	// Wave 3 security endpoints (SEC-25, SEC-28).
 	cm.RegisterHTTPHandler("/api/v1/security/exec-proxy-status", a.withAuth(a.HandleExecProxyStatus))
@@ -1895,10 +1909,17 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	cm.RegisterHTTPHandler("/api/v1/security/rate-limits", a.withAuth(a.HandleRateLimits))
 	// Wave 5 security endpoints (SEC-01/02/03).
 	cm.RegisterHTTPHandler("/api/v1/security/sandbox-status", a.withAuth(a.HandleSandboxStatus))
-	// Global tool policies endpoint.
+	// GET /api/v1/security/tool-policies — read available to all authenticated
+	// users; PUT is admin-only (enforced inside HandleToolPolicies, Issue #98).
 	cm.RegisterHTTPHandler("/api/v1/security/tool-policies", a.withAuth(a.HandleToolPolicies))
-	cm.RegisterHTTPHandler("/api/v1/credentials", a.withAuth(a.HandleCredentials))
-	cm.RegisterHTTPHandler("/api/v1/credentials/", a.withAuth(a.HandleCredentials))
+	// GET /api/v1/credentials — admin-only: even though plaintext is not
+	// returned, the credential ref names reveal what integrations exist
+	// (Issue #98).
+	// Chain: withAuth (verifies token, writes role into ctx) → RequireAdmin (checks role).
+	cm.RegisterHTTPHandler("/api/v1/credentials",
+		a.withAuth(middleware.RequireAdmin(http.HandlerFunc(a.HandleCredentials)).ServeHTTP))
+	cm.RegisterHTTPHandler("/api/v1/credentials/",
+		a.withAuth(middleware.RequireAdmin(http.HandlerFunc(a.HandleCredentials)).ServeHTTP))
 	cm.RegisterHTTPHandler("/api/v1/media/", a.withOptionalAuth(a.HandleMedia))
 	cm.RegisterHTTPHandler("/api/v1/backup", a.withAuth(a.HandleCreateBackup))
 	cm.RegisterHTTPHandler("/api/v1/backups", a.withAuth(a.HandleListBackups))

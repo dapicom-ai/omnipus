@@ -12,6 +12,7 @@ import (
 	"net/http"
 
 	"github.com/dapicom-ai/omnipus/pkg/audit"
+	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 )
 
 // HandleToolPolicies handles GET/PUT /api/v1/security/tool-policies.
@@ -50,91 +51,102 @@ func (a *restAPI) HandleToolPolicies(w http.ResponseWriter, r *http.Request) {
 		})
 
 	case http.MethodPut:
-		r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB limit
-		var body struct {
-			DefaultPolicy string            `json:"default_policy"`
-			Policies      map[string]string `json:"policies"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			jsonErr(w, http.StatusBadRequest, "invalid JSON body")
-			return
-		}
-
-		// Validate default_policy.
-		switch body.DefaultPolicy {
-		case "", "allow", "ask", "deny":
-			// valid; empty string is treated as "allow"
-		default:
-			jsonErr(w, http.StatusBadRequest, "default_policy must be 'allow', 'ask', or 'deny'")
-			return
-		}
-		if body.DefaultPolicy == "" {
-			body.DefaultPolicy = "allow"
-		}
-
-		// Validate per-tool policies.
-		for toolName, p := range body.Policies {
-			switch p {
-			case "allow", "ask", "deny":
-				// valid
-			default:
-				jsonErr(w, http.StatusBadRequest,
-					"policies["+toolName+"]: value must be 'allow', 'ask', or 'deny'")
-				return
-			}
-		}
-
-		// Persist to config.json under the sandbox key, preserving all other fields.
-		if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
-			sandbox, _ := m["sandbox"].(map[string]any)
-			if sandbox == nil {
-				sandbox = map[string]any{}
-				m["sandbox"] = sandbox
-			}
-			sandbox["default_tool_policy"] = body.DefaultPolicy
-			if body.Policies != nil {
-				sandbox["tool_policies"] = body.Policies
-			} else {
-				// Explicit null from the client clears the map.
-				sandbox["tool_policies"] = map[string]any{}
-			}
-			return nil
-		}); err != nil {
-			slog.Error("rest: update tool policies", "error", err)
-			jsonErr(w, http.StatusInternalServerError, "could not save config")
-			return
-		}
-
-		// SEC-15: audit-log the policy change.
-		if a.agentLoop != nil {
-			if auditLogger := a.agentLoop.AuditLogger(); auditLogger != nil {
-				if err := auditLogger.Log(&audit.Entry{
-					Event:    audit.EventPolicyEval,
-					Decision: audit.DecisionAllow,
-					Details: map[string]any{
-						"action":         "tool_policies_update",
-						"default_policy": body.DefaultPolicy,
-						"policy_count":   len(body.Policies),
-					},
-				}); err != nil {
-					slog.Warn("rest: audit log tool policies update", "error", err)
-				}
-			}
-		}
-
-		slog.Info("rest: global tool policies updated",
-			"default_policy", body.DefaultPolicy,
-			"policy_count", len(body.Policies),
-		)
-
-		// Return the persisted state. Changes take effect immediately because
-		// safeUpdateConfigJSON hot-reloads the in-memory config after the write.
-		jsonOK(w, map[string]any{
-			"default_policy": body.DefaultPolicy,
-			"policies":       body.Policies,
-		})
+		// PUT mutates tool policies — admin-only (Issue #98). GET remains
+		// readable by all authenticated users.
+		adminGuard := middleware.RequireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			a.putToolPolicies(w, r)
+		}))
+		adminGuard.ServeHTTP(w, r)
 
 	default:
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
+}
+
+// putToolPolicies is the admin-only body of PUT /api/v1/security/tool-policies.
+// It is called only after RequireAdmin has confirmed the caller holds admin role.
+func (a *restAPI) putToolPolicies(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB limit
+	var body struct {
+		DefaultPolicy string            `json:"default_policy"`
+		Policies      map[string]string `json:"policies"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	// Validate default_policy.
+	switch body.DefaultPolicy {
+	case "", "allow", "ask", "deny":
+		// valid; empty string is treated as "allow"
+	default:
+		jsonErr(w, http.StatusBadRequest, "default_policy must be 'allow', 'ask', or 'deny'")
+		return
+	}
+	if body.DefaultPolicy == "" {
+		body.DefaultPolicy = "allow"
+	}
+
+	// Validate per-tool policies.
+	for toolName, p := range body.Policies {
+		switch p {
+		case "allow", "ask", "deny":
+			// valid
+		default:
+			jsonErr(w, http.StatusBadRequest,
+				"policies["+toolName+"]: value must be 'allow', 'ask', or 'deny'")
+			return
+		}
+	}
+
+	// Persist to config.json under the sandbox key, preserving all other fields.
+	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
+		sandbox, _ := m["sandbox"].(map[string]any)
+		if sandbox == nil {
+			sandbox = map[string]any{}
+			m["sandbox"] = sandbox
+		}
+		sandbox["default_tool_policy"] = body.DefaultPolicy
+		if body.Policies != nil {
+			sandbox["tool_policies"] = body.Policies
+		} else {
+			// Explicit null from the client clears the map.
+			sandbox["tool_policies"] = map[string]any{}
+		}
+		return nil
+	}); err != nil {
+		slog.Error("rest: update tool policies", "error", err)
+		jsonErr(w, http.StatusInternalServerError, "could not save config")
+		return
+	}
+
+	// SEC-15: audit-log the policy change.
+	if a.agentLoop != nil {
+		if auditLogger := a.agentLoop.AuditLogger(); auditLogger != nil {
+			if err := auditLogger.Log(&audit.Entry{
+				Event:    audit.EventPolicyEval,
+				Decision: audit.DecisionAllow,
+				Details: map[string]any{
+					"action":         "tool_policies_update",
+					"default_policy": body.DefaultPolicy,
+					"policy_count":   len(body.Policies),
+				},
+			}); err != nil {
+				slog.Warn("rest: audit log tool policies update", "error", err)
+			}
+		}
+	}
+
+	slog.Info("rest: global tool policies updated",
+		"default_policy", body.DefaultPolicy,
+		"policy_count", len(body.Policies),
+	)
+
+	// Return the persisted state. Changes take effect immediately because
+	// safeUpdateConfigJSON hot-reloads the in-memory config after the write.
+	jsonOK(w, map[string]any{
+		"default_policy": body.DefaultPolicy,
+		"policies":       body.Policies,
+	})
 }

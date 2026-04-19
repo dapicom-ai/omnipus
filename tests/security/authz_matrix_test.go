@@ -53,6 +53,9 @@ type matrixCase struct {
 	expectStatus []int
 	// note describes expected behavior for debugging.
 	note string
+	// wantBodyContains, if non-empty, asserts the response body contains the
+	// given substring. Checked only after status assertion passes.
+	wantBodyContains string
 }
 
 // authzMatrix returns the full ≥30 row matrix. The cases below reflect TODAY'S
@@ -61,64 +64,71 @@ type matrixCase struct {
 func authzMatrix() []matrixCase {
 	return []matrixCase{
 		// ---- Read surface: all three roles ----
-		{roleAnon, http.MethodGet, "/api/v1/agents", "", []int{401}, "anon must be rejected"},
-		{roleUser, http.MethodGet, "/api/v1/agents", "", []int{200}, "user may read agent list"},
-		{roleAdmin, http.MethodGet, "/api/v1/agents", "", []int{200}, "admin may read agent list"},
+		{roleAnon, http.MethodGet, "/api/v1/agents", "", []int{401}, "anon must be rejected", ""},
+		{roleUser, http.MethodGet, "/api/v1/agents", "", []int{200}, "user may read agent list", ""},
+		{roleAdmin, http.MethodGet, "/api/v1/agents", "", []int{200}, "admin may read agent list", ""},
 
-		{roleAnon, http.MethodGet, "/api/v1/config", "", []int{401}, ""},
-		{roleUser, http.MethodGet, "/api/v1/config", "", []int{200}, ""},
-		{roleAdmin, http.MethodGet, "/api/v1/config", "", []int{200}, ""},
+		{roleAnon, http.MethodGet, "/api/v1/config", "", []int{401}, "", ""},
+		{roleUser, http.MethodGet, "/api/v1/config", "", []int{200}, "", ""},
+		{roleAdmin, http.MethodGet, "/api/v1/config", "", []int{200}, "", ""},
 
-		{roleAnon, http.MethodGet, "/api/v1/status", "", []int{401}, ""},
-		{roleUser, http.MethodGet, "/api/v1/status", "", []int{200}, ""},
-		{roleAdmin, http.MethodGet, "/api/v1/status", "", []int{200}, ""},
+		{roleAnon, http.MethodGet, "/api/v1/status", "", []int{401}, "", ""},
+		{roleUser, http.MethodGet, "/api/v1/status", "", []int{200}, "", ""},
+		{roleAdmin, http.MethodGet, "/api/v1/status", "", []int{200}, "", ""},
 
-		{roleAnon, http.MethodGet, "/api/v1/tasks", "", []int{401}, ""},
-		{roleUser, http.MethodGet, "/api/v1/tasks", "", []int{200}, ""},
-		{roleAdmin, http.MethodGet, "/api/v1/tasks", "", []int{200}, ""},
+		{roleAnon, http.MethodGet, "/api/v1/tasks", "", []int{401}, "", ""},
+		{roleUser, http.MethodGet, "/api/v1/tasks", "", []int{200}, "", ""},
+		{roleAdmin, http.MethodGet, "/api/v1/tasks", "", []int{200}, "", ""},
 
-		{roleAnon, http.MethodGet, "/api/v1/tools", "", []int{401}, ""},
-		{roleUser, http.MethodGet, "/api/v1/tools", "", []int{200}, ""},
-		{roleAdmin, http.MethodGet, "/api/v1/tools", "", []int{200}, ""},
+		{roleAnon, http.MethodGet, "/api/v1/tools", "", []int{401}, "", ""},
+		{roleUser, http.MethodGet, "/api/v1/tools", "", []int{200}, "", ""},
+		{roleAdmin, http.MethodGet, "/api/v1/tools", "", []int{200}, "", ""},
 
-		{roleAnon, http.MethodGet, "/api/v1/sessions", "", []int{401}, ""},
-		{roleUser, http.MethodGet, "/api/v1/sessions", "", []int{200}, ""},
-		{roleAdmin, http.MethodGet, "/api/v1/sessions", "", []int{200}, ""},
+		{roleAnon, http.MethodGet, "/api/v1/sessions", "", []int{401}, "", ""},
+		{roleUser, http.MethodGet, "/api/v1/sessions", "", []int{200}, "", ""},
+		{roleAdmin, http.MethodGet, "/api/v1/sessions", "", []int{200}, "", ""},
 
-		{roleAnon, http.MethodGet, "/api/v1/security/sandbox-status", "", []int{401}, ""},
-		{roleUser, http.MethodGet, "/api/v1/security/sandbox-status", "", []int{200}, ""},
-		{roleAdmin, http.MethodGet, "/api/v1/security/sandbox-status", "", []int{200}, ""},
+		{roleAnon, http.MethodGet, "/api/v1/security/sandbox-status", "", []int{401}, "", ""},
+		{roleUser, http.MethodGet, "/api/v1/security/sandbox-status", "", []int{200}, "", ""},
+		{roleAdmin, http.MethodGet, "/api/v1/security/sandbox-status", "", []int{200}, "", ""},
 
-		{roleAnon, http.MethodGet, "/api/v1/security/tool-policies", "", []int{401}, ""},
-		{roleUser, http.MethodGet, "/api/v1/security/tool-policies", "", []int{200}, ""},
-		{roleAdmin, http.MethodGet, "/api/v1/security/tool-policies", "", []int{200}, ""},
+		{roleAnon, http.MethodGet, "/api/v1/security/tool-policies", "", []int{401}, "", ""},
+		{roleUser, http.MethodGet, "/api/v1/security/tool-policies", "", []int{200}, "", ""},
+		{roleAdmin, http.MethodGet, "/api/v1/security/tool-policies", "", []int{200}, "", ""},
 
-		{roleAnon, http.MethodGet, "/api/v1/security/rate-limits", "", []int{401}, ""},
-		{roleUser, http.MethodGet, "/api/v1/security/rate-limits", "", []int{200}, ""},
-		{roleAdmin, http.MethodGet, "/api/v1/security/rate-limits", "", []int{200}, ""},
+		{roleAnon, http.MethodGet, "/api/v1/security/rate-limits", "", []int{401}, "", ""},
+		{roleUser, http.MethodGet, "/api/v1/security/rate-limits", "", []int{200}, "", ""},
+		{roleAdmin, http.MethodGet, "/api/v1/security/rate-limits", "", []int{200}, "", ""},
 
-		{roleAnon, http.MethodGet, "/api/v1/audit-log", "", []int{401}, ""},
-		{roleUser, http.MethodGet, "/api/v1/audit-log", "", []int{200}, "GAP: user can read audit log (admin-only?)"},
-		{roleAdmin, http.MethodGet, "/api/v1/audit-log", "", []int{200}, ""},
+		{role: roleAnon, method: http.MethodGet, path: "/api/v1/audit-log", expectStatus: []int{401}},
+		{
+			role:             roleUser,
+			method:           http.MethodGet,
+			path:             "/api/v1/audit-log",
+			expectStatus:     []int{403},
+			note:             "admin-only: user must receive 403 (Issue #98)",
+			wantBodyContains: "admin required",
+		},
+		{role: roleAdmin, method: http.MethodGet, path: "/api/v1/audit-log", expectStatus: []int{200}},
 
 		// ---- Write surface: createAgent (POST) ----
 		{
 			roleAnon, http.MethodPost, "/api/v1/agents",
 			`{"name":"a1","model":"scripted-model"}`,
 			[]int{401},
-			"",
+			"", "",
 		},
 		{
 			roleUser, http.MethodPost, "/api/v1/agents",
 			`{"name":"authz-user-a","model":"scripted-model"}`,
 			[]int{200, 201},
-			"GAP: user can create agents (admin-only?)",
+			"GAP: user can create agents (admin-only?)", "",
 		},
 		{
 			roleAdmin, http.MethodPost, "/api/v1/agents",
 			`{"name":"authz-admin-a","model":"scripted-model"}`,
 			[]int{200, 201},
-			"",
+			"", "",
 		},
 
 		// ---- Write surface: sessions POST ----
@@ -126,19 +136,19 @@ func authzMatrix() []matrixCase {
 			roleAnon, http.MethodPost, "/api/v1/sessions",
 			`{"agent_id":"omnipus-system","type":"chat"}`,
 			[]int{401},
-			"",
+			"", "",
 		},
 		{
 			roleUser, http.MethodPost, "/api/v1/sessions",
 			`{"agent_id":"omnipus-system","type":"chat"}`,
 			[]int{201, 400},
-			"agent existence depends on seed",
+			"agent existence depends on seed", "",
 		},
 		{
 			roleAdmin, http.MethodPost, "/api/v1/sessions",
 			`{"agent_id":"omnipus-system","type":"chat"}`,
 			[]int{201, 400},
-			"agent existence depends on seed",
+			"agent existence depends on seed", "",
 		},
 
 		// ---- Config PUT (admin-only in any reasonable model) ----
@@ -146,19 +156,20 @@ func authzMatrix() []matrixCase {
 			roleAnon, http.MethodPut, "/api/v1/config",
 			`{"agents":{"defaults":{}}}`,
 			[]int{401},
-			"",
+			"", "",
 		},
 		{
-			roleUser, http.MethodPut, "/api/v1/config",
-			`{"agents":{"defaults":{}}}`,
-			[]int{200, 400, 403},
-			"GAP-CANDIDATE: user-role PUT /config — may or may not be restricted",
+			role: roleUser, method: http.MethodPut, path: "/api/v1/config",
+			body:             `{"agents":{"defaults":{}}}`,
+			expectStatus:     []int{403},
+			note:             "admin-only: user must be rejected with 403 (Issue #98)",
+			wantBodyContains: "admin required",
 		},
 		{
 			roleAdmin, http.MethodPut, "/api/v1/config",
 			`{"agents":{"defaults":{}}}`,
 			[]int{200, 400},
-			"",
+			"", "",
 		},
 
 		// ---- tool-policies PUT (admin-only in any reasonable model) ----
@@ -166,29 +177,31 @@ func authzMatrix() []matrixCase {
 			roleAnon, http.MethodPut, "/api/v1/security/tool-policies",
 			`{"tool_policies":{}}`,
 			[]int{401},
-			"",
+			"", "",
 		},
 		{
-			roleUser, http.MethodPut, "/api/v1/security/tool-policies",
-			`{"tool_policies":{}}`,
-			[]int{200, 400, 403},
-			"GAP-CANDIDATE: user-role PUT tool-policies",
+			role: roleUser, method: http.MethodPut, path: "/api/v1/security/tool-policies",
+			body:             `{"tool_policies":{}}`,
+			expectStatus:     []int{403},
+			note:             "admin-only: user must be rejected with 403 (Issue #98)",
+			wantBodyContains: "admin required",
 		},
 		{
 			roleAdmin, http.MethodPut, "/api/v1/security/tool-policies",
 			`{"tool_policies":{}}`,
 			[]int{200, 400},
-			"",
+			"", "",
 		},
 
 		// ---- Credentials (admin-only even in simple models) ----
-		{roleAnon, http.MethodGet, "/api/v1/credentials", "", []int{401}, ""},
+		{roleAnon, http.MethodGet, "/api/v1/credentials", "", []int{401}, "", ""},
 		{
-			roleUser, http.MethodGet, "/api/v1/credentials", "",
-			[]int{200, 403},
-			"GAP-CANDIDATE: user reading credentials list",
+			role: roleUser, method: http.MethodGet, path: "/api/v1/credentials",
+			expectStatus:     []int{403},
+			note:             "admin-only: user must be rejected with 403 (Issue #98)",
+			wantBodyContains: "admin required",
 		},
-		{roleAdmin, http.MethodGet, "/api/v1/credentials", "", []int{200}, ""},
+		{roleAdmin, http.MethodGet, "/api/v1/credentials", "", []int{200}, "", ""},
 	}
 }
 
@@ -238,6 +251,9 @@ func TestAuthorizationMatrix(t *testing.T) {
 			}
 			defer resp.Body.Close()
 
+			raw, _ := io.ReadAll(resp.Body)
+			rawStr := string(raw)
+
 			ok := false
 			for _, want := range tc.expectStatus {
 				if resp.StatusCode == want {
@@ -246,18 +262,23 @@ func TestAuthorizationMatrix(t *testing.T) {
 				}
 			}
 			if !ok {
-				raw, _ := io.ReadAll(resp.Body)
 				note := tc.note
 				if note == "" {
 					note = "(no note)"
 				}
 				t.Fatalf("role=%s %s %s: got status %d, want one of %v. Body: %s. Note: %s",
 					tc.role, tc.method, tc.path, resp.StatusCode,
-					tc.expectStatus, truncate(string(raw), 200), note)
+					tc.expectStatus, truncate(rawStr, 200), note)
 			}
 			if tc.note != "" {
 				t.Logf("note: %s (role=%s %s %s -> %d)",
 					tc.note, tc.role, tc.method, tc.path, resp.StatusCode)
+			}
+			// Body substring assertion for admin-enforced 403 responses (Issue #98).
+			if tc.wantBodyContains != "" {
+				assert.Contains(t, rawStr, tc.wantBodyContains,
+					"role=%s %s %s: response body must contain %q",
+					tc.role, tc.method, tc.path, tc.wantBodyContains)
 			}
 			assert.Less(t, resp.StatusCode, 500,
 				"server must not 5xx for any matrix row (role=%s %s %s)",

@@ -119,17 +119,53 @@ func gatewayWithRBAC(t *testing.T) (gw *testutil.TestGateway, adminToken, userTo
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(cfgPath, out, 0o600))
 
-	// Trigger reload by hitting the config endpoint — or wait ~400 ms for the
-	// periodic reload if enabled. The test gateway has HotReload=false, so the
-	// cleanest path is to use the configured SIGHUP-equivalent: /reload.
+	// Trigger reload by hitting the /reload endpoint. This is asynchronous —
+	// the endpoint queues the reload and returns immediately; the actual config
+	// swap happens in the RunContext goroutine. We must NOT rely on a fixed
+	// sleep here because the reload duration is unpredictable in CI. Instead
+	// we use a probe loop (Option A): poll GET /api/v1/agents with the user
+	// token until we receive a non-401 response, confirming the new config
+	// has been picked up by the auth middleware.
 	reloadReq, err := gw.NewRequest(http.MethodPost, "/reload", nil)
-	if err == nil {
-		if reloadResp, err := gw.Do(reloadReq); err == nil {
-			_ = reloadResp.Body.Close()
+	require.NoError(t, err, "failed to build /reload request")
+	reloadResp, err := gw.Do(reloadReq)
+	require.NoError(t, err, "failed to POST /reload")
+	_ = reloadResp.Body.Close()
+	require.Equal(t, http.StatusOK, reloadResp.StatusCode,
+		"POST /reload must return 200 (got %d)", reloadResp.StatusCode)
+
+	// Wait for the non-admin user to be recognized by polling with their token.
+	// A 401 means the reload has not propagated yet. A 200 or 403 means the
+	// gateway's auth layer is aware of the new user list.
+	//
+	// Timeout: 5 s with 100 ms poll interval = 50 attempts. In CI, the reload
+	// typically completes within 200-400 ms; 5 s is a safe ceiling.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		probeReq, probeErr := http.NewRequest(http.MethodGet, gw.URL+"/api/v1/agents", nil)
+		require.NoError(t, probeErr, "failed to build probe request")
+		probeReq.Header.Set("Origin", gw.URL)
+		probeReq.Header.Set("Authorization", "Bearer "+userPlain)
+
+		probeResp, probeErr := gw.HTTPClient.Do(probeReq)
+		if probeErr == nil {
+			status := probeResp.StatusCode
+			_ = probeResp.Body.Close()
+			// 200 or any non-401 means the user was recognized.
+			if status != http.StatusUnauthorized {
+				break
+			}
 		}
+
+		if time.Now().After(deadline) {
+			t.Fatalf(
+				"gatewayWithRBAC: non-admin user token was not recognized within 5s after /reload; "+
+					"last probe status: %d — reload may have failed or taken too long",
+				http.StatusUnauthorized,
+			)
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
-	// Give the agent loop a beat to pick up the new config.
-	time.Sleep(500 * time.Millisecond)
 
 	return gw, adminToken, userPlain
 }
