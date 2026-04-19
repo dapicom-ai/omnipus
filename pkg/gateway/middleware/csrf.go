@@ -4,21 +4,18 @@
 // License: MIT
 // Copyright (c) 2026 Omnipus contributors
 
-// Package middleware provides HTTP middleware for the Omnipus gateway.
-//
-// CSRF protection (this file) implements the double-submit cookie pattern:
-// a random value is stored in an HttpOnly=false __Host-csrf cookie and must
-// be echoed in the X-CSRF-Token request header on every state-changing
-// method. Cross-origin JavaScript cannot read the cookie (same-origin policy
-// applies to cookies bound to our origin), so an attacker cannot forge the
-// header even if they can trick a browser into sending the request.
+package middleware
+
+// CSRF protection implements the double-submit cookie pattern: a random value
+// is stored in an HttpOnly=false __Host-csrf cookie and must be echoed in the
+// X-Csrf-Token request header on every state-changing method. Cross-origin
+// JavaScript cannot read the cookie (same-origin policy applies to cookies
+// bound to our origin), so an attacker cannot forge the header even if they
+// can trick a browser into sending the request.
 //
 // References:
 //   - OWASP CSRF cheat sheet: https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html
 //   - __Host- cookie prefix: https://developer.mozilla.org/en-US/docs/Web/HTTP/Cookies#cookie_prefixes
-//   - Plan reference: temporal-puzzling-melody.md §1 (CSRF/Origin decision)
-//   - Issue #97: https://github.com/dapicom-ai/omnipus/issues/97
-package middleware
 
 import (
 	"crypto/rand"
