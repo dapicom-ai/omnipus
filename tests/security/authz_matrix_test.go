@@ -199,7 +199,7 @@ func TestAuthorizationMatrix(t *testing.T) {
 	gw, adminToken, userToken, csrfToken := gatewayWithRBAC(t)
 
 	// Sanity check: the seeded config has both roles.
-	cfg := findTestConfig(t, gw.ConfigPath)
+	cfg := findTestConfig(t, gw.ConfigPath())
 	mustHaveRole(t, cfg, "admin")
 	mustHaveRole(t, cfg, "user")
 

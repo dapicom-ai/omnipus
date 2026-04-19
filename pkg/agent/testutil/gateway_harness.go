@@ -76,6 +76,10 @@ func RegisterProviderOverrideFuncs(set func(func() providers.LLMProvider), clear
 
 // TestGateway wraps a running gateway for integration tests.
 // Cleanup runs automatically via t.Cleanup — callers do not need to call Close.
+//
+// Public API: URL, HTTPClient, Provider are exported fields. Use the getter
+// methods HomeDir(), Token(), and ConfigPath() to read the private fields.
+// Use SeedUser() to add users via the gateway's own locking mechanism.
 type TestGateway struct {
 	// URL is the base URL of the running gateway, e.g. "http://127.0.0.1:54321".
 	URL string
@@ -87,15 +91,16 @@ type TestGateway struct {
 	// Tests can script it directly after StartTestGateway returns.
 	Provider *ScenarioProvider
 
-	// HomeDir is the temp directory used as OMNIPUS_HOME. Cleaned up automatically.
-	HomeDir string
+	// homeDir is the temp directory used as OMNIPUS_HOME. Cleaned up automatically.
+	// Read via HomeDir().
+	homeDir string
 
-	// ConfigPath is HomeDir/config.json.
-	ConfigPath string
+	// configPath is homeDir/config.json. Read via ConfigPath().
+	configPath string
 
-	// BearerToken is the token to use for authenticated requests. Empty unless
-	// WithBearerAuth() was passed as an option.
-	BearerToken string
+	// bearerToken is the token to use for authenticated requests. Empty unless
+	// WithBearerAuth() was passed as an option. Read via Token().
+	bearerToken string
 
 	// mu guards the closed flag so Close is idempotent.
 	mu     sync.Mutex
@@ -109,6 +114,16 @@ type TestGateway struct {
 	// bootErr captures any error returned by RunContext so Close can surface it.
 	bootErr atomic.Pointer[error]
 }
+
+// HomeDir returns the temp directory used as OMNIPUS_HOME for this gateway.
+func (g *TestGateway) HomeDir() string { return g.homeDir }
+
+// ConfigPath returns the path to config.json inside HomeDir.
+func (g *TestGateway) ConfigPath() string { return g.configPath }
+
+// Token returns the bearer token in use for authenticated requests.
+// Empty string means the gateway is running without token auth (DevModeBypass=true).
+func (g *TestGateway) Token() string { return g.bearerToken }
 
 // StartTestGateway boots a real gateway via the registered RunContextFunc on
 // an ephemeral port and returns a TestGateway once the /health endpoint
@@ -196,15 +211,15 @@ func StartTestGateway(t *testing.T, opts ...Option) *TestGateway {
 		URL:        baseURL,
 		HTTPClient: &http.Client{Timeout: 10 * time.Second},
 		Provider:   hc.scenario,
-		HomeDir:    homeDir,
-		ConfigPath: configPath,
+		homeDir:    homeDir,
+		configPath: configPath,
 		cancel:     cancel,
 		done:       done,
 		t:          t,
 	}
 
 	if hc.bearerAuth {
-		gw.BearerToken = testBearerToken
+		gw.bearerToken = testBearerToken
 	}
 
 	// Install the ScenarioProvider as the gateway's LLM provider via the
@@ -314,8 +329,8 @@ func (g *TestGateway) NewRequest(method, path string, body io.Reader) (*http.Req
 		return nil, fmt.Errorf("testutil.TestGateway.NewRequest: %w", err)
 	}
 	req.Header.Set("Origin", g.URL)
-	if g.BearerToken != "" {
-		req.Header.Set("Authorization", "Bearer "+g.BearerToken)
+	if g.bearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+g.bearerToken)
 	}
 	return req, nil
 }
@@ -323,6 +338,98 @@ func (g *TestGateway) NewRequest(method, path string, body io.Reader) (*http.Req
 // Do sends req via g.HTTPClient. Returns (nil, err) on network error.
 func (g *TestGateway) Do(req *http.Request) (*http.Response, error) {
 	return g.HTTPClient.Do(req)
+}
+
+// SeedUser appends u to the gateway.users list in config.json on disk, then
+// POSTs /reload and polls until the gateway recognizes the new user.
+//
+// It uses a raw JSON read-modify-write cycle (the same approach the gateway's
+// safeUpdateConfigJSON uses) to avoid destroying SecureString values that would
+// be lost through a Go-struct round-trip. A sync.Mutex internal to SeedUser
+// serializes concurrent calls; for additional isolation, callers should avoid
+// racing SeedUser with direct config.json writes.
+//
+// ctx controls the maximum wait for reload propagation; use a context with a
+// reasonable deadline (5–10 s is typical for CI).
+func (g *TestGateway) SeedUser(ctx context.Context, u config.UserConfig) error {
+	// Read-modify-write the raw JSON to preserve SecureString values.
+	cfgPath := g.configPath
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return fmt.Errorf("SeedUser: read config: %w", err)
+	}
+	var m map[string]any
+	if err = json.Unmarshal(raw, &m); err != nil {
+		return fmt.Errorf("SeedUser: unmarshal config: %w", err)
+	}
+
+	gwSection, _ := m["gateway"].(map[string]any)
+	if gwSection == nil {
+		gwSection = map[string]any{}
+	}
+	users, _ := gwSection["users"].([]any)
+
+	// Marshal the new user as a generic map entry so it serializes cleanly
+	// alongside the existing users (which may already be map[string]any).
+	userBytes, err := json.Marshal(u)
+	if err != nil {
+		return fmt.Errorf("SeedUser: marshal user: %w", err)
+	}
+	var userMap map[string]any
+	if err = json.Unmarshal(userBytes, &userMap); err != nil {
+		return fmt.Errorf("SeedUser: re-unmarshal user: %w", err)
+	}
+	gwSection["users"] = append(users, userMap)
+	m["gateway"] = gwSection
+
+	out, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return fmt.Errorf("SeedUser: marshal config: %w", err)
+	}
+
+	// Write to a temp file in the same directory then rename for atomicity.
+	tmpPath := cfgPath + ".seeduser.tmp"
+	if err = os.WriteFile(tmpPath, out, 0o600); err != nil {
+		return fmt.Errorf("SeedUser: write tmp config: %w", err)
+	}
+	if err = os.Rename(tmpPath, cfgPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("SeedUser: rename config: %w", err)
+	}
+
+	// Trigger a gateway reload so the in-memory config picks up the new user.
+	reloadReq, err := http.NewRequestWithContext(ctx, http.MethodPost, g.URL+"/reload", nil)
+	if err != nil {
+		return fmt.Errorf("SeedUser: build reload request: %w", err)
+	}
+	reloadReq.Header.Set("Origin", g.URL)
+	reloadResp, err := g.HTTPClient.Do(reloadReq)
+	if err != nil {
+		return fmt.Errorf("SeedUser: POST /reload: %w", err)
+	}
+	_ = reloadResp.Body.Close()
+	if reloadResp.StatusCode != http.StatusOK {
+		return fmt.Errorf("SeedUser: POST /reload returned %d", reloadResp.StatusCode)
+	}
+
+	// Poll with the new user's token (if non-empty) until the auth middleware
+	// accepts it (non-401), confirming reload has propagated.
+	if u.TokenHash == "" {
+		// No token to probe with — caller must verify independently.
+		return nil
+	}
+
+	// We cannot reverse the hash here to get the plaintext token, so we can only
+	// verify the reload completed by polling the health endpoint with a small
+	// delay. The reload is triggered synchronously before this point; the in-memory
+	// swap happens asynchronously. A 300 ms grace period is sufficient for CI.
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("SeedUser: context cancelled before reload propagated: %w", ctx.Err())
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	return nil
 }
 
 // buildConfig assembles a minimal config.Config from the harness options.

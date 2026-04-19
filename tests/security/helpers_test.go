@@ -13,10 +13,10 @@ package security_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
 	"testing"
 	"time"
 
@@ -158,57 +158,25 @@ func gatewayWithRBAC(t *testing.T) (gw *testutil.TestGateway, adminToken, userTo
 	}
 	require.NotEmpty(t, csrfToken, "onboarding response must set __Host-csrf cookie")
 
-	// Now add a second (non-admin) user by patching config.json directly.
-	// This is the simplest path — the HTTP config surface does not expose a
-	// user-mgmt API in the open-source wave. After rewriting, trigger a reload.
-	cfgPath := gw.ConfigPath
-	raw, err := os.ReadFile(cfgPath)
-	require.NoError(t, err)
-	var cfgMap map[string]any
-	require.NoError(t, json.Unmarshal(raw, &cfgMap))
-
-	gwMap, _ := cfgMap["gateway"].(map[string]any)
-	require.NotNil(t, gwMap, "gateway section must exist after onboarding")
-	usersRaw, _ := gwMap["users"].([]any)
-	usersRaw = append(usersRaw, map[string]any{
-		"username":   "secuser",
-		"token_hash": string(userHash),
-		"role":       "user",
-	})
-	gwMap["users"] = usersRaw
-
-	// Also replace the admin's token_hash so we know exactly what plaintext
-	// corresponds to the seeded admin — this is cheaper than fishing it out
-	// of the onboarding response above (which already gives us adminToken)
-	// but keeps this function self-consistent in case a caller re-rotates.
+	// Add a second (non-admin) user via gw.SeedUser — this writes the user via
+	// the same read-modify-write + /reload path the gateway uses, eliminating
+	// the hand-rolled config-rewrite dance.
 	_ = adminHash // already have usable adminToken from onboarding response
+	seedCtx, seedCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer seedCancel()
+	require.NoError(t,
+		gw.SeedUser(seedCtx, config.UserConfig{
+			Username:  "secuser",
+			TokenHash: string(userHash),
+			Role:      config.UserRoleUser,
+		}),
+		"SeedUser must succeed to add non-admin user",
+	)
 
-	cfgMap["gateway"] = gwMap
-	out, err := json.MarshalIndent(cfgMap, "", "  ")
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(cfgPath, out, 0o600))
-
-	// Trigger reload by hitting the /reload endpoint. This is asynchronous —
-	// the endpoint queues the reload and returns immediately; the actual config
-	// swap happens in the RunContext goroutine. We must NOT rely on a fixed
-	// sleep here because the reload duration is unpredictable in CI. Instead
-	// we use a probe loop (Option A): poll GET /api/v1/agents with the user
-	// token until we receive a non-401 response, confirming the new config
-	// has been picked up by the auth middleware.
-	reloadReq, err := gw.NewRequest(http.MethodPost, "/reload", nil)
-	require.NoError(t, err, "failed to build /reload request")
-	reloadResp, err := gw.Do(reloadReq)
-	require.NoError(t, err, "failed to POST /reload")
-	_ = reloadResp.Body.Close()
-	require.Equal(t, http.StatusOK, reloadResp.StatusCode,
-		"POST /reload must return 200 (got %d)", reloadResp.StatusCode)
-
-	// Wait for the non-admin user to be recognized by polling with their token.
-	// A 401 means the reload has not propagated yet. A 200 or 403 means the
-	// gateway's auth layer is aware of the new user list.
-	//
-	// Timeout: 5 s with 100 ms poll interval = 50 attempts. In CI, the reload
-	// typically completes within 200-400 ms; 5 s is a safe ceiling.
+	// Poll with the non-admin user's plaintext token to confirm reload has
+	// propagated through the gateway's auth middleware.
+	// A 401 means the config swap is not yet complete; any other status means
+	// the new user list is live. Timeout: 5 s, 100 ms interval.
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		probeReq, probeErr := http.NewRequest(http.MethodGet, gw.URL+"/api/v1/agents", nil)
@@ -228,7 +196,7 @@ func gatewayWithRBAC(t *testing.T) (gw *testutil.TestGateway, adminToken, userTo
 
 		if time.Now().After(deadline) {
 			t.Fatalf(
-				"gatewayWithRBAC: non-admin user token was not recognized within 5s after /reload; "+
+				"gatewayWithRBAC: non-admin user token was not recognized within 5s after SeedUser; "+
 					"last probe status: %d — reload may have failed or taken too long",
 				http.StatusUnauthorized,
 			)
