@@ -68,7 +68,11 @@ func TestBootUnder1Second(t *testing.T) {
 	// Without the flag the test still measures and logs latencies but skips the assertion.
 	perfNightly := os.Getenv("OMNIPUS_PERF_NIGHTLY") == "1"
 	if !perfNightly {
-		t.Skip("blocked on #92 — idleTicker 100ms floor; run with OMNIPUS_PERF_NIGHTLY=1 on a dedicated runner for the tight 1000ms SLO (perf-nightly.yml)")
+		t.Skip(
+			"blocked on #92 — idleTicker 100ms floor; " +
+				"run with OMNIPUS_PERF_NIGHTLY=1 on a dedicated runner " +
+				"for the tight 1000ms SLO (perf-nightly.yml)",
+		)
 	}
 
 	const (

@@ -142,10 +142,14 @@ type Option func(*csrfConfig)
 // installed unless WithDefaultExempts is also passed.
 func WithExemptPath(path string) Option {
 	return func(c *csrfConfig) {
-		c.customExemptSet = true
+		// Empty path is almost always a config wiring bug (typo or
+		// unset-var-interpolated-to-""). Panic at build time to surface
+		// it loudly — the alternative is silently dropping the default
+		// bootstrap exempts and breaking onboarding/login.
 		if path == "" {
-			return
+			panic("middleware.WithExemptPath: empty path; pass a non-empty route or omit the option")
 		}
+		c.customExemptSet = true
 		if c.exempt == nil {
 			c.exempt = make(map[string]struct{})
 		}

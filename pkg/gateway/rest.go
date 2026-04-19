@@ -61,6 +61,12 @@ type restAPI struct {
 	taskExecutor  *agent.TaskExecutor  // task execution engine
 	credStore     *credentials.Store   // shared unlocked credential store (injected at boot)
 	mediaStore    media.MediaStore     // shared media store for serving media files
+	// Lazy-initialized admin-only handler wrappers. Built once on first use so
+	// each incoming PUT request doesn't allocate a fresh middleware chain.
+	adminUpdateConfigOnce    sync.Once
+	adminUpdateConfigHandler http.Handler
+	adminPutPoliciesOnce     sync.Once
+	adminPutPoliciesHandler  http.Handler
 }
 
 // --- CORS / JSON helpers ---
@@ -1380,10 +1386,14 @@ func (a *restAPI) HandleConfig(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		// Enforce admin-only for config mutations. withAuth has already run and
 		// written the role into the context; RequireAdmin reads it from there.
-		adminGuard := middleware.RequireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			a.updateConfig(w, r)
-		}))
-		adminGuard.ServeHTTP(w, r)
+		// The wrapper is built once (sync.Once) so each PUT doesn't allocate a
+		// new middleware chain.
+		a.adminUpdateConfigOnce.Do(func() {
+			a.adminUpdateConfigHandler = middleware.RequireAdmin(
+				http.HandlerFunc(a.updateConfig),
+			)
+		})
+		a.adminUpdateConfigHandler.ServeHTTP(w, r)
 	default:
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 	}

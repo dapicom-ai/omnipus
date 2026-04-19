@@ -237,6 +237,17 @@ func TestLoad2000Sessions(t *testing.T) {
 	}
 
 	// ---- SLO assertions ----
+	// Guard: if no latencies were recorded at all, the percentile helpers
+	// return 0 and the SLO check below would trivially pass. Treat an empty
+	// sample as a hard failure — a "successful" load test with zero measured
+	// first-token events means the harness or the server collapsed before
+	// any data point could be recorded.
+	if len(allLatencies) == 0 {
+		sloBreaches["no_latency_samples"] = fmt.Sprintf(
+			"no first-token latencies recorded across %d sessions — gateway or harness collapse",
+			sessionsOpened,
+		)
+	}
 	if p95Lat > sloP95FirstToken {
 		msg := fmt.Sprintf("p95=%v > SLO=%v — distribution: p50=%v p95=%v p99=%v",
 			p95Lat, sloP95FirstToken, p50Lat, p95Lat, p99Lat)

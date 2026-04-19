@@ -100,6 +100,14 @@ func clamp(v float64) float64 {
 	return v
 }
 
+// clampAndReport clamps v to [0,1] and reports whether any clamping happened.
+// Callers decide whether the deviation is tolerable (FP noise) or a hard error
+// (model returning out-of-contract values).
+func clampAndReport(v float64) (clamped float64, wasClamped bool) {
+	c := clamp(v)
+	return c, c != v
+}
+
 // Parse extracts a Scores value from the raw text returned by the judge model.
 // It handles Markdown code fences, extracts the first JSON object, clamps each
 // numeric score to [0, 1], and rejects responses with missing or non-numeric
@@ -127,9 +135,17 @@ func Parse(judgeResponse string) (Scores, error) {
 		if err = json.Unmarshal(rawVal, &f); err != nil {
 			return Scores{}, fmt.Errorf("judge response key %q is not a number: %w", key, err)
 		}
-		// Clamp first, then validate with NewScore. The judge may return 1.0000001
-		// due to floating-point; clamping is intentional.
-		score, scoreErr := NewScore(clamp(f))
+		// Narrow FP noise (e.g. 1.0000001) is clamped and logged; anything
+		// farther outside [0,1] is a broken judge and surfaced as an error
+		// so silent masking can't hide model regressions.
+		clamped, wasClamped := clampAndReport(f)
+		if wasClamped && (f < -0.01 || f > 1.01) {
+			return Scores{}, fmt.Errorf(
+				"judge response key %q out of range [0,1]: got %g (refusing to silently clamp)",
+				key, f,
+			)
+		}
+		score, scoreErr := NewScore(clamped)
 		if scoreErr != nil {
 			return Scores{}, fmt.Errorf("judge response key %q invalid score: %w", key, scoreErr)
 		}

@@ -332,7 +332,10 @@ func TestXSSPayloadHTMLParsing(t *testing.T) {
 
 			if resp.StatusCode >= 400 {
 				// Server rejected the payload — that IS the sanitization.
-				t.Logf("server rejected XSS payload %q with %d (server-side defense)", truncate(payload, 60), resp.StatusCode)
+				t.Logf(
+					"server rejected XSS payload %q with %d (server-side defense)",
+					truncate(payload, 60), resp.StatusCode,
+				)
 				return
 			}
 			require.Less(t, resp.StatusCode, 500, "server must not 5xx on XSS payload")

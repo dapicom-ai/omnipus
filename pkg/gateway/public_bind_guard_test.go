@@ -1,3 +1,5 @@
+//go:build !cgo
+
 // Contract test: Plan 3 §1 acceptance decision — binding to a public IP with no
 // users and no dev_mode_bypass must cause a fatal boot error.
 //
@@ -11,7 +13,7 @@
 // Status: guard not yet implemented in RunContext.
 // This file is intentionally kept as a non-fatal skip (not t.Fatal) per the
 // Plan 4 A5 instructions: "Option (a) — skip with t.Skip + file an issue."
-// GitHub issue: #TBD — "Add public-bind guard: reject host=0.0.0.0 + no users + no dev_mode_bypass at boot"
+// GitHub issue: #115 — "Add public-bind guard: reject host=0.0.0.0 + no users + no dev_mode_bypass at boot"
 //
 // When the guard IS implemented, replace the t.Skip calls below with real
 // assertions against RunContext returning a non-nil error with a message
@@ -36,7 +38,7 @@ func TestPublicBindNoAuthFatal(t *testing.T) {
 	t.Skip(
 		"BLOCKED: production guard not yet implemented — " +
 			"RunContext must reject host=0.0.0.0 + no users + no dev_mode_bypass. " +
-			"Track at GitHub issue #TBD.",
+			"Track at GitHub issue #115.",
 	)
 }
 
@@ -62,7 +64,7 @@ func TestPublicBindGuard_Cases(t *testing.T) {
 				Users:         nil,
 			},
 			expectFatal: true,
-			skipReason:  "BLOCKED: guard not implemented — see GitHub issue #TBD",
+			skipReason:  "BLOCKED: guard not implemented — see GitHub issue #115",
 		},
 		{
 			name: "loopback_bind_no_users_no_bypass_safe",
@@ -72,7 +74,7 @@ func TestPublicBindGuard_Cases(t *testing.T) {
 				Users:         nil,
 			},
 			expectFatal: false,
-			skipReason:  "BLOCKED: guard not implemented — see GitHub issue #TBD",
+			skipReason:  "BLOCKED: guard not implemented — see GitHub issue #115",
 		},
 		{
 			name: "loopback_ipv6_bind_no_users_no_bypass_safe",
@@ -82,7 +84,7 @@ func TestPublicBindGuard_Cases(t *testing.T) {
 				Users:         nil,
 			},
 			expectFatal: false,
-			skipReason:  "BLOCKED: guard not implemented — see GitHub issue #TBD",
+			skipReason:  "BLOCKED: guard not implemented — see GitHub issue #115",
 		},
 		{
 			name: "public_bind_dev_mode_bypass_safe",
@@ -92,7 +94,7 @@ func TestPublicBindGuard_Cases(t *testing.T) {
 				Users:         nil,
 			},
 			expectFatal: false,
-			skipReason:  "BLOCKED: guard not implemented — see GitHub issue #TBD",
+			skipReason:  "BLOCKED: guard not implemented — see GitHub issue #115",
 		},
 		{
 			name: "public_bind_with_users_safe",
@@ -104,7 +106,7 @@ func TestPublicBindGuard_Cases(t *testing.T) {
 				},
 			},
 			expectFatal: false,
-			skipReason:  "BLOCKED: guard not implemented — see GitHub issue #TBD",
+			skipReason:  "BLOCKED: guard not implemented — see GitHub issue #115",
 		},
 	}
 

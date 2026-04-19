@@ -193,7 +193,11 @@ func TestPerTurnSLO(t *testing.T) {
 	// but skips the hard budget assertion.
 	perfNightly := os.Getenv("OMNIPUS_PERF_NIGHTLY") == "1"
 	if !perfNightly {
-		t.Skip("blocked on #92 — idleTicker 100ms floor; run with OMNIPUS_PERF_NIGHTLY=1 on a dedicated runner for the tight p95 50ms/150ms SLOs (perf-nightly.yml)")
+		t.Skip(
+			"blocked on #92 — idleTicker 100ms floor; " +
+				"run with OMNIPUS_PERF_NIGHTLY=1 on a dedicated runner " +
+				"for the tight p95 50ms/150ms SLOs (perf-nightly.yml)",
+		)
 	}
 
 	const (
