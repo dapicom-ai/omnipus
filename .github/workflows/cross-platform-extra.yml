@@ -1,10 +1,13 @@
-name: Cross-Platform
+name: Cross-Platform Extra (Windows)
 
-# Required blocking matrix: Linux amd64 + arm64, and macOS arm64.
-# Windows amd64 is covered by cross-platform-extra.yml (informational only)
-# because the codebase has ~15+ pre-existing POSIX-specific test
-# assumptions that block a fully-green Windows leg. Tracked in #113.
-# When #113 closes, fold Windows back in here and delete the extra file.
+# Informational Windows amd64 leg. Not a required check because the
+# codebase has ~15+ pre-existing POSIX-specific test assumptions that
+# fail on Windows (chmod-based permission injection, /bin/sh mock CLIs,
+# filepath.IsAbs of /tmp, backslash vs forward-slash in error strings,
+# PTY/shell pipeline tests, etc.). Full catalog in #113.
+#
+# When #113 closes, fold this leg back into cross-platform.yml and
+# delete this file.
 
 on:
   pull_request:
@@ -12,7 +15,7 @@ on:
       - '**.go'
       - 'go.mod'
       - 'go.sum'
-      - '.github/workflows/cross-platform.yml'
+      - '.github/workflows/cross-platform-extra.yml'
   push:
     branches: [main]
   workflow_dispatch:
@@ -23,14 +26,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: windows-latest
             arch: amd64
-          # ubuntu-24.04-arm is GA as of October 2024 per GitHub's ARM64 announcement.
-          # https://github.blog/2024-10-31-arm64-on-github-actions-powering-faster-more-efficient-build-systems/
-          - os: ubuntu-24.04-arm
-            arch: arm64
-          - os: macos-latest
-            arch: arm64
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
@@ -62,47 +59,30 @@ jobs:
         run: go build -tags goolm,stdjson ./...
 
       - name: Test
-        # Platform-gated tests skip cleanly via pkg/testutil.SkipIfNotLinux et al.
-        # The suite runs on all combinations to catch build-time breakage.
         shell: bash
         run: go test -tags goolm,stdjson -short -timeout 10m ./...
 
       - name: Smoke boot + /health
-        # Run the compiled binary once with --allow-empty on the local runner
-        # to catch any platform-specific boot path (ARM64 assembly, etc.) that
-        # goes wrong before we even reach the test suite.
         shell: bash
         run: |
           set -euo pipefail
           go build -tags goolm,stdjson -o omnipus ./cmd/omnipus/
           OMNIPUS_HOME="$(mktemp -d)"
           export OMNIPUS_HOME
-          # Supply a deterministic master key so the credential store unlocks
-          # without prompting (Plan 3 §1 locked-decision: env takes priority).
           export OMNIPUS_MASTER_KEY="0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
           ./omnipus gateway --allow-empty > omnipus.log 2>&1 &
           PID=$!
-          echo "gateway pid=$PID"
-
-          # Discover the bound host:port from the log — the datamodel first-run
-          # path writes "localhost:3000" into a default config, while a preset
-          # config might bind 127.0.0.1:18790 or any other host/port. Match
-          # both (host is any non-whitespace up to the colon). Poll with a
-          # 30 s budget (boot SLO is <1 s but runner cold-start varies).
           HOSTPORT=""
           for i in $(seq 1 30); do
             if [ -z "$HOSTPORT" ]; then
               HOSTPORT=$(grep -oE 'Gateway started on [^[:space:]]+:[0-9]+' omnipus.log 2>/dev/null | sed 's/^Gateway started on //' | head -1 || true)
             fi
             if [ -n "$HOSTPORT" ] && curl -sf "http://${HOSTPORT}/health" > /dev/null 2>&1; then
-              echo "health ok on ${HOSTPORT} after ${i}s"
               kill "$PID" || true
               exit 0
             fi
             sleep 1
           done
-
-          echo "gateway did not become ready within 30 s; log follows:" >&2
           cat omnipus.log >&2
           kill "$PID" || true
           exit 1
