@@ -18,28 +18,30 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/gateway/ctxkey"
 )
 
 var warnUnauthOnce sync.Once
 
-// configContextKey is used to store a snapshotted *config.Config in the request
-// context. This ensures all handlers within a single request see a consistent
-// config even during hot-reload, preventing the race where the config pointer
-// is replaced mid-iteration (~5-10% auth failures under concurrent load).
-type configContextKey struct{}
-
 // configFromContext retrieves the config snapshot stored by configSnapshotMiddleware.
 // Returns nil if no snapshot was stored (caller should fall back to GetConfig()).
 func configFromContext(ctx context.Context) *config.Config {
-	cfg, _ := ctx.Value(configContextKey{}).(*config.Config)
+	cfg, _ := ctx.Value(ctxkey.ConfigContextKey{}).(*config.Config)
 	return cfg
 }
 
-// RoleContextKey is the context key for storing the authenticated user's role.
-type RoleContextKey struct{}
+// configContextKey is an unexported alias for ctxkey.ConfigContextKey.
+// It is kept for internal use and test compatibility. External packages must
+// use ctxkey.ConfigContextKey directly.
+type configContextKey = ctxkey.ConfigContextKey
 
-// UserContextKey is the context key for storing the authenticated user config.
-type UserContextKey struct{}
+// RoleContextKey is an alias for ctxkey.RoleContextKey kept for compatibility
+// with existing code in this package that uses the gateway-local type name.
+type RoleContextKey = ctxkey.RoleContextKey
+
+// UserContextKey is an alias for ctxkey.UserContextKey kept for compatibility
+// with existing code in this package that uses the gateway-local type name.
+type UserContextKey = ctxkey.UserContextKey
 
 // AuthResult holds the outcome of a bearer token check.
 type AuthResult struct {
@@ -118,7 +120,7 @@ func MapUserRoleToPrincipal(ur config.UserRole) string {
 func (a *restAPI) configSnapshotMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cfg := a.agentLoop.GetConfig()
-		ctx := context.WithValue(r.Context(), configContextKey{}, cfg)
+		ctx := context.WithValue(r.Context(), ctxkey.ConfigContextKey{}, cfg)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
