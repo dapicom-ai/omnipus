@@ -170,23 +170,3 @@ func AppendJSONL(path string, record any) error {
 	return f.Close()
 }
 
-// WithFlock acquires an OS-level advisory write lock on path before calling fn,
-// then releases it. This is defense-in-depth alongside single-writer goroutines
-// for shared files (config.json, credentials.json).
-//
-// On platforms where syscall.Flock is unavailable the fn is called without
-// locking (graceful degradation).
-func WithFlock(path string, fn func() error) error {
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
-	if err != nil {
-		return fmt.Errorf("fileutil: open for flock %q: %w", path, err)
-	}
-	defer f.Close()
-
-	if err := flockExclusive(f); err != nil {
-		return fmt.Errorf("fileutil: acquire flock %q: %w", path, err)
-	}
-	defer flockUnlock(f) //nolint:errcheck
-
-	return fn()
-}

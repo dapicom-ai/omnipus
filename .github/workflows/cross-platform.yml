@@ -1,9 +1,7 @@
 name: Cross-Platform
 
-# Blocking matrix legs — must pass for PR merge. Only Linux amd64 and arm64
-# are here. macOS and Windows are covered by cross-platform-extra.yml, which
-# runs in the same scenarios but is not a required check until issues #107
-# (macOS sandbox symlink) and #108 (Windows path + rename) close.
+# All four matrix legs are required checks. Issues #107 (macOS sandbox symlink)
+# and #108 (Windows path + rename) are fixed inline on this branch.
 
 on:
   pull_request:
@@ -28,6 +26,10 @@ jobs:
           # https://github.blog/2024-10-31-arm64-on-github-actions-powering-faster-more-efficient-build-systems/
           - os: ubuntu-24.04-arm
             arch: arm64
+          - os: macos-latest
+            arch: arm64
+          - os: windows-latest
+            arch: amd64
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
