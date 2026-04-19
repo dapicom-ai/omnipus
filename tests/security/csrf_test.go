@@ -161,7 +161,7 @@ func TestCSRFProtection(t *testing.T) {
 			// attack shape. Attacker can set arbitrary headers but cannot
 			// write __Host- cookies from a different origin.
 			req.AddCookie(&http.Cookie{Name: "__Host-csrf", Value: "server-seeded-value"})
-			req.Header.Set("X-CSRF-Token", "attacker-guess")
+			req.Header.Set("X-Csrf-Token", "attacker-guess")
 			resp, err := gw.HTTPClient.Do(req)
 			require.NoError(t, err)
 			defer resp.Body.Close()
@@ -193,7 +193,7 @@ func TestCSRFProtection(t *testing.T) {
 				req.Header.Set("Authorization", "Bearer "+gw.BearerToken)
 			}
 			req.AddCookie(&http.Cookie{Name: "__Host-csrf", Value: csrfToken})
-			req.Header.Set("X-CSRF-Token", csrfToken)
+			req.Header.Set("X-Csrf-Token", csrfToken)
 			resp, err := gw.HTTPClient.Do(req)
 			require.NoError(t, err)
 			defer resp.Body.Close()

@@ -41,7 +41,13 @@ import (
 const CSRFCookieName = "__Host-csrf"
 
 // CSRFHeaderName is the header that clients must echo with the cookie value.
-const CSRFHeaderName = "X-CSRF-Token"
+//
+// The value is stored in Go's canonical MIME header form (X-Csrf-Token). HTTP
+// headers are case-insensitive on the wire, and Go normalizes incoming header
+// names via http.CanonicalMIMEHeaderKey before r.Header.Get looks them up, so
+// browsers or SDKs that send "X-CSRF-Token" or "x-csrf-token" will all match.
+// The canonical spelling here satisfies the canonicalheader linter.
+const CSRFHeaderName = "X-Csrf-Token"
 
 // csrfTokenBytes is the entropy of a fresh token (256 bits).
 const csrfTokenBytes = 32
@@ -138,7 +144,7 @@ type Config struct {
 //     4. Match → request proceeds to next.
 //
 // The middleware NEVER allows a state-changing request through when the
-// check fails. Fail-closed is the only correct behaviour for a gate.
+// check fails. Fail-closed is the only correct behavior for a gate.
 func CSRFMiddleware(cfg Config) func(http.Handler) http.Handler {
 	exempt := cfg.ExemptPaths
 	if exempt == nil {
@@ -206,7 +212,7 @@ func CSRFMiddleware(cfg Config) func(http.Handler) http.Handler {
 // On a dev-mode server bound to plain HTTP (no TLS) the browser will refuse
 // to store a Secure cookie. For localhost this is usually fine because
 // modern browsers treat 127.0.0.1/localhost as a "potentially trustworthy
-// origin" and honour Secure cookies over http. For arbitrary hosts, the
+// origin" and honor Secure cookies over http. For arbitrary hosts, the
 // gateway must run on TLS.
 func IssueCSRFCookie(w http.ResponseWriter) error {
 	buf := make([]byte, csrfTokenBytes)

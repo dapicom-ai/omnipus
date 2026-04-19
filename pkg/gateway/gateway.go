@@ -809,7 +809,10 @@ func setupAndStartServices(
 					"source_ip", sourceIP, "route", route, "method", r.Method)
 				return
 			}
-			if err := logger.Log(&audit.Entry{
+			// Named logErr to avoid shadowing the outer err declared in
+			// setupServices (govet shadow). The two errors have unrelated
+			// lifetimes — this one is scoped entirely to the Reporter closure.
+			if logErr := logger.Log(&audit.Entry{
 				Event:    "csrf_mismatch",
 				Decision: audit.DecisionDeny,
 				Details: map[string]any{
@@ -818,8 +821,8 @@ func setupAndStartServices(
 					"method":    r.Method,
 				},
 				PolicyRule: "csrf: cookie/header mismatch on state-changing request",
-			}); err != nil {
-				slog.Warn("csrf: audit log write failed", "error", err)
+			}); logErr != nil {
+				slog.Warn("csrf: audit log write failed", "error", logErr)
 			}
 		},
 	})

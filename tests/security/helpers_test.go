@@ -211,7 +211,7 @@ const testCSRFToken = "test-csrf-any-value"
 // three-line "AddCookie + Header.Set + ..." idiom.
 func withCSRF(req *http.Request) *http.Request {
 	req.AddCookie(&http.Cookie{Name: "__Host-csrf", Value: testCSRFToken})
-	req.Header.Set("X-CSRF-Token", testCSRFToken)
+	req.Header.Set("X-Csrf-Token", testCSRFToken)
 	return req
 }
 

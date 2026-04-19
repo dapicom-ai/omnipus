@@ -261,7 +261,7 @@ func TestAuthorizationMatrix(t *testing.T) {
 				switch tc.method {
 				case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
 					req.AddCookie(&http.Cookie{Name: "__Host-csrf", Value: csrfToken})
-					req.Header.Set("X-CSRF-Token", csrfToken)
+					req.Header.Set("X-Csrf-Token", csrfToken)
 				}
 			}
 			resp, err := gw.HTTPClient.Do(req)
