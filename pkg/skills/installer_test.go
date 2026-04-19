@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -264,6 +265,9 @@ func TestSkillInstaller_DownloadFile(t *testing.T) {
 	}
 
 	t.Run("successful download", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("os.FileMode permission bits (0o600) are advisory-only on Windows: POSIX-specific assumption (see #113)")
+		}
 		localPath := filepath.Join(tmpDir, "test-skill", "SKILL.md")
 		err := installer.downloadFile(context.Background(), server.URL, localPath)
 		if err != nil {

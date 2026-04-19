@@ -5,6 +5,7 @@
 package policy_test
 
 import (
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -20,6 +21,9 @@ import (
 func TestConfigLoader_SecuritySection(t *testing.T) {
 	// Traces to: wave2-security-layer-spec.md line 917 (Dataset: Policy File Examples — valid full policy)
 	t.Run("full valid policy parses correctly", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("filepath.IsAbs rejects POSIX paths like /tmp on Windows, making the test JSON invalid: POSIX-specific assumption (see #113)")
+		}
 		rawJSON := []byte(`{
 			"default_policy": "deny",
 			"ssrf": {

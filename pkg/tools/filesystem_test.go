@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -479,6 +480,9 @@ func TestFilesystemTool_WriteFile_Restricted_CreateDir(t *testing.T) {
 
 // TestHostRW_Read_PermissionDenied verifies that hostRW.Read surfaces access denied errors.
 func TestHostRW_Read_PermissionDenied(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod-based permission injection (mode 0o000) not enforced on Windows — os.FileMode perm bits are advisory-only: POSIX-specific assumption (see #113)")
+	}
 	if os.Getuid() == 0 {
 		t.Skip("skipping permission test: running as root")
 	}
