@@ -12,6 +12,7 @@ package onboarding
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -21,6 +22,10 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/fileutil"
 )
+
+// ErrAlreadyComplete is returned by ReserveComplete when onboarding has
+// already been marked complete. Callers should use errors.Is to check for it.
+var ErrAlreadyComplete = errors.New("onboarding already complete")
 
 // State holds the persistent onboarding and system status fields.
 type State struct {
@@ -37,6 +42,7 @@ type Manager struct {
 	mu        sync.RWMutex
 	statePath string
 	state     State
+	reserved  bool // true when ReserveComplete has been called but commit not yet invoked
 }
 
 // NewManager creates a Manager backed by statePath.
@@ -59,6 +65,46 @@ func (m *Manager) CompleteOnboarding() error {
 	defer m.mu.Unlock()
 	m.state.OnboardingComplete = true
 	return m.save()
+}
+
+// ReserveComplete implements the first phase of the two-phase commit for
+// onboarding. It:
+//   - Checks IsComplete (and reserved) under the write lock; returns
+//     ErrAlreadyComplete if either is true.
+//   - Sets an in-memory "reserved" flag so concurrent callers see
+//     "already complete" immediately (before state.json is written).
+//   - Returns a commit closure that atomically persists state.json and
+//     clears the reserved flag. The caller MUST invoke commit() after the
+//     config write succeeds, or call ReleaseReservation() on any error path.
+//
+// Two-phase invariant: state.json is never written before config.json.
+// If the process crashes between config.json write and state.json write,
+// the next boot will not have state.json, re-enter onboarding, and detect
+// the admin user already exists — idempotently updating the config entry.
+func (m *Manager) ReserveComplete() (commit func() error, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.state.OnboardingComplete || m.reserved {
+		return nil, ErrAlreadyComplete
+	}
+	m.reserved = true
+	commit = func() error {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		m.state.OnboardingComplete = true
+		m.reserved = false
+		return m.save()
+	}
+	return commit, nil
+}
+
+// ReleaseReservation clears the in-memory "reserved" flag without writing
+// state.json. Call this on any error path after ReserveComplete to allow
+// subsequent callers to retry onboarding.
+func (m *Manager) ReleaseReservation() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.reserved = false
 }
 
 // IsComplete returns true if onboarding has already been completed.

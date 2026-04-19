@@ -1,5 +1,3 @@
-//go:build !cgo
-
 package security_test
 
 // File purpose: CSRF protection tests for state-changing POST endpoints
@@ -121,8 +119,8 @@ func TestCSRFProtection(t *testing.T) {
 			if tgt.needsJSONBody {
 				req.Header.Set("Content-Type", "application/json")
 			}
-			if gw.BearerToken != "" {
-				req.Header.Set("Authorization", "Bearer "+gw.BearerToken)
+			if gw.Token() != "" {
+				req.Header.Set("Authorization", "Bearer "+gw.Token())
 			}
 			// Deliberately omit the X-CSRF-Token header AND the cookie.
 			resp, err := gw.HTTPClient.Do(req)
@@ -154,8 +152,8 @@ func TestCSRFProtection(t *testing.T) {
 			if tgt.needsJSONBody {
 				req.Header.Set("Content-Type", "application/json")
 			}
-			if gw.BearerToken != "" {
-				req.Header.Set("Authorization", "Bearer "+gw.BearerToken)
+			if gw.Token() != "" {
+				req.Header.Set("Authorization", "Bearer "+gw.Token())
 			}
 			// Cookie and header disagree — the classic "forged header"
 			// attack shape. Attacker can set arbitrary headers but cannot
@@ -189,8 +187,8 @@ func TestCSRFProtection(t *testing.T) {
 			if tgt.needsJSONBody {
 				req.Header.Set("Content-Type", "application/json")
 			}
-			if gw.BearerToken != "" {
-				req.Header.Set("Authorization", "Bearer "+gw.BearerToken)
+			if gw.Token() != "" {
+				req.Header.Set("Authorization", "Bearer "+gw.Token())
 			}
 			req.AddCookie(&http.Cookie{Name: "__Host-csrf", Value: csrfToken})
 			req.Header.Set("X-Csrf-Token", csrfToken)
@@ -244,8 +242,8 @@ func TestCSRFCORSReflectionGate(t *testing.T) {
 			req, err := http.NewRequest(http.MethodGet, gw.URL+"/api/v1/agents", nil)
 			require.NoError(t, err)
 			req.Header.Set("Origin", origin)
-			if gw.BearerToken != "" {
-				req.Header.Set("Authorization", "Bearer "+gw.BearerToken)
+			if gw.Token() != "" {
+				req.Header.Set("Authorization", "Bearer "+gw.Token())
 			}
 			resp, err := gw.HTTPClient.Do(req)
 			require.NoError(t, err)

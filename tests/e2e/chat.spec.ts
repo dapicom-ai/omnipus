@@ -34,7 +34,12 @@ test(
     const input = chatInput(page);
     await expect(input).toBeVisible({ timeout: 15_000 });
 
-    await input.fill('Remember the word: XYZQUUX7734');
+    // Phrasing note: we deliberately avoid the word "remember" because Mia
+    // (the default agent) treats "remember …" as an instruction to persist
+    // to her MEMORY.md file rather than retain it in conversation context.
+    // We want to probe multi-turn transcript retention, which is an agent-
+    // loop property independent of the agent's memory-file semantics.
+    await input.fill('In my first message, my serial number is XYZQUUX7734.');
     await input.press('Enter');
     await expect(assistantMessages(page)).toHaveCount(1, { timeout: 60_000 });
 
@@ -42,7 +47,10 @@ test(
     await input.press('Enter');
     await expect(assistantMessages(page)).toHaveCount(2, { timeout: 60_000 });
 
-    await input.fill('What special word did I ask you to remember?');
+    await input.fill(
+      'Look back at my first message in THIS conversation — what serial number ' +
+        'did I mention? Echo it back verbatim.',
+    );
     await input.press('Enter');
     await expect(assistantMessages(page)).toHaveCount(3, { timeout: 60_000 });
 
@@ -125,11 +133,11 @@ test(
   },
 );
 
-test.fixme(
+test.skip(
   '(f) queue-on-disconnect: messages sent during WS disconnect send in order after reconnect',
-  async ({ page, context }) => {
-    // The chat store does not implement a send queue for offline mode.
-    // Messages sent while context.setOffline(true) are silently dropped.
-    // See tests/e2e/SPA-GAPS.md — "Offline send queue not implemented".
-  },
+  // blocked on #105: useChatStore does not implement a local send queue for offline mode.
+  // Messages sent while context.setOffline(true) are silently dropped rather than queued.
+  // Needs max-5 queue with auto-send on reconnect and pending indicator.
+  // See tests/e2e/SPA-GAPS.md — "Offline send queue".
+  async ({ page, context }) => {},
 );

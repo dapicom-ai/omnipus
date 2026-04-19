@@ -6,6 +6,7 @@ package fileutil
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -89,6 +90,20 @@ func TestWithFlockFileNotExistCreatesIt(t *testing.T) {
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "created")
+}
+
+// TestWithFlockFnError verifies that an error returned by fn is propagated to
+// the caller (F15: no silent error swallowing).
+func TestWithFlockFnError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.json")
+	require.NoError(t, os.WriteFile(path, []byte("{}"), 0o600))
+
+	sentinel := fmt.Errorf("fn error sentinel")
+	err := WithFlock(path, func() error {
+		return sentinel
+	})
+	assert.ErrorIs(t, err, sentinel, "WithFlock must propagate fn errors to the caller")
 }
 
 // TestConcurrentConfigWrites verifies multiple goroutines can write config safely.

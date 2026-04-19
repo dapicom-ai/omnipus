@@ -1,5 +1,3 @@
-//go:build !cgo
-
 package security_test
 
 // File purpose: credential-leakage scanner for logs and HTTP responses (PR-D Axis-7).
@@ -176,12 +174,12 @@ func TestCredentialLeakage(t *testing.T) {
 	scanTokens := buildScanTokens(injectedAPIKey, bearerSentinel)
 
 	t.Run("audit_log_no_credential_leaks", func(t *testing.T) {
-		auditPath := filepath.Join(gw.HomeDir, "system", "audit.jsonl")
-		assertNoLeaksInFile(t, auditPath, scanTokens, gw.BearerToken, token)
+		auditPath := filepath.Join(gw.HomeDir(), "system", "audit.jsonl")
+		assertNoLeaksInFile(t, auditPath, scanTokens, gw.Token(), token)
 	})
 
 	t.Run("gateway_logs_no_credential_leaks", func(t *testing.T) {
-		logDir := filepath.Join(gw.HomeDir, "logs")
+		logDir := filepath.Join(gw.HomeDir(), "logs")
 		entries, err := os.ReadDir(logDir)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -195,7 +193,7 @@ func TestCredentialLeakage(t *testing.T) {
 				continue
 			}
 			assertNoLeaksInFile(t, filepath.Join(logDir, e.Name()),
-				scanTokens, gw.BearerToken, token)
+				scanTokens, gw.Token(), token)
 			scanned++
 		}
 		t.Logf("scanned %d log files", scanned)
@@ -220,7 +218,7 @@ func TestCredentialLeakage(t *testing.T) {
 		// After the provider update above, the audit log (if it recorded the
 		// PUT /providers/anthropic call) must redact the api_key. Read the
 		// audit log and look for the literal injected key.
-		auditPath := filepath.Join(gw.HomeDir, "system", "audit.jsonl")
+		auditPath := filepath.Join(gw.HomeDir(), "system", "audit.jsonl")
 		f, err := os.Open(auditPath)
 		if err != nil {
 			if os.IsNotExist(err) {

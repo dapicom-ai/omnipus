@@ -61,12 +61,24 @@ type restAPI struct {
 	taskExecutor  *agent.TaskExecutor  // task execution engine
 	credStore     *credentials.Store   // shared unlocked credential store (injected at boot)
 	mediaStore    media.MediaStore     // shared media store for serving media files
+	// Lazy-initialized admin-only handler wrappers. Built once on first use so
+	// each incoming PUT request doesn't allocate a fresh middleware chain.
+	adminUpdateConfigOnce    sync.Once
+	adminUpdateConfigHandler http.Handler
+	adminPutPoliciesOnce     sync.Once
+	adminPutPoliciesHandler  http.Handler
 }
 
 // --- CORS / JSON helpers ---
 
 func (a *restAPI) setCORSHeaders(w http.ResponseWriter, r ...*http.Request) {
 	origin := a.allowedOrigin
+	// isExplicitlyAllowed tracks whether the request origin matched the
+	// configured allowedOrigin exactly. Localhost/loopback fallback does NOT
+	// count — credentials are only sent for origins the operator explicitly
+	// configured, preventing overly broad cookie sharing.
+	isExplicitlyAllowed := false
+
 	// Allow same-origin requests: if the request Origin matches the Host header,
 	// reflect it so the SPA works when accessed via public IP.
 	// Only reflect origins that are same-origin or localhost — never arbitrary origins.
@@ -74,6 +86,11 @@ func (a *restAPI) setCORSHeaders(w http.ResponseWriter, r ...*http.Request) {
 		reqOrigin := r[0].Header.Get("Origin")
 		if reqOrigin != "" && isAllowedOrigin(reqOrigin, r[0].Host, a.allowedOrigin) {
 			origin = reqOrigin
+			// Mark explicit only when the request origin matches the operator-configured
+			// allowedOrigin directly (not merely localhost/same-host fallback).
+			if a.allowedOrigin != "" && reqOrigin == a.allowedOrigin {
+				isExplicitlyAllowed = true
+			}
 		}
 	}
 	// Never fall back to "*" — if no origin is configured and the request origin
@@ -83,7 +100,14 @@ func (a *restAPI) setCORSHeaders(w http.ResponseWriter, r ...*http.Request) {
 	}
 	w.Header().Set("Access-Control-Allow-Origin", origin)
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Csrf-Token")
+	// Access-Control-Allow-Credentials must only be sent when the origin is
+	// explicitly configured — never when falling back to wildcard or localhost
+	// reflection. Per CORS spec, "true" + wildcard is illegal; restricting to
+	// explicit origins is both correct and secure.
+	if isExplicitlyAllowed {
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+	}
 }
 
 // isAllowedOrigin checks whether a request origin should be reflected in CORS headers.
@@ -1362,10 +1386,14 @@ func (a *restAPI) HandleConfig(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		// Enforce admin-only for config mutations. withAuth has already run and
 		// written the role into the context; RequireAdmin reads it from there.
-		adminGuard := middleware.RequireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			a.updateConfig(w, r)
-		}))
-		adminGuard.ServeHTTP(w, r)
+		// The wrapper is built once (sync.Once) so each PUT doesn't allocate a
+		// new middleware chain.
+		a.adminUpdateConfigOnce.Do(func() {
+			a.adminUpdateConfigHandler = middleware.RequireAdmin(
+				http.HandlerFunc(a.updateConfig),
+			)
+		})
+		a.adminUpdateConfigHandler.ServeHTTP(w, r)
 	default:
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 	}

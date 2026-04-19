@@ -69,25 +69,21 @@ test('(c) "New Agent" button on roster opens the create-agent modal', async ({ p
   await expect(modal).toBeVisible({ timeout: 10_000 });
 });
 
-test.fixme(
+test.skip(
   '(d) locked fields render read-only on core agents',
-  async ({ page }) => {
-    // AgentProfile renders a "read-only" badge for locked agents but does NOT render
-    // data-testid="agent-name-input" or make the identity inputs accessible without
-    // navigating into the accordion. The identity accordion section is hidden for
-    // locked (core) agents (canEdit check in AgentProfile.tsx:353).
-    // No stable selector exists to assert readOnly/disabled on the name field for
-    // locked agents. See tests/e2e/SPA-GAPS.md — "Core-agent locked-field indicator".
-  },
+  // blocked on #101: AgentProfile hides the Identity accordion for locked (core) agents
+  // (canEdit guard at AgentProfile.tsx:353) — the name input is never rendered, so
+  // there is nothing to assert as readOnly. Needs data-testid="agent-name-input" and
+  // a visible (disabled) input for locked agents. See tests/e2e/SPA-GAPS.md.
+  async ({ page }) => {},
 );
 
-test.fixme(
+test.skip(
   '(e) deleted agent URL returns branded 404 with "Back to Agents" link',
-  async ({ page }) => {
-    // Navigating to /agents/nonexistent-slug renders a generic error state or the
-    // router's 404 page — neither includes a "Back to Agents" link with that exact text.
-    // See tests/e2e/SPA-GAPS.md — "Deleted-agent branded 404 not implemented".
-  },
+  // blocked on #102: /agents/:nonexistent-slug renders a generic error state without
+  // a "Back to Agents" link. Needs a branded 404 component with that exact link text.
+  // See tests/e2e/SPA-GAPS.md — "Deleted-agent branded 404".
+  async ({ page }) => {},
 );
 
 test('(f) name collision on Create Agent surfaces server 409 error in UI', async ({ page }) => {
@@ -130,13 +126,12 @@ test('(f) name collision on Create Agent surfaces server 409 error in UI', async
   await expect(errorToast).toBeVisible({ timeout: 10_000 });
 });
 
-test.fixme(
+test.skip(
   '(g) session with deleted agent shows read-only transcript and "Agent removed" banner',
-  async ({ page }) => {
-    // The SPA does not render an "Agent removed" banner on sessions where agent_removed=true.
-    // The chat screen does not handle this state — there is no data-testid="agent-removed-banner".
-    // See tests/e2e/SPA-GAPS.md — "Agent-removed banner not implemented".
-  },
+  // blocked on #103: ChatScreen does not check agent_removed in the session response.
+  // Needs data-testid="agent-removed-banner" and a disabled composer for ghost sessions.
+  // See tests/e2e/SPA-GAPS.md — "Agent-removed banner".
+  async ({ page }) => {},
 );
 
 test.afterAll(async ({ request }) => {

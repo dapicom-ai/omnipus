@@ -44,7 +44,17 @@ function readCSRFCookie(): string | null {
   for (const part of document.cookie.split(';')) {
     const trimmed = part.trim()
     if (trimmed.startsWith(prefix)) {
-      return trimmed.slice(prefix.length)
+      const raw = trimmed.slice(prefix.length)
+      // Apply decodeURIComponent defensively: if the browser percent-encoded
+      // the cookie value (e.g. standard base64 "=", "+", "/"), we decode it
+      // so the header value matches what the server originally set. If
+      // decoding fails (malformed sequence such as a lone "%"), fall back to
+      // the raw string and let the server compare verbatim.
+      try {
+        return decodeURIComponent(raw)
+      } catch {
+        return raw
+      }
     }
   }
   return null

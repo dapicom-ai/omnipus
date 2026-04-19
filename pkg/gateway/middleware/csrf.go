@@ -21,9 +21,9 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 )
 
 // CSRFCookieName is the name of the double-submit cookie.
@@ -49,8 +49,10 @@ const CSRFHeaderName = "X-Csrf-Token"
 // csrfTokenBytes is the entropy of a fresh token (256 bits).
 const csrfTokenBytes = 32
 
-// exemptPaths are paths that bypass the cookie+header check but still receive
-// a freshly-issued __Host-csrf cookie on their response when appropriate.
+// defaultExemptPaths are the bootstrap / operational routes bypassed by the
+// gate when the caller has NOT supplied any WithExemptPath / WithExemptPaths /
+// WithDefaultExempts option. Calling CSRFMiddleware() with no options yields
+// this default set.
 //
 // Invariant: every path in this set that is a POST/PUT/PATCH/DELETE MUST
 // call IssueCSRFCookie on successful response. The exemption exists because
@@ -60,7 +62,8 @@ const csrfTokenBytes = 32
 // into the success branch of the handler. If you remove IssueCSRFCookie from
 // one of these handlers, remove the entry here too so the gate still applies.
 //
-// Bootstrap / cookie-issuer endpoints:
+// Bootstrap / cookie-issuer endpoints (DO reach the REST mux and thus DO pass
+// through this middleware):
 //   - /api/v1/onboarding/complete — called on fresh install before any auth
 //     exists. Issues the cookie so the SPA's first post-onboarding request
 //     can pass the gate.
@@ -69,21 +72,22 @@ const csrfTokenBytes = 32
 //   - /api/v1/auth/register-admin — equivalent to login for the first-boot
 //     admin-account creation flow. Issues the cookie on 200.
 //
-// Operational endpoints (no CSRF attack surface — not browser-driven, no
-// cookies attached by browsers, no privileged origin):
-//   - /health, /ready, /reload — liveness/readiness probes and the operator
-//     reload trigger. Gating them would break kubelet probes and curl-based
-//     ops tooling, with no attacker benefit: an evil origin cannot make a
-//     browser attach credentials to these paths.
+// Operational endpoints (/health, /ready, /reload):
+//   - These are defense-in-depth for the case where a future refactor mounts
+//     these on the REST mux. Currently they are served on the separate
+//     health-server mux (pkg/health/server.go) and this gate never runs for
+//     them. Keeping the entries here means that if a maintainer accidentally
+//     moves them onto the main mux, liveness probes and the operator reload
+//     trigger still function without a rebuild of the middleware chain.
 //
 // Plan reference: temporal-puzzling-melody.md §1, PR-H.
-var exemptPaths = map[string]struct{}{
-	"/api/v1/onboarding/complete": {},
-	"/api/v1/auth/login":          {},
-	"/api/v1/auth/register-admin": {},
-	"/health":                     {},
-	"/ready":                      {},
-	"/reload":                     {},
+var defaultExemptPaths = []string{
+	"/api/v1/onboarding/complete",
+	"/api/v1/auth/login",
+	"/api/v1/auth/register-admin",
+	"/health",
+	"/ready",
+	"/reload",
 }
 
 // stateChangingMethods lists the HTTP verbs that trigger CSRF enforcement.
@@ -107,32 +111,122 @@ var stateChangingMethods = map[string]struct{}{
 // gateway's existing clientIP helper.
 type MismatchReporter func(r *http.Request, sourceIP, route string)
 
-// Config configures the CSRF middleware. A zero value is usable: exempt
-// paths default to the onboarding-complete endpoint and the reporter is nil.
-type Config struct {
-	// ExemptPaths, if non-nil, REPLACES the default exempt list. Callers
-	// who want to keep the default and add more should merge manually.
-	// Exact match only — no prefix or glob.
-	ExemptPaths map[string]struct{}
+// csrfConfig holds resolved middleware state. It is internal to this package
+// and is not reachable by callers — configuration is expressed exclusively
+// through Option values passed to CSRFMiddleware. This prevents a caller
+// from mutating (for example) the exempt-path set after construction:
+// once CSRFMiddleware returns, the configuration is frozen inside a closure.
+type csrfConfig struct {
+	exempt   map[string]struct{}
+	reporter MismatchReporter
+	clientIP func(r *http.Request) string
+	// customExemptSet reports whether any WithExemptPath/WithExemptPaths/
+	// WithDefaultExempts option was applied. When false, the default set is
+	// installed at build time.
+	customExemptSet bool
+}
 
-	// Reporter, if non-nil, is invoked on every cookie+header mismatch
-	// before the 403 response is written. It must not write to the
-	// ResponseWriter; it is for logging only.
-	Reporter MismatchReporter
+// Option mutates a csrfConfig during construction. Options are applied in
+// the order they are passed to CSRFMiddleware.
+//
+// Exempt-path options (WithExemptPath, WithExemptPaths, WithDefaultExempts)
+// are additive: each call extends the set. To opt out of the default bootstrap
+// paths, simply pass only the WithExemptPath options you want. To explicitly
+// include the defaults alongside custom paths, combine WithDefaultExempts with
+// other WithExemptPath calls.
+type Option func(*csrfConfig)
 
-	// ClientIP extracts the caller IP from a request. If nil, the
-	// middleware falls back to r.RemoteAddr (which may include the port).
-	// This avoids a hard dependency on the gateway's clientIP helper.
-	ClientIP func(r *http.Request) string
+// WithExemptPath appends a single path to the exempt set. Exact match only —
+// no prefix or glob. Calling this option (with or without paths) marks the
+// exempt set as "caller-customized"; the built-in default set will NOT be
+// installed unless WithDefaultExempts is also passed.
+func WithExemptPath(path string) Option {
+	return func(c *csrfConfig) {
+		// Empty path is almost always a config wiring bug (typo or
+		// unset-var-interpolated-to-""). Panic at build time to surface
+		// it loudly — the alternative is silently dropping the default
+		// bootstrap exempts and breaking onboarding/login.
+		if path == "" {
+			panic("middleware.WithExemptPath: empty path; pass a non-empty route or omit the option")
+		}
+		c.customExemptSet = true
+		if c.exempt == nil {
+			c.exempt = make(map[string]struct{})
+		}
+		c.exempt[path] = struct{}{}
+	}
+}
+
+// WithExemptPaths appends multiple paths to the exempt set. Exact match only.
+// Equivalent to calling WithExemptPath once per path. Marks the exempt set
+// as "caller-customized"; the default set is NOT installed unless
+// WithDefaultExempts is also passed.
+func WithExemptPaths(paths ...string) Option {
+	return func(c *csrfConfig) {
+		c.customExemptSet = true
+		if c.exempt == nil {
+			c.exempt = make(map[string]struct{})
+		}
+		for _, p := range paths {
+			if p == "" {
+				continue
+			}
+			c.exempt[p] = struct{}{}
+		}
+	}
+}
+
+// WithDefaultExempts explicitly installs the built-in bootstrap exempt set
+// (/api/v1/onboarding/complete, /api/v1/auth/login, /api/v1/auth/register-admin,
+// /health, /ready, /reload). Use this when you want the defaults AND additional
+// custom paths — otherwise passing WithExemptPath alone would drop the defaults.
+//
+// Calling CSRFMiddleware with zero options is equivalent to calling it with
+// only WithDefaultExempts.
+func WithDefaultExempts() Option {
+	return func(c *csrfConfig) {
+		if c.exempt == nil {
+			c.exempt = make(map[string]struct{})
+		}
+		for _, p := range defaultExemptPaths {
+			c.exempt[p] = struct{}{}
+		}
+	}
+}
+
+// WithReporter installs the mismatch reporter. If reporter is nil, the
+// middleware rejects mismatches silently (still with 403, but without invoking
+// any callback). Passing this option with a nil reporter is equivalent to
+// not passing it.
+func WithReporter(reporter MismatchReporter) Option {
+	return func(c *csrfConfig) {
+		c.reporter = reporter
+	}
+}
+
+// WithClientIPFunc installs the client-IP extractor used to populate the
+// Reporter's sourceIP argument. If no extractor is set (or nil is passed),
+// the middleware falls back to r.RemoteAddr (which may include the port).
+// This avoids a hard dependency on the gateway's clientIP helper while still
+// allowing production code to plug in the real extractor.
+func WithClientIPFunc(f func(r *http.Request) string) Option {
+	return func(c *csrfConfig) {
+		c.clientIP = f
+	}
 }
 
 // CSRFMiddleware returns an HTTP middleware that enforces the double-submit
 // cookie CSRF check on state-changing requests.
 //
+// Default behavior (when called with no options) is equivalent to passing
+// WithDefaultExempts: the six bootstrap / operational routes listed in
+// defaultExemptPaths are exempt, no Reporter is installed, and r.RemoteAddr
+// supplies the client IP.
+//
 // Semantics:
 //   - GET, HEAD, OPTIONS: pass through unchanged.
-//   - Exempt paths (see Config.ExemptPaths): pass through. The handler is
-//     expected to call IssueCSRFCookie to seed a cookie for the client.
+//   - Exempt paths: pass through. The handler is expected to call
+//     IssueCSRFCookie to seed a cookie for the client.
 //   - POST, PUT, PATCH, DELETE on non-exempt paths:
 //     1. If the __Host-csrf cookie is missing → 403 "csrf cookie missing".
 //     2. If the X-CSRF-Token header is missing → 403 "csrf header missing".
@@ -142,12 +236,48 @@ type Config struct {
 //
 // The middleware NEVER allows a state-changing request through when the
 // check fails. Fail-closed is the only correct behavior for a gate.
-func CSRFMiddleware(cfg Config) func(http.Handler) http.Handler {
-	exempt := cfg.ExemptPaths
-	if exempt == nil {
-		exempt = exemptPaths
+//
+// The resolved configuration is captured in the returned closure. Any option
+// value passed in (including the paths in WithExemptPaths) is deep-copied
+// into the closure — a caller cannot mutate the exempt set after construction
+// by retaining a reference to the slice they passed in.
+func CSRFMiddleware(opts ...Option) func(http.Handler) http.Handler {
+	cfg := &csrfConfig{}
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+		opt(cfg)
 	}
-	clientIP := cfg.ClientIP
+
+	// No option touched the exempt set → install the default. When a caller
+	// HAS called WithExemptPath / WithExemptPaths without WithDefaultExempts,
+	// the defaults are intentionally omitted; customExemptSet records that
+	// intent.
+	if !cfg.customExemptSet {
+		if cfg.exempt == nil {
+			cfg.exempt = make(map[string]struct{})
+		}
+		for _, p := range defaultExemptPaths {
+			cfg.exempt[p] = struct{}{}
+		}
+	}
+	// Replace a nil map with an empty one so the closure's membership check
+	// never panics on a zero-option caller who passed only WithExemptPath("").
+	if cfg.exempt == nil {
+		cfg.exempt = make(map[string]struct{})
+	}
+
+	// Deep-copy the exempt set into a private map so post-construction mutation
+	// of any option argument is impossible. Callers cannot reach `exempt` from
+	// outside this closure.
+	exempt := make(map[string]struct{}, len(cfg.exempt))
+	for k := range cfg.exempt {
+		exempt[k] = struct{}{}
+	}
+
+	reporter := cfg.reporter
+	clientIP := cfg.clientIP
 	if clientIP == nil {
 		clientIP = func(r *http.Request) string { return r.RemoteAddr }
 	}
@@ -180,8 +310,8 @@ func CSRFMiddleware(cfg Config) func(http.Handler) http.Handler {
 			}
 
 			if subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(header)) != 1 {
-				if cfg.Reporter != nil {
-					cfg.Reporter(r, clientIP(r), r.URL.Path)
+				if reporter != nil {
+					reporter(r, clientIP(r), r.URL.Path)
 				}
 				writeCSRFError(w, "csrf token mismatch")
 				return
@@ -232,15 +362,15 @@ func IssueCSRFCookie(w http.ResponseWriter) error {
 	return nil
 }
 
-// writeCSRFError writes a 403 JSON error response. We deliberately use a
-// single fmt.Fprintf instead of encoding/json to avoid pulling an import.
-// The response shape matches the rest of the gateway's { "error": "..." }
-// convention so the SPA's existing error path handles it uniformly.
+// writeCSRFError writes a 403 JSON error response. The response shape matches
+// the rest of the gateway's { "error": "..." } convention so the SPA's
+// existing error path handles it uniformly.
 func writeCSRFError(w http.ResponseWriter, msg string) {
-	// Escape the " in msg — none of our error strings contain quotes but be
-	// defensive in case a future caller passes untrusted input.
-	escaped := strings.ReplaceAll(msg, `"`, `\"`)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusForbidden)
-	fmt.Fprintf(w, `{"error":"%s"}`, escaped)
+	// Encoder guarantees the value is valid JSON regardless of what msg
+	// contains. A post-WriteHeader encode failure is unactionable (the status
+	// is already on the wire); the server's transport layer logs transport
+	// errors, and the caller still sees a 403.
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }

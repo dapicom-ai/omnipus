@@ -27,13 +27,13 @@ var nextHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) 
 	_, _ = io.WriteString(w, "next-ran")
 })
 
-// buildMW wraps nextHandler with default CSRFMiddleware.
-func buildMW(cfg Config) http.Handler {
-	return CSRFMiddleware(cfg)(nextHandler)
+// buildMW wraps nextHandler with CSRFMiddleware built from the given options.
+func buildMW(opts ...Option) http.Handler {
+	return CSRFMiddleware(opts...)(nextHandler)
 }
 
 func TestCSRF_SafeMethodsPassThrough(t *testing.T) {
-	h := buildMW(Config{})
+	h := buildMW()
 	for _, method := range []string{http.MethodGet, http.MethodHead, http.MethodOptions} {
 		t.Run(method, func(t *testing.T) {
 			req := httptest.NewRequest(method, "/api/v1/agents", nil)
@@ -46,7 +46,7 @@ func TestCSRF_SafeMethodsPassThrough(t *testing.T) {
 }
 
 func TestCSRF_MissingCookie(t *testing.T) {
-	h := buildMW(Config{})
+	h := buildMW()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/agents", bytes.NewReader([]byte(`{}`)))
 	// No cookie, no header.
 	rec := httptest.NewRecorder()
@@ -60,7 +60,7 @@ func TestCSRF_MissingCookie(t *testing.T) {
 }
 
 func TestCSRF_MissingHeader(t *testing.T) {
-	h := buildMW(Config{})
+	h := buildMW()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/agents", bytes.NewReader([]byte(`{}`)))
 	req.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: "abc123"})
 	rec := httptest.NewRecorder()
@@ -75,14 +75,14 @@ func TestCSRF_MissingHeader(t *testing.T) {
 func TestCSRF_Mismatch(t *testing.T) {
 	var reportedRoute, reportedIP string
 	var reportCalls int
-	h := buildMW(Config{
-		Reporter: func(r *http.Request, sourceIP, route string) {
+	h := buildMW(
+		WithReporter(func(r *http.Request, sourceIP, route string) {
 			reportCalls++
 			reportedIP = sourceIP
 			reportedRoute = route
-		},
-		ClientIP: func(r *http.Request) string { return "203.0.113.9" },
-	})
+		}),
+		WithClientIPFunc(func(r *http.Request) string { return "203.0.113.9" }),
+	)
 	req := httptest.NewRequest(http.MethodPut, "/api/v1/config", bytes.NewReader([]byte(`{}`)))
 	req.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: "correct-token"})
 	req.Header.Set(CSRFHeaderName, "wrong-token")
@@ -100,7 +100,7 @@ func TestCSRF_Mismatch(t *testing.T) {
 }
 
 func TestCSRF_MatchPassesThrough(t *testing.T) {
-	h := buildMW(Config{})
+	h := buildMW()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/agents", bytes.NewReader([]byte(`{}`)))
 	req.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: "match-me"})
 	req.Header.Set(CSRFHeaderName, "match-me")
@@ -113,11 +113,11 @@ func TestCSRF_MatchPassesThrough(t *testing.T) {
 }
 
 func TestCSRF_DefaultExempt(t *testing.T) {
-	// Default exempt list includes the cookie-issuer endpoints (onboarding,
-	// login, register-admin — can't require a cookie on the very handler
-	// whose job is to issue it) and operational health endpoints (which
-	// are not browser-driven).
-	h := buildMW(Config{})
+	// Default exempt list (no options passed) includes the cookie-issuer
+	// endpoints (onboarding, login, register-admin) and operational health
+	// endpoints (mounted on health-server mux; exempt here for
+	// defense-in-depth in case of future remount).
+	h := buildMW()
 	for _, path := range []string{
 		"/api/v1/onboarding/complete",
 		"/api/v1/auth/login",
@@ -137,16 +137,18 @@ func TestCSRF_DefaultExempt(t *testing.T) {
 	}
 }
 
-func TestCSRF_CustomExemptReplacesDefault(t *testing.T) {
-	// When a caller supplies a non-nil ExemptPaths, it REPLACES the default.
-	// So the onboarding endpoint is no longer exempt; it needs cookie+header.
-	h := buildMW(Config{ExemptPaths: map[string]struct{}{"/custom": {}}})
+func TestCSRF_WithExemptPath_DropsDefaults(t *testing.T) {
+	// When a caller supplies WithExemptPath without WithDefaultExempts, the
+	// default set is intentionally dropped. The onboarding endpoint is no
+	// longer exempt; it needs cookie+header.
+	h := buildMW(WithExemptPath("/custom"))
 
-	// Onboarding is gated now.
+	// Onboarding is now gated.
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/onboarding/complete", nil)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	assert.Equal(t, http.StatusForbidden, rec.Code, "custom exempt list must replace default; onboarding now gated")
+	assert.Equal(t, http.StatusForbidden, rec.Code,
+		"WithExemptPath without WithDefaultExempts must drop the default set")
 
 	// Custom exempt path passes through.
 	req = httptest.NewRequest(http.MethodPost, "/custom", nil)
@@ -155,10 +157,72 @@ func TestCSRF_CustomExemptReplacesDefault(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
-func TestCSRF_NoReporterOnMismatchIsSafe(t *testing.T) {
-	// Reporter is optional. A nil Reporter must not crash the middleware
-	// on a mismatch.
-	h := buildMW(Config{Reporter: nil})
+func TestCSRF_WithExemptPaths_Multiple(t *testing.T) {
+	// WithExemptPaths(...) is a bulk variant equivalent to calling
+	// WithExemptPath once per arg.
+	h := buildMW(WithExemptPaths("/one", "/two", "/three"))
+
+	for _, p := range []string{"/one", "/two", "/three"} {
+		req := httptest.NewRequest(http.MethodPost, p, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code, "path %s must be exempt", p)
+	}
+
+	// A path not in the custom set is still gated.
+	req := httptest.NewRequest(http.MethodPost, "/four", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+func TestCSRF_WithDefaultExempts_AndCustom(t *testing.T) {
+	// Combining WithDefaultExempts with WithExemptPath yields defaults UNION
+	// custom. Both the default /api/v1/auth/login AND the custom /extra are
+	// exempt.
+	h := buildMW(WithDefaultExempts(), WithExemptPath("/extra"))
+
+	for _, p := range []string{
+		"/api/v1/auth/login",
+		"/api/v1/onboarding/complete",
+		"/extra",
+	} {
+		req := httptest.NewRequest(http.MethodPost, p, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		assert.Equal(t, http.StatusOK, rec.Code, "path %s must be exempt", p)
+	}
+}
+
+func TestCSRF_OptionsDeepCopy_NoPostConstructionMutation(t *testing.T) {
+	// Build a slice, hand it to the constructor, then mutate the slice. The
+	// middleware's behavior must be unaffected — the constructor must deep-copy
+	// the paths into its private map.
+	paths := make([]string, 0, 3)
+	paths = append(paths, "/a", "/b")
+	h := buildMW(WithExemptPaths(paths...))
+
+	// Mutate the caller's slice AFTER construction.
+	paths[0] = "/hijacked"
+	paths = append(paths, "/c")
+	_ = paths
+
+	// /a must still be exempt; /hijacked must still be gated.
+	req := httptest.NewRequest(http.MethodPost, "/a", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code, "original exempt path must survive caller mutation")
+
+	req = httptest.NewRequest(http.MethodPost, "/hijacked", nil)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusForbidden, rec.Code, "post-construction slice mutation must not leak into middleware")
+}
+
+func TestCSRF_WithReporter_NilIsSafe(t *testing.T) {
+	// Passing a nil reporter option must not crash; the middleware simply
+	// rejects mismatches without invoking a callback.
+	h := buildMW(WithReporter(nil))
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/sessions/abc", nil)
 	req.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: "a"})
 	req.Header.Set(CSRFHeaderName, "b")
@@ -166,6 +230,50 @@ func TestCSRF_NoReporterOnMismatchIsSafe(t *testing.T) {
 	h.ServeHTTP(rec, req)
 
 	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+func TestCSRF_NoReporterOnMismatchIsSafe(t *testing.T) {
+	// With no WithReporter option at all, a mismatch still returns 403 and
+	// doesn't panic.
+	h := buildMW()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/sessions/abc", nil)
+	req.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: "a"})
+	req.Header.Set(CSRFHeaderName, "b")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+func TestCSRF_WithClientIPFunc_FallbackRemoteAddr(t *testing.T) {
+	// When no WithClientIPFunc is supplied, the mismatch reporter gets
+	// r.RemoteAddr as the source IP.
+	var seenIP string
+	h := buildMW(WithReporter(func(r *http.Request, sourceIP, route string) {
+		seenIP = sourceIP
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/config", nil)
+	req.RemoteAddr = "192.0.2.7:51234"
+	req.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: "x"})
+	req.Header.Set(CSRFHeaderName, "y")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Equal(t, "192.0.2.7:51234", seenIP, "fallback must be r.RemoteAddr")
+}
+
+func TestCSRF_NilOptionIgnored(t *testing.T) {
+	// Passing a nil Option must be safely ignored, not panic. This lets
+	// callers conditionally apply options via a ternary without branching.
+	var noOpt Option
+	h := buildMW(noOpt)
+
+	// Default behavior still in effect: onboarding is exempt.
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/onboarding/complete", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
 func TestIssueCSRFCookie_Attributes(t *testing.T) {
@@ -216,4 +324,21 @@ func TestIssueCSRFCookie_HeaderIsParseable(t *testing.T) {
 		"HttpOnly must not be set — SPA needs to read the cookie")
 	assert.NotContains(t, setCookie, "Domain=",
 		"__Host- prefix forbids Domain attribute")
+}
+
+func TestCSRF_ErrorBody_JSONEncoded(t *testing.T) {
+	// The error body is JSON-encoded via encoding/json (not fmt.Fprintf),
+	// so Content-Type is application/json and the payload is a valid JSON
+	// object with an "error" field.
+	h := buildMW()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agents", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+
+	var body map[string]string
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, "csrf cookie missing", body["error"])
 }

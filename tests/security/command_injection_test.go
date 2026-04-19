@@ -1,5 +1,3 @@
-//go:build !cgo
-
 package security_test
 
 // File purpose: PR-D Axis-7 command-injection coverage.

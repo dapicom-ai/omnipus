@@ -47,13 +47,12 @@ test(
   },
 );
 
-test.fixme(
+test.skip(
   '(b) file-download fallback: large binary request triggers browser download dialog',
-  async ({ page }) => {
-    // Driving a file download via LLM instruction is non-deterministic.
-    // The download link (InlineMedia <a download> in ChatScreen.tsx:226-237) only
-    // appears when the agent returns a non-image media frame.
-    // This test cannot be made deterministic without a dedicated mock tool that
-    // returns a file media frame. See tests/e2e/SPA-GAPS.md — "Download test requires mock media tool".
-  },
+  // blocked on #107: Deterministic file-download test requires a mock gateway tool that
+  // returns a non-image media frame. Real LLM instruction is non-deterministic and CI
+  // does not have a valid OPENROUTER_API_KEY. InlineMedia <a download> only renders on
+  // non-image media frames (ChatScreen.tsx:226-237).
+  // See tests/e2e/SPA-GAPS.md — "Download test requires mock media tool".
+  async ({ page }) => {},
 );

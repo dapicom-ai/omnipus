@@ -15,6 +15,15 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/gateway/ctxkey"
 )
 
+// writeJSONErr writes {"error": msg} with the given HTTP status. A post-header
+// encode failure is unactionable (the status is already on the wire) and is
+// logged by the transport layer; the caller still sees the correct status.
+func writeJSONErr(w http.ResponseWriter, status int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
 // RequireAdmin returns a middleware that enforces admin-only access.
 //
 // Response matrix:
@@ -30,21 +39,11 @@ func RequireAdmin(next http.Handler) http.Handler {
 		if !ok || role == "" {
 			// No role in context means the auth middleware did not run or did
 			// not recognize the token — treat as unauthenticated.
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			if err := json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"}); err != nil {
-				// Nothing useful to do after headers are sent; error is already
-				// logged by the http.Server at the transport level.
-				_ = err
-			}
+			writeJSONErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 		if role != config.UserRoleAdmin {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusForbidden)
-			if err := json.NewEncoder(w).Encode(map[string]string{"error": "admin required"}); err != nil {
-				_ = err
-			}
+			writeJSONErr(w, http.StatusForbidden, "admin required")
 			return
 		}
 		next.ServeHTTP(w, r)

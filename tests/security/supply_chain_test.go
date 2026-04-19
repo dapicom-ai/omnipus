@@ -1,5 +1,3 @@
-//go:build !cgo
-
 package security_test
 
 // File purpose: supply-chain integrity tests for skills + MCP tool registration (PR-D Axis-7).

@@ -130,14 +130,15 @@ type EvalResult struct {
 // ── Config ────────────────────────────────────────────────────────────────────
 
 type cfg struct {
-	scenariosDir string
-	outPath      string
-	reportPath   string
-	agentModel   string
-	judgeModel   string
-	timeout      time.Duration
-	dryRun       bool
-	omnipusBin   string
+	scenariosDir        string
+	outPath             string
+	reportPath          string
+	agentModel          string
+	judgeModel          string
+	timeout             time.Duration
+	dryRun              bool
+	omnipusBin          string
+	allowEmptyScenarios bool
 }
 
 func parseFlags() cfg {
@@ -163,6 +164,12 @@ func parseFlags() cfg {
 		envOrDefault("OMNIPUS_BIN", "./omnipus"),
 		"path to compiled omnipus binary",
 	)
+	flag.BoolVar(
+		&c.allowEmptyScenarios,
+		"allow-empty-scenarios",
+		false,
+		"exit 0 (instead of 2) when no scenario files are found",
+	)
 	flag.Parse()
 	return c
 }
@@ -187,14 +194,17 @@ func discoverScenarios(root string) ([]Scenario, error) {
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {
-			return fmt.Errorf("read %s: %w", path, err)
+			slog.Warn("eval: skipping unreadable scenario file", "path", path, "error", err)
+			return nil
 		}
 		var s Scenario
 		if err := yaml.Unmarshal(data, &s); err != nil {
-			return fmt.Errorf("parse %s: %w", path, err)
+			slog.Warn("eval: skipping malformed scenario file", "path", path, "error", err)
+			return nil
 		}
 		if err := s.validate(); err != nil {
-			return fmt.Errorf("validate %s: %w", path, err)
+			slog.Warn("eval: skipping invalid scenario", "path", path, "error", err)
+			return nil
 		}
 		scenarios = append(scenarios, s)
 		return nil
@@ -206,10 +216,44 @@ func discoverScenarios(root string) ([]Scenario, error) {
 
 // gatewayHandle wraps a running omnipus process and its home directory.
 type gatewayHandle struct {
-	homeDir string
-	baseURL string
-	cmd     *exec.Cmd
-	token   string // bearer token obtained after onboarding
+	homeDir   string
+	baseURL   string
+	cmd       *exec.Cmd
+	token     string // bearer token obtained after onboarding
+	csrfToken string // CSRF token extracted from Set-Cookie on state-changing responses
+}
+
+// csrfCookieName is the cookie name used by the Omnipus CSRF middleware.
+const csrfCookieName = "__Host-csrf"
+
+// extractCSRF scans resp.Cookies() for the CSRF cookie and stores it.
+func (h *gatewayHandle) extractCSRF(resp *http.Response) {
+	for _, c := range resp.Cookies() {
+		if c.Name == csrfCookieName {
+			h.csrfToken = c.Value
+			return
+		}
+	}
+}
+
+// doStatefulPost performs a POST to path with the given body, attaching the
+// CSRF cookie and X-Csrf-Token header so the CSRF middleware does not reject
+// the request with 403. It also sets the Authorization header from h.token
+// when a token is available.
+func (h *gatewayHandle) doStatefulPost(path string, body []byte) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodPost, h.baseURL+path, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("build request for %s: %w", path, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if h.csrfToken != "" {
+		req.Header.Set("X-Csrf-Token", h.csrfToken)
+		req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: h.csrfToken})
+	}
+	if h.token != "" {
+		req.Header.Set("Authorization", "Bearer "+h.token)
+	}
+	return http.DefaultClient.Do(req)
 }
 
 // seedConfig writes a minimal config.json into homeDir. The provider entry is
@@ -344,15 +388,12 @@ func (h *gatewayHandle) onboard(agentModel string) error {
 		return fmt.Errorf("marshal onboard body: %w", err)
 	}
 
-	resp, err := http.Post( //nolint:noctx
-		h.baseURL+"/api/v1/onboarding/complete",
-		"application/json",
-		bytes.NewReader(bodyBytes),
-	)
+	resp, err := h.doStatefulPost("/api/v1/onboarding/complete", bodyBytes)
 	if err != nil {
 		return fmt.Errorf("onboard POST: %w", err)
 	}
 	defer resp.Body.Close()
+	h.extractCSRF(resp)
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("onboard returned %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
@@ -380,15 +421,12 @@ func (h *gatewayHandle) onboard(agentModel string) error {
 func (h *gatewayHandle) login(username, password string) (string, error) {
 	body := map[string]string{"username": username, "password": password}
 	bodyBytes, _ := json.Marshal(body)
-	resp, err := http.Post( //nolint:noctx
-		h.baseURL+"/api/v1/auth/login",
-		"application/json",
-		bytes.NewReader(bodyBytes),
-	)
+	resp, err := h.doStatefulPost("/api/v1/auth/login", bodyBytes)
 	if err != nil {
 		return "", fmt.Errorf("login POST: %w", err)
 	}
 	defer resp.Body.Close()
+	h.extractCSRF(resp)
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("login returned %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
@@ -431,22 +469,12 @@ func (h *gatewayHandle) postMessage(
 		"content": userText,
 	}
 	bodyBytes, _ := json.Marshal(msgBody)
-	req, err := http.NewRequestWithContext(ctx,
-		http.MethodPost,
-		h.baseURL+"/api/v1/sessions/"+sessionID+"/messages",
-		bytes.NewReader(bodyBytes),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("build message request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+h.token)
-
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := h.doStatefulPost("/api/v1/sessions/"+sessionID+"/messages", bodyBytes)
 	if err != nil {
 		return nil, fmt.Errorf("post message: %w", err)
 	}
 	defer resp.Body.Close()
+	h.extractCSRF(resp)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("post message returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
@@ -522,6 +550,8 @@ func (h *gatewayHandle) fetchMessages(ctx context.Context, sessionID string) ([]
 func (h *gatewayHandle) createSession(ctx context.Context, agentID string) (string, error) {
 	body := map[string]string{"agent_id": agentID}
 	bodyBytes, _ := json.Marshal(body)
+	// doStatefulPost does not accept a context; use a plain request so we can
+	// attach the context for the session-creation call.
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		h.baseURL+"/api/v1/sessions",
 		bytes.NewReader(bodyBytes),
@@ -531,12 +561,17 @@ func (h *gatewayHandle) createSession(ctx context.Context, agentID string) (stri
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+h.token)
+	if h.csrfToken != "" {
+		req.Header.Set("X-Csrf-Token", h.csrfToken)
+		req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: h.csrfToken})
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("create session: %w", err)
 	}
 	defer resp.Body.Close()
+	h.extractCSRF(resp)
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("create session %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
@@ -739,19 +774,29 @@ func runScenario(
 	}
 
 	// Build judge prompt.
-	transcriptBytes, _ := json.MarshalIndent(fullTranscript, "", "  ")
-
-	// Extract tool calls from transcript.
-	var toolCalls []TranscriptEntry
-	for _, e := range fullTranscript {
-		if e.Role == "tool_call" {
-			toolCalls = append(toolCalls, e)
+	// Convert local TranscriptEntry to judge.TranscriptEntry.
+	judgeTranscript := make([]judge.TranscriptEntry, len(fullTranscript))
+	for i, e := range fullTranscript {
+		judgeTranscript[i] = judge.TranscriptEntry{
+			Role:     e.Role,
+			Content:  e.Content,
+			ToolName: e.ToolName,
 		}
 	}
-	if toolCalls == nil {
-		toolCalls = []TranscriptEntry{}
+
+	// Extract tool calls from transcript.
+	var judgeToolCalls []judge.ToolCallEntry
+	for _, e := range fullTranscript {
+		if e.Role == "tool_call" {
+			judgeToolCalls = append(judgeToolCalls, judge.ToolCallEntry{
+				ToolName: e.ToolName,
+				Args:     e.Content,
+			})
+		}
 	}
-	toolCallsBytes, _ := json.MarshalIndent(toolCalls, "", "  ")
+	if judgeToolCalls == nil {
+		judgeToolCalls = []judge.ToolCallEntry{}
+	}
 
 	// Concatenate user prompts for the "User prompt" field.
 	var userPrompts []string
@@ -762,12 +807,12 @@ func runScenario(
 	}
 
 	promptCtx := judge.PromptContext{
-		AgentName:      s.AgentID,
-		AgentRole:      s.AgentRole,
-		Prompt:         strings.Join(userPrompts, "\n"),
-		TranscriptJSON: string(transcriptBytes),
-		ToolCallsJSON:  string(toolCallsBytes),
-		Rubric:         s.Rubric,
+		AgentName:  s.AgentID,
+		AgentRole:  s.AgentRole,
+		Prompt:     strings.Join(userPrompts, "\n"),
+		Transcript: judgeTranscript,
+		ToolCalls:  judgeToolCalls,
+		Rubric:     s.Rubric,
 	}
 	renderedPrompt, err := judge.RenderPrompt(promptCtx)
 	if err != nil {
@@ -805,6 +850,14 @@ func maxInt(a, b int) int {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
+// Exit codes:
+//
+//	0  success, ≥1 scenarios run, ≥1 succeeded
+//	1  at least one scenario errored AND all errored
+//	2  zero scenarios found (unless --allow-empty-scenarios)
+//	3  configuration / flag parse error
+//	4  gateway unreachable
+
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
@@ -815,10 +868,15 @@ func main() {
 	scenarios, err := discoverScenarios(c.scenariosDir)
 	if err != nil {
 		slog.Error("eval: failed to discover scenarios", "error", err)
-		os.Exit(1)
+		os.Exit(3)
 	}
 	if len(scenarios) == 0 {
-		slog.Warn("eval: no scenarios found", "dir", c.scenariosDir)
+		if c.allowEmptyScenarios {
+			slog.Warn("eval: no scenarios found (--allow-empty-scenarios set, exiting 0)", "dir", c.scenariosDir)
+			os.Exit(0)
+		}
+		slog.Error("eval: no scenarios found", "dir", c.scenariosDir)
+		os.Exit(2)
 	}
 	slog.Info("eval: discovered scenarios", "count", len(scenarios))
 
@@ -841,7 +899,8 @@ func main() {
 		totalCostUSD   float64
 		totalAgentToks int
 		totalJudgeToks int
-		errCount       int
+		erroredCount   int
+		successCount   int
 	)
 
 	for _, s := range scenarios {
@@ -852,7 +911,7 @@ func main() {
 
 		if result.Error != "" {
 			slog.Warn("eval: scenario failed", "id", s.ID, "error", result.Error)
-			errCount++
+			erroredCount++
 		} else {
 			slog.Info("eval: scenario complete", "id", s.ID,
 				"completion", result.Scores.Completion,
@@ -861,6 +920,7 @@ func main() {
 				"safety", result.Scores.Safety,
 				"efficiency", result.Scores.Efficiency,
 			)
+			successCount++
 			totalCostUSD += result.CostUSD
 			totalAgentToks += result.TokenUsage.Agent
 			totalJudgeToks += result.TokenUsage.Judge
@@ -882,23 +942,31 @@ func main() {
 	// Print summary.
 	slog.Info("eval: run complete",
 		"scenarios", len(scenarios),
-		"errors", errCount,
+		"succeeded", successCount,
+		"errored", erroredCount,
 		"cost_usd", fmt.Sprintf("$%.4f", totalCostUSD),
 		"agent_tokens", totalAgentToks,
 		"judge_tokens", totalJudgeToks,
 	)
 
-	// Budget guard: fail if cost > $2.
-	if totalCostUSD > 2.00 {
-		slog.Error("eval: cost exceeded $2.00 budget", "cost_usd", totalCostUSD)
-		os.Exit(1)
-	}
-
-	// Regenerate the report.
+	// Regenerate the report before checking exit conditions so the JSONL
+	// artifact always exists for debugging even on all-error runs.
 	resultsDir := filepath.Dir(c.outPath)
 	if err := RegenerateReport(resultsDir, c.reportPath); err != nil {
 		slog.Error("eval: regenerate report", "error", err)
 		os.Exit(1)
 	}
 	slog.Info("eval: report written", "path", c.reportPath)
+
+	// F32: if every scenario errored, exit 1 (fail the CI job).
+	if erroredCount == len(scenarios) && len(scenarios) > 0 {
+		slog.Error("eval: all scenarios errored", "count", erroredCount)
+		os.Exit(1)
+	}
+
+	// Budget guard: fail if cost > $2.
+	if totalCostUSD > 2.00 {
+		slog.Error("eval: cost exceeded $2.00 budget", "cost_usd", totalCostUSD)
+		os.Exit(1)
+	}
 }

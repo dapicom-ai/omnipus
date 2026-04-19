@@ -32,13 +32,13 @@ test('(a) Browse Skills modal opens', async ({ page }) => {
   await expectA11yClean(page);
 });
 
-test.fixme(
+test.skip(
   '(b) skill install with hash mismatch shows block dialog',
-  async ({ page }) => {
-    // The SPA's SkillBrowser component does not render a visible file input on the skills
-    // page itself. Hash-mismatch error UI is not surfaced in the current SPA implementation.
-    // See tests/e2e/SPA-GAPS.md — "Skill hash-mismatch error UI not implemented".
-  },
+  // blocked on #109: SkillBrowser does not expose a file input on the /skills route.
+  // The hash-mismatch error dialog is unreachable via the current SPA surface.
+  // Needs a file input + hash-mismatch error dialog to be added to SkillBrowser.
+  // See tests/e2e/SPA-GAPS.md — "Skill hash-mismatch error UI not implemented".
+  async ({ page }) => {},
 );
 
 test('(c) MCP server add with duplicate name returns 409 and inline error', async ({ page }) => {

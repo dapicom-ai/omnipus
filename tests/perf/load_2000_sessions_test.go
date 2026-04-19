@@ -237,6 +237,17 @@ func TestLoad2000Sessions(t *testing.T) {
 	}
 
 	// ---- SLO assertions ----
+	// Guard: if no latencies were recorded at all, the percentile helpers
+	// return 0 and the SLO check below would trivially pass. Treat an empty
+	// sample as a hard failure — a "successful" load test with zero measured
+	// first-token events means the harness or the server collapsed before
+	// any data point could be recorded.
+	if len(allLatencies) == 0 {
+		sloBreaches["no_latency_samples"] = fmt.Sprintf(
+			"no first-token latencies recorded across %d sessions — gateway or harness collapse",
+			sessionsOpened,
+		)
+	}
 	if p95Lat > sloP95FirstToken {
 		msg := fmt.Sprintf("p95=%v > SLO=%v — distribution: p50=%v p95=%v p99=%v",
 			p95Lat, sloP95FirstToken, p50Lat, p95Lat, p99Lat)
@@ -368,6 +379,11 @@ holdPhase:
 	defer holdTicker.Stop()
 
 	// Drain incoming frames in a separate goroutine so we do not block on send.
+	// F14: distinguish expected close codes (1000/1001) from anomalous errors.
+	// Expected close codes (CloseNormalClosure=1000, CloseGoingAway=1001) occur
+	// when the server or client initiates a clean shutdown — these are not dropped
+	// frames. Any other close code or non-close read error indicates an anomalous
+	// termination and is counted as a dropped frame to surface regressions in P99.
 	drainDone := make(chan struct{})
 	go func() {
 		defer close(drainDone)
@@ -375,6 +391,18 @@ holdPhase:
 			_ = conn.SetReadDeadline(time.Now().Add(msgPeriod + 15*time.Second))
 			_, _, rErr := conn.ReadMessage()
 			if rErr != nil {
+				// Check if this is an expected close code (normal shutdown).
+				// websocket.IsCloseError returns true for the listed close codes.
+				if websocket.IsCloseError(rErr,
+					websocket.CloseNormalClosure, // 1000 — we sent this ourselves
+					websocket.CloseGoingAway,     // 1001 — server is shutting down
+				) {
+					// Expected close — not a dropped frame.
+					return
+				}
+				// Anomalous: unexpected close code or raw read error.
+				// Count as dropped so P99 latency does not hide regressions.
+				atomic.AddInt64(dropped, 1)
 				return
 			}
 			atomic.AddInt64(msgRecv, 1)

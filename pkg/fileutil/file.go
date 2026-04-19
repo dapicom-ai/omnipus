@@ -131,11 +131,14 @@ func CopyFile(src, dst string, perm os.FileMode) error {
 }
 
 // AppendJSONL appends a single JSON-encoded record followed by a newline to a
-// JSONL file. The file is opened with O_APPEND|O_CREATE. On Linux, the kernel
-// sets the write offset atomically to end-of-file before each write when
-// O_APPEND is set, so concurrent goroutines writing to the same file will not
-// interleave as long as each write is a single syscall (which a marshaled JSON
-// line always is).
+// JSONL file. The file is opened with O_APPEND|O_CREATE.
+//
+// Atomicity note: on Linux, O_APPEND causes each write(2) to atomically seek to
+// end-of-file before writing, so short concurrent writes from different goroutines
+// will not interleave. However, this guarantee applies only to writes within the
+// PIPE_BUF limit (~4 KB on most systems) and only when all writers open the same
+// underlying file description. For production usage, callers should use a
+// single-writer goroutine or explicit locking when strict ordering is required.
 //
 // The directory is created if it does not exist.
 func AppendJSONL(path string, record any) error {

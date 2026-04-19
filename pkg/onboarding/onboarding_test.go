@@ -8,6 +8,7 @@
 package onboarding_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -330,6 +331,101 @@ func TestDoctorRunIntegration(t *testing.T) {
 			"onboarding_complete must survive after RecordDoctorRun overwrites state.json")
 		require.NotNil(t, m2.LastDoctorScore())
 		assert.Equal(t, 55, *m2.LastDoctorScore())
+	})
+}
+
+// TestOnboardingReserveComplete verifies the two-phase commit API introduced by
+// Sprint B F2: ReserveComplete, commit closure, ReleaseReservation, ErrAlreadyComplete.
+func TestOnboardingReserveComplete(t *testing.T) {
+	t.Run("ReserveComplete returns a working commit closure", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, "system"), 0o755))
+		m := onboarding.NewManager(tmpDir)
+		require.False(t, m.IsComplete())
+
+		commit, err := m.ReserveComplete()
+		require.NoError(t, err, "ReserveComplete must succeed on a fresh manager")
+		require.NotNil(t, commit)
+
+		// Calling commit persists state.json and marks complete.
+		require.NoError(t, commit())
+		assert.True(t, m.IsComplete(), "commit() must mark onboarding complete in-memory")
+
+		// Verify persistence: new manager reads the written state.json.
+		m2 := onboarding.NewManager(tmpDir)
+		assert.True(t, m2.IsComplete(), "state.json must be written by commit()")
+	})
+
+	t.Run("concurrent ReserveComplete only one succeeds", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, "system"), 0o755))
+		m := onboarding.NewManager(tmpDir)
+
+		const goroutines = 10
+		results := make(chan error, goroutines)
+		commits := make(chan func() error, goroutines)
+
+		for range goroutines {
+			go func() {
+				commit, err := m.ReserveComplete()
+				results <- err
+				if err == nil {
+					commits <- commit
+				}
+			}()
+		}
+
+		var successCount, alreadyCount int
+		for range goroutines {
+			err := <-results
+			if err == nil {
+				successCount++
+			} else if errors.Is(err, onboarding.ErrAlreadyComplete) {
+				alreadyCount++
+			}
+		}
+		close(commits)
+		// Drain any commit closures to avoid goroutine leak.
+		for c := range commits {
+			_ = c()
+		}
+
+		assert.Equal(t, 1, successCount, "exactly one goroutine must win the reservation")
+		assert.Equal(t, goroutines-1, alreadyCount, "all others must get ErrAlreadyComplete")
+	})
+
+	t.Run("ReleaseReservation allows retry", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, "system"), 0o755))
+		m := onboarding.NewManager(tmpDir)
+
+		// Reserve, then release without committing.
+		_, err := m.ReserveComplete()
+		require.NoError(t, err)
+		m.ReleaseReservation()
+
+		// After release, a second Reserve must succeed.
+		commit2, err2 := m.ReserveComplete()
+		require.NoError(t, err2, "after ReleaseReservation, ReserveComplete must succeed again")
+		require.NoError(t, commit2())
+		assert.True(t, m.IsComplete())
+	})
+
+	t.Run("ReserveComplete fails after CompleteOnboarding", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		require.NoError(t, os.MkdirAll(filepath.Join(tmpDir, "system"), 0o755))
+		m := onboarding.NewManager(tmpDir)
+		require.NoError(t, m.CompleteOnboarding())
+
+		_, err := m.ReserveComplete()
+		assert.ErrorIs(t, err, onboarding.ErrAlreadyComplete,
+			"ReserveComplete must return ErrAlreadyComplete when already done")
+	})
+
+	t.Run("ErrAlreadyComplete is the exported sentinel", func(t *testing.T) {
+		// Verify the exported error is distinct and stable.
+		assert.NotNil(t, onboarding.ErrAlreadyComplete)
+		assert.Equal(t, "onboarding already complete", onboarding.ErrAlreadyComplete.Error())
 	})
 }
 

@@ -1,5 +1,3 @@
-//go:build !cgo
-
 package security_test
 
 // File purpose: authorization matrix tests for state-changing REST endpoints (PR-D Axis-7).
@@ -31,187 +29,300 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/config"
 )
 
-// authRole enumerates the three principal classes we test.
-type authRole string
-
-const (
-	roleAnon  authRole = "anonymous"
-	roleUser  authRole = "user"
-	roleAdmin authRole = "admin"
-)
-
-// matrixCase is one row in the role × method × endpoint matrix.
-type matrixCase struct {
-	role   authRole
-	method string
-	path   string
-	// body, if non-empty, is sent with Content-Type: application/json.
-	body string
-	// One of:
-	//   - a specific status code (e.g., 200)
-	//   - a range start (e.g., 200, where we accept 200-299)
-	expectStatus []int
-	// note describes expected behavior for debugging.
-	note string
-	// wantBodyContains, if non-empty, asserts the response body contains the
-	// given substring. Checked only after status assertion passes.
-	wantBodyContains string
-}
-
-// authzMatrix returns the full ≥30 row matrix. The cases below reflect TODAY'S
-// behavior, not a wishlist. Endpoints that should be admin-only but are not
-// are flagged with "GAP:" notes.
+// authzMatrix returns the full ≥30 row matrix using the new matrixRequest/matrixExpect
+// split types (F22). The cases reflect TODAY'S behavior. Endpoints with known RBAC
+// gaps are flagged with "GAP:" notes.
+//
+// F17: every row uses a single expect.status. The ONLY exception is wantOneOf on
+// anonymous state-changing rows where the middleware order (CSRF=403 vs auth=401) is
+// non-deterministic — those rows use wantOneOf and document the reason explicitly.
 func authzMatrix() []matrixCase {
 	return []matrixCase{
 		// ---- Read surface: all three roles ----
-		{roleAnon, http.MethodGet, "/api/v1/agents", "", []int{401}, "anon must be rejected", ""},
-		{roleUser, http.MethodGet, "/api/v1/agents", "", []int{200}, "user may read agent list", ""},
-		{roleAdmin, http.MethodGet, "/api/v1/agents", "", []int{200}, "admin may read agent list", ""},
-
-		{roleAnon, http.MethodGet, "/api/v1/config", "", []int{401}, "", ""},
-		{roleUser, http.MethodGet, "/api/v1/config", "", []int{200}, "", ""},
-		{roleAdmin, http.MethodGet, "/api/v1/config", "", []int{200}, "", ""},
-
-		{roleAnon, http.MethodGet, "/api/v1/status", "", []int{401}, "", ""},
-		{roleUser, http.MethodGet, "/api/v1/status", "", []int{200}, "", ""},
-		{roleAdmin, http.MethodGet, "/api/v1/status", "", []int{200}, "", ""},
-
-		{roleAnon, http.MethodGet, "/api/v1/tasks", "", []int{401}, "", ""},
-		{roleUser, http.MethodGet, "/api/v1/tasks", "", []int{200}, "", ""},
-		{roleAdmin, http.MethodGet, "/api/v1/tasks", "", []int{200}, "", ""},
-
-		{roleAnon, http.MethodGet, "/api/v1/tools", "", []int{401}, "", ""},
-		{roleUser, http.MethodGet, "/api/v1/tools", "", []int{200}, "", ""},
-		{roleAdmin, http.MethodGet, "/api/v1/tools", "", []int{200}, "", ""},
-
-		{roleAnon, http.MethodGet, "/api/v1/sessions", "", []int{401}, "", ""},
-		{roleUser, http.MethodGet, "/api/v1/sessions", "", []int{200}, "", ""},
-		{roleAdmin, http.MethodGet, "/api/v1/sessions", "", []int{200}, "", ""},
-
-		{roleAnon, http.MethodGet, "/api/v1/security/sandbox-status", "", []int{401}, "", ""},
-		{roleUser, http.MethodGet, "/api/v1/security/sandbox-status", "", []int{200}, "", ""},
-		{roleAdmin, http.MethodGet, "/api/v1/security/sandbox-status", "", []int{200}, "", ""},
-
-		{roleAnon, http.MethodGet, "/api/v1/security/tool-policies", "", []int{401}, "", ""},
-		{roleUser, http.MethodGet, "/api/v1/security/tool-policies", "", []int{200}, "", ""},
-		{roleAdmin, http.MethodGet, "/api/v1/security/tool-policies", "", []int{200}, "", ""},
-
-		{roleAnon, http.MethodGet, "/api/v1/security/rate-limits", "", []int{401}, "", ""},
-		{roleUser, http.MethodGet, "/api/v1/security/rate-limits", "", []int{200}, "", ""},
-		{roleAdmin, http.MethodGet, "/api/v1/security/rate-limits", "", []int{200}, "", ""},
-
-		{role: roleAnon, method: http.MethodGet, path: "/api/v1/audit-log", expectStatus: []int{401}},
 		{
-			role:             roleUser,
-			method:           http.MethodGet,
-			path:             "/api/v1/audit-log",
-			expectStatus:     []int{403},
-			note:             "admin-only: user must receive 403 (Issue #98)",
-			wantBodyContains: "admin required",
+			name:   "anon_get_agents",
+			req:    matrixRequest{roleAnon, http.MethodGet, "/api/v1/agents", ""},
+			expect: matrixExpect{status: http.StatusUnauthorized},
+			note:   "anon must be rejected",
 		},
-		{role: roleAdmin, method: http.MethodGet, path: "/api/v1/audit-log", expectStatus: []int{200}},
+		{
+			name:   "user_get_agents",
+			req:    matrixRequest{roleUser, http.MethodGet, "/api/v1/agents", ""},
+			expect: matrixExpect{status: http.StatusOK},
+			note:   "user may read agent list",
+		},
+		{
+			name:   "admin_get_agents",
+			req:    matrixRequest{roleAdmin, http.MethodGet, "/api/v1/agents", ""},
+			expect: matrixExpect{status: http.StatusOK},
+		},
+
+		{
+			name:   "anon_get_config",
+			req:    matrixRequest{roleAnon, http.MethodGet, "/api/v1/config", ""},
+			expect: matrixExpect{status: http.StatusUnauthorized},
+		},
+		{
+			name:   "user_get_config",
+			req:    matrixRequest{roleUser, http.MethodGet, "/api/v1/config", ""},
+			expect: matrixExpect{status: http.StatusOK},
+		},
+		{
+			name:   "admin_get_config",
+			req:    matrixRequest{roleAdmin, http.MethodGet, "/api/v1/config", ""},
+			expect: matrixExpect{status: http.StatusOK},
+		},
+		{
+			name:   "anon_get_status",
+			req:    matrixRequest{roleAnon, http.MethodGet, "/api/v1/status", ""},
+			expect: matrixExpect{status: http.StatusUnauthorized},
+		},
+		{
+			name:   "user_get_status",
+			req:    matrixRequest{roleUser, http.MethodGet, "/api/v1/status", ""},
+			expect: matrixExpect{status: http.StatusOK},
+		},
+		{
+			name:   "admin_get_status",
+			req:    matrixRequest{roleAdmin, http.MethodGet, "/api/v1/status", ""},
+			expect: matrixExpect{status: http.StatusOK},
+		},
+		{
+			name:   "anon_get_tasks",
+			req:    matrixRequest{roleAnon, http.MethodGet, "/api/v1/tasks", ""},
+			expect: matrixExpect{status: http.StatusUnauthorized},
+		},
+		{
+			name:   "user_get_tasks",
+			req:    matrixRequest{roleUser, http.MethodGet, "/api/v1/tasks", ""},
+			expect: matrixExpect{status: http.StatusOK},
+		},
+		{
+			name:   "admin_get_tasks",
+			req:    matrixRequest{roleAdmin, http.MethodGet, "/api/v1/tasks", ""},
+			expect: matrixExpect{status: http.StatusOK},
+		},
+		{
+			name:   "anon_get_tools",
+			req:    matrixRequest{roleAnon, http.MethodGet, "/api/v1/tools", ""},
+			expect: matrixExpect{status: http.StatusUnauthorized},
+		},
+		{
+			name:   "user_get_tools",
+			req:    matrixRequest{roleUser, http.MethodGet, "/api/v1/tools", ""},
+			expect: matrixExpect{status: http.StatusOK},
+		},
+		{
+			name:   "admin_get_tools",
+			req:    matrixRequest{roleAdmin, http.MethodGet, "/api/v1/tools", ""},
+			expect: matrixExpect{status: http.StatusOK},
+		},
+		{
+			name:   "anon_get_sessions",
+			req:    matrixRequest{roleAnon, http.MethodGet, "/api/v1/sessions", ""},
+			expect: matrixExpect{status: http.StatusUnauthorized},
+		},
+		{
+			name:   "user_get_sessions",
+			req:    matrixRequest{roleUser, http.MethodGet, "/api/v1/sessions", ""},
+			expect: matrixExpect{status: http.StatusOK},
+		},
+		{
+			name:   "admin_get_sessions",
+			req:    matrixRequest{roleAdmin, http.MethodGet, "/api/v1/sessions", ""},
+			expect: matrixExpect{status: http.StatusOK},
+		},
+		{
+			name:   "anon_get_sandbox_status",
+			req:    matrixRequest{roleAnon, http.MethodGet, "/api/v1/security/sandbox-status", ""},
+			expect: matrixExpect{status: http.StatusUnauthorized},
+		},
+		{
+			name:   "user_get_sandbox_status",
+			req:    matrixRequest{roleUser, http.MethodGet, "/api/v1/security/sandbox-status", ""},
+			expect: matrixExpect{status: http.StatusOK},
+		},
+		{
+			name:   "admin_get_sandbox_status",
+			req:    matrixRequest{roleAdmin, http.MethodGet, "/api/v1/security/sandbox-status", ""},
+			expect: matrixExpect{status: http.StatusOK},
+		},
+		{
+			name:   "anon_get_tool_policies",
+			req:    matrixRequest{roleAnon, http.MethodGet, "/api/v1/security/tool-policies", ""},
+			expect: matrixExpect{status: http.StatusUnauthorized},
+		},
+		{
+			name:   "user_get_tool_policies",
+			req:    matrixRequest{roleUser, http.MethodGet, "/api/v1/security/tool-policies", ""},
+			expect: matrixExpect{status: http.StatusOK},
+		},
+		{
+			name:   "admin_get_tool_policies",
+			req:    matrixRequest{roleAdmin, http.MethodGet, "/api/v1/security/tool-policies", ""},
+			expect: matrixExpect{status: http.StatusOK},
+		},
+		{
+			name:   "anon_get_rate_limits",
+			req:    matrixRequest{roleAnon, http.MethodGet, "/api/v1/security/rate-limits", ""},
+			expect: matrixExpect{status: http.StatusUnauthorized},
+		},
+		{
+			name:   "user_get_rate_limits",
+			req:    matrixRequest{roleUser, http.MethodGet, "/api/v1/security/rate-limits", ""},
+			expect: matrixExpect{status: http.StatusOK},
+		},
+		{
+			name:   "admin_get_rate_limits",
+			req:    matrixRequest{roleAdmin, http.MethodGet, "/api/v1/security/rate-limits", ""},
+			expect: matrixExpect{status: http.StatusOK},
+		},
+		{
+			name:   "anon_get_audit_log",
+			req:    matrixRequest{roleAnon, http.MethodGet, "/api/v1/audit-log", ""},
+			expect: matrixExpect{status: http.StatusUnauthorized},
+		},
+		{
+			name:   "user_get_audit_log",
+			req:    matrixRequest{roleUser, http.MethodGet, "/api/v1/audit-log", ""},
+			expect: matrixExpect{status: http.StatusForbidden, bodyContains: "admin required"},
+			note:   "admin-only: user must receive 403 (Issue #98)",
+		},
+		{
+			name:   "admin_get_audit_log",
+			req:    matrixRequest{roleAdmin, http.MethodGet, "/api/v1/audit-log", ""},
+			expect: matrixExpect{status: http.StatusOK},
+		},
 
 		// ---- Write surface: createAgent (POST) ----
-		// Anon on a state-changing route: CSRF middleware runs before auth and
-		// returns 403 "csrf cookie missing" for a caller without a __Host-csrf
-		// cookie (issue #97). Stricter than the original 401, still a hard deny.
+		// Anon on state-changing routes: CSRF middleware fires before auth and returns
+		// 403 "csrf cookie missing" when the __Host-csrf cookie is absent (issue #97).
+		// Auth middleware would return 401. The exact code depends on middleware order.
+		// F17 exception: wantOneOf is documented here because the behavior is
+		// middleware-order dependent — not because we are accepting any of three codes.
 		{
-			roleAnon, http.MethodPost, "/api/v1/agents",
-			`{"name":"a1","model":"scripted-model"}`,
-			[]int{401, 403},
-			"anon on state-changing route: CSRF (403) or auth (401) is a hard deny",
-			"",
+			name: "anon_post_agents",
+			req: matrixRequest{
+				roleAnon, http.MethodPost, "/api/v1/agents",
+				`{"name":"a1","model":"scripted-model"}`,
+			},
+			wantOneOf: []int{http.StatusUnauthorized, http.StatusForbidden},
+			note:      "anon on state-changing route: CSRF (403) or auth (401) is a hard deny — middleware-order dependent",
 		},
 		{
-			roleUser, http.MethodPost, "/api/v1/agents",
-			`{"name":"authz-user-a","model":"scripted-model"}`,
-			[]int{200, 201},
-			"GAP: user can create agents (admin-only?)", "",
+			// GAP: user can create agents — this is arguably admin-only but current behavior allows it.
+			name: "user_post_agents",
+			req: matrixRequest{
+				roleUser, http.MethodPost, "/api/v1/agents",
+				`{"name":"authz-user-a","model":"scripted-model"}`,
+			},
+			expect: matrixExpect{status: http.StatusCreated},
+			note:   "GAP: user can create agents (should be admin-only per Issue #98?)",
 		},
 		{
-			roleAdmin, http.MethodPost, "/api/v1/agents",
-			`{"name":"authz-admin-a","model":"scripted-model"}`,
-			[]int{200, 201},
-			"", "",
+			name: "admin_post_agents",
+			req: matrixRequest{
+				roleAdmin, http.MethodPost, "/api/v1/agents",
+				`{"name":"authz-admin-a","model":"scripted-model"}`,
+			},
+			expect: matrixExpect{status: http.StatusCreated},
 		},
 
 		// ---- Write surface: sessions POST ----
-		// Anon + CSRF: see note on POST /api/v1/agents above.
 		{
-			roleAnon, http.MethodPost, "/api/v1/sessions",
-			`{"agent_id":"omnipus-system","type":"chat"}`,
-			[]int{401, 403},
-			"anon on state-changing route: CSRF (403) or auth (401) is a hard deny",
-			"",
+			name: "anon_post_sessions",
+			req: matrixRequest{
+				roleAnon, http.MethodPost, "/api/v1/sessions",
+				`{"agent_id":"omnipus-system","type":"chat"}`,
+			},
+			wantOneOf: []int{http.StatusUnauthorized, http.StatusForbidden},
+			note:      "anon on state-changing route: CSRF (403) or auth (401) — middleware-order dependent",
 		},
 		{
-			roleUser, http.MethodPost, "/api/v1/sessions",
-			`{"agent_id":"omnipus-system","type":"chat"}`,
-			[]int{201, 400},
-			"agent existence depends on seed", "",
+			// The omnipus-system agent exists (hardcoded core agent) so this should succeed.
+			name: "user_post_sessions",
+			req: matrixRequest{
+				roleUser, http.MethodPost, "/api/v1/sessions",
+				`{"agent_id":"omnipus-system","type":"chat"}`,
+			},
+			expect: matrixExpect{status: http.StatusCreated},
+			note:   "omnipus-system is a core agent — always present",
 		},
 		{
-			roleAdmin, http.MethodPost, "/api/v1/sessions",
-			`{"agent_id":"omnipus-system","type":"chat"}`,
-			[]int{201, 400},
-			"agent existence depends on seed", "",
-		},
-
-		// ---- Config PUT (admin-only in any reasonable model) ----
-		// Anon + CSRF: see note on POST /api/v1/agents above.
-		{
-			roleAnon, http.MethodPut, "/api/v1/config",
-			`{"agents":{"defaults":{}}}`,
-			[]int{401, 403},
-			"anon on state-changing route: CSRF (403) or auth (401) is a hard deny",
-			"",
-		},
-		{
-			role: roleUser, method: http.MethodPut, path: "/api/v1/config",
-			body:             `{"agents":{"defaults":{}}}`,
-			expectStatus:     []int{403},
-			note:             "admin-only: user must be rejected with 403 (Issue #98)",
-			wantBodyContains: "admin required",
-		},
-		{
-			roleAdmin, http.MethodPut, "/api/v1/config",
-			`{"agents":{"defaults":{}}}`,
-			[]int{200, 400},
-			"", "",
+			name: "admin_post_sessions",
+			req: matrixRequest{
+				roleAdmin, http.MethodPost, "/api/v1/sessions",
+				`{"agent_id":"omnipus-system","type":"chat"}`,
+			},
+			expect: matrixExpect{status: http.StatusCreated},
+			note:   "omnipus-system is a core agent — always present",
 		},
 
-		// ---- tool-policies PUT (admin-only in any reasonable model) ----
-		// Anon + CSRF: see note on POST /api/v1/agents above.
+		// ---- Config PUT (admin-only) ----
 		{
-			roleAnon, http.MethodPut, "/api/v1/security/tool-policies",
-			`{"tool_policies":{}}`,
-			[]int{401, 403},
-			"anon on state-changing route: CSRF (403) or auth (401) is a hard deny",
-			"",
+			name:      "anon_put_config",
+			req:       matrixRequest{roleAnon, http.MethodPut, "/api/v1/config", `{"agents":{"defaults":{}}}`},
+			wantOneOf: []int{http.StatusUnauthorized, http.StatusForbidden},
+			note:      "anon on state-changing route: CSRF (403) or auth (401) — middleware-order dependent",
 		},
 		{
-			role: roleUser, method: http.MethodPut, path: "/api/v1/security/tool-policies",
-			body:             `{"tool_policies":{}}`,
-			expectStatus:     []int{403},
-			note:             "admin-only: user must be rejected with 403 (Issue #98)",
-			wantBodyContains: "admin required",
+			name:   "user_put_config",
+			req:    matrixRequest{roleUser, http.MethodPut, "/api/v1/config", `{"agents":{"defaults":{}}}`},
+			expect: matrixExpect{status: http.StatusForbidden, bodyContains: "admin required"},
+			note:   "admin-only: user must be rejected with 403 (Issue #98)",
 		},
 		{
-			roleAdmin, http.MethodPut, "/api/v1/security/tool-policies",
-			`{"tool_policies":{}}`,
-			[]int{200, 400},
-			"", "",
+			// Admin PUT config: the body is a valid partial config so this should succeed.
+			name:   "admin_put_config",
+			req:    matrixRequest{roleAdmin, http.MethodPut, "/api/v1/config", `{"agents":{"defaults":{}}}`},
+			expect: matrixExpect{status: http.StatusOK},
 		},
 
-		// ---- Credentials (admin-only even in simple models) ----
-		{roleAnon, http.MethodGet, "/api/v1/credentials", "", []int{401}, "", ""},
+		// ---- tool-policies PUT (admin-only) ----
 		{
-			role: roleUser, method: http.MethodGet, path: "/api/v1/credentials",
-			expectStatus:     []int{403},
-			note:             "admin-only: user must be rejected with 403 (Issue #98)",
-			wantBodyContains: "admin required",
+			name: "anon_put_tool_policies",
+			req: matrixRequest{
+				roleAnon, http.MethodPut, "/api/v1/security/tool-policies",
+				`{"tool_policies":{}}`,
+			},
+			wantOneOf: []int{http.StatusUnauthorized, http.StatusForbidden},
+			note:      "anon on state-changing route: CSRF (403) or auth (401) — middleware-order dependent",
 		},
-		{roleAdmin, http.MethodGet, "/api/v1/credentials", "", []int{200}, "", ""},
+		{
+			name: "user_put_tool_policies",
+			req: matrixRequest{
+				roleUser, http.MethodPut, "/api/v1/security/tool-policies",
+				`{"tool_policies":{}}`,
+			},
+			expect: matrixExpect{status: http.StatusForbidden, bodyContains: "admin required"},
+			note:   "admin-only: user must be rejected with 403 (Issue #98)",
+		},
+		{
+			name: "admin_put_tool_policies",
+			req: matrixRequest{
+				roleAdmin, http.MethodPut, "/api/v1/security/tool-policies",
+				`{"tool_policies":{}}`,
+			},
+			expect: matrixExpect{status: http.StatusOK},
+		},
+
+		// ---- Credentials (admin-only) ----
+		{
+			name:   "anon_get_credentials",
+			req:    matrixRequest{roleAnon, http.MethodGet, "/api/v1/credentials", ""},
+			expect: matrixExpect{status: http.StatusUnauthorized},
+		},
+		{
+			name:   "user_get_credentials",
+			req:    matrixRequest{roleUser, http.MethodGet, "/api/v1/credentials", ""},
+			expect: matrixExpect{status: http.StatusForbidden, bodyContains: "admin required"},
+			note:   "admin-only: user must be rejected with 403 (Issue #98)",
+		},
+		{
+			name:   "admin_get_credentials",
+			req:    matrixRequest{roleAdmin, http.MethodGet, "/api/v1/credentials", ""},
+			expect: matrixExpect{status: http.StatusOK},
+		},
 	}
 }
 
@@ -219,7 +330,7 @@ func TestAuthorizationMatrix(t *testing.T) {
 	gw, adminToken, userToken, csrfToken := gatewayWithRBAC(t)
 
 	// Sanity check: the seeded config has both roles.
-	cfg := findTestConfig(t, gw.ConfigPath)
+	cfg := findTestConfig(t, gw.ConfigPath())
 	mustHaveRole(t, cfg, "admin")
 	mustHaveRole(t, cfg, "user")
 
@@ -228,10 +339,10 @@ func TestAuthorizationMatrix(t *testing.T) {
 		"matrix must have at least 30 rows per task spec (got %d)", len(matrix))
 
 	for i, tc := range matrix {
-		name := matrixName(i, tc)
+		name := matrixCaseName(i, tc)
 		t.Run(name, func(t *testing.T) {
 			var token string
-			switch tc.role {
+			switch tc.req.role {
 			case roleAnon:
 				token = ""
 			case roleUser:
@@ -240,16 +351,16 @@ func TestAuthorizationMatrix(t *testing.T) {
 				token = adminToken
 			}
 
-			var body io.Reader
-			if tc.body != "" {
-				body = bytes.NewReader([]byte(tc.body))
+			var reqBody io.Reader
+			if tc.req.body != "" {
+				reqBody = bytes.NewReader([]byte(tc.req.body))
 			}
-			req, err := http.NewRequest(tc.method, gw.URL+tc.path, body)
+			req, err := http.NewRequest(tc.req.method, gw.URL+tc.req.path, reqBody)
 			if err != nil {
 				t.Fatalf("build req: %v", err)
 			}
 			req.Header.Set("Origin", gw.URL)
-			if tc.body != "" {
+			if tc.req.body != "" {
 				req.Header.Set("Content-Type", "application/json")
 			}
 			if token != "" {
@@ -258,7 +369,7 @@ func TestAuthorizationMatrix(t *testing.T) {
 				// state-changing methods so the CSRF middleware does not
 				// short-circuit the request before auth runs (issue #97).
 				// Anon rows deliberately omit both to exercise the CSRF gate.
-				switch tc.method {
+				switch tc.req.method {
 				case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
 					req.AddCookie(&http.Cookie{Name: "__Host-csrf", Value: csrfToken})
 					req.Header.Set("X-Csrf-Token", csrfToken)
@@ -273,35 +384,52 @@ func TestAuthorizationMatrix(t *testing.T) {
 			raw, _ := io.ReadAll(resp.Body)
 			rawStr := string(raw)
 
-			ok := false
-			for _, want := range tc.expectStatus {
-				if resp.StatusCode == want {
-					ok = true
-					break
-				}
-			}
-			if !ok {
-				note := tc.note
-				if note == "" {
-					note = "(no note)"
-				}
-				t.Fatalf("role=%s %s %s: got status %d, want one of %v. Body: %s. Note: %s",
-					tc.role, tc.method, tc.path, resp.StatusCode,
-					tc.expectStatus, truncate(rawStr, 200), note)
-			}
 			if tc.note != "" {
 				t.Logf("note: %s (role=%s %s %s -> %d)",
-					tc.note, tc.role, tc.method, tc.path, resp.StatusCode)
+					tc.note, tc.req.role, tc.req.method, tc.req.path, resp.StatusCode)
 			}
+
+			// Assert status — either exact (F17) or documented wantOneOf.
+			if len(tc.wantOneOf) > 0 {
+				// Middleware-order-dependent rows (anon + state-changing).
+				// These are the ONLY rows allowed to have multiple acceptable codes.
+				// Every other row must have a single expect.status (F17).
+				ok := false
+				for _, want := range tc.wantOneOf {
+					if resp.StatusCode == want {
+						ok = true
+						break
+					}
+				}
+				if !ok {
+					note := tc.note
+					if note == "" {
+						note = "(no note)"
+					}
+					t.Fatalf(
+						"role=%s %s %s: got status %d, want one of %v "+
+							"(middleware-order dependent). Body: %s. Note: %s",
+						tc.req.role, tc.req.method, tc.req.path, resp.StatusCode,
+						tc.wantOneOf, truncate(rawStr, 200), note,
+					)
+				}
+			} else {
+				// Single exact status (the normal path for all non-ambiguous rows).
+				require.Equal(t, tc.expect.status, resp.StatusCode,
+					"role=%s %s %s: unexpected status. Body: %s. Note: %s",
+					tc.req.role, tc.req.method, tc.req.path,
+					truncate(rawStr, 200), tc.note)
+			}
+
 			// Body substring assertion for admin-enforced 403 responses (Issue #98).
-			if tc.wantBodyContains != "" {
-				assert.Contains(t, rawStr, tc.wantBodyContains,
+			if tc.expect.bodyContains != "" {
+				assert.Contains(t, rawStr, tc.expect.bodyContains,
 					"role=%s %s %s: response body must contain %q",
-					tc.role, tc.method, tc.path, tc.wantBodyContains)
+					tc.req.role, tc.req.method, tc.req.path, tc.expect.bodyContains)
 			}
 			assert.Less(t, resp.StatusCode, 500,
 				"server must not 5xx for any matrix row (role=%s %s %s)",
-				tc.role, tc.method, tc.path)
+				tc.req.role, tc.req.method, tc.req.path)
 		})
 	}
 }
@@ -322,8 +450,13 @@ func findTestConfig(t *testing.T, path string) *config.Config {
 	return &cfg
 }
 
-// matrixName produces a readable t.Run name.
-func matrixName(i int, tc matrixCase) string {
-	path := strings.NewReplacer("/", "_").Replace(strings.TrimPrefix(tc.path, "/api/v1/"))
-	return string(tc.role) + "_" + strings.ToLower(tc.method) + "_" + path + "_" + itoa3(i)
+// matrixCaseName produces a readable t.Run name from a matrixCase.
+// Uses tc.name if set (preferred — explicitly named in F22 refactor),
+// falling back to derived name for backward compat.
+func matrixCaseName(i int, tc matrixCase) string {
+	if tc.name != "" {
+		return tc.name
+	}
+	path := strings.NewReplacer("/", "_").Replace(strings.TrimPrefix(tc.req.path, "/api/v1/"))
+	return string(tc.req.role) + "_" + strings.ToLower(tc.req.method) + "_" + path + "_" + itoa3(i)
 }

@@ -1,5 +1,3 @@
-//go:build !cgo
-
 package security_test
 
 // File purpose: prompt-injection level tests for low/medium/high strictness (PR-D Axis-7).

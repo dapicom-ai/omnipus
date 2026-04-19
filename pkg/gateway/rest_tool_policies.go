@@ -52,11 +52,14 @@ func (a *restAPI) HandleToolPolicies(w http.ResponseWriter, r *http.Request) {
 
 	case http.MethodPut:
 		// PUT mutates tool policies — admin-only (Issue #98). GET remains
-		// readable by all authenticated users.
-		adminGuard := middleware.RequireAdmin(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			a.putToolPolicies(w, r)
-		}))
-		adminGuard.ServeHTTP(w, r)
+		// readable by all authenticated users. Wrapper is built once
+		// (sync.Once) so each PUT doesn't allocate a new middleware chain.
+		a.adminPutPoliciesOnce.Do(func() {
+			a.adminPutPoliciesHandler = middleware.RequireAdmin(
+				http.HandlerFunc(a.putToolPolicies),
+			)
+		})
+		a.adminPutPoliciesHandler.ServeHTTP(w, r)
 
 	default:
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")

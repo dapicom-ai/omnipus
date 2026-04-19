@@ -74,11 +74,11 @@ test('(d) all tabs reachable via keyboard navigation (Tab + Enter)', async ({ pa
   }
 });
 
-test.fixme(
+test.skip(
   '(e) tool-policy "Always Allow" toggle persists across page reload',
-  async ({ page }) => {
-    // SecuritySection does not render an "Always Allow" toggle with a stable data-testid
-    // or aria-checked attribute discoverable without a testid.
-    // See tests/e2e/SPA-GAPS.md — "always-allow-toggle testid missing".
-  },
+  // blocked on #108: SecuritySection does not render an "Always Allow" toggle with
+  // data-testid="always-allow-toggle" or a discoverable aria-checked attribute.
+  // Needs data-testid on the toggle before this test can be implemented.
+  // See tests/e2e/SPA-GAPS.md — "always-allow-toggle testid missing".
+  async ({ page }) => {},
 );
