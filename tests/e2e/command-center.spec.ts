@@ -26,13 +26,11 @@ test('(a) all section cards load without console errors', async ({ page }) => {
   await expectA11yClean(page);
 });
 
-test.fixme(
+test.skip(
   '(b) approval-queue: policy=ask tool call triggers approval modal and Approve routes it through',
-  async ({ page }) => {
-    // The ExecApprovalBlock is rendered inside the ChatScreen, not the Command Center.
-    // Triggering a policy=ask tool call requires sending a specific message AND having
-    // the gateway configured with a policy that intercepts it. There is no stable
-    // data-testid="approval-modal" in the SPA — the block renders as a custom component.
-    // See tests/e2e/SPA-GAPS.md — "Approval modal testid missing".
-  },
+  // blocked on #106: ExecApprovalBlock has no data-testid="approval-modal".
+  // The block renders inside ChatScreen as a custom component without a stable selector.
+  // Needs data-testid="approval-modal" + deterministic policy=ask trigger in test setup.
+  // See tests/e2e/SPA-GAPS.md — "Approval modal testid missing".
+  async ({ page }) => {},
 );

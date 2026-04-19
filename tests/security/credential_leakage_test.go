@@ -1,5 +1,3 @@
-//go:build !cgo
-
 package security_test
 
 // File purpose: credential-leakage scanner for logs and HTTP responses (PR-D Axis-7).

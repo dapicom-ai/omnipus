@@ -6,6 +6,12 @@ package perf
 // it can be called from both *testing.T (SLO tests) and *testing.B (benchmarks).
 // It boots the real gateway via gateway.RunContext (registered in TestMain) with
 // DevModeBypass=true and a ScenarioProvider so there are no external LLM calls.
+//
+// This file retains //go:build !cgo because it directly imports and calls
+// pkg/gateway functions (RunContext, SetTestProviderOverride, ClearTestProviderOverride)
+// that are themselves tagged //go:build !cgo. F1 removes the tag from the benchmark
+// and SLO test files (which only use HTTP clients and don't import the gateway
+// package directly). This file is the sole exception in the perf package.
 
 import (
 	"context"

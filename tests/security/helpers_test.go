@@ -1,5 +1,3 @@
-//go:build !cgo
-
 package security_test
 
 // File purpose: shared helpers for PR-D security tests.
@@ -8,6 +6,10 @@ package security_test
 // ssrf_matrix_test.go / sandbox_enforcement tests and D3's workflow +
 // security_payloads. They are local to the security_test package so that if
 // D3 later lifts them into pkg/testutil we can delete this file.
+//
+// matrixRequest / matrixExpect / matrixCase types live here (F22 — split from
+// authz_matrix_test.go to separate input shape from assertion shape, reducing
+// the ambiguity that came from the single 7-field struct that conflated both).
 
 import (
 	"bytes"
@@ -24,6 +26,52 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/agent/testutil"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 )
+
+// authRole enumerates the three principal classes we test.
+// Moved to helpers_test.go so it is available to both authz_matrix_test.go
+// and any future matrix-style tests (F22 refactor).
+type authRole string
+
+const (
+	roleAnon  authRole = "anonymous"
+	roleUser  authRole = "user"
+	roleAdmin authRole = "admin"
+)
+
+// matrixRequest describes the HTTP request to issue (who sends it, what to send).
+// F22: split from the monolithic matrixCase struct to separate request from assertion.
+type matrixRequest struct {
+	role   authRole
+	method string
+	path   string
+	// body is sent with Content-Type: application/json when non-empty.
+	body string
+}
+
+// matrixExpect describes the exact assertion to make.
+// F17: each row uses a single status, not a slice. The only exception is
+// wantOneOf on matrixCase for middleware-order-dependent anon rows (documented).
+type matrixExpect struct {
+	// status is the EXACT expected HTTP status code.
+	status int
+	// bodyContains, if non-empty, is asserted as a substring of the response body.
+	bodyContains string
+}
+
+// matrixCase is one row in the authorization matrix.
+// F22: the old 7-field struct has been split into req (input) + expect (assertion).
+type matrixCase struct {
+	name   string
+	req    matrixRequest
+	expect matrixExpect
+	// note is logged on every run for documentation / debugging.
+	note string
+	// wantOneOf overrides expect.status when the precise code is middleware-order
+	// dependent (CSRF=403 vs auth=401 for anonymous state-changing requests).
+	// Only use this when there is a documented reason. Do NOT use it to paper
+	// over missing assertions — every non-anon row must have a single expect.status.
+	wantOneOf []int
+}
 
 // gatewayWithAdmin boots a gateway with DevModeBypass OFF and a single admin
 // user wired into config.Gateway.Users. Returns the gateway plus the admin's

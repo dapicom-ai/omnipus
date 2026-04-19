@@ -1,5 +1,3 @@
-//go:build !cgo
-
 package security_test
 
 // File purpose: CSRF protection tests for state-changing POST endpoints

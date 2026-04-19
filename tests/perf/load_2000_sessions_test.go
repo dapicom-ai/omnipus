@@ -368,6 +368,11 @@ holdPhase:
 	defer holdTicker.Stop()
 
 	// Drain incoming frames in a separate goroutine so we do not block on send.
+	// F14: distinguish expected close codes (1000/1001) from anomalous errors.
+	// Expected close codes (CloseNormalClosure=1000, CloseGoingAway=1001) occur
+	// when the server or client initiates a clean shutdown — these are not dropped
+	// frames. Any other close code or non-close read error indicates an anomalous
+	// termination and is counted as a dropped frame to surface regressions in P99.
 	drainDone := make(chan struct{})
 	go func() {
 		defer close(drainDone)
@@ -375,6 +380,18 @@ holdPhase:
 			_ = conn.SetReadDeadline(time.Now().Add(msgPeriod + 15*time.Second))
 			_, _, rErr := conn.ReadMessage()
 			if rErr != nil {
+				// Check if this is an expected close code (normal shutdown).
+				// websocket.IsCloseError returns true for the listed close codes.
+				if websocket.IsCloseError(rErr,
+					websocket.CloseNormalClosure, // 1000 — we sent this ourselves
+					websocket.CloseGoingAway,     // 1001 — server is shutting down
+				) {
+					// Expected close — not a dropped frame.
+					return
+				}
+				// Anomalous: unexpected close code or raw read error.
+				// Count as dropped so P99 latency does not hide regressions.
+				atomic.AddInt64(dropped, 1)
 				return
 			}
 			atomic.AddInt64(msgRecv, 1)

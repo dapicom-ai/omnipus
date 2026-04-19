@@ -9,33 +9,29 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 
-test.fixme(
+test.skip(
   '(a) Ray→Max→Jim chain: transcript shows all three agent labels',
-  async ({ page }) => {
-    // Agent handoff is driven via LLM tool calls. The chat transcript does not
-    // surface agent labels per-message in the DOM (no data-testid="messages-list"
-    // and no per-message agent attribution element exists in AssistantMessage).
-    // A working real-LLM test would be flaky without a deterministic handoff.
-    // See tests/e2e/SPA-GAPS.md — "Agent handoff transcript labels not surfaced in DOM".
-  },
+  // blocked on #111: AssistantMessage does not annotate messages with per-agent attribution
+  // in the DOM. No data-testid="messages-list" and no per-message agent label element.
+  // A deterministic handoff also requires a mock tool trigger, not a real LLM call.
+  // See tests/e2e/SPA-GAPS.md — "Agent handoff transcript labels not surfaced in DOM".
+  async ({ page }) => {},
 );
 
-test.fixme(
+test.skip(
   '(b) collapsed subagent display: spawn output renders as collapsed block, expandable',
-  async ({ page }) => {
-    // The SPA does not render a data-testid="subagent-collapsed" block.
-    // Subagent output arrives as assistant message text — there is no dedicated
-    // collapsed/expandable subagent UI component.
-    // See tests/e2e/SPA-GAPS.md — "Subagent collapsed block UI not implemented".
-  },
+  // blocked on #112: No data-testid="subagent-collapsed" block exists in the SPA.
+  // Subagent output arrives as plain assistant message text — no dedicated
+  // collapsed/expandable subagent UI component has been implemented.
+  // See tests/e2e/SPA-GAPS.md — "Subagent collapsed block UI not implemented".
+  async ({ page }) => {},
 );
 
-test.fixme(
+test.skip(
   '(c) 6th-handoff refusal: chain of 5 handoffs triggers policy error on 6th',
-  async ({ page, request }) => {
-    // Driving 5 real LLM handoffs in a single test is too slow and unreliable for CI.
-    // The policy error is surfaced via RateLimitIndicator in the chat composer area
-    // but there is no stable way to drive 5 consecutive handoffs deterministically.
-    // See tests/e2e/SPA-GAPS.md — "Handoff depth policy test requires deterministic LLM".
-  },
+  // blocked on #113: Driving 5 real LLM handoffs deterministically in CI is impractical
+  // without a mock tool that auto-triggers handoffs on a signal. The policy error is
+  // surfaced via RateLimitIndicator but there is no stable deterministic driver.
+  // See tests/e2e/SPA-GAPS.md — "Handoff depth policy test requires deterministic LLM".
+  async ({ page, request }) => {},
 );

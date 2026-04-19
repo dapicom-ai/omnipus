@@ -48,12 +48,12 @@ test('(b) wrong password shows inline error and stays on /login', async ({ page 
   expect(page.url()).toMatch(/login/);
 });
 
-test.fixme(
+test.skip(
   '(c) dev_mode_bypass = true shows red persistent banner on every route',
-  async ({ page }) => {
-    // SPA does not render a dev-mode banner when gateway.dev_mode_bypass is true.
-    // The feature is not implemented. See tests/e2e/SPA-GAPS.md.
-  },
+  // blocked on #104: The SPA does not render a persistent red banner when
+  // gateway.dev_mode_bypass is true. AppShell only shows a connectionError banner.
+  // Needs data-testid="dev-mode-banner". See tests/e2e/SPA-GAPS.md.
+  async ({ page }) => {},
 );
 
 /**

@@ -125,11 +125,11 @@ test(
   },
 );
 
-test.fixme(
+test.skip(
   '(f) queue-on-disconnect: messages sent during WS disconnect send in order after reconnect',
-  async ({ page, context }) => {
-    // The chat store does not implement a send queue for offline mode.
-    // Messages sent while context.setOffline(true) are silently dropped.
-    // See tests/e2e/SPA-GAPS.md — "Offline send queue not implemented".
-  },
+  // blocked on #105: useChatStore does not implement a local send queue for offline mode.
+  // Messages sent while context.setOffline(true) are silently dropped rather than queued.
+  // Needs max-5 queue with auto-send on reconnect and pending indicator.
+  // See tests/e2e/SPA-GAPS.md — "Offline send queue".
+  async ({ page, context }) => {},
 );
