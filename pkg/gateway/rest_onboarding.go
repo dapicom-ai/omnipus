@@ -15,6 +15,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 )
 
@@ -283,6 +284,14 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 	// Config + state saved atomically under configMu. Trigger a reload so the
 	// in-memory config picks up the new user.
 	a.awaitReload()
+
+	// Issue a __Host-csrf cookie so the onboarding client (which up to this
+	// point had no cookie — /api/v1/onboarding/complete is exempt from the
+	// CSRF gate for exactly that reason, see pkg/gateway/middleware/csrf.go)
+	// can make subsequent state-changing requests without a 403. Issue #97.
+	if err := middleware.IssueCSRFCookie(w); err != nil {
+		slog.Error("onboarding: issue CSRF cookie failed", "error", err)
+	}
 
 	slog.Info("onboarding: completed", "username", body.Admin.Username)
 	resp := map[string]any{

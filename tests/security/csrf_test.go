@@ -2,42 +2,39 @@
 
 package security_test
 
-// File purpose: CSRF protection tests for state-changing POST endpoints (PR-D Axis-7).
+// File purpose: CSRF protection tests for state-changing POST endpoints
+// (PR-D Axis-7, completed as PR-H #97).
 //
-// IMPORTANT — DOCUMENTED ADR-LEVEL GAP:
+// Hard-asserts the CSRF double-submit cookie gate:
 //
-// The Omnipus gateway does NOT implement explicit CSRF protection today. It
-// relies solely on bearer-token authentication + Origin-reflected CORS. In
-// practice this means:
+//   - Every state-changing request (POST/PUT/PATCH/DELETE) on a non-exempt
+//     /api/v1/* path MUST carry both:
+//     1. the __Host-csrf cookie
+//     2. an X-CSRF-Token header with the same value
 //
-//   1. A browser that has an Omnipus bearer token stored in localStorage
-//      sends it via Authorization: Bearer <token>, NOT via a cookie.
-//   2. Cross-origin JavaScript cannot read localStorage, so classic CSRF
-//      (where a malicious site forges a cookie-authenticated POST) does NOT
-//      apply — the attacker cannot obtain the bearer token.
-//   3. The server does not reject missing or hostile Origin headers on
-//      state-changing POSTs; it only uses Origin to decide whether to reflect
-//      it in the Access-Control-Allow-Origin response header.
-//   4. A fetch() from a different origin sending a bearer token the attacker
-//      somehow obtained would succeed — the server has no CSRF token and no
-//      Origin-based POST gate.
+//   - Missing cookie → 403 "csrf cookie missing"
+//   - Missing header → 403 "csrf header missing"
+//   - Mismatched cookie/header → 403 "csrf token mismatch"
+//   - Matching pair → request reaches the handler (2xx/4xx per handler logic)
 //
-// Mitigation analysis:
-//   - Bearer-in-localStorage is the standard browser pattern for SPA tokens.
-//   - Same-origin policy prevents cross-origin localStorage read.
-//   - The SPA uses same-origin fetch, so CORS preflight never runs.
-//   - Residual risk: token leak via XSS (see xss_test.go) OR token stolen
-//     via a network attacker on a non-TLS deployment.
+// A cross-origin JavaScript attacker cannot read the cookie (same-origin
+// policy applies to cookies bound to our host), so they cannot forge a
+// valid header. The hostile Origin leg of the test is preserved to catch
+// a regression in the CORS reflection gate that would let a browser READ
+// the 403 body (which would be a secondary leak, not a CSRF bypass).
 //
-// These tests ASSERT THE CURRENT BEHAVIOR so future regressions are caught.
-// They do NOT assert CSRF-token enforcement (which does not exist). If a
-// future Omnipus release adds CSRF-token enforcement, update these tests.
+// History:
+//   - Original PR-D version documented the gap and asserted only that the
+//     server did not 5xx.
+//   - PR-H (#97) landed the double-submit middleware and flipped these
+//     assertions to hard rejections + hard acceptance on the happy path.
 //
-// Plan reference: temporal-puzzling-melody.md §6 PR-D.
+// Plan reference: temporal-puzzling-melody.md §1 (CSRF/Origin decision).
 
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -55,8 +52,10 @@ type csrfTarget struct {
 	// body is sent on each request; empty body means no Content-Type and no payload.
 	body string
 	// expectAuthedOK is the status code (or code range) returned when the
-	// request is sent with a valid bearer token AND same-origin Origin header.
-	expectAuthedOK int
+	// request is sent with a valid bearer token AND a matching CSRF
+	// cookie+header pair. The handler may still 4xx for semantic reasons
+	// (e.g., agent_id not found), so tests accept a range.
+	expectAuthedOK []int
 	// Whether an empty body with no Content-Type is acceptable (for endpoints
 	// that only look at headers).
 	needsJSONBody bool
@@ -65,34 +64,27 @@ type csrfTarget struct {
 func csrfTargets() []csrfTarget {
 	return []csrfTarget{
 		{
-			// Onboarding is optional-auth; it can be called before the admin
-			// exists. It should accept a well-formed body regardless of Origin.
-			method:         http.MethodPost,
-			path:           "/api/v1/onboarding/complete",
-			body:           `{"provider":{"id":"openai","api_key":"sk-test","model":"gpt-4o"},"admin":{"username":"csrfadmin","password":"securepass123"}}`,
-			needsJSONBody:  true,
-			expectAuthedOK: http.StatusOK,
-		},
-		{
+			// /api/v1/agents exercises the generic state-changing route — it
+			// is NOT in the CSRF exempt list, so it is the canonical probe.
 			method:         http.MethodPost,
 			path:           "/api/v1/agents",
 			body:           `{"name":"csrf-test-agent","model":"scripted-model"}`,
 			needsJSONBody:  true,
-			expectAuthedOK: http.StatusOK,
+			expectAuthedOK: []int{http.StatusOK, http.StatusCreated},
 		},
 		{
 			method:         http.MethodPut,
 			path:           "/api/v1/security/tool-policies",
 			body:           `{"tool_policies":{}}`,
 			needsJSONBody:  true,
-			expectAuthedOK: http.StatusOK,
+			expectAuthedOK: []int{http.StatusOK, http.StatusBadRequest},
 		},
 		{
 			method:         http.MethodPost,
 			path:           "/api/v1/sessions",
 			body:           `{"agent_id":"omnipus-system","type":"chat"}`,
 			needsJSONBody:  true,
-			expectAuthedOK: http.StatusCreated,
+			expectAuthedOK: []int{http.StatusOK, http.StatusCreated, http.StatusBadRequest},
 		},
 		{
 			// /api/v1/config accepts PUT for updates.
@@ -100,56 +92,28 @@ func csrfTargets() []csrfTarget {
 			path:           "/api/v1/config",
 			body:           `{"agents":{"defaults":{}}}`,
 			needsJSONBody:  true,
-			expectAuthedOK: http.StatusOK,
+			expectAuthedOK: []int{http.StatusOK, http.StatusBadRequest},
 		},
 	}
 }
 
+// TestCSRFProtection hard-asserts the double-submit cookie gate on every
+// state-changing endpoint in csrfTargets. The three sub-tests match the
+// failure modes of pkg/gateway/middleware/csrf.go.
 func TestCSRFProtection(t *testing.T) {
 	gw := testutil.StartTestGateway(t, testutil.WithBearerAuth())
 
-	// The gateway has DevModeBypass=false AND a valid bearer token pre-loaded.
-	// Every request includes the valid token via gw.NewRequest (which always
-	// sets Origin to gw.URL). For CSRF probes we construct raw requests.
+	// Use a fixed CSRF token for the happy-path test. The middleware only
+	// compares cookie to header; any value works so long as both legs match.
+	const csrfToken = "csrf-test-fixture-value-42"
 
 	for _, tgt := range csrfTargets() {
 		name := strings.NewReplacer("/", "_", " ", "_").Replace(tgt.path)
-		t.Run(name+"_no_origin", func(t *testing.T) {
-			body := bytes.NewReader([]byte(tgt.body))
-			req, err := http.NewRequest(tgt.method, gw.URL+tgt.path, body)
-			require.NoError(t, err)
-			// Explicitly omit Origin.
-			req.Header.Del("Origin")
-			if tgt.needsJSONBody {
-				req.Header.Set("Content-Type", "application/json")
-			}
-			if gw.BearerToken != "" {
-				req.Header.Set("Authorization", "Bearer "+gw.BearerToken)
-			}
-			resp, err := gw.HTTPClient.Do(req)
-			require.NoError(t, err)
-			defer resp.Body.Close()
 
-			// DOCUMENTED GAP: the gateway currently does NOT reject missing
-			// Origin on state-changing POSTs. This assertion records the
-			// current behavior. When CSRF protection lands, flip this
-			// assertion.
-			t.Logf("current behavior: bearer-auth-only; no Origin gate on %s %s (status=%d)",
-				tgt.method, tgt.path, resp.StatusCode)
-
-			// At minimum, the server must respond — no hang, no crash.
-			assert.NotEqual(t, 0, resp.StatusCode,
-				"server must respond with a status code, not crash")
-			// If we ever add CSRF protection, the server would return 403.
-			// For now we assert only that the request WAS processed (not 5xx
-			// due to a crash). Accept 200/201/400/401/409/422 as valid
-			// responses that indicate the handler ran.
-			assert.Less(t, resp.StatusCode, 500,
-				"server must not 5xx on missing-Origin POST — gap documented, "+
-					"but a 5xx indicates a real bug in error handling")
-		})
-
-		t.Run(name+"_wrong_origin", func(t *testing.T) {
+		// ------------------------------------------------------------
+		// 1. Cross-origin + NO X-CSRF-Token header → hard-expect 403.
+		// ------------------------------------------------------------
+		t.Run(name+"_no_csrf_header_rejected", func(t *testing.T) {
 			body := bytes.NewReader([]byte(tgt.body))
 			req, err := http.NewRequest(tgt.method, gw.URL+tgt.path, body)
 			require.NoError(t, err)
@@ -160,38 +124,64 @@ func TestCSRFProtection(t *testing.T) {
 			if gw.BearerToken != "" {
 				req.Header.Set("Authorization", "Bearer "+gw.BearerToken)
 			}
+			// Deliberately omit the X-CSRF-Token header AND the cookie.
 			resp, err := gw.HTTPClient.Do(req)
 			require.NoError(t, err)
 			defer resp.Body.Close()
 
-			// DOCUMENTED GAP: the gateway does NOT reject hostile Origin.
-			t.Logf("current behavior: bearer-auth-only; hostile Origin %q accepted on %s %s (status=%d). "+
-				"Record of gap: evil.example.com did not trigger a 403.",
-				"https://evil.example.com", tgt.method, tgt.path, resp.StatusCode)
+			// Hard expectation: 403 Forbidden.
+			require.Equal(t, http.StatusForbidden, resp.StatusCode,
+				"CSRF gate must reject %s %s with no cookie/header as 403",
+				tgt.method, tgt.path)
 
-			// Verify the Access-Control-Allow-Origin response header is NOT
-			// set to the hostile origin — that WOULD enable a cross-origin
-			// browser read. The isAllowedOrigin() gate must refuse to reflect
-			// evil.example.com.
-			acao := resp.Header.Get("Access-Control-Allow-Origin")
-			assert.NotEqual(t, "https://evil.example.com", acao,
-				"CORS must NOT reflect a hostile Origin header — this is the "+
-					"one gate that actually protects browser-based attacks")
-
-			// Do not 5xx.
-			assert.Less(t, resp.StatusCode, 500, "must not crash on hostile Origin")
+			// Error body must mention CSRF (so the error is actionable).
+			raw, _ := io.ReadAll(resp.Body)
+			var body403 map[string]string
+			require.NoError(t, json.Unmarshal(raw, &body403),
+				"403 body must be JSON — got %q", string(raw))
+			assert.Contains(t, strings.ToLower(body403["error"]), "csrf",
+				"403 body must name the CSRF gate so callers can diagnose: %q", body403["error"])
 		})
 
-		t.Run(name+"_no_csrf_token", func(t *testing.T) {
-			// There is no CSRF token mechanism in the gateway today. Document
-			// this explicitly so the test surface is honest.
-			t.Log("current behavior: no CSRF token in the gateway — bearer auth only; " +
-				"cross-origin JS cannot read localStorage-held token so CSRF is " +
-				"mitigated by same-origin policy, not by a token check")
+		// ------------------------------------------------------------
+		// 2. Wrong cookie/header pair → hard-expect 403.
+		// ------------------------------------------------------------
+		t.Run(name+"_wrong_csrf_token_rejected", func(t *testing.T) {
+			body := bytes.NewReader([]byte(tgt.body))
+			req, err := http.NewRequest(tgt.method, gw.URL+tgt.path, body)
+			require.NoError(t, err)
+			req.Header.Set("Origin", "https://evil.example.com")
+			if tgt.needsJSONBody {
+				req.Header.Set("Content-Type", "application/json")
+			}
+			if gw.BearerToken != "" {
+				req.Header.Set("Authorization", "Bearer "+gw.BearerToken)
+			}
+			// Cookie and header disagree — the classic "forged header"
+			// attack shape. Attacker can set arbitrary headers but cannot
+			// write __Host- cookies from a different origin.
+			req.AddCookie(&http.Cookie{Name: "__Host-csrf", Value: "server-seeded-value"})
+			req.Header.Set("X-Csrf-Token", "attacker-guess")
+			resp, err := gw.HTTPClient.Do(req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
 
-			// Send a properly-authenticated request with Origin matching the
-			// gateway — this should succeed. Failure here means our "CSRF
-			// token not required" understanding is wrong.
+			require.Equal(t, http.StatusForbidden, resp.StatusCode,
+				"CSRF gate must reject mismatched cookie/header as 403")
+
+			raw, _ := io.ReadAll(resp.Body)
+			var body403 map[string]string
+			require.NoError(t, json.Unmarshal(raw, &body403))
+			// Specifically "mismatch" so we know we reached the compare step,
+			// not the cookie-missing short-circuit.
+			assert.Equal(t, "csrf token mismatch", body403["error"],
+				"403 body must read 'csrf token mismatch' on a forged-header attempt")
+		})
+
+		// ------------------------------------------------------------
+		// 3. Correct cookie + matching header → request reaches handler.
+		// ------------------------------------------------------------
+		t.Run(name+"_correct_csrf_token_passes", func(t *testing.T) {
 			body := bytes.NewReader([]byte(tgt.body))
 			req, err := http.NewRequest(tgt.method, gw.URL+tgt.path, body)
 			require.NoError(t, err)
@@ -202,32 +192,41 @@ func TestCSRFProtection(t *testing.T) {
 			if gw.BearerToken != "" {
 				req.Header.Set("Authorization", "Bearer "+gw.BearerToken)
 			}
+			req.AddCookie(&http.Cookie{Name: "__Host-csrf", Value: csrfToken})
+			req.Header.Set("X-Csrf-Token", csrfToken)
 			resp, err := gw.HTTPClient.Do(req)
 			require.NoError(t, err)
 			defer resp.Body.Close()
 
-			// Expect success (or at least not forbidden). A 403 with a body
-			// containing "csrf" would mean CSRF enforcement landed — update
-			// this test.
-			if resp.StatusCode == http.StatusForbidden {
-				var body map[string]string
-				_ = json.NewDecoder(resp.Body).Decode(&body)
-				if strings.Contains(strings.ToLower(body["error"]), "csrf") {
-					t.Fatalf("CSRF enforcement is now live (%s %s -> 403 %q). "+
-						"Update this test to assert token-based CSRF gates.",
-						tgt.method, tgt.path, body["error"])
+			// The request must NOT be rejected at the CSRF gate. The handler
+			// itself may still 4xx (missing field, agent not found, etc.);
+			// the test accepts the per-target whitelist.
+			require.NotEqual(t, http.StatusForbidden, resp.StatusCode,
+				"CSRF gate must let through matching cookie+header "+
+					"(%s %s returned 403 — regression in the compare path)",
+				tgt.method, tgt.path)
+
+			accepted := false
+			for _, want := range tgt.expectAuthedOK {
+				if resp.StatusCode == want {
+					accepted = true
+					break
 				}
 			}
-			assert.Less(t, resp.StatusCode, 500,
-				"must not 5xx on authenticated same-origin request")
+			if !accepted {
+				raw, _ := io.ReadAll(resp.Body)
+				t.Fatalf("handler returned unexpected status %d (want one of %v) for %s %s. Body: %s",
+					resp.StatusCode, tgt.expectAuthedOK, tgt.method, tgt.path, truncate(string(raw), 200))
+			}
 		})
 	}
 }
 
-// TestCSRFCORSReflectionGate verifies the ONE real CSRF protection Omnipus
-// does have: the CORS Access-Control-Allow-Origin reflection gate will not
-// echo hostile origins, which prevents browser JS on evil.example.com from
-// READING the response (even if it could send the request).
+// TestCSRFCORSReflectionGate verifies the CORS reflection gate, which is
+// the second layer of CSRF defense. Even if the primary cookie+header
+// check missed something, a browser JS attacker can only READ the response
+// body if the server reflects their Origin in Access-Control-Allow-Origin.
+// This test ensures hostile origins are never reflected.
 func TestCSRFCORSReflectionGate(t *testing.T) {
 	gw := testutil.StartTestGateway(t, testutil.WithBearerAuth())
 

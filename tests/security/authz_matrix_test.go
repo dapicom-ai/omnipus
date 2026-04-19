@@ -112,11 +112,15 @@ func authzMatrix() []matrixCase {
 		{role: roleAdmin, method: http.MethodGet, path: "/api/v1/audit-log", expectStatus: []int{200}},
 
 		// ---- Write surface: createAgent (POST) ----
+		// Anon on a state-changing route: CSRF middleware runs before auth and
+		// returns 403 "csrf cookie missing" for a caller without a __Host-csrf
+		// cookie (issue #97). Stricter than the original 401, still a hard deny.
 		{
 			roleAnon, http.MethodPost, "/api/v1/agents",
 			`{"name":"a1","model":"scripted-model"}`,
-			[]int{401},
-			"", "",
+			[]int{401, 403},
+			"anon on state-changing route: CSRF (403) or auth (401) is a hard deny",
+			"",
 		},
 		{
 			roleUser, http.MethodPost, "/api/v1/agents",
@@ -132,11 +136,13 @@ func authzMatrix() []matrixCase {
 		},
 
 		// ---- Write surface: sessions POST ----
+		// Anon + CSRF: see note on POST /api/v1/agents above.
 		{
 			roleAnon, http.MethodPost, "/api/v1/sessions",
 			`{"agent_id":"omnipus-system","type":"chat"}`,
-			[]int{401},
-			"", "",
+			[]int{401, 403},
+			"anon on state-changing route: CSRF (403) or auth (401) is a hard deny",
+			"",
 		},
 		{
 			roleUser, http.MethodPost, "/api/v1/sessions",
@@ -152,11 +158,13 @@ func authzMatrix() []matrixCase {
 		},
 
 		// ---- Config PUT (admin-only in any reasonable model) ----
+		// Anon + CSRF: see note on POST /api/v1/agents above.
 		{
 			roleAnon, http.MethodPut, "/api/v1/config",
 			`{"agents":{"defaults":{}}}`,
-			[]int{401},
-			"", "",
+			[]int{401, 403},
+			"anon on state-changing route: CSRF (403) or auth (401) is a hard deny",
+			"",
 		},
 		{
 			role: roleUser, method: http.MethodPut, path: "/api/v1/config",
@@ -173,11 +181,13 @@ func authzMatrix() []matrixCase {
 		},
 
 		// ---- tool-policies PUT (admin-only in any reasonable model) ----
+		// Anon + CSRF: see note on POST /api/v1/agents above.
 		{
 			roleAnon, http.MethodPut, "/api/v1/security/tool-policies",
 			`{"tool_policies":{}}`,
-			[]int{401},
-			"", "",
+			[]int{401, 403},
+			"anon on state-changing route: CSRF (403) or auth (401) is a hard deny",
+			"",
 		},
 		{
 			role: roleUser, method: http.MethodPut, path: "/api/v1/security/tool-policies",
@@ -206,7 +216,7 @@ func authzMatrix() []matrixCase {
 }
 
 func TestAuthorizationMatrix(t *testing.T) {
-	gw, adminToken, userToken := gatewayWithRBAC(t)
+	gw, adminToken, userToken, csrfToken := gatewayWithRBAC(t)
 
 	// Sanity check: the seeded config has both roles.
 	cfg := findTestConfig(t, gw.ConfigPath)
@@ -244,6 +254,15 @@ func TestAuthorizationMatrix(t *testing.T) {
 			}
 			if token != "" {
 				req.Header.Set("Authorization", "Bearer "+token)
+				// Authenticated callers attach the CSRF cookie + header on
+				// state-changing methods so the CSRF middleware does not
+				// short-circuit the request before auth runs (issue #97).
+				// Anon rows deliberately omit both to exercise the CSRF gate.
+				switch tc.method {
+				case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+					req.AddCookie(&http.Cookie{Name: "__Host-csrf", Value: csrfToken})
+					req.Header.Set("X-Csrf-Token", csrfToken)
+				}
 			}
 			resp, err := gw.HTTPClient.Do(req)
 			if err != nil {

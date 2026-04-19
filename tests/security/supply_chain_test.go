@@ -145,6 +145,7 @@ func testMCPToolNameCollision(t *testing.T) {
 		bytes.NewReader(body))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
+	withCSRF(req)
 	resp, err := gw.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()

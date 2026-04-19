@@ -1,21 +1,102 @@
 // REST API client — all calls go through the backend gateway.
 // Auth: Authorization: Bearer <token> header. Token read from sessionStorage (preferred) or localStorage ('omnipus_auth_token'). Backend validates against per-user RBAC token hashes or legacy OMNIPUS_BEARER_TOKEN env var.
+// CSRF: X-CSRF-Token header echoes the __Host-csrf cookie value on every
+// state-changing request (double-submit cookie, issue #97). The cookie is
+// issued by the backend on /auth/login, /auth/register-admin, and
+// /onboarding/complete. State-changing calls made before the cookie exists
+// fail fast client-side so the UI surfaces an actionable error instead of
+// waiting for the server's 403.
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? ''
+
+// CSRF_COOKIE_NAME must match pkg/gateway/middleware/csrf.go CSRFCookieName.
+const CSRF_COOKIE_NAME = '__Host-csrf'
+const CSRF_HEADER_NAME = 'X-CSRF-Token'
+const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+
+// CSRF_EXEMPT_PATHS lists state-changing endpoints whose handler's job is to
+// ISSUE the __Host-csrf cookie. They can't require the cookie to be present
+// — that's the chicken-and-egg bootstrap problem. Keep this list in sync
+// with pkg/gateway/middleware/csrf.go `exemptPaths` for /api/v1/* entries.
+// Paths here are compared against the /api/v1/-prefixed URL.
+//
+// Why each entry is here:
+//   - /api/v1/onboarding/complete — called on fresh install (no cookie exists).
+//   - /api/v1/auth/login — called on first load of an existing install
+//     (refresh, new tab); cookie may be absent until the login succeeds.
+//   - /api/v1/auth/register-admin — first-boot admin account creation.
+const CSRF_EXEMPT_PATHS = new Set<string>([
+  '/api/v1/onboarding/complete',
+  '/api/v1/auth/login',
+  '/api/v1/auth/register-admin',
+])
+
+// readCSRFCookie parses document.cookie and returns the __Host-csrf value,
+// or null if the cookie is absent. We intentionally do not cache — cookies
+// can change after login/logout/onboarding and caching would cause stale
+// tokens on the next state-changing call.
+function readCSRFCookie(): string | null {
+  if (typeof document === 'undefined') return null
+  const prefix = `${CSRF_COOKIE_NAME}=`
+  // document.cookie is a single string of "a=b; c=d" pairs. We walk the
+  // pairs manually rather than split on ";" because cookie values can
+  // contain "=" (and base64 tokens certainly can).
+  for (const part of document.cookie.split(';')) {
+    const trimmed = part.trim()
+    if (trimmed.startsWith(prefix)) {
+      return trimmed.slice(prefix.length)
+    }
+  }
+  return null
+}
 
 function getAuthHeaders(): HeadersInit {
   const token = sessionStorage.getItem('omnipus_auth_token') ?? localStorage.getItem('omnipus_auth_token')
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+// buildHeaders composes the standard request headers, layering (in order):
+// content-type → bearer auth → CSRF header → caller overrides. The CSRF
+// header is added unconditionally when the cookie exists; safe GETs pass
+// it through too because doing so is harmless and keeps the code simple.
+function buildHeaders(extra?: HeadersInit): HeadersInit {
+  const csrf = readCSRFCookie()
+  return {
+    'Content-Type': 'application/json',
+    ...getAuthHeaders(),
+    ...(csrf ? { [CSRF_HEADER_NAME]: csrf } : {}),
+    ...extra,
+  }
+}
+
+// isPathCSRFExempt checks whether a state-changing call can skip the
+// client-side cookie-presence check. Only onboarding-complete is exempt —
+// see CSRF_EXEMPT_PATHS.
+function isPathCSRFExempt(apiPath: string): boolean {
+  return CSRF_EXEMPT_PATHS.has(`/api/v1${apiPath}`)
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  // Client-side CSRF gate: reject state-changing calls that would be
+  // guaranteed to 403 at the server. This gives a clear error immediately
+  // instead of a cryptic "403 csrf cookie missing" from the network tab
+  // and also prevents a cascade of dependent requests firing during a
+  // broken auth state.
+  const method = (init?.method ?? 'GET').toUpperCase()
+  if (
+    STATE_CHANGING_METHODS.has(method) &&
+    !isPathCSRFExempt(path) &&
+    readCSRFCookie() === null
+  ) {
+    throw new Error(
+      `CSRF cookie missing — cannot ${method} ${path}. ` +
+        `Log in or complete onboarding first so the server can issue the __Host-csrf cookie.`,
+    )
+  }
+
   const res = await fetch(`${BASE_URL}/api/v1${path}`, {
     ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...getAuthHeaders(),
-      ...init?.headers,
-    },
+    headers: buildHeaders(init?.headers),
   })
   if (!res.ok) {
     const text = await res.text().catch((e) => {
@@ -799,9 +880,26 @@ export async function uploadFiles(sessionId: string, files: File[]): Promise<{ f
     formData.append('files', file)
   }
   const token = sessionStorage.getItem('omnipus_auth_token') ?? localStorage.getItem('omnipus_auth_token')
+  const csrf = readCSRFCookie()
+  // Upload is a state-changing POST — fail fast if we have no CSRF cookie
+  // (see request() for the same pattern). We still send the header on the
+  // off chance the user explicitly set the cookie externally.
+  if (csrf === null) {
+    throw new Error(
+      'CSRF cookie missing — cannot upload files. Log in first so the server can issue the __Host-csrf cookie.',
+    )
+  }
+  // Build headers by hand because FormData must NOT have a Content-Type
+  // set — the browser needs to fill in the multipart boundary itself.
+  const headers: Record<string, string> = {
+    [CSRF_HEADER_NAME]: csrf,
+  }
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
   const res = await fetch(`${BASE_URL}/api/v1/upload`, {
     method: 'POST',
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    headers,
     body: formData,
   })
   if (!res.ok) {

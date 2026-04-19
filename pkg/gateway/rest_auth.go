@@ -24,6 +24,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 )
 
 // Sentinel errors for HandleLogin error handling.
@@ -360,6 +361,17 @@ func (a *restAPI) HandleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Reset rate limit counter on successful login.
 	globalLoginLimiter.recordSuccess(ip, body.Username)
+
+	// Issue a fresh __Host-csrf cookie so the SPA can echo it on subsequent
+	// state-changing requests (issue #97). Login is the canonical moment to
+	// rotate CSRF tokens — it coincides with a new bearer token.
+	if err := middleware.IssueCSRFCookie(w); err != nil {
+		// Cookie mint can only fail if the OS RNG is broken. Fail loudly but
+		// still return the bearer token — the user can call /auth/validate on
+		// a retry to get a working CSRF cookie.
+		slog.Error("auth: issue CSRF cookie failed", "error", err)
+	}
+
 	jsonOK(w, map[string]any{
 		"token":    token,
 		"role":     foundRole,
@@ -484,6 +496,13 @@ func (a *restAPI) HandleRegisterAdmin(w http.ResponseWriter, r *http.Request) {
 
 	// Reload in-memory config so withAuth middleware picks up the new token hash immediately.
 	a.awaitReload()
+
+	// Issue a __Host-csrf cookie so the newly-registered admin can
+	// immediately make state-changing requests without being blocked by the
+	// CSRF middleware (issue #97).
+	if err := middleware.IssueCSRFCookie(w); err != nil {
+		slog.Error("auth: issue CSRF cookie failed", "error", err)
+	}
 
 	slog.Info("auth: admin user registered", "username", body.Username)
 	jsonOK(w, map[string]any{

@@ -98,6 +98,7 @@ func TestChatMarkdownXSS(t *testing.T) {
 			// Even in DevModeBypass, checkBearerAuth requires a Bearer prefix
 			// before it evaluates the bypass — send any non-empty token.
 			req.Header.Set("Authorization", "Bearer devmode-bypass")
+			withCSRF(req)
 			resp, err := gw.Do(req)
 			require.NoError(t, err)
 
@@ -225,6 +226,7 @@ func TestChatMarkdownXSS(t *testing.T) {
 			// Delete the agent to keep the fixture clean.
 			delReq, _ := gw.NewRequest(http.MethodDelete, "/api/v1/agents/"+id, nil)
 			delReq.Header.Set("Authorization", "Bearer devmode-bypass")
+			withCSRF(delReq)
 			if delResp, err := gw.Do(delReq); err == nil {
 				_ = delResp.Body.Close()
 			}
