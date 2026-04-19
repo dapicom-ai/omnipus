@@ -37,7 +37,7 @@ jobs:
           "$(go env GOPATH)/bin/grype" dir:. -o sarif > grype.sarif
       - name: Upload SARIF
         if: always()
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: grype.sarif
       - name: Run full security test suite
