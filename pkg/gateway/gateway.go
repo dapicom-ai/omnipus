@@ -798,9 +798,9 @@ func setupAndStartServices(
 	// cookie avoids wasting a bcrypt compare on obvious cross-origin forgeries.
 	// The net effect — state-changing requests without a valid cookie+header
 	// get rejected — is identical.
-	csrfMW := middleware.CSRFMiddleware(middleware.Config{
-		ClientIP: clientIP,
-		Reporter: func(r *http.Request, sourceIP, route string) {
+	csrfMW := middleware.CSRFMiddleware(
+		middleware.WithClientIPFunc(clientIP),
+		middleware.WithReporter(func(r *http.Request, sourceIP, route string) {
 			// Best-effort audit log of CSRF mismatches (SEC-15). Never blocks
 			// or crashes the request path — the middleware already returns 403.
 			logger := api.agentLoop.AuditLogger()
@@ -824,8 +824,8 @@ func setupAndStartServices(
 			}); logErr != nil {
 				slog.Warn("csrf: audit log write failed", "error", logErr)
 			}
-		},
-	})
+		}),
+	)
 	if err = runningServices.ChannelManager.WrapHTTPHandler(csrfMW); err != nil {
 		return nil, fmt.Errorf("wrapping HTTP handler with CSRF: %w", err)
 	}

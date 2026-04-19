@@ -491,8 +491,16 @@ func (c *WhatsAppNativeChannel) handleLoggedOut() {
 
 	client.Disconnect()
 
-	// Clear session so the next connect triggers QR pairing.
-	if err := client.Store.Delete(context.Background()); err != nil {
+	// Clear session so the next connect triggers QR pairing. Use the channel's
+	// runCtx (rather than context.Background) with a bounded timeout so a Stop
+	// that fires while re-pairing is in flight cancels the Delete call and
+	// avoids blocking shutdown. Store.Delete hits a local SQLite file so a
+	// 10-second ceiling is generous; in practice the call completes in
+	// milliseconds but a disk stall should not be able to pin shutdown.
+	deleteCtx, cancel := context.WithTimeout(c.runCtx, 10*time.Second)
+	err := client.Store.Delete(deleteCtx)
+	cancel()
+	if err != nil {
 		logger.ErrorCF("whatsapp", "Failed to clear session for re-pairing", map[string]any{"error": err.Error()})
 		return
 	}
