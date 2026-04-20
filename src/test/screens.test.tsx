@@ -62,12 +62,12 @@ vi.mock('@assistant-ui/react', async () => {
     ThreadPrimitive: {
       Root: passthrough,
       Viewport: passthrough,
-      Messages: ({ children }: { children: (args: { message: unknown }) => React.ReactNode }) =>
+      Messages: (_: { children: (args: { message: unknown }) => React.ReactNode }) =>
         React.createElement(React.Fragment, null, null),
     },
     MessagePrimitive: {
       Root: passthrough,
-      Parts: ({ children }: { children: (args: { part: unknown }) => React.ReactNode }) =>
+      Parts: (_: { children: (args: { part: unknown }) => React.ReactNode }) =>
         React.createElement(React.Fragment, null, null),
     },
     MessagePartPrimitive: {
