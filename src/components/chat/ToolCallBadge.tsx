@@ -62,6 +62,8 @@ export function ToolCallBadge({ toolCall }: ToolCallBadgeProps) {
 
   return (
     <div
+      data-testid="tool-call-badge"
+      data-tool={toolCall.tool}
       className={cn(
         'mt-2 rounded-md border bg-[var(--color-surface-1)] text-xs font-mono overflow-hidden',
         config.border
