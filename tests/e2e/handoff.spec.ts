@@ -2,6 +2,7 @@ import { expect } from '@playwright/test';
 import { test } from './fixtures/console-errors';
 import { expectA11yClean } from './fixtures/a11y';
 import { chatInput, agentPicker, assistantMessages } from './fixtures/selectors';
+import { softSkip } from './fixtures/skip-tracking';
 
 // Global storageState provides pre-authenticated session (see playwright.config.ts + global-setup.ts).
 
@@ -59,7 +60,7 @@ test(
         'Scenario-provider HTTP injection into live gateway is not yet implemented. ' +
         'Tracks: sprint-h-subagent-block-spec.md SC-H-001',
       );
-      test.skip();
+      softSkip(test, 'OPENROUTER_API_KEY_CI not set — handoff test cannot run');
       return;
     }
 
@@ -89,7 +90,7 @@ test(
         'This is a real-LLM non-determinism issue. ' +
         'Re-run this test or use the scenario-provider HTTP interface once available.',
       );
-      test.skip();
+      softSkip(test, 'LLM did not issue a spawn tool call within 30s — non-determinism');
       return;
     }
 

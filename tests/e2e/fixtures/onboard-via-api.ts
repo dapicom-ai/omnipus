@@ -58,11 +58,35 @@ export async function onboardViaAPI(opts: OnboardingOptions): Promise<void> {
       },
     });
 
-    // 200 = fresh onboard; 409 = already complete on this $OMNIPUS_HOME (e.g.
-    // second test shard hitting the same instance). Both mean "admin exists,
-    // login will succeed" — no need to surface a failure.
-    if (res.status() === 200 || res.status() === 409) {
+    // 200 = fresh onboard.
+    if (res.status() === 200) {
       return;
+    }
+
+    // 409 = already complete on this $OMNIPUS_HOME (e.g. second test shard
+    // hitting the same instance). Accept ONLY when the body confirms the known
+    // sentinel — any other 409 is an unexpected error and must be surfaced.
+    // W3-10: parse the body to distinguish expected "already complete" from
+    // an unexpected 409 (e.g., partial state, schema mismatch).
+    if (res.status() === 409) {
+      let body: string;
+      try {
+        body = await res.text();
+      } catch {
+        throw new Error('onboard-via-api: 409 response body could not be read');
+      }
+      // Accept the 409 only when the body contains the expected sentinel.
+      // The backend returns {"error":"onboarding_already_complete",...} or similar text.
+      if (
+        body.includes('onboarding_already_complete') ||
+        body.toLowerCase().includes('already complete') ||
+        body.toLowerCase().includes('already been completed')
+      ) {
+        return;
+      }
+      throw new Error(
+        `onboard-via-api: POST /api/v1/onboarding/complete returned unexpected 409: ${body}`,
+      );
     }
 
     const body = await res.text();

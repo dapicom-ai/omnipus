@@ -24,6 +24,7 @@ import { expect } from '@playwright/test';
 import { test } from './fixtures/console-errors';
 import { expectA11yClean } from './fixtures/a11y';
 import { chatInput, assistantMessages, newChatButton } from './fixtures/selectors';
+import { softSkip } from './fixtures/skip-tracking';
 
 // Global storageState provides pre-authenticated session (see playwright.config.ts + global-setup.ts).
 
@@ -37,7 +38,7 @@ function requireApiKey(t: typeof test): void {
       'Scenario-provider HTTP injection into live gateway is not yet implemented. ' +
       'Set OPENROUTER_API_KEY_CI or add a scenario-provider HTTP endpoint to the gateway.',
     );
-    t.skip();
+    softSkip(t, 'OPENROUTER_API_KEY_CI not set — real-LLM test cannot run');
   }
 }
 
@@ -108,7 +109,7 @@ test(
         'WARNING: Parent spawn did not produce [data-testid="subagent-collapsed"] within 40s. ' +
         'LLM may not have called spawn. Real-LLM non-determinism — re-run.',
       );
-      test.skip();
+      softSkip(test, 'LLM did not produce subagent-collapsed block within 40s — non-determinism');
       return;
     }
 
@@ -183,7 +184,7 @@ test(
         'WARNING: First sibling spawn did not produce [data-testid="subagent-collapsed"]. ' +
         'LLM may not have called spawn. Real-LLM non-determinism — re-run.',
       );
-      test.skip();
+      softSkip(test, 'LLM did not produce first sibling subagent-collapsed block — non-determinism');
       return;
     }
 
@@ -199,7 +200,7 @@ test(
         'LLM may not have issued two separate spawn calls. Real-LLM non-determinism.',
       );
       if (count === 0) {
-        test.skip();
+        softSkip(test, 'LLM produced 0 sibling subagent blocks — non-determinism');
         return;
       }
       // If only 1 appeared, still test what we can (single block should at least expand).
@@ -277,7 +278,7 @@ test(
         'WARNING: No [data-testid="subagent-collapsed"] appeared. LLM did not spawn. ' +
         'Real-LLM non-determinism.',
       );
-      test.skip();
+      softSkip(test, 'LLM did not spawn — no subagent-collapsed block appeared — non-determinism');
       return;
     }
 
@@ -293,7 +294,11 @@ test(
     const deadline = Date.now() + 60_000; // 60s budget for multi-step run
 
     while (Date.now() < deadline) {
-      const headerText = await collapsedBlock.textContent().catch(() => null);
+      // W3-11: scoped catch — only swallow stale-locator errors, rethrow others.
+      const headerText = await collapsedBlock.textContent().catch((err: unknown) => {
+        if (err instanceof Error && (err.message.includes('Element is not attached') || err.message.includes('locator handle is stale'))) return null
+        throw err
+      });
       if (!headerText) break;
 
       // Check for ≥3 steps in the text (stepCountText: "N steps" or "1 step")
@@ -330,7 +335,11 @@ test(
       // that is a confirmed product regression — fail hard (not skip).
       // Reserve test.skip() for the "no block at all" case (handled above via blockAppeared check).
       // Traces to: temporal-puzzling-melody.md W2-7
-      const finalText = await collapsedBlock.textContent().catch(() => '');
+      // W3-11: scoped catch — only swallow stale-locator errors, rethrow others.
+      const finalText = await collapsedBlock.textContent().catch((err: unknown) => {
+        if (err instanceof Error && (err.message.includes('Element is not attached') || err.message.includes('locator handle is stale'))) return ''
+        throw err
+      });
       const anySteps = /\d+\s+steps?/.test(finalText ?? '');
       if (!anySteps) {
         // SubagentBlock appeared but step counter text is missing — confirmed product regression.
@@ -340,7 +349,7 @@ test(
           'Traces to: temporal-puzzling-melody.md W2-7, sprint-h-subagent-block-spec.md FR-H-010.',
         );
       }
-      test.skip();
+      softSkip(test, 'LLM subagent executed fewer than 3 tool calls — non-determinism');
       return;
     }
 
@@ -369,7 +378,7 @@ test(
     // This test is best-effort and does NOT gate merge (SC-H-003).
     // If OPENROUTER_API_KEY_CI is absent, skip gracefully (not BLOCKED — this is by design).
     if (!process.env.OPENROUTER_API_KEY_CI) {
-      test.skip();
+      softSkip(test, 'OPENROUTER_API_KEY_CI not set — smoke test skipped by design');
       return;
     }
 
@@ -390,7 +399,11 @@ test(
 
     // Best-effort: IF a SubagentBlock appeared, verify basic UI behavior.
     const collapsedBlock = page.locator('[data-testid="subagent-collapsed"]');
-    const spawnOccurred = await collapsedBlock.isVisible({ timeout: 5_000 }).catch(() => false);
+    // W3-11: scoped catch — only swallow stale-locator errors, rethrow others.
+    const spawnOccurred = await collapsedBlock.isVisible({ timeout: 5_000 }).catch((err: unknown) => {
+      if (err instanceof Error && (err.message.includes('Element is not attached') || err.message.includes('locator handle is stale'))) return false
+      throw err
+    });
 
     if (spawnOccurred) {
       // Click to expand — basic expansion must work.
@@ -449,7 +462,7 @@ test(
         'WARNING: No SubagentBlock appeared for axe test. LLM did not spawn. ' +
         'Skipping axe assertion — no subagent elements to check.',
       );
-      test.skip();
+      softSkip(test, 'LLM did not spawn for axe test — no subagent elements to check — non-determinism');
       return;
     }
 
