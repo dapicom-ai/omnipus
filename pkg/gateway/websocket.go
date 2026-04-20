@@ -32,8 +32,11 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/session"
 )
 
-// replayLiveBufferCap is the maximum number of live WS frames buffered during
-// replay (FR-I-009). Frames beyond this cap are dropped under backpressure.
+// replayLiveBufferCap is the capacity of replayDivertCh (FR-I-009).
+// Frames are diverted here via sendConnFrame when isReplayingLive is set;
+// drained into sendCh after replay's done frame.  When the channel is full
+// sendConnFrame drops the frame and emits a degraded warning to sendCh directly
+// (W1-6) so the client still receives the overflow notice.
 const replayLiveBufferCap = 1000
 
 // wsClientFrame is a message sent from the browser to the server over WebSocket.

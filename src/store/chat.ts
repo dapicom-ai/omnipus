@@ -175,6 +175,47 @@ const CLEAN_SESSION_STATE = {
   rateLimitEvent: null as RateLimitEventData | null,
 } as const
 
+// ── Frame-routing helpers — extracted from handleFrame to reduce duplication ──
+//
+// Both tool_call_start and tool_call_result share the same parent-span check +
+// orphan-buffer logic. These module-level helpers encapsulate the shared parts.
+
+/**
+ * hasOpenSpan returns true when any assistant message in `messages` has a span
+ * whose parentCallId matches `parentCallId`.
+ */
+function hasOpenSpan(messages: ChatMessage[], parentCallId: string): boolean {
+  return messages.some(
+    (m) => m.role === 'assistant' && m.spans?.some((s) => s.parentCallId === parentCallId)
+  )
+}
+
+/**
+ * bufferForSpan adds `frame` to the pending buffer for `parentCallId` and arms
+ * the 10s orphan TTL if this is the first frame for that parent.
+ * When the timer fires, `onTimeout` is called with the accumulated buffered frames.
+ */
+function bufferForSpan(
+  parentCallId: string,
+  frame: BufferedFrame['frame'],
+  onTimeout: (buffered: BufferedFrame[]) => void,
+): void {
+  if (!pendingByParentCallId[parentCallId]) {
+    pendingByParentCallId[parentCallId] = []
+    if (!orphanTimers[parentCallId]) {
+      orphanTimers[parentCallId] = setTimeout(() => {
+        const buffered = pendingByParentCallId[parentCallId] ?? []
+        delete pendingByParentCallId[parentCallId]
+        delete orphanTimers[parentCallId]
+        if (buffered.length > 0) {
+          onTimeout(buffered)
+        }
+      }, ORPHAN_BUFFER_TTL_MS)
+    }
+  }
+  pendingByParentCallId[parentCallId].push({ frame, arrivedAt: Date.now() })
+}
+
 export const useChatStore = create<ChatStore>((set, get) => ({
   messages: [],
   isStreaming: false,
@@ -705,11 +746,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         const parentCallId = frame.parent_call_id
         if (parentCallId) {
           // FR-H-009: check if a matching span is already open
-          const msgs = store.messages
-          const hasSpan = msgs.some(
-            (m) => m.role === 'assistant' && m.spans?.some((s) => s.parentCallId === parentCallId)
-          )
-          if (hasSpan) {
+          if (hasOpenSpan(store.messages, parentCallId)) {
             // Attach directly to the span (FR-H-010)
             store.attachStepToSpan(parentCallId, {
               id: frame.call_id,
@@ -720,38 +757,28 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             })
           } else {
             // Buffer until subagent_start arrives or TTL expires (FR-H-009)
-            if (!pendingByParentCallId[parentCallId]) {
-              pendingByParentCallId[parentCallId] = []
-              // Set 10s TTL: after which release as flat tool call with a warning
-              orphanTimers[parentCallId] = setTimeout(() => {
-                const buffered = pendingByParentCallId[parentCallId] ?? []
-                delete pendingByParentCallId[parentCallId]
-                delete orphanTimers[parentCallId]
-                if (buffered.length > 0) {
-                  console.warn(
-                    `[chat] Orphan frames for parent_call_id="${parentCallId}" — subagent_start never arrived within ${ORPHAN_BUFFER_TTL_MS}ms. Releasing as flat tool calls.`
-                  )
-                  // W1-8c: give the user a visible signal in addition to the console warn.
-                  useUiStore.getState().addToast({
-                    variant: 'default',
-                    message: 'Some subagent steps arrived without their span — displayed as flat tool calls',
-                  })
-                  for (const { frame: bf } of buffered) {
-                    if (bf.type === 'tool_call_start') {
-                      const s = get()
-                      const lastMsg = s.messages[s.messages.length - 1]
-                      if (!lastMsg || lastMsg.role !== 'assistant') {
-                        s.updateLastAssistantMessage('', false)
-                      }
-                      s.startToolCall(bf.call_id ?? '', bf.tool ?? '', bf.params ?? {})
-                    } else if (bf.type === 'tool_call_result') {
-                      get().resolveToolCall(bf.call_id ?? '', bf.result, bf.status ?? 'success', bf.duration_ms, bf.error)
-                    }
+            bufferForSpan(parentCallId, frame, (buffered) => {
+              console.warn(
+                `[chat] orphan frame: parent_call_id="${parentCallId}" — subagent_start never arrived within ${ORPHAN_BUFFER_TTL_MS}ms. Releasing as flat tool calls.`
+              )
+              // W1-8c: give the user a visible signal in addition to the console warn.
+              useUiStore.getState().addToast({
+                variant: 'default',
+                message: 'Some subagent steps arrived without their span — displayed as flat tool calls',
+              })
+              for (const { frame: bf } of buffered) {
+                if (bf.type === 'tool_call_start') {
+                  const s = get()
+                  const lastMsg = s.messages[s.messages.length - 1]
+                  if (!lastMsg || lastMsg.role !== 'assistant') {
+                    s.updateLastAssistantMessage('', false)
                   }
+                  s.startToolCall(bf.call_id ?? '', bf.tool ?? '', bf.params ?? {})
+                } else if (bf.type === 'tool_call_result') {
+                  get().resolveToolCall(bf.call_id ?? '', bf.result, bf.status ?? 'success', bf.duration_ms, bf.error)
                 }
-              }, ORPHAN_BUFFER_TTL_MS)
-            }
-            pendingByParentCallId[parentCallId].push({ frame, arrivedAt: Date.now() })
+              }
+            })
           }
         } else {
           // Non-nested tool call — original behavior
@@ -767,11 +794,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       case 'tool_call_result': {
         const parentCallId = frame.parent_call_id
         if (parentCallId) {
-          const msgs = store.messages
-          const hasSpan = msgs.some(
-            (m) => m.role === 'assistant' && m.spans?.some((s) => s.parentCallId === parentCallId)
-          )
-          if (hasSpan) {
+          if (hasOpenSpan(store.messages, parentCallId)) {
             // Update the step in the span
             store.attachStepToSpan(parentCallId, {
               id: frame.call_id,
@@ -785,40 +808,28 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             })
           } else {
             // Buffer until subagent_start arrives.
-            // W1-8a: if this result creates a NEW buffer entry (no prior tool_call_start
-            // buffered it), arm the 10s TTL now so results don't leak forever.
-            if (!pendingByParentCallId[parentCallId]) {
-              pendingByParentCallId[parentCallId] = []
-              if (!orphanTimers[parentCallId]) {
-                orphanTimers[parentCallId] = setTimeout(() => {
-                  const buffered = pendingByParentCallId[parentCallId] ?? []
-                  delete pendingByParentCallId[parentCallId]
-                  delete orphanTimers[parentCallId]
-                  if (buffered.length > 0) {
-                    console.warn(
-                      `[chat] Orphan frames for parent_call_id="${parentCallId}" — subagent_start never arrived within ${ORPHAN_BUFFER_TTL_MS}ms. Releasing as flat tool calls.`
-                    )
-                    useUiStore.getState().addToast({
-                      variant: 'default',
-                      message: 'Some subagent steps arrived without their span — displayed as flat tool calls',
-                    })
-                    for (const { frame: bf } of buffered) {
-                      if (bf.type === 'tool_call_start') {
-                        const s = get()
-                        const lastMsg = s.messages[s.messages.length - 1]
-                        if (!lastMsg || lastMsg.role !== 'assistant') {
-                          s.updateLastAssistantMessage('', false)
-                        }
-                        s.startToolCall(bf.call_id ?? '', bf.tool ?? '', bf.params ?? {})
-                      } else if (bf.type === 'tool_call_result') {
-                        get().resolveToolCall(bf.call_id ?? '', bf.result, bf.status ?? 'success', bf.duration_ms, bf.error)
-                      }
-                    }
+            // W1-8a: bufferForSpan arms the 10s TTL on first frame for this parent.
+            bufferForSpan(parentCallId, frame, (buffered) => {
+              console.warn(
+                `[chat] orphan frame: parent_call_id="${parentCallId}" — subagent_start never arrived within ${ORPHAN_BUFFER_TTL_MS}ms. Releasing as flat tool calls.`
+              )
+              useUiStore.getState().addToast({
+                variant: 'default',
+                message: 'Some subagent steps arrived without their span — displayed as flat tool calls',
+              })
+              for (const { frame: bf } of buffered) {
+                if (bf.type === 'tool_call_start') {
+                  const s = get()
+                  const lastMsg = s.messages[s.messages.length - 1]
+                  if (!lastMsg || lastMsg.role !== 'assistant') {
+                    s.updateLastAssistantMessage('', false)
                   }
-                }, ORPHAN_BUFFER_TTL_MS)
+                  s.startToolCall(bf.call_id ?? '', bf.tool ?? '', bf.params ?? {})
+                } else if (bf.type === 'tool_call_result') {
+                  get().resolveToolCall(bf.call_id ?? '', bf.result, bf.status ?? 'success', bf.duration_ms, bf.error)
+                }
               }
-            }
-            pendingByParentCallId[parentCallId].push({ frame, arrivedAt: Date.now() })
+            })
           }
         } else {
           store.resolveToolCall(frame.call_id ?? '', frame.result, frame.status ?? 'success', frame.duration_ms, frame.error)

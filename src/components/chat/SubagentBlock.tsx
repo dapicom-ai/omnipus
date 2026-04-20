@@ -22,18 +22,13 @@ import { cn } from '@/lib/utils'
 
 type SubagentEndReason = WsSubagentEndFrame['reason']
 
-// ── Label truncation — graceme-safe (FR-H-009, Scenario 14) ──────────────────
+// ── Label truncation — grapheme-safe (FR-H-009, Scenario 14) ─────────────────
 
 /** Truncate to 60 grapheme clusters. Uses Array.from for emoji/CJK safety. */
 function truncateLabel(raw: string): string {
   const clusters = Array.from(raw)
   if (clusters.length <= 60) return raw
   return clusters.slice(0, 60).join('') + '\u2026'
-}
-
-function deriveLabel(span: SubagentSpan): string {
-  if (span.taskLabel) return truncateLabel(span.taskLabel)
-  return truncateLabel(span.taskLabel)
 }
 
 // ── Duration formatting ───────────────────────────────────────────────────────
@@ -146,7 +141,7 @@ export function SubagentBlock({ span }: SubagentBlockProps) {
   // W4-4: narrow to terminal type before accessing durationMs/finalResult.
   const terminal = isTerminal ? (span as SubagentSpanTerminal) : null
   const config = getStatusConfig(span.status, terminal?.durationMs)
-  const label = deriveLabel(span)
+  const label = truncateLabel(span.taskLabel ?? '')
   const stepCount = span.steps.length
   const hasFinalResult = Boolean(terminal?.finalResult)
 

@@ -611,9 +611,9 @@ describe('ChatStore_OrphanFrame_FallsBackFlat', () => {
     expect(state.toolCalls['orphan_t1']).toBeDefined()
     expect(state.toolCalls['orphan_t1'].tool).toBe('fs.list')
 
-    // A dev console warning must have been emitted
+    // A dev console warning must have been emitted with the stable prefix.
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('orphan_parent'),
+      expect.stringContaining('[chat] orphan frame'),
     )
 
     vi.useRealTimers()

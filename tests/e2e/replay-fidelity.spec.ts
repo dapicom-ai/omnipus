@@ -4,16 +4,8 @@
  * Scope: TDD rows 23-27 from sprint-i-historical-replay-fidelity-spec.md.
  * Traces to: sprint-i-historical-replay-fidelity-spec.md BDD Scenarios 1-10, SC-I-001 to SC-I-006.
  *
- * Dependency chain:
- *   I1 (backend-lead): pkg/gateway/replay.go — emits tool_call_start/result/subagent_* on replay.
- *   I2 (frontend-lead): src/store/chat.ts — isReplaying state; ChatScreen send-button disable.
- *
- * Tests (a), (c), (d), (e) are runnable against any gateway build.
- *   - (a) and (d) will FAIL (red) until I1 lands — the tool-call-badge assertions will not pass
- *     because the current replay loop emits markdown text, not structured frames.
- *   - (e) will FAIL (red) until I2 lands — isReplaying / disabled send button does not exist.
- *   - (c) is skipped with a clear blocking message until I1 (streaming backend) + I2 land.
- *   - (b) requires Sprint H SubagentBlock UI AND I1/I2 — skipped with blocking message.
+ * Both Sprint I1 (pkg/gateway/replay.go) and Sprint I2 (src/store/chat.ts) are merged.
+ * All tests except (c) are runnable against the current build.
  *
  * "Scenario provider" approach: since no deterministic LLM scenario provider exists yet,
  * these tests create sessions via the REST API, then seed the transcript.jsonl file
@@ -243,10 +235,6 @@ test(
     // Traces to: sprint-i-historical-replay-fidelity-spec.md BDD Scenarios 1, 2, 3; TDD row 23.
     // SC-I-004 narrow criteria: badge count, tool attribute values, status icons, message roles.
     //
-    // IMPORTANT: This test will FAIL (red) until I1 (pkg/gateway/replay.go) lands.
-    // The current replay loop emits tool calls as markdown text, not tool_call_start/result frames.
-    // tool-call-badge elements will be absent; the assertion below will catch this clearly.
-
     await page.goto('/')
     await expect(page.getByRole('banner')).toBeVisible({ timeout: 15_000 })
 
@@ -315,8 +303,7 @@ test(
     await expect(asstMsgs).toHaveCount(1, { timeout: 15_000 })
 
     // SC-I-004(i): badge count — two tool calls must produce two tool-call-badge elements.
-    // BLOCKED until I1 lands: the current replay emits markdown text, not structured frames.
-    // This assertion is the key validation — if it fails with 0 found, I1 is not implemented.
+    // SC-I-004(i): badge count — two tool calls must produce two tool-call-badge elements.
     const badges = page.locator('[data-testid="tool-call-badge"]')
     await expect(badges).toHaveCount(2, { timeout: 15_000 })
 
@@ -409,7 +396,6 @@ test(
     await waitForReplayDone(page)
 
     // Assert SubagentBlock is present.
-    // BLOCKED: no SubagentBlock component in current SPA.
     const subagentBlock = page.locator('[data-testid="subagent-collapsed"]').first()
     await expect(subagentBlock).toBeVisible({ timeout: 15_000 })
 
@@ -448,21 +434,12 @@ test(
 
 test.skip(
   '(c) attach-during-active-turn: second browser context receives all events without loss',
-  // BLOCKED on:
-  // 1. I1 (pkg/gateway/replay.go) must implement FR-I-009: register live forwarder BEFORE
-  //    replay, buffer during replay, flush after done. Without this, events that arrive
-  //    during the replay window are lost.
-  // 2. A deterministic slow-streaming scenario provider is needed to control the timing.
-  //    The current LLM calls are non-deterministic and have no mock stream harness.
+  // Covered by Go-level TestAttach_RegistersLiveEventsBeforeReplay (pkg/gateway/websocket_test.go).
   //
-  // Scenario provider gap surfaced: pkg/gateway needs a test-mode streaming scenario
-  //    endpoint (e.g., GET /api/v1/_test/slow-stream?session_id=<id>&duration_ms=10000)
-  //    that emits tokens slowly and deterministically. Without this, the 2-second timing
-  //    window for "attach after start but before done" cannot be reliably controlled.
-  //
-  // Go unit-test recommendation: TestAttach_RegistersLiveEventsBeforeReplay (TDD row 16)
-  //    covers this race at the unit level without needing a full browser. The E2E is a
-  //    belt-and-suspenders check — the Go unit test should be prioritised.
+  // Remaining Playwright blocker: a deterministic slow-streaming scenario provider is needed
+  // to control timing (attach after start, before done). Without it the 2-second window
+  // for "attach after start but before done" cannot be reliably controlled in Playwright.
+  // The Go unit test covers the race without a full browser — the E2E is belt-and-suspenders.
   //
   // Traces to: sprint-i-historical-replay-fidelity-spec.md BDD Scenario 9; TDD row 25.
   async ({ page, browser }) => {
@@ -487,9 +464,6 @@ test(
     // SC-I-004(iv): message ordering preserved; live continuation appears after replayed transcript.
     //
     // IMPORTANT: This test requires a real LLM (OPENROUTER_API_KEY_CI) to send a live message.
-    // The replay fidelity portion (assert replayed messages are present) will FAIL until I1 lands
-    // — the current replay emits markdown text, and tool-call-badge assertions won't pass.
-    // However, the live continuation itself (new message appears below) can be validated today.
 
     await page.goto('/')
     await expect(page.getByRole('banner')).toBeVisible({ timeout: 15_000 })
@@ -644,19 +618,9 @@ test(
     const input = chatInput(page)
 
     // During replay, the chat input must be disabled.
-    // isReplaying is set to true when attach_session is sent (session store line 100).
-    // isReplaying is set to false when the done frame arrives (chat store line 532).
-    //
-    // This assertion will FAIL with the current (pre-I1) implementation because:
-    //   - The current replay loop emits text-only frames at wire speed (~0ms total)
-    //   - The isReplaying window is true → false in <1ms — too fast to observe in Playwright
-    //
-    // This assertion will PASS once I1 lands because:
-    //   - I1 emits N tool_call_start + tool_call_result frames through the WS sendCh
-    //   - Each frame takes time to marshal + send; 20 entries × 2 tool frames = 40 frames
-    //   - The isReplaying window becomes measurably long (tens to hundreds of milliseconds)
-    //
-    // BLOCKED on I1 (pkg/gateway/replay.go): replay too fast to observe disabled state.
+    // isReplaying is set to true when attach_session is sent (session store: setReplaying action).
+    // isReplaying is set to false when the done frame arrives (chat store: setReplaying action
+    // in handleFrame's 'done' case).
     await expect(input).toBeDisabled({ timeout: 500 })
 
     // After replay completes (done frame arrives, isReplaying → false), input must be enabled.

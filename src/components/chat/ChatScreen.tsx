@@ -340,8 +340,8 @@ interface SlashCommand {
   description: string
 }
 
-// Built-in slash commands.
-// TODO: agents will be able to register custom commands via a 'commands' WebSocket frame.
+// Built-in slash commands. Custom commands registered via 'commands' WebSocket
+// frame are not yet wired; see sprint-h-subagent-block-spec.md for the design.
 const SLASH_COMMANDS: SlashCommand[] = [
   { label: '/session new', description: 'Start a new session' },
   { label: '/clear', description: 'Clear all messages' },

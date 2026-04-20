@@ -1,4 +1,7 @@
 //go:build !cgo
+// NOTE: this tag applies to every file in pkg/gateway — it is a package-wide
+// constraint enforcing CGO_ENABLED=0 for the single-binary open-source build.
+// It is NOT specific to this file; see gateway.go for the package entry point.
 
 // Omnipus - Ultra-lightweight personal AI agent
 // License: MIT
@@ -99,10 +102,59 @@ func streamReplay(
 		return nil
 	}
 
+	// buildStart returns a tool_call_start frame for tc, setting AgentID and
+	// optionally ParentCallID.  Extracted to avoid duplicating the same 6-field
+	// construction in the spawn-parent branch and the flat-emission branch.
+	buildStart := func(tc session.ToolCall, agentID, parentCallID string) wsServerFrame {
+		f := wsServerFrame{
+			Type:   "tool_call_start",
+			CallID: string(tc.ID),
+			Tool:   tc.Tool,
+			Params: tc.Parameters,
+		}
+		if agentID != "" {
+			f.AgentID = agentID
+		}
+		if parentCallID != "" {
+			f.ParentCallID = parentCallID
+		}
+		return f
+	}
+
+	// buildResult returns a tool_call_result frame for tc, setting AgentID and
+	// optionally ParentCallID.
+	buildResult := func(tc session.ToolCall, agentID, parentCallID string) wsServerFrame {
+		resultPayload := truncateResult(sessionID, tc)
+		f := wsServerFrame{
+			Type:       "tool_call_result",
+			CallID:     string(tc.ID),
+			Tool:       tc.Tool,
+			Result:     resultPayload,
+			Status:     resolveStatus(tc.Status),
+			DurationMs: tc.DurationMS,
+		}
+		if agentID != "" {
+			f.AgentID = agentID
+		}
+		if parentCallID != "" {
+			f.ParentCallID = parentCallID
+		}
+		return f
+	}
+
+	// lastSeenAgentID tracks the most recent non-empty AgentID across entries.
+	// Used as fallback when a spawn entry has an empty AgentID (W5-17).
+	lastSeenAgentID := ""
+
 	for ei, entry := range entries {
 		// FR-I-006: skip compaction entries.
 		if entry.Type == session.EntryTypeCompaction {
 			continue
+		}
+
+		// Update the running fallback agent ID.
+		if entry.AgentID != "" {
+			lastSeenAgentID = entry.AgentID
 		}
 
 		// FR-I-002: emit replay_message for non-empty content.
@@ -155,6 +207,15 @@ func streamReplay(
 				// The slog.Warn above records the full context for operator debugging.
 			}
 
+			// Resolve the effective agent ID for this tool call's frames.
+			// W5-17: if the spawn entry has an empty AgentID, fall back to the most
+			// recently seen agent ID in the transcript so the span is never emitted
+			// with a blank agent_id.
+			effectiveAgentID := entry.AgentID
+			if effectiveAgentID == "" {
+				effectiveAgentID = lastSeenAgentID
+			}
+
 			// For spawn calls that have children: emit subagent_start before
 			// the nested frames, then subagent_end after.  We detect this
 			// entry as a spawn-parent if its own ID is in spawnIDsWithChildren.
@@ -162,16 +223,7 @@ func streamReplay(
 
 			if isSpawnParent {
 				// Emit tool_call_start for the spawn call itself FIRST.
-				startFrame := wsServerFrame{
-					Type:   "tool_call_start",
-					CallID: tcID,
-					Tool:   tc.Tool,
-					Params: tc.Parameters,
-				}
-				if entry.AgentID != "" {
-					startFrame.AgentID = entry.AgentID
-				}
-				if err2 := emitFrame(startFrame); err2 != nil {
+				if err2 := emitFrame(buildStart(tc, effectiveAgentID, "")); err2 != nil {
 					return framesEmitted, err2
 				}
 
@@ -184,8 +236,8 @@ func streamReplay(
 					ParentCallID: tcID,
 					TaskLabel:    taskLabel,
 				}
-				if entry.AgentID != "" {
-					subStart.AgentID = entry.AgentID
+				if effectiveAgentID != "" {
+					subStart.AgentID = effectiveAgentID
 				}
 				if err2 := emitFrame(subStart); err2 != nil {
 					return framesEmitted, err2
@@ -193,7 +245,7 @@ func streamReplay(
 
 				// Emit all nested tool calls (children with ParentToolCallID == tc.ID).
 				nestedDurationMS, nestedStatus, nestedErr := emitNestedToolCalls(
-					ctx, sessionID, tcID, entries, latestByID, entry.AgentID, emitFrame,
+					ctx, sessionID, tcID, entries, latestByID, effectiveAgentID, emitFrame,
 				)
 				if nestedErr != nil {
 					return framesEmitted, nestedErr
@@ -206,27 +258,15 @@ func streamReplay(
 					DurationMs: nestedDurationMS,
 					Status:     nestedStatus,
 				}
-				if entry.AgentID != "" {
-					subEnd.AgentID = entry.AgentID
+				if effectiveAgentID != "" {
+					subEnd.AgentID = effectiveAgentID
 				}
 				if err2 := emitFrame(subEnd); err2 != nil {
 					return framesEmitted, err2
 				}
 
 				// Emit tool_call_result for the spawn call.
-				resultPayload := truncateResult(sessionID, tc)
-				resultFrame := wsServerFrame{
-					Type:       "tool_call_result",
-					CallID:     tcID,
-					Tool:       tc.Tool,
-					Result:     resultPayload,
-					Status:     resolveStatus(tc.Status),
-					DurationMs: tc.DurationMS,
-				}
-				if entry.AgentID != "" {
-					resultFrame.AgentID = entry.AgentID
-				}
-				if err2 := emitFrame(resultFrame); err2 != nil {
+				if err2 := emitFrame(buildResult(tc, effectiveAgentID, "")); err2 != nil {
 					return framesEmitted, err2
 				}
 				continue
@@ -235,38 +275,14 @@ func streamReplay(
 			// Regular (non-spawn, or nested) tool call: flat emission.
 			// W3-1: orphan tool calls are emitted WITHOUT ParentCallID so the
 			// client takes the flat non-nested path immediately (not after 10s TTL).
-			startFrame := wsServerFrame{
-				Type:   "tool_call_start",
-				CallID: tcID,
-				Tool:   tc.Tool,
-				Params: tc.Parameters,
-			}
-			if entry.AgentID != "" {
-				startFrame.AgentID = entry.AgentID
-			}
+			parentForFlat := ""
 			if isNested && !isOrphan {
-				startFrame.ParentCallID = tcParentID
+				parentForFlat = tcParentID
 			}
-			if err2 := emitFrame(startFrame); err2 != nil {
+			if err2 := emitFrame(buildStart(tc, effectiveAgentID, parentForFlat)); err2 != nil {
 				return framesEmitted, err2
 			}
-
-			resultPayload := truncateResult(sessionID, tc)
-			resultFrame := wsServerFrame{
-				Type:       "tool_call_result",
-				CallID:     tcID,
-				Tool:       tc.Tool,
-				Result:     resultPayload,
-				Status:     resolveStatus(tc.Status),
-				DurationMs: tc.DurationMS,
-			}
-			if entry.AgentID != "" {
-				resultFrame.AgentID = entry.AgentID
-			}
-			if isNested && !isOrphan {
-				resultFrame.ParentCallID = tcParentID
-			}
-			if err2 := emitFrame(resultFrame); err2 != nil {
+			if err2 := emitFrame(buildResult(tc, effectiveAgentID, parentForFlat)); err2 != nil {
 				return framesEmitted, err2
 			}
 		}
@@ -296,34 +312,33 @@ func streamReplay(
 // tool call IDs that have at least one child (another tool call carrying that
 // ID as ParentToolCallID).  This is used to determine whether to bracket a
 // spawn with subagent_start / subagent_end.
+//
+// Two-pass approach: pass 1 collects isSpawn (spawn IDs seen in the transcript),
+// pass 2 collects withChildren (spawn IDs that have at least one child).
+// Returning withChildren directly eliminates the three-map + false-sentinel pattern.
 func buildSpawnIDsWithChildren(entries []session.TranscriptEntry) map[string]bool {
-	// Collect all spawn IDs.
-	spawnIDs := make(map[string]bool)
+	// Pass 1: collect all spawn tool call IDs.
+	isSpawn := make(map[string]struct{})
 	for _, entry := range entries {
 		for _, tc := range entry.ToolCalls {
 			if tc.Tool == "spawn" && tc.ID != "" {
-				spawnIDs[string(tc.ID)] = false // not yet confirmed to have children
+				isSpawn[string(tc.ID)] = struct{}{}
 			}
 		}
 	}
-	// Mark those that have at least one child.
+	// Pass 2: mark spawn IDs that have at least one child.
+	withChildren := make(map[string]bool)
 	for _, entry := range entries {
 		for _, tc := range entry.ToolCalls {
 			if tc.ParentToolCallID != "" {
-				if _, ok := spawnIDs[string(tc.ParentToolCallID)]; ok {
-					spawnIDs[string(tc.ParentToolCallID)] = true
+				parentID := string(tc.ParentToolCallID)
+				if _, ok := isSpawn[parentID]; ok {
+					withChildren[parentID] = true
 				}
 			}
 		}
 	}
-	// Keep only confirmed spawns with children.
-	result := make(map[string]bool)
-	for id, hasChildren := range spawnIDs {
-		if hasChildren {
-			result[id] = true
-		}
-	}
-	return result
+	return withChildren
 }
 
 type tcAddr struct{ entryIdx, tcIdx int }

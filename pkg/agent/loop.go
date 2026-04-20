@@ -942,8 +942,6 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 						al.channelManager.InvokeTypingStop(msg.Channel, msg.ChatID)
 					}
 				}()
-				// TODO(media-cleanup): Media file cleanup is disabled. Track in issue backlog.
-
 				drainCanceled := false
 				cancelDrain := func() {
 					if drainCanceled {

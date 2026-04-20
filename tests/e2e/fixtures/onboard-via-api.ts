@@ -15,6 +15,7 @@ export interface OnboardingOptions {
   apiKey?: string;
   model?: string;
   username?: string;
+  /** @minLength 8 — backend enforces ≥8 chars; W4-7 throws at fixture-build time if violated. */
   password?: string;
 }
 

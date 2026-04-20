@@ -11,14 +11,10 @@
 // updated to use it for determinism. Until then, tests (a)-(c) run as real-LLM tests with the
 // same skip/BLOCKED semantics as (d).
 //
-// data-testid cross-reference (for H2 handshake):
-//   - [data-testid="subagent-collapsed"] — SubagentBlock.tsx:137
-//   - [data-testid="subagent-expanded"]  — SubagentBlock.tsx:179
-//   - [data-testid="tool-call-badge"]    — MISSING: ToolCallBadge.tsx has no testid (see gap below)
-//
-// TESTABILITY GAP: ToolCallBadge.tsx does not have data-testid="tool-call-badge" on its root div.
-// frontend-lead must add: <div data-testid="tool-call-badge" ...> on line 64 of ToolCallBadge.tsx.
-// Until this is fixed, the (b) and (d) tests that assert ≥1 badge use a fallback assertion.
+// data-testid cross-reference:
+//   - [data-testid="subagent-collapsed"] — SubagentBlock.tsx
+//   - [data-testid="subagent-expanded"]  — SubagentBlock.tsx
+//   - [data-testid="tool-call-badge"]    — ToolCallBadge.tsx (added in commit aaa9de7)
 
 import { expect } from '@playwright/test';
 import { test } from './fixtures/console-errors';
