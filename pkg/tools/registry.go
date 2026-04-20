@@ -484,6 +484,36 @@ func (r *ToolRegistry) Clone() *ToolRegistry {
 	return clone
 }
 
+// CloneExcept creates an independent copy of the registry omitting the named tools.
+// It is used to construct child sub-turn registries that must not have access to
+// certain tools (FR-H-006). The canonical call is CloneExcept("spawn","handoff"):
+// a subagent must never be able to spawn grandchildren or hand off to another agent.
+// The version counter is reset to 0 in the clone as it is a new independent registry.
+func (r *ToolRegistry) CloneExcept(names ...string) *ToolRegistry {
+	excluded := make(map[string]struct{}, len(names))
+	for _, n := range names {
+		excluded[n] = struct{}{}
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	clone := &ToolRegistry{
+		tools:       make(map[string]*ToolEntry, len(r.tools)),
+		mediaStore:  r.mediaStore,
+		auditLogger: r.auditLogger,
+	}
+	for name, entry := range r.tools {
+		if _, skip := excluded[name]; skip {
+			continue
+		}
+		clone.tools[name] = &ToolEntry{
+			Tool:   entry.Tool,
+			IsCore: entry.IsCore,
+			TTL:    entry.TTL,
+		}
+	}
+	return clone
+}
+
 // Count returns the number of registered tools.
 func (r *ToolRegistry) Count() int {
 	r.mu.RLock()

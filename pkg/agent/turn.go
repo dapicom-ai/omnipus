@@ -89,6 +89,11 @@ type turnState struct {
 	isFinished           atomic.Bool            // Whether this turn has finished
 	session              session.SessionStore   // Session store reference
 	initialHistoryLength int                    // Snapshot of history length at turn start
+	// parentSpawnCallID is the ToolCall.ID of the spawn tool call in the parent turn that
+	// triggered this sub-turn. Set by spawnSubTurn at child construction (FR-H-003).
+	// Empty for root turns. Used to populate ParentSpawnCallID on ToolExec* payloads
+	// emitted by this child turn, enabling the WS forwarder to tag frames with parent_call_id.
+	parentSpawnCallID string
 
 	// Additional SubTurn fields
 	ctx             context.Context    // Context for this turn
@@ -596,4 +601,25 @@ func turnStateFromContext(ctx context.Context) *turnState {
 // TurnStateFromContext retrieves turnState from context (exported for tools)
 func TurnStateFromContext(ctx context.Context) *turnState {
 	return turnStateFromContext(ctx)
+}
+
+// spawnToolCallIDKeyType is the context key for the current spawn tool call's ToolCall.ID.
+// Injected by loop.go before tool execution so that spawnSubTurn can read it and set
+// the child turnState.parentSpawnCallID (FR-H-003).
+type spawnToolCallIDKeyType struct{}
+
+var spawnToolCallIDKey = spawnToolCallIDKeyType{}
+
+// withSpawnToolCallID injects the spawn tool call's ToolCall.ID into the context.
+// Called by loop.go at each tool dispatch so tools can correlate their execution
+// to the parent spawn call.
+func withSpawnToolCallID(ctx context.Context, toolCallID string) context.Context {
+	return context.WithValue(ctx, spawnToolCallIDKey, toolCallID)
+}
+
+// spawnToolCallIDFromContext retrieves the spawn tool call ID from context.
+// Returns empty string if not set (i.e., not inside a spawn tool execution).
+func spawnToolCallIDFromContext(ctx context.Context) string {
+	id, _ := ctx.Value(spawnToolCallIDKey).(string)
+	return id
 }

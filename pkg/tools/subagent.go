@@ -30,6 +30,9 @@ type SubTurnConfig struct {
 	ActualSystemPrompt string
 	InitialMessages    []providers.Message
 	InitialTokenBudget *atomic.Int64 // Shared token budget for team members; nil if no budget
+	// TaskLabel is the optional human-readable label for the sub-turn task (FR-H-004).
+	// Populated from the spawn tool's "label" argument. Used in the subagent_start WS frame.
+	TaskLabel string
 }
 
 type SubagentTask struct {

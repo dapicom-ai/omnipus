@@ -144,6 +144,11 @@ type ToolCall struct {
 	DurationMS int64          `json:"duration_ms,omitempty"`
 	Parameters map[string]any `json:"parameters,omitempty"`
 	Result     map[string]any `json:"result,omitempty"`
+	// ParentToolCallID is set on tool calls that execute inside a sub-turn.
+	// It equals the parent spawn tool call's ID, which is the correlation anchor
+	// for the subagent span (FR-H-001). Empty for top-level tool calls.
+	// span_id = "span_" + ParentToolCallID (derivable, not stored separately).
+	ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
 }
 
 // NewSessionID generates a ULID-based session ID prefixed with "session_".
