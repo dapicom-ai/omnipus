@@ -141,7 +141,9 @@ describe('Agents screen — empty state', () => {
   let AgentsScreen: () => JSX.Element
 
   beforeAll(async () => {
-    const mod = await import('@/routes/_app/agents')
+    // agents.tsx is the layout route (renders <Outlet />) — the actual list screen
+    // with the "Agents" h1 lives in agents.index.tsx. Import the index route instead.
+    const mod = await import('@/routes/_app/agents.index')
     AgentsScreen = mod.Route.options.component as () => JSX.Element
   })
 

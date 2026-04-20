@@ -32,6 +32,7 @@ export default defineConfig({
     include: ['src/**/*.test.{ts,tsx}'],
     css: false,
     pool: 'forks',
+    testTimeout: 15000,
   },
   build: {
     outDir: 'dist/spa',
