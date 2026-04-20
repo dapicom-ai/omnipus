@@ -65,7 +65,11 @@ export function GenericToolCall({
   const hasDetail = !isRunning && (args !== undefined || result !== undefined || error)
 
   return (
-    <div className={cn('mt-2 rounded-md border bg-[var(--color-surface-1)] text-xs font-mono overflow-hidden', statusConfig.border)}>
+    <div
+      data-testid="tool-call-badge"
+      data-tool={toolName}
+      className={cn('mt-2 rounded-md border bg-[var(--color-surface-1)] text-xs font-mono overflow-hidden', statusConfig.border)}
+    >
       {/* Header row */}
       <button
         type="button"

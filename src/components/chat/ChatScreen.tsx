@@ -806,14 +806,25 @@ export function ChatScreen() {
     refetchOnMount: !isConnected,
   })
 
+  // Sprint I: WS attach_session + streamReplay is the authoritative history loader.
+  // Skip the REST-based setMessages overwrite when WS replay is active OR has already
+  // populated the store — otherwise the filter below strips tool_call frames already
+  // attached by the reducer and historical tool-call-badge elements disappear.
+  const isReplaying = useChatStore((s) => s.isReplaying)
+  const storeMessageCount = useChatStore((s) => s.messages.length)
   useEffect(() => {
-    if (historyData) {
-      // Filter out tool_call entries that have no role — they crash AssistantUI's convertMessages.
-      // Tool calls are replayed via WebSocket frames instead.
-      const validMessages = historyData.filter((m: { role?: string }) => m.role === 'user' || m.role === 'assistant' || m.role === 'system')
-      setMessages(validMessages)
-    }
-  }, [historyData, setMessages])
+    if (!historyData) return
+    // Don't overwrite during replay — WS frames are the source of truth.
+    if (isReplaying) return
+    // Don't overwrite if the store already has messages for this session (replay done).
+    if (storeMessageCount > 0) return
+    // Fallback: REST fetched history before WS replay fired (e.g., WS unavailable).
+    // Filter out tool_call entries that have no role — they crash AssistantUI's convertMessages.
+    const validMessages = historyData.filter(
+      (m: { role?: string }) => m.role === 'user' || m.role === 'assistant' || m.role === 'system',
+    )
+    setMessages(validMessages)
+  }, [historyData, isReplaying, storeMessageCount, setMessages])
 
   const activePendingApprovals = pendingApprovals.filter((a) => a.status === 'pending')
 

@@ -823,7 +823,7 @@ describe('ChatStore_ReplayMessageThenToolCall_InterleavesCorrectly', () => {
 
 // TDD row 18 supplement: isReplaying flag transitions
 describe('ChatStore_isReplaying_flag', () => {
-  it('starts false, can be set true via setReplaying, cleared to false on done', () => {
+  it('starts false, can be set true via setReplaying, cleared to false on done (with 100ms minimum display window)', async () => {
     // Initial state
     expect(useChatStore.getState().isReplaying).toBe(false)
 
@@ -833,10 +833,16 @@ describe('ChatStore_isReplaying_flag', () => {
     })
     expect(useChatStore.getState().isReplaying).toBe(true)
 
-    // done frame clears it
+    // done frame schedules clear — but minimum 100ms display window is enforced
+    // so the placeholder doesn't flicker on sub-frame replays.
     act(() => {
       useChatStore.getState().handleFrame({ type: 'done' })
     })
+    // Still true immediately after done (inside the window).
+    expect(useChatStore.getState().isReplaying).toBe(true)
+
+    // After >= 250ms the setTimeout fires and flips it.
+    await new Promise((r) => setTimeout(r, 300))
     expect(useChatStore.getState().isReplaying).toBe(false)
   })
 

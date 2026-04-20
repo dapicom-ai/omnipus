@@ -511,8 +511,14 @@ func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsCo
 		case "exec_approval_response":
 			h.handleApprovalResponse(frame.ID, frame.Decision)
 		case "attach_session":
+			slog.Info("ws: attach_session frame received",
+				"chat_id", chatID,
+				"requested_session_id", frame.SessionID,
+			)
 			if frame.SessionID != "" {
 				h.handleAttachSession(ctx, chatID, sessionID, frame.SessionID, wc)
+			} else {
+				slog.Warn("ws: attach_session with empty session_id", "chat_id", chatID)
 			}
 		case "ping":
 			// Client heartbeat — no action needed, the WebSocket pong handler keeps the connection alive

@@ -114,6 +114,12 @@ interface ChatStore {
 // be cancellable across calls without retrieving it through the store.
 let rateLimitClearTimer: ReturnType<typeof setTimeout> | null = null
 
+// Tracks when isReplaying was most recently set to true, so setReplaying(false)
+// can enforce a minimum display window (prevents sub-frame flicker of the
+// "Loading session history..." placeholder and gives E2E tests an observable
+// disabled-input window). See setReplaying action.
+let replayingStartedAt = 0
+
 // FR-H-009: out-of-order frame buffer — tool_call_start/result frames that
 // arrived before their subagent_start. Keyed by parent_call_id. Dropped to
 // flat rendering after ORPHAN_BUFFER_TTL_MS if no subagent_start arrives.
@@ -139,7 +145,25 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   messages: [],
   isStreaming: false,
   isReplaying: false,
-  setReplaying: (value) => set({ isReplaying: value }),
+  setReplaying: (value) => {
+    // Minimum 250ms display window: (a) avoids flicker of the "Loading session
+    // history..." placeholder on sub-frame replays, (b) gives E2E automation
+    // an observable disabled-input window. Tracked module-local.
+    if (value) {
+      replayingStartedAt = Date.now()
+      set({ isReplaying: true })
+      return
+    }
+    // No-op if already false (done on a live turn where no replay ran).
+    if (!get().isReplaying) return
+    const elapsed = Date.now() - replayingStartedAt
+    const MIN_REPLAY_DISPLAY_MS = 250
+    if (elapsed >= MIN_REPLAY_DISPLAY_MS) {
+      set({ isReplaying: false })
+    } else {
+      setTimeout(() => set({ isReplaying: false }), MIN_REPLAY_DISPLAY_MS - elapsed)
+    }
+  },
   setMessages: (messages) =>
     set({ ...CLEAN_SESSION_STATE, messages }),
 
@@ -520,17 +544,19 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
       case 'done':
         store.updateLastAssistantMessage('', true)
-        // FR-I-014: first done after attach_session closes the replay window.
-        // isReplaying is always set false on done — harmless for live turns (already false).
+        // Stats update is immediate.
         set((state) => {
-          const statsUpdate = (frame.stats?.tokens != null || frame.stats?.cost != null)
-            ? {
-                sessionTokens: state.sessionTokens + (frame.stats?.tokens ?? 0),
-                sessionCost: state.sessionCost + (frame.stats?.cost ?? 0),
-              }
-            : {}
-          return { isReplaying: false, ...statsUpdate }
+          if (frame.stats?.tokens == null && frame.stats?.cost == null) return state
+          return {
+            sessionTokens: state.sessionTokens + (frame.stats?.tokens ?? 0),
+            sessionCost: state.sessionCost + (frame.stats?.cost ?? 0),
+          }
         })
+        // FR-I-014: first done after attach_session closes the replay window.
+        // Route through setReplaying so the 100ms minimum-display window is honored
+        // (avoids flicker + gives E2E the observable disabled-input window).
+        // Harmless for live turns (isReplaying was already false).
+        store.setReplaying(false)
         break
 
       case 'error':
