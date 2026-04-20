@@ -24,6 +24,14 @@ func TestToolExecStartPayload_CarriesParentSpawnCallID(t *testing.T) {
 			Arguments:         map[string]any{"path": "/tmp"},
 			ParentSpawnCallID: session.ToolCallID("c1"),
 		}
+		assert.Equal(t, session.ToolCallID("t1"), p.ToolCallID,
+			"ToolExecStartPayload.ToolCallID must be settable and readable")
+		assert.Equal(t, "chat-abc", p.ChatID,
+			"ToolExecStartPayload.ChatID must be settable and readable")
+		assert.Equal(t, "fs.list", p.Tool,
+			"ToolExecStartPayload.Tool must be settable and readable")
+		assert.Equal(t, map[string]any{"path": "/tmp"}, p.Arguments,
+			"ToolExecStartPayload.Arguments must be settable and readable")
 		assert.Equal(t, session.ToolCallID("c1"), p.ParentSpawnCallID,
 			"ToolExecStartPayload.ParentSpawnCallID must be settable and readable")
 		assert.Empty(t, ToolExecStartPayload{}.ParentSpawnCallID,
@@ -38,6 +46,14 @@ func TestToolExecStartPayload_CarriesParentSpawnCallID(t *testing.T) {
 			IsError:           false,
 			ParentSpawnCallID: session.ToolCallID("c1"),
 		}
+		assert.Equal(t, session.ToolCallID("t1"), p.ToolCallID,
+			"ToolExecEndPayload.ToolCallID must be settable and readable")
+		assert.Equal(t, "chat-abc", p.ChatID,
+			"ToolExecEndPayload.ChatID must be settable and readable")
+		assert.Equal(t, "fs.list", p.Tool,
+			"ToolExecEndPayload.Tool must be settable and readable")
+		assert.False(t, p.IsError,
+			"ToolExecEndPayload.IsError must be settable and readable")
 		assert.Equal(t, session.ToolCallID("c1"), p.ParentSpawnCallID,
 			"ToolExecEndPayload.ParentSpawnCallID must be settable and readable")
 		assert.Empty(t, ToolExecEndPayload{}.ParentSpawnCallID,
@@ -83,6 +99,9 @@ func TestSubTurnSpawnPayload_HasSpanFields(t *testing.T) {
 			TaskLabel:         "audit go files",
 			ChatID:            "chat-xyz",
 		}
+		assert.Equal(t, "max", p.AgentID)
+		assert.Equal(t, "subturn-1", p.Label)
+		assert.Equal(t, "turn-abc", p.ParentTurnID)
 		assert.Equal(t, "span_c1", p.SpanID)
 		assert.Equal(t, session.ToolCallID("c1"), p.ParentSpawnCallID)
 		assert.Equal(t, "audit go files", p.TaskLabel)
@@ -98,6 +117,8 @@ func TestSubTurnSpawnPayload_HasSpanFields(t *testing.T) {
 			DurationMS:        4210,
 			ChatID:            "chat-xyz",
 		}
+		assert.Equal(t, "max", p.AgentID)
+		assert.Equal(t, SubTurnStatusSuccess, p.Status)
 		assert.Equal(t, "span_c1", p.SpanID)
 		assert.Equal(t, session.ToolCallID("c1"), p.ParentSpawnCallID)
 		assert.Equal(t, int64(4210), p.DurationMS)

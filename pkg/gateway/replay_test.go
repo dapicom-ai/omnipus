@@ -51,15 +51,6 @@ func (s *sliceSink) all() []wsServerFrame {
 	return out
 }
 
-func (s *sliceSink) types() []string {
-	frames := s.all()
-	out := make([]string, len(frames))
-	for i, f := range frames {
-		out[i] = f.Type
-	}
-	return out
-}
-
 // runReplay is a convenience wrapper for streamReplay with a sliceSink.
 func runReplay(t *testing.T, entries []session.TranscriptEntry) ([]wsServerFrame, int) {
 	t.Helper()
@@ -99,16 +90,6 @@ func toolCall(id, tool, status string, durationMS int64, params, result map[stri
 		DurationMS: durationMS,
 		Parameters: params,
 		Result:     result,
-	}
-}
-
-// nestedToolCall builds a ToolCall with ParentToolCallID set.
-func nestedToolCall(id, tool, parentID string) session.ToolCall {
-	return session.ToolCall{
-		ID:               session.ToolCallID(id),
-		Tool:             tool,
-		Status:           "success",
-		ParentToolCallID: session.ToolCallID(parentID),
 	}
 }
 
@@ -222,14 +203,16 @@ func TestReplay_Params_And_Result_Fidelity(t *testing.T) {
 	// Params must round-trip faithfully.
 	gotParamsJSON, _ := json.Marshal(start.Params)
 	wantParamsJSON, _ := json.Marshal(wantParams)
-	assert.JSONEq(t, string(wantParamsJSON), string(gotParamsJSON), "params must be bit-for-bit equal after JSON round-trip")
+	assert.JSONEq(t, string(wantParamsJSON), string(gotParamsJSON),
+		"params must be bit-for-bit equal after JSON round-trip")
 
 	result := findFrame(frames, "tool_call_result")
 	require.NotNil(t, result)
 	// Result must round-trip faithfully.
 	gotResultJSON, _ := json.Marshal(result.Result)
 	wantResultJSON, _ := json.Marshal(wantResult)
-	assert.JSONEq(t, string(wantResultJSON), string(gotResultJSON), "result must be bit-for-bit equal after JSON round-trip")
+	assert.JSONEq(t, string(wantResultJSON), string(gotResultJSON),
+		"result must be bit-for-bit equal after JSON round-trip")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -323,7 +306,9 @@ func TestReplay_ToolCall_CarriesAgentID(t *testing.T) {
 // TestReplay_SpawnSpan_Synthesizes_StartEnd verifies that when a spawn call has
 // children, the replay emits:
 //
-//	replay_message, tool_call_start{c1,spawn}, subagent_start{span_c1}, tool_call_start{t2}, tool_call_result{t2}, subagent_end{span_c1}, tool_call_result{c1}, done
+//	replay_message, tool_call_start{c1,spawn}, subagent_start{span_c1},
+//	tool_call_start{t2}, tool_call_result{t2}, subagent_end{span_c1},
+//	tool_call_result{c1}, done
 //
 // Traces to: TDD row 8, FR-I-003, BDD Scenario 5, dataset D2
 func TestReplay_SpawnSpan_Synthesizes_StartEnd(t *testing.T) {
@@ -640,7 +625,7 @@ func TestReplay_CtxCancelled_StopsCleanly(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel() // ensure context is cancelled even on test failure
+	defer cancel() // ensure context is canceled even on test failure
 
 	var emitCount int
 	emitFn := func(f wsServerFrame) error {
@@ -908,7 +893,7 @@ func TestReplay_EmptyContent_NoReplayMessage(t *testing.T) {
 // mechanism by directly testing wsEmitFunc and the sendCh redirect pattern.
 func TestReplay_LiveEventBuffer_OrderPreserved(t *testing.T) {
 	// The live-buffer logic is exercised by TestAttach_RegistersLiveEventsBeforeReplay.
-	// This test independently verifies wsEmitFunc honours context cancellation.
+	// This test independently verifies wsEmitFunc honors context cancellation.
 	wc := &wsConn{
 		sendCh: make(chan []byte, 4),
 		doneCh: make(chan struct{}),

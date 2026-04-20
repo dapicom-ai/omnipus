@@ -42,7 +42,7 @@ const replayResultPreviewBytes = 10 * 1024
 //   - Duplicate ToolCall.IDs: only the last occurrence is emitted; earlier ones
 //     log slog.Warn (FR-I-012).
 //   - Oversized results are truncated (FR-I-011).
-//   - Context cancellation is honoured between every frame (FR-I-005).
+//   - Context cancellation is honored between every frame (FR-I-005).
 //   - Returns after emitting exactly one done frame (FR-I-004).
 //
 // W3-3: rs is the pre-computed replayStats from computeReplayStats. Passing it
@@ -51,7 +51,7 @@ const replayResultPreviewBytes = 10 * 1024
 // WS trace.
 //
 // The returned error is non-nil only when emit itself returns an error (e.g.
-// context cancelled or send-channel full).
+// context canceled or send-channel full).
 func streamReplay(
 	ctx context.Context,
 	sessionID string,

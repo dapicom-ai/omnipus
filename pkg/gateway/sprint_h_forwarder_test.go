@@ -283,7 +283,7 @@ func TestSpawn_OrphanSubTurn_EmitsInterruptedAfter5s(t *testing.T) {
 
 // TestSpawn_SubTurnEnd_AfterParentDone_CancelsWatchdog verifies that when
 // EventKindSubTurnEnd arrives after TurnEnd (but before the watchdog fires),
-// the watchdog is cancelled and NO interrupted frame is emitted.
+// the watchdog is canceled and NO interrupted frame is emitted.
 func TestSpawn_SubTurnEnd_AfterParentDone_CancelsWatchdog(t *testing.T) {
 	// Use a longer watchdog timeout so our SubTurnEnd can arrive first.
 	restore := SetOrphanWatchdogTimeoutForTest(500 * time.Millisecond)

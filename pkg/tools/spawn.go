@@ -131,7 +131,7 @@ Task: %s`,
 				SystemPrompt: systemPrompt,
 				MaxTokens:    t.maxTokens,
 				Temperature:  t.temperature,
-				Async:        true, // Async execution
+				Async:        true,  // Async execution
 				TaskLabel:    label, // FR-H-004: propagate to SubTurnSpawnPayload for WS frame
 			})
 			if err != nil {

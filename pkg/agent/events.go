@@ -295,7 +295,9 @@ const (
 	SubTurnStatusSuccess SubTurnStatus = "success"
 	// SubTurnStatusError indicates the sub-turn ended with an error.
 	SubTurnStatusError SubTurnStatus = "error"
-	// SubTurnStatusCancelled indicates the sub-turn was explicitly cancelled.
+	// SubTurnStatusCancelled indicates the sub-turn was explicitly canceled by the user.
+	//
+	//nolint:misspell // wire value "cancelled" matches frontend TS union in src/store/chat.ts, src/lib/ws.ts
 	SubTurnStatusCancelled SubTurnStatus = "cancelled"
 	// SubTurnStatusInterrupted indicates the sub-turn was interrupted by its parent.
 	SubTurnStatusInterrupted SubTurnStatus = "interrupted"

@@ -723,7 +723,7 @@ func (h *WSHandler) handleAttachSession(
 	// into wc.sendCh in arrival order.
 	//
 	// This replaces the previous wc.sendCh swap which caused a data race because
-	// writePump and pingPump read wc.sendCh concurrently with no synchronisation.
+	// writePump and pingPump read wc.sendCh concurrently with no synchronization.
 	if wc.replayDivertCh == nil {
 		wc.replayDivertCh = make(chan []byte, replayLiveBufferCap)
 	}
@@ -1194,7 +1194,7 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 			var watchdogReason string
 			switch p.Status {
 			case agent.TurnEndStatusAborted:
-				watchdogReason = "parent_cancelled"
+				watchdogReason = "parent_cancelled" //nolint:misspell // wire value, frontend TS union
 			case agent.TurnEndStatusError:
 				watchdogReason = "parent_timeout"
 			case agent.TurnEndStatusCompleted:

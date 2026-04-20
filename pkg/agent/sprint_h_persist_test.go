@@ -176,7 +176,8 @@ func (p *w212ToolProvider) GetDefaultModel() string { return "scripted-model" }
 // Traces to: temporal-puzzling-melody.md W2-12
 // Traces to: sprint-h-subagent-block-spec.md TDD row 9, FR-H-001, FR-H-003
 func TestSpawn_PersistsParentToolCallID_ViaProductionPath(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
+	al, _, _, _provider, cleanup := newTestAgentLoop(t)
+	_ = _provider
 	defer cleanup()
 
 	// Register a simple echo tool that always succeeds.
