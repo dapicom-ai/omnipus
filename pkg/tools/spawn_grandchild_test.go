@@ -1,12 +1,21 @@
-// Contract test: Plan 3 §1 acceptance decision — subagents are allowed to spawn
-// grandchildren (unlimited depth; budget-only caps apply).
+// REVERSAL NOTICE — 2026-04-20 (owner decision)
 //
-// BDD: Given a subagent that invokes the spawn tool, When the spawn call proceeds,
+// Plan 3 §1 / temporal-puzzling-melody.md §4 Axis-1 accepted "subagent grandchildren:
+// allowed, unlimited depth, budget-only caps". That decision is FORMALLY REVERSED in
+// Sprint H (sprint-h-subagent-block, 2026-04-20).
 //
-//	Then it is NOT blocked by any depth-limit check; budget limits apply instead.
+// Rationale (owner): "unlimited grandchildren is not an option; one level only for
+// general subagents; we will improve that in the future."
 //
-// Acceptance decision: Plan 3 §1 "Subagent grandchildren: allowed (unlimited depth, budget-only caps)"
-// Traces to: temporal-puzzling-melody.md §4 Axis-1, pkg/tools/spawn_grandchild_test.go
+// The prior test TestSubagentCanSpawnGrandchild asserted the reversed behavior. This
+// test (TestSubagentCannotSpawnGrandchild) asserts the NEW contract:
+//   - A sub-turn's tool registry is constructed via CloneExcept("spawn","handoff").
+//   - "spawn" and "handoff" are absent from the registry.
+//   - Any LLM tool call for "spawn" inside a sub-turn receives an unknown-tool error.
+//   - No grandchild subagent_start frame is emitted.
+//
+// The enforcement is at the registry level (FR-H-006), not a depth check in the tool.
+// Traces to: sprint-h-subagent-block-spec.md FR-H-006, FR-H-007, US-3, BDD Scenario 9 & 10.
 
 package tools
 
@@ -18,54 +27,57 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSubagentCanSpawnGrandchild verifies that the SpawnTool itself applies no
-// hardcoded depth limit. The only guard is the budget-level mechanism (cost cap,
-// max_tool_iterations) — not a fixed recursion depth counter in the tool.
+// TestSubagentCannotSpawnGrandchild verifies the REVERSAL of Plan 3 §1:
+// subagents cannot spawn grandchildren because "spawn" is absent from their tool registry.
 //
-// This test verifies the absence of a hardcoded depth guard in the spawn tool's
-// Execute path by inspecting the tool's parameter schema (no "depth" or "max_depth"
-// field) and by verifying the tool does not reject calls based on a depth argument.
+// The child sub-turn's registry is constructed via CloneExcept("spawn","handoff") in
+// pkg/agent/subturn.go::spawnSubTurn. With "spawn" absent from the registry, any LLM
+// tool call for "spawn" is dispatched to ExecuteWithContext which returns an unknown-tool
+// error — no new sub-turn is created, no subagent_start frame is emitted.
 //
-// Traces to: temporal-puzzling-melody.md §4 Axis-1 — TestSubagentCanSpawnGrandchild
-func TestSubagentCanSpawnGrandchild(t *testing.T) {
-	// Build a minimal SpawnTool. Without a SubagentManager, Execute will return an
-	// error about missing spawner — but the error must NOT mention "depth limit".
-	tool := &SpawnTool{}
+// This test verifies the registry-level enforcement directly.
+func TestSubagentCannotSpawnGrandchild(t *testing.T) {
+	// Build a parent registry with a spawn tool registered.
+	parentRegistry := NewToolRegistry()
+	spawnTool := &SpawnTool{} // no spawner — only used for registration
+	parentRegistry.Register(spawnTool)
 
-	// BDD: When Execute is called with a task (simulating a grandchild spawn attempt).
-	ctx := context.Background()
-	result := tool.Execute(ctx, map[string]any{
-		"task":  "grandchild task from subagent",
-		"label": "grandchild",
-	})
+	// Verify spawn IS in the parent registry.
+	parent, ok := parentRegistry.Get("spawn")
+	require.True(t, ok, "spawn must be present in the parent registry before CloneExcept")
+	require.NotNil(t, parent)
 
-	// BDD: Then the result must NOT contain a "depth limit" error message.
-	require.NotNil(t, result, "Execute must return a result (not nil)")
-	if result.IsError {
-		// An error is expected (no spawner configured), but it must NOT be a depth error.
-		assert.NotContains(t, result.ForLLM, "depth",
-			"spawn error must not mention depth — there is no depth limit in the tool")
-		assert.NotContains(t, result.ForLLM, "max_depth",
-			"spawn error must not mention max_depth — depth limits are budget-based, not tool-based")
-		assert.NotContains(t, result.ForLLM, "recursion",
-			"spawn error must not mention recursion limit — not a tool-level concern")
-	}
+	// Construct the child registry as spawnSubTurn does (FR-H-006).
+	childRegistry := parentRegistry.CloneExcept("spawn", "handoff")
 
-	// Verify the tool parameters schema has no depth-related field.
-	params := tool.Parameters()
-	require.NotNil(t, params)
-	props, _ := params["properties"].(map[string]any)
-	require.NotNil(t, props, "SpawnTool must have a properties schema")
+	// BDD: Then "spawn" is absent from the child registry.
+	childSpawn, childHasSpawn := childRegistry.Get("spawn")
+	assert.False(t, childHasSpawn,
+		"spawn must NOT be in the child registry — grandchildren are forbidden (Plan 3 §1 reversal)")
+	assert.Nil(t, childSpawn,
+		"spawn tool must be nil in the child registry")
 
-	_, hasDepth := props["depth"]
-	_, hasMaxDepth := props["max_depth"]
-	assert.False(t, hasDepth,
-		"SpawnTool schema must not have a 'depth' parameter — depth is not a tool-level concept")
-	assert.False(t, hasMaxDepth,
-		"SpawnTool schema must not have a 'max_depth' parameter — depth limits are budget-only")
+	// BDD: And "handoff" is absent from the child registry.
+	childHandoff, childHasHandoff := childRegistry.Get("handoff")
+	assert.False(t, childHasHandoff,
+		"handoff must NOT be in the child registry — one level only (Plan 3 §1 reversal)")
+	assert.Nil(t, childHandoff,
+		"handoff tool must be nil in the child registry")
 
-	// Differentiation: the "task" parameter IS present (normal invocation field).
-	_, hasTask := props["task"]
-	assert.True(t, hasTask,
-		"SpawnTool schema must have a 'task' parameter — this is the primary input")
+	// BDD: When the child registry tries to execute "spawn", it returns an unknown-tool error.
+	result := childRegistry.ExecuteWithContext(
+		context.Background(),
+		"spawn",
+		map[string]any{"task": "grandchild task"},
+		"", "", nil,
+	)
+	require.NotNil(t, result, "ExecuteWithContext must return a non-nil result")
+	assert.True(t, result.IsError,
+		"executing spawn in a child registry must return an error result")
+	assert.Contains(t, result.ForLLM, "not found",
+		"the error must indicate the tool is not found (unknown-tool error), not a depth error")
+
+	// The error must NOT mention "depth" — depth is not the enforcement mechanism.
+	assert.NotContains(t, result.ForLLM, "depth",
+		"unknown-tool error must not mention depth — the enforcement is registry-level, not depth-level")
 }

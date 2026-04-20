@@ -73,6 +73,14 @@ type wsServerFrame struct {
 	AgentID           string  `json:"agent_id,omitempty"`
 	// media frame fields
 	Parts []wsMediaPart `json:"parts,omitempty"`
+	// subagent span fields (FR-H-004, FR-H-005)
+	// SpanID is "span_" + parent spawn ToolCall.ID. Present on subagent_start and subagent_end.
+	SpanID string `json:"span_id,omitempty"`
+	// ParentCallID is the parent spawn ToolCall.ID. Present on subagent_start, subagent_end,
+	// and tool_call_start/result frames fired inside a sub-turn. Empty for top-level calls.
+	ParentCallID string `json:"parent_call_id,omitempty"`
+	// TaskLabel is the human-readable label for the subagent task (subagent_start only).
+	TaskLabel string `json:"task_label,omitempty"`
 }
 
 // wsMediaPart represents a single media attachment in a "media" WebSocket frame.
@@ -917,9 +925,29 @@ func sendWSFrame(conn *websocket.Conn, frame wsServerFrame) {
 	}
 }
 
+// orphanWatchdogTimeout is the duration the forwarder waits after a parent turn ends
+// before synthesizing a subagent_end{status:"interrupted"} for any still-open span.
+// Configurable so tests can override to a short value (e.g., 200ms) without sleeping.
+// Production default is 5 seconds (FR-H-004 / Scenario 7).
+var orphanWatchdogTimeout = 5 * time.Second
+
+// openSpanEntry tracks an in-flight subagent span in the event forwarder.
+type openSpanEntry struct {
+	spanID        string
+	parentCallID  string
+	agentID       string
+	parentTurnEnded bool       // set to true when EventKindTurnEnd fires for the parent turn
+	closeCh       chan struct{} // closed when EventKindSubTurnEnd arrives (cancels watchdog)
+}
+
 // eventForwarder listens on the agent EventBus and forwards tool_call_start/result
 // frames to the browser so tool call UIs render in real time.
 // It also matches events from an attached task session (via taskChatIDs).
+// Extended (FR-H-004, FR-H-005): emits subagent_start / subagent_end frames and
+// propagates parent_call_id on tool_call_* frames fired inside sub-turns.
+// Orphan watchdog (FR-H-004, Scenario 7): when the parent turn ends before all spans
+// are closed, a timer fires after orphanWatchdogTimeout and synthesizes
+// subagent_end{status:"interrupted"} for each still-open span.
 func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSubscription, done chan<- struct{}) {
 	defer close(done)
 
@@ -937,18 +965,121 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 		return tid != "" && evtChatID == tid
 	}
 
+	// openSpans tracks in-flight subagent spans keyed by parentCallID.
+	// Accessed only from the single eventForwarder goroutine — no mutex needed.
+	openSpans := make(map[string]*openSpanEntry)
+
+	// closeSpan marks a span as resolved and signals its watchdog to stop.
+	closeSpan := func(parentCallID string) {
+		if entry, ok := openSpans[parentCallID]; ok {
+			select {
+			case <-entry.closeCh: // already closed
+			default:
+				close(entry.closeCh)
+			}
+			delete(openSpans, parentCallID)
+		}
+	}
+
+	// startOrphanWatchdog launches a goroutine that fires after orphanWatchdogTimeout
+	// if the span is not closed first. On timeout it synthesizes subagent_end and logs Warn.
+	startOrphanWatchdog := func(entry *openSpanEntry) {
+		go func() {
+			select {
+			case <-entry.closeCh:
+				// Span resolved normally — nothing to do.
+				return
+			case <-time.After(orphanWatchdogTimeout):
+				// Span is still open after timeout. Emit interrupted.
+				slog.Warn("ws: subagent span orphaned — synthesizing interrupted end",
+					"event", "span_orphan_interrupted",
+					"span_id", entry.spanID,
+					"parent_call_id", entry.parentCallID,
+				)
+				sendConnFrame(wc, wsServerFrame{
+					Type:         "subagent_end",
+					SpanID:       entry.spanID,
+					ParentCallID: entry.parentCallID,
+					AgentID:      entry.agentID,
+					Status:       "interrupted",
+				})
+			}
+		}()
+	}
+
 	for evt := range sub.C {
 		switch evt.Kind {
+		case agent.EventKindSubTurnSpawn:
+			// FR-H-004: emit subagent_start when a sub-turn is spawned.
+			p, ok := evt.Payload.(agent.SubTurnSpawnPayload)
+			if !ok || !matchesChatID(p.ChatID) {
+				continue
+			}
+			slog.Debug("ws: subagent_start",
+				"span_id", p.SpanID,
+				"parent_call_id", p.ParentSpawnCallID,
+				"agent_id", p.AgentID,
+			)
+			sendConnFrame(wc, wsServerFrame{
+				Type:         "subagent_start",
+				SpanID:       p.SpanID,
+				ParentCallID: p.ParentSpawnCallID,
+				AgentID:      p.AgentID,
+				TaskLabel:    p.TaskLabel,
+			})
+			// Register the span in openSpans for orphan watchdog tracking.
+			entry := &openSpanEntry{
+				spanID:       p.SpanID,
+				parentCallID: p.ParentSpawnCallID,
+				agentID:      p.AgentID,
+				closeCh:      make(chan struct{}),
+			}
+			openSpans[p.ParentSpawnCallID] = entry
+
+		case agent.EventKindSubTurnEnd:
+			// FR-H-004: emit subagent_end when a sub-turn finishes.
+			p, ok := evt.Payload.(agent.SubTurnEndPayload)
+			if !ok || !matchesChatID(p.ChatID) {
+				continue
+			}
+			slog.Debug("ws: subagent_end",
+				"span_id", p.SpanID,
+				"parent_call_id", p.ParentSpawnCallID,
+				"agent_id", p.AgentID,
+			)
+			sendConnFrame(wc, wsServerFrame{
+				Type:         "subagent_end",
+				SpanID:       p.SpanID,
+				ParentCallID: p.ParentSpawnCallID,
+				AgentID:      p.AgentID,
+				Status:       p.Status,
+				DurationMs:   p.DurationMS,
+			})
+			// Signal the watchdog that the span closed normally.
+			closeSpan(p.ParentSpawnCallID)
+
+		case agent.EventKindTurnEnd:
+			// When the parent turn ends, activate the orphan watchdog for every still-open span.
+			// The watchdog fires after orphanWatchdogTimeout if the span hasn't closed by then.
+			for _, entry := range openSpans {
+				if !entry.parentTurnEnded {
+					entry.parentTurnEnded = true
+					startOrphanWatchdog(entry)
+				}
+			}
+
 		case agent.EventKindToolExecStart:
 			p, ok := evt.Payload.(agent.ToolExecStartPayload)
 			if !ok || !matchesChatID(p.ChatID) {
 				continue
 			}
+			// FR-H-005: propagate parent_call_id when the tool fires inside a sub-turn.
 			sendConnFrame(wc, wsServerFrame{
-				Type:   "tool_call_start",
-				CallID: p.ToolCallID,
-				Tool:   p.Tool,
-				Params: p.Arguments,
+				Type:         "tool_call_start",
+				CallID:       p.ToolCallID,
+				Tool:         p.Tool,
+				Params:       p.Arguments,
+				ParentCallID: p.ParentSpawnCallID,
 			})
 		case agent.EventKindToolExecEnd:
 			p, ok := evt.Payload.(agent.ToolExecEndPayload)
@@ -959,13 +1090,15 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 			if p.IsError {
 				status = "error"
 			}
+			// FR-H-005: propagate parent_call_id when the tool fires inside a sub-turn.
 			sendConnFrame(wc, wsServerFrame{
-				Type:       "tool_call_result",
-				CallID:     p.ToolCallID,
-				Tool:       p.Tool,
-				Result:     p.Result,
-				Status:     status,
-				DurationMs: p.Duration.Milliseconds(),
+				Type:         "tool_call_result",
+				CallID:       p.ToolCallID,
+				Tool:         p.Tool,
+				Result:       p.Result,
+				Status:       status,
+				DurationMs:   p.Duration.Milliseconds(),
+				ParentCallID: p.ParentSpawnCallID,
 			})
 			// When the handoff tool succeeds, notify the frontend to switch agents.
 			if p.Tool == "handoff" && status == "success" {
