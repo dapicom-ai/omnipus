@@ -529,9 +529,11 @@ test(
     const userMsgs = page.locator('[data-message-id].flex-row-reverse')
     await expect(userMsgs).toHaveCount(1, { timeout: 15_000 })
 
+    // W2-9: Replace loose GreaterThanOrEqual(1) with exact count.
+    // The fixture seeds exactly 1 assistant message — fidelity tests assert fidelity, not tolerance.
+    // Traces to: temporal-puzzling-melody.md W2-9
     const asstMsgs = page.locator('[data-message-id]:not(.flex-row-reverse)')
-    const countAfterReplay = await asstMsgs.count()
-    expect(countAfterReplay).toBeGreaterThanOrEqual(1)
+    await expect(asstMsgs).toHaveCount(1, { timeout: 15_000 })
 
     // ── Step 2: Send a new message and verify it appears BELOW the replayed transcript ──
     // Traces to: BDD Scenario 8 AS-1: new response streams in below replayed transcript.

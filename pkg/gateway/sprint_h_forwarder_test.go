@@ -244,8 +244,16 @@ func TestSpawn_OrphanSubTurn_EmitsInterruptedAfter5s(t *testing.T) {
 	})
 
 	// 3. Do NOT emit SubTurnEnd. The watchdog should fire after ~200ms.
-	// Close bus to terminate the forwarder's for-range loop AFTER the watchdog timer.
-	time.Sleep(300 * time.Millisecond) // give watchdog time to fire
+	// W2-11: Replace time.Sleep(300ms) with require.Eventually to avoid CI flakes.
+	// Poll until the interrupted frame is emitted into the send channel.
+	// Traces to: temporal-puzzling-melody.md W2-11
+	require.Eventually(t, func() bool {
+		// Check if a frame is queued in the channel.
+		// We want at least 2 frames: subagent_start + synthesized subagent_end{interrupted}.
+		return len(ch) >= 2
+	}, 2*time.Second, 10*time.Millisecond,
+		"watchdog must emit subagent_end{interrupted} within 2s after parent turn ends")
+
 	bus.Close()
 	<-done
 

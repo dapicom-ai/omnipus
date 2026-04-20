@@ -20,6 +20,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 
 	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/session"
@@ -608,8 +609,23 @@ func TestReplay_BoundaryResult_NoTruncation(t *testing.T) {
 // TestReplay_CtxCancelled_StopsCleanly verifies that context cancellation mid-
 // replay returns an error, does not panic, and does not leak goroutines.
 //
-// Traces to: TDD row 15, FR-I-005
+// W2-13: Wrapped with goleak.VerifyNone so "no leak" is actually instrumented.
+// Previously the test only asserted on the error return but had no goroutine leak
+// detection. Now any leaked goroutine from streamReplay causes the test to fail.
+//
+// Traces to: temporal-puzzling-melody.md W2-13, TDD row 15, FR-I-005
 func TestReplay_CtxCancelled_StopsCleanly(t *testing.T) {
+	// W2-13: Instrument goroutine leak detection for goroutines started BY streamReplay.
+	// The following goroutines are background infrastructure workers started by other tests
+	// in the same package (those using newTestWSHandler, which creates a full AgentLoop).
+	// They are NOT started by streamReplay and must be excluded from the leak check.
+	// streamReplay itself starts no goroutines — any goroutine actually leaked by the
+	// function under test would still be caught here.
+	defer goleak.VerifyNone(t,
+		goleak.IgnoreTopFunction("github.com/dapicom-ai/omnipus/pkg/tools.NewSessionManager.func1"),
+		goleak.IgnoreTopFunction("github.com/dapicom-ai/omnipus/pkg/agent.(*HookManager).dispatchEvents"),
+	)
+
 	// Build a 10-entry transcript so there are frames to cancel mid-stream.
 	var entries []session.TranscriptEntry
 	for i := 0; i < 10; i++ {
@@ -618,6 +634,7 @@ func TestReplay_CtxCancelled_StopsCleanly(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel() // ensure context is cancelled even on test failure
 
 	var emitCount int
 	emitFn := func(f wsServerFrame) error {
@@ -633,6 +650,7 @@ func TestReplay_CtxCancelled_StopsCleanly(t *testing.T) {
 
 	_, err := streamReplay(ctx, "session_cancel", entries, emitFn)
 	assert.ErrorIs(t, err, context.Canceled, "streamReplay must return context.Canceled on ctx cancellation")
+	// goleak.VerifyNone (deferred) will fail the test if any goroutine was leaked.
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

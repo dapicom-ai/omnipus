@@ -823,7 +823,9 @@ describe('ChatStore_ReplayMessageThenToolCall_InterleavesCorrectly', () => {
 
 // TDD row 18 supplement: isReplaying flag transitions
 describe('ChatStore_isReplaying_flag', () => {
-  it('starts false, can be set true via setReplaying, cleared to false on done (with 100ms minimum display window)', async () => {
+  it('starts false, can be set true via setReplaying, cleared to false on done (with 250ms minimum display window)', async () => {
+    // W2-6(a): Fix comment: "100ms minimum" → "250ms minimum" (matches MIN_REPLAY_DISPLAY_MS constant).
+    // Traces to: temporal-puzzling-melody.md W2-6(a)
     // Initial state
     expect(useChatStore.getState().isReplaying).toBe(false)
 
@@ -833,7 +835,7 @@ describe('ChatStore_isReplaying_flag', () => {
     })
     expect(useChatStore.getState().isReplaying).toBe(true)
 
-    // done frame schedules clear — but minimum 100ms display window is enforced
+    // done frame schedules clear — but minimum 250ms display window is enforced
     // so the placeholder doesn't flicker on sub-frame replays.
     act(() => {
       useChatStore.getState().handleFrame({ type: 'done' })
@@ -863,5 +865,135 @@ describe('ChatStore_isReplaying_flag', () => {
       useChatStore.getState().resetSession()
     })
     expect(useChatStore.getState().isReplaying).toBe(false)
+  })
+
+  // W2-6(b): setReplaying(false) when already false is a no-op.
+  it('setReplaying(false) when already false is a no-op — isReplaying stays false', () => {
+    // BDD: Given isReplaying is already false
+    // BDD: When setReplaying(false) is called
+    // BDD: Then isReplaying stays false (no state change)
+    // Traces to: temporal-puzzling-melody.md W2-6(b)
+    expect(useChatStore.getState().isReplaying).toBe(false)
+    act(() => {
+      useChatStore.getState().setReplaying(false)
+    })
+    expect(useChatStore.getState().isReplaying).toBe(false)
+  })
+
+  // W2-6(c): setReplaying(true) when already true does NOT reset replayingStartedAt.
+  it('setReplaying(true) when already true does not extend the minimum window', async () => {
+    // BDD: Given setReplaying(true) was called at T=0, starting the 250ms minimum window
+    // BDD: When setReplaying(true) is called again at T=200ms (before window ends)
+    // BDD: Then the window does NOT extend — done frame at T=210ms still fires within 250ms of T=0
+    // Traces to: temporal-puzzling-melody.md W2-6(c)
+
+    act(() => {
+      useChatStore.getState().setReplaying(true)
+    })
+    expect(useChatStore.getState().isReplaying).toBe(true)
+
+    // Wait 200ms (still inside the 250ms window from the first call)
+    await new Promise((r) => setTimeout(r, 200))
+
+    // Call setReplaying(true) again — if it reset replayingStartedAt, the window would
+    // extend by another 250ms. The test verifies it does NOT by checking that
+    // isReplaying flips to false within ~100ms after this second call (total ~300ms > 250ms from T=0).
+    act(() => {
+      useChatStore.getState().setReplaying(true)
+    })
+    expect(useChatStore.getState().isReplaying).toBe(true)
+
+    // Issue done to schedule the clear.
+    act(() => {
+      useChatStore.getState().handleFrame({ type: 'done' })
+    })
+
+    // After another 100ms (total ~300ms from first call), should have cleared.
+    // If the window was reset on the second setReplaying(true), it would still be true here.
+    await new Promise((r) => setTimeout(r, 100))
+    // isReplaying should be false by now (250ms from original T=0 has elapsed).
+    expect(useChatStore.getState().isReplaying).toBe(false)
+  })
+})
+
+// W2-10: Sibling-spans cross-wire test.
+// Two spans A (parentCallId "cA") and B (parentCallId "cB") open.
+// Emit 2 tool_call_start frames both with parent_call_id "cA".
+// Assert A.steps.length === 2 AND B.steps.length === 0.
+// Guards against a routing bug that could increment both spans' counters.
+//
+// Traces to: temporal-puzzling-melody.md W2-10
+describe('ChatStore_sibling_spans_crosswire (W2-10)', () => {
+  it('tool_call_start with parent_call_id "cA" routes to span A only, not span B', () => {
+    // BDD: Given two open spans A (parentCallId "cA") and B (parentCallId "cB")
+    // BDD: When 2 tool_call_start frames arrive with parent_call_id "cA"
+    // BDD: Then span A has 2 steps and span B has 0 steps
+    // Traces to: temporal-puzzling-melody.md W2-10
+
+    act(() => {
+      // Create an assistant message to host the spans
+      useChatStore.getState().appendMessage({
+        id: 'asst-sibling-1',
+        role: 'assistant',
+        content: 'Working...',
+        timestamp: new Date().toISOString(),
+        status: 'streaming',
+        isStreaming: true,
+      })
+
+      // Start span A (parentCallId = "cA")
+      useChatStore.getState().handleFrame({
+        type: 'subagent_start',
+        span_id: 'spanA',
+        parent_call_id: 'cA',
+        task_label: 'Span A task',
+        agent_id: 'agent-a',
+      })
+
+      // Start span B (parentCallId = "cB")
+      useChatStore.getState().handleFrame({
+        type: 'subagent_start',
+        span_id: 'spanB',
+        parent_call_id: 'cB',
+        task_label: 'Span B task',
+        agent_id: 'agent-b',
+      })
+    })
+
+    // Emit 2 tool_call_start frames, both targeting span A (parent_call_id: "cA")
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'step_a_1',
+        tool: 'web_search',
+        params: { query: 'query 1' },
+        parent_call_id: 'cA',
+      })
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'step_a_2',
+        tool: 'fs.read',
+        params: { path: '/tmp/test' },
+        parent_call_id: 'cA',
+      })
+    })
+
+    const state = useChatStore.getState()
+    const asstMsg = state.messages.find((m) => m.id === 'asst-sibling-1')
+    expect(asstMsg).toBeDefined()
+    expect(asstMsg?.spans).toHaveLength(2)
+
+    const spanA = asstMsg!.spans!.find((s) => s.spanId === 'spanA')
+    const spanB = asstMsg!.spans!.find((s) => s.spanId === 'spanB')
+    expect(spanA).toBeDefined()
+    expect(spanB).toBeDefined()
+
+    // Span A must have exactly 2 steps (both tool_call_start frames targeted "cA")
+    expect(spanA!.steps).toHaveLength(2)
+    expect(spanA!.steps[0].call_id).toBe('step_a_1')
+    expect(spanA!.steps[1].call_id).toBe('step_a_2')
+
+    // Span B must have exactly 0 steps (no frames targeted "cB")
+    expect(spanB!.steps).toHaveLength(0)
   })
 })

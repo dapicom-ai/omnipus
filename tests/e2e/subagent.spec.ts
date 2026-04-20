@@ -325,18 +325,20 @@ test(
         'The LLM subagent may have executed fewer tool calls than requested. ' +
         'This is a real-LLM non-determinism issue — re-run with a more constrained prompt.',
       );
-      // Verify at least the counter IS incrementing (any non-zero count).
+      // W2-7: Verify at least the counter IS incrementing (any non-zero count).
+      // If a SubagentBlock appeared but step-counter text is never present at timeout,
+      // that is a confirmed product regression — fail hard (not skip).
+      // Reserve test.skip() for the "no block at all" case (handled above via blockAppeared check).
+      // Traces to: temporal-puzzling-melody.md W2-7
       const finalText = await collapsedBlock.textContent().catch(() => '');
       const anySteps = /\d+\s+steps?/.test(finalText ?? '');
       if (!anySteps) {
-        // No step counter text found at all — this IS a product bug.
-        console.error(
-          'FAIL: No step counter text found in collapsed SubagentBlock header. ' +
-          'Expected text matching /\\d+ steps?/. ' +
-          'Traces to: sprint-h-subagent-block-spec.md FR-H-010.',
+        // SubagentBlock appeared but step counter text is missing — confirmed product regression.
+        throw new Error(
+          'PRODUCT REGRESSION: SubagentBlock appeared but no step counter text was rendered. ' +
+          'Expected text matching /\\d+ steps?/ in the collapsed header. ' +
+          'Traces to: temporal-puzzling-melody.md W2-7, sprint-h-subagent-block-spec.md FR-H-010.',
         );
-        // We don't throw here because the missing text could also mean the block
-        // disappeared (sub-turn finished before we could read it).
       }
       test.skip();
       return;

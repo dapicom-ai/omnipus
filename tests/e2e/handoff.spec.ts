@@ -104,29 +104,17 @@ test(
     const expandedBlock = page.locator('[data-testid="subagent-expanded"]');
     await expect(expandedBlock).toBeVisible({ timeout: 10_000 });
 
-    // Assert: expanded region contains ≥1 tool-call-badge.
-    // NOTE: ToolCallBadge currently does not have data-testid="tool-call-badge".
-    // This is a TESTABILITY ISSUE — frontend-lead must add the data-testid.
-    // Until then, we fall back to asserting the expanded body is non-empty.
-    // Tracks: sprint-h-subagent-block-spec.md FR-H-008
+    // W2-8: [data-testid="tool-call-badge"] is present (added in commit aaa9de7).
+    // Remove the "TESTABILITY GAP" soft-fallback branch — assert exact count.
+    // The LLM is prompted to spawn with a single tool call ("list workspace files"),
+    // so we expect at least 1 badge. Cannot assert an exact count without scenario provider.
+    // Traces to: temporal-puzzling-melody.md W2-8
     const toolCallBadges = expandedBlock.locator('[data-testid="tool-call-badge"]');
+    // Use toBeGreaterThan(0) without the fallback log — the testid is now present.
     const badgeCount = await toolCallBadges.count();
-    if (badgeCount === 0) {
-      // Fallback: at least the expanded body rendered some content (steps or result).
-      // The missing data-testid on ToolCallBadge is a production code gap.
-      // Report as soft failure so the test still passes when the testid is missing.
-      console.warn(
-        'TESTABILITY GAP: [data-testid="tool-call-badge"] not found inside subagent-expanded. ' +
-        'ToolCallBadge.tsx needs data-testid="tool-call-badge" on the outer div. ' +
-        'Tracks: sprint-h-subagent-block-spec.md FR-H-008, BDD Scenario 4.',
-      );
-      // Verify the expanded block at least has non-empty content (any child element).
-      const children = await expandedBlock.locator('> *').count();
-      expect(children).toBeGreaterThan(0, 'expanded block must have at least one child element');
-    } else {
-      // Ideal path: real badges are present.
-      expect(badgeCount).toBeGreaterThanOrEqual(1, 'expanded SubagentBlock must contain ≥1 tool-call-badge');
-    }
+    expect(badgeCount).toBeGreaterThan(0,
+      'expanded SubagentBlock must contain at least one [data-testid="tool-call-badge"] — ' +
+      'commit aaa9de7 added the testid, no fallback needed (W2-8)');
 
     // a11y baseline check on subagent elements (BDD Scenario 11, FR-H-008).
     // Traces to: sprint-h-subagent-block-spec.md line 316 (Scenario 11)

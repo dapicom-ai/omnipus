@@ -157,7 +157,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     // history..." placeholder on sub-frame replays, (b) gives E2E automation
     // an observable disabled-input window. Tracked module-local.
     if (value) {
-      replayingStartedAt = Date.now()
+      // Only reset the window start on a false→true transition. Repeated
+      // setReplaying(true) calls while already replaying must NOT extend
+      // the 250ms minimum — caught by W2-6c test.
+      if (!get().isReplaying) {
+        replayingStartedAt = Date.now()
+      }
       set({ isReplaying: true })
       return
     }
