@@ -16,7 +16,10 @@ import {
 } from '@phosphor-icons/react'
 import { ToolCallBadge } from './ToolCallBadge'
 import type { SubagentSpan } from '@/store/chat'
+import type { WsSubagentEndFrame } from '@/lib/ws'
 import { cn } from '@/lib/utils'
+
+type SubagentEndReason = WsSubagentEndFrame['reason']
 
 // ── Label truncation — graceme-safe (FR-H-009, Scenario 14) ──────────────────
 
@@ -100,6 +103,17 @@ function stepCountText(count: number): string {
 
 // ── SubagentBlock ─────────────────────────────────────────────────────────────
 
+/** Human-readable label for the interrupted reason field (W1-9). */
+function formatInterruptReason(reason: SubagentEndReason): string {
+  switch (reason) {
+    case 'parent_timeout': return 'parent timed out'
+    case 'parent_cancelled': return 'parent cancelled'
+    case 'parent_done_early': return 'parent completed early'
+    case 'unknown': return 'unknown reason'
+    default: return reason ?? ''
+  }
+}
+
 export interface SubagentBlockProps {
   span: SubagentSpan
 }
@@ -158,6 +172,15 @@ export function SubagentBlock({ span }: SubagentBlockProps) {
         <span className={cn('flex items-center gap-1 shrink-0 rounded px-1.5 py-0.5', config.pill)}>
           {config.icon}
           <span>{config.label}</span>
+          {/* W1-9: show interrupt reason as a muted inline label when available */}
+          {span.status === 'interrupted' && span.reason && (
+            <span
+              className="text-[var(--color-muted)] font-sans"
+              title={`Interrupted: ${formatInterruptReason(span.reason)}`}
+            >
+              ({formatInterruptReason(span.reason)})
+            </span>
+          )}
         </span>
 
         {/* Duration — only shown in terminal state */}

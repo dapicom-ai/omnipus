@@ -24,6 +24,8 @@ export interface SubagentSpan {
   durationMs?: number
   steps: Array<ToolCall & { call_id: string }>
   finalResult?: string
+  /** W1-9 coordination: reason populated when status is 'interrupted' (from backend W1-9). */
+  reason?: 'parent_timeout' | 'parent_cancelled' | 'parent_done_early' | 'unknown'
 }
 
 // A buffered frame waiting for its subagent_start to arrive (FR-H-009)
@@ -120,6 +122,11 @@ let rateLimitClearTimer: ReturnType<typeof setTimeout> | null = null
 // disabled-input window). See setReplaying action.
 let replayingStartedAt = 0
 
+// W1-7: diagnostic flag — true when at least one replay_message was processed
+// in the current session/turn. Used to emit a warning if setReplaying(false)
+// hits the no-op guard unexpectedly after a replay sequence ran.
+let sawReplayMessageThisTurn = false
+
 // FR-H-009: out-of-order frame buffer — tool_call_start/result frames that
 // arrived before their subagent_start. Keyed by parent_call_id. Dropped to
 // flat rendering after ORPHAN_BUFFER_TTL_MS if no subagent_start arrives.
@@ -155,7 +162,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       return
     }
     // No-op if already false (done on a live turn where no replay ran).
-    if (!get().isReplaying) return
+    if (!get().isReplaying) {
+      // W1-7: if replay_message frames were processed this turn but we hit
+      // the no-op path, something is wrong — likely attachToSession race.
+      if (sawReplayMessageThisTurn) {
+        console.warn(
+          '[chat] setReplaying(false) ignored — isReplaying was already false despite replay_message having been processed. Likely attachToSession race.',
+        )
+      }
+      return
+    }
+    // Clear the diagnostic flag on the true→false transition.
+    sawReplayMessageThisTurn = false
     const elapsed = Date.now() - replayingStartedAt
     const MIN_REPLAY_DISPLAY_MS = 250
     if (elapsed >= MIN_REPLAY_DISPLAY_MS) {
@@ -322,6 +340,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           status: frame.status,
           durationMs: frame.duration_ms,
           finalResult: frame.final_result,
+          // W1-9: propagate reason from backend when status is 'interrupted'
+          reason: frame.reason,
         }
         msgs[i] = { ...msgs[i], spans: updatedSpans }
         return { messages: msgs }
@@ -408,7 +428,20 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     set({ rateLimitEvent: null })
   },
 
-  resetSession: () => set(CLEAN_SESSION_STATE),
+  resetSession: () => {
+    // W1-8b: clear module-level orphan buffers and their TTL timers so they
+    // don't leak across session switches.
+    for (const key of Object.keys(orphanTimers)) {
+      clearTimeout(orphanTimers[key])
+      delete orphanTimers[key]
+    }
+    for (const key of Object.keys(pendingByParentCallId)) {
+      delete pendingByParentCallId[key]
+    }
+    // W1-7: reset the diagnostic flag on session reset.
+    sawReplayMessageThisTurn = false
+    set(CLEAN_SESSION_STATE)
+  },
 
   sendMessage: (content) => {
     const { connection, isConnected } = useConnectionStore.getState()
@@ -622,6 +655,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                   console.warn(
                     `[chat] Orphan frames for parent_call_id="${parentCallId}" — subagent_start never arrived within ${ORPHAN_BUFFER_TTL_MS}ms. Releasing as flat tool calls.`
                   )
+                  // W1-8c: give the user a visible signal in addition to the console warn.
+                  useUiStore.getState().addToast({
+                    variant: 'default',
+                    message: 'Some subagent steps arrived without their span — displayed as flat tool calls',
+                  })
                   for (const { frame: bf } of buffered) {
                     if (bf.type === 'tool_call_start') {
                       const s = get()
@@ -670,9 +708,39 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               error: frame.error,
             })
           } else {
-            // Buffer until subagent_start arrives
+            // Buffer until subagent_start arrives.
+            // W1-8a: if this result creates a NEW buffer entry (no prior tool_call_start
+            // buffered it), arm the 10s TTL now so results don't leak forever.
             if (!pendingByParentCallId[parentCallId]) {
               pendingByParentCallId[parentCallId] = []
+              if (!orphanTimers[parentCallId]) {
+                orphanTimers[parentCallId] = setTimeout(() => {
+                  const buffered = pendingByParentCallId[parentCallId] ?? []
+                  delete pendingByParentCallId[parentCallId]
+                  delete orphanTimers[parentCallId]
+                  if (buffered.length > 0) {
+                    console.warn(
+                      `[chat] Orphan frames for parent_call_id="${parentCallId}" — subagent_start never arrived within ${ORPHAN_BUFFER_TTL_MS}ms. Releasing as flat tool calls.`
+                    )
+                    useUiStore.getState().addToast({
+                      variant: 'default',
+                      message: 'Some subagent steps arrived without their span — displayed as flat tool calls',
+                    })
+                    for (const { frame: bf } of buffered) {
+                      if (bf.type === 'tool_call_start') {
+                        const s = get()
+                        const lastMsg = s.messages[s.messages.length - 1]
+                        if (!lastMsg || lastMsg.role !== 'assistant') {
+                          s.updateLastAssistantMessage('', false)
+                        }
+                        s.startToolCall(bf.call_id ?? '', bf.tool ?? '', bf.params ?? {})
+                      } else if (bf.type === 'tool_call_result') {
+                        get().resolveToolCall(bf.call_id ?? '', bf.result, bf.status ?? 'success', bf.duration_ms, bf.error)
+                      }
+                    }
+                  }
+                }, ORPHAN_BUFFER_TTL_MS)
+              }
             }
             pendingByParentCallId[parentCallId].push({ frame, arrivedAt: Date.now() })
           }
@@ -717,6 +785,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       }
 
       case 'replay_message': {
+        // W1-7: mark that a replay_message was processed so setReplaying(false)
+        // can warn if it hits the no-op path after replay ran.
+        sawReplayMessageThisTurn = true
         const replayFrame = frame as WsReplayMessageFrame
         const role = (replayFrame.role || 'assistant') as 'user' | 'assistant'
         set((state) => ({
