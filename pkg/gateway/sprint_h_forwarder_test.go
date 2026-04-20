@@ -232,9 +232,15 @@ func TestSpawn_OrphanSubTurn_EmitsInterruptedAfter5s(t *testing.T) {
 	})
 
 	// 2. Parent turn ends — trigger orphan watchdog.
+	// W1-2: must include ChatID matching the forwarder's chatID and IsRoot=true;
+	// sub-turn ends from unrelated chats or non-root turns must not arm the watchdog.
 	bus.Emit(agent.Event{
-		Kind:    agent.EventKindTurnEnd,
-		Payload: agent.TurnEndPayload{Status: agent.TurnEndStatusCompleted},
+		Kind: agent.EventKindTurnEnd,
+		Payload: agent.TurnEndPayload{
+			Status: agent.TurnEndStatusCompleted,
+			ChatID: "chat-1",
+			IsRoot: true,
+		},
 	})
 
 	// 3. Do NOT emit SubTurnEnd. The watchdog should fire after ~200ms.
@@ -292,9 +298,13 @@ func TestSpawn_SubTurnEnd_AfterParentDone_CancelsWatchdog(t *testing.T) {
 	})
 
 	// 2. Parent turn ends — starts watchdog (500ms timer).
+	// W1-2: must include ChatID and IsRoot=true for the watchdog to arm.
 	bus.Emit(agent.Event{
-		Kind:    agent.EventKindTurnEnd,
-		Payload: agent.TurnEndPayload{},
+		Kind: agent.EventKindTurnEnd,
+		Payload: agent.TurnEndPayload{
+			ChatID: "chat-1",
+			IsRoot: true,
+		},
 	})
 
 	// 3. Sub-turn ends normally (before the 500ms watchdog fires).

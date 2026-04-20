@@ -144,6 +144,13 @@ type TurnEndPayload struct {
 	Iterations      int
 	Duration        time.Duration
 	FinalContentLen int
+	// ChatID is the chat session this turn belongs to.
+	// Populated so the WS watchdog can scope orphan detection to the correct connection.
+	ChatID string
+	// IsRoot is true when this turn has no parent (parentTurnID == "").
+	// The orphan watchdog only arms on root turn-end to avoid spurious interrupts
+	// from sibling sub-turn completions.
+	IsRoot bool
 }
 
 // LLMRequestPayload describes an outbound LLM request.
@@ -212,6 +219,9 @@ type ToolExecStartPayload struct {
 	// It equals the parent spawn tool call's ToolCall.ID (FR-H-002).
 	// The WebSocket forwarder propagates this as parent_call_id on outbound frames (FR-H-005).
 	ParentSpawnCallID string
+	// AgentID is the agent executing this tool call.
+	// FR-I-008: live tool_call_start frames must carry agent_id to match replay frame parity.
+	AgentID string
 }
 
 // ToolExecEndPayload describes the outcome of a tool execution.
@@ -231,6 +241,9 @@ type ToolExecEndPayload struct {
 	// It equals the parent spawn tool call's ToolCall.ID (FR-H-002).
 	// The WebSocket forwarder propagates this as parent_call_id on outbound frames (FR-H-005).
 	ParentSpawnCallID string
+	// AgentID is the agent executing this tool call.
+	// FR-I-008: live tool_call_result frames must carry agent_id to match replay frame parity.
+	AgentID string
 }
 
 // ToolExecSkippedPayload describes a skipped tool call.

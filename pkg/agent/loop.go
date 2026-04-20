@@ -2599,6 +2599,8 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 				Iterations:      ts.currentIteration(),
 				Duration:        time.Since(ts.startedAt),
 				FinalContentLen: ts.finalContentLen(),
+				ChatID:          ts.chatID,
+				IsRoot:          ts.parentTurnID == "",
 			},
 		)
 	}()
@@ -3662,6 +3664,7 @@ turnLoop:
 					Tool:              toolName,
 					Arguments:         cloneEventArguments(toolArgs),
 					ParentSpawnCallID: ts.parentSpawnCallID,
+					AgentID:           ts.agentID,
 				},
 			)
 
@@ -3993,6 +3996,7 @@ turnLoop:
 					Async:             toolResult.Async,
 					Result:            contentForLLM,
 					ParentSpawnCallID: ts.parentSpawnCallID,
+					AgentID:           ts.agentID,
 				},
 			)
 			tcStatus := "success"
