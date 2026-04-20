@@ -1,4 +1,5 @@
 //go:build !cgo
+
 // NOTE: this tag applies to every file in pkg/gateway — it is a package-wide
 // constraint enforcing CGO_ENABLED=0 for the single-binary open-source build.
 // It is NOT specific to this file; see gateway.go for the package entry point.
@@ -294,10 +295,10 @@ func streamReplay(
 	// W3-2: emit the done frame OUTSIDE emitFrame so it is NOT counted in
 	// framesEmitted — that counter represents content frames only.
 	doneStats := map[string]any{
-		"frames_emitted":                framesEmitted,
-		"orphan_count":                  rs.orphanCount,
-		"duplicate_tool_call_id_count":  rs.duplicateToolCallIDCount,
-		"truncated_result_count":        rs.truncatedResultCount,
+		"frames_emitted":               framesEmitted,
+		"orphan_count":                 rs.orphanCount,
+		"duplicate_tool_call_id_count": rs.duplicateToolCallIDCount,
+		"truncated_result_count":       rs.truncatedResultCount,
 	}
 	if ctx.Err() != nil {
 		return framesEmitted, ctx.Err()
@@ -492,12 +493,12 @@ func resolveTaskLabel(tc session.ToolCall) string {
 // replayStats aggregates metrics from a set of transcript entries for slog.Info.
 // W3-2: extended with three additional counters to improve operator observability.
 type replayStats struct {
-	toolCallCount  int
-	spanCount      int
+	toolCallCount int
+	spanCount     int
 	// W3-2 additions
-	orphanCount                int // tool calls whose ParentToolCallID has no matching spawn-with-children
-	duplicateToolCallIDCount   int // tool_call_ids that appear more than once across entries
-	truncatedResultCount       int // tool call results that exceeded replayMaxResultBytes
+	orphanCount              int // tool calls whose ParentToolCallID has no matching spawn-with-children
+	duplicateToolCallIDCount int // tool_call_ids that appear more than once across entries
+	truncatedResultCount     int // tool call results that exceeded replayMaxResultBytes
 }
 
 // computeReplayStats scans entries for logging purposes.
@@ -556,4 +557,3 @@ func wsEmitFunc(ctx context.Context, wc *wsConn) func(wsServerFrame) error {
 		}
 	}
 }
-

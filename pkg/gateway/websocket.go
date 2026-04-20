@@ -1041,11 +1041,11 @@ var orphanWatchdogTimeout = 5 * time.Second
 
 // openSpanEntry tracks an in-flight subagent span in the event forwarder.
 type openSpanEntry struct {
-	spanID        string
-	parentCallID  string
-	agentID       string
-	parentTurnEnded bool       // set to true when EventKindTurnEnd fires for the parent turn
-	closeCh       chan struct{} // closed when EventKindSubTurnEnd arrives (cancels watchdog)
+	spanID          string
+	parentCallID    string
+	agentID         string
+	parentTurnEnded bool          // set to true when EventKindTurnEnd fires for the parent turn
+	closeCh         chan struct{} // closed when EventKindSubTurnEnd arrives (cancels watchdog)
 }
 
 // eventForwarder listens on the agent EventBus and forwards tool_call_start/result

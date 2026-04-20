@@ -47,10 +47,11 @@ import (
 // call spawn, subagent, or handoff. This is the enforcement mechanism per FR-H-006.
 //
 // BDD Scenario 9 (sprint-h-subagent-block-spec.md):
-//   Given a sub-turn child registry constructed via CloneExcept("spawn","subagent","handoff")
-//   When ExecuteWithContext is called for "spawn", "subagent", or "handoff"
-//   Then each returns a non-nil error result with "not found" in the error text
-//   And zero EventKindSubTurnSpawn are emitted as a result
+//
+//	Given a sub-turn child registry constructed via CloneExcept("spawn","subagent","handoff")
+//	When ExecuteWithContext is called for "spawn", "subagent", or "handoff"
+//	Then each returns a non-nil error result with "not found" in the error text
+//	And zero EventKindSubTurnSpawn are emitted as a result
 //
 // Traces to: temporal-puzzling-melody.md W2-5
 func TestSubTurn_ForbiddenToolCalls_ReturnUnknownToolError(t *testing.T) {
@@ -67,7 +68,6 @@ func TestSubTurn_ForbiddenToolCalls_ReturnUnknownToolError(t *testing.T) {
 	forbiddenTools := []string{"spawn", "subagent", "handoff"}
 
 	for _, toolName := range forbiddenTools {
-		toolName := toolName // capture loop var for parallel subtests
 		t.Run("forbidden_tool="+toolName, func(t *testing.T) {
 			// Verify the tool is absent from the child registry.
 			_, ok := childRegistry.Get(toolName)
@@ -105,7 +105,7 @@ func TestSubTurn_ForbiddenToolCalls_ReturnUnknownToolError(t *testing.T) {
 //
 // Traces to: temporal-puzzling-melody.md W2-5
 func TestSubTurn_ForbiddenToolCalls_EmitZeroGrandchildSpawnEvents(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
+	al, _, _, _, cleanup := newTestAgentLoop(t) //nolint:dogsled // only al+cleanup used here
 	defer cleanup()
 
 	collector, collectCleanup := newEventCollector(t, al)
@@ -157,7 +157,7 @@ func TestSubTurn_ForbiddenToolCalls_EmitZeroGrandchildSpawnEvents(t *testing.T) 
 //
 // Traces to: temporal-puzzling-melody.md W2-5
 func TestSubTurn_OriginalDelegation_EmitsExactlyOneSpawnEvent(t *testing.T) {
-	al, _, _, _, cleanup := newTestAgentLoop(t)
+	al, _, _, _, cleanup := newTestAgentLoop(t) //nolint:dogsled // only al+cleanup used here
 	defer cleanup()
 
 	collector, collectCleanup := newEventCollector(t, al)

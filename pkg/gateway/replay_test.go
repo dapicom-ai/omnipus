@@ -168,8 +168,16 @@ func TestReplay_MultipleToolCalls_PreservesOrder(t *testing.T) {
 	frames, _ := runReplay(t, entries)
 
 	types := frameTypes(frames)
-	require.Equal(t,
-		[]string{"replay_message", "tool_call_start", "tool_call_result", "tool_call_start", "tool_call_result", "done"},
+	require.Equal(
+		t,
+		[]string{
+			"replay_message",
+			"tool_call_start",
+			"tool_call_result",
+			"tool_call_start",
+			"tool_call_result",
+			"done",
+		},
 		types,
 	)
 

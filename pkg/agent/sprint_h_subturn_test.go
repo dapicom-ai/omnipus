@@ -53,7 +53,7 @@ func TestSpawnSubTurn_ChildRegistry_OmitsThreeDelegationTools(t *testing.T) {
 	// BDD: Then child.Tools.List() contains NONE of: spawn, subagent, handoff
 	// Traces to: temporal-puzzling-melody.md W2-3
 
-	al, _, _, _, cleanup := newTestAgentLoop(t)
+	al, _, _, _, cleanup := newTestAgentLoop(t) //nolint:dogsled // only al+cleanup used here
 	defer cleanup()
 
 	// ── Part 1: Registry-level wiring check ─────────────────────────────────────
