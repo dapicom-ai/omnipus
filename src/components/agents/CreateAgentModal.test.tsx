@@ -58,7 +58,9 @@ describe('CreateAgentModal — rendering (test #14)', () => {
     renderModal({ open: true, onClose: vi.fn() })
     expect(screen.getByLabelText(/name/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/description/i)).toBeInTheDocument()
-    expect(screen.getByText(/use provider default/i)).toBeInTheDocument()
+    // ModelSelector renders as an <input> with placeholder when no models are available.
+    // "Use provider default" is the placeholder attribute, not a text node — use getByPlaceholderText.
+    expect(screen.getByPlaceholderText(/use provider default/i)).toBeInTheDocument()
   })
 })
 

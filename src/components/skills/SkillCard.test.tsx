@@ -24,10 +24,12 @@ vi.mock('@/lib/api', async (importOriginal) => {
     ...actual,
     fetchSkills: vi.fn(),
     fetchMcpServers: vi.fn(),
+    fetchTools: vi.fn(),
+    fetchChannels: vi.fn(),
   }
 })
 
-import { fetchSkills, fetchMcpServers } from '@/lib/api'
+import { fetchSkills, fetchMcpServers, fetchTools, fetchChannels } from '@/lib/api'
 import { Route } from '@/routes/_app/skills'
 
 const SkillsScreen = (Route as any).component as React.ComponentType
@@ -70,6 +72,12 @@ beforeEach(() => {
     { id: 'mcp-1', name: 'filesystem', transport: 'stdio', status: 'connected', tool_count: 8 },
     { id: 'mcp-2', name: 'github', transport: 'stdio', status: 'disconnected', tool_count: 0 },
   ])
+  vi.mocked(fetchTools).mockResolvedValue([
+    { name: 'exec', category: 'system', description: 'Execute shell commands' },
+    { name: 'web_search', category: 'web', description: 'Search the web' },
+    { name: 'file.read', category: 'fs', description: 'Read a file' },
+  ])
+  vi.mocked(fetchChannels).mockResolvedValue([])
 })
 
 describe('SkillsScreen — installed skills tab (test #19)', () => {
