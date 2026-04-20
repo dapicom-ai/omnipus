@@ -97,7 +97,7 @@ export interface WsSubagentStartFrame {
 export interface WsSubagentEndFrame {
   type: 'subagent_end'
   span_id: string
-  status: 'success' | 'error' | 'cancelled' | 'interrupted'
+  status: 'success' | 'error' | 'cancelled' | 'interrupted' | 'timeout'
   duration_ms?: number
   final_result?: string
   /**
@@ -194,10 +194,20 @@ export type WsReceiveFrame =
   | WsSubagentStartFrame
   | WsSubagentEndFrame
 
+/** Allowed status values for subagent_end frames. */
+const SUBAGENT_END_STATUSES = new Set<string>(['success', 'error', 'cancelled', 'interrupted', 'timeout'])
+
 function isValidFrame(frame: unknown): frame is WsReceiveFrame {
   if (typeof frame !== 'object' || frame === null) return false
   const f = frame as Record<string, unknown>
-  return typeof f.type === 'string'
+  if (typeof f.type !== 'string') return false
+  // W4-6: validate subagent_end status to prevent unknown-status render crashes.
+  if (f.type === 'subagent_end') {
+    if (typeof f.status !== 'string' || !SUBAGENT_END_STATUSES.has(f.status)) {
+      return false
+    }
+  }
+  return true
 }
 
 // ── Connection ────────────────────────────────────────────────────────────────

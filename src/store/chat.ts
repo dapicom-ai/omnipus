@@ -15,18 +15,39 @@ export interface MediaAttachment {
   caption?: string
 }
 
-// FR-H-008/FR-H-009: a subagent span brackets one sub-turn
-export interface SubagentSpan {
+// SpanStep is one step in a subagent span.
+// The discriminant `kind` allows renderers to switch between tool calls
+// and interleaved text fragments without a runtime type-check on all fields.
+// Text steps are reserved for future subagent-text streaming; no emit site
+// writes them yet, but the type admits them so a future sprint can add
+// subagent-text streaming without a type change.
+export type SpanStep =
+  | { kind: 'tool'; tool: ToolCall & { call_id: string } }
+  | { kind: 'text'; text: string; ts: number }
+
+// FR-H-008/FR-H-009: a subagent span brackets one sub-turn.
+// Discriminated union: 'running' vs terminal so TypeScript enforces that
+// durationMs / finalResult / reason are only accessible on terminal spans.
+interface SubagentSpanBase {
   spanId: string
   parentCallId: string
   taskLabel: string
-  status: 'running' | 'success' | 'error' | 'cancelled' | 'interrupted'
-  durationMs?: number
-  steps: Array<ToolCall & { call_id: string }>
+  steps: SpanStep[]
+}
+
+export interface SubagentSpanRunning extends SubagentSpanBase {
+  status: 'running'
+}
+
+export interface SubagentSpanTerminal extends SubagentSpanBase {
+  status: 'success' | 'error' | 'cancelled' | 'interrupted' | 'timeout'
+  durationMs: number
   finalResult?: string
-  /** W1-9 coordination: reason populated when status is 'interrupted' (from backend W1-9). */
+  /** W1-9 coordination: reason populated when status is 'interrupted'. */
   reason?: 'parent_timeout' | 'parent_cancelled' | 'parent_done_early' | 'unknown'
 }
+
+export type SubagentSpan = SubagentSpanRunning | SubagentSpanTerminal
 
 // A buffered frame waiting for its subagent_start to arrive (FR-H-009)
 interface BufferedFrame {
@@ -300,7 +321,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const msgs = [...state.messages]
       const lastIdx = msgs.map((m) => m.role).lastIndexOf('assistant')
       if (lastIdx === -1) return {}
-      const span: SubagentSpan = {
+      const span: SubagentSpanRunning = {
         spanId: frame.span_id,
         parentCallId: frame.parent_call_id,
         taskLabel: frame.task_label,
@@ -317,21 +338,32 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       for (const { frame: bf } of buffered) {
         if (bf.type === 'tool_call_start') {
           span.steps.push({
-            id: bf.call_id,
-            call_id: bf.call_id,
-            tool: bf.tool,
-            params: bf.params,
-            status: 'running',
+            kind: 'tool',
+            tool: {
+              id: bf.call_id,
+              call_id: bf.call_id,
+              tool: bf.tool,
+              params: bf.params,
+              status: 'running',
+            },
           })
         } else if (bf.type === 'tool_call_result') {
-          const existingIdx = span.steps.findIndex((s) => s.call_id === bf.call_id)
+          const existingIdx = span.steps.findIndex(
+            (s) => s.kind === 'tool' && s.tool.call_id === bf.call_id
+          )
           if (existingIdx !== -1) {
-            span.steps[existingIdx] = {
-              ...span.steps[existingIdx],
-              result: bf.result,
-              status: bf.status,
-              duration_ms: bf.duration_ms,
-              error: bf.error,
+            const existing = span.steps[existingIdx]
+            if (existing.kind === 'tool') {
+              span.steps[existingIdx] = {
+                kind: 'tool',
+                tool: {
+                  ...existing.tool,
+                  result: bf.result,
+                  status: bf.status,
+                  duration_ms: bf.duration_ms,
+                  error: bf.error,
+                },
+              }
             }
           }
         }
@@ -352,15 +384,22 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         if (msg.role !== 'assistant' || !msg.spans) continue
         const spanIdx = msg.spans.findIndex((s) => s.spanId === frame.span_id)
         if (spanIdx === -1) continue
+        const existingSpan = msg.spans[spanIdx]
         const updatedSpans = [...msg.spans]
-        updatedSpans[spanIdx] = {
-          ...updatedSpans[spanIdx],
+        // Transition to terminal: carry forward all base fields + steps,
+        // then add durationMs, finalResult, reason from the end frame.
+        const terminalSpan: SubagentSpanTerminal = {
+          spanId: existingSpan.spanId,
+          parentCallId: existingSpan.parentCallId,
+          taskLabel: existingSpan.taskLabel,
+          steps: existingSpan.steps,
           status: frame.status,
-          durationMs: frame.duration_ms,
+          durationMs: frame.duration_ms ?? 0,
           finalResult: frame.final_result,
           // W1-9: propagate reason from backend when status is 'interrupted'
           reason: frame.reason,
         }
+        updatedSpans[spanIdx] = terminalSpan
         msgs[i] = { ...msgs[i], spans: updatedSpans }
         return { messages: msgs }
       }
@@ -382,16 +421,21 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         const spanIdx = msg.spans.findIndex((s) => s.parentCallId === parentCallId)
         if (spanIdx === -1) continue
         const updatedSpans = [...msg.spans]
-        const existingIdx = updatedSpans[spanIdx].steps.findIndex((s) => s.call_id === step.call_id)
+        const existingIdx = updatedSpans[spanIdx].steps.findIndex(
+          (s) => s.kind === 'tool' && s.tool.call_id === step.call_id
+        )
         if (existingIdx !== -1) {
           // Update existing step (tool_call_result arriving after start)
-          const updatedSteps = [...updatedSpans[spanIdx].steps]
-          updatedSteps[existingIdx] = { ...updatedSteps[existingIdx], ...step }
-          updatedSpans[spanIdx] = { ...updatedSpans[spanIdx], steps: updatedSteps }
+          const existingStep = updatedSpans[spanIdx].steps[existingIdx]
+          if (existingStep.kind === 'tool') {
+            const updatedSteps = [...updatedSpans[spanIdx].steps]
+            updatedSteps[existingIdx] = { kind: 'tool', tool: { ...existingStep.tool, ...step } }
+            updatedSpans[spanIdx] = { ...updatedSpans[spanIdx], steps: updatedSteps }
+          }
         } else {
           updatedSpans[spanIdx] = {
             ...updatedSpans[spanIdx],
-            steps: [...updatedSpans[spanIdx].steps, step],
+            steps: [...updatedSpans[spanIdx].steps, { kind: 'tool', tool: step }],
           }
         }
         msgs[i] = { ...msgs[i], spans: updatedSpans }

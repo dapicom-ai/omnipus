@@ -36,6 +36,15 @@ export interface OnboardingOptions {
  * UI flow behavior.
  */
 export async function onboardViaAPI(opts: OnboardingOptions): Promise<void> {
+  // W4-7: validate password length at fixture-build time, not at 400-response time.
+  // The backend requires >= 8 characters; failing here gives a clear error message.
+  const password = opts.password ?? DEFAULT_PASSWORD;
+  if (password.length < 8) {
+    throw new Error(
+      `onboard-via-api: password must be at least 8 characters (got ${password.length})`
+    );
+  }
+
   const apiKey =
     opts.apiKey ??
     process.env.OPENROUTER_API_KEY_CI ??
@@ -53,7 +62,7 @@ export async function onboardViaAPI(opts: OnboardingOptions): Promise<void> {
         },
         admin: {
           username: opts.username ?? DEFAULT_USERNAME,
-          password: opts.password ?? DEFAULT_PASSWORD,
+          password,
         },
       },
     });

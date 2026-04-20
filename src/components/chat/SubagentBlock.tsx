@@ -10,12 +10,13 @@ import {
   CheckCircle,
   XCircle,
   Prohibit,
+  Clock,
   CaretDown,
   CaretUp,
   UserCircle,
 } from '@phosphor-icons/react'
 import { ToolCallBadge } from './ToolCallBadge'
-import type { SubagentSpan } from '@/store/chat'
+import type { SubagentSpan, SubagentSpanTerminal } from '@/store/chat'
 import type { WsSubagentEndFrame } from '@/lib/ws'
 import { cn } from '@/lib/utils'
 
@@ -91,6 +92,26 @@ function getStatusConfig(status: SpanStatus, durationMs?: number): StatusConfig 
         border: 'border-[var(--color-muted)]/20',
         pill: 'bg-[var(--color-muted)]/10 text-[var(--color-muted)]',
       }
+    case 'timeout':
+      // W4-2: timeout is treated like interrupted but with a Clock icon
+      return {
+        icon: <Clock size={13} className="text-[var(--color-muted)]" weight="fill" aria-hidden="true" />,
+        label: 'timed out',
+        border: 'border-[var(--color-muted)]/20',
+        pill: 'bg-[var(--color-muted)]/10 text-[var(--color-muted)]',
+      }
+    default: {
+      // W4-6: safe fallback for any unexpected status value arriving from the wire.
+      // Prevents the "unknown status → undefined → render crash" latent bug.
+      const _exhaustive: never = status
+      void _exhaustive
+      return {
+        icon: <Prohibit size={13} className="text-[var(--color-muted)]" weight="fill" aria-hidden="true" />,
+        label: 'unknown',
+        border: 'border-[var(--color-muted)]/20',
+        pill: 'bg-[var(--color-muted)]/10 text-[var(--color-muted)]',
+      }
+    }
   }
 }
 
@@ -122,10 +143,12 @@ export function SubagentBlock({ span }: SubagentBlockProps) {
   const [expanded, setExpanded] = useState(false)
   const isTerminal = span.status !== 'running'
 
-  const config = getStatusConfig(span.status, span.durationMs)
+  // W4-4: narrow to terminal type before accessing durationMs/finalResult.
+  const terminal = isTerminal ? (span as SubagentSpanTerminal) : null
+  const config = getStatusConfig(span.status, terminal?.durationMs)
   const label = deriveLabel(span)
   const stepCount = span.steps.length
-  const hasFinalResult = Boolean(span.finalResult)
+  const hasFinalResult = Boolean(terminal?.finalResult)
 
   function toggle() {
     setExpanded((e) => !e)
@@ -173,20 +196,20 @@ export function SubagentBlock({ span }: SubagentBlockProps) {
           {config.icon}
           <span>{config.label}</span>
           {/* W1-9: show interrupt reason as a muted inline label when available */}
-          {span.status === 'interrupted' && span.reason && (
+          {span.status === 'interrupted' && terminal?.reason && (
             <span
               className="text-[var(--color-muted)] font-sans"
-              title={`Interrupted: ${formatInterruptReason(span.reason)}`}
+              title={`Interrupted: ${formatInterruptReason(terminal.reason)}`}
             >
-              ({formatInterruptReason(span.reason)})
+              ({formatInterruptReason(terminal.reason)})
             </span>
           )}
         </span>
 
         {/* Duration — only shown in terminal state */}
-        {isTerminal && span.durationMs != null && (
+        {terminal?.durationMs != null && (
           <span className="text-[var(--color-muted)] shrink-0 tabular-nums">
-            {formatDuration(span.durationMs)}
+            {formatDuration(terminal.durationMs)}
           </span>
         )}
 
@@ -207,10 +230,18 @@ export function SubagentBlock({ span }: SubagentBlockProps) {
             <p className="text-[var(--color-muted)] text-[11px] py-1">No steps recorded.</p>
           )}
 
-          {/* Nested tool call badges — in arrival order */}
-          {span.steps.map((step) => (
-            <ToolCallBadge key={step.call_id} toolCall={step} />
-          ))}
+          {/* Steps — in arrival order. W4-5: switch on step.kind */}
+          {span.steps.map((step, idx) => {
+            if (step.kind === 'tool') {
+              return <ToolCallBadge key={step.tool.call_id} toolCall={step.tool} />
+            }
+            // kind === 'text' — reserved for future subagent-text streaming
+            return (
+              <p key={idx} className="text-[10px] text-[var(--color-secondary)] font-sans py-0.5">
+                {step.text}
+              </p>
+            )
+          })}
 
           {/* Final result section — visually distinguishable from tool calls */}
           {hasFinalResult && (
@@ -219,7 +250,7 @@ export function SubagentBlock({ span }: SubagentBlockProps) {
                 Final result
               </div>
               <pre className="text-[10px] text-[var(--color-secondary)] whitespace-pre-wrap break-all font-mono">
-                {span.finalResult}
+                {terminal?.finalResult}
               </pre>
             </div>
           )}
