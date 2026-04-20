@@ -67,11 +67,18 @@ test(
     const input = chatInput(page);
     await expect(input).toBeVisible({ timeout: 15_000 });
 
-    // Prompt engineered to elicit a spawn tool call. The agent must have spawn in its registry.
+    // Prompt engineered to elicit BOTH a spawn AND at least one nested tool call.
+    // The subagent's workspace-scoped filesystem tools may refuse paths — so we
+    // use `shell` with `echo` which always succeeds in any sandbox. This pattern
+    // matches subagent.spec.ts (c) and reliably produces ≥1 nested tool-call-badge
+    // inside the expanded SubagentBlock (otherwise the assertion at ~L116 fails).
     await input.fill(
-      'Use the spawn tool to delegate this sub-task to a subagent: list the top-level ' +
-      'directory entries in the workspace. Label the spawn task "list workspace files". ' +
-      'Do not do it yourself — explicitly call spawn.',
+      [
+        'Call the `spawn` tool exactly once, right now, with these arguments:',
+        '  label: "handoff-b test"',
+        '  task: "You are the subagent. Call the `shell` tool ONCE with cmd=\\"echo hello\\". Then reply with the single word \\"done\\". Do not use any other tool."',
+        'Do not reply in prose. Do not call any other tool. Call spawn now.',
+      ].join('\n'),
     );
     await input.press('Enter');
 

@@ -508,6 +508,7 @@ test(
     // Traces to: temporal-puzzling-melody.md W2-9
     const asstMsgs = page.locator('[data-message-id]:not(.flex-row-reverse)')
     await expect(asstMsgs).toHaveCount(1, { timeout: 15_000 })
+    const countAfterReplay = 1
 
     // ── Step 2: Send a new message and verify it appears BELOW the replayed transcript ──
     // Traces to: BDD Scenario 8 AS-1: new response streams in below replayed transcript.
