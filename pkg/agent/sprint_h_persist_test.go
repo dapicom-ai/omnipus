@@ -55,7 +55,7 @@ func TestSpawn_PersistsParentToolCallIDOnChildren(t *testing.T) {
 		Tool:             "fs.list",
 		Status:           "success",
 		DurationMS:       100,
-		ParentToolCallID: ts.parentSpawnCallID,
+		ParentToolCallID: session.ToolCallID(ts.parentSpawnCallID),
 	}
 	ts.appendToolCallTranscript(tc)
 
@@ -71,7 +71,7 @@ func TestSpawn_PersistsParentToolCallIDOnChildren(t *testing.T) {
 			if call.ID == "t1" {
 				found = true
 				// FR-H-001: ParentToolCallID must equal the parent spawn's ToolCall.ID.
-				assert.Equal(t, "c1", call.ParentToolCallID,
+				assert.Equal(t, session.ToolCallID("c1"), call.ParentToolCallID,
 					"ToolCall.ParentToolCallID must be persisted correctly (FR-H-001, FR-H-003)")
 				assert.Equal(t, "fs.list", call.Tool)
 			}
@@ -104,7 +104,7 @@ func TestSpawn_TopLevel_NoParentToolCallID(t *testing.T) {
 		ID:               "t2",
 		Tool:             "shell",
 		Status:           "success",
-		ParentToolCallID: ts.parentSpawnCallID, // empty
+		ParentToolCallID: session.ToolCallID(ts.parentSpawnCallID), // empty
 	}
 	ts.appendToolCallTranscript(tc)
 

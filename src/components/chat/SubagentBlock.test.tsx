@@ -6,13 +6,13 @@ import { render, screen, fireEvent, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import axe from 'axe-core'
 import { SubagentBlock } from './SubagentBlock'
-import type { SubagentSpan } from '@/store/chat'
+import type { SubagentSpan, SubagentSpanTerminal, SpanStep } from '@/store/chat'
 import type { ToolCall } from '@/lib/api'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function makeStep(overrides: Partial<ToolCall & { call_id: string }> = {}): ToolCall & { call_id: string } {
-  return {
+function makeStep(overrides: Partial<ToolCall & { call_id: string }> = {}): SpanStep {
+  const tool: ToolCall & { call_id: string } = {
     id: overrides.id ?? 'step_1',
     call_id: overrides.call_id ?? overrides.id ?? 'step_1',
     tool: overrides.tool ?? 'fs.list',
@@ -22,17 +22,26 @@ function makeStep(overrides: Partial<ToolCall & { call_id: string }> = {}): Tool
     duration_ms: overrides.duration_ms ?? 120,
     error: overrides.error,
   }
+  return { kind: 'tool', tool }
 }
 
-function makeSpan(overrides: Partial<SubagentSpan> = {}): SubagentSpan {
+function makeSpan(overrides?: { spanId?: string; parentCallId?: string; taskLabel?: string; status?: SubagentSpan['status']; steps?: SpanStep[] } & Partial<Omit<SubagentSpanTerminal, 'status' | 'steps'>>): SubagentSpan {
+  const status = overrides?.status ?? 'running'
+  const base = {
+    spanId: overrides?.spanId ?? 'span_c1',
+    parentCallId: overrides?.parentCallId ?? 'c1',
+    taskLabel: overrides?.taskLabel ?? 'audit go files',
+    steps: overrides?.steps ?? [],
+  }
+  if (status === 'running') {
+    return { ...base, status: 'running' }
+  }
   return {
-    spanId: overrides.spanId ?? 'span_c1',
-    parentCallId: overrides.parentCallId ?? 'c1',
-    taskLabel: overrides.taskLabel ?? 'audit go files',
-    status: overrides.status ?? 'running',
-    durationMs: overrides.durationMs,
-    steps: overrides.steps ?? [],
-    finalResult: overrides.finalResult,
+    ...base,
+    status: status as SubagentSpanTerminal['status'],
+    durationMs: (overrides as Partial<SubagentSpanTerminal>)?.durationMs ?? 0,
+    finalResult: (overrides as Partial<SubagentSpanTerminal>)?.finalResult,
+    reason: (overrides as Partial<SubagentSpanTerminal>)?.reason,
   }
 }
 

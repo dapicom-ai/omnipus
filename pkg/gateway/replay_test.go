@@ -93,7 +93,7 @@ func userEntry(content string) session.TranscriptEntry {
 // toolCall builds a ToolCall with the given fields.
 func toolCall(id, tool, status string, durationMS int64, params, result map[string]any) session.ToolCall {
 	return session.ToolCall{
-		ID:         id,
+		ID:         session.ToolCallID(id),
 		Tool:       tool,
 		Status:     status,
 		DurationMS: durationMS,
@@ -105,10 +105,10 @@ func toolCall(id, tool, status string, durationMS int64, params, result map[stri
 // nestedToolCall builds a ToolCall with ParentToolCallID set.
 func nestedToolCall(id, tool, parentID string) session.ToolCall {
 	return session.ToolCall{
-		ID:               id,
+		ID:               session.ToolCallID(id),
 		Tool:             tool,
 		Status:           "success",
-		ParentToolCallID: parentID,
+		ParentToolCallID: session.ToolCallID(parentID),
 	}
 }
 

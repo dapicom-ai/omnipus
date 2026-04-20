@@ -35,7 +35,7 @@ func TestToolCall_JSONRoundtrip_WithParentToolCallID(t *testing.T) {
 		assert.Equal(t, original.Status, roundTripped.Status)
 		assert.Equal(t, original.DurationMS, roundTripped.DurationMS)
 		// FR-H-001: ParentToolCallID must survive the round-trip.
-		assert.Equal(t, "c1", roundTripped.ParentToolCallID,
+		assert.Equal(t, ToolCallID("c1"), roundTripped.ParentToolCallID,
 			"ParentToolCallID must be preserved through JSON round-trip")
 	})
 

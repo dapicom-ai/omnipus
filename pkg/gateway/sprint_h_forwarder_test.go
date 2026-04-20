@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/dapicom-ai/omnipus/pkg/agent"
+	"github.com/dapicom-ai/omnipus/pkg/session"
 )
 
 // makeForwarderTestConn creates a wsConn wired to a buffered send channel for tests.
@@ -78,7 +79,7 @@ func TestSpawn_SubTurnStart_EmitsSubagentStart(t *testing.T) {
 		Payload: agent.SubTurnSpawnPayload{
 			AgentID:           "max",
 			SpanID:            "span_c1",
-			ParentSpawnCallID: "c1",
+			ParentSpawnCallID: session.ToolCallID("c1"),
 			TaskLabel:         "audit go files",
 			ChatID:            "chat-1",
 		},
@@ -104,13 +105,13 @@ func TestSpawn_SubTurnStart_EmitsSubagentStart(t *testing.T) {
 // Traces to: sprint-h-subagent-block-spec.md TDD row 6, BDD Scenarios 3 & 6.
 func TestSpawn_SubTurnEnd_EmitsSubagentEnd(t *testing.T) {
 	for _, tc := range []struct {
-		status string
+		status agent.SubTurnStatus
 		err    bool
 	}{
-		{status: "completed", err: false},
-		{status: "error", err: true},
+		{status: agent.SubTurnStatusSuccess, err: false},
+		{status: agent.SubTurnStatusError, err: true},
 	} {
-		t.Run("status="+tc.status, func(t *testing.T) {
+		t.Run("status="+string(tc.status), func(t *testing.T) {
 			bus := agent.NewEventBus()
 			h := makeMinimalHandler()
 			wc, ch := makeForwarderTestConn(64)
@@ -122,7 +123,7 @@ func TestSpawn_SubTurnEnd_EmitsSubagentEnd(t *testing.T) {
 					AgentID:           "max",
 					Status:            tc.status,
 					SpanID:            "span_c1",
-					ParentSpawnCallID: "c1",
+					ParentSpawnCallID: session.ToolCallID("c1"),
 					DurationMS:        4210,
 					ChatID:            "chat-1",
 				},
@@ -136,7 +137,7 @@ func TestSpawn_SubTurnEnd_EmitsSubagentEnd(t *testing.T) {
 			assert.Equal(t, "subagent_end", frame.Type)
 			assert.Equal(t, "span_c1", frame.SpanID)
 			assert.Equal(t, "c1", frame.ParentCallID)
-			assert.Equal(t, tc.status, frame.Status)
+			assert.Equal(t, string(tc.status), frame.Status)
 			assert.Equal(t, int64(4210), frame.DurationMs)
 		})
 	}
@@ -156,11 +157,11 @@ func TestToolExecStart_CarriesParentCallID(t *testing.T) {
 	bus.Emit(agent.Event{
 		Kind: agent.EventKindToolExecStart,
 		Payload: agent.ToolExecStartPayload{
-			ToolCallID:        "t1",
+			ToolCallID:        session.ToolCallID("t1"),
 			ChatID:            "chat-1",
 			Tool:              "fs.list",
 			Arguments:         map[string]any{"path": "/tmp"},
-			ParentSpawnCallID: "c1",
+			ParentSpawnCallID: session.ToolCallID("c1"),
 		},
 	})
 
@@ -187,7 +188,7 @@ func TestToolExecStart_NoParentCallID_TopLevel(t *testing.T) {
 	bus.Emit(agent.Event{
 		Kind: agent.EventKindToolExecStart,
 		Payload: agent.ToolExecStartPayload{
-			ToolCallID: "t2",
+			ToolCallID: session.ToolCallID("t2"),
 			ChatID:     "chat-1",
 			Tool:       "shell",
 			// ParentSpawnCallID is empty — top-level call.
@@ -225,7 +226,7 @@ func TestSpawn_OrphanSubTurn_EmitsInterruptedAfter5s(t *testing.T) {
 		Payload: agent.SubTurnSpawnPayload{
 			AgentID:           "max",
 			SpanID:            "span_c1",
-			ParentSpawnCallID: "c1",
+			ParentSpawnCallID: session.ToolCallID("c1"),
 			TaskLabel:         "some task",
 			ChatID:            "chat-1",
 		},
@@ -299,7 +300,7 @@ func TestSpawn_SubTurnEnd_AfterParentDone_CancelsWatchdog(t *testing.T) {
 		Payload: agent.SubTurnSpawnPayload{
 			AgentID:           "max",
 			SpanID:            "span_c1",
-			ParentSpawnCallID: "c1",
+			ParentSpawnCallID: session.ToolCallID("c1"),
 			TaskLabel:         "task",
 			ChatID:            "chat-1",
 		},
@@ -321,9 +322,9 @@ func TestSpawn_SubTurnEnd_AfterParentDone_CancelsWatchdog(t *testing.T) {
 		Kind: agent.EventKindSubTurnEnd,
 		Payload: agent.SubTurnEndPayload{
 			AgentID:           "max",
-			Status:            "completed",
+			Status:            agent.SubTurnStatusSuccess,
 			SpanID:            "span_c1",
-			ParentSpawnCallID: "c1",
+			ParentSpawnCallID: session.ToolCallID("c1"),
 			DurationMS:        100,
 			ChatID:            "chat-1",
 		},
@@ -340,7 +341,7 @@ func TestSpawn_SubTurnEnd_AfterParentDone_CancelsWatchdog(t *testing.T) {
 		frames = append(frames, drainFrame(t, ch))
 	}
 
-	// Must have subagent_start and subagent_end(completed) — no interrupted.
+	// Must have subagent_start and subagent_end(success) — no interrupted.
 	hasInterrupted := false
 	for _, f := range frames {
 		if f.Type == "subagent_end" && f.Status == "interrupted" {

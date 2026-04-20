@@ -415,8 +415,9 @@ describe('ChatStore_GroupsFramesBySpan', () => {
     msgs = useChatStore.getState().messages
     span = msgs[msgs.length - 1].spans?.[0]
     expect(span?.steps).toHaveLength(1)
-    expect(span?.steps[0].tool).toBe('fs.list')
-    expect(span?.steps[0].status).toBe('running')
+    const s0 = span?.steps[0]
+    expect(s0?.kind === 'tool' ? s0.tool.tool : undefined).toBe('fs.list')
+    expect(s0?.kind === 'tool' ? s0.tool.status : undefined).toBe('running')
 
     // tool_call_result
     act(() => {
@@ -433,8 +434,9 @@ describe('ChatStore_GroupsFramesBySpan', () => {
 
     msgs = useChatStore.getState().messages
     span = msgs[msgs.length - 1].spans?.[0]
-    expect(span?.steps[0].status).toBe('success')
-    expect(span?.steps[0].result).toBe('file.go')
+    const s0after = span?.steps[0]
+    expect(s0after?.kind === 'tool' ? s0after.tool.status : undefined).toBe('success')
+    expect(s0after?.kind === 'tool' ? s0after.tool.result : undefined).toBe('file.go')
 
     // subagent_end
     act(() => {
@@ -450,8 +452,10 @@ describe('ChatStore_GroupsFramesBySpan', () => {
     msgs = useChatStore.getState().messages
     span = msgs[msgs.length - 1].spans?.[0]
     expect(span?.status).toBe('success')
-    expect(span?.durationMs).toBe(4210)
-    expect(span?.finalResult).toBe('Found 1 Go file')
+    // Narrow to terminal span to access durationMs and finalResult.
+    const terminalSpan = span?.status !== 'running' ? span : undefined
+    expect((terminalSpan as import('@/store/chat').SubagentSpanTerminal | undefined)?.durationMs).toBe(4210)
+    expect((terminalSpan as import('@/store/chat').SubagentSpanTerminal | undefined)?.finalResult).toBe('Found 1 Go file')
   })
 
   it('out-of-order: tool_call_start arrives before subagent_start — buffered then drained', () => {
@@ -487,7 +491,9 @@ describe('ChatStore_GroupsFramesBySpan', () => {
     expect(span).toBeDefined()
     expect(span?.spanId).toBe('span_c2')
     expect(span?.steps).toHaveLength(1)
-    expect(span?.steps[0].tool).toBe('shell')
+    const step0 = span?.steps[0]
+    expect(step0?.kind).toBe('tool')
+    expect(step0?.kind === 'tool' ? step0.tool.tool : undefined).toBe('shell')
   })
 
   it('step count increments +1 per tool_call_start, not per result (FR-H-010)', () => {
@@ -990,8 +996,10 @@ describe('ChatStore_sibling_spans_crosswire (W2-10)', () => {
 
     // Span A must have exactly 2 steps (both tool_call_start frames targeted "cA")
     expect(spanA!.steps).toHaveLength(2)
-    expect(spanA!.steps[0].call_id).toBe('step_a_1')
-    expect(spanA!.steps[1].call_id).toBe('step_a_2')
+    const stepA0 = spanA!.steps[0]
+    const stepA1 = spanA!.steps[1]
+    expect(stepA0.kind === 'tool' ? stepA0.tool.call_id : undefined).toBe('step_a_1')
+    expect(stepA1.kind === 'tool' ? stepA1.tool.call_id : undefined).toBe('step_a_2')
 
     // Span B must have exactly 0 steps (no frames targeted "cB")
     expect(spanB!.steps).toHaveLength(0)

@@ -3,7 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { act } from 'react'
 import { SubagentBlock } from './SubagentBlock'
 import { useChatStore } from '@/store/chat'
-import type { SubagentSpan } from '@/store/chat'
+import type { SubagentSpan, SubagentSpanTerminal } from '@/store/chat'
 
 // W2-4: ChatScreen replay-render tests — TDD rows I-20 and I-21.
 //
@@ -54,7 +54,7 @@ describe('ChatScreen replay-render — TDD row I-20 (tool-call-badge) (W2-4)', (
       status: 'success',
       durationMs: 1234,
       steps: [
-        {
+        { kind: 'tool', tool: {
           id: 'tc_web_1',
           call_id: 'tc_web_1',
           tool: 'web_search',
@@ -62,7 +62,7 @@ describe('ChatScreen replay-render — TDD row I-20 (tool-call-badge) (W2-4)', (
           result: { items: ['result1'] },
           status: 'success',
           duration_ms: 500,
-        },
+        }},
       ],
       finalResult: 'Found 1 result',
     }
@@ -97,7 +97,7 @@ describe('ChatScreen replay-render — TDD row I-20 (tool-call-badge) (W2-4)', (
       status: 'success',
       durationMs: 200,
       steps: [
-        {
+        { kind: 'tool', tool: {
           id: 'tc_exec_1',
           call_id: 'tc_exec_1',
           tool: 'exec',
@@ -105,7 +105,7 @@ describe('ChatScreen replay-render — TDD row I-20 (tool-call-badge) (W2-4)', (
           result: { stdout: 'file.txt' },
           status: 'success',
           duration_ms: 200,
-        },
+        }},
       ],
     }
 
@@ -189,7 +189,7 @@ describe('ChatScreen replay-render — TDD row I-21 (subagent-collapsed/expanded
       status: 'success',
       durationMs: 5000,
       steps: [
-        {
+        { kind: 'tool', tool: {
           id: 'tc_nested_1',
           call_id: 'tc_nested_1',
           tool: 'fs.read',
@@ -197,8 +197,8 @@ describe('ChatScreen replay-render — TDD row I-21 (subagent-collapsed/expanded
           result: { content: '127.0.0.1 localhost' },
           status: 'success',
           duration_ms: 100,
-        },
-        {
+        }},
+        { kind: 'tool', tool: {
           id: 'tc_nested_2',
           call_id: 'tc_nested_2',
           tool: 'web_search',
@@ -206,7 +206,7 @@ describe('ChatScreen replay-render — TDD row I-21 (subagent-collapsed/expanded
           result: { items: [] },
           status: 'success',
           duration_ms: 200,
-        },
+        }},
       ],
       finalResult: 'Analysis complete',
     }
@@ -303,10 +303,13 @@ describe('ChatScreen replay-render — TDD row I-21 (subagent-collapsed/expanded
     const span = assistantMsg!.spans![0]
     expect(span.spanId).toBe('span_replay_1')
     expect(span.status).toBe('success')
-    expect(span.durationMs).toBe(1000)
-    expect(span.finalResult).toBe('Listed files')
+    // Narrow to terminal to access durationMs and finalResult.
+    const ts = span as SubagentSpanTerminal
+    expect(ts.durationMs).toBe(1000)
+    expect(ts.finalResult).toBe('Listed files')
     expect(span.steps).toHaveLength(1)
-    expect(span.steps[0].tool).toBe('fs.list')
-    expect(span.steps[0].status).toBe('success')
+    const step0 = span.steps[0]
+    expect(step0.kind === 'tool' ? step0.tool.tool : undefined).toBe('fs.list')
+    expect(step0.kind === 'tool' ? step0.tool.status : undefined).toBe('success')
   })
 })
