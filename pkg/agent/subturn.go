@@ -352,9 +352,20 @@ func spawnSubTurn(
 	// child tool calls back to their originating spawn call on the wire.
 	parentSpawnCallID := spawnToolCallIDFromContext(ctx)
 
+	// W1-12: guard against degenerate input (empty parentSpawnCallID). When the
+	// spawn tool call ID was not injected into context, "span_" + "" == "span_"
+	// which collides across sub-turns and corrupts the SubagentBlock. We still run
+	// the sub-turn, but emit no subagent_start / subagent_end WS frames so the
+	// tool call renders as a flat ToolCallBadge instead of an unrooted span.
+	emitSpanEvents := parentSpawnCallID != ""
+	if !emitSpanEvents {
+		slog.Warn("subturn: empty parent_spawn_call_id — skipping span lifecycle emission",
+			"child_id", childID,
+			"parent_turn_id", parentTS.turnID,
+		)
+	}
+
 	// Compute span_id deterministically (FR-H-004): "span_" + parentSpawnCallID.
-	// Empty parentSpawnCallID produces "span_" which is fine for root turns that shouldn't
-	// normally reach spawnSubTurn, but we guard below.
 	spanID := "span_" + parentSpawnCallID
 
 	// subTurnStartedAt records the wall-clock start for duration_ms in SubTurnEndPayload.
@@ -493,23 +504,26 @@ func spawnSubTurn(
 			taskLabel = cfg.SystemPrompt
 		}
 	}
-	slog.Debug("subagent_start",
-		"span_id", spanID,
-		"parent_call_id", parentSpawnCallID,
-		"agent_id", childTS.agentID,
-	)
-	al.emitEvent(EventKindSubTurnSpawn,
-		childTS.eventMeta("spawnSubTurn", "subturn.spawn"),
-		SubTurnSpawnPayload{
-			AgentID:           childTS.agentID,
-			Label:             childID,
-			ParentTurnID:      parentTS.turnID,
-			SpanID:            spanID,
-			ParentSpawnCallID: parentSpawnCallID,
-			TaskLabel:         taskLabel,
-			ChatID:            parentTS.chatID,
-		},
-	)
+	// W1-12: only emit span lifecycle events when parentSpawnCallID is non-empty.
+	if emitSpanEvents {
+		slog.Debug("subagent_start",
+			"span_id", spanID,
+			"parent_call_id", parentSpawnCallID,
+			"agent_id", childTS.agentID,
+		)
+		al.emitEvent(EventKindSubTurnSpawn,
+			childTS.eventMeta("spawnSubTurn", "subturn.spawn"),
+			SubTurnSpawnPayload{
+				AgentID:           childTS.agentID,
+				Label:             childID,
+				ParentTurnID:      parentTS.turnID,
+				SpanID:            spanID,
+				ParentSpawnCallID: parentSpawnCallID,
+				TaskLabel:         taskLabel,
+				ChatID:            parentTS.chatID,
+			},
+		)
+	}
 
 	// 7. Defer cleanup: deliver result (for async), emit End event, and recover from panics
 	defer func() {
@@ -529,27 +543,30 @@ func spawnSubTurn(
 			deliverSubTurnResult(al, parentTS, childID, result)
 		}
 
-		status := "completed"
-		if err != nil {
-			status = "error"
+		// W1-12: only emit span end event when parentSpawnCallID was non-empty.
+		if emitSpanEvents {
+			status := "completed"
+			if err != nil {
+				status = "error"
+			}
+			subTurnDurationMS := time.Since(subTurnStartedAt).Milliseconds()
+			slog.Debug("subagent_end",
+				"span_id", spanID,
+				"parent_call_id", parentSpawnCallID,
+				"agent_id", childTS.agentID,
+			)
+			al.emitEvent(EventKindSubTurnEnd,
+				childTS.eventMeta("spawnSubTurn", "subturn.end"),
+				SubTurnEndPayload{
+					AgentID:           childTS.agentID,
+					Status:            status,
+					SpanID:            spanID,
+					ParentSpawnCallID: parentSpawnCallID,
+					DurationMS:        subTurnDurationMS,
+					ChatID:            parentTS.chatID,
+				},
+			)
 		}
-		subTurnDurationMS := time.Since(subTurnStartedAt).Milliseconds()
-		slog.Debug("subagent_end",
-			"span_id", spanID,
-			"parent_call_id", parentSpawnCallID,
-			"agent_id", childTS.agentID,
-		)
-		al.emitEvent(EventKindSubTurnEnd,
-			childTS.eventMeta("spawnSubTurn", "subturn.end"),
-			SubTurnEndPayload{
-				AgentID:           childTS.agentID,
-				Status:            status,
-				SpanID:            spanID,
-				ParentSpawnCallID: parentSpawnCallID,
-				DurationMS:        subTurnDurationMS,
-				ChatID:            parentTS.chatID,
-			},
-		)
 	}()
 
 	// 8. Execute sub-turn via the real agent loop.
