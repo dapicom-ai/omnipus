@@ -384,8 +384,16 @@ func truncateResult(sessionID string, tc session.ToolCall) any {
 	}
 	encoded, err := json.Marshal(tc.Result)
 	if err != nil {
-		// Marshal failure: pass the raw map through; the WS encoder will re-marshal.
-		return tc.Result
+		// Marshal failure: return a sentinel map so the downstream WS encoder always
+		// succeeds. Passing the raw value through would cause an identical failure at
+		// the next marshal site, silently corrupting the replay frame.
+		slog.Error("replay: tool_call_result marshal failed — emitting sentinel",
+			"event", "replay_result_marshal_error",
+			"session_id", sessionID,
+			"tool_call_id", tc.ID,
+			"error", err,
+		)
+		return map[string]any{"_marshal_error": err.Error()}
 	}
 	if len(encoded) <= replayMaxResultBytes {
 		return tc.Result
