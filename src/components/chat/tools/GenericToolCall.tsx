@@ -7,9 +7,11 @@ import {
   Prohibit,
   CaretDown,
   CaretUp,
+  Warning,
 } from '@phosphor-icons/react'
 import { cn } from '@/lib/utils'
 import type { MessagePartStatus } from '@assistant-ui/react'
+import type { TruncatedResult, MarshalErrorResult } from '@/lib/ws'
 
 interface GenericToolCallProps {
   toolName: string
@@ -38,6 +40,31 @@ function safeJson(value: unknown): string {
   }
 }
 
+/** Returns true when the result is the truncation sentinel from replay.go:truncateResult. */
+function isTruncatedResult(value: unknown): value is TruncatedResult {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as Record<string, unknown>)['_truncated'] === true
+  )
+}
+
+/** Returns true when the result is the marshal-error sentinel from replay.go. */
+function isMarshalErrorResult(value: unknown): value is MarshalErrorResult {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as Record<string, unknown>)['_marshal_error'] === 'string'
+  )
+}
+
+/** Format bytes into a human-readable size string (e.g. "2.3 MiB"). */
+function humanSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`
+}
+
 export function GenericToolCall({
   toolName,
   args,
@@ -63,6 +90,11 @@ export function GenericToolCall({
     : { icon: <CheckCircle size={12} weight="fill" className="text-[var(--color-success)]" />, label: formatDuration(durationMs) || 'Done', border: 'border-[var(--color-success)]/20' }
 
   const hasDetail = !isRunning && (args !== undefined || result !== undefined || error)
+
+  // Resolve result rendering: plain, truncated, or marshal-error sentinel
+  const truncated = isTruncatedResult(result) ? result : null
+  const marshalErr = isMarshalErrorResult(result) ? result : null
+  const plainResult = !truncated && !marshalErr ? result : undefined
 
   return (
     <div
@@ -106,14 +138,50 @@ export function GenericToolCall({
               </pre>
             </div>
           )}
+
+          {/* Result section — three rendering paths */}
           {result !== undefined && (
             <div>
               <div className="text-[var(--color-muted)] mb-1 font-sans">Result</div>
-              <pre className="text-[10px] text-[var(--color-secondary)] whitespace-pre-wrap break-all max-h-48 overflow-auto">
-                {safeJson(result)}
-              </pre>
+
+              {/* Marshal-error sentinel: result could not be serialized */}
+              {marshalErr && (
+                <div
+                  data-testid="result-marshal-error"
+                  className="flex items-start gap-2 rounded border border-[var(--color-error)]/40 bg-[var(--color-error)]/10 px-2 py-1.5 mb-1 font-sans text-[10px] text-[var(--color-error)]"
+                >
+                  <XCircle size={12} weight="fill" className="shrink-0 mt-0.5" />
+                  <span>Result serialization failed: {marshalErr._marshal_error}</span>
+                </div>
+              )}
+
+              {/* Truncated sentinel: result exceeded 10 KiB */}
+              {truncated && (
+                <>
+                  <div
+                    data-testid="result-truncated-banner"
+                    className="flex items-start gap-2 rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1.5 mb-1 font-sans text-[10px] text-amber-400"
+                  >
+                    <Warning size={12} weight="fill" className="shrink-0 mt-0.5" />
+                    <span>
+                      Truncated — showing first 10 KiB of {humanSize(truncated.original_size_bytes)}
+                    </span>
+                  </div>
+                  <pre className="text-[10px] text-[var(--color-secondary)] whitespace-pre-wrap break-all max-h-48 overflow-auto">
+                    {truncated.preview}
+                  </pre>
+                </>
+              )}
+
+              {/* Plain result: normal rendering */}
+              {plainResult !== undefined && (
+                <pre className="text-[10px] text-[var(--color-secondary)] whitespace-pre-wrap break-all max-h-48 overflow-auto">
+                  {safeJson(plainResult)}
+                </pre>
+              )}
             </div>
           )}
+
           {error && (
             <div className="text-[var(--color-error)] text-[10px] font-sans">{error}</div>
           )}
