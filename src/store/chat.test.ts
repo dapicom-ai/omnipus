@@ -644,3 +644,218 @@ describe('ChatStore regression: flat tool call without parent_call_id', () => {
     expect(lastMsg.spans ?? []).toHaveLength(0)
   })
 })
+
+// ── Sprint I: replay parity tests ─────────────────────────────────────────────
+
+// TDD row 18: ChatStore_ReplaySequence_MatchesLiveSequence
+// Traces to: sprint-i-historical-replay-fidelity-spec.md FR-I-010
+// Hard Constraint: "one reducer path" — live and replay sequences must produce
+// identical ChatMessage shapes (excluding cursor/isStreaming flags).
+describe('ChatStore_ReplaySequence_MatchesLiveSequence', () => {
+  it('live token sequence and replay_message produce equivalent content, tool-call count, and ordering', () => {
+    // Full reset including toolCallOrder (beforeEach only resets a subset of state)
+    act(() => { useChatStore.getState().resetSession() })
+
+    // ── Live sequence ──────────────────────────────────────────────────────────
+    // Emit token frames producing text "A", then a tool call, then text "B", then done.
+    act(() => {
+      // Seed an assistant placeholder (sendMessage path does this; replicate here)
+      useChatStore.getState().handleFrame({ type: 'token', content: 'A' })
+    })
+    act(() => {
+      // tool_call_start (no parent_call_id — flat call)
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'tc_live_1',
+        tool: 'shell',
+        params: { cmd: 'echo hi' },
+      })
+    })
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_result',
+        call_id: 'tc_live_1',
+        tool: 'shell',
+        result: { stdout: 'hi\n' },
+        status: 'success',
+        duration_ms: 42,
+      })
+    })
+    act(() => {
+      useChatStore.getState().handleFrame({ type: 'token', content: 'B' })
+    })
+    act(() => {
+      useChatStore.getState().handleFrame({ type: 'done' })
+    })
+
+    const liveState = useChatStore.getState()
+    // Extract the single assistant message
+    const liveAssistant = liveState.messages.find((m) => m.role === 'assistant')
+    expect(liveAssistant).toBeDefined()
+    const liveContent = liveAssistant!.content           // "AB"
+    const liveToolCallOrder = liveState.toolCallOrder    // ['tc_live_1']
+    const liveToolCall = liveState.toolCalls['tc_live_1']
+    expect(liveContent).toBe('AB')
+    expect(liveToolCallOrder).toHaveLength(1)
+    expect(liveToolCall.tool).toBe('shell')
+    expect(liveToolCall.status).toBe('success')
+    // Live sequence: streaming flags settled
+    expect(liveAssistant!.isStreaming).toBe(false)
+    expect(liveAssistant!.streamCursor).toBe(false)
+
+    // ── Reset ─────────────────────────────────────────────────────────────────
+    act(() => {
+      useChatStore.getState().resetSession()
+    })
+
+    // ── Replay sequence ────────────────────────────────────────────────────────
+    // replay_message for the completed assistant text, then tool_call_start/result, then done.
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'replay_message',
+        role: 'assistant',
+        content: 'AB',
+      })
+    })
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'tc_replay_1',
+        tool: 'shell',
+        params: { cmd: 'echo hi' },
+      })
+    })
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_result',
+        call_id: 'tc_replay_1',
+        tool: 'shell',
+        result: { stdout: 'hi\n' },
+        status: 'success',
+        duration_ms: 42,
+      })
+    })
+    act(() => {
+      useChatStore.getState().handleFrame({ type: 'done' })
+    })
+
+    const replayState = useChatStore.getState()
+    const replayAssistant = replayState.messages.find((m) => m.role === 'assistant')
+    expect(replayAssistant).toBeDefined()
+
+    // ── Assert shape parity ────────────────────────────────────────────────────
+    // Content must match
+    expect(replayAssistant!.content).toBe(liveContent)
+
+    // Tool-call count must match
+    expect(replayState.toolCallOrder).toHaveLength(liveToolCallOrder.length)
+
+    // Tool-call properties must match
+    const replayToolCall = replayState.toolCalls['tc_replay_1']
+    expect(replayToolCall.tool).toBe(liveToolCall.tool)
+    expect(replayToolCall.status).toBe(liveToolCall.status)
+
+    // Cursor/streaming flags: replay_message arrives as a completed message (no cursor)
+    // Live message: also settled after done. Both must be false.
+    expect(replayAssistant!.isStreaming).toBe(false)
+    expect(replayAssistant!.streamCursor).toBe(false)
+    // Live and replay both settle identically after done
+    expect(replayAssistant!.isStreaming).toBe(liveAssistant!.isStreaming)
+    expect(replayAssistant!.streamCursor).toBe(liveAssistant!.streamCursor)
+  })
+})
+
+// TDD row 19: ChatStore_ReplayMessageThenToolCall_InterleavesCorrectly
+// Traces to: sprint-i-historical-replay-fidelity-spec.md FR-I-010
+// Verifies that textAtToolCallStart is captured correctly when a tool_call_start
+// follows a replay_message (completed, non-streaming assistant message).
+describe('ChatStore_ReplayMessageThenToolCall_InterleavesCorrectly', () => {
+  it('textAtToolCallStart snapshot equals the replay_message content when tool_call_start follows', () => {
+    act(() => { useChatStore.getState().resetSession() })
+    // Simulate: replay_message with content "Hello from replay" arrives, then tool_call_start
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'replay_message',
+        role: 'assistant',
+        content: 'Hello from replay',
+      })
+    })
+
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'tc_interleave_1',
+        tool: 'fs.read',
+        params: { path: '/etc/hosts' },
+      })
+    })
+
+    const state = useChatStore.getState()
+
+    // The tool call must be registered
+    expect(state.toolCalls['tc_interleave_1']).toBeDefined()
+    expect(state.toolCalls['tc_interleave_1'].tool).toBe('fs.read')
+
+    // textAtToolCallStart must capture the replay_message content at the
+    // point the tool call started — this is the visual text position for interleaving.
+    const snapshot = state.textAtToolCallStart['tc_interleave_1']
+    expect(snapshot).toBe('Hello from replay')
+  })
+
+  it('textAtToolCallStart is empty string when tool_call_start arrives before any assistant message', () => {
+    act(() => { useChatStore.getState().resetSession() })
+    // During replay, tool_call_start may arrive after an entry with no text content.
+    // The snapshot should be '' not undefined.
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'tc_no_text',
+        tool: 'web_search',
+        params: { query: 'test' },
+      })
+    })
+
+    const state = useChatStore.getState()
+    const snapshot = state.textAtToolCallStart['tc_no_text']
+    expect(snapshot).toBe('')
+  })
+})
+
+// TDD row 18 supplement: isReplaying flag transitions
+describe('ChatStore_isReplaying_flag', () => {
+  it('starts false, can be set true via setReplaying, cleared to false on done', () => {
+    // Initial state
+    expect(useChatStore.getState().isReplaying).toBe(false)
+
+    // Simulate attach_session triggering setReplaying(true)
+    act(() => {
+      useChatStore.getState().setReplaying(true)
+    })
+    expect(useChatStore.getState().isReplaying).toBe(true)
+
+    // done frame clears it
+    act(() => {
+      useChatStore.getState().handleFrame({ type: 'done' })
+    })
+    expect(useChatStore.getState().isReplaying).toBe(false)
+  })
+
+  it('done frame while not replaying is harmless — isReplaying stays false', () => {
+    expect(useChatStore.getState().isReplaying).toBe(false)
+    act(() => {
+      useChatStore.getState().handleFrame({ type: 'done' })
+    })
+    expect(useChatStore.getState().isReplaying).toBe(false)
+  })
+
+  it('resetSession clears isReplaying', () => {
+    act(() => {
+      useChatStore.getState().setReplaying(true)
+    })
+    expect(useChatStore.getState().isReplaying).toBe(true)
+    act(() => {
+      useChatStore.getState().resetSession()
+    })
+    expect(useChatStore.getState().isReplaying).toBe(false)
+  })
+})

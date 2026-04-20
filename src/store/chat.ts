@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { generateId } from '@/lib/constants'
 import { useUiStore } from '@/store/ui'
 import { useConnectionStore } from '@/store/connection'
-import { useSessionStore, registerChatResetSession } from '@/store/session'
+import { useSessionStore, registerChatResetSession, registerChatSetReplaying } from '@/store/session'
 import { queryClient } from '@/lib/queryClient'
 import type { Message, ToolCall } from '@/lib/api'
 import type { WsReceiveFrame, WsExecApprovalRequestFrame, WsReplayMessageFrame, WsRateLimitFrame, WsSubagentStartFrame, WsSubagentEndFrame } from '@/lib/ws'
@@ -60,6 +60,9 @@ interface ChatStore {
   // Messages
   messages: ChatMessage[]
   isStreaming: boolean
+  // FR-I-014: true from attach_session until first done frame — disables send input during replay
+  isReplaying: boolean
+  setReplaying: (value: boolean) => void
   setMessages: (messages: Message[]) => void
   appendMessage: (message: ChatMessage) => void
   updateLastAssistantMessage: (content: string, done?: boolean) => void
@@ -128,12 +131,15 @@ const CLEAN_SESSION_STATE = {
   sessionTokens: 0,
   sessionCost: 0,
   isStreaming: false,
+  isReplaying: false,
   rateLimitEvent: null as RateLimitEventData | null,
 } as const
 
 export const useChatStore = create<ChatStore>((set, get) => ({
   messages: [],
   isStreaming: false,
+  isReplaying: false,
+  setReplaying: (value) => set({ isReplaying: value }),
   setMessages: (messages) =>
     set({ ...CLEAN_SESSION_STATE, messages }),
 
@@ -514,12 +520,17 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
       case 'done':
         store.updateLastAssistantMessage('', true)
-        if (frame.stats?.tokens != null || frame.stats?.cost != null) {
-          set((state) => ({
-            sessionTokens: state.sessionTokens + (frame.stats?.tokens ?? 0),
-            sessionCost: state.sessionCost + (frame.stats?.cost ?? 0),
-          }))
-        }
+        // FR-I-014: first done after attach_session closes the replay window.
+        // isReplaying is always set false on done — harmless for live turns (already false).
+        set((state) => {
+          const statsUpdate = (frame.stats?.tokens != null || frame.stats?.cost != null)
+            ? {
+                sessionTokens: state.sessionTokens + (frame.stats?.tokens ?? 0),
+                sessionCost: state.sessionCost + (frame.stats?.cost ?? 0),
+              }
+            : {}
+          return { isReplaying: false, ...statsUpdate }
+        })
         break
 
       case 'error':
@@ -755,6 +766,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 }))
 
-// Register resetSession with the session store to break the circular import.
-// This runs after useChatStore is fully initialized.
+// Register resetSession and setReplaying with the session store to break the circular import.
+// Both run after useChatStore is fully initialized.
 registerChatResetSession(() => useChatStore.getState().resetSession())
+registerChatSetReplaying((value) => useChatStore.getState().setReplaying(value))

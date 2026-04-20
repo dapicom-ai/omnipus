@@ -360,8 +360,9 @@ const HELP_TEXT = `**Omnipus commands:**
 
 // ── Composer ──────────────────────────────────────────────────────────────────
 
-function composerPlaceholder(isConnected: boolean, isStreaming: boolean, agentName: string): string {
+function composerPlaceholder(isConnected: boolean, isStreaming: boolean, isReplaying: boolean, agentName: string): string {
   if (!isConnected) return 'Connecting to gateway...'
+  if (isReplaying) return 'Loading session history...'
   if (isStreaming) return 'Waiting for response...'
   return `Message ${agentName}…`
 }
@@ -382,8 +383,11 @@ function FilePreviewThumbnail({ file }: { file: File }) {
   return <img src={url} className="w-8 h-8 rounded object-cover" alt={file.name} />
 }
 
-function OmnipusComposer() {
+// Exported for unit testing (TDD row 22).
+export function OmnipusComposer() {
   const isStreaming = useChatStore((s) => s.isStreaming)
+  // FR-I-014: disable send while replay frames are still arriving
+  const isReplaying = useChatStore((s) => s.isReplaying)
   const isConnected = useConnectionStore((s) => s.isConnected)
   const cancelStream = useChatStore((s) => s.cancelStream)
   const setMessages = useChatStore((s) => s.setMessages)
@@ -426,7 +430,7 @@ function OmnipusComposer() {
   const hasWarnedLargeInput = useRef(false)
 
   // Show slash dropdown when input starts with "/"
-  const shouldShowSlash = inputValue.startsWith('/') && !isStreaming && isConnected
+  const shouldShowSlash = inputValue.startsWith('/') && !isStreaming && !isReplaying && isConnected
 
   function closeSlash() {
     setSlashOpen(false)
@@ -619,7 +623,7 @@ function OmnipusComposer() {
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          disabled={!isConnected || isStreaming || isUploading}
+          disabled={!isConnected || isStreaming || isUploading || isReplaying}
           className="shrink-0 w-11 h-11 rounded-xl flex items-center justify-center text-[var(--color-muted)] hover:text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           aria-label="Attach file"
           title="Attach file"
@@ -639,14 +643,14 @@ function OmnipusComposer() {
         }}
       >
         <ComposerPrimitive.Input
-          placeholder={composerPlaceholder(isConnected, isStreaming || isUploading, activeAgentName)}
-          disabled={!isConnected || isStreaming || isUploading}
+          placeholder={composerPlaceholder(isConnected, isStreaming || isUploading, isReplaying, activeAgentName)}
+          disabled={!isConnected || isStreaming || isUploading || isReplaying}
           rows={1}
           className={cn(
             'flex-1 resize-none rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 py-2.5 text-sm text-[var(--color-secondary)] outline-none',
             'placeholder:text-[var(--color-muted)] min-h-[24px] max-h-[200px] leading-6 overflow-hidden',
             'focus:border-[var(--color-accent)]/50 focus:ring-1 focus:ring-[var(--color-accent)]/20',
-            (!isConnected || isStreaming || isUploading) && 'opacity-60 cursor-not-allowed',
+            (!isConnected || isStreaming || isUploading || isReplaying) && 'opacity-60 cursor-not-allowed',
           )}
           aria-label="Message input"
           onChange={(e) => {
@@ -706,15 +710,18 @@ function OmnipusComposer() {
             <Stop size={15} weight="fill" />
           </button>
         ) : (
+          // FR-I-014: also disabled during replay (isReplaying) so user cannot send out-of-order
           <ComposerPrimitive.Send
-            disabled={!isConnected}
+            disabled={!isConnected || isReplaying}
+            data-testid="send-button"
             className={cn(
               'shrink-0 w-11 h-11 rounded-xl flex items-center justify-center transition-colors',
-              isConnected
+              isConnected && !isReplaying
                 ? 'bg-[var(--color-accent)] text-[var(--color-primary)] hover:bg-[var(--color-accent-hover)] disabled:bg-[var(--color-surface-3)] disabled:text-[var(--color-muted)] disabled:cursor-not-allowed'
                 : 'bg-[var(--color-surface-3)] text-[var(--color-muted)] cursor-not-allowed',
             )}
             aria-label="Send message"
+            aria-disabled={isReplaying || undefined}
           >
             <PaperPlaneRight size={15} weight="bold" />
           </ComposerPrimitive.Send>

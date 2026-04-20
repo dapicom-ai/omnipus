@@ -26,13 +26,19 @@ interface SessionStore {
 }
 
 // Breaks the chat.ts ↔ session.ts circular import: chat.ts imports this module,
-// then registers resetSession so session.ts never imports chat.ts directly.
+// then registers resetSession and setReplaying so session.ts never imports chat.ts directly.
 // This avoids any ES module circular-init ordering issues entirely.
 let _chatResetSession: (() => void) | null = null
+let _chatSetReplaying: ((value: boolean) => void) | null = null
 
 /** Called once by chat.ts after it creates useChatStore. */
 export function registerChatResetSession(fn: () => void): void {
   _chatResetSession = fn
+}
+
+/** Called once by chat.ts after it creates useChatStore (FR-I-014). */
+export function registerChatSetReplaying(fn: (value: boolean) => void): void {
+  _chatSetReplaying = fn
 }
 
 function resetChatSession(): void {
@@ -40,6 +46,14 @@ function resetChatSession(): void {
     _chatResetSession()
   } else {
     console.warn('[session] resetChatSession called before chat store registered — session state may be stale')
+  }
+}
+
+function setChatReplaying(value: boolean): void {
+  if (_chatSetReplaying) {
+    _chatSetReplaying(value)
+  } else {
+    console.warn('[session] setChatReplaying called before chat store registered — isReplaying not set')
   }
 }
 
@@ -81,6 +95,9 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         useConnectionStore.getState().setConnectionError(
           'Could not attach to session — connection dropped. Please reconnect and try again.'
         )
+      } else {
+        // FR-I-014: replay is now in flight — disable send until done arrives
+        setChatReplaying(true)
       }
     } else {
       console.warn('[session] attachToSession: no connection — attach_session not sent')
