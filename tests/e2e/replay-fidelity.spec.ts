@@ -26,7 +26,7 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
-import { expect, type APIRequestContext, type Page } from '@playwright/test'
+import { expect, type Page } from '@playwright/test'
 import { test } from './fixtures/console-errors'
 import { expectA11yClean } from './fixtures/a11y'
 import { chatInput, sendButton } from './fixtures/selectors'
@@ -86,37 +86,7 @@ function seedTranscript(sessionId: string, entries: TranscriptEntry[]): void {
 }
 
 /**
- * Create a new session via the REST API and return its ID.
- * Uses the storageState auth token stored in sessionStorage (mirrored to localStorage
- * by global-setup.ts for playwright's use).
- */
-async function createSession(request: APIRequestContext): Promise<string> {
-  const authToken = await getStoredAuthToken()
-
-  const resp = await request.post(`${BASE_URL}/api/v1/sessions`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-    },
-    data: { agent_id: 'main', type: 'chat' },
-  })
-
-  if (!resp.ok()) {
-    const body = await resp.text()
-    throw new Error(
-      `POST /api/v1/sessions failed: ${resp.status()} ${resp.statusText()} — ${body}`,
-    )
-  }
-
-  const meta = (await resp.json()) as { id: string }
-  if (!meta.id) {
-    throw new Error('POST /api/v1/sessions returned no id')
-  }
-  return meta.id
-}
-
-/**
- * Read the auth token from the auth state file so we can pass it in API requests.
+ * Read the auth token from the auth state file.
  * The global-setup copies it from sessionStorage to localStorage and saves
  * storageState — we extract it from the auth file here.
  */
@@ -147,6 +117,77 @@ function getStoredAuthToken(): string | null {
     // Auth file may not exist in first run
   }
   return null
+}
+
+/**
+ * Extract the __Host-csrf cookie value from the browser context.
+ * The gateway uses double-submit cookie CSRF: the cookie value must also be
+ * sent as the X-CSRF-Token request header on state-mutating endpoints.
+ * Returns null if the cookie is not present (pre-auth or first load).
+ */
+async function getCsrfToken(page: Page): Promise<string | null> {
+  const cookies = await page.context().cookies()
+  const csrfCookie = cookies.find((c) => c.name === '__Host-csrf')
+  return csrfCookie?.value ?? null
+}
+
+/**
+ * Build headers for a REST API request: Authorization + CSRF token.
+ * Both are required for state-mutating endpoints.
+ */
+async function apiHeaders(
+  page: Page,
+): Promise<Record<string, string>> {
+  const authToken = getStoredAuthToken()
+  const csrfToken = await getCsrfToken(page)
+  return {
+    'Content-Type': 'application/json',
+    ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
+  }
+}
+
+/**
+ * Create a new session via the REST API and return its ID.
+ * Uses page.request which inherits the browser's cookies (including __Host-csrf),
+ * and sends the X-CSRF-Token header required by the gateway's double-submit CSRF check.
+ */
+async function createSession(page: Page): Promise<string> {
+  const resp = await page.request.post(`${BASE_URL}/api/v1/sessions`, {
+    headers: await apiHeaders(page),
+    data: { agent_id: 'main', type: 'chat' },
+  })
+
+  if (!resp.ok()) {
+    const body = await resp.text()
+    throw new Error(
+      `POST /api/v1/sessions failed: ${resp.status()} ${resp.statusText()} — ${body}`,
+    )
+  }
+
+  const meta = (await resp.json()) as { id: string }
+  if (!meta.id) {
+    throw new Error('POST /api/v1/sessions returned no id')
+  }
+  return meta.id
+}
+
+/**
+ * Rename a session via the REST API.
+ * Sends both Authorization and X-CSRF-Token headers.
+ */
+async function renameSession(page: Page, sessionId: string, title: string): Promise<void> {
+  const resp = await page.request.put(`${BASE_URL}/api/v1/sessions/${sessionId}`, {
+    headers: await apiHeaders(page),
+    data: { title },
+  })
+
+  if (!resp.ok()) {
+    const body = await resp.text()
+    throw new Error(
+      `PUT /api/v1/sessions/${sessionId} failed: ${resp.status()} ${resp.statusText()} — ${body}`,
+    )
+  }
 }
 
 /**
@@ -198,7 +239,7 @@ async function waitForReplayDone(page: Page): Promise<void> {
 
 test(
   '(a) tool-call fidelity on reopen: live-captured DOM matches replay-captured DOM',
-  async ({ page, request }) => {
+  async ({ page }) => {
     // Traces to: sprint-i-historical-replay-fidelity-spec.md BDD Scenarios 1, 2, 3; TDD row 23.
     // SC-I-004 narrow criteria: badge count, tool attribute values, status icons, message roles.
     //
@@ -214,18 +255,10 @@ test(
     await waitForWsConnected(page)
 
     // ── Step 1: Create a session and seed a transcript with known tool calls ──
-    const sessionId = await createSession(request)
+    // Uses page.request for CSRF cookie inheritance (see createSession helper).
+    const sessionId = await createSession(page)
     const sessionTitle = `replay-fidelity-test-a-${Date.now()}`
-
-    // Rename the session so we can find it by title in the session panel
-    const authToken = getStoredAuthToken()
-    await request.put(`${BASE_URL}/api/v1/sessions/${sessionId}`, {
-      headers: {
-        'Content-Type': 'application/json',
-        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-      },
-      data: { title: sessionTitle },
-    })
+    await renameSession(page, sessionId, sessionTitle)
 
     // Seed the transcript: one user message + one assistant reply with two tool calls.
     // Dataset D1 (shell tool) + D4 (agent_id="ray") from spec.
@@ -329,20 +362,13 @@ test.skip(
   //
   // When both land: un-skip this test and remove this comment.
   // Traces to: sprint-i-historical-replay-fidelity-spec.md BDD Scenario 5; TDD row 24.
-  async ({ page, request }) => {
+  async ({ page }) => {
     await page.goto('/')
     await expect(page.getByRole('banner')).toBeVisible({ timeout: 15_000 })
 
-    const sessionId = await createSession(request)
+    const sessionId = await createSession(page)
     const sessionTitle = `replay-fidelity-test-b-${Date.now()}`
-    const authToken = getStoredAuthToken()
-    await request.put(`${BASE_URL}/api/v1/sessions/${sessionId}`, {
-      headers: {
-        'Content-Type': 'application/json',
-        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-      },
-      data: { title: sessionTitle },
-    })
+    await renameSession(page, sessionId, sessionTitle)
 
     // Dataset D2: spawn call + nested tool with ParentToolCallID.
     // Traces to: BDD Scenario 5.
@@ -444,7 +470,7 @@ test.skip(
   //    belt-and-suspenders check — the Go unit test should be prioritised.
   //
   // Traces to: sprint-i-historical-replay-fidelity-spec.md BDD Scenario 9; TDD row 25.
-  async ({ page, browser, request }) => {
+  async ({ page, browser }) => {
     // Implementation sketch (for when blockers are resolved):
     // 1. Start a gateway with a slow-stream scenario provider activated.
     // 2. Browser context 1 sends a message that triggers the slow stream (>10s).
@@ -454,7 +480,6 @@ test.skip(
     // 6. Assert context 2's final message content === context 1's.
     void page
     void browser
-    void request
   },
 )
 
@@ -462,7 +487,7 @@ test.skip(
 
 test(
   '(d) live continuation after replay: new message appends below replayed transcript',
-  async ({ page, request }) => {
+  async ({ page }) => {
     // Traces to: sprint-i-historical-replay-fidelity-spec.md BDD Scenario 8; TDD row 26.
     // SC-I-004(iv): message ordering preserved; live continuation appears after replayed transcript.
     //
@@ -477,16 +502,9 @@ test(
     // Wait for WS connection to be established.
     await waitForWsConnected(page)
 
-    const sessionId = await createSession(request)
+    const sessionId = await createSession(page)
     const sessionTitle = `replay-fidelity-test-d-${Date.now()}`
-    const authToken = getStoredAuthToken()
-    await request.put(`${BASE_URL}/api/v1/sessions/${sessionId}`, {
-      headers: {
-        'Content-Type': 'application/json',
-        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-      },
-      data: { title: sessionTitle },
-    })
+    await renameSession(page, sessionId, sessionTitle)
 
     // Seed a simple multi-entry transcript (no tool calls — validates text replay + continuation).
     // Traces to: BDD Scenario 8 (replay → live continuation), Scenario 4 (user message replay).
@@ -548,7 +566,7 @@ test(
 
 test(
   '(e) send button disabled during replay: input locked until done frame arrives',
-  async ({ page, request }) => {
+  async ({ page }) => {
     // Traces to: sprint-i-historical-replay-fidelity-spec.md BDD Scenario 10; TDD row 27; FR-I-014.
     //
     // IMPORTANT: This test validates FR-I-014 which requires I2 (isReplaying state in chat store).
@@ -566,16 +584,9 @@ test(
     // Wait for WS connection to be established.
     await waitForWsConnected(page)
 
-    const sessionId = await createSession(request)
+    const sessionId = await createSession(page)
     const sessionTitle = `replay-fidelity-test-e-${Date.now()}`
-    const authToken = getStoredAuthToken()
-    await request.put(`${BASE_URL}/api/v1/sessions/${sessionId}`, {
-      headers: {
-        'Content-Type': 'application/json',
-        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
-      },
-      data: { title: sessionTitle },
-    })
+    await renameSession(page, sessionId, sessionTitle)
 
     // Seed a transcript with many entries to extend replay duration.
     // 10 alternating user/assistant turns with tool calls to give I1's replay loop
