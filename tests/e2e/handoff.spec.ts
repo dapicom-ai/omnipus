@@ -136,11 +136,11 @@ test(
   },
 );
 
-test.skip(
-  '(c) 6th-handoff refusal: chain of 5 handoffs triggers policy error on 6th',
-  // blocked on #113: Driving 5 real LLM handoffs deterministically in CI is impractical
-  // without a mock tool that auto-triggers handoffs on a signal. The policy error is
-  // surfaced via RateLimitIndicator but there is no stable deterministic driver.
-  // See tests/e2e/SPA-GAPS.md — "Handoff depth policy test requires deterministic LLM".
-  async ({ page, request }) => {},
-);
+// (c) 6th-handoff refusal — DELETED.
+// The concept no longer exists in Omnipus. Per owner decision (2026-04-20, documented
+// in Sprint H / Plan 3 §1 reversal), handoffs are 1-level only. There is no "chain"
+// or "depth limit" to refuse — the second-handoff refusal invariant is tested
+// deterministically at the Go tool layer:
+//   - pkg/gateway/handoff_summary_test.go :: TestHandoff_RejectsSecondHandoffInSession
+//   - pkg/tools/handoff_test.go :: TestHandoffTool_RejectsSecondHandoff
+// A Playwright placeholder for a deleted concept is dead code; removed.

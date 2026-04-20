@@ -1,7 +1,11 @@
 import { type APIRequestContext, request } from '@playwright/test';
 
 const DEFAULT_PROVIDER_ID = 'openrouter';
-const DEFAULT_MODEL = 'anthropic/claude-3.5-haiku';
+// Opus 4.7 — chosen for reliability in tool-use and multi-step subagent tests.
+// Cheaper models (Haiku, Sonnet) were too flaky at the "call spawn exactly twice"
+// and "subagent executes ≥3 tools in sequence" assertions the E2E suite makes.
+// Cost: higher per-run, but deterministic CI > $0.50 saved per run.
+const DEFAULT_MODEL = 'anthropic/claude-opus-4.7';
 const DEFAULT_USERNAME = 'admin';
 const DEFAULT_PASSWORD = 'admin123';
 

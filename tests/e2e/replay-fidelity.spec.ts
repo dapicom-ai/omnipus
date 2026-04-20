@@ -353,15 +353,10 @@ test(
 
 // ── Test (b): subagent span round-trip ────────────────────────────────────────
 
-test.skip(
+test(
   '(b) subagent span round-trip: SubagentBlock renders on reopen with correct step count',
-  // BLOCKED on two conditions:
-  // 1. Sprint H SubagentBlock UI must be in the build (data-testid="subagent-collapsed").
-  //    Current SPA has no SubagentBlock component — handoff.spec.ts (b) is also skipped for this reason.
-  // 2. I1 (pkg/gateway/replay.go) must emit subagent_start / subagent_end frames on replay.
-  //
-  // When both land: un-skip this test and remove this comment.
   // Traces to: sprint-i-historical-replay-fidelity-spec.md BDD Scenario 5; TDD row 24.
+  // Unskipped after Sprint H SubagentBlock UI + Sprint I streamReplay landed on the same branch.
   async ({ page }) => {
     await page.goto('/')
     await expect(page.getByRole('banner')).toBeVisible({ timeout: 15_000 })

@@ -88,12 +88,16 @@ test(
     const input = chatInput(page);
     await expect(input).toBeVisible({ timeout: 15_000 });
 
-    // Prompt: ask the parent agent to spawn, and instruct the subagent to itself spawn.
-    // The subagent's registry excludes spawn (FR-H-006), so the attempt returns unknown-tool.
+    // Prompt: commanding + specific. Older prompts ("Use the spawn tool to delegate…")
+    // gave Opus room to narrate instead of calling the tool. This version specifies the
+    // exact tool name, task, and behavior with no optional phrasing.
     await input.fill(
-      'Use the spawn tool to delegate a subagent task: "attempt to call spawn again inside ' +
-      'the subagent to test nested spawning". The subagent should try to call spawn. ' +
-      'Label the parent spawn "grandchild test".',
+      [
+        'Call the `spawn` tool exactly once, right now, with these arguments:',
+        '  label: "grandchild test"',
+        '  task: "You are the subagent. Your one and only job is to call the `spawn` tool yourself to attempt to spawn a grandchild subagent with task \\"hello\\". If spawn is not in your available tools, report the exact error you receive. Do not do anything else."',
+        'Do not reply in prose. Do not call any other tool. Call spawn now.',
+      ].join('\n'),
     );
     await input.press('Enter');
 
@@ -156,12 +160,19 @@ test(
     const input = chatInput(page);
     await expect(input).toBeVisible({ timeout: 15_000 });
 
-    // Prompt: explicitly request two sequential spawn calls.
+    // Prompt: commanding, explicit, numbered.
     await input.fill(
-      'Make exactly two sequential spawn tool calls: ' +
-      'first spawn a subagent with label "task one" to list files in /tmp, ' +
-      'then spawn a second subagent with label "task two" to echo hello. ' +
-      'Do both spawns before doing anything else.',
+      [
+        'Call the `spawn` tool exactly TWO times, in sequence. No other tools. No prose answer until both spawns have been issued.',
+        '',
+        'First call (do this first):',
+        '  spawn(label="task one", task="Reply with the word done-one. Use no tools.")',
+        '',
+        'Second call (do this immediately after the first returns):',
+        '  spawn(label="task two", task="Reply with the word done-two. Use no tools.")',
+        '',
+        'Issue both spawn tool calls now.',
+      ].join('\n'),
     );
     await input.press('Enter');
 
@@ -243,12 +254,14 @@ test(
     const input = chatInput(page);
     await expect(input).toBeVisible({ timeout: 15_000 });
 
-    // Prompt: request a multi-step subagent run so the step counter has time to increment.
+    // Prompt: force a single spawn with a subagent task that mandates ≥3 tool calls.
     await input.fill(
-      'Use the spawn tool to delegate a subagent with label "multi step counter test". ' +
-      'The subagent should execute at least 3 tool calls in sequence: ' +
-      'list /tmp, list /etc, then echo "done". ' +
-      'Do this via spawn, not directly.',
+      [
+        'Call the `spawn` tool exactly once, now, with these arguments:',
+        '  label: "multi step counter test"',
+        '  task: "You are a subagent. Execute these THREE tool calls in this exact order. Do not skip any. Do not reply in prose between them. After all three have completed, reply with the single word \\"finished\\". (1) list_dir with path=\\"/\\"; (2) list_dir with path=\\"/workspace\\"; (3) shell with cmd=\\"echo done\\"."',
+        'Do not call any other tool. Do not reply in prose. Call spawn now.',
+      ].join('\n'),
     );
     await input.press('Enter');
 
@@ -414,8 +427,12 @@ test(
     await expect(input).toBeVisible({ timeout: 15_000 });
 
     await input.fill(
-      'Use the spawn tool to delegate a subagent with label "axe test subagent" ' +
-      'to list files in /tmp.',
+      [
+        'Call the `spawn` tool exactly once, now, with these arguments:',
+        '  label: "axe test subagent"',
+        '  task: "Reply with the single word ok. Use no tools."',
+        'Do not call any other tool. Do not reply in prose. Call spawn now.',
+      ].join('\n'),
     );
     await input.press('Enter');
 
