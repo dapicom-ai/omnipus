@@ -72,17 +72,17 @@ func streamReplay(
 			if tc.ID == "" {
 				continue
 			}
-			if prev, dup := latestByID[tc.ID]; dup {
+			if prev, dup := latestByID[string(tc.ID)]; dup {
 				// Warn only once (on the first detected duplicate). Subsequent
 				// occurrences silently overwrite — the last one wins.
 				_ = prev
 				slog.Warn("replay: duplicate tool_call_id detected — only latest will emit",
 					"event", "replay_duplicate_tool_call_id",
 					"session_id", sessionID,
-					"tool_call_id", tc.ID,
+					"tool_call_id", string(tc.ID),
 				)
 			}
-			latestByID[tc.ID] = tcAddr{ei, ti}
+			latestByID[string(tc.ID)] = tcAddr{ei, ti}
 		}
 	}
 
@@ -125,13 +125,15 @@ func streamReplay(
 			if tc.ID == "" {
 				continue
 			}
+			tcID := string(tc.ID)
+			tcParentID := string(tc.ParentToolCallID)
 			// Dedup: skip if this is not the latest occurrence.
-			if latest := latestByID[tc.ID]; latest.entryIdx != ei || latest.tcIdx != ti {
+			if latest := latestByID[tcID]; latest.entryIdx != ei || latest.tcIdx != ti {
 				continue
 			}
 
-			isNested := tc.ParentToolCallID != ""
-			parentIsSpawn := isNested && spawnIDsWithChildren[tc.ParentToolCallID]
+			isNested := tcParentID != ""
+			parentIsSpawn := isNested && spawnIDsWithChildren[tcParentID]
 			isOrphan := isNested && !parentIsSpawn
 
 			if isNested && parentIsSpawn {
@@ -145,7 +147,7 @@ func streamReplay(
 				slog.Warn("replay: orphan tool call — parent spawn not in transcript",
 					"event", "replay_orphan",
 					"session_id", sessionID,
-					"parent_tool_call_id", tc.ParentToolCallID,
+					"parent_tool_call_id", tcParentID,
 				)
 				// W3-1: the orphan is emitted as a flat tool call (no ParentCallID on
 				// the wire). This causes the client to take the non-nested rendering
@@ -156,13 +158,13 @@ func streamReplay(
 			// For spawn calls that have children: emit subagent_start before
 			// the nested frames, then subagent_end after.  We detect this
 			// entry as a spawn-parent if its own ID is in spawnIDsWithChildren.
-			isSpawnParent := spawnIDsWithChildren[tc.ID]
+			isSpawnParent := spawnIDsWithChildren[tcID]
 
 			if isSpawnParent {
 				// Emit tool_call_start for the spawn call itself FIRST.
 				startFrame := wsServerFrame{
 					Type:   "tool_call_start",
-					CallID: tc.ID,
+					CallID: tcID,
 					Tool:   tc.Tool,
 					Params: tc.Parameters,
 				}
@@ -174,12 +176,12 @@ func streamReplay(
 				}
 
 				// Emit subagent_start to bracket nested frames.
-				spanID := "span_" + tc.ID
+				spanID := "span_" + tcID
 				taskLabel := resolveTaskLabel(tc)
 				subStart := wsServerFrame{
 					Type:         "subagent_start",
 					SpanID:       spanID,
-					ParentCallID: tc.ID,
+					ParentCallID: tcID,
 					TaskLabel:    taskLabel,
 				}
 				if entry.AgentID != "" {
@@ -191,7 +193,7 @@ func streamReplay(
 
 				// Emit all nested tool calls (children with ParentToolCallID == tc.ID).
 				nestedDurationMS, nestedStatus, nestedErr := emitNestedToolCalls(
-					ctx, sessionID, tc.ID, entries, latestByID, entry.AgentID, emitFrame,
+					ctx, sessionID, tcID, entries, latestByID, entry.AgentID, emitFrame,
 				)
 				if nestedErr != nil {
 					return framesEmitted, nestedErr
@@ -215,7 +217,7 @@ func streamReplay(
 				resultPayload := truncateResult(sessionID, tc)
 				resultFrame := wsServerFrame{
 					Type:       "tool_call_result",
-					CallID:     tc.ID,
+					CallID:     tcID,
 					Tool:       tc.Tool,
 					Result:     resultPayload,
 					Status:     resolveStatus(tc.Status),
@@ -235,7 +237,7 @@ func streamReplay(
 			// client takes the flat non-nested path immediately (not after 10s TTL).
 			startFrame := wsServerFrame{
 				Type:   "tool_call_start",
-				CallID: tc.ID,
+				CallID: tcID,
 				Tool:   tc.Tool,
 				Params: tc.Parameters,
 			}
@@ -243,7 +245,7 @@ func streamReplay(
 				startFrame.AgentID = entry.AgentID
 			}
 			if isNested && !isOrphan {
-				startFrame.ParentCallID = tc.ParentToolCallID
+				startFrame.ParentCallID = tcParentID
 			}
 			if err2 := emitFrame(startFrame); err2 != nil {
 				return framesEmitted, err2
@@ -252,7 +254,7 @@ func streamReplay(
 			resultPayload := truncateResult(sessionID, tc)
 			resultFrame := wsServerFrame{
 				Type:       "tool_call_result",
-				CallID:     tc.ID,
+				CallID:     tcID,
 				Tool:       tc.Tool,
 				Result:     resultPayload,
 				Status:     resolveStatus(tc.Status),
@@ -262,7 +264,7 @@ func streamReplay(
 				resultFrame.AgentID = entry.AgentID
 			}
 			if isNested && !isOrphan {
-				resultFrame.ParentCallID = tc.ParentToolCallID
+				resultFrame.ParentCallID = tcParentID
 			}
 			if err2 := emitFrame(resultFrame); err2 != nil {
 				return framesEmitted, err2
@@ -300,7 +302,7 @@ func buildSpawnIDsWithChildren(entries []session.TranscriptEntry) map[string]boo
 	for _, entry := range entries {
 		for _, tc := range entry.ToolCalls {
 			if tc.Tool == "spawn" && tc.ID != "" {
-				spawnIDs[tc.ID] = false // not yet confirmed to have children
+				spawnIDs[string(tc.ID)] = false // not yet confirmed to have children
 			}
 		}
 	}
@@ -308,8 +310,8 @@ func buildSpawnIDsWithChildren(entries []session.TranscriptEntry) map[string]boo
 	for _, entry := range entries {
 		for _, tc := range entry.ToolCalls {
 			if tc.ParentToolCallID != "" {
-				if _, ok := spawnIDs[tc.ParentToolCallID]; ok {
-					spawnIDs[tc.ParentToolCallID] = true
+				if _, ok := spawnIDs[string(tc.ParentToolCallID)]; ok {
+					spawnIDs[string(tc.ParentToolCallID)] = true
 				}
 			}
 		}
@@ -342,14 +344,15 @@ func emitNestedToolCalls(
 
 	for ei, entry := range entries {
 		for ti, tc := range entry.ToolCalls {
-			if tc.ParentToolCallID != parentID {
+			if string(tc.ParentToolCallID) != parentID {
 				continue
 			}
 			if tc.ID == "" {
 				continue
 			}
+			tcID := string(tc.ID)
 			// Dedup.
-			if latest := latestByID[tc.ID]; latest.entryIdx != ei || latest.tcIdx != ti {
+			if latest := latestByID[tcID]; latest.entryIdx != ei || latest.tcIdx != ti {
 				continue
 			}
 
@@ -359,7 +362,7 @@ func emitNestedToolCalls(
 
 			startFrame := wsServerFrame{
 				Type:         "tool_call_start",
-				CallID:       tc.ID,
+				CallID:       tcID,
 				Tool:         tc.Tool,
 				Params:       tc.Parameters,
 				ParentCallID: parentID,
@@ -379,7 +382,7 @@ func emitNestedToolCalls(
 			status := resolveStatus(tc.Status)
 			resultFrame := wsServerFrame{
 				Type:         "tool_call_result",
-				CallID:       tc.ID,
+				CallID:       tcID,
 				Tool:         tc.Tool,
 				Result:       resultPayload,
 				Status:       status,
@@ -417,7 +420,7 @@ func truncateResult(sessionID string, tc session.ToolCall) any {
 		slog.Error("replay: tool_call_result marshal failed — emitting sentinel",
 			"event", "replay_result_marshal_error",
 			"session_id", sessionID,
-			"tool_call_id", tc.ID,
+			"tool_call_id", string(tc.ID),
 			"error", err,
 		)
 		return map[string]any{"_marshal_error": err.Error()}
@@ -434,7 +437,7 @@ func truncateResult(sessionID string, tc session.ToolCall) any {
 	slog.Warn("replay: tool_call_result exceeds 1 MiB — truncating",
 		"event", "replay_result_truncated",
 		"session_id", sessionID,
-		"tool_call_id", tc.ID,
+		"tool_call_id", string(tc.ID),
 		"original_size_bytes", originalSize,
 	)
 	return map[string]any{
@@ -497,14 +500,15 @@ func computeReplayStats(entries []session.TranscriptEntry) replayStats {
 		for _, tc := range entry.ToolCalls {
 			rs.toolCallCount++
 			if tc.ID != "" {
-				if seenIDs[tc.ID] {
+				tcID := string(tc.ID)
+				if seenIDs[tcID] {
 					rs.duplicateToolCallIDCount++
 				} else {
-					seenIDs[tc.ID] = true
+					seenIDs[tcID] = true
 				}
 			}
 			// Orphan: nested but parent not in spawnIDsWithChildren.
-			if tc.ParentToolCallID != "" && !spawnIDsWithChildren[tc.ParentToolCallID] {
+			if tc.ParentToolCallID != "" && !spawnIDsWithChildren[string(tc.ParentToolCallID)] {
 				rs.orphanCount++
 			}
 			// Truncated: would the result exceed the limit?

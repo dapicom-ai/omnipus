@@ -136,9 +136,15 @@ type Attachment struct {
 	MIMEType string `json:"mime_type"`
 }
 
+// ToolCallID is the opaque identifier for a single tool invocation.
+// Using a named type prevents accidental mixing with other string IDs
+// (e.g., span IDs, session IDs) at Go call sites.
+// JSON marshaling is identical to a plain string — the wire format is unchanged.
+type ToolCallID string
+
 // ToolCall represents one tool invocation within a message.
 type ToolCall struct {
-	ID         string         `json:"id"`
+	ID         ToolCallID     `json:"id"`
 	Tool       string         `json:"tool"`
 	Status     string         `json:"status"` // "success" | "error" | "pending" | "denied"
 	DurationMS int64          `json:"duration_ms,omitempty"`
@@ -148,7 +154,7 @@ type ToolCall struct {
 	// It equals the parent spawn tool call's ID, which is the correlation anchor
 	// for the subagent span (FR-H-001). Empty for top-level tool calls.
 	// span_id = "span_" + ParentToolCallID (derivable, not stored separately).
-	ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
+	ParentToolCallID ToolCallID `json:"parent_tool_call_id,omitempty"`
 }
 
 // NewSessionID generates a ULID-based session ID prefixed with "session_".

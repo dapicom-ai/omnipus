@@ -12,6 +12,7 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
+	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 )
 
@@ -422,7 +423,7 @@ func spawnSubTurn(
 	//                error (the intended contract).
 	//   - handoff:   agent switch
 	if baseAgent.Tools != nil {
-		agent.Tools = baseAgent.Tools.CloneExcept("spawn", "subagent", "handoff")
+		agent.Tools = baseAgent.Tools.CloneExcept(tools.ExcludedSpawn, tools.ExcludedSubagent, tools.ExcludedHandoff)
 		// W3-4: log the constructed registry so operators can debug "my subagent has no tools" issues.
 		slog.Info("subturn: child registry constructed",
 			"excluded", []string{"spawn", "subagent", "handoff"},
@@ -524,7 +525,7 @@ func spawnSubTurn(
 				Label:             childID,
 				ParentTurnID:      parentTS.turnID,
 				SpanID:            spanID,
-				ParentSpawnCallID: parentSpawnCallID,
+				ParentSpawnCallID: session.ToolCallID(parentSpawnCallID),
 				TaskLabel:         taskLabel,
 				ChatID:            parentTS.chatID,
 			},
@@ -553,9 +554,9 @@ func spawnSubTurn(
 
 		// W1-12: only emit span end event when parentSpawnCallID was non-empty.
 		if emitSpanEvents {
-			status := "completed"
+			endStatus := SubTurnStatusSuccess
 			if err != nil {
-				status = "error"
+				endStatus = SubTurnStatusError
 			}
 			subTurnDurationMS := time.Since(subTurnStartedAt).Milliseconds()
 			slog.Debug("subagent_end",
@@ -567,9 +568,9 @@ func spawnSubTurn(
 				childTS.eventMeta("spawnSubTurn", "subturn.end"),
 				SubTurnEndPayload{
 					AgentID:           childTS.agentID,
-					Status:            status,
+					Status:            endStatus,
 					SpanID:            spanID,
-					ParentSpawnCallID: parentSpawnCallID,
+					ParentSpawnCallID: session.ToolCallID(parentSpawnCallID),
 					DurationMS:        subTurnDurationMS,
 					ChatID:            parentTS.chatID,
 				},

@@ -1143,18 +1143,18 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 			sendConnFrame(wc, wsServerFrame{
 				Type:         "subagent_start",
 				SpanID:       p.SpanID,
-				ParentCallID: p.ParentSpawnCallID,
+				ParentCallID: string(p.ParentSpawnCallID),
 				AgentID:      p.AgentID,
 				TaskLabel:    p.TaskLabel,
 			})
 			// Register the span in openSpans for orphan watchdog tracking.
 			entry := &openSpanEntry{
 				spanID:       p.SpanID,
-				parentCallID: p.ParentSpawnCallID,
+				parentCallID: string(p.ParentSpawnCallID),
 				agentID:      p.AgentID,
 				closeCh:      make(chan struct{}),
 			}
-			openSpans[p.ParentSpawnCallID] = entry
+			openSpans[string(p.ParentSpawnCallID)] = entry
 
 		case agent.EventKindSubTurnEnd:
 			// FR-H-004: emit subagent_end when a sub-turn finishes.
@@ -1170,13 +1170,13 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 			sendConnFrame(wc, wsServerFrame{
 				Type:         "subagent_end",
 				SpanID:       p.SpanID,
-				ParentCallID: p.ParentSpawnCallID,
+				ParentCallID: string(p.ParentSpawnCallID),
 				AgentID:      p.AgentID,
-				Status:       p.Status,
+				Status:       string(p.Status),
 				DurationMs:   p.DurationMS,
 			})
 			// Signal the watchdog that the span closed normally.
-			closeSpan(p.ParentSpawnCallID)
+			closeSpan(string(p.ParentSpawnCallID))
 
 		case agent.EventKindTurnEnd:
 			// W1-2: only arm the orphan watchdog when the root turn for this
@@ -1215,10 +1215,10 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 			// FR-I-008: propagate agent_id so live frames match replay frame parity.
 			sendConnFrame(wc, wsServerFrame{
 				Type:         "tool_call_start",
-				CallID:       p.ToolCallID,
+				CallID:       string(p.ToolCallID),
 				Tool:         p.Tool,
 				Params:       p.Arguments,
-				ParentCallID: p.ParentSpawnCallID,
+				ParentCallID: string(p.ParentSpawnCallID),
 				AgentID:      p.AgentID,
 			})
 		case agent.EventKindToolExecEnd:
@@ -1234,12 +1234,12 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 			// FR-I-008: propagate agent_id so live frames match replay frame parity.
 			sendConnFrame(wc, wsServerFrame{
 				Type:         "tool_call_result",
-				CallID:       p.ToolCallID,
+				CallID:       string(p.ToolCallID),
 				Tool:         p.Tool,
 				Result:       p.Result,
 				Status:       status,
 				DurationMs:   p.Duration.Milliseconds(),
-				ParentCallID: p.ParentSpawnCallID,
+				ParentCallID: string(p.ParentSpawnCallID),
 				AgentID:      p.AgentID,
 			})
 			// When the handoff tool succeeds, notify the frontend to switch agents.

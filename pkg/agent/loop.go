@@ -3659,11 +3659,11 @@ turnLoop:
 				EventKindToolExecStart,
 				ts.eventMeta("runTurn", "turn.tool.start"),
 				ToolExecStartPayload{
-					ToolCallID:        tc.ID,
+					ToolCallID:        session.ToolCallID(tc.ID),
 					ChatID:            ts.chatID,
 					Tool:              toolName,
 					Arguments:         cloneEventArguments(toolArgs),
-					ParentSpawnCallID: ts.parentSpawnCallID,
+					ParentSpawnCallID: session.ToolCallID(ts.parentSpawnCallID),
 					AgentID:           ts.agentID,
 				},
 			)
@@ -3986,7 +3986,7 @@ turnLoop:
 				EventKindToolExecEnd,
 				ts.eventMeta("runTurn", "turn.tool.end"),
 				ToolExecEndPayload{
-					ToolCallID:        toolCallID,
+					ToolCallID:        session.ToolCallID(toolCallID),
 					ChatID:            ts.chatID,
 					Tool:              toolName,
 					Duration:          toolDuration,
@@ -3995,7 +3995,7 @@ turnLoop:
 					IsError:           toolResult.IsError,
 					Async:             toolResult.Async,
 					Result:            contentForLLM,
-					ParentSpawnCallID: ts.parentSpawnCallID,
+					ParentSpawnCallID: session.ToolCallID(ts.parentSpawnCallID),
 					AgentID:           ts.agentID,
 				},
 			)
@@ -4004,12 +4004,12 @@ turnLoop:
 				tcStatus = "error"
 			}
 			ts.appendToolCallTranscript(session.ToolCall{
-				ID:               toolCallID,
+				ID:               session.ToolCallID(toolCallID),
 				Tool:             toolName,
 				Status:           tcStatus,
 				DurationMS:       toolDuration.Milliseconds(),
 				Parameters:       cloneEventArguments(toolArgs),
-				ParentToolCallID: ts.parentSpawnCallID,
+				ParentToolCallID: session.ToolCallID(ts.parentSpawnCallID),
 			})
 			messages = append(messages, toolResultMsg)
 			if !ts.opts.NoHistory {
