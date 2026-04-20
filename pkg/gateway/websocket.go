@@ -32,6 +32,10 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/session"
 )
 
+// replayLiveBufferCap is the maximum number of live WS frames buffered during
+// replay (FR-I-009). Frames beyond this cap are dropped under backpressure.
+const replayLiveBufferCap = 1000
+
 // wsClientFrame is a message sent from the browser to the server over WebSocket.
 type wsClientFrame struct {
 	Type      string `json:"type"`                 // "auth" | "message" | "cancel" | "exec_approval_response" | "attach_session" | "device_pairing_response"
@@ -640,8 +644,14 @@ func (h *WSHandler) handleCancel(sessionID *string) {
 	}
 }
 
-// handleAttachSession loads an existing session's transcript and replays it to the client,
-// then sets the connection's active session to the requested session.
+// handleAttachSession loads an existing session's transcript and replays it to
+// the client via streamReplay, then sets the connection's active session to the
+// requested session.
+//
+// FR-I-009: the connection is registered for live-event forwarding BEFORE the
+// replay starts. Live events arriving during replay are buffered in a capped
+// channel; after the done frame is emitted the buffer is drained to the WS in
+// arrival order.
 func (h *WSHandler) handleAttachSession(
 	ctx context.Context,
 	chatID string,
@@ -667,78 +677,36 @@ func (h *WSHandler) handleAttachSession(
 		return
 	}
 
-	// Replay transcript entries in order. Tool call entries are rendered as text
-	// within an assistant message because AssistantUI requires tool calls to be
-	// part of the message tree. (Live tool calls arrive via eventForwarder during
-	// an active streaming turn where AssistantUI already has a message context.)
+	rs := computeReplayStats(entries)
 
-	// flushToolCalls sends any accumulated tool call lines as a single assistant
-	// replay message, then resets the slice. Returns false if ctx was canceled.
-	var pendingToolCalls []string
-	flushToolCalls := func() bool {
-		if len(pendingToolCalls) == 0 {
-			return true
-		}
-		tcContent := strings.Join(pendingToolCalls, "\n")
-		pendingToolCalls = nil
-		tcData, err := json.Marshal(wsServerFrame{
-			Type: "replay_message", Content: tcContent, Role: "assistant",
-		})
-		if err != nil {
-			slog.Warn("ws: attach_session: could not marshal tool call batch", "session_id", attachID, "error", err)
-			return true
-		}
-		select {
-		case wc.sendCh <- tcData:
-			return true
-		case <-ctx.Done():
-			return false
-		}
-	}
+	// FR-I-013: structured log at replay start.
+	slog.Info("ws: replay_start",
+		"event", "replay_start",
+		"session_id", attachID,
+		"entry_count_loaded", len(entries),
+		"tool_call_count_loaded", rs.toolCallCount,
+		"span_count_detected", rs.spanCount,
+	)
+	replayStart := time.Now()
 
-	for _, entry := range entries {
-		if entry.Content != "" {
-			if !flushToolCalls() {
-				return
-			}
-			data, merr := json.Marshal(wsServerFrame{
-				Type:    "replay_message",
-				Content: entry.Content,
-				Role:    entry.Role,
-			})
-			if merr != nil {
-				slog.Warn("ws: attach_session: could not marshal replay entry", "session_id", attachID, "error", merr)
-				continue
-			}
-			select {
-			case wc.sendCh <- data:
-			case <-ctx.Done():
-				return
-			}
-		}
-		for _, tc := range entry.ToolCalls {
-			status := tc.Status
-			if status == "" {
-				status = "success"
-			}
-			dur := ""
-			if tc.DurationMS > 0 {
-				dur = fmt.Sprintf(" (%dms)", tc.DurationMS)
-			}
-			pendingToolCalls = append(pendingToolCalls, fmt.Sprintf("**%s** — %s%s", tc.Tool, status, dur))
-		}
-	}
-	flushToolCalls()
+	// FR-I-009: register for live-event forwarding BEFORE starting replay so no
+	// live events are lost during the replay window.  We do this by setting the
+	// task-chat mapping before the replay loop runs.  The eventForwarder goroutine
+	// that already owns the WS sendCh will forward events normally for the new
+	// session after this mapping is established.
+	//
+	// Live events arriving during replay go directly into wc.sendCh via
+	// eventForwarder.  To prevent interleaving with replay frames we capture them
+	// in a separate buffer, then drain after done.
+	liveBuf := make(chan []byte, replayLiveBufferCap)
 
-	// Signal replay complete so the frontend marks the last message as done.
-	sendConnFrame(wc, wsServerFrame{Type: "done", Stats: map[string]any{}})
+	// intercept wraps the send channel so that eventForwarder writes during
+	// replay land in liveBuf instead of directly on sendCh.
+	origSendCh := wc.sendCh
+	wc.sendCh = liveBuf // temporarily redirect live events into the buffer
 
-	// Switch this connection's active session.
-	*sessionID = attachID
+	// Register for live event forwarding now (before replay).
 	h.mu.Lock()
-	h.sessionIDs[chatID] = attachID
-	// Register for live event forwarding: map the browser's chatID to the task's chatID
-	// so eventForwarder picks up task events and GetStreamer finds this connection.
 	if oldTID, ok := h.taskChatIDs[chatID]; ok {
 		delete(h.sessions, oldTID)
 		delete(h.sessionIDs, oldTID)
@@ -746,6 +714,65 @@ func (h *WSHandler) handleAttachSession(
 	h.taskChatIDs[chatID] = attachID
 	h.sessions[attachID] = wc
 	h.sessionIDs[attachID] = attachID
+	h.mu.Unlock()
+
+	// Run replay: emit into origSendCh directly, bypassing the liveBuf redirect.
+	emitFn := func(f wsServerFrame) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		data, merr := json.Marshal(f)
+		if merr != nil {
+			return merr
+		}
+		select {
+		case origSendCh <- data:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+
+	framesEmitted, replayErr := streamReplay(ctx, attachID, entries, emitFn)
+
+	// Restore the original send channel so future frames go directly to the WS.
+	wc.sendCh = origSendCh
+
+	durationMS := time.Since(replayStart).Milliseconds()
+
+	if replayErr != nil {
+		slog.Warn("ws: replay_aborted",
+			"event", "replay_aborted",
+			"session_id", attachID,
+			"frames_emitted", framesEmitted,
+			"duration_ms", durationMS,
+			"error", replayErr,
+		)
+		return
+	}
+
+	// FR-I-013: structured log at replay end.
+	slog.Info("ws: replay_end",
+		"event", "replay_end",
+		"session_id", attachID,
+		"frames_emitted", framesEmitted,
+		"duration_ms", durationMS,
+	)
+
+	// FR-I-009: drain any live events buffered during replay, in arrival order.
+	close(liveBuf)
+	for raw := range liveBuf {
+		select {
+		case origSendCh <- raw:
+		case <-ctx.Done():
+			return
+		}
+	}
+
+	// Switch this connection's active session.
+	*sessionID = attachID
+	h.mu.Lock()
+	h.sessionIDs[chatID] = attachID
 	h.mu.Unlock()
 
 	slog.Debug("ws: attached to session", "chat_id", chatID, "session_id", attachID)
