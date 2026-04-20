@@ -80,27 +80,39 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   attachToSession: (sessionId, type, title, agentId) => {
     const { connection } = useConnectionStore.getState()
 
-    resetChatSession()
-
-    set({
-      activeSessionId: sessionId,
-      attachedSessionType: type,
-      attachedTaskTitle: title ?? null,
-      activeAgentId: agentId ?? get().activeAgentId,
-    })
-
+    // W1-11: send the WS frame BEFORE committing state. If send fails, leave
+    // the previous session state intact so the UI doesn't show a phantom
+    // attached session with no gateway replay in flight.
     if (connection) {
       const sent = connection.send({ type: 'attach_session', session_id: sessionId })
       if (!sent) {
         useConnectionStore.getState().setConnectionError(
           'Could not attach to session — connection dropped. Please reconnect and try again.'
         )
-      } else {
-        // FR-I-014: replay is now in flight — disable send until done arrives
-        setChatReplaying(true)
+        // Leave state unchanged — do not call resetChatSession or update the store.
+        return
       }
+      // Send succeeded — now safe to commit new state.
+      resetChatSession()
+      set({
+        activeSessionId: sessionId,
+        attachedSessionType: type,
+        attachedTaskTitle: title ?? null,
+        activeAgentId: agentId ?? get().activeAgentId,
+      })
+      // FR-I-014: replay is now in flight — disable send until done arrives.
+      setChatReplaying(true)
     } else {
+      // No connection at all — commit state anyway (offline/optimistic path) but
+      // do not set replaying since no replay will arrive.
       console.warn('[session] attachToSession: no connection — attach_session not sent')
+      resetChatSession()
+      set({
+        activeSessionId: sessionId,
+        attachedSessionType: type,
+        attachedTaskTitle: title ?? null,
+        activeAgentId: agentId ?? get().activeAgentId,
+      })
     }
   },
 }))
