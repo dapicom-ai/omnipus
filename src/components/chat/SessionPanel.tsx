@@ -268,7 +268,7 @@ function SessionItem({ session, agents, isActive, onSelect, onDeleted }: Session
 
 export function SessionPanel() {
   const { sessionPanelOpen, closeSessionPanel } = useUiStore()
-  const { activeSessionId, activeAgentId, setActiveSession, attachToSession } = useSessionStore()
+  const { activeSessionId, activeAgentId, setActiveSession, attachToSession, setActiveAgentType } = useSessionStore()
   const queryClient = useQueryClient()
 
   const [searchValue, setSearchValue] = useState('')
@@ -317,7 +317,8 @@ export function SessionPanel() {
       // Set directly via the store — no reset, no double-attach.
       const agent = agents.find((a) => a.id === agentId)
       if (agent?.type) {
-        useSessionStore.setState({ activeAgentType: agent.type })
+        // W3-8: use the dedicated store action instead of direct setState bypass.
+        setActiveAgentType(agent.type)
       }
     }
     closeSessionPanel()

@@ -812,10 +812,17 @@ export function ChatScreen() {
   // attached by the reducer and historical tool-call-badge elements disappear.
   const isReplaying = useChatStore((s) => s.isReplaying)
   const storeMessageCount = useChatStore((s) => s.messages.length)
+  // W3-9: replayCompletedForSession tracks whether WS replay finished for the active session.
+  // When set, the REST fallback is skipped even if the store has 0 messages (empty session).
+  const replayCompletedForSession = useChatStore((s) => s.replayCompletedForSession)
   useEffect(() => {
     if (!historyData) return
     // Don't overwrite during replay — WS frames are the source of truth.
     if (isReplaying) return
+    // W3-9: don't overwrite if WS replay already completed for this session.
+    // This gates the fallback more precisely than storeMessageCount > 0 alone —
+    // an empty session would pass the count check but still had a successful replay.
+    if (replayCompletedForSession === activeSessionId) return
     // Don't overwrite if the store already has messages for this session (replay done).
     if (storeMessageCount > 0) return
     // Fallback: REST fetched history before WS replay fired (e.g., WS unavailable).
@@ -824,7 +831,7 @@ export function ChatScreen() {
       (m: { role?: string }) => m.role === 'user' || m.role === 'assistant' || m.role === 'system',
     )
     setMessages(validMessages)
-  }, [historyData, isReplaying, storeMessageCount, setMessages])
+  }, [historyData, isReplaying, storeMessageCount, replayCompletedForSession, activeSessionId, setMessages])
 
   const activePendingApprovals = pendingApprovals.filter((a) => a.status === 'pending')
 

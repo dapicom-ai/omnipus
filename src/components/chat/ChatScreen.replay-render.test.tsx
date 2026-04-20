@@ -292,7 +292,6 @@ describe('ChatScreen replay-render — TDD row I-21 (subagent-collapsed/expanded
         status: 'success',
         duration_ms: 1000,
         final_result: 'Listed files',
-        agent_id: 'agent-1',
       })
     })
 

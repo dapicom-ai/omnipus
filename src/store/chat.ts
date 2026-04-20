@@ -65,6 +65,10 @@ interface ChatStore {
   // FR-I-014: true from attach_session until first done frame — disables send input during replay
   isReplaying: boolean
   setReplaying: (value: boolean) => void
+  // W3-9: tracks the session ID for which WS replay completed successfully.
+  // Set when a done frame arrives while isReplaying was true.
+  // Cleared on resetSession. Used to gate the REST fallback in ChatScreen.
+  replayCompletedForSession: string | null
   setMessages: (messages: Message[]) => void
   appendMessage: (message: ChatMessage) => void
   updateLastAssistantMessage: (content: string, done?: boolean) => void
@@ -145,6 +149,8 @@ const CLEAN_SESSION_STATE = {
   sessionCost: 0,
   isStreaming: false,
   isReplaying: false,
+  // W3-9: cleared on session switch so new session gets a fresh replay tracking state.
+  replayCompletedForSession: null as string | null,
   rateLimitEvent: null as RateLimitEventData | null,
 } as const
 
@@ -152,6 +158,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   messages: [],
   isStreaming: false,
   isReplaying: false,
+  replayCompletedForSession: null,
   setReplaying: (value) => {
     // Minimum 250ms display window: (a) avoids flicker of the "Loading session
     // history..." placeholder on sub-frame replays, (b) gives E2E automation
@@ -255,7 +262,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   resolveToolCall: (callId, result, status, durationMs, error) =>
     set((state) => {
-      if (!state.toolCalls[callId]) return state
+      if (!state.toolCalls[callId]) {
+        // W3-7a: diagnostic for tool_call_result arriving for an unknown call_id.
+        // Common causes: race between resetSession and a late result frame, or
+        // a nested tool call that was handled via attachStepToSpan instead.
+        console.debug('[chat] resolveToolCall for unknown call_id', callId)
+        return state
+      }
       return {
         toolCalls: {
           ...state.toolCalls,
@@ -351,6 +364,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         msgs[i] = { ...msgs[i], spans: updatedSpans }
         return { messages: msgs }
       }
+      // W3-6: no matching span found — log a diagnostic so operators can correlate
+      // out-of-order subagent_end frames (e.g., end arrived before start on replay).
+      console.warn('[chat] subagent_end received for unknown span_id', {
+        spanId: frame.span_id,
+      })
       return {}
     }),
 
@@ -590,8 +608,17 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             sessionCost: state.sessionCost + (frame.stats?.cost ?? 0),
           }
         })
+        // W3-9: if a replay was in flight when this done frame arrived, record the
+        // completed session ID so ChatScreen's REST fallback knows replay finished
+        // and can skip the overwrite (even if storeMessageCount is 0 for an empty session).
+        if (store.isReplaying) {
+          const { activeSessionId } = useSessionStore.getState()
+          if (activeSessionId) {
+            set({ replayCompletedForSession: activeSessionId })
+          }
+        }
         // FR-I-014: first done after attach_session closes the replay window.
-        // Route through setReplaying so the 100ms minimum-display window is honored
+        // Route through setReplaying so the 250ms minimum-display window is honored
         // (avoids flicker + gives E2E the observable disabled-input window).
         // Harmless for live turns (isReplaying was already false).
         store.setReplaying(false)
@@ -862,7 +889,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       }
 
       default:
-        console.warn('[chat] Unknown frame type:', (frame as { type: string }).type)
+        // W3-7b: log the actual type string, not [object Object] from the whole frame.
+        console.warn('[chat] Unknown frame type', { type: (frame as { type?: string }).type })
         break
     }
   },
