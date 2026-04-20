@@ -397,11 +397,21 @@ func spawnSubTurn(
 		LightCandidates:           baseAgent.LightCandidates,
 		LightProvider:             baseAgent.LightProvider,
 	}
-	// FR-H-006: Use CloneExcept("spawn","handoff") so the child sub-turn cannot recursively
-	// spawn grandchildren or hand off to another agent. This is a registry-level filter:
-	// the tools are absent, not refused at execute time. One level only (owner decision 2026-04-20).
+	// FR-H-006: exclude delegation tools from the child's registry so it cannot
+	// recursively spawn grandchildren or hand off. Registry-level filter — the
+	// tools are absent, not refused at execute time. One level only (owner
+	// decision 2026-04-20).
+	//
+	// Three names are excluded (not just two as the spec originally listed):
+	//   - spawn:     async delegation (SpawnTool)
+	//   - subagent:  sync delegation (SubagentTool) — missed in the initial
+	//                Sprint H pass. Without this, a child could call `subagent`
+	//                to create a grandchild sub-turn, which would then fail
+	//                with a runtime depth-limit error instead of an unknown-tool
+	//                error (the intended contract).
+	//   - handoff:   agent switch
 	if baseAgent.Tools != nil {
-		agent.Tools = baseAgent.Tools.CloneExcept("spawn", "handoff")
+		agent.Tools = baseAgent.Tools.CloneExcept("spawn", "subagent", "handoff")
 	}
 
 	// Create processOptions for the child turn

@@ -255,11 +255,16 @@ test(
     await expect(input).toBeVisible({ timeout: 15_000 });
 
     // Prompt: force a single spawn with a subagent task that mandates ≥3 tool calls.
+    // The three tool calls are all `shell echo ...` — no filesystem access, no sandbox
+    // traversal. This matters because the subagent runs in its own workspace sandbox
+    // and filesystem tools (list_dir, fs.read) reject paths outside it, causing the
+    // subagent to abort early with <3 steps. Shell `echo` runs inside any sandbox
+    // and always succeeds, so the step counter reliably increments three times.
     await input.fill(
       [
         'Call the `spawn` tool exactly once, now, with these arguments:',
         '  label: "multi step counter test"',
-        '  task: "You are a subagent. Execute these THREE tool calls in this exact order. Do not skip any. Do not reply in prose between them. After all three have completed, reply with the single word \\"finished\\". (1) list_dir with path=\\"/\\"; (2) list_dir with path=\\"/workspace\\"; (3) shell with cmd=\\"echo done\\"."',
+        '  task: "You are a subagent. Execute these THREE shell tool calls in this exact order. Do not skip any. Do not reply in prose between them. After all three have completed, reply with the single word \\"finished\\". (1) shell cmd=\\"echo step one\\"; (2) shell cmd=\\"echo step two\\"; (3) shell cmd=\\"echo step three\\"."',
         'Do not call any other tool. Do not reply in prose. Call spawn now.',
       ].join('\n'),
     );
@@ -337,15 +342,14 @@ test(
       return;
     }
 
-    // Assert: step count reached ≥3. This proves the counter is live and incrementing.
-    const finalText = await collapsedBlock.textContent().catch(() => '');
-    const stepMatch = (finalText ?? '').match(/(\d+)\s+steps?/);
-    expect(stepMatch).not.toBeNull('step counter text must be present in collapsed block header');
-    if (stepMatch) {
-      const finalStepCount = parseInt(stepMatch[1], 10);
-      expect(finalStepCount).toBeGreaterThanOrEqual(3,
-        'step counter must reach ≥3 during a 3-tool sub-turn (FR-H-010)');
-    }
+    // If we reached here, the polling loop observed ≥3 steps — the counter is
+    // live and incrementing (FR-H-010). The loop's reachedThreeSteps=true flag
+    // IS the assertion; no further check is required. The earlier code tried
+    // to re-parse the final header text, but by the time we reach this point,
+    // the sub-turn has completed and the header may show duration ("3.2s")
+    // instead of the step count ("3 steps") — that re-check was always
+    // redundant and had a syntax bug (toBeNull doesn't accept a message arg).
+    expect(reachedThreeSteps).toBe(true);
   },
 );
 

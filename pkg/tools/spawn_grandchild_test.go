@@ -37,18 +37,26 @@ import (
 //
 // This test verifies the registry-level enforcement directly.
 func TestSubagentCannotSpawnGrandchild(t *testing.T) {
-	// Build a parent registry with a spawn tool registered.
+	// Build a parent registry with spawn + subagent tools registered.
+	// Both are delegation tools — the async `spawn` and the sync `subagent`
+	// variant — and both must be filtered out of the child's registry.
 	parentRegistry := NewToolRegistry()
 	spawnTool := &SpawnTool{} // no spawner — only used for registration
 	parentRegistry.Register(spawnTool)
+	subagentTool := &SubagentTool{} // no manager — only used for registration
+	parentRegistry.Register(subagentTool)
 
-	// Verify spawn IS in the parent registry.
+	// Verify both delegation tools ARE in the parent registry.
 	parent, ok := parentRegistry.Get("spawn")
 	require.True(t, ok, "spawn must be present in the parent registry before CloneExcept")
 	require.NotNil(t, parent)
+	parentSubagent, okSubagent := parentRegistry.Get("subagent")
+	require.True(t, okSubagent, "subagent must be present in the parent registry before CloneExcept")
+	require.NotNil(t, parentSubagent)
 
 	// Construct the child registry as spawnSubTurn does (FR-H-006).
-	childRegistry := parentRegistry.CloneExcept("spawn", "handoff")
+	// All three delegation tools are excluded: spawn, subagent, handoff.
+	childRegistry := parentRegistry.CloneExcept("spawn", "subagent", "handoff")
 
 	// BDD: Then "spawn" is absent from the child registry.
 	childSpawn, childHasSpawn := childRegistry.Get("spawn")
@@ -56,6 +64,13 @@ func TestSubagentCannotSpawnGrandchild(t *testing.T) {
 		"spawn must NOT be in the child registry — grandchildren are forbidden (Plan 3 §1 reversal)")
 	assert.Nil(t, childSpawn,
 		"spawn tool must be nil in the child registry")
+
+	// BDD: And "subagent" (sync delegation variant) is absent too.
+	childSubagent, childHasSubagent := childRegistry.Get("subagent")
+	assert.False(t, childHasSubagent,
+		"subagent must NOT be in the child registry — sync delegation is also grandchild-forbidden")
+	assert.Nil(t, childSubagent,
+		"subagent tool must be nil in the child registry")
 
 	// BDD: And "handoff" is absent from the child registry.
 	childHandoff, childHasHandoff := childRegistry.Get("handoff")
