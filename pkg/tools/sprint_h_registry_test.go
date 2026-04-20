@@ -11,7 +11,7 @@ import (
 )
 
 // TestToolRegistry_CloneExcept_OmitsNamed verifies FR-H-006:
-// CloneExcept("spawn","handoff") produces a registry without those tools
+// CloneExcept(ExcludedSpawn, ExcludedHandoff) produces a registry without those tools
 // but with all other tools intact.
 // Traces to: sprint-h-subagent-block-spec.md TDD row 2, BDD Scenario 9.
 func TestToolRegistry_CloneExcept_OmitsNamed(t *testing.T) {
@@ -36,7 +36,7 @@ func TestToolRegistry_CloneExcept_OmitsNamed(t *testing.T) {
 	require.True(t, hasReadFile, "read_file must be in the parent registry")
 
 	// Construct the child registry as spawnSubTurn does.
-	child := r.CloneExcept("spawn", "handoff")
+	child := r.CloneExcept(ExcludedSpawn, ExcludedHandoff)
 
 	// FR-H-006: "spawn" must be absent.
 	childSpawn, childHasSpawn := child.Get("spawn")
@@ -84,7 +84,7 @@ func TestSubTurn_ChildRegistry_OmitsSpawnAndHandoff(t *testing.T) {
 	r.Register(&HandoffTool{})
 	r.Register(&ReadFileTool{})
 
-	child := r.CloneExcept("spawn", "handoff")
+	child := r.CloneExcept(ExcludedSpawn, ExcludedHandoff)
 
 	// The child registry must have exactly read_file, no spawn, no handoff.
 	childNames := child.List()

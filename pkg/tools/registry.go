@@ -494,24 +494,57 @@ func (r *ToolRegistry) Clone() *ToolRegistry {
 	return clone
 }
 
+// ExcludedTool is the opaque identifier for a tool name to be excluded from a
+// cloned registry. Using a named type prevents accidental mixing with arbitrary
+// tool name strings at call sites — the compiler rejects mismatched types without
+// an explicit conversion.
+type ExcludedTool string
+
+const (
+	// ExcludedSpawn is the async delegation tool (SpawnTool). Excluded from child
+	// sub-turn registries so grandchild spawning is impossible (FR-H-006).
+	ExcludedSpawn ExcludedTool = "spawn"
+	// ExcludedSubagent is the sync delegation tool (SubagentTool). Also excluded
+	// from child registries — a subagent calling subagent would create a grandchild.
+	ExcludedSubagent ExcludedTool = "subagent"
+	// ExcludedHandoff is the agent-switch tool. Excluded from child registries to
+	// prevent sub-turns from hijacking the active agent session (FR-H-006).
+	ExcludedHandoff ExcludedTool = "handoff"
+)
+
 // CloneExcept creates an independent copy of the registry omitting the named tools.
 // It is used to construct child sub-turn registries that must not have access to
 // certain tools (FR-H-006). The canonical call site is
-// CloneExcept("spawn", "subagent", "handoff"): a child sub-turn must never be
-// able to spawn grandchildren, create nested subagents, or hand off to another
-// agent. The version counter is reset to 0 in the clone as it is a new
+// CloneExcept(ExcludedSpawn, ExcludedSubagent, ExcludedHandoff): a child sub-turn
+// must never be able to spawn grandchildren, create nested subagents, or hand off
+// to another agent. The version counter is reset to 0 in the clone as it is a new
 // independent registry.
+//
+// Existence check: each ExcludedTool name is validated against the base registry.
+// If a named tool is absent, slog.Warn is emitted and processing continues — this
+// is a production-safe guard that does not panic on typos. The check prevents
+// silent no-ops (e.g., a renamed tool that should still be excluded).
 //
 // IMPORTANT: keep field list in sync with Clone() and ToolEntry. A new field on
 // ToolEntry must also be copied here (via cloneEntry), or the child registry will
 // silently forget it. Add the field to cloneEntry above — not inline here.
-func (r *ToolRegistry) CloneExcept(names ...string) *ToolRegistry {
-	excluded := make(map[string]struct{}, len(names))
-	for _, n := range names {
-		excluded[n] = struct{}{}
+func (r *ToolRegistry) CloneExcept(tools ...ExcludedTool) *ToolRegistry {
+	excluded := make(map[string]struct{}, len(tools))
+	for _, t := range tools {
+		excluded[string(t)] = struct{}{}
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	// Existence check: warn if any excluded name is not in the base registry.
+	// Non-fatal so production never crashes on a typo.
+	for name := range excluded {
+		if _, exists := r.tools[name]; !exists {
+			slog.Warn("CloneExcept: tool not in base registry",
+				"tool", name,
+				"hint", "check for renamed or unregistered tool",
+			)
+		}
+	}
 	clone := &ToolRegistry{
 		tools:       make(map[string]*ToolEntry, len(r.tools)),
 		mediaStore:  r.mediaStore,

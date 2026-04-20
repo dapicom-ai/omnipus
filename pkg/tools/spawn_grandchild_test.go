@@ -56,7 +56,7 @@ func TestSubagentCannotSpawnGrandchild(t *testing.T) {
 
 	// Construct the child registry as spawnSubTurn does (FR-H-006).
 	// All three delegation tools are excluded: spawn, subagent, handoff.
-	childRegistry := parentRegistry.CloneExcept("spawn", "subagent", "handoff")
+	childRegistry := parentRegistry.CloneExcept(ExcludedSpawn, ExcludedSubagent, ExcludedHandoff)
 
 	// BDD: Then "spawn" is absent from the child registry.
 	childSpawn, childHasSpawn := childRegistry.Get("spawn")
