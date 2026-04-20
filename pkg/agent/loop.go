@@ -3657,10 +3657,11 @@ turnLoop:
 				EventKindToolExecStart,
 				ts.eventMeta("runTurn", "turn.tool.start"),
 				ToolExecStartPayload{
-					ToolCallID: tc.ID,
-					ChatID:     ts.chatID,
-					Tool:       toolName,
-					Arguments:  cloneEventArguments(toolArgs),
+					ToolCallID:        tc.ID,
+					ChatID:            ts.chatID,
+					Tool:              toolName,
+					Arguments:         cloneEventArguments(toolArgs),
+					ParentSpawnCallID: ts.parentSpawnCallID,
 				},
 			)
 
@@ -3805,8 +3806,12 @@ turnLoop:
 			}
 
 			toolStart := time.Now()
+			// Inject the current tool call's ID into the context so that tools like
+			// spawn can read it as their parentSpawnCallID when they in turn call
+			// SpawnSubTurn (FR-H-003).
+			execCtx := withSpawnToolCallID(turnCtx, tc.ID)
 			toolResult := ts.agent.Tools.ExecuteWithContext(
-				turnCtx,
+				execCtx,
 				toolName,
 				toolArgs,
 				ts.channel,
@@ -3978,15 +3983,16 @@ turnLoop:
 				EventKindToolExecEnd,
 				ts.eventMeta("runTurn", "turn.tool.end"),
 				ToolExecEndPayload{
-					ToolCallID: toolCallID,
-					ChatID:     ts.chatID,
-					Tool:       toolName,
-					Duration:   toolDuration,
-					ForLLMLen:  len(contentForLLM),
-					ForUserLen: len(toolResult.ForUser),
-					IsError:    toolResult.IsError,
-					Async:      toolResult.Async,
-					Result:     contentForLLM,
+					ToolCallID:        toolCallID,
+					ChatID:            ts.chatID,
+					Tool:              toolName,
+					Duration:          toolDuration,
+					ForLLMLen:         len(contentForLLM),
+					ForUserLen:        len(toolResult.ForUser),
+					IsError:           toolResult.IsError,
+					Async:             toolResult.Async,
+					Result:            contentForLLM,
+					ParentSpawnCallID: ts.parentSpawnCallID,
 				},
 			)
 			tcStatus := "success"
@@ -3994,11 +4000,12 @@ turnLoop:
 				tcStatus = "error"
 			}
 			ts.appendToolCallTranscript(session.ToolCall{
-				ID:         toolCallID,
-				Tool:       toolName,
-				Status:     tcStatus,
-				DurationMS: toolDuration.Milliseconds(),
-				Parameters: cloneEventArguments(toolArgs),
+				ID:               toolCallID,
+				Tool:             toolName,
+				Status:           tcStatus,
+				DurationMS:       toolDuration.Milliseconds(),
+				Parameters:       cloneEventArguments(toolArgs),
+				ParentToolCallID: ts.parentSpawnCallID,
 			})
 			messages = append(messages, toolResultMsg)
 			if !ts.opts.NoHistory {
