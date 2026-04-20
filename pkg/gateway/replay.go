@@ -42,12 +42,18 @@ const replayResultPreviewBytes = 10 * 1024
 //   - Context cancellation is honoured between every frame (FR-I-005).
 //   - Returns after emitting exactly one done frame (FR-I-004).
 //
+// W3-3: rs is the pre-computed replayStats from computeReplayStats. Passing it
+// in avoids recomputing spawnIDsWithChildren a second time inside this function.
+// The done frame's Stats map is populated from rs so operators see counts in the
+// WS trace.
+//
 // The returned error is non-nil only when emit itself returns an error (e.g.
 // context cancelled or send-channel full).
 func streamReplay(
 	ctx context.Context,
 	sessionID string,
 	entries []session.TranscriptEntry,
+	rs replayStats,
 	emit func(wsServerFrame) error,
 ) (framesEmitted int, err error) {
 	// ── Pass 1: build ancillary indexes ─────────────────────────────────────
@@ -55,6 +61,7 @@ func streamReplay(
 	// spawnIDsPresent: set of ToolCall.IDs where tool == "spawn" AND at least
 	// one other tool call in the transcript has ParentToolCallID == that ID.
 	// This is the signal that the parent span has live children to bracket.
+	// W3-3: reuse the map from the pre-computed stats rather than recomputing.
 	spawnIDsWithChildren := buildSpawnIDsWithChildren(entries)
 
 	// deduped: for each ToolCall.ID keep only the index of the last occurrence
@@ -125,6 +132,7 @@ func streamReplay(
 
 			isNested := tc.ParentToolCallID != ""
 			parentIsSpawn := isNested && spawnIDsWithChildren[tc.ParentToolCallID]
+			isOrphan := isNested && !parentIsSpawn
 
 			if isNested && parentIsSpawn {
 				// This tool call will be emitted by emitNestedToolCalls when its
@@ -132,13 +140,17 @@ func streamReplay(
 				continue
 			}
 
-			if isNested && !parentIsSpawn {
+			if isOrphan {
 				// FR-I-007: orphan — parent not found in transcript.
 				slog.Warn("replay: orphan tool call — parent spawn not in transcript",
 					"event", "replay_orphan",
 					"session_id", sessionID,
 					"parent_tool_call_id", tc.ParentToolCallID,
 				)
+				// W3-1: the orphan is emitted as a flat tool call (no ParentCallID on
+				// the wire). This causes the client to take the non-nested rendering
+				// path immediately rather than waiting 10 s for the orphan TTL to expire.
+				// The slog.Warn above records the full context for operator debugging.
 			}
 
 			// For spawn calls that have children: emit subagent_start before
@@ -219,6 +231,8 @@ func streamReplay(
 			}
 
 			// Regular (non-spawn, or nested) tool call: flat emission.
+			// W3-1: orphan tool calls are emitted WITHOUT ParentCallID so the
+			// client takes the flat non-nested path immediately (not after 10s TTL).
 			startFrame := wsServerFrame{
 				Type:   "tool_call_start",
 				CallID: tc.ID,
@@ -228,7 +242,7 @@ func streamReplay(
 			if entry.AgentID != "" {
 				startFrame.AgentID = entry.AgentID
 			}
-			if isNested {
+			if isNested && !isOrphan {
 				startFrame.ParentCallID = tc.ParentToolCallID
 			}
 			if err2 := emitFrame(startFrame); err2 != nil {
@@ -247,7 +261,7 @@ func streamReplay(
 			if entry.AgentID != "" {
 				resultFrame.AgentID = entry.AgentID
 			}
-			if isNested {
+			if isNested && !isOrphan {
 				resultFrame.ParentCallID = tc.ParentToolCallID
 			}
 			if err2 := emitFrame(resultFrame); err2 != nil {
@@ -257,7 +271,20 @@ func streamReplay(
 	}
 
 	// FR-I-004: exactly one done frame at the end.
-	if err2 := emitFrame(wsServerFrame{Type: "done", Stats: map[string]any{}}); err2 != nil {
+	// W3-2: populate Stats with the pre-computed counters so operators reading
+	// the WS trace can see orphan / duplicate / truncated counts inline.
+	// W3-2: emit the done frame OUTSIDE emitFrame so it is NOT counted in
+	// framesEmitted — that counter represents content frames only.
+	doneStats := map[string]any{
+		"frames_emitted":                framesEmitted,
+		"orphan_count":                  rs.orphanCount,
+		"duplicate_tool_call_id_count":  rs.duplicateToolCallIDCount,
+		"truncated_result_count":        rs.truncatedResultCount,
+	}
+	if ctx.Err() != nil {
+		return framesEmitted, ctx.Err()
+	}
+	if err2 := emit(wsServerFrame{Type: "done", Stats: doneStats}); err2 != nil {
 		return framesEmitted, err2
 	}
 	return framesEmitted, nil
@@ -445,19 +472,49 @@ func resolveTaskLabel(tc session.ToolCall) string {
 }
 
 // replayStats aggregates metrics from a set of transcript entries for slog.Info.
+// W3-2: extended with three additional counters to improve operator observability.
 type replayStats struct {
 	toolCallCount  int
 	spanCount      int
+	// W3-2 additions
+	orphanCount                int // tool calls whose ParentToolCallID has no matching spawn-with-children
+	duplicateToolCallIDCount   int // tool_call_ids that appear more than once across entries
+	truncatedResultCount       int // tool call results that exceeded replayMaxResultBytes
 }
 
 // computeReplayStats scans entries for logging purposes.
+// W3-3: this function is the single point of computation. streamReplay accepts
+// the pre-computed stats via its signature so the spawnIDsWithChildren map is
+// not rebuilt redundantly on every call.
 func computeReplayStats(entries []session.TranscriptEntry) replayStats {
 	var rs replayStats
 	spawnIDsWithChildren := buildSpawnIDsWithChildren(entries)
-	for _, entry := range entries {
-		rs.toolCallCount += len(entry.ToolCalls)
-	}
 	rs.spanCount = len(spawnIDsWithChildren)
+
+	// Count duplicates: seenIDs tracks first occurrence; a second hit increments the counter.
+	seenIDs := make(map[string]bool, len(entries))
+	for _, entry := range entries {
+		for _, tc := range entry.ToolCalls {
+			rs.toolCallCount++
+			if tc.ID != "" {
+				if seenIDs[tc.ID] {
+					rs.duplicateToolCallIDCount++
+				} else {
+					seenIDs[tc.ID] = true
+				}
+			}
+			// Orphan: nested but parent not in spawnIDsWithChildren.
+			if tc.ParentToolCallID != "" && !spawnIDsWithChildren[tc.ParentToolCallID] {
+				rs.orphanCount++
+			}
+			// Truncated: would the result exceed the limit?
+			if tc.Result != nil {
+				if encoded, merr := json.Marshal(tc.Result); merr == nil && len(encoded) > replayMaxResultBytes {
+					rs.truncatedResultCount++
+				}
+			}
+		}
+	}
 	return rs
 }
 

@@ -64,7 +64,8 @@ func (s *sliceSink) types() []string {
 func runReplay(t *testing.T, entries []session.TranscriptEntry) ([]wsServerFrame, int) {
 	t.Helper()
 	sink := &sliceSink{}
-	n, err := streamReplay(context.Background(), "session_test", entries, sink.emit)
+	rs := computeReplayStats(entries)
+	n, err := streamReplay(context.Background(), "session_test", entries, rs, sink.emit)
 	require.NoError(t, err, "streamReplay must not return an error for valid input")
 	return sink.all(), n
 }
@@ -121,9 +122,12 @@ func nestedToolCall(id, tool, parentID string) session.ToolCall {
 // Traces to: TDD row 1
 func TestStreamReplay_Extracted_TestableSignature(t *testing.T) {
 	sink := &sliceSink{}
-	n, err := streamReplay(context.Background(), "s1", nil, sink.emit)
+	// W3-3: pass pre-computed stats; nil entries produce an empty stats struct.
+	rs := computeReplayStats(nil)
+	n, err := streamReplay(context.Background(), "s1", nil, rs, sink.emit)
 	require.NoError(t, err, "streamReplay must accept a nil entry slice")
-	assert.Equal(t, 1, n, "empty transcript must emit exactly 1 frame (done)")
+	// W3-2: done frame is NOT counted in framesEmitted (content frames only).
+	assert.Equal(t, 0, n, "empty transcript must emit 0 content frames (done frame excluded from count)")
 	frames := sink.all()
 	require.Len(t, frames, 1)
 	assert.Equal(t, "done", frames[0].Type)
@@ -502,7 +506,8 @@ func TestReplay_CompactionEntry_Skipped(t *testing.T) {
 
 	require.Equal(t, []string{"done"}, frameTypes(frames),
 		"compaction entry must produce zero frames before done")
-	assert.Equal(t, 1, n, "only the done frame should be counted")
+	// W3-2: done frame is excluded from framesEmitted (content frames only).
+	assert.Equal(t, 0, n, "compaction-only transcript produces 0 content frames")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -516,7 +521,8 @@ func TestReplay_CompactionEntry_Skipped(t *testing.T) {
 func TestReplay_EmptyTranscript_JustDone(t *testing.T) {
 	frames, n := runReplay(t, nil)
 	require.Equal(t, []string{"done"}, frameTypes(frames))
-	assert.Equal(t, 1, n)
+	// W3-2: done frame excluded from framesEmitted.
+	assert.Equal(t, 0, n)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -648,7 +654,7 @@ func TestReplay_CtxCancelled_StopsCleanly(t *testing.T) {
 		return nil
 	}
 
-	_, err := streamReplay(ctx, "session_cancel", entries, emitFn)
+	_, err := streamReplay(ctx, "session_cancel", entries, computeReplayStats(entries), emitFn)
 	assert.ErrorIs(t, err, context.Canceled, "streamReplay must return context.Canceled on ctx cancellation")
 	// goleak.VerifyNone (deferred) will fail the test if any goroutine was leaked.
 }

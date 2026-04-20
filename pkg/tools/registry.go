@@ -460,6 +460,20 @@ func (r *ToolRegistry) List() []string {
 	return r.sortedToolNames()
 }
 
+// cloneEntry returns a shallow copy of a ToolEntry.
+// W3-13: shared by Clone and CloneExcept so the field list cannot drift between
+// the two methods. When a new field is added to ToolEntry, update ONLY this
+// function and both Clone + CloneExcept pick up the change automatically.
+//
+// IMPORTANT: keep this in sync with the ToolEntry struct definition above.
+func cloneEntry(e *ToolEntry) *ToolEntry {
+	return &ToolEntry{
+		Tool:   e.Tool,
+		IsCore: e.IsCore,
+		TTL:    e.TTL,
+	}
+}
+
 // Clone creates an independent copy of the registry containing the same tool
 // entries (shallow copy of each ToolEntry). This is used to give subagents a
 // snapshot of the parent agent's tools without sharing the same registry —
@@ -475,20 +489,22 @@ func (r *ToolRegistry) Clone() *ToolRegistry {
 		auditLogger: r.auditLogger,
 	}
 	for name, entry := range r.tools {
-		clone.tools[name] = &ToolEntry{
-			Tool:   entry.Tool,
-			IsCore: entry.IsCore,
-			TTL:    entry.TTL,
-		}
+		clone.tools[name] = cloneEntry(entry)
 	}
 	return clone
 }
 
 // CloneExcept creates an independent copy of the registry omitting the named tools.
 // It is used to construct child sub-turn registries that must not have access to
-// certain tools (FR-H-006). The canonical call is CloneExcept("spawn","handoff"):
-// a subagent must never be able to spawn grandchildren or hand off to another agent.
-// The version counter is reset to 0 in the clone as it is a new independent registry.
+// certain tools (FR-H-006). The canonical call site is
+// CloneExcept("spawn", "subagent", "handoff"): a child sub-turn must never be
+// able to spawn grandchildren, create nested subagents, or hand off to another
+// agent. The version counter is reset to 0 in the clone as it is a new
+// independent registry.
+//
+// IMPORTANT: keep field list in sync with Clone() and ToolEntry. A new field on
+// ToolEntry must also be copied here (via cloneEntry), or the child registry will
+// silently forget it. Add the field to cloneEntry above — not inline here.
 func (r *ToolRegistry) CloneExcept(names ...string) *ToolRegistry {
 	excluded := make(map[string]struct{}, len(names))
 	for _, n := range names {
@@ -505,11 +521,7 @@ func (r *ToolRegistry) CloneExcept(names ...string) *ToolRegistry {
 		if _, skip := excluded[name]; skip {
 			continue
 		}
-		clone.tools[name] = &ToolEntry{
-			Tool:   entry.Tool,
-			IsCore: entry.IsCore,
-			TTL:    entry.TTL,
-		}
+		clone.tools[name] = cloneEntry(entry)
 	}
 	return clone
 }

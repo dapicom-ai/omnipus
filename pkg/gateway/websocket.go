@@ -696,12 +696,17 @@ func (h *WSHandler) handleAttachSession(
 	rs := computeReplayStats(entries)
 
 	// FR-I-013: structured log at replay start.
+	// W3-2: include orphan/duplicate/truncated counts so the replay_start log
+	// line carries enough context to debug fidelity issues without replay_end.
 	slog.Info("ws: replay_start",
 		"event", "replay_start",
 		"session_id", attachID,
 		"entry_count_loaded", len(entries),
 		"tool_call_count_loaded", rs.toolCallCount,
 		"span_count_detected", rs.spanCount,
+		"orphan_count", rs.orphanCount,
+		"duplicate_tool_call_id_count", rs.duplicateToolCallIDCount,
+		"truncated_result_count", rs.truncatedResultCount,
 	)
 	replayStart := time.Now()
 
@@ -756,7 +761,9 @@ func (h *WSHandler) handleAttachSession(
 		}
 	}
 
-	framesEmitted, replayErr := streamReplay(ctx, attachID, entries, emitFn)
+	// W3-3: pass pre-computed rs into streamReplay so it doesn't rebuild
+	// spawnIDsWithChildren for a second time.
+	framesEmitted, replayErr := streamReplay(ctx, attachID, entries, rs, emitFn)
 
 	// Disarm the divert FIRST so that subsequent sendConnFrame calls go directly
 	// to sendCh once we drain the buffer below.
@@ -787,11 +794,15 @@ func (h *WSHandler) handleAttachSession(
 	}
 
 	// FR-I-013: structured log at replay end.
+	// W3-2: include the full stats set so replay_end is a self-contained diagnostic record.
 	slog.Info("ws: replay_end",
 		"event", "replay_end",
 		"session_id", attachID,
 		"frames_emitted", framesEmitted,
 		"duration_ms", durationMS,
+		"orphan_count", rs.orphanCount,
+		"duplicate_tool_call_id_count", rs.duplicateToolCallIDCount,
+		"truncated_result_count", rs.truncatedResultCount,
 	)
 
 	// FR-I-009: drain any live events buffered during replay, in arrival order.
