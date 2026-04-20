@@ -5,7 +5,7 @@ import { useConnectionStore } from '@/store/connection'
 import { useSessionStore, registerChatResetSession } from '@/store/session'
 import { queryClient } from '@/lib/queryClient'
 import type { Message, ToolCall } from '@/lib/api'
-import type { WsReceiveFrame, WsExecApprovalRequestFrame, WsReplayMessageFrame, WsRateLimitFrame } from '@/lib/ws'
+import type { WsReceiveFrame, WsExecApprovalRequestFrame, WsReplayMessageFrame, WsRateLimitFrame, WsSubagentStartFrame, WsSubagentEndFrame } from '@/lib/ws'
 
 export interface MediaAttachment {
   type: 'image' | 'audio' | 'video' | 'file'
@@ -15,10 +15,28 @@ export interface MediaAttachment {
   caption?: string
 }
 
+// FR-H-008/FR-H-009: a subagent span brackets one sub-turn
+export interface SubagentSpan {
+  spanId: string
+  parentCallId: string
+  taskLabel: string
+  status: 'running' | 'success' | 'error' | 'cancelled' | 'interrupted'
+  durationMs?: number
+  steps: Array<ToolCall & { call_id: string }>
+  finalResult?: string
+}
+
+// A buffered frame waiting for its subagent_start to arrive (FR-H-009)
+interface BufferedFrame {
+  frame: WsReceiveFrame & { type: 'tool_call_start' | 'tool_call_result' }
+  arrivedAt: number
+}
+
 export interface ChatMessage extends Message {
   isStreaming?: boolean
   streamCursor?: boolean
   media?: MediaAttachment[]
+  spans?: SubagentSpan[]
 }
 
 export interface RateLimitEventData {
@@ -70,6 +88,11 @@ interface ChatStore {
   setRateLimitEvent: (event: RateLimitEventData) => void
   clearRateLimitEvent: () => void
 
+  // Subagent span management (FR-H-008, FR-H-009)
+  startSpan: (frame: WsSubagentStartFrame) => void
+  endSpan: (frame: WsSubagentEndFrame) => void
+  attachStepToSpan: (parentCallId: string, step: ToolCall & { call_id: string }) => void
+
   // Reset all session-scoped state (called by sessionStore on session switch)
   resetSession: () => void
 
@@ -87,6 +110,13 @@ interface ChatStore {
 // Kept outside the zustand store because it is ephemeral (not state) and must
 // be cancellable across calls without retrieving it through the store.
 let rateLimitClearTimer: ReturnType<typeof setTimeout> | null = null
+
+// FR-H-009: out-of-order frame buffer — tool_call_start/result frames that
+// arrived before their subagent_start. Keyed by parent_call_id. Dropped to
+// flat rendering after ORPHAN_BUFFER_TTL_MS if no subagent_start arrives.
+const ORPHAN_BUFFER_TTL_MS = 10_000
+const pendingByParentCallId: Record<string, BufferedFrame[]> = {}
+const orphanTimers: Record<string, ReturnType<typeof setTimeout>> = {}
 
 /** State reset applied whenever switching or attaching to a session. */
 const CLEAN_SESSION_STATE = {
@@ -196,6 +226,105 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           [callId]: { ...state.toolCalls[callId], status: 'cancelled' },
         },
       }
+    }),
+
+  // FR-H-008: push a new span onto the current streaming assistant message
+  startSpan: (frame) =>
+    set((state) => {
+      const msgs = [...state.messages]
+      const lastIdx = msgs.map((m) => m.role).lastIndexOf('assistant')
+      if (lastIdx === -1) return {}
+      const span: SubagentSpan = {
+        spanId: frame.span_id,
+        parentCallId: frame.parent_call_id,
+        taskLabel: frame.task_label,
+        status: 'running',
+        steps: [],
+      }
+      // Drain any buffered frames that were waiting for this span
+      const buffered = pendingByParentCallId[frame.parent_call_id] ?? []
+      delete pendingByParentCallId[frame.parent_call_id]
+      if (orphanTimers[frame.parent_call_id]) {
+        clearTimeout(orphanTimers[frame.parent_call_id])
+        delete orphanTimers[frame.parent_call_id]
+      }
+      for (const { frame: bf } of buffered) {
+        if (bf.type === 'tool_call_start') {
+          span.steps.push({
+            id: bf.call_id,
+            call_id: bf.call_id,
+            tool: bf.tool,
+            params: bf.params,
+            status: 'running',
+          })
+        } else if (bf.type === 'tool_call_result') {
+          const existingIdx = span.steps.findIndex((s) => s.call_id === bf.call_id)
+          if (existingIdx !== -1) {
+            span.steps[existingIdx] = {
+              ...span.steps[existingIdx],
+              result: bf.result,
+              status: bf.status,
+              duration_ms: bf.duration_ms,
+              error: bf.error,
+            }
+          }
+        }
+      }
+      msgs[lastIdx] = {
+        ...msgs[lastIdx],
+        spans: [...(msgs[lastIdx].spans ?? []), span],
+      }
+      return { messages: msgs }
+    }),
+
+  // FR-H-008: finalize span status, duration, finalResult
+  endSpan: (frame) =>
+    set((state) => {
+      const msgs = [...state.messages]
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const msg = msgs[i]
+        if (msg.role !== 'assistant' || !msg.spans) continue
+        const spanIdx = msg.spans.findIndex((s) => s.spanId === frame.span_id)
+        if (spanIdx === -1) continue
+        const updatedSpans = [...msg.spans]
+        updatedSpans[spanIdx] = {
+          ...updatedSpans[spanIdx],
+          status: frame.status,
+          durationMs: frame.duration_ms,
+          finalResult: frame.final_result,
+        }
+        msgs[i] = { ...msgs[i], spans: updatedSpans }
+        return { messages: msgs }
+      }
+      return {}
+    }),
+
+  // FR-H-010: attach a step (tool_call_start) to an open span
+  attachStepToSpan: (parentCallId, step) =>
+    set((state) => {
+      const msgs = [...state.messages]
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const msg = msgs[i]
+        if (msg.role !== 'assistant' || !msg.spans) continue
+        const spanIdx = msg.spans.findIndex((s) => s.parentCallId === parentCallId)
+        if (spanIdx === -1) continue
+        const updatedSpans = [...msg.spans]
+        const existingIdx = updatedSpans[spanIdx].steps.findIndex((s) => s.call_id === step.call_id)
+        if (existingIdx !== -1) {
+          // Update existing step (tool_call_result arriving after start)
+          const updatedSteps = [...updatedSpans[spanIdx].steps]
+          updatedSteps[existingIdx] = { ...updatedSteps[existingIdx], ...step }
+          updatedSpans[spanIdx] = { ...updatedSpans[spanIdx], steps: updatedSteps }
+        } else {
+          updatedSpans[spanIdx] = {
+            ...updatedSpans[spanIdx],
+            steps: [...updatedSpans[spanIdx].steps, step],
+          }
+        }
+        msgs[i] = { ...msgs[i], spans: updatedSpans }
+        return { messages: msgs }
+      }
+      return {}
     }),
 
   pendingApprovals: [],
@@ -427,19 +556,106 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         break
 
       case 'tool_call_start': {
-        // During replay, tool_call frames may arrive before any assistant text.
-        // Ensure an assistant message exists so tool calls have a parent to render against.
-        const lastMsg = store.messages[store.messages.length - 1]
-        if (!lastMsg || lastMsg.role !== 'assistant') {
-          store.updateLastAssistantMessage('', false)
+        const parentCallId = frame.parent_call_id
+        if (parentCallId) {
+          // FR-H-009: check if a matching span is already open
+          const msgs = store.messages
+          const hasSpan = msgs.some(
+            (m) => m.role === 'assistant' && m.spans?.some((s) => s.parentCallId === parentCallId)
+          )
+          if (hasSpan) {
+            // Attach directly to the span (FR-H-010)
+            store.attachStepToSpan(parentCallId, {
+              id: frame.call_id,
+              call_id: frame.call_id,
+              tool: frame.tool,
+              params: frame.params,
+              status: 'running',
+            })
+          } else {
+            // Buffer until subagent_start arrives or TTL expires (FR-H-009)
+            if (!pendingByParentCallId[parentCallId]) {
+              pendingByParentCallId[parentCallId] = []
+              // Set 10s TTL: after which release as flat tool call with a warning
+              orphanTimers[parentCallId] = setTimeout(() => {
+                const buffered = pendingByParentCallId[parentCallId] ?? []
+                delete pendingByParentCallId[parentCallId]
+                delete orphanTimers[parentCallId]
+                if (buffered.length > 0) {
+                  console.warn(
+                    `[chat] Orphan frames for parent_call_id="${parentCallId}" — subagent_start never arrived within ${ORPHAN_BUFFER_TTL_MS}ms. Releasing as flat tool calls.`
+                  )
+                  for (const { frame: bf } of buffered) {
+                    if (bf.type === 'tool_call_start') {
+                      const s = get()
+                      const lastMsg = s.messages[s.messages.length - 1]
+                      if (!lastMsg || lastMsg.role !== 'assistant') {
+                        s.updateLastAssistantMessage('', false)
+                      }
+                      s.startToolCall(bf.call_id ?? '', bf.tool ?? '', bf.params ?? {})
+                    } else if (bf.type === 'tool_call_result') {
+                      get().resolveToolCall(bf.call_id ?? '', bf.result, bf.status ?? 'success', bf.duration_ms, bf.error)
+                    }
+                  }
+                }
+              }, ORPHAN_BUFFER_TTL_MS)
+            }
+            pendingByParentCallId[parentCallId].push({ frame, arrivedAt: Date.now() })
+          }
+        } else {
+          // Non-nested tool call — original behavior
+          const lastMsg = store.messages[store.messages.length - 1]
+          if (!lastMsg || lastMsg.role !== 'assistant') {
+            store.updateLastAssistantMessage('', false)
+          }
+          store.startToolCall(frame.call_id ?? '', frame.tool ?? '', frame.params ?? {})
         }
-        store.startToolCall(frame.call_id ?? '', frame.tool ?? '', frame.params ?? {})
         break
       }
 
-      case 'tool_call_result':
-        store.resolveToolCall(frame.call_id ?? '', frame.result, frame.status ?? 'success', frame.duration_ms, frame.error)
+      case 'tool_call_result': {
+        const parentCallId = frame.parent_call_id
+        if (parentCallId) {
+          const msgs = store.messages
+          const hasSpan = msgs.some(
+            (m) => m.role === 'assistant' && m.spans?.some((s) => s.parentCallId === parentCallId)
+          )
+          if (hasSpan) {
+            // Update the step in the span
+            store.attachStepToSpan(parentCallId, {
+              id: frame.call_id,
+              call_id: frame.call_id,
+              tool: frame.tool,
+              params: {},
+              result: frame.result,
+              status: frame.status ?? 'success',
+              duration_ms: frame.duration_ms,
+              error: frame.error,
+            })
+          } else {
+            // Buffer until subagent_start arrives
+            if (!pendingByParentCallId[parentCallId]) {
+              pendingByParentCallId[parentCallId] = []
+            }
+            pendingByParentCallId[parentCallId].push({ frame, arrivedAt: Date.now() })
+          }
+        } else {
+          store.resolveToolCall(frame.call_id ?? '', frame.result, frame.status ?? 'success', frame.duration_ms, frame.error)
+        }
         break
+      }
+
+      case 'subagent_start': {
+        const sf = frame as WsSubagentStartFrame
+        store.startSpan(sf)
+        break
+      }
+
+      case 'subagent_end': {
+        const ef = frame as WsSubagentEndFrame
+        store.endSpan(ef)
+        break
+      }
 
       case 'exec_approval_request':
         store.addApprovalRequest(frame)

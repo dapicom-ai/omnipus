@@ -367,3 +367,280 @@ describe('chat store — sendMessage optimistic render', () => {
     )
   })
 })
+
+// ── Sprint H: subagent span tests ─────────────────────────────────────────────
+// TDD row 11: ChatStore_GroupsFramesBySpan
+// Traces to: sprint-h-subagent-block-spec.md Scenarios 2, 4, 5, 8
+
+describe('ChatStore_GroupsFramesBySpan', () => {
+  /** Seed an assistant placeholder so spans have a message to attach to. */
+  function seedAssistant() {
+    act(() => {
+      useChatStore.getState().updateLastAssistantMessage('', false)
+    })
+  }
+
+  it('in-order: subagent_start → tool_call_start → tool_call_result → subagent_end populates span', () => {
+    seedAssistant()
+
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'subagent_start',
+        span_id: 'span_c1',
+        parent_call_id: 'c1',
+        task_label: 'audit go files',
+        agent_id: 'max',
+      })
+    })
+
+    let msgs = useChatStore.getState().messages
+    let span = msgs[msgs.length - 1].spans?.[0]
+    expect(span).toBeDefined()
+    expect(span?.spanId).toBe('span_c1')
+    expect(span?.taskLabel).toBe('audit go files')
+    expect(span?.status).toBe('running')
+    expect(span?.steps).toHaveLength(0)
+
+    // tool_call_start with matching parent_call_id
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 't1',
+        tool: 'fs.list',
+        params: { path: '/tmp' },
+        parent_call_id: 'c1',
+      })
+    })
+
+    msgs = useChatStore.getState().messages
+    span = msgs[msgs.length - 1].spans?.[0]
+    expect(span?.steps).toHaveLength(1)
+    expect(span?.steps[0].tool).toBe('fs.list')
+    expect(span?.steps[0].status).toBe('running')
+
+    // tool_call_result
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_result',
+        call_id: 't1',
+        tool: 'fs.list',
+        result: 'file.go',
+        status: 'success',
+        duration_ms: 100,
+        parent_call_id: 'c1',
+      })
+    })
+
+    msgs = useChatStore.getState().messages
+    span = msgs[msgs.length - 1].spans?.[0]
+    expect(span?.steps[0].status).toBe('success')
+    expect(span?.steps[0].result).toBe('file.go')
+
+    // subagent_end
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'subagent_end',
+        span_id: 'span_c1',
+        status: 'success',
+        duration_ms: 4210,
+        final_result: 'Found 1 Go file',
+      })
+    })
+
+    msgs = useChatStore.getState().messages
+    span = msgs[msgs.length - 1].spans?.[0]
+    expect(span?.status).toBe('success')
+    expect(span?.durationMs).toBe(4210)
+    expect(span?.finalResult).toBe('Found 1 Go file')
+  })
+
+  it('out-of-order: tool_call_start arrives before subagent_start — buffered then drained', () => {
+    seedAssistant()
+
+    // tool_call_start arrives BEFORE subagent_start
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 't2',
+        tool: 'shell',
+        params: { cmd: 'ls' },
+        parent_call_id: 'c2',
+      })
+    })
+
+    // No span yet — should not appear in flat toolCalls either yet
+    let msgs = useChatStore.getState().messages
+    expect(msgs[msgs.length - 1].spans ?? []).toHaveLength(0)
+
+    // Now subagent_start arrives — should drain the buffer
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'subagent_start',
+        span_id: 'span_c2',
+        parent_call_id: 'c2',
+        task_label: 'list files',
+      })
+    })
+
+    msgs = useChatStore.getState().messages
+    const span = msgs[msgs.length - 1].spans?.[0]
+    expect(span).toBeDefined()
+    expect(span?.spanId).toBe('span_c2')
+    expect(span?.steps).toHaveLength(1)
+    expect(span?.steps[0].tool).toBe('shell')
+  })
+
+  it('step count increments +1 per tool_call_start, not per result (FR-H-010)', () => {
+    seedAssistant()
+
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'subagent_start',
+        span_id: 'span_c3',
+        parent_call_id: 'c3',
+        task_label: 'multi-step task',
+      })
+    })
+
+    for (let i = 1; i <= 3; i++) {
+      act(() => {
+        useChatStore.getState().handleFrame({
+          type: 'tool_call_start',
+          call_id: `t_${i}`,
+          tool: 'fs.list',
+          params: {},
+          parent_call_id: 'c3',
+        })
+      })
+      const msgs = useChatStore.getState().messages
+      const span = msgs[msgs.length - 1].spans?.[0]
+      expect(span?.steps).toHaveLength(i)
+    }
+  })
+
+  it('two sibling spans accumulate steps independently', () => {
+    seedAssistant()
+
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'subagent_start',
+        span_id: 'span_s1',
+        parent_call_id: 's1',
+        task_label: 'first',
+      })
+      useChatStore.getState().handleFrame({
+        type: 'subagent_start',
+        span_id: 'span_s2',
+        parent_call_id: 's2',
+        task_label: 'second',
+      })
+    })
+
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'ts1',
+        tool: 'exec',
+        params: {},
+        parent_call_id: 's1',
+      })
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'ts2a',
+        tool: 'web_search',
+        params: {},
+        parent_call_id: 's2',
+      })
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'ts2b',
+        tool: 'file.read',
+        params: {},
+        parent_call_id: 's2',
+      })
+    })
+
+    const msgs = useChatStore.getState().messages
+    const spans = msgs[msgs.length - 1].spans ?? []
+    expect(spans).toHaveLength(2)
+    expect(spans[0].steps).toHaveLength(1)
+    expect(spans[1].steps).toHaveLength(2)
+  })
+})
+
+// TDD row 12: ChatStore_OrphanFrame_FallsBackFlat
+// Traces to: sprint-h-subagent-block-spec.md Edge (out-of-order), FR-H-009
+
+describe('ChatStore_OrphanFrame_FallsBackFlat', () => {
+  it('frame with unknown parent_call_id + no subagent_start within 10s → flat + dev warning', async () => {
+    // Use fake timers to simulate the 10s TTL without waiting
+    vi.useFakeTimers()
+    const warnSpy = vi.spyOn(console, 'warn')
+
+    act(() => {
+      useChatStore.getState().updateLastAssistantMessage('', false)
+    })
+
+    // tool_call_start with a parent_call_id that has no matching subagent_start
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'orphan_t1',
+        tool: 'fs.list',
+        params: {},
+        parent_call_id: 'orphan_parent',
+      })
+    })
+
+    // No span yet, not in toolCalls yet (buffered)
+    expect(useChatStore.getState().toolCalls['orphan_t1']).toBeUndefined()
+
+    // Advance time past 10s TTL
+    await act(async () => {
+      vi.advanceTimersByTime(10_001)
+    })
+
+    // Now the buffered frame should be released as a flat tool call
+    const state = useChatStore.getState()
+    expect(state.toolCalls['orphan_t1']).toBeDefined()
+    expect(state.toolCalls['orphan_t1'].tool).toBe('fs.list')
+
+    // A dev console warning must have been emitted
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('orphan_parent'),
+    )
+
+    vi.useRealTimers()
+    warnSpy.mockRestore()
+  })
+})
+
+// Regression: TestChatRouter_NonSpawnCall_NoSpan
+// flat tool_call_start (no parent_call_id) is NOT grouped into any span
+
+describe('ChatStore regression: flat tool call without parent_call_id', () => {
+  it('renders as a flat ToolCallBadge (not attached to any span)', () => {
+    act(() => {
+      useChatStore.getState().updateLastAssistantMessage('', false)
+    })
+
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'flat_1',
+        tool: 'exec',
+        params: { cmd: 'pwd' },
+        // no parent_call_id
+      })
+    })
+
+    const state = useChatStore.getState()
+    // Tool call appears in the flat toolCalls map
+    expect(state.toolCalls['flat_1']).toBeDefined()
+    expect(state.toolCalls['flat_1'].tool).toBe('exec')
+
+    // No span was created
+    const lastMsg = state.messages[state.messages.length - 1]
+    expect(lastMsg.spans ?? []).toHaveLength(0)
+  })
+})

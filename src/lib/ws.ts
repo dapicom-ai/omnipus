@@ -71,6 +71,7 @@ export interface WsToolCallStartFrame {
   tool: string
   call_id: string
   params: Record<string, unknown>
+  parent_call_id?: string
 }
 
 export interface WsToolCallResultFrame {
@@ -81,6 +82,24 @@ export interface WsToolCallResultFrame {
   status: 'success' | 'error'
   duration_ms?: number
   error?: string
+  parent_call_id?: string
+}
+
+// FR-H-004: subagent span bracket frames
+export interface WsSubagentStartFrame {
+  type: 'subagent_start'
+  span_id: string
+  parent_call_id: string
+  task_label: string
+  agent_id?: string
+}
+
+export interface WsSubagentEndFrame {
+  type: 'subagent_end'
+  span_id: string
+  status: 'success' | 'error' | 'cancelled' | 'interrupted'
+  duration_ms?: number
+  final_result?: string
 }
 
 export interface WsExecApprovalRequestFrame {
@@ -146,6 +165,8 @@ export type WsReceiveFrame =
   | WsRateLimitFrame
   | WsMediaFrame
   | WsAgentSwitchedFrame
+  | WsSubagentStartFrame
+  | WsSubagentEndFrame
 
 function isValidFrame(frame: unknown): frame is WsReceiveFrame {
   if (typeof frame !== 'object' || frame === null) return false
