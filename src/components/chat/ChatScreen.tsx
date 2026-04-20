@@ -31,6 +31,7 @@ import { GenericToolCall } from './tools/GenericToolCall'
 import { ExecApprovalBlock } from './ExecApprovalBlock'
 import { RateLimitIndicator } from './RateLimitIndicator'
 import { MarkdownText } from './markdown-text'
+import { SubagentBlock } from './SubagentBlock'
 import { Button } from '@/components/ui/button'
 import { useChatStore } from '@/store/chat'
 import { useConnectionStore } from '@/store/connection'
@@ -238,6 +239,23 @@ function InlineMedia() {
   )
 }
 
+// Renders subagent spans attached to the current message (FR-H-008).
+// useMessage().id corresponds to the store message's id (set in omnipus-runtime convertMessage).
+function SubagentSpansRenderer() {
+  const message = useMessage()
+  const messages = useChatStore((s) => s.messages)
+  const storeMsg = messages.find((m) => m.id === message.id)
+  const spans = storeMsg?.spans ?? []
+  if (spans.length === 0) return null
+  return (
+    <>
+      {spans.map((span) => (
+        <SubagentBlock key={span.spanId} span={span} />
+      ))}
+    </>
+  )
+}
+
 function AssistantMessageAvatar() {
   const activeAgentId = useSessionStore((s) => s.activeAgentId)
   const { data: agents = [] } = useQuery({ queryKey: ['agents'], queryFn: fetchAgents })
@@ -284,6 +302,8 @@ function AssistantMessage() {
               },
             }}
           />
+          {/* Subagent spans — rendered per-message, keyed by span_id (FR-H-008) */}
+          <SubagentSpansRenderer />
           <InlineMedia />
         </div>
 
