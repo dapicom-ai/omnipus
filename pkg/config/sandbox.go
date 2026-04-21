@@ -66,6 +66,29 @@ type OmnipusSandboxConfig struct {
 	// DefaultToolPolicy is the fallback global policy for tools not listed in
 	// ToolPolicies. Valid values: "allow" (default), "ask", "deny".
 	DefaultToolPolicy string `json:"default_tool_policy,omitempty"`
+
+	// SSRF configures outbound-HTTP SSRF protection (SEC-24).
+	// When Enabled is true, all tool HTTP clients (web_search, skills installer,
+	// browser, exec proxy) route through the SSRFChecker which blocks
+	// connections to private/internal IP ranges and cloud metadata endpoints.
+	// AllowInternal lists hosts, IPs, or CIDRs that are exempted from SSRF
+	// blocking (e.g. ["localhost", "10.0.0.0/8"] to allow an internal search
+	// service while still blocking all other private ranges).
+	SSRF OmnipusSSRFConfig `json:"ssrf,omitempty"`
+}
+
+// OmnipusSSRFConfig holds SSRF protection settings for outbound HTTP clients (SEC-24).
+type OmnipusSSRFConfig struct {
+	// Enabled activates SSRF protection for all outbound HTTP tool clients.
+	// Default: false (not enabled). Set to true to block private-IP connections.
+	Enabled bool `json:"enabled,omitempty"`
+
+	// AllowInternal lists hostnames, exact IPs, or CIDR ranges that are exempt
+	// from SSRF blocking even when Enabled is true. Entries may be:
+	//   - Exact IPv4/IPv6:  "127.0.0.1", "::1"
+	//   - CIDR range:       "10.0.0.0/8", "192.168.0.0/16"
+	//   - Hostname:         "localhost", "internal.corp"
+	AllowInternal []string `json:"allow_internal,omitempty"`
 }
 
 // OmnipusRateLimitsConfig holds Wave 4 rate limit configuration (SEC-26).
