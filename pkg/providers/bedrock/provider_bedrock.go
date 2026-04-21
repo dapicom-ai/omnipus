@@ -367,7 +367,11 @@ func buildUserContent(msg Message) []types.ContentBlock {
 			const maxImageSize = 10 * 1024 * 1024
 			decodedLen := base64.StdEncoding.DecodedLen(len(parts[1]))
 			if decodedLen > maxImageSize {
-				logger.WarnCF("bedrock", "skipping image exceeding size limit", map[string]any{"bytes": decodedLen, "limit": maxImageSize})
+				logger.WarnCF(
+					"bedrock",
+					"skipping image exceeding size limit",
+					map[string]any{"bytes": decodedLen, "limit": maxImageSize},
+				)
 				continue
 			}
 
@@ -430,7 +434,11 @@ func buildAssistantContent(msg Message) []types.ContentBlock {
 		args := tc.Arguments
 		if args == nil && tc.Function != nil && tc.Function.Arguments != "" {
 			if err := json.Unmarshal([]byte(tc.Function.Arguments), &args); err != nil {
-				logger.WarnCF("bedrock", "failed to parse Function.Arguments", map[string]any{"tool": toolName, "error": err.Error()})
+				logger.WarnCF(
+					"bedrock",
+					"failed to parse Function.Arguments",
+					map[string]any{"tool": toolName, "error": err.Error()},
+				)
 				args = map[string]any{}
 			}
 		}

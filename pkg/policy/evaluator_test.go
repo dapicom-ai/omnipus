@@ -235,3 +235,247 @@ func TestPolicyEvaluator_ExplainableDecision(t *testing.T) {
 		assert.NotEmpty(t, decision.PolicyRule)
 	})
 }
+
+// TestPolicyEvaluator_GlobToolNames validates glob pattern matching for tool names
+// in both agent-level allow/deny lists and global tool_policies.
+// Closes: issue #79
+// README citation: "Three-tier tool policy per agent — allow / ask / deny with glob patterns"
+func TestPolicyEvaluator_GlobToolNames(t *testing.T) {
+	t.Run("fs.* glob in allow matches fs.read", func(t *testing.T) {
+		agents := map[string]policy.AgentPolicy{
+			"worker": {
+				Tools: policy.AgentToolsPolicy{
+					Allow: []string{"fs.*"},
+				},
+			},
+		}
+		ev := makeEvaluator(policy.PolicyDeny, agents)
+		d := ev.EvaluateTool("worker", "fs.read")
+		assert.True(t, d.Allowed, "fs.* should match fs.read")
+	})
+
+	t.Run("fs.* glob in allow matches fs.write", func(t *testing.T) {
+		agents := map[string]policy.AgentPolicy{
+			"worker": {
+				Tools: policy.AgentToolsPolicy{
+					Allow: []string{"fs.*"},
+				},
+			},
+		}
+		ev := makeEvaluator(policy.PolicyDeny, agents)
+		d := ev.EvaluateTool("worker", "fs.write")
+		assert.True(t, d.Allowed, "fs.* should match fs.write")
+	})
+
+	t.Run("fs.* glob in allow matches fs.list", func(t *testing.T) {
+		agents := map[string]policy.AgentPolicy{
+			"worker": {
+				Tools: policy.AgentToolsPolicy{
+					Allow: []string{"fs.*"},
+				},
+			},
+		}
+		ev := makeEvaluator(policy.PolicyDeny, agents)
+		d := ev.EvaluateTool("worker", "fs.list")
+		assert.True(t, d.Allowed, "fs.* should match fs.list")
+	})
+
+	t.Run("fs.* glob does NOT match fsx.read (prefix boundary)", func(t *testing.T) {
+		agents := map[string]policy.AgentPolicy{
+			"worker": {
+				Tools: policy.AgentToolsPolicy{
+					Allow: []string{"fs.*"},
+				},
+			},
+		}
+		ev := makeEvaluator(policy.PolicyDeny, agents)
+		d := ev.EvaluateTool("worker", "fsx.read")
+		assert.False(t, d.Allowed, "fs.* must not match fsx.read (different prefix)")
+	})
+
+	t.Run("deny beats allow when deny=fs.delete, allow=fs.*", func(t *testing.T) {
+		agents := map[string]policy.AgentPolicy{
+			"worker": {
+				Tools: policy.AgentToolsPolicy{
+					Allow: []string{"fs.*"},
+					Deny:  []string{"fs.delete"},
+				},
+			},
+		}
+		ev := makeEvaluator(policy.PolicyDeny, agents)
+
+		d := ev.EvaluateTool("worker", "fs.delete")
+		assert.False(t, d.Allowed, "fs.delete in deny must block even though fs.* is in allow")
+		assert.Contains(t, d.PolicyRule, "deny")
+
+		// Other fs.* tools still pass.
+		d2 := ev.EvaluateTool("worker", "fs.read")
+		assert.True(t, d2.Allowed, "fs.read not in deny should still be allowed via fs.* glob")
+	})
+
+	t.Run("deny glob fs.* beats allow=fs.*", func(t *testing.T) {
+		agents := map[string]policy.AgentPolicy{
+			"worker": {
+				Tools: policy.AgentToolsPolicy{
+					Allow: []string{"fs.*"},
+					Deny:  []string{"fs.*"},
+				},
+			},
+		}
+		ev := makeEvaluator(policy.PolicyDeny, agents)
+		d := ev.EvaluateTool("worker", "fs.read")
+		assert.False(t, d.Allowed, "deny glob fs.* takes precedence over allow glob fs.*")
+	})
+
+	t.Run("literal tool name in allow still works (backward compat)", func(t *testing.T) {
+		agents := map[string]policy.AgentPolicy{
+			"worker": {
+				Tools: policy.AgentToolsPolicy{
+					Allow: []string{"web_search"},
+				},
+			},
+		}
+		ev := makeEvaluator(policy.PolicyDeny, agents)
+		d := ev.EvaluateTool("worker", "web_search")
+		assert.True(t, d.Allowed, "exact literal 'web_search' in allow must still match")
+
+		d2 := ev.EvaluateTool("worker", "web_fetch")
+		assert.False(t, d2.Allowed, "web_fetch not in allow list")
+	})
+
+	t.Run("global tool_policies with fs.* glob → ask mode", func(t *testing.T) {
+		ev := policy.NewEvaluator(&policy.SecurityConfig{
+			DefaultPolicy: policy.PolicyAllow,
+			ToolPolicies: map[string]policy.ToolPolicy{
+				"fs.*": policy.ToolPolicyAsk,
+			},
+		})
+
+		d := ev.EvaluateTool("worker", "fs.read")
+		assert.True(t, d.Allowed, "fs.read matched by fs.* glob should be allowed")
+		assert.Equal(t, "ask", d.Policy, "global fs.* policy=ask should be reflected in decision")
+
+		d2 := ev.EvaluateTool("worker", "fs.write")
+		assert.True(t, d2.Allowed)
+		assert.Equal(t, "ask", d2.Policy)
+
+		// Tool outside the glob is not affected by the fs.* policy.
+		d3 := ev.EvaluateTool("worker", "web_search")
+		assert.True(t, d3.Allowed, "web_search not matched by fs.* so not elevated to ask")
+		assert.NotEqual(t, "ask", d3.Policy)
+	})
+
+	t.Run("global tool_policies with fs.* glob → deny", func(t *testing.T) {
+		ev := policy.NewEvaluator(&policy.SecurityConfig{
+			DefaultPolicy: policy.PolicyAllow,
+			ToolPolicies: map[string]policy.ToolPolicy{
+				"fs.*": policy.ToolPolicyDeny,
+			},
+		})
+
+		d := ev.EvaluateTool("worker", "fs.write")
+		assert.False(t, d.Allowed, "global deny via fs.* glob should block fs.write")
+
+		// Tool outside glob still allowed by default_policy.
+		d2 := ev.EvaluateTool("worker", "web_search")
+		assert.True(t, d2.Allowed)
+	})
+
+	t.Run("question-mark wildcard matches exactly one character", func(t *testing.T) {
+		agents := map[string]policy.AgentPolicy{
+			"worker": {
+				Tools: policy.AgentToolsPolicy{
+					Allow: []string{"fs.?ead"},
+				},
+			},
+		}
+		ev := makeEvaluator(policy.PolicyDeny, agents)
+
+		d := ev.EvaluateTool("worker", "fs.read")
+		assert.True(t, d.Allowed, "fs.?ead should match fs.read (? = 'r')")
+
+		d2 := ev.EvaluateTool("worker", "fs.lead")
+		assert.True(t, d2.Allowed, "fs.?ead should match fs.lead (? = 'l')")
+
+		d3 := ev.EvaluateTool("worker", "fs.head")
+		assert.True(t, d3.Allowed, "fs.?ead should match fs.head (? = 'h')")
+
+		d4 := ev.EvaluateTool("worker", "fs.write")
+		assert.False(t, d4.Allowed, "fs.?ead must not match fs.write")
+
+		d5 := ev.EvaluateTool("worker", "fs.aread")
+		assert.False(t, d5.Allowed, "fs.?ead must not match fs.aread (? is exactly one char)")
+	})
+
+	t.Run("empty deny pattern never matches any tool (edge case)", func(t *testing.T) {
+		agents := map[string]policy.AgentPolicy{
+			"worker": {
+				Tools: policy.AgentToolsPolicy{
+					Allow: []string{"web_search"},
+					Deny:  []string{""}, // empty pattern
+				},
+			},
+		}
+		ev := makeEvaluator(policy.PolicyDeny, agents)
+		d := ev.EvaluateTool("worker", "web_search")
+		// Empty pattern only matches empty string, so web_search should be allowed.
+		assert.True(t, d.Allowed, "empty deny pattern should not match non-empty tool names")
+	})
+
+	t.Run("star-only pattern matches everything", func(t *testing.T) {
+		agents := map[string]policy.AgentPolicy{
+			"worker": {
+				Tools: policy.AgentToolsPolicy{
+					Allow: []string{"*"},
+				},
+			},
+		}
+		ev := makeEvaluator(policy.PolicyDeny, agents)
+		for _, tool := range []string{"web_search", "fs.read", "exec", "browser.navigate"} {
+			d := ev.EvaluateTool("worker", tool)
+			assert.True(t, d.Allowed, "* should match any tool name: %s", tool)
+		}
+	})
+
+	t.Run("table-driven glob allow/deny combinations", func(t *testing.T) {
+		type row struct {
+			allow []string
+			deny  []string
+			tool  string
+			want  bool
+		}
+		rows := []row{
+			// Exact match works.
+			{allow: []string{"web_search"}, tool: "web_search", want: true},
+			{allow: []string{"web_search"}, tool: "web_fetch", want: false},
+			// fs.* glob.
+			{allow: []string{"fs.*"}, tool: "fs.read", want: true},
+			{allow: []string{"fs.*"}, tool: "fs.write", want: true},
+			{allow: []string{"fs.*"}, tool: "fsx.read", want: false},
+			// deny beats allow.
+			{allow: []string{"fs.*"}, deny: []string{"fs.delete"}, tool: "fs.delete", want: false},
+			{allow: []string{"fs.*"}, deny: []string{"fs.delete"}, tool: "fs.read", want: true},
+			// Star-only.
+			{allow: []string{"*"}, tool: "anything", want: true},
+			// Deny-only with glob.
+			{deny: []string{"exec.*"}, tool: "exec.shell", want: false},
+			{deny: []string{"exec.*"}, tool: "web_search", want: true},
+		}
+
+		for _, r := range rows {
+			agents := map[string]policy.AgentPolicy{
+				"agent": {
+					Tools: policy.AgentToolsPolicy{
+						Allow: r.allow,
+						Deny:  r.deny,
+					},
+				},
+			}
+			// Use allow-by-default so deny-only rows behave correctly.
+			ev := makeEvaluator(policy.PolicyAllow, agents)
+			d := ev.EvaluateTool("agent", r.tool)
+			assert.Equal(t, r.want, d.Allowed,
+				"allow=%v deny=%v tool=%q: expected allowed=%v", r.allow, r.deny, r.tool, r.want)
+		}
+	})
+}

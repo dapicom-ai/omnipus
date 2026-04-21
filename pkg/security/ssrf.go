@@ -39,10 +39,11 @@ var privateIPv6Ranges = []string{
 
 // SSRFChecker validates IP addresses and hostnames against SSRF rules.
 type SSRFChecker struct {
-	ipv4Nets  []*net.IPNet
-	ipv6Nets  []*net.IPNet
-	allowList map[string]bool // Allowlisted IPs (SEC-24 configurable allowlist)
-	resolver  Resolver        // DNS resolver (injectable for testing)
+	ipv4Nets   []*net.IPNet
+	ipv6Nets   []*net.IPNet
+	allowList  map[string]bool // Allowlisted exact IPs and hostnames
+	allowCIDRs []*net.IPNet    // Allowlisted CIDR ranges
+	resolver   Resolver        // DNS resolver (injectable for testing)
 }
 
 // Resolver abstracts DNS resolution for testability.
@@ -60,6 +61,15 @@ func (d *defaultResolver) LookupIPAddr(ctx context.Context, host string) ([]net.
 }
 
 // NewSSRFChecker creates an SSRF checker with the given allowlist.
+//
+// Each entry in allowInternal may be:
+//   - An exact IPv4 or IPv6 address (e.g. "192.168.1.5", "::1")
+//   - A CIDR range (e.g. "10.0.0.0/8", "fc00::/7")
+//   - A hostname (e.g. "localhost", "internal.corp")
+//
+// When a hostname is provided, CheckHost skips SSRF blocking for that exact
+// hostname (case-insensitive). When a CIDR or IP is provided, CheckIP permits
+// connections to addresses that fall within the range.
 func NewSSRFChecker(allowInternal []string) *SSRFChecker {
 	sc := &SSRFChecker{
 		allowList: make(map[string]bool),
@@ -82,8 +92,28 @@ func NewSSRFChecker(allowInternal []string) *SSRFChecker {
 		sc.ipv6Nets = append(sc.ipv6Nets, ipNet)
 	}
 
-	for _, ip := range allowInternal {
-		sc.allowList[ip] = true
+	// Parse each allowInternal entry as a CIDR, exact IP, or hostname.
+	// CIDRs are stored for range-based IP checks; IPs and hostnames are stored
+	// in the exact allowList map for O(1) lookups.
+	for _, entry := range allowInternal {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		// Try CIDR first (e.g. "10.0.0.0/8").
+		if _, ipNet, err := net.ParseCIDR(entry); err == nil {
+			sc.allowCIDRs = append(sc.allowCIDRs, ipNet)
+			continue
+		}
+		// Try exact IP (e.g. "127.0.0.1", "::1"). Normalise to canonical string
+		// so "127.001" and "127.0.0.1" both match "127.0.0.1".
+		if ip := net.ParseIP(entry); ip != nil {
+			sc.allowList[ip.String()] = true
+			continue
+		}
+		// Treat as a hostname (e.g. "localhost", "internal.corp").
+		// Store in lower-case for case-insensitive matching in CheckHost.
+		sc.allowList[strings.ToLower(entry)] = true
 	}
 
 	return sc
@@ -102,12 +132,23 @@ func (sc *SSRFChecker) CheckIP(ip net.IP) error {
 	}
 	ipStr := ip.String()
 
-	// Check allowlist first
+	// Check exact-IP allowlist first (O(1)).
 	if sc.allowList[ipStr] {
 		return nil
 	}
 
-	// Cloud metadata endpoint (exact match)
+	// Check CIDR allowlist — caller has opted-in to these internal ranges.
+	for _, allowNet := range sc.allowCIDRs {
+		if allowNet.Contains(ip) {
+			return nil
+		}
+		// Also check against the IPv4 form when the address is IPv4-mapped IPv6.
+		if ip4 := ip.To4(); ip4 != nil && allowNet.Contains(ip4) {
+			return nil
+		}
+	}
+
+	// Cloud metadata endpoint (exact match — always blocked unless allowlisted above).
 	if ipStr == "169.254.169.254" {
 		return fmt.Errorf("SSRF: blocked cloud metadata endpoint %s", ipStr)
 	}
@@ -122,6 +163,27 @@ func (sc *SSRFChecker) CheckIP(ip net.IP) error {
 		return nil
 	}
 
+	// 6to4 addresses (RFC 3056 — 2002::/16): the embedded IPv4 address occupies
+	// bytes [2:6] of the IPv6 address. Unwrap and re-check against IPv4 rules so
+	// that e.g. 2002:7f00:0001:: (which encodes 127.0.0.1) is correctly blocked.
+	if len(ip) == net.IPv6len && ip[0] == 0x20 && ip[1] == 0x02 {
+		embedded4 := net.IPv4(ip[2], ip[3], ip[4], ip[5])
+		if err := sc.CheckIP(embedded4); err != nil {
+			return fmt.Errorf("SSRF: 6to4 address %s embeds blocked IPv4: %w", ipStr, err)
+		}
+		// embedded4 is safe; fall through to standard IPv6 checks below.
+	}
+
+	// Teredo addresses (RFC 4380 — 2001:0000::/32): the client's IPv4 address
+	// occupies bytes [12:16], XOR-inverted with 0xFF. Unwrap and re-check.
+	if len(ip) == net.IPv6len && ip[0] == 0x20 && ip[1] == 0x01 && ip[2] == 0x00 && ip[3] == 0x00 {
+		client4 := net.IPv4(ip[12]^0xff, ip[13]^0xff, ip[14]^0xff, ip[15]^0xff)
+		if err := sc.CheckIP(client4); err != nil {
+			return fmt.Errorf("SSRF: Teredo address %s embeds blocked client IPv4: %w", ipStr, err)
+		}
+		// client4 is safe; fall through to standard IPv6 checks below.
+	}
+
 	// Pure IPv6
 	for _, ipNet := range sc.ipv6Nets {
 		if ipNet.Contains(ip) {
@@ -134,13 +196,28 @@ func (sc *SSRFChecker) CheckIP(ip net.IP) error {
 
 // CheckHost resolves a hostname and checks all resolved IPs against SSRF rules.
 // This provides DNS rebinding protection (SEC-24).
+//
+// When a hostname is present in the allowInternal list supplied to NewSSRFChecker,
+// SSRF blocking is skipped entirely for that hostname (the resolved IPs are not
+// individually checked). This lets operators explicitly permit internal services
+// by name (e.g. "localhost", "internal.corp") without having to enumerate IPs.
 func (sc *SSRFChecker) CheckHost(ctx context.Context, host string) ([]net.IPAddr, error) {
-	// If host is already an IP, check it directly
+	// If host is already an IP, check it directly.
 	if ip := net.ParseIP(host); ip != nil {
 		if err := sc.CheckIP(ip); err != nil {
 			return nil, err
 		}
 		return []net.IPAddr{{IP: ip}}, nil
+	}
+
+	// Check hostname allowlist (case-insensitive) before DNS resolution.
+	// This lets operators allowlist by name without enumerating IPs.
+	if sc.allowList[strings.ToLower(host)] {
+		addrs, err := sc.resolver.LookupIPAddr(ctx, host)
+		if err != nil {
+			return nil, fmt.Errorf("SSRF: DNS resolution failed for allowlisted host %s: %w", host, err)
+		}
+		return addrs, nil
 	}
 
 	// Resolve hostname

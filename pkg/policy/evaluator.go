@@ -96,30 +96,72 @@ func (e *Evaluator) EvaluateTool(agentID, toolName string, agentPolicy ...*Agent
 }
 
 // resolveGlobalToolPolicy returns the effective global policy for a tool name.
-// Resolution order mirrors SecurityConfig.ResolveToolPolicy:
-// user override → builtin safety default → DefaultToolPolicy → ToolPolicyAllow.
+// Resolution order:
+//  1. User-configured tool_policies — exact match first, then glob scan (deny beats allow across patterns)
+//  2. Builtin safety defaults — exact then glob scan
+//  3. DefaultToolPolicy
+//  4. ToolPolicyAllow
+//
+// When multiple glob patterns in tool_policies match the same tool name, "deny"
+// takes precedence over "ask", and "ask" takes precedence over "allow" — the
+// most restrictive matching pattern wins.
 func (e *Evaluator) resolveGlobalToolPolicy(toolName string) ToolPolicy {
-	if p, ok := e.toolPolicies[toolName]; ok {
-		return p
+	// Scan user-configured tool_policies using glob matching.
+	// Strictest matching policy wins (deny > ask > allow).
+	if len(e.toolPolicies) > 0 {
+		resolved := resolveStrictestPolicy(e.toolPolicies, toolName)
+		if resolved != "" {
+			return resolved
+		}
 	}
-	if p, ok := builtinToolPolicies[toolName]; ok {
-		return p
+
+	// Builtin safety defaults (exact then glob).
+	if resolved := resolveStrictestPolicy(builtinToolPolicies, toolName); resolved != "" {
+		return resolved
 	}
+
 	if e.defaultToolPolicy != "" {
 		return e.defaultToolPolicy
 	}
 	return ToolPolicyAllow
 }
 
+// resolveStrictestPolicy scans a pattern→policy map and returns the strictest
+// policy matched by toolName (deny > ask > allow). Returns "" if no pattern matches.
+func resolveStrictestPolicy(policies map[string]ToolPolicy, toolName string) ToolPolicy {
+	best := ToolPolicy("")
+	for pattern, pol := range policies {
+		if !MatchGlob(pattern, toolName) {
+			continue
+		}
+		// First match or stricter than current best.
+		if best == "" || isStricter(pol, best) {
+			best = pol
+		}
+	}
+	return best
+}
+
+// isStricter returns true when candidate is more restrictive than current.
+// Order: deny > ask > allow.
+func isStricter(candidate, current ToolPolicy) bool {
+	rank := map[ToolPolicy]int{
+		ToolPolicyAllow: 0,
+		ToolPolicyAsk:   1,
+		ToolPolicyDeny:  2,
+	}
+	return rank[candidate] > rank[current]
+}
+
 func (e *Evaluator) evaluateWithPolicy(agentID, toolName string, ap *AgentPolicy) Decision {
 	deny := ap.effectiveDeny()
 	allow := ap.effectiveAllow()
 
-	// Step 1: Check deny list (deny always wins)
+	// Step 1: Check deny list — glob patterns supported; deny always wins.
 	for _, denied := range deny {
-		if denied == toolName {
+		if MatchGlob(denied, toolName) {
 			for _, allowed := range allow {
-				if allowed == toolName {
+				if MatchGlob(allowed, toolName) {
 					return Decision{
 						Allowed: false,
 						Policy:  string(ToolPolicyDeny),
@@ -139,7 +181,7 @@ func (e *Evaluator) evaluateWithPolicy(agentID, toolName string, ap *AgentPolicy
 		}
 	}
 
-	// Step 2: Check allow list
+	// Step 2: Check allow list — glob patterns supported.
 	if ap.hasAllowList() {
 		if len(allow) == 0 {
 			return Decision{
@@ -149,7 +191,7 @@ func (e *Evaluator) evaluateWithPolicy(agentID, toolName string, ap *AgentPolicy
 			}
 		}
 		for _, allowed := range allow {
-			if allowed == toolName {
+			if MatchGlob(allowed, toolName) {
 				return Decision{
 					Allowed:    true,
 					Policy:     string(ToolPolicyAllow),
@@ -220,27 +262,49 @@ func (e *Evaluator) evaluateDefault(agentID, toolName string) Decision {
 	}
 }
 
-// MatchGlob returns true if s matches pattern where '*' matches any substring.
-// Exported for use by pkg/security exec allowlist matching.
+// MatchGlob returns true if s matches pattern.
+// Wildcards: '*' matches any sequence of characters (including empty);
+// '?' matches exactly one character.
+// Exported for use by pkg/security exec allowlist matching and tool policy evaluation.
 func MatchGlob(pattern, s string) bool {
-	idx := strings.Index(pattern, "*")
-	if idx < 0 {
+	// Fast path: no wildcards — exact match only.
+	if !strings.ContainsAny(pattern, "*?") {
 		return pattern == s
 	}
-	prefix := pattern[:idx]
-	suffix := pattern[idx+1:]
-	if !strings.HasPrefix(s, prefix) {
-		return false
+
+	// Use iterative DP matching to handle both * and ?.
+	// pi = index into pattern, si = index into s.
+	// starPI and starSI track the last '*' position for backtracking.
+	pi, si := 0, 0
+	starPI, starSI := -1, -1
+
+	for si < len(s) {
+		if pi < len(pattern) && pattern[pi] == '*' {
+			// Record position of star; advance pattern only.
+			starPI = pi
+			starSI = si
+			pi++
+		} else if pi < len(pattern) && (pattern[pi] == '?' || pattern[pi] == s[si]) {
+			// '?' matches any single char; literal char matches itself.
+			pi++
+			si++
+		} else if starPI >= 0 {
+			// Mismatch but we have a prior '*': backtrack.
+			// The '*' consumes one more character of s.
+			starSI++
+			si = starSI
+			pi = starPI + 1
+		} else {
+			return false
+		}
 	}
-	rest := s[len(prefix):]
-	if suffix == "" {
-		return true
+
+	// Consume any trailing '*' patterns.
+	for pi < len(pattern) && pattern[pi] == '*' {
+		pi++
 	}
-	i := strings.LastIndex(rest, suffix)
-	if i < 0 {
-		return false
-	}
-	return MatchGlob(suffix, rest[i:])
+
+	return pi == len(pattern)
 }
 
 // FirstToken returns the first space-separated token of s.

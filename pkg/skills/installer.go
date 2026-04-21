@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dapicom-ai/omnipus/pkg/security"
 	"github.com/dapicom-ai/omnipus/pkg/utils"
 )
 
@@ -41,10 +42,31 @@ type SkillInstaller struct {
 
 // NewSkillInstaller creates a new skill installer.
 // proxy is an optional HTTP/HTTPS/SOCKS5 proxy URL for downloading skills.
+// To enforce SSRF protection (SEC-24), use NewSkillInstallerWithSSRF instead.
 func NewSkillInstaller(workspace, githubToken, proxy string) (*SkillInstaller, error) {
-	client, err := utils.CreateHTTPClient(proxy, 15*time.Second)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create HTTP client: %w", err)
+	return NewSkillInstallerWithSSRF(workspace, githubToken, proxy, nil)
+}
+
+// NewSkillInstallerWithSSRF creates a new skill installer with SSRF protection.
+//
+// When ssrf is non-nil, all outbound HTTP requests (GitHub API calls, raw
+// content downloads) are routed through ssrf.SafeClient(), which blocks
+// connections to private/internal IP ranges, cloud metadata endpoints, and
+// non-http(s) schemes (SEC-24). Pass nil to use the default proxy-aware client
+// without SSRF enforcement.
+func NewSkillInstallerWithSSRF(
+	workspace, githubToken, proxy string,
+	ssrf *security.SSRFChecker,
+) (*SkillInstaller, error) {
+	var client *http.Client
+	if ssrf != nil {
+		client = ssrf.SafeClient()
+	} else {
+		var err error
+		client, err = utils.CreateHTTPClient(proxy, 15*time.Second)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create HTTP client: %w", err)
+		}
 	}
 
 	return &SkillInstaller{
@@ -56,7 +78,7 @@ func NewSkillInstaller(workspace, githubToken, proxy string) (*SkillInstaller, e
 }
 
 // SetHTTPClient replaces the HTTP client used for GitHub downloads.
-// Use security.SSRFChecker.SafeClient() to enforce SSRF protection (W-2).
+// Use security.SSRFChecker.SafeClient() to enforce SSRF protection (SEC-24).
 func (si *SkillInstaller) SetHTTPClient(client *http.Client) {
 	si.client = client
 }

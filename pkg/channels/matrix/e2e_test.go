@@ -54,7 +54,6 @@ import (
 	"maunium.net/go/mautrix/crypto/cryptohelper"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
-
 	// Pure-Go SQLite driver (modernc.org/sqlite). Registers the "sqlite"
 	// database/sql driver used by the dbutil "sqlite" dialect below. This
 	// avoids the cgo-tagged mattn/go-sqlite3 registration path that ships
@@ -590,7 +589,14 @@ func registerOrLogin(
 	// OMNIPUS_MATRIX_REGISTRATION_SHARED_SECRET. This is the documented way
 	// to register users on a Synapse that has public registration closed.
 	if sharedSecret != "" {
-		token, userID, deviceID, admErr := sharedSecretRegister(ctx, homeserver, sharedSecret, username, password, deviceName)
+		token, userID, deviceID, admErr := sharedSecretRegister(
+			ctx,
+			homeserver,
+			sharedSecret,
+			username,
+			password,
+			deviceName,
+		)
 		if admErr == nil {
 			return token, userID, deviceID
 		}
@@ -665,11 +671,11 @@ func sharedSecretRegister(
 	sig := hex.EncodeToString(mac.Sum(nil))
 
 	body, err := json.Marshal(map[string]any{
-		"nonce":                      nonceBody.Nonce,
-		"username":                   username,
-		"password":                   password,
-		"admin":                      false,
-		"mac":                        sig,
+		"nonce":                       nonceBody.Nonce,
+		"username":                    username,
+		"password":                    password,
+		"admin":                       false,
+		"mac":                         sig,
 		"initial_device_display_name": deviceName,
 	})
 	if err != nil {

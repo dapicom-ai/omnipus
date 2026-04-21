@@ -456,6 +456,14 @@ func buildConfig(hc *harnessConfig, homeDir string, port int) *config.Config {
 
 	if hc.sandbox != nil {
 		cfg.Sandbox = *hc.sandbox
+	} else {
+		// Sprint J: default tests to sandbox=off so the harness can boot
+		// on kernels where Landlock Apply would otherwise fail closed
+		// (FR-J-004) and abort the gateway. Tests that specifically
+		// exercise enforce/permissive mode can opt in via an Option that
+		// sets hc.sandbox explicitly. Production defaults are unaffected
+		// — the CLI defaults to enforce when no config is written.
+		cfg.Sandbox.Mode = "off"
 	}
 
 	if hc.bearerAuth {

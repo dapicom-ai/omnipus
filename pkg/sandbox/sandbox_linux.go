@@ -7,10 +7,27 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"sync/atomic"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
+
+// processLandlockApplied is a process-wide latching flag set to true the
+// first time ApplyWithMode successfully completes on ANY LinuxBackend
+// instance in this process. It exists because Landlock's restrict_self is a
+// process-global ratchet: once any instance has called it, any subsequent
+// call (even on a fresh LinuxBackend with policyApplied=false) would fail
+// with EINVAL from create_ruleset on the already-restricted task.
+//
+// Tests (gateway_harness_test, rest_*_test) spawn multiple in-process
+// gateway instances in sequence; each constructs its own LinuxBackend via
+// sandbox.SelectBackend(). Without this process-wide guard, the second boot
+// would call Apply on a kernel that has already been locked down and fail
+// the whole test run. Production gateways only ever boot once, so this is
+// strictly a test-affordance — but the guard is safe in production too
+// (Apply's one-shot semantics mean a second boot was always wrong).
+var processLandlockApplied atomic.Bool
 
 // Landlock syscall numbers.
 const (
@@ -122,9 +139,70 @@ func (lb *LinuxBackend) PolicyApplied() bool {
 	return lb.policyApplied
 }
 
-// Apply applies Landlock restrictions to the current process.
+// Apply applies Landlock restrictions to the current process in enforce mode.
+// Idempotent: once PolicyApplied() returns true, further calls are no-ops.
+// See ApplyWithMode for the mode-aware variant that supports permissive mode.
 func (lb *LinuxBackend) Apply(policy SandboxPolicy) error {
-	// Create ruleset
+	return lb.ApplyWithMode(policy, ModeEnforce)
+}
+
+// ApplyWithMode applies Landlock restrictions to the current process.
+//
+// ModeEnforce:
+//   - Build ruleset, add path rules, prctl(PR_SET_NO_NEW_PRIVS), landlock_restrict_self.
+//   - After this returns, filesystem access outside the ruleset returns EACCES.
+//
+// ModePermissive:
+//   - Build ruleset and add path rules (so errors in rule add are still caught).
+//   - prctl(PR_SET_NO_NEW_PRIVS) so seccomp install still works.
+//   - SKIP landlock_restrict_self entirely (kernels ≤ 6.11 have no permissive
+//     Landlock semantic; restrict_self would enforce the policy in that case).
+//   - Emit an INFO log identifying this as the permissive-degraded path.
+//   - PolicyApplied() still returns true so the status endpoint correctly
+//     reports "policy was computed and logged" — this is the audit-only
+//     degradation documented in FR-J-012.
+//
+// ModeOff is rejected; callers should never invoke Apply when the sandbox is
+// disabled. An error is returned instead of silently succeeding to prevent
+// drift between caller intent and kernel state.
+//
+// Idempotent: if PolicyApplied() already returns true, further calls are
+// no-ops that return nil. Landlock is a one-way ratchet — re-applying would
+// stack rulesets and could only tighten, never widen. We treat that as a
+// bug in the caller (e.g. a misconfigured reload handler) and skip.
+func (lb *LinuxBackend) ApplyWithMode(policy SandboxPolicy, mode Mode) error {
+	if lb.policyApplied {
+		slog.Info("sandbox.apply.skipped", "reason", "already_applied",
+			"abi_version", lb.abiVersion, "mode", string(mode))
+		return nil
+	}
+	// Process-wide guard: if any other LinuxBackend instance already
+	// called Apply in this process, the kernel has Landlock restrictions
+	// installed globally. Creating another ruleset here would fail with
+	// EINVAL and fool callers into thinking the kernel is broken. Flag
+	// this instance as applied and return nil — the effective policy on
+	// the process is whatever was installed the first time.
+	if processLandlockApplied.Load() {
+		lb.policyApplied = true
+		slog.Info("sandbox.apply.skipped",
+			"reason", "already_applied_in_process",
+			"abi_version", lb.abiVersion, "mode", string(mode))
+		return nil
+	}
+
+	switch mode {
+	case ModeEnforce, ModePermissive:
+		// Fine — proceed below.
+	case ModeOff, "":
+		// Defensive: callers should gate on mode before invoking Apply.
+		// Returning an error here turns a caller bug into a loud boot
+		// failure instead of a silent "sandbox disabled" state.
+		return fmt.Errorf("landlock: Apply called with mode=%q; caller must gate on mode", mode)
+	default:
+		return fmt.Errorf("landlock: unknown mode %q", mode)
+	}
+
+	// Create ruleset.
 	attr := landlockRulesetAttr{handledAccessFS: lb.allRights}
 	rulesetFd, _, errno := unix.Syscall(
 		sysLandlockCreateRuleset,
@@ -149,11 +227,32 @@ func (lb *LinuxBackend) Apply(policy SandboxPolicy) error {
 		return fmt.Errorf("landlock: failed to add %d path rule(s): %w", len(ruleErrors), errors.Join(ruleErrors...))
 	}
 
-	// Set no_new_privs then restrict self
+	// Set no_new_privs unconditionally — seccomp install (which runs after
+	// this) requires NNP, and NNP is also a prerequisite for Landlock's
+	// restrict_self. This is safe in permissive mode because NNP by itself
+	// enforces nothing; it only disables setuid/setgid and seccomp-bypass.
 	if _, _, prctlErrno := unix.RawSyscall(unix.SYS_PRCTL, unix.PR_SET_NO_NEW_PRIVS, 1, 0); prctlErrno != 0 {
 		return fmt.Errorf("landlock: prctl(PR_SET_NO_NEW_PRIVS) failed: %w", prctlErrno)
 	}
 
+	if mode == ModePermissive {
+		// FR-J-012: current kernels (≤ 6.11) have no native permissive
+		// Landlock semantic. Calling restrict_self here would enforce
+		// the policy — the opposite of what the operator asked for.
+		// We skip it and leave the policy computed-but-unenforced. The
+		// seccomp program is separately installed with RET_LOG by the
+		// caller, which gives us partial audit-only coverage.
+		lb.policyApplied = true
+		processLandlockApplied.Store(true)
+		slog.Info("sandbox.permissive.downgraded",
+			"reason", "kernel_lacks_permissive_landlock",
+			"abi_version", lb.abiVersion,
+			"rules", len(policy.FilesystemRules))
+		return nil
+	}
+
+	// Enforce mode: restrict_self is the one-way ratchet that actually
+	// activates policy enforcement on this thread and all future children.
 	_, _, errno = unix.Syscall(sysLandlockRestrictSelf, rulesetFd, 0, 0)
 	if errno != 0 {
 		return fmt.Errorf("landlock: restrict_self failed: %w", errno)
@@ -163,8 +262,10 @@ func (lb *LinuxBackend) Apply(policy SandboxPolicy) error {
 	// be removed, so this stays true for the rest of the process lifetime.
 	// DescribeBackend reads this to distinguish capability from enforcement.
 	lb.policyApplied = true
+	processLandlockApplied.Store(true)
 
-	slog.Info("Landlock sandbox applied", "abi_version", lb.abiVersion, "rules", len(policy.FilesystemRules))
+	slog.Info("Landlock sandbox applied",
+		"abi_version", lb.abiVersion, "rules", len(policy.FilesystemRules), "mode", string(mode))
 	return nil
 }
 

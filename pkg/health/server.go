@@ -19,6 +19,12 @@ type Server struct {
 	startTime  time.Time
 	reloadFunc func() error
 	degradedFn func() (bool, string) // optional; returns (isDegraded, reason)
+	// sandboxInfoFn, when non-nil, returns the structured sandbox state
+	// the /health handler embeds in the response under the "sandbox" key.
+	// Sprint-J FR-J-008 / FR-J-016 require the status endpoint to report
+	// {applied, mode, backend} after Apply has completed. See
+	// gateway.registerSandboxHealthCheck for the wiring.
+	sandboxInfoFn func() map[string]any
 }
 
 type Check struct {
@@ -126,6 +132,19 @@ func (s *Server) SetDegradedFunc(fn func() (bool, string)) {
 	s.degradedFn = fn
 }
 
+// SetSandboxInfoFunc sets a function that returns the structured sandbox
+// state the /health handler embeds under the "sandbox" key. Sprint-J
+// FR-J-008 requires callers to verify {applied, mode, backend} via /health
+// (and via the detailed /api/v1/security/sandbox-status endpoint).
+//
+// The function is called on every /health request; keep it cheap (return
+// a pre-built map, not recomputed data). fn=nil clears the hook.
+func (s *Server) SetSandboxInfoFunc(fn func() map[string]any) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sandboxInfoFn = fn
+}
+
 func (s *Server) reloadHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Content-Type", "application/json")
@@ -160,28 +179,47 @@ func (s *Server) reloadHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	degradedFn := s.degradedFn
+	sandboxInfoFn := s.sandboxInfoFn
 	s.mu.RUnlock()
 
 	w.Header().Set("Content-Type", "application/json")
 
+	// Build sandbox info up front so it can be included in both the
+	// degraded and healthy response bodies. This matters because Sprint-J
+	// operators may want to query /health during a failed reload to
+	// confirm the sandbox is still applied.
+	var sandboxInfo map[string]any
+	if sandboxInfoFn != nil {
+		sandboxInfo = sandboxInfoFn()
+	}
+
 	if degradedFn != nil {
 		if isDegraded, reason := degradedFn(); isDegraded {
 			w.WriteHeader(http.StatusServiceUnavailable)
-			json.NewEncoder(w).Encode(map[string]any{
+			resp := map[string]any{
 				"status": "degraded",
 				"reason": reason,
 				"pid":    os.Getpid(),
-			})
+			}
+			if sandboxInfo != nil {
+				resp["sandbox"] = sandboxInfo
+			}
+			json.NewEncoder(w).Encode(resp)
 			return
 		}
 	}
 
 	w.WriteHeader(http.StatusOK)
 	uptime := time.Since(s.startTime)
-	resp := StatusResponse{
-		Status: "ok",
-		Uptime: uptime.String(),
-		Pid:    os.Getpid(),
+	// Use a generic map instead of StatusResponse so callers can include
+	// the optional "sandbox" field without expanding the exported struct.
+	resp := map[string]any{
+		"status": "ok",
+		"uptime": uptime.String(),
+		"pid":    os.Getpid(),
+	}
+	if sandboxInfo != nil {
+		resp["sandbox"] = sandboxInfo
 	}
 	json.NewEncoder(w).Encode(resp)
 }

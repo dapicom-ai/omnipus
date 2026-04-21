@@ -60,11 +60,13 @@ func TestRedactionEngine_DefaultPatterns(t *testing.T) {
 			wantMissing:  "user@example.com",
 			wantContains: "[REDACTED]",
 		},
-		// Dataset row 5 — plain word not matched by patterns
+		// Dataset row 5 — plain word: value-pattern alone still does not match a bare word
+		// without a known token prefix/suffix. Field-name detection is tested separately
+		// in TestFieldNameRedaction below (it operates on map keys, not raw strings).
 		{
-			name:         "plain 'password123' not matched",
+			name:         "plain 'password123' not matched by value-pattern alone",
 			input:        "password123",
-			wantContains: "password123", // no pattern matches a bare word without separator
+			wantContains: "password123", // no value-pattern matches a bare word without separator
 		},
 		// Dataset row 6 — JWT Bearer token
 		{
@@ -208,4 +210,239 @@ func TestRedactionEngine_RedactEntry(t *testing.T) {
 	query, _ := params["query"].(string)
 	assert.Equal(t, "safe query text", query,
 		"non-sensitive parameter must be preserved unchanged")
+}
+
+// TestFieldNameRedaction validates that field-name-based detection (SEC-16 layer 1)
+// redacts values unconditionally when the map key normalises to a sensitive name,
+// regardless of whether the value would be caught by any value-pattern regex.
+//
+// Normalization rule: lowercase + strip '_' and '-'.
+// So "API_KEY", "api-key", "ApiKey", and "apikey" all collapse to "apikey".
+//
+// Traces to: sprint-j #80 — field-name redaction layer
+func TestFieldNameRedaction(t *testing.T) {
+	dir := t.TempDir()
+	logger, err := audit.NewLogger(audit.LoggerConfig{
+		Dir:           dir,
+		RetentionDays: 90,
+		RedactEnabled: true,
+	})
+	require.NoError(t, err)
+	defer logger.Close()
+
+	logAndRead := func(t *testing.T, params map[string]any) map[string]any {
+		t.Helper()
+		entry := audit.Entry{
+			Timestamp:  time.Now().UTC(),
+			Event:      audit.EventToolCall,
+			Parameters: params,
+		}
+		require.NoError(t, logger.Log(&entry))
+
+		// Each call appends a line; read the last line only.
+		data, err := os.ReadFile(filepath.Join(dir, "audit.jsonl"))
+		require.NoError(t, err)
+		lines := []byte{}
+		for _, line := range splitLines(data) {
+			if len(line) > 0 {
+				lines = line
+			}
+		}
+		var parsed map[string]any
+		require.NoError(t, json.Unmarshal(lines, &parsed))
+		p, _ := parsed["parameters"].(map[string]any)
+		return p
+	}
+
+	t.Run("password field with plain value is redacted", func(t *testing.T) {
+		// This is the inverted assertion from the original dataset row 5:
+		// "password123" in a field named "password" MUST be redacted.
+		params := logAndRead(t, map[string]any{"password": "password123", "safe": "ok"})
+		assert.Equal(t, "[REDACTED]", params["password"],
+			"field named 'password' must always be redacted (field-name layer)")
+		assert.Equal(t, "ok", params["safe"],
+			"non-sensitive field must be preserved")
+	})
+
+	// Table of all field-name aliases that must trigger redaction.
+	aliases := []struct {
+		key   string
+		value string
+	}{
+		{"pwd", "mypassword"},
+		{"passwd", "mypassword"},
+		{"passphrase", "my passphrase"},
+		{"secret", "topsecret"},
+		{"secrets", "topsecret"},
+		{"token", "abc123"},
+		{"access_token", "abc123"},
+		{"ACCESS_TOKEN", "abc123"},
+		{"refresh_token", "abc123"},
+		{"id_token", "abc123"},
+		{"csrf_token", "abc123"},
+		{"xsrf_token", "abc123"},
+		{"api_key", "abc123"},
+		{"apikey", "abc123"},
+		{"api-key", "abc123"},
+		{"API_KEY", "abc123"},
+		{"authorization", "Basic dXNlcjpwYXNz"},
+		{"auth", "sometoken"},
+		{"bearer", "sometoken"},
+		{"private_key", "-----BEGIN RSA PRIVATE KEY-----"},
+		{"privatekey", "-----BEGIN RSA PRIVATE KEY-----"},
+		{"signing_key", "hmac-secret"},
+		{"client_secret", "client-pw"},
+		{"client-secret", "client-pw"},
+	}
+
+	for _, tc := range aliases {
+		t.Run("alias: "+tc.key, func(t *testing.T) {
+			params := logAndRead(t, map[string]any{tc.key: tc.value})
+			val, _ := params[tc.key].(string)
+			assert.Equal(t, "[REDACTED]", val,
+				"field %q with value %q must be redacted by field-name layer", tc.key, tc.value)
+		})
+	}
+
+	t.Run("already-redacted value is not double-wrapped", func(t *testing.T) {
+		params := logAndRead(t, map[string]any{"password": "[REDACTED]"})
+		assert.Equal(t, "[REDACTED]", params["password"],
+			"already-redacted value must remain [REDACTED], not [[REDACTED]]")
+	})
+
+	t.Run("non-sensitive field with bearer token value uses value-pattern layer", func(t *testing.T) {
+		// "debug" is not in the sensitive field set; value-pattern must catch the Bearer token.
+		params := logAndRead(t, map[string]any{"debug": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.payload.sig"})
+		val, _ := params["debug"].(string)
+		assert.Equal(t, "[REDACTED]", val,
+			"Bearer token in a non-sensitive field must be caught by value-pattern layer")
+	})
+}
+
+// TestFieldNameRedaction_NestedMaps validates that field-name detection recurses into
+// nested map[string]any values, not just the top-level Parameters/Details maps.
+//
+// Traces to: sprint-j #80 — nested map edge case
+func TestFieldNameRedaction_NestedMaps(t *testing.T) {
+	dir := t.TempDir()
+	logger, err := audit.NewLogger(audit.LoggerConfig{
+		Dir:           dir,
+		RetentionDays: 90,
+		RedactEnabled: true,
+	})
+	require.NoError(t, err)
+	defer logger.Close()
+
+	entry := audit.Entry{
+		Timestamp: time.Now().UTC(),
+		Event:     audit.EventToolCall,
+		Parameters: map[string]any{
+			"outer": map[string]any{
+				"password": "secret-nested",
+				"safe":     "ok",
+			},
+			"safe_top": "not-redacted",
+		},
+	}
+	require.NoError(t, logger.Log(&entry))
+
+	data, err := os.ReadFile(filepath.Join(dir, "audit.jsonl"))
+	require.NoError(t, err)
+	// Find last non-empty line.
+	var lastLine []byte
+	for _, line := range splitLines(data) {
+		if len(line) > 0 {
+			lastLine = line
+		}
+	}
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(lastLine, &parsed))
+
+	params, ok := parsed["parameters"].(map[string]any)
+	require.True(t, ok)
+	outer, ok := params["outer"].(map[string]any)
+	require.True(t, ok, "outer must remain a nested object")
+
+	assert.Equal(t, "[REDACTED]", outer["password"],
+		"nested field named 'password' must be redacted recursively")
+	assert.Equal(t, "ok", outer["safe"],
+		"nested non-sensitive field must be preserved")
+	assert.Equal(t, "not-redacted", params["safe_top"],
+		"top-level non-sensitive field must be preserved")
+}
+
+// TestFieldNameRedaction_ArrayOfMaps validates that field-name detection recurses into
+// []any slices that contain map[string]any elements.
+//
+// Traces to: sprint-j #80 — array of maps edge case
+func TestFieldNameRedaction_ArrayOfMaps(t *testing.T) {
+	dir := t.TempDir()
+	logger, err := audit.NewLogger(audit.LoggerConfig{
+		Dir:           dir,
+		RetentionDays: 90,
+		RedactEnabled: true,
+	})
+	require.NoError(t, err)
+	defer logger.Close()
+
+	entry := audit.Entry{
+		Timestamp: time.Now().UTC(),
+		Event:     audit.EventToolCall,
+		Parameters: map[string]any{
+			"credentials": []any{
+				map[string]any{"token": "tok1", "user": "alice"},
+				map[string]any{"token": "tok2", "user": "bob"},
+			},
+		},
+	}
+	require.NoError(t, logger.Log(&entry))
+
+	data, err := os.ReadFile(filepath.Join(dir, "audit.jsonl"))
+	require.NoError(t, err)
+	var lastLine []byte
+	for _, line := range splitLines(data) {
+		if len(line) > 0 {
+			lastLine = line
+		}
+	}
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(lastLine, &parsed))
+
+	params, ok := parsed["parameters"].(map[string]any)
+	require.True(t, ok)
+	creds, ok := params["credentials"].([]any)
+	require.True(t, ok, "credentials must be a JSON array")
+	require.Len(t, creds, 2)
+
+	for i, elem := range creds {
+		m, ok := elem.(map[string]any)
+		require.True(t, ok, "element %d must be a map", i)
+		assert.Equal(t, "[REDACTED]", m["token"],
+			"token field inside array element %d must be redacted", i)
+		// user is not a sensitive field name
+		assert.NotEqual(t, "[REDACTED]", m["user"],
+			"user field inside array element %d must NOT be redacted", i)
+	}
+}
+
+// splitLines splits a byte slice on newlines and returns non-empty lines.
+func splitLines(data []byte) [][]byte {
+	var lines [][]byte
+	start := 0
+	for i, b := range data {
+		if b == '\n' {
+			line := data[start:i]
+			if len(line) > 0 {
+				lines = append(lines, line)
+			}
+			start = i + 1
+		}
+	}
+	if start < len(data) {
+		line := data[start:]
+		if len(line) > 0 {
+			lines = append(lines, line)
+		}
+	}
+	return lines
 }

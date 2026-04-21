@@ -37,6 +37,179 @@ type SandboxPolicy struct {
 	InheritToChildren bool
 }
 
+// Mode selects how the sandbox enforces policy. Sprint J / BRD SEC-01..03.
+// The zero value ("") is treated as ModeEnforce by ParseMode so that partial
+// struct literals in tests don't accidentally disable enforcement.
+type Mode string
+
+const (
+	// ModeEnforce enforces policy at the kernel layer (Landlock+seccomp on
+	// Linux 5.13+). Violating syscalls return EACCES (filesystem) or EPERM
+	// (seccomp). This is the production default on capable kernels.
+	ModeEnforce Mode = "enforce"
+
+	// ModePermissive computes and audit-logs policy without enforcing it.
+	// Seccomp uses SECCOMP_RET_LOG rather than SECCOMP_RET_ERRNO.
+	// On Linux < 6.12 (no native permissive Landlock), landlock_restrict_self
+	// is skipped entirely and the mode effectively degrades to audit-only.
+	// Intended for pre-enforcement audit in production rollouts. A prominent
+	// stderr banner repeats every 60 seconds while the gateway runs.
+	ModePermissive Mode = "permissive"
+
+	// ModeOff disables the sandbox completely. Apply and Install are not
+	// called. Intended for local development with debuggers and tracers.
+	// When combined with OMNIPUS_ENV=production, a WARN banner repeats every
+	// 60 seconds to alert operators.
+	ModeOff Mode = "off"
+)
+
+// ParseMode normalizes a string to a Mode value. Empty string and the legacy
+// "enabled"/"disabled" aliases are accepted for backwards compatibility.
+// Returns an error for any other unrecognized value so CLI parsing can reject
+// typos with an explicit "usage error" exit (code 2).
+func ParseMode(s string) (Mode, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "enforce", "enabled":
+		return ModeEnforce, nil
+	case "permissive", "audit":
+		return ModePermissive, nil
+	case "off", "disabled", "false", "none":
+		return ModeOff, nil
+	}
+	return "", fmt.Errorf("invalid sandbox mode %q; must be one of: enforce, permissive, off", s)
+}
+
+// SystemRestrictedPaths is the canonical list of path prefixes that user
+// AllowedPaths entries may NOT grant write access to. When a user rule
+// overlaps any of these, DefaultPolicy strips the Write bit and keeps only
+// Read. Keeping this list narrow prevents sandboxed code from modifying the
+// system (SSH keys, init scripts, kernel modules, etc) even if an operator
+// mistakenly whitelists them for read access.
+//
+// Order-independent. Each entry matches itself and any child path (prefix
+// match on the directory boundary).
+var SystemRestrictedPaths = []string{
+	"/etc",
+	"/proc",
+	"/sys",
+	"/dev",
+	"/boot",
+	"/root",
+}
+
+// isSystemRestricted returns true if path equals or lies under any entry in
+// SystemRestrictedPaths. The path is cleaned first so that traversal sequences
+// like "../../../etc" resolve to /etc before the check.
+func isSystemRestricted(path string) bool {
+	clean := filepath.Clean(path)
+	for _, restricted := range SystemRestrictedPaths {
+		if clean == restricted || strings.HasPrefix(clean, restricted+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+// DefaultPolicy builds the workspace SandboxPolicy from the Omnipus home
+// directory and an optional list of user-declared additional allowed paths.
+// Implements FR-J-003 and FR-J-013 (user read wins, write unconditionally
+// stripped on system-restricted paths).
+//
+// The returned policy grants:
+//   - RWX on $OMNIPUS_HOME and /tmp (workspace + scratch)
+//   - R on common system library and CA cert directories (/proc/self,
+//     /lib, /lib64, /usr/lib, /usr/lib64, /usr/bin, /etc/ssl, /etc/ca-certificates,
+//     /sys/devices/system/cpu) — gateway needs to read shared objects, DNS
+//     resolver config, and TLS trust store at runtime.
+//   - R-only on any user-declared path that overlaps SystemRestrictedPaths
+//     (Write bit silently stripped, WARN logged via the provided warnFn).
+//   - RW on any user-declared path that does NOT overlap system-restricted
+//     paths.
+//
+// warnFn may be nil; when set, it is invoked once per stripped rule with a
+// human-readable message. The gateway passes slog.Warn here so the message
+// lands in the structured log alongside the sandbox.applied event.
+//
+// Duplicate paths are NOT deduplicated — Landlock silently accepts duplicates
+// and takes the union of access rights per path.
+func DefaultPolicy(homePath string, allowedPaths []string, warnFn func(msg string, path string)) SandboxPolicy {
+	rules := make([]PathRule, 0, 16+len(allowedPaths))
+
+	// Workspace: full RWX on $OMNIPUS_HOME. This is where agents write
+	// sessions, credentials, config, skills, and state.
+	if homePath != "" {
+		rules = append(rules, PathRule{
+			Path:   filepath.Clean(homePath),
+			Access: AccessRead | AccessWrite | AccessExecute,
+		})
+	}
+
+	// Scratch: /tmp is the POSIX convention for transient files. Agents,
+	// exec tools, and temp-file helpers all write here.
+	rules = append(rules, PathRule{
+		Path:   "/tmp",
+		Access: AccessRead | AccessWrite | AccessExecute,
+	})
+
+	// Read-only system dependencies required by the gateway at runtime.
+	// Missing paths (e.g. /lib64 on systems that don't split it) are
+	// rejected individually by Apply() and logged as ruleErrors; the
+	// remaining rules still succeed.
+	readOnlySystem := []string{
+		"/proc/self",
+		"/lib",
+		"/lib64",
+		"/usr/lib",
+		"/usr/lib64",
+		"/usr/bin",
+		"/etc/ssl",
+		"/etc/ca-certificates",
+		"/etc/resolv.conf",
+		"/etc/hosts",
+		"/etc/nsswitch.conf",
+		"/sys/devices/system/cpu",
+	}
+	for _, p := range readOnlySystem {
+		rules = append(rules, PathRule{
+			Path:   p,
+			Access: AccessRead | AccessExecute, // exec bit lets dynamic loader mmap .so files
+		})
+	}
+
+	// User-declared additional paths (FR-J-013).
+	for _, raw := range allowedPaths {
+		if raw == "" {
+			continue
+		}
+		clean := filepath.Clean(raw)
+		if isSystemRestricted(clean) {
+			// Strip Write bit — user intent (read) is preserved, but
+			// write access to /etc, /proc, /sys, /dev, /boot, /root and
+			// their children is unconditionally denied.
+			if warnFn != nil {
+				warnFn(
+					"User sandbox policy allows read on restricted system path; write access is still denied.",
+					clean,
+				)
+			}
+			rules = append(rules, PathRule{
+				Path:   clean,
+				Access: AccessRead,
+			})
+			continue
+		}
+		rules = append(rules, PathRule{
+			Path:   clean,
+			Access: AccessRead | AccessWrite,
+		})
+	}
+
+	return SandboxPolicy{
+		FilesystemRules:   rules,
+		InheritToChildren: true,
+	}
+}
+
 // SandboxBackend is the interface for platform-specific sandbox enforcement.
 type SandboxBackend interface {
 	Name() string
@@ -111,16 +284,42 @@ var blockedSyscallNames = []string{
 type SeccompProgram struct {
 	syscalls []BlockedSyscall
 	useTSync bool
+	// mode controls the BPF return action for blocked syscalls. In
+	// ModeEnforce, the filter returns SECCOMP_RET_ERRNO(EPERM) — the
+	// syscall fails with EPERM and the process continues. In
+	// ModePermissive, the filter returns SECCOMP_RET_LOG — the syscall
+	// proceeds to the kernel but an entry is written to the audit log.
+	// RET_LOG has been in the kernel since 4.14 so it is always available
+	// on our 5.13+ support floor.
+	mode Mode
 }
 
 // BuildSeccompProgram assembles the seccomp BPF program with all blocked syscalls.
 // The program blocks privilege-escalation syscalls with EPERM (not SIGKILL).
 func BuildSeccompProgram() *SeccompProgram {
+	return BuildSeccompProgramWithMode(ModeEnforce)
+}
+
+// BuildSeccompProgramWithMode is the mode-aware variant. ModeEnforce produces
+// the same program as BuildSeccompProgram. ModePermissive produces a program
+// that logs denied syscalls via SECCOMP_RET_LOG but lets them proceed.
+// ModeOff is rejected — callers must not install any seccomp program when
+// the sandbox is off.
+func BuildSeccompProgramWithMode(mode Mode) *SeccompProgram {
 	syscalls := make([]BlockedSyscall, len(blockedSyscallNames))
 	for i, name := range blockedSyscallNames {
 		syscalls[i] = BlockedSyscall{Name: name}
 	}
-	return &SeccompProgram{syscalls: syscalls, useTSync: true}
+	return &SeccompProgram{syscalls: syscalls, useTSync: true, mode: mode}
+}
+
+// Mode returns the effective mode of the program. ModeEnforce when the
+// program was built without an explicit mode.
+func (sp *SeccompProgram) Mode() Mode {
+	if sp == nil || sp.mode == "" {
+		return ModeEnforce
+	}
+	return sp.mode
 }
 
 // Blocks returns true if the given syscall name is blocked by this program.
@@ -330,6 +529,25 @@ type Status struct {
 	// available but not actively enforcing — see the package comment for
 	// the wiring status.
 	PolicyApplied bool `json:"policy_applied"`
+	// Mode is the effective sandbox mode ("enforce", "permissive", "off").
+	// Empty string means the caller has not set the mode (e.g. describe was
+	// called before Apply wiring was done).
+	Mode Mode `json:"mode,omitempty"`
+	// DisabledBy is populated when Mode == ModeOff to explain why the
+	// sandbox was disabled: "cli_flag" (--sandbox=off), "config"
+	// (gateway.sandbox.mode = "off"), or "kernel_unsupported" (no fallback
+	// path, kernel too old). Empty when the sandbox is active.
+	DisabledBy string `json:"disabled_by,omitempty"`
+	// LandlockEnforced and SeccompEnforced are distinct from PolicyApplied
+	// to make permissive-mode state readable: in permissive mode on a pre-
+	// 6.12 kernel, policy is computed and logged but nothing is actually
+	// enforced by the kernel. Clients that need to know "is this process
+	// actually locked down" should check both.
+	LandlockEnforced bool `json:"landlock_enforced,omitempty"`
+	SeccompEnforced  bool `json:"seccomp_enforced,omitempty"`
+	// AuditOnly is true when the sandbox is installed in audit/log-only mode
+	// (permissive on a kernel without native permissive-Landlock support).
+	AuditOnly bool `json:"audit_only,omitempty"`
 	// Notes carries operator-facing explanations of the current state, such
 	// as "sandbox not applied at startup" or "kernel older than 5.13". It
 	// is empty when everything is healthy.
@@ -350,6 +568,35 @@ type policyApplyReporter interface {
 	PolicyApplied() bool
 }
 
+// ApplyState captures the gateway's Sprint-J boot-time decisions about the
+// sandbox so the status endpoint can reflect them: which mode is effective,
+// whether Apply/Install actually ran (not just whether they would have
+// succeeded), whether the kernel degraded permissive to audit-only, and why
+// the sandbox was disabled. Populated by the gateway's sandbox-apply step
+// and read by DescribeBackendWithState.
+type ApplyState struct {
+	// Mode is the resolved sandbox mode for this process lifetime.
+	Mode Mode
+	// DisabledBy is set when Mode == ModeOff: "cli_flag", "config", or
+	// "kernel_unsupported". Empty otherwise.
+	DisabledBy string
+	// LandlockEnforced is true when Apply() was invoked in enforce mode on
+	// a kernel that actually enforces restrictions. False in permissive
+	// mode (on current kernels that lack native permissive Landlock) and
+	// when the sandbox is disabled.
+	LandlockEnforced bool
+	// SeccompEnforced is true when Install() was invoked with
+	// SECCOMP_RET_ERRNO. False when mode=permissive (RET_LOG) or disabled.
+	SeccompEnforced bool
+	// AuditOnly captures the permissive-on-old-kernel degradation (policy
+	// is computed and logged, but not enforced by the kernel).
+	AuditOnly bool
+	// ExtraNotes carries gateway-level notes that don't originate from the
+	// backend itself (e.g. "permissive mode degraded to audit-only on
+	// kernel 6.8").
+	ExtraNotes []string
+}
+
 // DescribeBackend returns the operator-facing status of the given backend.
 // It uses type assertions against narrow interfaces (abiReporter,
 // policyApplyReporter) so this function stays build-tag free and forward-
@@ -361,19 +608,43 @@ type policyApplyReporter interface {
 //
 // When the backend is capable but Apply has not been called, PolicyApplied
 // is false and a note is added to Notes to surface the gap to operators.
+//
+// Callers who have also invoked Install() and know the effective Mode
+// should prefer DescribeBackendWithState, which reflects mode and
+// DisabledBy in the response.
 func DescribeBackend(backend SandboxBackend) Status {
+	return DescribeBackendWithState(backend, ApplyState{})
+}
+
+// DescribeBackendWithState is DescribeBackend extended with gateway-level
+// state (mode, disabled_by, landlock_enforced, seccomp_enforced, audit_only,
+// extra notes). The gateway owns this state because it orchestrates Apply()
+// and Install() and knows whether the operator asked for enforce/permissive/off.
+//
+// When state.Mode is empty (zero value), the function degrades to the
+// legacy DescribeBackend output for backward compatibility.
+func DescribeBackendWithState(backend SandboxBackend, state ApplyState) Status {
 	if backend == nil {
 		return Status{Backend: "none", Available: false}
 	}
 	status := Status{
-		Backend:   backend.Name(),
-		Available: backend.Available(),
+		Backend:    backend.Name(),
+		Available:  backend.Available(),
+		Mode:       state.Mode,
+		DisabledBy: state.DisabledBy,
+		AuditOnly:  state.AuditOnly,
 	}
+
 	rep, ok := backend.(abiReporter)
 	if !ok {
 		// Non-kernel backend (e.g. FallbackBackend). KernelLevel stays false.
+		// Preserve any gateway-level notes (e.g. "kernel too old").
+		if len(state.ExtraNotes) > 0 {
+			status.Notes = append(status.Notes, state.ExtraNotes...)
+		}
 		return status
 	}
+
 	// Capable of kernel-level enforcement.
 	status.KernelLevel = true
 	status.ABIVersion = rep.ABIVersion()
@@ -381,18 +652,56 @@ func DescribeBackend(backend SandboxBackend) Status {
 	status.BlockedSyscalls = append([]string(nil), blockedSyscallNames...)
 
 	// Distinguish capability from enforcement. A backend that tracks its
-	// own applied state wins; otherwise conservatively assume not applied
-	// and surface a note so operators can investigate.
-	if applied, ok := backend.(policyApplyReporter); ok && applied.PolicyApplied() {
+	// own applied state wins; otherwise conservatively assume not applied.
+	applied, hasApplied := backend.(policyApplyReporter)
+	if hasApplied && applied.PolicyApplied() {
 		status.PolicyApplied = true
-		status.SeccompEnabled = true
+		switch state.Mode {
+		case ModeEnforce:
+			// Kernel-enforced on both axes.
+			status.SeccompEnabled = true
+			status.LandlockEnforced = true
+			status.SeccompEnforced = true
+		case ModePermissive:
+			// Policy computed and logged, not enforced. Operators
+			// care about the distinction when checking
+			// /api/v1/security/sandbox-status.
+			status.SeccompEnabled = true // seccomp filter is installed (RET_LOG)
+			status.LandlockEnforced = state.LandlockEnforced
+			status.SeccompEnforced = state.SeccompEnforced
+		case "":
+			// Legacy caller (DescribeBackend without state).
+			// Preserve the pre-Sprint-J contract: when the backend
+			// reports PolicyApplied, seccomp is reported enabled
+			// because historically Apply and Install ran together.
+			status.SeccompEnabled = true
+			status.LandlockEnforced = true
+			status.SeccompEnforced = true
+		default:
+			// Explicit mode other than enforce/permissive with
+			// PolicyApplied=true is surprising but should not crash.
+			status.SeccompEnabled = state.SeccompEnforced
+			status.LandlockEnforced = state.LandlockEnforced
+			status.SeccompEnforced = state.SeccompEnforced
+		}
 	} else {
 		status.PolicyApplied = false
 		status.SeccompEnabled = false
+		// Surface the "Apply has not been called" note regardless of
+		// Mode. The note's semantics are "kernel-level sandbox is not
+		// active on this process" — that is equally true when Apply
+		// failed, when Sprint-J wiring is pending, or when mode=off
+		// was explicitly requested. The DisabledBy field lets clients
+		// distinguish the three cases while the Notes array remains
+		// informationally complete for operators scanning status.
 		status.Notes = append(
 			status.Notes,
 			"sandbox backend is capable of kernel-level enforcement but Apply() has not been called on the Omnipus process; child processes are not currently restricted by Landlock or seccomp",
 		)
+	}
+
+	if len(state.ExtraNotes) > 0 {
+		status.Notes = append(status.Notes, state.ExtraNotes...)
 	}
 	return status
 }

@@ -6,10 +6,18 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"sync/atomic"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
+
+// processSeccompInstalled latches to true the first time Install succeeds
+// in this process. Paired with processLandlockApplied in sandbox_linux.go:
+// both guards exist so repeated in-process boots (test harness) don't stack
+// filters or fail with EEXIST. Production gateways boot once so the guard
+// is a no-op there.
+var processSeccompInstalled atomic.Bool
 
 // syscallNrByName maps syscall names to Linux syscall numbers for the current
 // architecture. Entries that do not exist on every arch (create_module,
@@ -52,15 +60,28 @@ func blockedSyscallNrs() []uint32 {
 // Install loads the seccomp BPF filter into the kernel.
 // Sets PR_SET_NO_NEW_PRIVS first, then installs the filter with
 // SECCOMP_FILTER_FLAG_TSYNC for child-process inheritance (SEC-03).
-// Blocked syscalls return EPERM (not SIGKILL) per spec.
+// In ModeEnforce, blocked syscalls return EPERM (not SIGKILL). In
+// ModePermissive, blocked syscalls return SECCOMP_RET_LOG — the call
+// proceeds but an audit-log entry is written.
 func (sp *SeccompProgram) Install() error {
+	if processSeccompInstalled.Load() {
+		// Process-wide idempotency: the first boot in this process
+		// already installed a filter. Re-installing would stack a
+		// second (identical) filter — harmless but wasteful — or fail
+		// if ptrace is blocked by the first filter and the kernel
+		// relies on it for SECCOMP_MODE_FILTER_CHECK. Either way the
+		// process is already protected; skip.
+		slog.Info("seccomp: install skipped — already installed in this process",
+			"mode", string(sp.Mode()))
+		return nil
+	}
 	nrs := blockedSyscallNrs()
 	if len(nrs) == 0 {
 		return nil
 	}
 	sort.Slice(nrs, func(i, j int) bool { return nrs[i] < nrs[j] })
 
-	filter := assembleBPF(nrs)
+	filter := assembleBPFMode(nrs, sp.Mode())
 	if len(filter) == 0 {
 		return fmt.Errorf("seccomp: empty BPF program")
 	}
@@ -86,16 +107,20 @@ func (sp *SeccompProgram) Install() error {
 		return fmt.Errorf("seccomp: SYS_SECCOMP install failed: %w", errno)
 	}
 
-	slog.Info("Seccomp BPF filter installed", "blocked_syscalls", len(nrs), "tsync", sp.useTSync)
+	processSeccompInstalled.Store(true)
+	slog.Info("Seccomp BPF filter installed",
+		"blocked_syscalls", len(nrs), "tsync", sp.useTSync, "mode", string(sp.Mode()))
 	return nil
 }
 
-// assembleBPF builds a classic BPF program that:
+// assembleBPFMode builds a classic BPF program that:
 //  1. Loads the syscall number from seccomp_data.nr (offset 0)
 //  2. Compares against each blocked syscall number
-//  3. Returns SECCOMP_RET_ERRNO(EPERM) for blocked syscalls
-//  4. Returns SECCOMP_RET_ALLOW for everything else
-func assembleBPF(blockedNrs []uint32) []unix.SockFilter {
+//  3. In ModeEnforce: returns SECCOMP_RET_ERRNO(EPERM) for blocked syscalls.
+//     In ModePermissive: returns SECCOMP_RET_LOG — the syscall proceeds but
+//     the kernel writes an audit-log entry.
+//  4. Returns SECCOMP_RET_ALLOW for everything else.
+func assembleBPFMode(blockedNrs []uint32, mode Mode) []unix.SockFilter {
 	// seccomp_data layout: offset 0 = nr (uint32), offset 4 = arch (uint32)
 	const offsetNr = 0
 
@@ -111,10 +136,21 @@ func assembleBPF(blockedNrs []uint32) []unix.SockFilter {
 
 		seccompRetAllow = unix.SECCOMP_RET_ALLOW
 		seccompRetErrno = unix.SECCOMP_RET_ERRNO
+		seccompRetLog   = unix.SECCOMP_RET_LOG
 	)
 
-	// SECCOMP_RET_ERRNO encodes errno in the low 16 bits
-	retEPERM := uint32(seccompRetErrno) | uint32(unix.EPERM&0xFFFF)
+	// Deny target: in enforce mode, return errno EPERM; in permissive mode,
+	// return RET_LOG so the call proceeds but the kernel logs it. This is
+	// the core Sprint-J FR-J-012 behavior. RET_LOG has been in the kernel
+	// since 4.14, well before our 5.13 Landlock floor, so it is always
+	// available on any kernel that also has Landlock.
+	// SECCOMP_RET_ERRNO encodes errno in the low 16 bits.
+	var denyAction uint32
+	if mode == ModePermissive {
+		denyAction = uint32(seccompRetLog)
+	} else {
+		denyAction = uint32(seccompRetErrno) | uint32(unix.EPERM&0xFFFF)
+	}
 
 	n := len(blockedNrs)
 	// Program structure:
@@ -150,10 +186,10 @@ func assembleBPF(blockedNrs []uint32) []unix.SockFilter {
 		K:    seccompRetAllow,
 	})
 
-	// Instruction n+2: RET ERRNO(EPERM) (deny)
+	// Instruction n+2: RET (deny). EPERM in enforce mode, RET_LOG in permissive.
 	prog = append(prog, unix.SockFilter{
 		Code: uint16(bpfRET | bpfK),
-		K:    retEPERM,
+		K:    denyAction,
 	})
 
 	return prog

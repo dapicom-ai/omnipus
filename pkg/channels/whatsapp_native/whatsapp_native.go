@@ -584,7 +584,11 @@ func (c *WhatsAppNativeChannel) StartTyping(ctx context.Context, chatID string) 
 
 	// Send initial composing presence
 	if err := client.SendChatPresence(ctx, to, types.ChatPresenceComposing, types.ChatPresenceMediaText); err != nil {
-		logger.DebugCF("whatsapp", "Failed to send composing presence", map[string]any{"chat_id": chatID, "error": err.Error()})
+		logger.DebugCF(
+			"whatsapp",
+			"Failed to send composing presence",
+			map[string]any{"chat_id": chatID, "error": err.Error()},
+		)
 	}
 
 	typingCtx, cancel := context.WithCancel(ctx)
@@ -602,8 +606,17 @@ func (c *WhatsAppNativeChannel) StartTyping(ctx context.Context, chatID string) 
 				cl := c.client
 				c.mu.Unlock()
 				if cl != nil && cl.IsConnected() {
-					if err := cl.SendChatPresence(maxCtx, to, types.ChatPresencePaused, types.ChatPresenceMediaText); err != nil {
-						logger.DebugCF("whatsapp", "Failed to send paused presence", map[string]any{"chat_id": chatID, "error": err.Error()})
+					if err := cl.SendChatPresence(
+						maxCtx,
+						to,
+						types.ChatPresencePaused,
+						types.ChatPresenceMediaText,
+					); err != nil {
+						logger.DebugCF(
+							"whatsapp",
+							"Failed to send paused presence",
+							map[string]any{"chat_id": chatID, "error": err.Error()},
+						)
 					}
 				}
 				return
@@ -612,8 +625,17 @@ func (c *WhatsAppNativeChannel) StartTyping(ctx context.Context, chatID string) 
 				cl := c.client
 				c.mu.Unlock()
 				if cl != nil && cl.IsConnected() {
-					if err := cl.SendChatPresence(maxCtx, to, types.ChatPresenceComposing, types.ChatPresenceMediaText); err != nil {
-						logger.DebugCF("whatsapp", "Failed to re-send composing presence", map[string]any{"chat_id": chatID, "error": err.Error()})
+					if err := cl.SendChatPresence(
+						maxCtx,
+						to,
+						types.ChatPresenceComposing,
+						types.ChatPresenceMediaText,
+					); err != nil {
+						logger.DebugCF(
+							"whatsapp",
+							"Failed to re-send composing presence",
+							map[string]any{"chat_id": chatID, "error": err.Error()},
+						)
 					}
 				}
 			}

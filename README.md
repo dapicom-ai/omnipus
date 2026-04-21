@@ -5,7 +5,7 @@
 
 <h3>Multi-agent orchestration — sovereign, sandboxed, single binary.</h3>
 
-<p>An opinionated agent runtime with five named coworkers, hand-off between them, kernel-level sandboxing, and 17 chat channels. One <code>go build</code>, no database, runs on a $10 VPS.</p>
+<p>An opinionated agent runtime with five named coworkers, hand-off between them, a Landlock+seccomp sandbox applied to the gateway itself on Linux 5.13+, and 17 chat channels. One <code>go build</code>, no database, runs on a $10 VPS.</p>
 
 <p>
   <img src="https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat&logo=go&logoColor=white" alt="Go">
@@ -26,7 +26,7 @@ Most agent frameworks give you orchestration **or** a security story. Omnipus sh
 
 - **Five named agents out of the box** — not one general-purpose chatbot, but a team with defined roles and delegation rules.
 - **Real hand-off, not fake role-play** — agents pass control through a transcript the next agent can actually read.
-- **Deny-by-default security** — Linux Landlock sandbox, SSRF guard, three-tier tool policy (allow / ask / deny), encrypted credential store.
+- **Deny-by-default security** — Landlock + seccomp applied to the gateway process before it listens (Linux 5.13+; app-level fallback elsewhere), SSRF guard wired into every outbound-HTTP tool, three-tier tool policy (allow / ask / deny), encrypted credential store.
 - **Runs anywhere** — single static binary, embedded SPA, auto-generates its own encryption key on first boot. Works on a laptop, a $10 VPS, or a Raspberry Pi.
 
 ---
@@ -92,12 +92,45 @@ Ask Ray to research then hand off to Max for a screenshot. Ray researches, calls
 
 <img src="docs/marketing/screenshots/06-max-tools-permissions.png" alt="Per-agent tool policy" width="900">
 
-- **Landlock sandbox** on Linux 5.13+ (pure Go via `golang.org/x/sys/unix`), app-level fallback elsewhere.
-- **Three-tier tool policy per agent** — `allow` / `ask` / `deny` with glob patterns and interactive approval over the WebSocket.
-- **SSRF guard** on every outbound fetch / navigate — private IP ranges, cloud metadata endpoints, link-local addresses blocked.
+- **Kernel sandbox applied to the gateway itself** on Linux 5.13+ — Landlock (`restrict_self`) plus a seccomp filter are installed at boot, *before* `net.Listen`, so the HTTP listener never binds unsandboxed. Pure Go via `golang.org/x/sys/unix`. Modes: `enforce` (default), `permissive` (audit-only), `off`. On unsupported kernels / macOS / Windows the backend degrades to app-level checks only — see the limitations section below.
+- **Three-tier tool policy per agent** — `allow` / `ask` / `deny`. Tool names and exec commands both support `*` / `?` glob patterns; deny beats allow; interactive approval streams over the WebSocket.
+- **SSRF guard wired into every outbound-HTTP tool** — `web_search` (all 7 providers), `web_fetch`, the skills installer, and the exec SSRF proxy all share one `SSRFChecker.SafeClient()`. Blocks private IP ranges, link-local, cloud metadata endpoints, and IPv6 wrappings (IPv4-mapped, 6to4, Teredo); DNS is re-resolved at connect-time to close the rebinding gap. Operator allowlist via `sandbox.ssrf.allow_internal` (IPs / CIDRs / hostnames).
 - **Encrypted credential store** — AES-256-GCM with Argon2id KDF; master key auto-generated on first boot, rotation via CLI.
 - **Prompt-injection guard**, per-channel rate limits, per-binary exec allowlists.
-- **Audit log** — structured JSONL with automatic secret/PII redaction.
+- **Audit log** — structured JSONL with two-layer redaction: a sensitive-key-name layer (`password`, `api_key`, `authorization`, `bearer`, `client_secret`, and ~15 more, case-insensitive, recursing into nested maps and arrays) plus a value-pattern layer for API-key shapes, Bearer tokens, and emails.
+
+### Security limitations and known gaps
+
+The sandbox is deliberately scoped; be precise about what it does and doesn't do:
+
+- **No LSM enforcement on macOS, Windows, or Linux < 5.13.** The sandbox selects a `FallbackBackend` and enforcement reduces to in-process policy checks. The BRD's Windows story (Job Objects + Restricted Tokens + DACL) is specified in Appendix A but not yet implemented.
+- **Landlock ABI v4** (kernel 5.19+ / 6.x) has a `create_ruleset` incompatibility: the current `computeRights()` enumerates v1–v3 bits only, so on a v4-negotiated ruleset the call returns EINVAL and the backend downgrades to app-level checks. Tracked in [#103](https://github.com/dapicom-ai/omnipus/issues/103); out of scope for Sprint J.
+- **Permissive mode downgrades to audit-only skip on kernels < 6.12.** Native permissive `landlock_restrict_self` is not available; Omnipus logs the computed policy and installs seccomp with `SECCOMP_RET_LOG`, but does not call `restrict_self`. Plan for kernel ≥ 6.12 if you need a true log-then-enforce workflow.
+- **`sandbox.ssrf.allow_internal`** accepts exact hostnames, exact IPs, and CIDR ranges. Glob host patterns (`*.internal.corp`) are **not** supported yet.
+
+When `OMNIPUS_ENV=production` is set and the sandbox is `off` or `permissive`, the gateway prints a multi-line warning to stderr at boot and every 60 seconds thereafter. The banner is not silenceable by design.
+
+### Operator configuration
+
+Sandbox behaviour is controlled by the `sandbox` key in `~/.omnipus/config.json`:
+
+```json
+{
+  "sandbox": {
+    "mode": "enforce",
+    "allowed_paths": ["/var/lib/omnipus-data"],
+    "ssrf": {
+      "enabled": true,
+      "allow_internal": ["localhost", "10.0.0.0/8", "internal.api.corp"]
+    }
+  }
+}
+```
+
+- `mode`: `enforce` | `permissive` | `off`. Legacy `enabled: true/false` still works (maps to `enforce`/`off`).
+- CLI override: `./omnipus gateway --sandbox=enforce|permissive|off` — always trumps the config value.
+- Apply/Install failure on a kernel that claims Landlock support aborts boot with exit code **78** (`EX_CONFIG`); the HTTP listener never binds. Other boot failures keep exit 1.
+- Status is surfaced at `/health` under `sandbox.{applied,mode,backend,disabled_by}` and in more detail at `/api/v1/security/sandbox-status`.
 
 ### Built-in tools (27 loaded by default)
 

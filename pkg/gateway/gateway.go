@@ -86,6 +86,14 @@ type services struct {
 	manualReloadChan chan struct{}
 	reloading        atomic.Bool
 	credStore        *credentials.Store
+	// sandboxResult is the Sprint-J Apply/Install outcome. Populated by
+	// applySandbox before services start (and before any HTTP listener
+	// binds). Read-only after initialization — FR-J-015 forbids hot-reload
+	// of sandbox config, so this never changes for the process lifetime.
+	sandboxResult *SandboxApplyResult
+	// stopNagBanner cancels the permissive / production-off nag goroutine
+	// on shutdown. No-op when no banner was armed.
+	stopNagBanner func()
 	// bundle is read-only to HTTP handlers (channels receive secrets at
 	// construction time via SecretBundle; handlers do not access bundle
 	// directly). Written only during executeReload under the reloading
@@ -232,12 +240,65 @@ func bootCredentials(
 	return cfg, bundle, credStore, nil
 }
 
+// RunOptions carries the inputs for the gateway runtime. Kept as a struct
+// so new Sprint-J options (SandboxMode) and future options can be added
+// without churning the Run signature. The legacy Run function remains as a
+// thin wrapper for callers that have not migrated.
+type RunOptions struct {
+	Debug             bool
+	HomePath          string
+	ConfigPath        string
+	AllowEmptyStartup bool
+	// SandboxMode is the value of the --sandbox CLI flag ("enforce",
+	// "permissive", "off"). Empty means "no flag set, use config". See
+	// FR-J-006 for CLI > config > default precedence.
+	SandboxMode string
+}
+
+// SandboxBootError wraps a sandbox Apply/Install failure so the CLI entry
+// point can distinguish it from generic boot errors and exit with the
+// Sprint-J-specific EX_CONFIG (78) code per FR-J-004.
+type SandboxBootError struct {
+	Err error
+}
+
+// Error makes SandboxBootError satisfy the error interface.
+func (e *SandboxBootError) Error() string {
+	if e == nil || e.Err == nil {
+		return "sandbox boot error"
+	}
+	return e.Err.Error()
+}
+
+// Unwrap exposes the underlying error for errors.Is/As traversal.
+func (e *SandboxBootError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
 // Run starts the gateway runtime using the configuration loaded from configPath.
 // It installs OS signal handlers (SIGINT, SIGTERM) and blocks until one fires,
 // then delegates to RunContext for the actual boot and serve logic.
 // Zero behavior change from the caller's perspective — the CLI entry point
 // continues to call Run unchanged.
+//
+// For Sprint-J options (--sandbox), call RunWithOptions instead.
 func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error {
+	return RunWithOptions(RunOptions{
+		Debug:             debug,
+		HomePath:          homePath,
+		ConfigPath:        configPath,
+		AllowEmptyStartup: allowEmptyStartup,
+	})
+}
+
+// RunWithOptions is the Sprint-J entry point. Handles the same boot flow as
+// Run but accepts the expanded RunOptions struct (including SandboxMode).
+// Installs OS signal handlers the same way Run does, then delegates to
+// RunContextWithOptions.
+func RunWithOptions(opts RunOptions) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -253,7 +314,7 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 		}
 	}()
 
-	return RunContext(ctx, debug, homePath, configPath, allowEmptyStartup)
+	return RunContextWithOptions(ctx, opts)
 }
 
 // RunContext is the context-cancellable entry point for the gateway runtime.
@@ -265,7 +326,25 @@ func Run(debug bool, homePath, configPath string, allowEmptyStartup bool) error 
 // RunContext blocks until ctx is canceled or a fatal error occurs, then performs
 // the full graceful shutdown sequence (channels → agent loop → background services
 // → provider) before returning.
+//
+// Tests that need to override Sprint-J options (sandbox mode) should call
+// RunContextWithOptions instead.
 func RunContext(ctx context.Context, debug bool, homePath, configPath string, allowEmptyStartup bool) error {
+	return RunContextWithOptions(ctx, RunOptions{
+		Debug:             debug,
+		HomePath:          homePath,
+		ConfigPath:        configPath,
+		AllowEmptyStartup: allowEmptyStartup,
+	})
+}
+
+// RunContextWithOptions is the Sprint-J context-cancellable entry point.
+// RunContext is a thin wrapper that builds a legacy RunOptions and calls this.
+func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
+	debug := opts.Debug
+	homePath := opts.HomePath
+	configPath := opts.ConfigPath
+	allowEmptyStartup := opts.AllowEmptyStartup
 	// Bootstrap ~/.omnipus/ directory tree on every start (idempotent, US-1).
 	if err := datamodel.Init(homePath); err != nil {
 		return fmt.Errorf("directory initialization failed: %w", err)
@@ -333,6 +412,34 @@ func RunContext(ctx context.Context, debug bool, homePath, configPath string, al
 	msgBus := bus.NewMessageBus()
 	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider)
 
+	// Sprint J (FR-J-001..016): Apply the kernel sandbox to the gateway
+	// process BEFORE any HTTP listener binds. Strict ordering:
+	//   unlock → config → NewAgentLoop → applySandbox → setupAndStartServices
+	// where setupAndStartServices ends in ChannelManager.StartAll which
+	// calls ListenAndServe on the shared HTTP server. During the
+	// Apply→Install→listen window, external TCP probes receive
+	// ECONNREFUSED (FR-J-016) because the socket simply does not exist yet.
+	sandboxResult, sandboxErr := applySandbox(SandboxApplyOptions{
+		CLIMode:  opts.SandboxMode,
+		Cfg:      cfg,
+		HomePath: homePath,
+		Backend:  agentLoop.SandboxBackend(),
+	})
+	if sandboxErr != nil {
+		// FR-J-004: kernel apply failure on a capable kernel is fatal.
+		// Never bind the HTTP listener in this state — a half-sandboxed
+		// process is worse than failing to boot. Wrapping in
+		// SandboxBootError lets cmd/omnipus map this to exit code 78.
+		slog.Error("gateway: sandbox apply failed — aborting boot",
+			"error", sandboxErr,
+			"requested_mode", opts.SandboxMode)
+		return &SandboxBootError{Err: sandboxErr}
+	}
+
+	// Arm the permissive / production-off nag banner BEFORE the listener
+	// binds so operators see the warning even during a fast crash-loop.
+	stopNag := StartNagBanner(sandboxResult.NagReason, nil)
+
 	// Wire agent CRUD tools (system.agent.create/update/delete) to Ava so she
 	// can create custom agents through her structured interview flow.
 	// reloadFuncRef is set after services start; the closure captures the pointer
@@ -379,9 +486,18 @@ func RunContext(ctx context.Context, debug bool, homePath, configPath string, al
 			"skills_available": skillsInfo["available"],
 		})
 
-	runningServices, err := setupAndStartServices(cfg, bundle, agentLoop, msgBus, homePath, credStore)
+	runningServices, err := setupAndStartServices(cfg, bundle, agentLoop, msgBus, homePath, credStore, sandboxResult)
 	if err != nil {
+		stopNag() // don't leak the nag goroutine if service setup fails.
 		return err
+	}
+	runningServices.stopNagBanner = stopNag
+
+	// Surface sandbox state on /health via the existing degraded/check
+	// infrastructure. Registering a RegisterCheck puts the {mode, backend,
+	// applied} triplet into the /health response body.
+	if runningServices.HealthServer != nil && sandboxResult != nil {
+		registerSandboxHealthCheck(runningServices.HealthServer, sandboxResult)
 	}
 
 	// Setup manual reload channel for /reload endpoint
@@ -633,8 +749,9 @@ func setupAndStartServices(
 	msgBus *bus.MessageBus,
 	homePath string,
 	credStore *credentials.Store,
+	sandboxResult *SandboxApplyResult,
 ) (*services, error) {
-	runningServices := &services{credStore: credStore, bundle: bundle}
+	runningServices := &services{credStore: credStore, bundle: bundle, sandboxResult: sandboxResult}
 
 	execTimeout := time.Duration(cfg.Tools.Cron.ExecTimeoutMinutes) * time.Minute
 	var err error
@@ -740,6 +857,8 @@ func setupAndStartServices(
 		taskExecutor:  tExecutor,
 		credStore:     credStore,
 		mediaStore:    runningServices.MediaStore,
+		ssrfChecker:   agent.GetSSRFChecker(agentLoop), // SEC-24: nil when SSRF disabled
+		sandboxResult: sandboxResult,                   // Sprint J: immutable post-boot snapshot
 	}
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions", api.withAuth(api.HandleSessions))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions/", api.withAuth(api.HandleSessions))

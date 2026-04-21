@@ -17,17 +17,26 @@ const (
 )
 
 // OmnipusSandboxConfig holds Wave 2 kernel-level sandboxing configuration per
-// BRD SEC-01 through SEC-20 (Landlock, seccomp, Job Objects, RBAC, audit log).
+// BRD SEC-01 through SEC-20 (Landlock, seccomp, Job Objects, RBAC, audit log)
+// and Sprint-J sandbox-apply wiring (FR-J-001..016).
 //
 // All fields default to the most restrictive safe value when omitted.
 // Populated from config.json under the "sandbox" key.
-//
-// This struct is intentionally empty in Wave 1 — enforcement is implemented
-// in pkg/security/ (Wave 2). The config struct is defined now so config.json
-// can carry sandbox keys without parse errors during the transition.
 type OmnipusSandboxConfig struct {
-	// Enabled activates kernel-level sandboxing. Default: false (Wave 1).
-	// Set to true once pkg/security/ backends are available (Wave 2).
+	// Mode selects how the sandbox enforces policy at boot (Sprint J).
+	// Valid values: "enforce" (default on capable kernels), "permissive"
+	// (audit-only), "off" (disabled — development only).
+	//
+	// When Mode is empty, the legacy Enabled field controls behavior
+	// (Enabled=true → enforce, Enabled=false → off) for backwards
+	// compatibility with configs written before Sprint J.
+	Mode string `json:"mode,omitempty"`
+
+	// Enabled activates kernel-level sandboxing. Deprecated: use Mode
+	// instead. Kept for backwards compatibility — Enabled=true maps to
+	// Mode=enforce and Enabled=false maps to Mode=off when Mode is empty.
+	//
+	// Deprecated: use Mode ("enforce", "permissive", "off").
 	Enabled bool `json:"enabled,omitempty"`
 
 	// AllowNetworkOutbound permits sandboxed processes to make outbound TCP
@@ -66,6 +75,29 @@ type OmnipusSandboxConfig struct {
 	// DefaultToolPolicy is the fallback global policy for tools not listed in
 	// ToolPolicies. Valid values: "allow" (default), "ask", "deny".
 	DefaultToolPolicy string `json:"default_tool_policy,omitempty"`
+
+	// SSRF configures outbound-HTTP SSRF protection (SEC-24).
+	// When Enabled is true, all tool HTTP clients (web_search, skills installer,
+	// browser, exec proxy) route through the SSRFChecker which blocks
+	// connections to private/internal IP ranges and cloud metadata endpoints.
+	// AllowInternal lists hosts, IPs, or CIDRs that are exempted from SSRF
+	// blocking (e.g. ["localhost", "10.0.0.0/8"] to allow an internal search
+	// service while still blocking all other private ranges).
+	SSRF OmnipusSSRFConfig `json:"ssrf,omitempty"`
+}
+
+// OmnipusSSRFConfig holds SSRF protection settings for outbound HTTP clients (SEC-24).
+type OmnipusSSRFConfig struct {
+	// Enabled activates SSRF protection for all outbound HTTP tool clients.
+	// Default: false (not enabled). Set to true to block private-IP connections.
+	Enabled bool `json:"enabled,omitempty"`
+
+	// AllowInternal lists hostnames, exact IPs, or CIDR ranges that are exempt
+	// from SSRF blocking even when Enabled is true. Entries may be:
+	//   - Exact IPv4/IPv6:  "127.0.0.1", "::1"
+	//   - CIDR range:       "10.0.0.0/8", "192.168.0.0/16"
+	//   - Hostname:         "localhost", "internal.corp"
+	AllowInternal []string `json:"allow_internal,omitempty"`
 }
 
 // OmnipusRateLimitsConfig holds Wave 4 rate limit configuration (SEC-26).
@@ -77,4 +109,26 @@ type OmnipusRateLimitsConfig struct {
 	MaxAgentLLMCallsPerHour int `json:"max_agent_llm_calls_per_hour,omitempty"`
 	// MaxAgentToolCallsPerMinute limits tool calls per agent per minute. 0 = no limit.
 	MaxAgentToolCallsPerMinute int `json:"max_agent_tool_calls_per_minute,omitempty"`
+}
+
+// ResolvedMode returns the effective sandbox mode string, applying the
+// legacy Enabled→Mode mapping when Mode is empty:
+//
+//	Mode set            → Mode (normalized via strings.ToLower-trim)
+//	Mode empty, Enabled → "enforce" (backwards compat)
+//	Mode empty, !Enabled → "off"    (backwards compat — explicit disable)
+//
+// Note: on a fresh config where neither field is set, Enabled defaults to
+// false, so this returns "off". Callers that want the "enforce on capable
+// kernels" default behavior should apply it at a higher layer (e.g. the
+// gateway boot path) rather than here — this helper only reports what the
+// config file says.
+func (s OmnipusSandboxConfig) ResolvedMode() string {
+	if s.Mode != "" {
+		return s.Mode
+	}
+	if s.Enabled {
+		return "enforce"
+	}
+	return "off"
 }

@@ -9,9 +9,9 @@
 //
 // The prior test TestSubagentCanSpawnGrandchild asserted the reversed behavior. This
 // test (TestSubagentCannotSpawnGrandchild) asserts the NEW contract:
-//   - A sub-turn's tool registry is constructed via CloneExcept("spawn","handoff").
-//   - "spawn" and "handoff" are absent from the registry.
-//   - Any LLM tool call for "spawn" inside a sub-turn receives an unknown-tool error.
+//   - A sub-turn's tool registry is constructed via CloneExcept(ExcludedSpawn, ExcludedSubagent, ExcludedHandoff).
+//   - "spawn", "subagent", and "handoff" are absent from the registry.
+//   - Any LLM tool call for any of those three inside a sub-turn receives an unknown-tool error.
 //   - No grandchild subagent_start frame is emitted.
 //
 // The enforcement is at the registry level (FR-H-006), not a depth check in the tool.
@@ -30,10 +30,11 @@ import (
 // TestSubagentCannotSpawnGrandchild verifies the REVERSAL of Plan 3 §1:
 // subagents cannot spawn grandchildren because "spawn" is absent from their tool registry.
 //
-// The child sub-turn's registry is constructed via CloneExcept("spawn","handoff") in
-// pkg/agent/subturn.go::spawnSubTurn. With "spawn" absent from the registry, any LLM
-// tool call for "spawn" is dispatched to ExecuteWithContext which returns an unknown-tool
-// error — no new sub-turn is created, no subagent_start frame is emitted.
+// The child sub-turn's registry is constructed via CloneExcept(ExcludedSpawn,
+// ExcludedSubagent, ExcludedHandoff) in pkg/agent/subturn.go::spawnSubTurn. With all
+// three absent from the registry, any LLM tool call for them is dispatched to
+// ExecuteWithContext which returns an unknown-tool error — no new sub-turn is
+// created, no subagent_start frame is emitted.
 //
 // This test verifies the registry-level enforcement directly.
 func TestSubagentCannotSpawnGrandchild(t *testing.T) {

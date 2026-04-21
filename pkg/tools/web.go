@@ -18,6 +18,7 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
+	"github.com/dapicom-ai/omnipus/pkg/security"
 	"github.com/dapicom-ai/omnipus/pkg/utils"
 )
 
@@ -915,6 +916,28 @@ type WebSearchToolOptions struct {
 	BaiduSearchMaxResults int
 	BaiduSearchEnabled    bool
 	Proxy                 string
+
+	// SSRFChecker enforces SSRF protection (SEC-24) on all outbound HTTP
+	// connections made by the search provider. When non-nil, SafeClient()
+	// is used instead of utils.CreateHTTPClient, blocking connections to
+	// private/internal IP ranges and cloud metadata endpoints.
+	SSRFChecker *security.SSRFChecker
+}
+
+// makeSearchClient returns an HTTP client for a search provider.
+// When an SSRFChecker is provided, it returns an SSRF-safe client that blocks
+// connections to private/internal IP ranges (SEC-24). Otherwise it falls back
+// to the proxy-aware client from utils.CreateHTTPClient.
+func makeSearchClient(ssrf *security.SSRFChecker, proxy string, timeout time.Duration) (*http.Client, error) {
+	if ssrf != nil {
+		// SafeClient() enforces SSRF protection at the dial layer (connect-time
+		// re-resolution). The proxy setting is intentionally not applied on top of
+		// SafeClient because proxy URLs could themselves be used to bypass SSRF;
+		// operators who need a proxy with SSRF protection should configure it at
+		// the OS/network level.
+		return ssrf.SafeClient(), nil
+	}
+	return utils.CreateHTTPClient(proxy, timeout)
 }
 
 func NewWebSearchTool(opts WebSearchToolOptions) (*WebSearchTool, error) {
@@ -922,7 +945,7 @@ func NewWebSearchTool(opts WebSearchToolOptions) (*WebSearchTool, error) {
 	maxResults := 10
 	// Priority: Perplexity > Brave > SearXNG > Tavily > DuckDuckGo > Baidu Search > GLM Search
 	if opts.PerplexityEnabled && len(opts.PerplexityAPIKeys) > 0 {
-		client, err := utils.CreateHTTPClient(opts.Proxy, perplexityTimeout)
+		client, err := makeSearchClient(opts.SSRFChecker, opts.Proxy, perplexityTimeout)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create HTTP client for Perplexity: %w", err)
 		}
@@ -935,7 +958,7 @@ func NewWebSearchTool(opts WebSearchToolOptions) (*WebSearchTool, error) {
 			maxResults = min(opts.PerplexityMaxResults, 10)
 		}
 	} else if opts.BraveEnabled && len(opts.BraveAPIKeys) > 0 {
-		client, err := utils.CreateHTTPClient(opts.Proxy, searchTimeout)
+		client, err := makeSearchClient(opts.SSRFChecker, opts.Proxy, searchTimeout)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create HTTP client for Brave: %w", err)
 		}
@@ -944,15 +967,23 @@ func NewWebSearchTool(opts WebSearchToolOptions) (*WebSearchTool, error) {
 			maxResults = min(opts.BraveMaxResults, 10)
 		}
 	} else if opts.SearXNGEnabled && opts.SearXNGBaseURL != "" {
+		// SearXNG: when SSRFChecker is present use its safe client; otherwise
+		// use a minimal stock client (SearXNG is self-hosted so no proxy needed).
+		var searXNGClient *http.Client
+		if opts.SSRFChecker != nil {
+			searXNGClient = opts.SSRFChecker.SafeClient()
+		} else {
+			searXNGClient = &http.Client{Timeout: 10 * time.Second}
+		}
 		provider = &SearXNGSearchProvider{
 			baseURL: opts.SearXNGBaseURL,
-			client:  &http.Client{Timeout: 10 * time.Second},
+			client:  searXNGClient,
 		}
 		if opts.SearXNGMaxResults > 0 {
 			maxResults = min(opts.SearXNGMaxResults, 10)
 		}
 	} else if opts.TavilyEnabled && len(opts.TavilyAPIKeys) > 0 {
-		client, err := utils.CreateHTTPClient(opts.Proxy, searchTimeout)
+		client, err := makeSearchClient(opts.SSRFChecker, opts.Proxy, searchTimeout)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create HTTP client for Tavily: %w", err)
 		}
@@ -966,7 +997,7 @@ func NewWebSearchTool(opts WebSearchToolOptions) (*WebSearchTool, error) {
 			maxResults = min(opts.TavilyMaxResults, 10)
 		}
 	} else if opts.DuckDuckGoEnabled {
-		client, err := utils.CreateHTTPClient(opts.Proxy, searchTimeout)
+		client, err := makeSearchClient(opts.SSRFChecker, opts.Proxy, searchTimeout)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create HTTP client for DuckDuckGo: %w", err)
 		}
@@ -975,7 +1006,7 @@ func NewWebSearchTool(opts WebSearchToolOptions) (*WebSearchTool, error) {
 			maxResults = min(opts.DuckDuckGoMaxResults, 10)
 		}
 	} else if opts.BaiduSearchEnabled && opts.BaiduSearchAPIKey != "" {
-		client, err := utils.CreateHTTPClient(opts.Proxy, perplexityTimeout)
+		client, err := makeSearchClient(opts.SSRFChecker, opts.Proxy, perplexityTimeout)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create HTTP client for Baidu Search: %w", err)
 		}
@@ -989,7 +1020,7 @@ func NewWebSearchTool(opts WebSearchToolOptions) (*WebSearchTool, error) {
 			maxResults = min(opts.BaiduSearchMaxResults, 10)
 		}
 	} else if opts.GLMSearchEnabled && opts.GLMSearchAPIKey != "" {
-		client, err := utils.CreateHTTPClient(opts.Proxy, searchTimeout)
+		client, err := makeSearchClient(opts.SSRFChecker, opts.Proxy, searchTimeout)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create HTTP client for GLM Search: %w", err)
 		}

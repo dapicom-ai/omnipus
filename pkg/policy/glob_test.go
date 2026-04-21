@@ -201,3 +201,70 @@ func TestGlobMatcher_EmptyList(t *testing.T) {
 			"nil allowlist with deny-by-default should block exec")
 	})
 }
+
+// TestMatchGlob_ToolNamePatterns validates MatchGlob behavior specifically for
+// tool name patterns (dot-separated namespaces, wildcards, question-mark).
+// Issue #79 — glob patterns for tool names.
+func TestMatchGlob_ToolNamePatterns(t *testing.T) {
+	tests := []struct {
+		name    string
+		pattern string
+		input   string
+		want    bool
+	}{
+		// Star wildcard — dot-namespaced tools.
+		{name: "fs.* matches fs.read", pattern: "fs.*", input: "fs.read", want: true},
+		{name: "fs.* matches fs.write", pattern: "fs.*", input: "fs.write", want: true},
+		{name: "fs.* matches fs.list", pattern: "fs.*", input: "fs.list", want: true},
+		{name: "fs.* matches fs.delete", pattern: "fs.*", input: "fs.delete", want: true},
+		{name: "fs.* does not match fsx.read (prefix boundary)", pattern: "fs.*", input: "fsx.read", want: false},
+		{name: "fs.* does not match web_search", pattern: "fs.*", input: "web_search", want: false},
+		{name: "fs.* does not match empty string", pattern: "fs.*", input: "", want: false},
+
+		// Exact match (no wildcards).
+		{name: "web_search exact match", pattern: "web_search", input: "web_search", want: true},
+		{name: "web_search does not match web_fetch", pattern: "web_search", input: "web_fetch", want: false},
+		{name: "fs.read exact match", pattern: "fs.read", input: "fs.read", want: true},
+		{name: "fs.read does not match fs.write", pattern: "fs.read", input: "fs.write", want: false},
+
+		// Star-only pattern — matches everything.
+		{name: "* matches web_search", pattern: "*", input: "web_search", want: true},
+		{name: "* matches fs.read", pattern: "*", input: "fs.read", want: true},
+		{name: "* matches empty string", pattern: "*", input: "", want: true},
+
+		// Question-mark wildcard — exactly one character.
+		{name: "fs.?ead matches fs.read", pattern: "fs.?ead", input: "fs.read", want: true},
+		{name: "fs.?ead matches fs.lead", pattern: "fs.?ead", input: "fs.lead", want: true},
+		{name: "fs.?ead does not match fs.aread (two chars for ?)", pattern: "fs.?ead", input: "fs.aread", want: false},
+		{name: "fs.?ead does not match fs.write", pattern: "fs.?ead", input: "fs.write", want: false},
+		{name: "fs.?rite matches fs.write", pattern: "fs.?rite", input: "fs.write", want: true},
+
+		// Combined * and ?.
+		{name: "fs.?* matches fs.read (? then anything)", pattern: "fs.?*", input: "fs.read", want: true},
+		{name: "fs.?* matches fs.x (? then empty)", pattern: "fs.?*", input: "fs.x", want: true},
+		{name: "fs.?* does not match fs. (need at least one char for ?)", pattern: "fs.?*", input: "fs.", want: false},
+
+		// Namespace prefix patterns.
+		{name: "browser.* matches browser.navigate", pattern: "browser.*", input: "browser.navigate", want: true},
+		{name: "browser.* matches browser.evaluate", pattern: "browser.*", input: "browser.evaluate", want: true},
+		{name: "browser.* does not match exec", pattern: "browser.*", input: "exec", want: false},
+		{name: "system.* matches system.info", pattern: "system.*", input: "system.info", want: true},
+
+		// Empty pattern — only matches empty string.
+		{name: "empty pattern matches empty string", pattern: "", input: "", want: true},
+		{name: "empty pattern does not match web_search", pattern: "", input: "web_search", want: false},
+
+		// Mid-string wildcard.
+		{name: "web_* matches web_search", pattern: "web_*", input: "web_search", want: true},
+		{name: "web_* matches web_fetch", pattern: "web_*", input: "web_fetch", want: true},
+		{name: "web_* does not match webx_search", pattern: "web_*", input: "webx_search", want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := policy.MatchGlob(tc.pattern, tc.input)
+			assert.Equal(t, tc.want, got,
+				"MatchGlob(%q, %q) = %v, want %v", tc.pattern, tc.input, got, tc.want)
+		})
+	}
+}

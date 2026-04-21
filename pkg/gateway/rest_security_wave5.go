@@ -19,6 +19,12 @@ import (
 // and whether seccomp filtering is active.
 
 // HandleSandboxStatus handles GET /api/v1/security/sandbox-status.
+//
+// Sprint-J: the response now includes the resolved Mode, DisabledBy, and
+// Landlock/Seccomp enforcement flags so operators can distinguish enforce
+// from permissive (audit-only) from off (disabled) states. FR-J-008 and
+// the BDD scenario "Fresh boot applies Landlock and seccomp" both verify
+// the "Apply() has not been called" note is gone after a successful wire.
 func (a *restAPI) HandleSandboxStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -32,6 +38,15 @@ func (a *restAPI) HandleSandboxStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	backend := a.agentLoop.SandboxBackend()
-	status := sandbox.DescribeBackend(backend)
+	// Sprint-J: enrich the response with gateway-owned state (mode,
+	// disabled_by, landlock_enforced, seccomp_enforced, audit_only).
+	// When sandboxResult is nil (legacy path or test harness that skipped
+	// applySandbox), fall back to the bare backend description — the
+	// response will have the same shape but with Mode empty.
+	var state sandbox.ApplyState
+	if a.sandboxResult != nil {
+		state = a.sandboxResult.ApplyState
+	}
+	status := sandbox.DescribeBackendWithState(backend, state)
 	jsonOK(w, status)
 }

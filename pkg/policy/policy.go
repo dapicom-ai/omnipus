@@ -166,23 +166,25 @@ var builtinToolPolicies = map[string]ToolPolicy{
 
 // ResolveToolPolicy returns the effective global policy for a tool name.
 // Resolution order:
-//  1. explicit user override in sc.ToolPolicies
-//  2. baked-in safety default in builtinToolPolicies
+//  1. explicit user override in sc.ToolPolicies (glob patterns supported; strictest wins)
+//  2. baked-in safety default in builtinToolPolicies (glob patterns supported; strictest wins)
 //  3. sc.DefaultToolPolicy
 //  4. ToolPolicyAllow
 func (sc *SecurityConfig) ResolveToolPolicy(toolName string) ToolPolicy {
 	if sc == nil {
 		// No config loaded (tests, early boot): still honor builtin safety defaults.
-		if p, ok := builtinToolPolicies[toolName]; ok {
-			return p
+		if resolved := resolveStrictestPolicy(builtinToolPolicies, toolName); resolved != "" {
+			return resolved
 		}
 		return ToolPolicyAllow
 	}
-	if p, ok := sc.ToolPolicies[toolName]; ok {
-		return p
+	if len(sc.ToolPolicies) > 0 {
+		if resolved := resolveStrictestPolicy(sc.ToolPolicies, toolName); resolved != "" {
+			return resolved
+		}
 	}
-	if p, ok := builtinToolPolicies[toolName]; ok {
-		return p
+	if resolved := resolveStrictestPolicy(builtinToolPolicies, toolName); resolved != "" {
+		return resolved
 	}
 	if sc.DefaultToolPolicy != "" {
 		return sc.DefaultToolPolicy
