@@ -31,6 +31,7 @@ import { GenericToolCall } from './tools/GenericToolCall'
 import { ExecApprovalBlock } from './ExecApprovalBlock'
 import { RateLimitIndicator } from './RateLimitIndicator'
 import { MarkdownText } from './markdown-text'
+import { SubagentBlock } from './SubagentBlock'
 import { Button } from '@/components/ui/button'
 import { useChatStore } from '@/store/chat'
 import { useConnectionStore } from '@/store/connection'
@@ -238,6 +239,23 @@ function InlineMedia() {
   )
 }
 
+// Renders subagent spans attached to the current message (FR-H-008).
+// useMessage().id corresponds to the store message's id (set in omnipus-runtime convertMessage).
+function SubagentSpansRenderer() {
+  const message = useMessage()
+  const messages = useChatStore((s) => s.messages)
+  const storeMsg = messages.find((m) => m.id === message.id)
+  const spans = storeMsg?.spans ?? []
+  if (spans.length === 0) return null
+  return (
+    <>
+      {spans.map((span) => (
+        <SubagentBlock key={span.spanId} span={span} />
+      ))}
+    </>
+  )
+}
+
 function AssistantMessageAvatar() {
   const activeAgentId = useSessionStore((s) => s.activeAgentId)
   const { data: agents = [] } = useQuery({ queryKey: ['agents'], queryFn: fetchAgents })
@@ -284,6 +302,8 @@ function AssistantMessage() {
               },
             }}
           />
+          {/* Subagent spans — rendered per-message, keyed by span_id (FR-H-008) */}
+          <SubagentSpansRenderer />
           <InlineMedia />
         </div>
 
@@ -320,8 +340,8 @@ interface SlashCommand {
   description: string
 }
 
-// Built-in slash commands.
-// TODO: agents will be able to register custom commands via a 'commands' WebSocket frame.
+// Built-in slash commands. Custom commands registered via 'commands' WebSocket
+// frame are not yet wired; see sprint-h-subagent-block-spec.md for the design.
 const SLASH_COMMANDS: SlashCommand[] = [
   { label: '/session new', description: 'Start a new session' },
   { label: '/clear', description: 'Clear all messages' },
@@ -340,8 +360,9 @@ const HELP_TEXT = `**Omnipus commands:**
 
 // ── Composer ──────────────────────────────────────────────────────────────────
 
-function composerPlaceholder(isConnected: boolean, isStreaming: boolean, agentName: string): string {
+function composerPlaceholder(isConnected: boolean, isStreaming: boolean, isReplaying: boolean, agentName: string): string {
   if (!isConnected) return 'Connecting to gateway...'
+  if (isReplaying) return 'Loading session history...'
   if (isStreaming) return 'Waiting for response...'
   return `Message ${agentName}…`
 }
@@ -362,8 +383,11 @@ function FilePreviewThumbnail({ file }: { file: File }) {
   return <img src={url} className="w-8 h-8 rounded object-cover" alt={file.name} />
 }
 
-function OmnipusComposer() {
+// Exported for unit testing (TDD row 22).
+export function OmnipusComposer() {
   const isStreaming = useChatStore((s) => s.isStreaming)
+  // FR-I-014: disable send while replay frames are still arriving
+  const isReplaying = useChatStore((s) => s.isReplaying)
   const isConnected = useConnectionStore((s) => s.isConnected)
   const cancelStream = useChatStore((s) => s.cancelStream)
   const setMessages = useChatStore((s) => s.setMessages)
@@ -406,7 +430,7 @@ function OmnipusComposer() {
   const hasWarnedLargeInput = useRef(false)
 
   // Show slash dropdown when input starts with "/"
-  const shouldShowSlash = inputValue.startsWith('/') && !isStreaming && isConnected
+  const shouldShowSlash = inputValue.startsWith('/') && !isStreaming && !isReplaying && isConnected
 
   function closeSlash() {
     setSlashOpen(false)
@@ -599,7 +623,7 @@ function OmnipusComposer() {
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          disabled={!isConnected || isStreaming || isUploading}
+          disabled={!isConnected || isStreaming || isUploading || isReplaying}
           className="shrink-0 w-11 h-11 rounded-xl flex items-center justify-center text-[var(--color-muted)] hover:text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           aria-label="Attach file"
           title="Attach file"
@@ -619,14 +643,14 @@ function OmnipusComposer() {
         }}
       >
         <ComposerPrimitive.Input
-          placeholder={composerPlaceholder(isConnected, isStreaming || isUploading, activeAgentName)}
-          disabled={!isConnected || isStreaming || isUploading}
+          placeholder={composerPlaceholder(isConnected, isStreaming || isUploading, isReplaying, activeAgentName)}
+          disabled={!isConnected || isStreaming || isUploading || isReplaying}
           rows={1}
           className={cn(
             'flex-1 resize-none rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 py-2.5 text-sm text-[var(--color-secondary)] outline-none',
             'placeholder:text-[var(--color-muted)] min-h-[24px] max-h-[200px] leading-6 overflow-hidden',
             'focus:border-[var(--color-accent)]/50 focus:ring-1 focus:ring-[var(--color-accent)]/20',
-            (!isConnected || isStreaming || isUploading) && 'opacity-60 cursor-not-allowed',
+            (!isConnected || isStreaming || isUploading || isReplaying) && 'opacity-60 cursor-not-allowed',
           )}
           aria-label="Message input"
           onChange={(e) => {
@@ -686,15 +710,18 @@ function OmnipusComposer() {
             <Stop size={15} weight="fill" />
           </button>
         ) : (
+          // FR-I-014: also disabled during replay (isReplaying) so user cannot send out-of-order
           <ComposerPrimitive.Send
-            disabled={!isConnected}
+            disabled={!isConnected || isReplaying}
+            data-testid="send-button"
             className={cn(
               'shrink-0 w-11 h-11 rounded-xl flex items-center justify-center transition-colors',
-              isConnected
+              isConnected && !isReplaying
                 ? 'bg-[var(--color-accent)] text-[var(--color-primary)] hover:bg-[var(--color-accent-hover)] disabled:bg-[var(--color-surface-3)] disabled:text-[var(--color-muted)] disabled:cursor-not-allowed'
                 : 'bg-[var(--color-surface-3)] text-[var(--color-muted)] cursor-not-allowed',
             )}
             aria-label="Send message"
+            aria-disabled={isReplaying || undefined}
           >
             <PaperPlaneRight size={15} weight="bold" />
           </ComposerPrimitive.Send>
@@ -779,14 +806,32 @@ export function ChatScreen() {
     refetchOnMount: !isConnected,
   })
 
+  // Sprint I: WS attach_session + streamReplay is the authoritative history loader.
+  // Skip the REST-based setMessages overwrite when WS replay is active OR has already
+  // populated the store — otherwise the filter below strips tool_call frames already
+  // attached by the reducer and historical tool-call-badge elements disappear.
+  const isReplaying = useChatStore((s) => s.isReplaying)
+  const storeMessageCount = useChatStore((s) => s.messages.length)
+  // W3-9: replayCompletedForSession tracks whether WS replay finished for the active session.
+  // When set, the REST fallback is skipped even if the store has 0 messages (empty session).
+  const replayCompletedForSession = useChatStore((s) => s.replayCompletedForSession)
   useEffect(() => {
-    if (historyData) {
-      // Filter out tool_call entries that have no role — they crash AssistantUI's convertMessages.
-      // Tool calls are replayed via WebSocket frames instead.
-      const validMessages = historyData.filter((m: { role?: string }) => m.role === 'user' || m.role === 'assistant' || m.role === 'system')
-      setMessages(validMessages)
-    }
-  }, [historyData, setMessages])
+    if (!historyData) return
+    // Don't overwrite during replay — WS frames are the source of truth.
+    if (isReplaying) return
+    // W3-9: don't overwrite if WS replay already completed for this session.
+    // This gates the fallback more precisely than storeMessageCount > 0 alone —
+    // an empty session would pass the count check but still had a successful replay.
+    if (replayCompletedForSession === activeSessionId) return
+    // Don't overwrite if the store already has messages for this session (replay done).
+    if (storeMessageCount > 0) return
+    // Fallback: REST fetched history before WS replay fired (e.g., WS unavailable).
+    // Filter out tool_call entries that have no role — they crash AssistantUI's convertMessages.
+    const validMessages = historyData.filter(
+      (m: { role?: string }) => m.role === 'user' || m.role === 'assistant' || m.role === 'system',
+    )
+    setMessages(validMessages)
+  }, [historyData, isReplaying, storeMessageCount, replayCompletedForSession, activeSessionId, setMessages])
 
   const activePendingApprovals = pendingApprovals.filter((a) => a.status === 'pending')
 

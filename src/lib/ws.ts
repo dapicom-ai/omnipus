@@ -71,6 +71,7 @@ export interface WsToolCallStartFrame {
   tool: string
   call_id: string
   params: Record<string, unknown>
+  parent_call_id?: string
 }
 
 export interface WsToolCallResultFrame {
@@ -81,6 +82,50 @@ export interface WsToolCallResultFrame {
   status: 'success' | 'error'
   duration_ms?: number
   error?: string
+  parent_call_id?: string
+}
+
+// FR-H-004: subagent span bracket frames
+export interface WsSubagentStartFrame {
+  type: 'subagent_start'
+  span_id: string
+  parent_call_id: string
+  task_label: string
+  agent_id?: string
+}
+
+export interface WsSubagentEndFrame {
+  type: 'subagent_end'
+  span_id: string
+  status: 'success' | 'error' | 'cancelled' | 'interrupted' | 'timeout'
+  duration_ms?: number
+  final_result?: string
+  /**
+   * Coordination with wave-1a-go W1-9: optional reason for interrupted status.
+   * Backend populates this when the sub-turn was interrupted by the parent.
+   */
+  reason?: 'parent_timeout' | 'parent_cancelled' | 'parent_done_early' | 'unknown'
+}
+
+/**
+ * Truncation sentinel emitted by pkg/gateway/replay.go:truncateResult when a
+ * tool result exceeds 10 KiB. The result field of WsToolCallResultFrame will
+ * be an object matching this shape instead of the raw result.
+ *
+ * Also see TruncatedResult helper type below for UI narrowing.
+ */
+export interface TruncatedResult {
+  _truncated: true
+  original_size_bytes: number
+  preview: string
+}
+
+/**
+ * Marshal-error sentinel emitted when json.Marshal fails on the tool result.
+ * The result field of WsToolCallResultFrame will be an object matching this shape.
+ */
+export interface MarshalErrorResult {
+  _marshal_error: string
 }
 
 export interface WsExecApprovalRequestFrame {
@@ -146,11 +191,23 @@ export type WsReceiveFrame =
   | WsRateLimitFrame
   | WsMediaFrame
   | WsAgentSwitchedFrame
+  | WsSubagentStartFrame
+  | WsSubagentEndFrame
+
+/** Allowed status values for subagent_end frames. */
+const SUBAGENT_END_STATUSES = new Set<string>(['success', 'error', 'cancelled', 'interrupted', 'timeout'])
 
 function isValidFrame(frame: unknown): frame is WsReceiveFrame {
   if (typeof frame !== 'object' || frame === null) return false
   const f = frame as Record<string, unknown>
-  return typeof f.type === 'string'
+  if (typeof f.type !== 'string') return false
+  // W4-6: validate subagent_end status to prevent unknown-status render crashes.
+  if (f.type === 'subagent_end') {
+    if (typeof f.status !== 'string' || !SUBAGENT_END_STATUSES.has(f.status)) {
+      return false
+    }
+  }
+  return true
 }
 
 // ── Connection ────────────────────────────────────────────────────────────────

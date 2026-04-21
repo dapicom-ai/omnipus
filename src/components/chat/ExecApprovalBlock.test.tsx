@@ -36,7 +36,10 @@ describe('ExecApprovalBlock — rendering (test #9)', () => {
         }}
       />
     )
-    expect(screen.getByText(/git pull origin main/i)).toBeInTheDocument()
+    // Command is split across spans (binary highlighted separately from args) so
+    // getByText regex won't match a single element. Assert via pre element textContent.
+    const pre = document.querySelector('pre')
+    expect(pre?.textContent).toMatch(/git pull origin main/i)
     expect(screen.getByText(/~\/projects\/omnipus/i)).toBeInTheDocument()
     expect(screen.getByText(/tools\.exec\.approval=ask/i)).toBeInTheDocument()
     // Use anchored regex: /^Allow$/i to avoid matching "Always Allow"

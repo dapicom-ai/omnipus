@@ -367,3 +367,641 @@ describe('chat store — sendMessage optimistic render', () => {
     )
   })
 })
+
+// ── Sprint H: subagent span tests ─────────────────────────────────────────────
+// TDD row 11: ChatStore_GroupsFramesBySpan
+// Traces to: sprint-h-subagent-block-spec.md Scenarios 2, 4, 5, 8
+
+describe('ChatStore_GroupsFramesBySpan', () => {
+  /** Seed an assistant placeholder so spans have a message to attach to. */
+  function seedAssistant() {
+    act(() => {
+      useChatStore.getState().updateLastAssistantMessage('', false)
+    })
+  }
+
+  it('in-order: subagent_start → tool_call_start → tool_call_result → subagent_end populates span', () => {
+    seedAssistant()
+
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'subagent_start',
+        span_id: 'span_c1',
+        parent_call_id: 'c1',
+        task_label: 'audit go files',
+        agent_id: 'max',
+      })
+    })
+
+    let msgs = useChatStore.getState().messages
+    let span = msgs[msgs.length - 1].spans?.[0]
+    expect(span).toBeDefined()
+    expect(span?.spanId).toBe('span_c1')
+    expect(span?.taskLabel).toBe('audit go files')
+    expect(span?.status).toBe('running')
+    expect(span?.steps).toHaveLength(0)
+
+    // tool_call_start with matching parent_call_id
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 't1',
+        tool: 'fs.list',
+        params: { path: '/tmp' },
+        parent_call_id: 'c1',
+      })
+    })
+
+    msgs = useChatStore.getState().messages
+    span = msgs[msgs.length - 1].spans?.[0]
+    expect(span?.steps).toHaveLength(1)
+    const s0 = span?.steps[0]
+    expect(s0?.kind === 'tool' ? s0.tool.tool : undefined).toBe('fs.list')
+    expect(s0?.kind === 'tool' ? s0.tool.status : undefined).toBe('running')
+
+    // tool_call_result
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_result',
+        call_id: 't1',
+        tool: 'fs.list',
+        result: 'file.go',
+        status: 'success',
+        duration_ms: 100,
+        parent_call_id: 'c1',
+      })
+    })
+
+    msgs = useChatStore.getState().messages
+    span = msgs[msgs.length - 1].spans?.[0]
+    const s0after = span?.steps[0]
+    expect(s0after?.kind === 'tool' ? s0after.tool.status : undefined).toBe('success')
+    expect(s0after?.kind === 'tool' ? s0after.tool.result : undefined).toBe('file.go')
+
+    // subagent_end
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'subagent_end',
+        span_id: 'span_c1',
+        status: 'success',
+        duration_ms: 4210,
+        final_result: 'Found 1 Go file',
+      })
+    })
+
+    msgs = useChatStore.getState().messages
+    span = msgs[msgs.length - 1].spans?.[0]
+    expect(span?.status).toBe('success')
+    // Narrow to terminal span to access durationMs and finalResult.
+    const terminalSpan = span?.status !== 'running' ? span : undefined
+    expect((terminalSpan as import('@/store/chat').SubagentSpanTerminal | undefined)?.durationMs).toBe(4210)
+    expect((terminalSpan as import('@/store/chat').SubagentSpanTerminal | undefined)?.finalResult).toBe('Found 1 Go file')
+  })
+
+  it('out-of-order: tool_call_start arrives before subagent_start — buffered then drained', () => {
+    seedAssistant()
+
+    // tool_call_start arrives BEFORE subagent_start
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 't2',
+        tool: 'shell',
+        params: { cmd: 'ls' },
+        parent_call_id: 'c2',
+      })
+    })
+
+    // No span yet — should not appear in flat toolCalls either yet
+    let msgs = useChatStore.getState().messages
+    expect(msgs[msgs.length - 1].spans ?? []).toHaveLength(0)
+
+    // Now subagent_start arrives — should drain the buffer
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'subagent_start',
+        span_id: 'span_c2',
+        parent_call_id: 'c2',
+        task_label: 'list files',
+      })
+    })
+
+    msgs = useChatStore.getState().messages
+    const span = msgs[msgs.length - 1].spans?.[0]
+    expect(span).toBeDefined()
+    expect(span?.spanId).toBe('span_c2')
+    expect(span?.steps).toHaveLength(1)
+    const step0 = span?.steps[0]
+    expect(step0?.kind).toBe('tool')
+    expect(step0?.kind === 'tool' ? step0.tool.tool : undefined).toBe('shell')
+  })
+
+  it('step count increments +1 per tool_call_start, not per result (FR-H-010)', () => {
+    seedAssistant()
+
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'subagent_start',
+        span_id: 'span_c3',
+        parent_call_id: 'c3',
+        task_label: 'multi-step task',
+      })
+    })
+
+    for (let i = 1; i <= 3; i++) {
+      act(() => {
+        useChatStore.getState().handleFrame({
+          type: 'tool_call_start',
+          call_id: `t_${i}`,
+          tool: 'fs.list',
+          params: {},
+          parent_call_id: 'c3',
+        })
+      })
+      const msgs = useChatStore.getState().messages
+      const span = msgs[msgs.length - 1].spans?.[0]
+      expect(span?.steps).toHaveLength(i)
+    }
+  })
+
+  it('two sibling spans accumulate steps independently', () => {
+    seedAssistant()
+
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'subagent_start',
+        span_id: 'span_s1',
+        parent_call_id: 's1',
+        task_label: 'first',
+      })
+      useChatStore.getState().handleFrame({
+        type: 'subagent_start',
+        span_id: 'span_s2',
+        parent_call_id: 's2',
+        task_label: 'second',
+      })
+    })
+
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'ts1',
+        tool: 'exec',
+        params: {},
+        parent_call_id: 's1',
+      })
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'ts2a',
+        tool: 'web_search',
+        params: {},
+        parent_call_id: 's2',
+      })
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'ts2b',
+        tool: 'file.read',
+        params: {},
+        parent_call_id: 's2',
+      })
+    })
+
+    const msgs = useChatStore.getState().messages
+    const spans = msgs[msgs.length - 1].spans ?? []
+    expect(spans).toHaveLength(2)
+    expect(spans[0].steps).toHaveLength(1)
+    expect(spans[1].steps).toHaveLength(2)
+  })
+})
+
+// TDD row 12: ChatStore_OrphanFrame_FallsBackFlat
+// Traces to: sprint-h-subagent-block-spec.md Edge (out-of-order), FR-H-009
+
+describe('ChatStore_OrphanFrame_FallsBackFlat', () => {
+  it('frame with unknown parent_call_id + no subagent_start within 10s → flat + dev warning', async () => {
+    // Use fake timers to simulate the 10s TTL without waiting
+    vi.useFakeTimers()
+    const warnSpy = vi.spyOn(console, 'warn')
+
+    act(() => {
+      useChatStore.getState().updateLastAssistantMessage('', false)
+    })
+
+    // tool_call_start with a parent_call_id that has no matching subagent_start
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'orphan_t1',
+        tool: 'fs.list',
+        params: {},
+        parent_call_id: 'orphan_parent',
+      })
+    })
+
+    // No span yet, not in toolCalls yet (buffered)
+    expect(useChatStore.getState().toolCalls['orphan_t1']).toBeUndefined()
+
+    // Advance time past 10s TTL
+    await act(async () => {
+      vi.advanceTimersByTime(10_001)
+    })
+
+    // Now the buffered frame should be released as a flat tool call
+    const state = useChatStore.getState()
+    expect(state.toolCalls['orphan_t1']).toBeDefined()
+    expect(state.toolCalls['orphan_t1'].tool).toBe('fs.list')
+
+    // A dev console warning must have been emitted with the stable prefix.
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('[chat] orphan frame'),
+    )
+
+    vi.useRealTimers()
+    warnSpy.mockRestore()
+  })
+})
+
+// Regression: TestChatRouter_NonSpawnCall_NoSpan
+// flat tool_call_start (no parent_call_id) is NOT grouped into any span
+
+describe('ChatStore regression: flat tool call without parent_call_id', () => {
+  it('renders as a flat ToolCallBadge (not attached to any span)', () => {
+    act(() => {
+      useChatStore.getState().updateLastAssistantMessage('', false)
+    })
+
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'flat_1',
+        tool: 'exec',
+        params: { cmd: 'pwd' },
+        // no parent_call_id
+      })
+    })
+
+    const state = useChatStore.getState()
+    // Tool call appears in the flat toolCalls map
+    expect(state.toolCalls['flat_1']).toBeDefined()
+    expect(state.toolCalls['flat_1'].tool).toBe('exec')
+
+    // No span was created
+    const lastMsg = state.messages[state.messages.length - 1]
+    expect(lastMsg.spans ?? []).toHaveLength(0)
+  })
+})
+
+// ── Sprint I: replay parity tests ─────────────────────────────────────────────
+
+// TDD row 18: ChatStore_ReplaySequence_MatchesLiveSequence
+// Traces to: sprint-i-historical-replay-fidelity-spec.md FR-I-010
+// Hard Constraint: "one reducer path" — live and replay sequences must produce
+// identical ChatMessage shapes (excluding cursor/isStreaming flags).
+describe('ChatStore_ReplaySequence_MatchesLiveSequence', () => {
+  it('live token sequence and replay_message produce equivalent content, tool-call count, and ordering', () => {
+    // Full reset including toolCallOrder (beforeEach only resets a subset of state)
+    act(() => { useChatStore.getState().resetSession() })
+
+    // ── Live sequence ──────────────────────────────────────────────────────────
+    // Emit token frames producing text "A", then a tool call, then text "B", then done.
+    act(() => {
+      // Seed an assistant placeholder (sendMessage path does this; replicate here)
+      useChatStore.getState().handleFrame({ type: 'token', content: 'A' })
+    })
+    act(() => {
+      // tool_call_start (no parent_call_id — flat call)
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'tc_live_1',
+        tool: 'shell',
+        params: { cmd: 'echo hi' },
+      })
+    })
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_result',
+        call_id: 'tc_live_1',
+        tool: 'shell',
+        result: { stdout: 'hi\n' },
+        status: 'success',
+        duration_ms: 42,
+      })
+    })
+    act(() => {
+      useChatStore.getState().handleFrame({ type: 'token', content: 'B' })
+    })
+    act(() => {
+      useChatStore.getState().handleFrame({ type: 'done' })
+    })
+
+    const liveState = useChatStore.getState()
+    // Extract the single assistant message
+    const liveAssistant = liveState.messages.find((m) => m.role === 'assistant')
+    expect(liveAssistant).toBeDefined()
+    const liveContent = liveAssistant!.content           // "AB"
+    const liveToolCallOrder = liveState.toolCallOrder    // ['tc_live_1']
+    const liveToolCall = liveState.toolCalls['tc_live_1']
+    expect(liveContent).toBe('AB')
+    expect(liveToolCallOrder).toHaveLength(1)
+    expect(liveToolCall.tool).toBe('shell')
+    expect(liveToolCall.status).toBe('success')
+    // Live sequence: streaming flags settled
+    expect(liveAssistant!.isStreaming).toBe(false)
+    expect(liveAssistant!.streamCursor).toBe(false)
+
+    // ── Reset ─────────────────────────────────────────────────────────────────
+    act(() => {
+      useChatStore.getState().resetSession()
+    })
+
+    // ── Replay sequence ────────────────────────────────────────────────────────
+    // replay_message for the completed assistant text, then tool_call_start/result, then done.
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'replay_message',
+        role: 'assistant',
+        content: 'AB',
+      })
+    })
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'tc_replay_1',
+        tool: 'shell',
+        params: { cmd: 'echo hi' },
+      })
+    })
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_result',
+        call_id: 'tc_replay_1',
+        tool: 'shell',
+        result: { stdout: 'hi\n' },
+        status: 'success',
+        duration_ms: 42,
+      })
+    })
+    act(() => {
+      useChatStore.getState().handleFrame({ type: 'done' })
+    })
+
+    const replayState = useChatStore.getState()
+    const replayAssistant = replayState.messages.find((m) => m.role === 'assistant')
+    expect(replayAssistant).toBeDefined()
+
+    // ── Assert shape parity ────────────────────────────────────────────────────
+    // Content must match
+    expect(replayAssistant!.content).toBe(liveContent)
+
+    // Tool-call count must match
+    expect(replayState.toolCallOrder).toHaveLength(liveToolCallOrder.length)
+
+    // Tool-call properties must match
+    const replayToolCall = replayState.toolCalls['tc_replay_1']
+    expect(replayToolCall.tool).toBe(liveToolCall.tool)
+    expect(replayToolCall.status).toBe(liveToolCall.status)
+
+    // Cursor/streaming flags: replay_message arrives as a completed message (no cursor)
+    // Live message: also settled after done. Both must be false.
+    expect(replayAssistant!.isStreaming).toBe(false)
+    expect(replayAssistant!.streamCursor).toBe(false)
+    // Live and replay both settle identically after done
+    expect(replayAssistant!.isStreaming).toBe(liveAssistant!.isStreaming)
+    expect(replayAssistant!.streamCursor).toBe(liveAssistant!.streamCursor)
+  })
+})
+
+// TDD row 19: ChatStore_ReplayMessageThenToolCall_InterleavesCorrectly
+// Traces to: sprint-i-historical-replay-fidelity-spec.md FR-I-010
+// Verifies that textAtToolCallStart is captured correctly when a tool_call_start
+// follows a replay_message (completed, non-streaming assistant message).
+describe('ChatStore_ReplayMessageThenToolCall_InterleavesCorrectly', () => {
+  it('textAtToolCallStart snapshot equals the replay_message content when tool_call_start follows', () => {
+    act(() => { useChatStore.getState().resetSession() })
+    // Simulate: replay_message with content "Hello from replay" arrives, then tool_call_start
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'replay_message',
+        role: 'assistant',
+        content: 'Hello from replay',
+      })
+    })
+
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'tc_interleave_1',
+        tool: 'fs.read',
+        params: { path: '/etc/hosts' },
+      })
+    })
+
+    const state = useChatStore.getState()
+
+    // The tool call must be registered
+    expect(state.toolCalls['tc_interleave_1']).toBeDefined()
+    expect(state.toolCalls['tc_interleave_1'].tool).toBe('fs.read')
+
+    // textAtToolCallStart must capture the replay_message content at the
+    // point the tool call started — this is the visual text position for interleaving.
+    const snapshot = state.textAtToolCallStart['tc_interleave_1']
+    expect(snapshot).toBe('Hello from replay')
+  })
+
+  it('textAtToolCallStart is empty string when tool_call_start arrives before any assistant message', () => {
+    act(() => { useChatStore.getState().resetSession() })
+    // During replay, tool_call_start may arrive after an entry with no text content.
+    // The snapshot should be '' not undefined.
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'tc_no_text',
+        tool: 'web_search',
+        params: { query: 'test' },
+      })
+    })
+
+    const state = useChatStore.getState()
+    const snapshot = state.textAtToolCallStart['tc_no_text']
+    expect(snapshot).toBe('')
+  })
+})
+
+// TDD row 18 supplement: isReplaying flag transitions
+describe('ChatStore_isReplaying_flag', () => {
+  it('starts false, can be set true via setReplaying, cleared to false on done (with 250ms minimum display window)', async () => {
+    // W2-6(a): Fix comment: "100ms minimum" → "250ms minimum" (matches MIN_REPLAY_DISPLAY_MS constant).
+    // Traces to: temporal-puzzling-melody.md W2-6(a)
+    // Initial state
+    expect(useChatStore.getState().isReplaying).toBe(false)
+
+    // Simulate attach_session triggering setReplaying(true)
+    act(() => {
+      useChatStore.getState().setReplaying(true)
+    })
+    expect(useChatStore.getState().isReplaying).toBe(true)
+
+    // done frame schedules clear — but minimum 250ms display window is enforced
+    // so the placeholder doesn't flicker on sub-frame replays.
+    act(() => {
+      useChatStore.getState().handleFrame({ type: 'done' })
+    })
+    // Still true immediately after done (inside the window).
+    expect(useChatStore.getState().isReplaying).toBe(true)
+
+    // After >= 250ms the setTimeout fires and flips it.
+    await new Promise((r) => setTimeout(r, 300))
+    expect(useChatStore.getState().isReplaying).toBe(false)
+  })
+
+  it('done frame while not replaying is harmless — isReplaying stays false', () => {
+    expect(useChatStore.getState().isReplaying).toBe(false)
+    act(() => {
+      useChatStore.getState().handleFrame({ type: 'done' })
+    })
+    expect(useChatStore.getState().isReplaying).toBe(false)
+  })
+
+  it('resetSession clears isReplaying', () => {
+    act(() => {
+      useChatStore.getState().setReplaying(true)
+    })
+    expect(useChatStore.getState().isReplaying).toBe(true)
+    act(() => {
+      useChatStore.getState().resetSession()
+    })
+    expect(useChatStore.getState().isReplaying).toBe(false)
+  })
+
+  // W2-6(b): setReplaying(false) when already false is a no-op.
+  it('setReplaying(false) when already false is a no-op — isReplaying stays false', () => {
+    // BDD: Given isReplaying is already false
+    // BDD: When setReplaying(false) is called
+    // BDD: Then isReplaying stays false (no state change)
+    // Traces to: temporal-puzzling-melody.md W2-6(b)
+    expect(useChatStore.getState().isReplaying).toBe(false)
+    act(() => {
+      useChatStore.getState().setReplaying(false)
+    })
+    expect(useChatStore.getState().isReplaying).toBe(false)
+  })
+
+  // W2-6(c): setReplaying(true) when already true does NOT reset replayingStartedAt.
+  it('setReplaying(true) when already true does not extend the minimum window', async () => {
+    // BDD: Given setReplaying(true) was called at T=0, starting the 250ms minimum window
+    // BDD: When setReplaying(true) is called again at T=200ms (before window ends)
+    // BDD: Then the window does NOT extend — done frame at T=210ms still fires within 250ms of T=0
+    // Traces to: temporal-puzzling-melody.md W2-6(c)
+
+    act(() => {
+      useChatStore.getState().setReplaying(true)
+    })
+    expect(useChatStore.getState().isReplaying).toBe(true)
+
+    // Wait 200ms (still inside the 250ms window from the first call)
+    await new Promise((r) => setTimeout(r, 200))
+
+    // Call setReplaying(true) again — if it reset replayingStartedAt, the window would
+    // extend by another 250ms. The test verifies it does NOT by checking that
+    // isReplaying flips to false within ~100ms after this second call (total ~300ms > 250ms from T=0).
+    act(() => {
+      useChatStore.getState().setReplaying(true)
+    })
+    expect(useChatStore.getState().isReplaying).toBe(true)
+
+    // Issue done to schedule the clear.
+    act(() => {
+      useChatStore.getState().handleFrame({ type: 'done' })
+    })
+
+    // After another 100ms (total ~300ms from first call), should have cleared.
+    // If the window was reset on the second setReplaying(true), it would still be true here.
+    await new Promise((r) => setTimeout(r, 100))
+    // isReplaying should be false by now (250ms from original T=0 has elapsed).
+    expect(useChatStore.getState().isReplaying).toBe(false)
+  })
+})
+
+// W2-10: Sibling-spans cross-wire test.
+// Two spans A (parentCallId "cA") and B (parentCallId "cB") open.
+// Emit 2 tool_call_start frames both with parent_call_id "cA".
+// Assert A.steps.length === 2 AND B.steps.length === 0.
+// Guards against a routing bug that could increment both spans' counters.
+//
+// Traces to: temporal-puzzling-melody.md W2-10
+describe('ChatStore_sibling_spans_crosswire (W2-10)', () => {
+  it('tool_call_start with parent_call_id "cA" routes to span A only, not span B', () => {
+    // BDD: Given two open spans A (parentCallId "cA") and B (parentCallId "cB")
+    // BDD: When 2 tool_call_start frames arrive with parent_call_id "cA"
+    // BDD: Then span A has 2 steps and span B has 0 steps
+    // Traces to: temporal-puzzling-melody.md W2-10
+
+    act(() => {
+      // Create an assistant message to host the spans
+      useChatStore.getState().appendMessage({
+        id: 'asst-sibling-1',
+        role: 'assistant',
+        content: 'Working...',
+        timestamp: new Date().toISOString(),
+        status: 'streaming',
+        isStreaming: true,
+      })
+
+      // Start span A (parentCallId = "cA")
+      useChatStore.getState().handleFrame({
+        type: 'subagent_start',
+        span_id: 'spanA',
+        parent_call_id: 'cA',
+        task_label: 'Span A task',
+        agent_id: 'agent-a',
+      })
+
+      // Start span B (parentCallId = "cB")
+      useChatStore.getState().handleFrame({
+        type: 'subagent_start',
+        span_id: 'spanB',
+        parent_call_id: 'cB',
+        task_label: 'Span B task',
+        agent_id: 'agent-b',
+      })
+    })
+
+    // Emit 2 tool_call_start frames, both targeting span A (parent_call_id: "cA")
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'step_a_1',
+        tool: 'web_search',
+        params: { query: 'query 1' },
+        parent_call_id: 'cA',
+      })
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'step_a_2',
+        tool: 'fs.read',
+        params: { path: '/tmp/test' },
+        parent_call_id: 'cA',
+      })
+    })
+
+    const state = useChatStore.getState()
+    const asstMsg = state.messages.find((m) => m.id === 'asst-sibling-1')
+    expect(asstMsg).toBeDefined()
+    expect(asstMsg?.spans).toHaveLength(2)
+
+    const spanA = asstMsg!.spans!.find((s) => s.spanId === 'spanA')
+    const spanB = asstMsg!.spans!.find((s) => s.spanId === 'spanB')
+    expect(spanA).toBeDefined()
+    expect(spanB).toBeDefined()
+
+    // Span A must have exactly 2 steps (both tool_call_start frames targeted "cA")
+    expect(spanA!.steps).toHaveLength(2)
+    const stepA0 = spanA!.steps[0]
+    const stepA1 = spanA!.steps[1]
+    expect(stepA0.kind === 'tool' ? stepA0.tool.call_id : undefined).toBe('step_a_1')
+    expect(stepA1.kind === 'tool' ? stepA1.tool.call_id : undefined).toBe('step_a_2')
+
+    // Span B must have exactly 0 steps (no frames targeted "cB")
+    expect(spanB!.steps).toHaveLength(0)
+  })
+})

@@ -42,6 +42,68 @@ vi.mock('@tanstack/react-router', () => ({
 
 vi.mock('@/assets/logo/omnipus-avatar.svg?url', () => ({ default: '/mock-avatar.svg' }))
 
+// Wave C fix: ChatScreen uses AssistantUI hooks and primitives that require an
+// AuiProvider runtime context. OmnipusRuntimeProvider is too heavy for unit tests
+// (it opens a WebSocket connection). Mock @assistant-ui/react so all primitives
+// render their children and hooks return minimal stubs. AuiIf is mocked to always
+// render its children — matching the empty-state path where thread.isEmpty is true.
+vi.mock('@assistant-ui/react', async () => {
+  const React = await import('react')
+  const passthrough = ({ children }: { children?: React.ReactNode }) =>
+    React.createElement(React.Fragment, null, children ?? null)
+  const passthroughFwd = React.forwardRef(
+    ({ children, ...rest }: Record<string, unknown>, _ref: unknown) => {
+      void rest
+      return React.createElement(React.Fragment, null, children as React.ReactNode ?? null)
+    }
+  )
+  return {
+    // Primitives — render children as-is
+    ThreadPrimitive: {
+      Root: passthrough,
+      Viewport: passthrough,
+      Messages: (_: { children: (args: { message: unknown }) => React.ReactNode }) =>
+        React.createElement(React.Fragment, null, null),
+    },
+    MessagePrimitive: {
+      Root: passthrough,
+      Parts: (_: { children: (args: { part: unknown }) => React.ReactNode }) =>
+        React.createElement(React.Fragment, null, null),
+    },
+    MessagePartPrimitive: {
+      InProgress: () => null,
+    },
+    ComposerPrimitive: {
+      Root: passthrough,
+      Input: passthroughFwd,
+      Send: passthroughFwd,
+    },
+    ActionBarPrimitive: {
+      Root: passthrough,
+      Copy: passthrough,
+    },
+    // AuiIf: always render children (covers the empty-state path where thread.isEmpty === true)
+    AuiIf: ({ children }: { children?: React.ReactNode }) =>
+      React.createElement(React.Fragment, null, children ?? null),
+    // Hook stubs
+    useComposerRuntime: () => ({
+      send: vi.fn(),
+      setText: vi.fn(),
+      getText: vi.fn(),
+      getState: () => ({ text: '' }),
+    }),
+    useMessage: () => ({
+      content: [],
+      role: 'assistant',
+      status: { type: 'complete' },
+      isCopied: false,
+    }),
+    makeAssistantToolUI: vi.fn(),
+    useAssistantToolUI: vi.fn(),
+    AssistantRuntimeProvider: passthrough,
+  }
+})
+
 function makeClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } })
 }
@@ -79,7 +141,9 @@ describe('Agents screen — empty state', () => {
   let AgentsScreen: () => JSX.Element
 
   beforeAll(async () => {
-    const mod = await import('@/routes/_app/agents')
+    // agents.tsx is the layout route (renders <Outlet />) — the actual list screen
+    // with the "Agents" h1 lives in agents.index.tsx. Import the index route instead.
+    const mod = await import('@/routes/_app/agents.index')
     AgentsScreen = mod.Route.options.component as () => JSX.Element
   })
 

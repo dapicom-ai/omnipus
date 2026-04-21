@@ -942,8 +942,6 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 						al.channelManager.InvokeTypingStop(msg.Channel, msg.ChatID)
 					}
 				}()
-				// TODO(media-cleanup): Media file cleanup is disabled. Track in issue backlog.
-
 				drainCanceled := false
 				cancelDrain := func() {
 					if drainCanceled {
@@ -2599,6 +2597,8 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 				Iterations:      ts.currentIteration(),
 				Duration:        time.Since(ts.startedAt),
 				FinalContentLen: ts.finalContentLen(),
+				ChatID:          ts.chatID,
+				IsRoot:          ts.parentTurnID == "",
 			},
 		)
 	}()
@@ -3657,10 +3657,12 @@ turnLoop:
 				EventKindToolExecStart,
 				ts.eventMeta("runTurn", "turn.tool.start"),
 				ToolExecStartPayload{
-					ToolCallID: tc.ID,
-					ChatID:     ts.chatID,
-					Tool:       toolName,
-					Arguments:  cloneEventArguments(toolArgs),
+					ToolCallID:        session.ToolCallID(tc.ID),
+					ChatID:            ts.chatID,
+					Tool:              toolName,
+					Arguments:         cloneEventArguments(toolArgs),
+					ParentSpawnCallID: session.ToolCallID(ts.parentSpawnCallID),
+					AgentID:           ts.agentID,
 				},
 			)
 
@@ -3805,8 +3807,12 @@ turnLoop:
 			}
 
 			toolStart := time.Now()
+			// Inject the current tool call's ID into the context so that tools like
+			// spawn can read it as their parentSpawnCallID when they in turn call
+			// SpawnSubTurn (FR-H-003).
+			execCtx := withSpawnToolCallID(turnCtx, tc.ID)
 			toolResult := ts.agent.Tools.ExecuteWithContext(
-				turnCtx,
+				execCtx,
 				toolName,
 				toolArgs,
 				ts.channel,
@@ -3978,15 +3984,17 @@ turnLoop:
 				EventKindToolExecEnd,
 				ts.eventMeta("runTurn", "turn.tool.end"),
 				ToolExecEndPayload{
-					ToolCallID: toolCallID,
-					ChatID:     ts.chatID,
-					Tool:       toolName,
-					Duration:   toolDuration,
-					ForLLMLen:  len(contentForLLM),
-					ForUserLen: len(toolResult.ForUser),
-					IsError:    toolResult.IsError,
-					Async:      toolResult.Async,
-					Result:     contentForLLM,
+					ToolCallID:        session.ToolCallID(toolCallID),
+					ChatID:            ts.chatID,
+					Tool:              toolName,
+					Duration:          toolDuration,
+					ForLLMLen:         len(contentForLLM),
+					ForUserLen:        len(toolResult.ForUser),
+					IsError:           toolResult.IsError,
+					Async:             toolResult.Async,
+					Result:            contentForLLM,
+					ParentSpawnCallID: session.ToolCallID(ts.parentSpawnCallID),
+					AgentID:           ts.agentID,
 				},
 			)
 			tcStatus := "success"
@@ -3994,11 +4002,12 @@ turnLoop:
 				tcStatus = "error"
 			}
 			ts.appendToolCallTranscript(session.ToolCall{
-				ID:         toolCallID,
-				Tool:       toolName,
-				Status:     tcStatus,
-				DurationMS: toolDuration.Milliseconds(),
-				Parameters: cloneEventArguments(toolArgs),
+				ID:               session.ToolCallID(toolCallID),
+				Tool:             toolName,
+				Status:           tcStatus,
+				DurationMS:       toolDuration.Milliseconds(),
+				Parameters:       cloneEventArguments(toolArgs),
+				ParentToolCallID: session.ToolCallID(ts.parentSpawnCallID),
 			})
 			messages = append(messages, toolResultMsg)
 			if !ts.opts.NoHistory {

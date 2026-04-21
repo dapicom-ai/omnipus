@@ -3,6 +3,8 @@ package agent
 import (
 	"fmt"
 	"time"
+
+	"github.com/dapicom-ai/omnipus/pkg/session"
 )
 
 // EventKind identifies a structured agent-loop event.
@@ -144,6 +146,13 @@ type TurnEndPayload struct {
 	Iterations      int
 	Duration        time.Duration
 	FinalContentLen int
+	// ChatID is the chat session this turn belongs to.
+	// Populated so the WS watchdog can scope orphan detection to the correct connection.
+	ChatID string
+	// IsRoot is true when this turn has no parent (parentTurnID == "").
+	// The orphan watchdog only arms on root turn-end to avoid spurious interrupts
+	// from sibling sub-turn completions.
+	IsRoot bool
 }
 
 // LLMRequestPayload describes an outbound LLM request.
@@ -204,15 +213,22 @@ type SessionSummarizePayload struct {
 
 // ToolExecStartPayload describes a tool execution request.
 type ToolExecStartPayload struct {
-	ToolCallID string
+	ToolCallID session.ToolCallID
 	ChatID     string
 	Tool       string
 	Arguments  map[string]any
+	// ParentSpawnCallID is non-empty when this tool call fires inside a sub-turn.
+	// It equals the parent spawn tool call's ToolCall.ID (FR-H-002).
+	// The WebSocket forwarder propagates this as parent_call_id on outbound frames (FR-H-005).
+	ParentSpawnCallID session.ToolCallID
+	// AgentID is the agent executing this tool call.
+	// FR-I-008: live tool_call_start frames must carry agent_id to match replay frame parity.
+	AgentID string
 }
 
 // ToolExecEndPayload describes the outcome of a tool execution.
 type ToolExecEndPayload struct {
-	ToolCallID string
+	ToolCallID session.ToolCallID
 	ChatID     string
 	Tool       string
 	Duration   time.Duration
@@ -223,6 +239,13 @@ type ToolExecEndPayload struct {
 	// Result is the tool's ForLLM content, forwarded to the browser via WebSocket
 	// so rich tool UIs (e.g., browser screenshot preview) can render the result.
 	Result string
+	// ParentSpawnCallID is non-empty when this tool call fires inside a sub-turn.
+	// It equals the parent spawn tool call's ToolCall.ID (FR-H-002).
+	// The WebSocket forwarder propagates this as parent_call_id on outbound frames (FR-H-005).
+	ParentSpawnCallID session.ToolCallID
+	// AgentID is the agent executing this tool call.
+	// FR-I-008: live tool_call_result frames must carry agent_id to match replay frame parity.
+	AgentID string
 }
 
 // ToolExecSkippedPayload describes a skipped tool call.
@@ -262,17 +285,56 @@ type InterruptReceivedPayload struct {
 	HintLen    int
 }
 
+// SubTurnStatus describes the terminal state of a sub-turn.
+// Using a named type prevents accidental use of arbitrary strings at call sites.
+// JSON marshaling is identical to a plain string.
+type SubTurnStatus string
+
+const (
+	// SubTurnStatusSuccess indicates the sub-turn completed normally.
+	SubTurnStatusSuccess SubTurnStatus = "success"
+	// SubTurnStatusError indicates the sub-turn ended with an error.
+	SubTurnStatusError SubTurnStatus = "error"
+	// SubTurnStatusCancelled indicates the sub-turn was explicitly canceled by the user.
+	//
+	//nolint:misspell // wire value "cancelled" matches frontend TS union in src/store/chat.ts, src/lib/ws.ts
+	SubTurnStatusCancelled SubTurnStatus = "cancelled"
+	// SubTurnStatusInterrupted indicates the sub-turn was interrupted by its parent.
+	SubTurnStatusInterrupted SubTurnStatus = "interrupted"
+	// SubTurnStatusTimeout indicates the sub-turn exceeded its configured timeout.
+	SubTurnStatusTimeout SubTurnStatus = "timeout"
+)
+
 // SubTurnSpawnPayload describes the creation of a child turn.
+// FR-H-004: carries span_id, parent_call_id, task_label, agent_id for the WS forwarder.
 type SubTurnSpawnPayload struct {
 	AgentID      string
 	Label        string
 	ParentTurnID string
+	// SpanID is "span_" + ParentSpawnCallID (deterministic, derivable from persisted data).
+	SpanID string
+	// ParentSpawnCallID is the ToolCall.ID of the spawn tool call that triggered this sub-turn.
+	// This is the correlation anchor for the subagent span.
+	ParentSpawnCallID session.ToolCallID
+	// TaskLabel is the human-readable label for the sub-turn task (from spawn tool's label param).
+	TaskLabel string
+	// ChatID is needed so the WS forwarder can route this event to the right connection.
+	ChatID string
 }
 
 // SubTurnEndPayload describes the completion of a child turn.
+// FR-H-004: carries span_id, status, duration_ms for the WS forwarder.
 type SubTurnEndPayload struct {
 	AgentID string
-	Status  string
+	Status  SubTurnStatus
+	// SpanID is "span_" + ParentSpawnCallID, matching the corresponding SubTurnSpawnPayload.
+	SpanID string
+	// ParentSpawnCallID is the ToolCall.ID of the spawn tool call that triggered this sub-turn.
+	ParentSpawnCallID session.ToolCallID
+	// DurationMS is the wall-clock duration of the sub-turn in milliseconds.
+	DurationMS int64
+	// ChatID is needed so the WS forwarder can route this event to the right connection.
+	ChatID string
 }
 
 // SubTurnResultDeliveredPayload describes delivery of a sub-turn result.

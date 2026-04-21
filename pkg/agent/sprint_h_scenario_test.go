@@ -1,0 +1,229 @@
+//go:build !cgo
+
+// W2-5: Integration test — sub-turn calling forbidden tools returns unknown-tool errors.
+//
+// Scripts a sub-turn where the LLM attempts to call spawn, then subagent, then handoff.
+// For each:
+//   - Assert the tool result returns an "unknown tool" / "not found" error.
+//   - Assert zero EventKindSubTurnSpawn emitted as a grandchild.
+//   - Assert the parent's transcript has exactly one spawn entry (the original delegation).
+//
+// SCENARIO-PROVIDER GAP NOTE:
+// The ideal implementation would use a scenario-provider mock LLM that emits tool calls
+// in a scripted sequence. The current test infrastructure uses a mockProvider (returns
+// no tool calls by default) which cannot be scripted to emit specific tool calls.
+// As a result, the "calling forbidden tools" integration path is tested via the registry
+// execution path directly (which is the enforcement mechanism, not the LLM path).
+// The LLM-path integration test is documented as BLOCKED pending scenario-provider
+// HTTP injection into the gateway.
+//
+// What this file DOES test:
+// 1. Registry-level enforcement: executing "spawn", "subagent", "handoff" on a child
+//    registry returns unknown-tool errors (not depth errors, not panics).
+// 2. Event bus invariant: calling ExecuteWithContext on excluded tools does NOT emit
+//    EventKindSubTurnSpawn (no grandchild).
+// 3. A full spawnSubTurn integration call emits exactly ONE SubTurnSpawn event
+//    (for the original delegation, not for any grandchild calls).
+//
+// Traces to: temporal-puzzling-melody.md W2-5
+// Traces to: sprint-h-subagent-block-spec.md FR-H-006, FR-H-007, US-3, BDD Scenarios 9 & 10
+
+package agent
+
+import (
+	"context"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/dapicom-ai/omnipus/pkg/tools"
+)
+
+// TestSubTurn_ForbiddenToolCalls_ReturnUnknownToolError verifies that a child
+// sub-turn's registry returns an "unknown tool" error when the LLM attempts to
+// call spawn, subagent, or handoff. This is the enforcement mechanism per FR-H-006.
+//
+// BDD Scenario 9 (sprint-h-subagent-block-spec.md):
+//
+//	Given a sub-turn child registry constructed via CloneExcept("spawn","subagent","handoff")
+//	When ExecuteWithContext is called for "spawn", "subagent", or "handoff"
+//	Then each returns a non-nil error result with "not found" in the error text
+//	And zero EventKindSubTurnSpawn are emitted as a result
+//
+// Traces to: temporal-puzzling-melody.md W2-5
+func TestSubTurn_ForbiddenToolCalls_ReturnUnknownToolError(t *testing.T) {
+	// Build a parent registry with all three delegation tools.
+	parentRegistry := tools.NewToolRegistry()
+	parentRegistry.Register(&tools.SpawnTool{})
+	parentRegistry.Register(&tools.SubagentTool{})
+	parentRegistry.Register(&tools.HandoffTool{})
+	parentRegistry.Register(&tools.ReadFileTool{})
+
+	// Construct child registry as spawnSubTurn does.
+	childRegistry := parentRegistry.CloneExcept("spawn", "subagent", "handoff")
+
+	forbiddenTools := []string{"spawn", "subagent", "handoff"}
+
+	for _, toolName := range forbiddenTools {
+		t.Run("forbidden_tool="+toolName, func(t *testing.T) {
+			// Verify the tool is absent from the child registry.
+			_, ok := childRegistry.Get(toolName)
+			require.False(t, ok,
+				"%s must not be in child registry (CloneExcept enforcement)", toolName)
+
+			// Execute the forbidden tool — must return an error result.
+			result := childRegistry.ExecuteWithContext(
+				context.Background(),
+				toolName,
+				map[string]any{"task": "grandchild task"},
+				"", "", nil,
+			)
+
+			// Assert: non-nil result with error flag set.
+			require.NotNil(t, result,
+				"ExecuteWithContext must return non-nil result for forbidden tool %s", toolName)
+			assert.True(t, result.IsError,
+				"calling %s on child registry must set IsError=true (unknown-tool error)", toolName)
+			assert.True(t,
+				strings.Contains(strings.ToLower(result.ForLLM), "not found") ||
+					strings.Contains(strings.ToLower(result.ForLLM), "unknown"),
+				"error text for %s must contain 'not found' or 'unknown', got: %q", toolName, result.ForLLM)
+
+			// The error must NOT mention "depth" — enforcement is registry-level, not depth-level.
+			assert.NotContains(t, strings.ToLower(result.ForLLM), "depth",
+				"forbidden tool error for %s must not mention depth (wrong enforcement mechanism)", toolName)
+		})
+	}
+}
+
+// TestSubTurn_ForbiddenToolCalls_EmitZeroGrandchildSpawnEvents verifies that executing
+// a forbidden tool on the child registry emits zero EventKindSubTurnSpawn events.
+// This confirms the "no grandchild" invariant at the event bus level.
+//
+// Traces to: temporal-puzzling-melody.md W2-5
+func TestSubTurn_ForbiddenToolCalls_EmitZeroGrandchildSpawnEvents(t *testing.T) {
+	al, _, _, _, cleanup := newTestAgentLoop(t) //nolint:dogsled // only al+cleanup used here
+	defer cleanup()
+
+	collector, collectCleanup := newEventCollector(t, al)
+	defer collectCleanup()
+
+	// Build parent registry with delegation tools + neutral tool.
+	parentRegistry := tools.NewToolRegistry()
+	parentRegistry.Register(&tools.SpawnTool{})
+	parentRegistry.Register(&tools.SubagentTool{})
+	parentRegistry.Register(&tools.HandoffTool{})
+	parentRegistry.Register(&tools.ReadFileTool{})
+
+	childRegistry := parentRegistry.CloneExcept("spawn", "subagent", "handoff")
+
+	// Attempt to call all three forbidden tools on the child registry.
+	for _, toolName := range []string{"spawn", "subagent", "handoff"} {
+		result := childRegistry.ExecuteWithContext(
+			context.Background(),
+			toolName,
+			map[string]any{"task": "attempt grandchild"},
+			"", "", nil,
+		)
+		require.NotNil(t, result)
+		assert.True(t, result.IsError, "result must be error for forbidden tool %s", toolName)
+	}
+
+	// Give the event bus time to flush any goroutines.
+	time.Sleep(20 * time.Millisecond)
+
+	// Assert: zero EventKindSubTurnSpawn events were emitted.
+	// (If a grandchild had been spawned, spawnSubTurn would emit SubTurnSpawn.)
+	collector.mu.Lock()
+	var spawnCount int
+	for _, e := range collector.events {
+		if e.Kind == EventKindSubTurnSpawn {
+			spawnCount++
+		}
+	}
+	collector.mu.Unlock()
+
+	assert.Equal(t, 0, spawnCount,
+		"zero EventKindSubTurnSpawn must be emitted when forbidden tools are called — "+
+			"grandchildren are forbidden per FR-H-006")
+}
+
+// TestSubTurn_OriginalDelegation_EmitsExactlyOneSpawnEvent verifies that a
+// legitimate top-level spawnSubTurn call emits exactly ONE EventKindSubTurnSpawn
+// (for the original delegation), never a second one for a grandchild.
+//
+// Traces to: temporal-puzzling-melody.md W2-5
+func TestSubTurn_OriginalDelegation_EmitsExactlyOneSpawnEvent(t *testing.T) {
+	al, _, _, _, cleanup := newTestAgentLoop(t) //nolint:dogsled // only al+cleanup used here
+	defer cleanup()
+
+	collector, collectCleanup := newEventCollector(t, al)
+	defer collectCleanup()
+
+	parent := &turnState{
+		ctx:            context.Background(),
+		turnID:         "parent-scenario-1",
+		depth:          0,
+		childTurnIDs:   []string{},
+		pendingResults: make(chan *tools.ToolResult, 10),
+		session:        &ephemeralSessionStore{},
+		agent:          al.GetRegistry().GetDefaultAgent(),
+	}
+
+	cfg := SubTurnConfig{
+		Model: "gpt-4o-mini",
+		Tools: []tools.Tool{},
+	}
+
+	// W1-12: the span lifecycle (EventKindSubTurnSpawn) is only emitted when
+	// the context carries a parentSpawnCallID — i.e., when invoked via the
+	// SpawnTool. In tests we simulate that by injecting the call ID directly.
+	ctx := withSpawnToolCallID(context.Background(), "parent-scenario-spawn-call")
+	_, err := spawnSubTurn(ctx, al, parent, cfg)
+	require.NoError(t, err, "spawnSubTurn must not error for valid config")
+
+	// Wait for events to flush.
+	require.Eventually(t, func() bool {
+		return collector.hasEventOfKind(EventKindSubTurnSpawn)
+	}, 2*time.Second, 10*time.Millisecond,
+		"EventKindSubTurnSpawn must be emitted for the original delegation")
+
+	// Count all SubTurnSpawn events — must be exactly one.
+	collector.mu.Lock()
+	var spawnCount int
+	for _, e := range collector.events {
+		if e.Kind == EventKindSubTurnSpawn {
+			spawnCount++
+		}
+	}
+	collector.mu.Unlock()
+
+	assert.Equal(t, 1, spawnCount,
+		"exactly ONE EventKindSubTurnSpawn must be emitted (original delegation only, no grandchild)")
+}
+
+// TestSubTurn_NeutralTools_RemainAccessible verifies that non-delegation tools
+// are unaffected by CloneExcept("spawn","subagent","handoff").
+//
+// Traces to: temporal-puzzling-melody.md W2-5
+func TestSubTurn_NeutralTools_RemainAccessible(t *testing.T) {
+	parentRegistry := tools.NewToolRegistry()
+	parentRegistry.Register(&tools.SpawnTool{})
+	parentRegistry.Register(&tools.SubagentTool{})
+	parentRegistry.Register(&tools.HandoffTool{})
+	parentRegistry.Register(&tools.ReadFileTool{})
+
+	childRegistry := parentRegistry.CloneExcept("spawn", "subagent", "handoff")
+
+	// ReadFileTool must still be present in the child registry.
+	tool, ok := childRegistry.Get("read_file")
+	assert.True(t, ok, "read_file must remain accessible in child registry")
+	assert.NotNil(t, tool)
+
+	// Child registry count must be parent count minus 3 (the three excluded tools).
+	assert.Equal(t, parentRegistry.Count()-3, childRegistry.Count(),
+		"child must have exactly parent_count-3 tools after excluding spawn+subagent+handoff")
+}

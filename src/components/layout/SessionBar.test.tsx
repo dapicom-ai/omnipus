@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { act } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SessionBar } from '../chat/SessionBar'
@@ -68,21 +68,20 @@ describe('SessionBar — rendering (test #11)', () => {
     })
   })
 
-  it('renders Sessions button', async () => {
-    // Traces to: wave5a-wire-ui-spec.md — AC4: Sessions button opens history panel
+  it('renders New Chat button', async () => {
+    // Traces to: wave5a-wire-ui-spec.md — AC4: session controls in session bar
+    // NOTE: The "Sessions" button was removed from SessionBar — it now lives in SessionPanel.
+    // SessionBar shows: agent picker dropdown + New Chat button. There are two "New Chat" buttons
+    // (icon-only on mobile, icon+text on desktop) so we use getAllByRole.
     renderBar()
     await vi.waitFor(() => {
-      expect(screen.getByRole('button', { name: /sessions/i })).toBeInTheDocument()
+      const newChatBtns = screen.getAllByRole('button', { name: /new chat/i })
+      expect(newChatBtns.length).toBeGreaterThan(0)
     })
   })
 })
 
-describe('SessionBar — sessions panel (test #11)', () => {
-  it('calls openSessionPanel when Sessions button is clicked', async () => {
-    // Traces to: wave5a-wire-ui-spec.md — AC4: Sessions button opens history panel
-    renderBar()
-    await vi.waitFor(() => screen.getByRole('button', { name: /sessions/i }))
-    fireEvent.click(screen.getByRole('button', { name: /sessions/i }))
-    expect(useUiStore.getState().sessionPanelOpen).toBe(true)
-  })
-})
+// DELETED: "calls openSessionPanel when Sessions button is clicked" — SessionBar no longer has
+// a Sessions button. That button was moved to SessionPanel. The test was asserting a UI element
+// that no longer exists in this component. Session panel opening is now tested in
+// SessionPanel.test.tsx (or via the parent layout component).

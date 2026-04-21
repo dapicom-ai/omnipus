@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
+	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 )
 
@@ -173,6 +175,11 @@ type SubTurnConfig struct {
 	// Used by team tool to enforce token limits across all team members.
 	InitialTokenBudget *atomic.Int64
 
+	// TaskLabel is the optional human-readable label for the sub-turn task.
+	// Populated by the spawn tool from its "label" argument (FR-H-004).
+	// Used in SubTurnSpawnPayload.TaskLabel for the WS subagent_start frame.
+	TaskLabel string
+
 	// Can be extended with temperature, topP, etc.
 }
 
@@ -231,6 +238,7 @@ func (s *AgentLoopSpawner) SpawnSubTurn(
 		Critical:           cfg.Critical,
 		Timeout:            cfg.Timeout,
 		MaxContextRunes:    cfg.MaxContextRunes,
+		TaskLabel:          cfg.TaskLabel,
 	}
 
 	return spawnSubTurn(ctx, s.al, parentTS, agentCfg)
@@ -339,6 +347,31 @@ func spawnSubTurn(
 
 	childID := al.generateSubTurnID()
 
+	// FR-H-003: Extract the parent spawn tool call's ID from context. This was injected
+	// by loop.go via withSpawnToolCallID before calling ExecuteWithContext on the spawn tool.
+	// It becomes the parentSpawnCallID for the child turn, enabling correlation of all
+	// child tool calls back to their originating spawn call on the wire.
+	parentSpawnCallID := spawnToolCallIDFromContext(ctx)
+
+	// W1-12: guard against degenerate input (empty parentSpawnCallID). When the
+	// spawn tool call ID was not injected into context, "span_" + "" == "span_"
+	// which collides across sub-turns and corrupts the SubagentBlock. We still run
+	// the sub-turn, but emit no subagent_start / subagent_end WS frames so the
+	// tool call renders as a flat ToolCallBadge instead of an unrooted span.
+	emitSpanEvents := parentSpawnCallID != ""
+	if !emitSpanEvents {
+		slog.Warn("subturn: empty parent_spawn_call_id — skipping span lifecycle emission",
+			"child_id", childID,
+			"parent_turn_id", parentTS.turnID,
+		)
+	}
+
+	// Compute span_id deterministically (FR-H-004): "span_" + parentSpawnCallID.
+	spanID := "span_" + parentSpawnCallID
+
+	// subTurnStartedAt records the wall-clock start for duration_ms in SubTurnEndPayload.
+	subTurnStartedAt := time.Now()
+
 	// Get the agent instance from parent, falling back to the default agent.
 	// Wrap it in a shallow copy that uses an ephemeral (in-memory only) session store
 	// so that child turns never pollute or persist to the parent's session history.
@@ -376,10 +409,27 @@ func spawnSubTurn(
 		LightCandidates:           baseAgent.LightCandidates,
 		LightProvider:             baseAgent.LightProvider,
 	}
-	// Clone the tool registry so child turn's tool registrations
-	// don't pollute the parent's registry.
+	// FR-H-006: exclude delegation tools from the child's registry so it cannot
+	// recursively spawn grandchildren or hand off. Registry-level filter — the
+	// tools are absent, not refused at execute time. One level only (owner
+	// decision 2026-04-20).
+	//
+	// Three names are excluded (not just two as the spec originally listed):
+	//   - spawn:     async delegation (SpawnTool)
+	//   - subagent:  sync delegation (SubagentTool) — missed in the initial
+	//                Sprint H pass. Without this, a child could call `subagent`
+	//                to create a grandchild sub-turn, which would then fail
+	//                with a runtime depth-limit error instead of an unknown-tool
+	//                error (the intended contract).
+	//   - handoff:   agent switch
 	if baseAgent.Tools != nil {
-		agent.Tools = baseAgent.Tools.Clone()
+		agent.Tools = baseAgent.Tools.CloneExcept(tools.ExcludedSpawn, tools.ExcludedSubagent, tools.ExcludedHandoff)
+		// W3-4: log the constructed registry so operators can debug "my subagent has no tools" issues.
+		slog.Info("subturn: child registry constructed",
+			"excluded", []string{"spawn", "subagent", "handoff"},
+			"remaining_count", agent.Tools.Count(),
+			"child_id", childID,
+		)
 	}
 
 	// Create processOptions for the child turn
@@ -416,6 +466,9 @@ func spawnSubTurn(
 	childTS.concurrencySem = make(chan struct{}, rtCfg.maxConcurrent)
 	childTS.al = al                  // back-ref for hard abort cascade
 	childTS.session = ephemeralStore // same store as agent.Sessions
+	// FR-H-003: set parentSpawnCallID so all ToolExec* events emitted by this child turn
+	// carry the parent spawn's ToolCall.ID as ParentSpawnCallID.
+	childTS.parentSpawnCallID = parentSpawnCallID
 
 	// Token budget initialization/inheritance
 	// If InitialTokenBudget is explicitly provided (e.g., by team tool), use it.
@@ -446,27 +499,52 @@ func spawnSubTurn(
 	parentTS.childTurnIDs = append(parentTS.childTurnIDs, childID)
 	parentTS.mu.Unlock()
 
-	// 6. Emit Spawn event
-	al.emitEvent(EventKindSubTurnSpawn,
-		childTS.eventMeta("spawnSubTurn", "subturn.spawn"),
-		SubTurnSpawnPayload{
-			AgentID:      childTS.agentID,
-			Label:        childID,
-			ParentTurnID: parentTS.turnID,
-		},
-	)
+	// 6. Emit Spawn event (FR-H-004: carries SpanID, ParentSpawnCallID, TaskLabel, ChatID, AgentID)
+	// task label: prefer cfg.TaskLabel if set (from spawn tool's label arg); else use the first
+	// 60 runes of SystemPrompt as a fallback so the WS frame always has something human-readable.
+	taskLabel := cfg.TaskLabel
+	if taskLabel == "" {
+		runes := []rune(cfg.SystemPrompt)
+		if len(runes) > 60 {
+			taskLabel = string(runes[:60])
+		} else {
+			taskLabel = cfg.SystemPrompt
+		}
+	}
+	// W1-12: only emit span lifecycle events when parentSpawnCallID is non-empty.
+	if emitSpanEvents {
+		slog.Debug("subagent_start",
+			"span_id", spanID,
+			"parent_call_id", parentSpawnCallID,
+			"agent_id", childTS.agentID,
+		)
+		al.emitEvent(EventKindSubTurnSpawn,
+			childTS.eventMeta("spawnSubTurn", "subturn.spawn"),
+			SubTurnSpawnPayload{
+				AgentID:           childTS.agentID,
+				Label:             childID,
+				ParentTurnID:      parentTS.turnID,
+				SpanID:            spanID,
+				ParentSpawnCallID: session.ToolCallID(parentSpawnCallID),
+				TaskLabel:         taskLabel,
+				ChatID:            parentTS.chatID,
+			},
+		)
+	}
 
 	// 7. Defer cleanup: deliver result (for async), emit End event, and recover from panics
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("subturn panicked: %v", r)
+			// W3-5: include childID in the error message so support can correlate
+			// a user-visible "subturn panicked" back to the logged stack trace.
+			err = fmt.Errorf("subturn %q panicked: %v", childID, r)
 			result = nil
-			logger.ErrorCF("subturn", "SubTurn panicked", map[string]any{
-				"child_id":  childID,
-				"parent_id": parentTS.turnID,
-				"panic":     r,
-				"stack":     string(debug.Stack()),
-			})
+			slog.Error("subturn: panic recovered",
+				"child_id", childID,
+				"parent_id", parentTS.turnID,
+				"panic", fmt.Sprintf("%v", r),
+				"stack", string(debug.Stack()),
+			)
 		}
 
 		// Result Delivery Strategy (Async vs Sync)
@@ -474,17 +552,30 @@ func spawnSubTurn(
 			deliverSubTurnResult(al, parentTS, childID, result)
 		}
 
-		status := "completed"
-		if err != nil {
-			status = "error"
+		// W1-12: only emit span end event when parentSpawnCallID was non-empty.
+		if emitSpanEvents {
+			endStatus := SubTurnStatusSuccess
+			if err != nil {
+				endStatus = SubTurnStatusError
+			}
+			subTurnDurationMS := time.Since(subTurnStartedAt).Milliseconds()
+			slog.Debug("subagent_end",
+				"span_id", spanID,
+				"parent_call_id", parentSpawnCallID,
+				"agent_id", childTS.agentID,
+			)
+			al.emitEvent(EventKindSubTurnEnd,
+				childTS.eventMeta("spawnSubTurn", "subturn.end"),
+				SubTurnEndPayload{
+					AgentID:           childTS.agentID,
+					Status:            endStatus,
+					SpanID:            spanID,
+					ParentSpawnCallID: session.ToolCallID(parentSpawnCallID),
+					DurationMS:        subTurnDurationMS,
+					ChatID:            parentTS.chatID,
+				},
+			)
 		}
-		al.emitEvent(EventKindSubTurnEnd,
-			childTS.eventMeta("spawnSubTurn", "subturn.end"),
-			SubTurnEndPayload{
-				AgentID: childTS.agentID,
-				Status:  status,
-			},
-		)
 	}()
 
 	// 8. Execute sub-turn via the real agent loop.

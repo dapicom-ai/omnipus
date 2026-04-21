@@ -1,0 +1,109 @@
+import { type APIRequestContext, request } from '@playwright/test';
+
+const DEFAULT_PROVIDER_ID = 'openrouter';
+// Opus 4.7 — chosen for reliability in tool-use and multi-step subagent tests.
+// Cheaper models (Haiku, Sonnet) were too flaky at the "call spawn exactly twice"
+// and "subagent executes ≥3 tools in sequence" assertions the E2E suite makes.
+// Cost: higher per-run, but deterministic CI > $0.50 saved per run.
+const DEFAULT_MODEL = 'anthropic/claude-opus-4.7';
+const DEFAULT_USERNAME = 'admin';
+const DEFAULT_PASSWORD = 'admin123';
+
+export interface OnboardingOptions {
+  baseURL: string;
+  providerID?: string;
+  apiKey?: string;
+  model?: string;
+  username?: string;
+  /** @minLength 8 — backend enforces ≥8 chars; W4-7 throws at fixture-build time if violated. */
+  password?: string;
+}
+
+/**
+ * Call POST /api/v1/onboarding/complete to seed an admin user + provider
+ * without navigating the UI wizard. Bypasses the "Continue button stays
+ * disabled because no model was auto-selected" trap in the UI flow.
+ *
+ * Contract from pkg/gateway/rest_onboarding.go:
+ *   - Endpoint is CSRF-exempt (see rest_onboarding.go:310).
+ *   - Body: { provider: {id, api_key, model}, admin: {username, password} }.
+ *   - 200 on success, 409 if already complete — both are treated as success.
+ *   - Password must be ≥8 characters.
+ *
+ * The API key is sourced from OPENROUTER_API_KEY_CI (or falls back to
+ * OPENROUTER_API_KEY for local runs). If neither is set, the call uses a
+ * placeholder that will likely cause provider tests to fail — but onboarding
+ * itself only stores the key, it does not validate it. Matches the upstream
+ * UI flow behavior.
+ */
+export async function onboardViaAPI(opts: OnboardingOptions): Promise<void> {
+  // W4-7: validate password length at fixture-build time, not at 400-response time.
+  // The backend requires >= 8 characters; failing here gives a clear error message.
+  const password = opts.password ?? DEFAULT_PASSWORD;
+  if (password.length < 8) {
+    throw new Error(
+      `onboard-via-api: password must be at least 8 characters (got ${password.length})`
+    );
+  }
+
+  const apiKey =
+    opts.apiKey ??
+    process.env.OPENROUTER_API_KEY_CI ??
+    process.env.OPENROUTER_API_KEY ??
+    'sk-test-placeholder';
+
+  const ctx: APIRequestContext = await request.newContext({ baseURL: opts.baseURL });
+  try {
+    const res = await ctx.post('/api/v1/onboarding/complete', {
+      data: {
+        provider: {
+          id: opts.providerID ?? DEFAULT_PROVIDER_ID,
+          api_key: apiKey,
+          model: opts.model ?? DEFAULT_MODEL,
+        },
+        admin: {
+          username: opts.username ?? DEFAULT_USERNAME,
+          password,
+        },
+      },
+    });
+
+    // 200 = fresh onboard.
+    if (res.status() === 200) {
+      return;
+    }
+
+    // 409 = already complete on this $OMNIPUS_HOME (e.g. second test shard
+    // hitting the same instance). Accept ONLY when the body confirms the known
+    // sentinel — any other 409 is an unexpected error and must be surfaced.
+    // W3-10: parse the body to distinguish expected "already complete" from
+    // an unexpected 409 (e.g., partial state, schema mismatch).
+    if (res.status() === 409) {
+      let body: string;
+      try {
+        body = await res.text();
+      } catch {
+        throw new Error('onboard-via-api: 409 response body could not be read');
+      }
+      // Accept the 409 only when the body contains the expected sentinel.
+      // The backend returns {"error":"onboarding_already_complete",...} or similar text.
+      if (
+        body.includes('onboarding_already_complete') ||
+        body.toLowerCase().includes('already complete') ||
+        body.toLowerCase().includes('already been completed')
+      ) {
+        return;
+      }
+      throw new Error(
+        `onboard-via-api: POST /api/v1/onboarding/complete returned unexpected 409: ${body}`,
+      );
+    }
+
+    const body = await res.text();
+    throw new Error(
+      `onboard-via-api: POST /api/v1/onboarding/complete returned ${res.status()}: ${body}`,
+    );
+  } finally {
+    await ctx.dispose();
+  }
+}

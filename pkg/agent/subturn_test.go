@@ -135,8 +135,15 @@ func TestSpawnSubTurn(t *testing.T) {
 			collector, collectCleanup := newEventCollector(t, al)
 			defer collectCleanup()
 
+			// W1-12: inject a synthetic parentSpawnCallID so span events are emitted
+			// even when this test bypasses the spawn tool's context injection path.
+			spawnCtx := context.Background()
+			if tt.wantSpawn {
+				spawnCtx = withSpawnToolCallID(spawnCtx, "test-spawn-call-1")
+			}
+
 			// Execute spawnSubTurn
-			result, err := spawnSubTurn(context.Background(), al, parent, tt.config)
+			result, err := spawnSubTurn(spawnCtx, al, parent, tt.config)
 
 			// Assert errors
 			if tt.wantErr != nil {
@@ -620,9 +627,11 @@ func TestNestedSubTurnHierarchy(t *testing.T) {
 		concurrencySem: make(chan struct{}, 5),
 	}
 
-	// Spawn a child (depth 1)
+	// Spawn a child (depth 1).
+	// W1-12: inject a parentSpawnCallID so span events are emitted.
 	childCfg := SubTurnConfig{Model: "gpt-4o-mini"}
-	_, err := spawnSubTurn(context.Background(), al, rootTS, childCfg)
+	spawnCtx := withSpawnToolCallID(context.Background(), "nested-spawn-call-1")
+	_, err := spawnSubTurn(spawnCtx, al, rootTS, childCfg)
 	if err != nil {
 		t.Fatalf("failed to spawn child: %v", err)
 	}
@@ -864,9 +873,11 @@ func TestSpawnSubTurn_PanicRecovery(t *testing.T) {
 	collector, collectCleanup := newEventCollector(t, al)
 	defer collectCleanup()
 
-	// Test async call - result should still be delivered via channel
+	// Test async call - result should still be delivered via channel.
+	// W1-12: inject a synthetic parentSpawnCallID so span events are emitted.
 	asyncCfg := SubTurnConfig{Model: "gpt-4o-mini", Tools: []tools.Tool{}, Async: true}
-	result, err := spawnSubTurn(context.Background(), al, parent, asyncCfg)
+	spawnCtx := withSpawnToolCallID(context.Background(), "panic-test-spawn-call")
+	result, err := spawnSubTurn(spawnCtx, al, parent, asyncCfg)
 
 	// Should return error from panic recovery
 	if err == nil {

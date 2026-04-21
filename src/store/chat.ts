@@ -2,10 +2,10 @@ import { create } from 'zustand'
 import { generateId } from '@/lib/constants'
 import { useUiStore } from '@/store/ui'
 import { useConnectionStore } from '@/store/connection'
-import { useSessionStore, registerChatResetSession } from '@/store/session'
+import { useSessionStore, registerChatResetSession, registerChatSetReplaying } from '@/store/session'
 import { queryClient } from '@/lib/queryClient'
 import type { Message, ToolCall } from '@/lib/api'
-import type { WsReceiveFrame, WsExecApprovalRequestFrame, WsReplayMessageFrame, WsRateLimitFrame } from '@/lib/ws'
+import type { WsReceiveFrame, WsExecApprovalRequestFrame, WsReplayMessageFrame, WsRateLimitFrame, WsSubagentStartFrame, WsSubagentEndFrame } from '@/lib/ws'
 
 export interface MediaAttachment {
   type: 'image' | 'audio' | 'video' | 'file'
@@ -15,10 +15,51 @@ export interface MediaAttachment {
   caption?: string
 }
 
+// SpanStep is one step in a subagent span.
+// The discriminant `kind` allows renderers to switch between tool calls
+// and interleaved text fragments without a runtime type-check on all fields.
+// Text steps are reserved for future subagent-text streaming; no emit site
+// writes them yet, but the type admits them so a future sprint can add
+// subagent-text streaming without a type change.
+export type SpanStep =
+  | { kind: 'tool'; tool: ToolCall & { call_id: string } }
+  | { kind: 'text'; text: string; ts: number }
+
+// FR-H-008/FR-H-009: a subagent span brackets one sub-turn.
+// Discriminated union: 'running' vs terminal so TypeScript enforces that
+// durationMs / finalResult / reason are only accessible on terminal spans.
+interface SubagentSpanBase {
+  spanId: string
+  parentCallId: string
+  taskLabel: string
+  steps: SpanStep[]
+}
+
+export interface SubagentSpanRunning extends SubagentSpanBase {
+  status: 'running'
+}
+
+export interface SubagentSpanTerminal extends SubagentSpanBase {
+  status: 'success' | 'error' | 'cancelled' | 'interrupted' | 'timeout'
+  durationMs: number
+  finalResult?: string
+  /** W1-9 coordination: reason populated when status is 'interrupted'. */
+  reason?: 'parent_timeout' | 'parent_cancelled' | 'parent_done_early' | 'unknown'
+}
+
+export type SubagentSpan = SubagentSpanRunning | SubagentSpanTerminal
+
+// A buffered frame waiting for its subagent_start to arrive (FR-H-009)
+interface BufferedFrame {
+  frame: WsReceiveFrame & { type: 'tool_call_start' | 'tool_call_result' }
+  arrivedAt: number
+}
+
 export interface ChatMessage extends Message {
   isStreaming?: boolean
   streamCursor?: boolean
   media?: MediaAttachment[]
+  spans?: SubagentSpan[]
 }
 
 export interface RateLimitEventData {
@@ -42,6 +83,13 @@ interface ChatStore {
   // Messages
   messages: ChatMessage[]
   isStreaming: boolean
+  // FR-I-014: true from attach_session until first done frame — disables send input during replay
+  isReplaying: boolean
+  setReplaying: (value: boolean) => void
+  // W3-9: tracks the session ID for which WS replay completed successfully.
+  // Set when a done frame arrives while isReplaying was true.
+  // Cleared on resetSession. Used to gate the REST fallback in ChatScreen.
+  replayCompletedForSession: string | null
   setMessages: (messages: Message[]) => void
   appendMessage: (message: ChatMessage) => void
   updateLastAssistantMessage: (content: string, done?: boolean) => void
@@ -70,6 +118,11 @@ interface ChatStore {
   setRateLimitEvent: (event: RateLimitEventData) => void
   clearRateLimitEvent: () => void
 
+  // Subagent span management (FR-H-008, FR-H-009)
+  startSpan: (frame: WsSubagentStartFrame) => void
+  endSpan: (frame: WsSubagentEndFrame) => void
+  attachStepToSpan: (parentCallId: string, step: ToolCall & { call_id: string }) => void
+
   // Reset all session-scoped state (called by sessionStore on session switch)
   resetSession: () => void
 
@@ -88,6 +141,24 @@ interface ChatStore {
 // be cancellable across calls without retrieving it through the store.
 let rateLimitClearTimer: ReturnType<typeof setTimeout> | null = null
 
+// Tracks when isReplaying was most recently set to true, so setReplaying(false)
+// can enforce a minimum display window (prevents sub-frame flicker of the
+// "Loading session history..." placeholder and gives E2E tests an observable
+// disabled-input window). See setReplaying action.
+let replayingStartedAt = 0
+
+// W1-7: diagnostic flag — true when at least one replay_message was processed
+// in the current session/turn. Used to emit a warning if setReplaying(false)
+// hits the no-op guard unexpectedly after a replay sequence ran.
+let sawReplayMessageThisTurn = false
+
+// FR-H-009: out-of-order frame buffer — tool_call_start/result frames that
+// arrived before their subagent_start. Keyed by parent_call_id. Dropped to
+// flat rendering after ORPHAN_BUFFER_TTL_MS if no subagent_start arrives.
+const ORPHAN_BUFFER_TTL_MS = 10_000
+const pendingByParentCallId: Record<string, BufferedFrame[]> = {}
+const orphanTimers: Record<string, ReturnType<typeof setTimeout>> = {}
+
 /** State reset applied whenever switching or attaching to a session. */
 const CLEAN_SESSION_STATE = {
   messages: [] as ChatMessage[],
@@ -98,12 +169,93 @@ const CLEAN_SESSION_STATE = {
   sessionTokens: 0,
   sessionCost: 0,
   isStreaming: false,
+  isReplaying: false,
+  // W3-9: cleared on session switch so new session gets a fresh replay tracking state.
+  replayCompletedForSession: null as string | null,
   rateLimitEvent: null as RateLimitEventData | null,
 } as const
+
+// ── Frame-routing helpers — extracted from handleFrame to reduce duplication ──
+//
+// Both tool_call_start and tool_call_result share the same parent-span check +
+// orphan-buffer logic. These module-level helpers encapsulate the shared parts.
+
+/**
+ * hasOpenSpan returns true when any assistant message in `messages` has a span
+ * whose parentCallId matches `parentCallId`.
+ */
+function hasOpenSpan(messages: ChatMessage[], parentCallId: string): boolean {
+  return messages.some(
+    (m) => m.role === 'assistant' && m.spans?.some((s) => s.parentCallId === parentCallId)
+  )
+}
+
+/**
+ * bufferForSpan adds `frame` to the pending buffer for `parentCallId` and arms
+ * the 10s orphan TTL if this is the first frame for that parent.
+ * When the timer fires, `onTimeout` is called with the accumulated buffered frames.
+ */
+function bufferForSpan(
+  parentCallId: string,
+  frame: BufferedFrame['frame'],
+  onTimeout: (buffered: BufferedFrame[]) => void,
+): void {
+  if (!pendingByParentCallId[parentCallId]) {
+    pendingByParentCallId[parentCallId] = []
+    if (!orphanTimers[parentCallId]) {
+      orphanTimers[parentCallId] = setTimeout(() => {
+        const buffered = pendingByParentCallId[parentCallId] ?? []
+        delete pendingByParentCallId[parentCallId]
+        delete orphanTimers[parentCallId]
+        if (buffered.length > 0) {
+          onTimeout(buffered)
+        }
+      }, ORPHAN_BUFFER_TTL_MS)
+    }
+  }
+  pendingByParentCallId[parentCallId].push({ frame, arrivedAt: Date.now() })
+}
 
 export const useChatStore = create<ChatStore>((set, get) => ({
   messages: [],
   isStreaming: false,
+  isReplaying: false,
+  replayCompletedForSession: null,
+  setReplaying: (value) => {
+    // Minimum 250ms display window: (a) avoids flicker of the "Loading session
+    // history..." placeholder on sub-frame replays, (b) gives E2E automation
+    // an observable disabled-input window. Tracked module-local.
+    if (value) {
+      // Only reset the window start on a false→true transition. Repeated
+      // setReplaying(true) calls while already replaying must NOT extend
+      // the 250ms minimum — caught by W2-6c test.
+      if (!get().isReplaying) {
+        replayingStartedAt = Date.now()
+      }
+      set({ isReplaying: true })
+      return
+    }
+    // No-op if already false (done on a live turn where no replay ran).
+    if (!get().isReplaying) {
+      // W1-7: if replay_message frames were processed this turn but we hit
+      // the no-op path, something is wrong — likely attachToSession race.
+      if (sawReplayMessageThisTurn) {
+        console.warn(
+          '[chat] setReplaying(false) ignored — isReplaying was already false despite replay_message having been processed. Likely attachToSession race.',
+        )
+      }
+      return
+    }
+    // Clear the diagnostic flag on the true→false transition.
+    sawReplayMessageThisTurn = false
+    const elapsed = Date.now() - replayingStartedAt
+    const MIN_REPLAY_DISPLAY_MS = 250
+    if (elapsed >= MIN_REPLAY_DISPLAY_MS) {
+      set({ isReplaying: false })
+    } else {
+      setTimeout(() => set({ isReplaying: false }), MIN_REPLAY_DISPLAY_MS - elapsed)
+    }
+  },
   setMessages: (messages) =>
     set({ ...CLEAN_SESSION_STATE, messages }),
 
@@ -172,7 +324,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   resolveToolCall: (callId, result, status, durationMs, error) =>
     set((state) => {
-      if (!state.toolCalls[callId]) return state
+      if (!state.toolCalls[callId]) {
+        // W3-7a: diagnostic for tool_call_result arriving for an unknown call_id.
+        // Common causes: race between resetSession and a late result frame, or
+        // a nested tool call that was handled via attachStepToSpan instead.
+        console.debug('[chat] resolveToolCall for unknown call_id', callId)
+        return state
+      }
       return {
         toolCalls: {
           ...state.toolCalls,
@@ -196,6 +354,135 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           [callId]: { ...state.toolCalls[callId], status: 'cancelled' },
         },
       }
+    }),
+
+  // FR-H-008: push a new span onto the current streaming assistant message
+  startSpan: (frame) =>
+    set((state) => {
+      const msgs = [...state.messages]
+      const lastIdx = msgs.map((m) => m.role).lastIndexOf('assistant')
+      if (lastIdx === -1) return {}
+      const span: SubagentSpanRunning = {
+        spanId: frame.span_id,
+        parentCallId: frame.parent_call_id,
+        taskLabel: frame.task_label,
+        status: 'running',
+        steps: [],
+      }
+      // Drain any buffered frames that were waiting for this span
+      const buffered = pendingByParentCallId[frame.parent_call_id] ?? []
+      delete pendingByParentCallId[frame.parent_call_id]
+      if (orphanTimers[frame.parent_call_id]) {
+        clearTimeout(orphanTimers[frame.parent_call_id])
+        delete orphanTimers[frame.parent_call_id]
+      }
+      for (const { frame: bf } of buffered) {
+        if (bf.type === 'tool_call_start') {
+          span.steps.push({
+            kind: 'tool',
+            tool: {
+              id: bf.call_id,
+              call_id: bf.call_id,
+              tool: bf.tool,
+              params: bf.params,
+              status: 'running',
+            },
+          })
+        } else if (bf.type === 'tool_call_result') {
+          const existingIdx = span.steps.findIndex(
+            (s) => s.kind === 'tool' && s.tool.call_id === bf.call_id
+          )
+          if (existingIdx !== -1) {
+            const existing = span.steps[existingIdx]
+            if (existing.kind === 'tool') {
+              span.steps[existingIdx] = {
+                kind: 'tool',
+                tool: {
+                  ...existing.tool,
+                  result: bf.result,
+                  status: bf.status,
+                  duration_ms: bf.duration_ms,
+                  error: bf.error,
+                },
+              }
+            }
+          }
+        }
+      }
+      msgs[lastIdx] = {
+        ...msgs[lastIdx],
+        spans: [...(msgs[lastIdx].spans ?? []), span],
+      }
+      return { messages: msgs }
+    }),
+
+  // FR-H-008: finalize span status, duration, finalResult
+  endSpan: (frame) =>
+    set((state) => {
+      const msgs = [...state.messages]
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const msg = msgs[i]
+        if (msg.role !== 'assistant' || !msg.spans) continue
+        const spanIdx = msg.spans.findIndex((s) => s.spanId === frame.span_id)
+        if (spanIdx === -1) continue
+        const existingSpan = msg.spans[spanIdx]
+        const updatedSpans = [...msg.spans]
+        // Transition to terminal: carry forward all base fields + steps,
+        // then add durationMs, finalResult, reason from the end frame.
+        const terminalSpan: SubagentSpanTerminal = {
+          spanId: existingSpan.spanId,
+          parentCallId: existingSpan.parentCallId,
+          taskLabel: existingSpan.taskLabel,
+          steps: existingSpan.steps,
+          status: frame.status,
+          durationMs: frame.duration_ms ?? 0,
+          finalResult: frame.final_result,
+          // W1-9: propagate reason from backend when status is 'interrupted'
+          reason: frame.reason,
+        }
+        updatedSpans[spanIdx] = terminalSpan
+        msgs[i] = { ...msgs[i], spans: updatedSpans }
+        return { messages: msgs }
+      }
+      // W3-6: no matching span found — log a diagnostic so operators can correlate
+      // out-of-order subagent_end frames (e.g., end arrived before start on replay).
+      console.warn('[chat] subagent_end received for unknown span_id', {
+        spanId: frame.span_id,
+      })
+      return {}
+    }),
+
+  // FR-H-010: attach a step (tool_call_start) to an open span
+  attachStepToSpan: (parentCallId, step) =>
+    set((state) => {
+      const msgs = [...state.messages]
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        const msg = msgs[i]
+        if (msg.role !== 'assistant' || !msg.spans) continue
+        const spanIdx = msg.spans.findIndex((s) => s.parentCallId === parentCallId)
+        if (spanIdx === -1) continue
+        const updatedSpans = [...msg.spans]
+        const existingIdx = updatedSpans[spanIdx].steps.findIndex(
+          (s) => s.kind === 'tool' && s.tool.call_id === step.call_id
+        )
+        if (existingIdx !== -1) {
+          // Update existing step (tool_call_result arriving after start)
+          const existingStep = updatedSpans[spanIdx].steps[existingIdx]
+          if (existingStep.kind === 'tool') {
+            const updatedSteps = [...updatedSpans[spanIdx].steps]
+            updatedSteps[existingIdx] = { kind: 'tool', tool: { ...existingStep.tool, ...step } }
+            updatedSpans[spanIdx] = { ...updatedSpans[spanIdx], steps: updatedSteps }
+          }
+        } else {
+          updatedSpans[spanIdx] = {
+            ...updatedSpans[spanIdx],
+            steps: [...updatedSpans[spanIdx].steps, { kind: 'tool', tool: step }],
+          }
+        }
+        msgs[i] = { ...msgs[i], spans: updatedSpans }
+        return { messages: msgs }
+      }
+      return {}
     }),
 
   pendingApprovals: [],
@@ -249,7 +536,20 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     set({ rateLimitEvent: null })
   },
 
-  resetSession: () => set(CLEAN_SESSION_STATE),
+  resetSession: () => {
+    // W1-8b: clear module-level orphan buffers and their TTL timers so they
+    // don't leak across session switches.
+    for (const key of Object.keys(orphanTimers)) {
+      clearTimeout(orphanTimers[key])
+      delete orphanTimers[key]
+    }
+    for (const key of Object.keys(pendingByParentCallId)) {
+      delete pendingByParentCallId[key]
+    }
+    // W1-7: reset the diagnostic flag on session reset.
+    sawReplayMessageThisTurn = false
+    set(CLEAN_SESSION_STATE)
+  },
 
   sendMessage: (content) => {
     const { connection, isConnected } = useConnectionStore.getState()
@@ -385,12 +685,28 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
       case 'done':
         store.updateLastAssistantMessage('', true)
-        if (frame.stats?.tokens != null || frame.stats?.cost != null) {
-          set((state) => ({
+        // Stats update is immediate.
+        set((state) => {
+          if (frame.stats?.tokens == null && frame.stats?.cost == null) return state
+          return {
             sessionTokens: state.sessionTokens + (frame.stats?.tokens ?? 0),
             sessionCost: state.sessionCost + (frame.stats?.cost ?? 0),
-          }))
+          }
+        })
+        // W3-9: if a replay was in flight when this done frame arrived, record the
+        // completed session ID so ChatScreen's REST fallback knows replay finished
+        // and can skip the overwrite (even if storeMessageCount is 0 for an empty session).
+        if (store.isReplaying) {
+          const { activeSessionId } = useSessionStore.getState()
+          if (activeSessionId) {
+            set({ replayCompletedForSession: activeSessionId })
+          }
         }
+        // FR-I-014: first done after attach_session closes the replay window.
+        // Route through setReplaying so the 250ms minimum-display window is honored
+        // (avoids flicker + gives E2E the observable disabled-input window).
+        // Harmless for live turns (isReplaying was already false).
+        store.setReplaying(false)
         break
 
       case 'error':
@@ -427,19 +743,111 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         break
 
       case 'tool_call_start': {
-        // During replay, tool_call frames may arrive before any assistant text.
-        // Ensure an assistant message exists so tool calls have a parent to render against.
-        const lastMsg = store.messages[store.messages.length - 1]
-        if (!lastMsg || lastMsg.role !== 'assistant') {
-          store.updateLastAssistantMessage('', false)
+        const parentCallId = frame.parent_call_id
+        if (parentCallId) {
+          // FR-H-009: check if a matching span is already open
+          if (hasOpenSpan(store.messages, parentCallId)) {
+            // Attach directly to the span (FR-H-010)
+            store.attachStepToSpan(parentCallId, {
+              id: frame.call_id,
+              call_id: frame.call_id,
+              tool: frame.tool,
+              params: frame.params,
+              status: 'running',
+            })
+          } else {
+            // Buffer until subagent_start arrives or TTL expires (FR-H-009)
+            bufferForSpan(parentCallId, frame, (buffered) => {
+              console.warn(
+                `[chat] orphan frame: parent_call_id="${parentCallId}" — subagent_start never arrived within ${ORPHAN_BUFFER_TTL_MS}ms. Releasing as flat tool calls.`
+              )
+              // W1-8c: give the user a visible signal in addition to the console warn.
+              useUiStore.getState().addToast({
+                variant: 'default',
+                message: 'Some subagent steps arrived without their span — displayed as flat tool calls',
+              })
+              for (const { frame: bf } of buffered) {
+                if (bf.type === 'tool_call_start') {
+                  const s = get()
+                  const lastMsg = s.messages[s.messages.length - 1]
+                  if (!lastMsg || lastMsg.role !== 'assistant') {
+                    s.updateLastAssistantMessage('', false)
+                  }
+                  s.startToolCall(bf.call_id ?? '', bf.tool ?? '', bf.params ?? {})
+                } else if (bf.type === 'tool_call_result') {
+                  get().resolveToolCall(bf.call_id ?? '', bf.result, bf.status ?? 'success', bf.duration_ms, bf.error)
+                }
+              }
+            })
+          }
+        } else {
+          // Non-nested tool call — original behavior
+          const lastMsg = store.messages[store.messages.length - 1]
+          if (!lastMsg || lastMsg.role !== 'assistant') {
+            store.updateLastAssistantMessage('', false)
+          }
+          store.startToolCall(frame.call_id ?? '', frame.tool ?? '', frame.params ?? {})
         }
-        store.startToolCall(frame.call_id ?? '', frame.tool ?? '', frame.params ?? {})
         break
       }
 
-      case 'tool_call_result':
-        store.resolveToolCall(frame.call_id ?? '', frame.result, frame.status ?? 'success', frame.duration_ms, frame.error)
+      case 'tool_call_result': {
+        const parentCallId = frame.parent_call_id
+        if (parentCallId) {
+          if (hasOpenSpan(store.messages, parentCallId)) {
+            // Update the step in the span
+            store.attachStepToSpan(parentCallId, {
+              id: frame.call_id,
+              call_id: frame.call_id,
+              tool: frame.tool,
+              params: {},
+              result: frame.result,
+              status: frame.status ?? 'success',
+              duration_ms: frame.duration_ms,
+              error: frame.error,
+            })
+          } else {
+            // Buffer until subagent_start arrives.
+            // W1-8a: bufferForSpan arms the 10s TTL on first frame for this parent.
+            bufferForSpan(parentCallId, frame, (buffered) => {
+              console.warn(
+                `[chat] orphan frame: parent_call_id="${parentCallId}" — subagent_start never arrived within ${ORPHAN_BUFFER_TTL_MS}ms. Releasing as flat tool calls.`
+              )
+              useUiStore.getState().addToast({
+                variant: 'default',
+                message: 'Some subagent steps arrived without their span — displayed as flat tool calls',
+              })
+              for (const { frame: bf } of buffered) {
+                if (bf.type === 'tool_call_start') {
+                  const s = get()
+                  const lastMsg = s.messages[s.messages.length - 1]
+                  if (!lastMsg || lastMsg.role !== 'assistant') {
+                    s.updateLastAssistantMessage('', false)
+                  }
+                  s.startToolCall(bf.call_id ?? '', bf.tool ?? '', bf.params ?? {})
+                } else if (bf.type === 'tool_call_result') {
+                  get().resolveToolCall(bf.call_id ?? '', bf.result, bf.status ?? 'success', bf.duration_ms, bf.error)
+                }
+              }
+            })
+          }
+        } else {
+          store.resolveToolCall(frame.call_id ?? '', frame.result, frame.status ?? 'success', frame.duration_ms, frame.error)
+        }
         break
+      }
+
+      case 'subagent_start': {
+        const sf = frame as WsSubagentStartFrame
+        store.startSpan(sf)
+        break
+      }
+
+      case 'subagent_end': {
+        const ef = frame as WsSubagentEndFrame
+        store.endSpan(ef)
+        break
+      }
 
       case 'exec_approval_request':
         store.addApprovalRequest(frame)
@@ -464,6 +872,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       }
 
       case 'replay_message': {
+        // W1-7: mark that a replay_message was processed so setReplaying(false)
+        // can warn if it hits the no-op path after replay ran.
+        sawReplayMessageThisTurn = true
         const replayFrame = frame as WsReplayMessageFrame
         const role = (replayFrame.role || 'assistant') as 'user' | 'assistant'
         set((state) => ({
@@ -533,12 +944,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       }
 
       default:
-        console.warn('[chat] Unknown frame type:', (frame as { type: string }).type)
+        // W3-7b: log the actual type string, not [object Object] from the whole frame.
+        console.warn('[chat] Unknown frame type', { type: (frame as { type?: string }).type })
         break
     }
   },
 }))
 
-// Register resetSession with the session store to break the circular import.
-// This runs after useChatStore is fully initialized.
+// Register resetSession and setReplaying with the session store to break the circular import.
+// Both run after useChatStore is fully initialized.
 registerChatResetSession(() => useChatStore.getState().resetSession())
+registerChatSetReplaying((value) => useChatStore.getState().setReplaying(value))

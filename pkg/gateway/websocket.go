@@ -32,6 +32,13 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/session"
 )
 
+// replayLiveBufferCap is the capacity of replayDivertCh (FR-I-009).
+// Frames are diverted here via sendConnFrame when isReplayingLive is set;
+// drained into sendCh after replay's done frame.  When the channel is full
+// sendConnFrame drops the frame and emits a degraded warning to sendCh directly
+// (W1-6) so the client still receives the overflow notice.
+const replayLiveBufferCap = 1000
+
 // wsClientFrame is a message sent from the browser to the server over WebSocket.
 type wsClientFrame struct {
 	Type      string `json:"type"`                 // "auth" | "message" | "cancel" | "exec_approval_response" | "attach_session" | "device_pairing_response"
@@ -73,6 +80,14 @@ type wsServerFrame struct {
 	AgentID           string  `json:"agent_id,omitempty"`
 	// media frame fields
 	Parts []wsMediaPart `json:"parts,omitempty"`
+	// subagent span fields (FR-H-004, FR-H-005)
+	// SpanID is "span_" + parent spawn ToolCall.ID. Present on subagent_start and subagent_end.
+	SpanID string `json:"span_id,omitempty"`
+	// ParentCallID is the parent spawn ToolCall.ID. Present on subagent_start, subagent_end,
+	// and tool_call_start/result frames fired inside a sub-turn. Empty for top-level calls.
+	ParentCallID string `json:"parent_call_id,omitempty"`
+	// TaskLabel is the human-readable label for the subagent task (subagent_start only).
+	TaskLabel string `json:"task_label,omitempty"`
 }
 
 // wsMediaPart represents a single media attachment in a "media" WebSocket frame.
@@ -127,6 +142,16 @@ type wsConn struct {
 	droppedTokens atomic.Int32
 	droppedFrames atomic.Int32    // non-critical frames dropped due to backpressure
 	role          config.UserRole // RBAC role resolved at auth time
+
+	// Replay-mode divert (W1-1): during replay, live events arriving via
+	// sendConnFrame are redirected into replayDivertCh instead of sendCh so
+	// they don't interleave with replay frames. After replay finishes they are
+	// drained into sendCh in arrival order.
+	// isReplayingLive is set atomically before replay starts and cleared after
+	// the done frame is sent, so concurrent callers of sendConnFrame see a
+	// consistent view without holding any mutex.
+	isReplayingLive atomic.Bool
+	replayDivertCh  chan []byte // capacity replayLiveBufferCap; allocated lazily by handleAttachSession
 }
 
 func (c *wsConn) close() {
@@ -499,8 +524,14 @@ func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsCo
 		case "exec_approval_response":
 			h.handleApprovalResponse(frame.ID, frame.Decision)
 		case "attach_session":
+			slog.Info("ws: attach_session frame received",
+				"chat_id", chatID,
+				"requested_session_id", frame.SessionID,
+			)
 			if frame.SessionID != "" {
 				h.handleAttachSession(ctx, chatID, sessionID, frame.SessionID, wc)
+			} else {
+				slog.Warn("ws: attach_session with empty session_id", "chat_id", chatID)
 			}
 		case "ping":
 			// Client heartbeat — no action needed, the WebSocket pong handler keeps the connection alive
@@ -632,8 +663,14 @@ func (h *WSHandler) handleCancel(sessionID *string) {
 	}
 }
 
-// handleAttachSession loads an existing session's transcript and replays it to the client,
-// then sets the connection's active session to the requested session.
+// handleAttachSession loads an existing session's transcript and replays it to
+// the client via streamReplay, then sets the connection's active session to the
+// requested session.
+//
+// FR-I-009: the connection is registered for live-event forwarding BEFORE the
+// replay starts. Live events arriving during replay are buffered in a capped
+// channel; after the done frame is emitted the buffer is drained to the WS in
+// arrival order.
 func (h *WSHandler) handleAttachSession(
 	ctx context.Context,
 	chatID string,
@@ -659,78 +696,40 @@ func (h *WSHandler) handleAttachSession(
 		return
 	}
 
-	// Replay transcript entries in order. Tool call entries are rendered as text
-	// within an assistant message because AssistantUI requires tool calls to be
-	// part of the message tree. (Live tool calls arrive via eventForwarder during
-	// an active streaming turn where AssistantUI already has a message context.)
+	rs := computeReplayStats(entries)
 
-	// flushToolCalls sends any accumulated tool call lines as a single assistant
-	// replay message, then resets the slice. Returns false if ctx was canceled.
-	var pendingToolCalls []string
-	flushToolCalls := func() bool {
-		if len(pendingToolCalls) == 0 {
-			return true
-		}
-		tcContent := strings.Join(pendingToolCalls, "\n")
-		pendingToolCalls = nil
-		tcData, err := json.Marshal(wsServerFrame{
-			Type: "replay_message", Content: tcContent, Role: "assistant",
-		})
-		if err != nil {
-			slog.Warn("ws: attach_session: could not marshal tool call batch", "session_id", attachID, "error", err)
-			return true
-		}
-		select {
-		case wc.sendCh <- tcData:
-			return true
-		case <-ctx.Done():
-			return false
-		}
+	// FR-I-013: structured log at replay start.
+	// W3-2: include orphan/duplicate/truncated counts so the replay_start log
+	// line carries enough context to debug fidelity issues without replay_end.
+	slog.Info("ws: replay_start",
+		"event", "replay_start",
+		"session_id", attachID,
+		"entry_count_loaded", len(entries),
+		"tool_call_count_loaded", rs.toolCallCount,
+		"span_count_detected", rs.spanCount,
+		"orphan_count", rs.orphanCount,
+		"duplicate_tool_call_id_count", rs.duplicateToolCallIDCount,
+		"truncated_result_count", rs.truncatedResultCount,
+	)
+	replayStart := time.Now()
+
+	// FR-I-009 / W1-1: register for live-event forwarding BEFORE starting replay
+	// so no live events are lost during the replay window.
+	//
+	// Live events arriving via sendConnFrame during replay are diverted into
+	// wc.replayDivertCh (allocated below) by the atomic flag wc.isReplayingLive.
+	// writePump drains wc.sendCh as normal — replay frames go there directly.
+	// After the done frame, the flag is cleared and the divert buffer is drained
+	// into wc.sendCh in arrival order.
+	//
+	// This replaces the previous wc.sendCh swap which caused a data race because
+	// writePump and pingPump read wc.sendCh concurrently with no synchronization.
+	if wc.replayDivertCh == nil {
+		wc.replayDivertCh = make(chan []byte, replayLiveBufferCap)
 	}
 
-	for _, entry := range entries {
-		if entry.Content != "" {
-			if !flushToolCalls() {
-				return
-			}
-			data, merr := json.Marshal(wsServerFrame{
-				Type:    "replay_message",
-				Content: entry.Content,
-				Role:    entry.Role,
-			})
-			if merr != nil {
-				slog.Warn("ws: attach_session: could not marshal replay entry", "session_id", attachID, "error", merr)
-				continue
-			}
-			select {
-			case wc.sendCh <- data:
-			case <-ctx.Done():
-				return
-			}
-		}
-		for _, tc := range entry.ToolCalls {
-			status := tc.Status
-			if status == "" {
-				status = "success"
-			}
-			dur := ""
-			if tc.DurationMS > 0 {
-				dur = fmt.Sprintf(" (%dms)", tc.DurationMS)
-			}
-			pendingToolCalls = append(pendingToolCalls, fmt.Sprintf("**%s** — %s%s", tc.Tool, status, dur))
-		}
-	}
-	flushToolCalls()
-
-	// Signal replay complete so the frontend marks the last message as done.
-	sendConnFrame(wc, wsServerFrame{Type: "done", Stats: map[string]any{}})
-
-	// Switch this connection's active session.
-	*sessionID = attachID
+	// Register for live event forwarding now (before flipping the replay flag).
 	h.mu.Lock()
-	h.sessionIDs[chatID] = attachID
-	// Register for live event forwarding: map the browser's chatID to the task's chatID
-	// so eventForwarder picks up task events and GetStreamer finds this connection.
 	if oldTID, ok := h.taskChatIDs[chatID]; ok {
 		delete(h.sessions, oldTID)
 		delete(h.sessionIDs, oldTID)
@@ -738,6 +737,98 @@ func (h *WSHandler) handleAttachSession(
 	h.taskChatIDs[chatID] = attachID
 	h.sessions[attachID] = wc
 	h.sessionIDs[attachID] = attachID
+	h.mu.Unlock()
+
+	// Arm the divert: any sendConnFrame calls after this point will route live
+	// frames into replayDivertCh instead of sendCh.
+	wc.isReplayingLive.Store(true)
+
+	// Run replay: emit frames directly into wc.sendCh via emitFn, bypassing the
+	// divert.  W1-10: a per-frame 5 s timeout prevents indefinite blocking when
+	// the client is not draining the socket.
+	emitFn := func(f wsServerFrame) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		data, merr := json.Marshal(f)
+		if merr != nil {
+			return merr
+		}
+		select {
+		case wc.sendCh <- data:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+			return errSendTimeout
+		}
+	}
+
+	// W3-3: pass pre-computed rs into streamReplay so it doesn't rebuild
+	// spawnIDsWithChildren for a second time.
+	framesEmitted, replayErr := streamReplay(ctx, attachID, entries, rs, emitFn)
+
+	// Disarm the divert FIRST so that subsequent sendConnFrame calls go directly
+	// to sendCh once we drain the buffer below.
+	wc.isReplayingLive.Store(false)
+
+	durationMS := time.Since(replayStart).Milliseconds()
+
+	if replayErr != nil {
+		slog.Warn("ws: replay_aborted",
+			"event", "replay_aborted",
+			"session_id", attachID,
+			"frames_emitted", framesEmitted,
+			"duration_ms", durationMS,
+			"error", replayErr,
+		)
+		// W1-5: emit error + synthetic done so the client clears isReplaying and
+		// re-enables the composer.  Use sendConnFrame (canonical path) because the
+		// divert flag is already cleared above.
+		sendConnFrame(wc, wsServerFrame{
+			Type:    "error",
+			Message: "replay aborted: " + replayErr.Error(),
+		})
+		sendConnFrame(wc, wsServerFrame{
+			Type:  "done",
+			Stats: map[string]any{"replay_error": true},
+		})
+		return
+	}
+
+	// FR-I-013: structured log at replay end.
+	// W3-2: include the full stats set so replay_end is a self-contained diagnostic record.
+	slog.Info("ws: replay_end",
+		"event", "replay_end",
+		"session_id", attachID,
+		"frames_emitted", framesEmitted,
+		"duration_ms", durationMS,
+		"orphan_count", rs.orphanCount,
+		"duplicate_tool_call_id_count", rs.duplicateToolCallIDCount,
+		"truncated_result_count", rs.truncatedResultCount,
+	)
+
+	// FR-I-009: drain any live events buffered during replay, in arrival order.
+	// The divert flag is already cleared, so no new frames will land here.
+	// We drain until the buffer is empty (non-blocking).
+	for {
+		select {
+		case raw := <-wc.replayDivertCh:
+			select {
+			case wc.sendCh <- raw:
+			case <-ctx.Done():
+				return
+			}
+		default:
+			goto drainDone
+		}
+	}
+drainDone:
+
+	// Switch this connection's active session.
+	*sessionID = attachID
+	h.mu.Lock()
+	h.sessionIDs[chatID] = attachID
 	h.mu.Unlock()
 
 	slog.Debug("ws: attached to session", "chat_id", chatID, "session_id", attachID)
@@ -777,6 +868,11 @@ func (h *WSHandler) handleApprovalResponse(id, decision string) {
 // satisfying gorilla/websocket's single-writer requirement (fix for gorilla write race).
 // Important: do not pass nil []byte through sendCh for any other purpose — nil is reserved as the ping sentinel.
 var wsPingMsg []byte
+
+// errSendTimeout is returned by the replay emitFn when the send channel is
+// full for more than 5 seconds (W1-10). The caller (streamReplay) surfaces
+// this via W1-5's error+done emission so the client can recover.
+var errSendTimeout = fmt.Errorf("ws: send channel full — replay send timeout")
 
 // writePump is the single goroutine that writes all frames to the WebSocket connection.
 // gorilla/websocket requires all writes to happen from the same goroutine.
@@ -832,6 +928,12 @@ func (h *WSHandler) pingPump(wc *wsConn) {
 // After 20 cumulative dropped frames a "degraded" error frame is
 // injected into the critical path to warn the client; the counter resets on success.
 //
+// During replay (wc.isReplayingLive == true), live frames arriving from the
+// eventForwarder are diverted into wc.replayDivertCh so they do not interleave
+// with replay frames that are being written directly to wc.sendCh. After replay
+// finishes, handleAttachSession drains replayDivertCh into sendCh in order.
+// This replaces the old wc.sendCh swap which caused a data race.
+//
 // droppedFramesWarnThreshold is the number of consecutively dropped non-critical
 // frames after which a "connection degraded" error is sent to the browser.
 const droppedFramesWarnThreshold = 20
@@ -842,13 +944,26 @@ func sendConnFrame(wc *wsConn, frame wsServerFrame) {
 		slog.Error("ws: marshal frame failed", "error", err)
 		return
 	}
-	switch frame.Type {
-	case "done", "error", "exec_approval_request", "exec_approval_expired":
+
+	// W1-1: if replay mode is active, divert live frames into the replay buffer
+	// instead of wc.sendCh, so writePump never sees them while replay is running.
+	// "done", "error", and critical control frames are always sent to the canonical
+	// sendCh regardless of replay state — they are emitted by streamReplay itself
+	// and must reach writePump immediately.
+	targetCh := wc.sendCh
+	isCritical := frame.Type == "done" || frame.Type == "error" ||
+		frame.Type == "exec_approval_request" || frame.Type == "exec_approval_expired"
+	if !isCritical && wc.isReplayingLive.Load() && wc.replayDivertCh != nil {
+		targetCh = wc.replayDivertCh
+	}
+
+	switch {
+	case isCritical:
 		// Critical frames must not be dropped. Block briefly; force-close on timeout.
 		// Approval frames are critical: dropping them leaves the agent turn blocked for
 		// the full approval timeout (90 s) and then results in a mysterious denial.
 		select {
-		case wc.sendCh <- data:
+		case targetCh <- data:
 		case <-time.After(5 * time.Second):
 			slog.Warn("ws: send channel full after timeout for critical frame, closing connection", "type", frame.Type)
 			wc.close()
@@ -859,7 +974,7 @@ func sendConnFrame(wc *wsConn, frame wsServerFrame) {
 		for _, wait := range backoffs {
 			if wait == 0 {
 				select {
-				case wc.sendCh <- data:
+				case targetCh <- data:
 					wc.droppedFrames.Store(0)
 					return
 				default:
@@ -867,7 +982,7 @@ func sendConnFrame(wc *wsConn, frame wsServerFrame) {
 			} else {
 				t := time.NewTimer(wait)
 				select {
-				case wc.sendCh <- data:
+				case targetCh <- data:
 					t.Stop()
 					wc.droppedFrames.Store(0)
 					return
@@ -883,8 +998,9 @@ func sendConnFrame(wc *wsConn, frame wsServerFrame) {
 		wc.droppedFrames.Add(1)
 
 		// After threshold drops, warn the client over the critical path so it knows
-		// the connection is degraded. This uses the blocking 5-second critical path
-		// intentionally: if we cannot even deliver this warning, the connection is lost.
+		// the connection is degraded. The degraded warning always goes to the canonical
+		// wc.sendCh — never to replayDivertCh — so the user sees the overflow warning
+		// immediately without waiting for replay to drain (W1-6).
 		if wc.droppedFrames.Load() >= int32(droppedFramesWarnThreshold) {
 			wc.droppedFrames.Store(0)
 			degraded, merr := json.Marshal(wsServerFrame{
@@ -917,9 +1033,29 @@ func sendWSFrame(conn *websocket.Conn, frame wsServerFrame) {
 	}
 }
 
+// orphanWatchdogTimeout is the duration the forwarder waits after a parent turn ends
+// before synthesizing a subagent_end{status:"interrupted"} for any still-open span.
+// Configurable so tests can override to a short value (e.g., 200ms) without sleeping.
+// Production default is 5 seconds (FR-H-004 / Scenario 7).
+var orphanWatchdogTimeout = 5 * time.Second
+
+// openSpanEntry tracks an in-flight subagent span in the event forwarder.
+type openSpanEntry struct {
+	spanID          string
+	parentCallID    string
+	agentID         string
+	parentTurnEnded bool          // set to true when EventKindTurnEnd fires for the parent turn
+	closeCh         chan struct{} // closed when EventKindSubTurnEnd arrives (cancels watchdog)
+}
+
 // eventForwarder listens on the agent EventBus and forwards tool_call_start/result
 // frames to the browser so tool call UIs render in real time.
 // It also matches events from an attached task session (via taskChatIDs).
+// Extended (FR-H-004, FR-H-005): emits subagent_start / subagent_end frames and
+// propagates parent_call_id on tool_call_* frames fired inside sub-turns.
+// Orphan watchdog (FR-H-004, Scenario 7): when the parent turn ends before all spans
+// are closed, a timer fires after orphanWatchdogTimeout and synthesizes
+// subagent_end{status:"interrupted"} for each still-open span.
 func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSubscription, done chan<- struct{}) {
 	defer close(done)
 
@@ -937,18 +1073,156 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 		return tid != "" && evtChatID == tid
 	}
 
+	// openSpans tracks in-flight subagent spans keyed by parentCallID.
+	// Accessed only from the single eventForwarder goroutine — no mutex needed.
+	openSpans := make(map[string]*openSpanEntry)
+
+	// closeSpan marks a span as resolved and signals its watchdog to stop.
+	closeSpan := func(parentCallID string) {
+		if entry, ok := openSpans[parentCallID]; ok {
+			select {
+			case <-entry.closeCh: // already closed
+			default:
+				close(entry.closeCh)
+			}
+			delete(openSpans, parentCallID)
+		}
+	}
+
+	// startOrphanWatchdog launches a goroutine that fires after orphanWatchdogTimeout
+	// if the span is not closed first. On timeout it synthesizes subagent_end and logs.
+	// W1-9: the goroutine also exits cleanly when wc.doneCh is closed (connection torn down).
+	startOrphanWatchdog := func(entry *openSpanEntry, reason string) {
+		go func() {
+			select {
+			case <-entry.closeCh:
+				// Span resolved normally — nothing to do.
+				return
+			case <-wc.doneCh:
+				// Connection closed while waiting — exit cleanly without emitting.
+				return
+			case <-time.After(orphanWatchdogTimeout):
+				// Span is still open after timeout. Emit interrupted.
+				if reason == "unknown" {
+					slog.Error("ws: subagent span orphaned with unknown reason — synthesizing interrupted end",
+						"event", "span_orphan_interrupted",
+						"span_id", entry.spanID,
+						"parent_call_id", entry.parentCallID,
+						"reason", reason,
+					)
+				} else {
+					slog.Warn("ws: subagent span orphaned — synthesizing interrupted end",
+						"event", "span_orphan_interrupted",
+						"span_id", entry.spanID,
+						"parent_call_id", entry.parentCallID,
+						"reason", reason,
+					)
+				}
+				sendConnFrame(wc, wsServerFrame{
+					Type:         "subagent_end",
+					SpanID:       entry.spanID,
+					ParentCallID: entry.parentCallID,
+					AgentID:      entry.agentID,
+					Status:       "interrupted",
+					Message:      reason,
+				})
+			}
+		}()
+	}
+
 	for evt := range sub.C {
 		switch evt.Kind {
+		case agent.EventKindSubTurnSpawn:
+			// FR-H-004: emit subagent_start when a sub-turn is spawned.
+			p, ok := evt.Payload.(agent.SubTurnSpawnPayload)
+			if !ok || !matchesChatID(p.ChatID) {
+				continue
+			}
+			slog.Debug("ws: subagent_start",
+				"span_id", p.SpanID,
+				"parent_call_id", p.ParentSpawnCallID,
+				"agent_id", p.AgentID,
+			)
+			sendConnFrame(wc, wsServerFrame{
+				Type:         "subagent_start",
+				SpanID:       p.SpanID,
+				ParentCallID: string(p.ParentSpawnCallID),
+				AgentID:      p.AgentID,
+				TaskLabel:    p.TaskLabel,
+			})
+			// Register the span in openSpans for orphan watchdog tracking.
+			entry := &openSpanEntry{
+				spanID:       p.SpanID,
+				parentCallID: string(p.ParentSpawnCallID),
+				agentID:      p.AgentID,
+				closeCh:      make(chan struct{}),
+			}
+			openSpans[string(p.ParentSpawnCallID)] = entry
+
+		case agent.EventKindSubTurnEnd:
+			// FR-H-004: emit subagent_end when a sub-turn finishes.
+			p, ok := evt.Payload.(agent.SubTurnEndPayload)
+			if !ok || !matchesChatID(p.ChatID) {
+				continue
+			}
+			slog.Debug("ws: subagent_end",
+				"span_id", p.SpanID,
+				"parent_call_id", p.ParentSpawnCallID,
+				"agent_id", p.AgentID,
+			)
+			sendConnFrame(wc, wsServerFrame{
+				Type:         "subagent_end",
+				SpanID:       p.SpanID,
+				ParentCallID: string(p.ParentSpawnCallID),
+				AgentID:      p.AgentID,
+				Status:       string(p.Status),
+				DurationMs:   p.DurationMS,
+			})
+			// Signal the watchdog that the span closed normally.
+			closeSpan(string(p.ParentSpawnCallID))
+
+		case agent.EventKindTurnEnd:
+			// W1-2: only arm the orphan watchdog when the root turn for this
+			// connection ends (IsRoot == true) and the event belongs to our chat
+			// (ChatID matches). Sub-turn ends from sibling sub-turns would otherwise
+			// spuriously interrupt still-running spans on this connection.
+			p, ok := evt.Payload.(agent.TurnEndPayload)
+			if !ok || !p.IsRoot || !matchesChatID(p.ChatID) {
+				continue
+			}
+			// Determine watchdog reason from the terminal status of the parent turn.
+			var watchdogReason string
+			switch p.Status {
+			case agent.TurnEndStatusAborted:
+				watchdogReason = "parent_cancelled" //nolint:misspell // wire value, frontend TS union
+			case agent.TurnEndStatusError:
+				watchdogReason = "parent_timeout"
+			case agent.TurnEndStatusCompleted:
+				watchdogReason = "parent_done_early"
+			default:
+				watchdogReason = "unknown"
+			}
+			for _, entry := range openSpans {
+				if !entry.parentTurnEnded {
+					entry.parentTurnEnded = true
+					startOrphanWatchdog(entry, watchdogReason)
+				}
+			}
+
 		case agent.EventKindToolExecStart:
 			p, ok := evt.Payload.(agent.ToolExecStartPayload)
 			if !ok || !matchesChatID(p.ChatID) {
 				continue
 			}
+			// FR-H-005: propagate parent_call_id when the tool fires inside a sub-turn.
+			// FR-I-008: propagate agent_id so live frames match replay frame parity.
 			sendConnFrame(wc, wsServerFrame{
-				Type:   "tool_call_start",
-				CallID: p.ToolCallID,
-				Tool:   p.Tool,
-				Params: p.Arguments,
+				Type:         "tool_call_start",
+				CallID:       string(p.ToolCallID),
+				Tool:         p.Tool,
+				Params:       p.Arguments,
+				ParentCallID: string(p.ParentSpawnCallID),
+				AgentID:      p.AgentID,
 			})
 		case agent.EventKindToolExecEnd:
 			p, ok := evt.Payload.(agent.ToolExecEndPayload)
@@ -959,13 +1233,17 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 			if p.IsError {
 				status = "error"
 			}
+			// FR-H-005: propagate parent_call_id when the tool fires inside a sub-turn.
+			// FR-I-008: propagate agent_id so live frames match replay frame parity.
 			sendConnFrame(wc, wsServerFrame{
-				Type:       "tool_call_result",
-				CallID:     p.ToolCallID,
-				Tool:       p.Tool,
-				Result:     p.Result,
-				Status:     status,
-				DurationMs: p.Duration.Milliseconds(),
+				Type:         "tool_call_result",
+				CallID:       string(p.ToolCallID),
+				Tool:         p.Tool,
+				Result:       p.Result,
+				Status:       status,
+				DurationMs:   p.Duration.Milliseconds(),
+				ParentCallID: string(p.ParentSpawnCallID),
+				AgentID:      p.AgentID,
 			})
 			// When the handoff tool succeeds, notify the frontend to switch agents.
 			if p.Tool == "handoff" && status == "success" {

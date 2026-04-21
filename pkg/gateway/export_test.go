@@ -8,6 +8,8 @@
 
 package gateway
 
+import "time"
+
 // ClearDegradedForTest calls the real clearDegraded closure logic on the
 // services struct. It is used by reload rollback tests to verify that the
 // degraded fields are zeroed without spinning up the full service graph.
@@ -16,4 +18,13 @@ func (s *services) ClearDegradedForTest() {
 	s.reloadDegraded = false
 	s.reloadError = nil
 	s.reloadMu.Unlock()
+}
+
+// SetOrphanWatchdogTimeoutForTest overrides orphanWatchdogTimeout for the duration
+// of a test, restoring the original value at test cleanup.
+// Used by TestSpawn_OrphanSubTurn_EmitsInterruptedAfter5s to avoid sleeping 5 seconds.
+func SetOrphanWatchdogTimeoutForTest(d time.Duration) func() {
+	orig := orphanWatchdogTimeout
+	orphanWatchdogTimeout = d
+	return func() { orphanWatchdogTimeout = orig }
 }

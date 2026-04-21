@@ -2,6 +2,7 @@ import { chromium } from '@playwright/test';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { loginAs } from './fixtures/login.js';
+import { onboardViaAPI } from './fixtures/onboard-via-api.js';
 
 const AUTH_FILE = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -25,10 +26,17 @@ const AUTH_FILE = path.join(
  * ARIA role "banner") is the canonical auth indicator.
  */
 async function globalSetup(): Promise<void> {
+  const baseURL = process.env.OMNIPUS_URL || 'http://localhost:6060';
+
+  // Seed the admin user + provider via the REST onboarding endpoint so the
+  // browser flow enters straight into the login form rather than the 4-step
+  // wizard. The wizard's "Continue" button stays disabled when no model is
+  // auto-selected in CI, which was the local-run blocker. The API call is
+  // idempotent: 200 or 409 both mean "admin exists, proceed".
+  await onboardViaAPI({ baseURL });
+
   const browser = await chromium.launch();
-  const context = await browser.newContext({
-    baseURL: process.env.OMNIPUS_URL || 'http://localhost:6060',
-  });
+  const context = await browser.newContext({ baseURL });
   const page = await context.newPage();
 
   await page.goto('/');

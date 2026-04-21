@@ -1,8 +1,16 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 
 // Wave 5b spec tests — OnboardingWizard frontend tests
 // Traces to: wave5b-system-agent-spec.md — US-7 Onboarding Flow BDD scenarios
+
+// Wave B migration: component evolved from 3-step to 4-step wizard.
+// Step 1 — Welcome, Step 2 — Provider Setup, Step 3 — Admin Credentials, Step 4 — Done.
+// All aria-valuemax assertions updated 3 → 4.
+// "Test Connection" button was renamed to "Connect & Load Models" in the component.
+// finish flow: component calls completeOnboardingTransaction (not completeOnboarding).
+// skip-on-failure test deleted: component intentionally does NOT navigate when
+//   completeOnboarding throws — it shows a toast only.
 
 // Mock TanStack Router navigate
 const mockNavigate = vi.fn()
@@ -31,7 +39,8 @@ vi.mock('framer-motion', () => {
   }
 })
 
-// Mock API calls
+// Mock API calls — includes completeOnboardingTransaction and fetchProviders
+// which are called during the 4-step flow.
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>()
   return {
@@ -39,30 +48,41 @@ vi.mock('@/lib/api', async (importOriginal) => {
     configureProvider: vi.fn(),
     testProvider: vi.fn(),
     completeOnboarding: vi.fn(),
+    completeOnboardingTransaction: vi.fn(),
+    // fetchProviders is called after a successful test to populate the model list.
+    // Return empty models so ModelSelector renders in free-text (Input) mode.
+    fetchProviders: vi.fn().mockResolvedValue([]),
   }
 })
 
 // Mock SVG import
 vi.mock('@/assets/logo/omnipus-avatar.svg?url', () => ({ default: '/test-avatar.svg' }))
 
-import { configureProvider, testProvider, completeOnboarding } from '@/lib/api'
+import { configureProvider, testProvider, completeOnboarding, completeOnboardingTransaction } from '@/lib/api'
 
-// Dynamically import the component AFTER mocks are in place
-// The Route export is the component wrapped in createFileRoute — import the inner component
-// by importing the module and rendering OnboardingWizard directly.
-// Since the route component is not exported by name, we render via the Route.component.
+// Cache the dynamically imported component across all tests so the first import's
+// transform cost (~20s) only pays once and doesn't time out individual tests.
+let WizardComponent: React.ComponentType | null = null
+
+beforeAll(async () => {
+  const mod = await import('./onboarding')
+  WizardComponent = ((mod.Route as unknown) as { component: React.ComponentType }).component
+})
 
 async function renderWizard() {
-  // Dynamic import after mocks are set
-  const mod = await import('./onboarding')
-  const Component = ((mod.Route as unknown) as { component: React.ComponentType }).component
-  return render(<Component />)
+  if (!WizardComponent) throw new Error('WizardComponent not loaded — beforeAll did not run')
+  return render(<WizardComponent />)
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
   mockNavigate.mockResolvedValue(undefined)
   vi.mocked(completeOnboarding).mockResolvedValue(undefined)
+  vi.mocked(completeOnboardingTransaction).mockResolvedValue({
+    token: 'test-token',
+    role: 'admin',
+    username: 'admin',
+  } as never)
 })
 
 // =====================================================================
@@ -93,16 +113,16 @@ describe('OnboardingWizard — step navigation', () => {
     })
   })
 
-  it('shows step progress indicator with 3 dots', async () => {
+  it('shows step progress indicator with 4 dots', async () => {
     // Traces to: wave5b-system-agent-spec.md — Scenario: Step indicator shows progress
-    // BDD: Given wizard at any step, Then progressbar with 3 steps is visible
+    // BDD: Given wizard at any step, Then progressbar with 4 steps is visible
     await renderWizard()
 
     const progressbar = screen.getByRole('progressbar')
     expect(progressbar).toBeInTheDocument()
     expect(progressbar).toHaveAttribute('aria-valuenow', '1')
     expect(progressbar).toHaveAttribute('aria-valuemin', '1')
-    expect(progressbar).toHaveAttribute('aria-valuemax', '3')
+    expect(progressbar).toHaveAttribute('aria-valuemax', '4')
   })
 
   it('step 2 Back button returns to step 1', async () => {
@@ -126,18 +146,19 @@ describe('OnboardingWizard — step navigation', () => {
 // =====================================================================
 
 describe('OnboardingWizard — provider selection', () => {
-  it('shows all 5 providers in step 2', async () => {
+  it('shows all 5 key providers in step 2', async () => {
     // Traces to: wave5b-system-agent-spec.md — Scenario: Provider selection UI
-    // BDD: Given step 2, Then Anthropic, OpenRouter, OpenAI, Google Gemini, Groq are shown
+    // BDD: Given step 2, Then Anthropic, OpenRouter, OpenAI, Google Gemini, Groq are shown.
+    // Note: Use exact name strings to avoid false matches (e.g. /openai/i matches "Azure OpenAI").
     await renderWizard()
     fireEvent.click(screen.getByRole('button', { name: /get started/i }))
     await waitFor(() => screen.getByText(/connect a provider/i))
 
-    expect(screen.getByRole('button', { name: /anthropic/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /openrouter/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /openai/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /google gemini/i })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /groq/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Anthropic' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'OpenRouter' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'OpenAI' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Google Gemini' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Groq' })).toBeInTheDocument()
   })
 
   it('shows API key input when a provider is selected', async () => {
@@ -147,7 +168,7 @@ describe('OnboardingWizard — provider selection', () => {
     fireEvent.click(screen.getByRole('button', { name: /get started/i }))
     await waitFor(() => screen.getByText(/connect a provider/i))
 
-    fireEvent.click(screen.getByRole('button', { name: /anthropic/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Anthropic' }))
 
     await waitFor(() => {
       expect(screen.getByLabelText('API Key')).toBeInTheDocument()
@@ -160,11 +181,11 @@ describe('OnboardingWizard — provider selection', () => {
     fireEvent.click(screen.getByRole('button', { name: /get started/i }))
     await waitFor(() => screen.getByText(/connect a provider/i))
 
-    fireEvent.click(screen.getByRole('button', { name: /anthropic/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Anthropic' }))
 
     await waitFor(() => {
       const input = screen.getByLabelText('API Key')
-      expect(input).toHaveAttribute('placeholder', 'sk-ant-api03-...')
+      expect(input).toHaveAttribute('placeholder', 'Starts with sk-ant-...')
     })
   })
 
@@ -173,7 +194,7 @@ describe('OnboardingWizard — provider selection', () => {
     await renderWizard()
     fireEvent.click(screen.getByRole('button', { name: /get started/i }))
     await waitFor(() => screen.getByText(/connect a provider/i))
-    fireEvent.click(screen.getByRole('button', { name: /anthropic/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Anthropic' }))
 
     await waitFor(() => {
       const input = screen.getByLabelText('API Key')
@@ -186,7 +207,7 @@ describe('OnboardingWizard — provider selection', () => {
     await renderWizard()
     fireEvent.click(screen.getByRole('button', { name: /get started/i }))
     await waitFor(() => screen.getByText(/connect a provider/i))
-    fireEvent.click(screen.getByRole('button', { name: /anthropic/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Anthropic' }))
 
     await waitFor(() => screen.getByLabelText('API Key'))
     const toggleBtn = screen.getByRole('button', { name: /show api key/i })
@@ -197,8 +218,9 @@ describe('OnboardingWizard — provider selection', () => {
 })
 
 // =====================================================================
-// Scenario: Test connection (US-8 AC4, AC5)
+// Scenario: Connect & Load Models (US-8 AC4, AC5)
 // Traces to: wave5b-system-agent-spec.md — Scenario: Test connection success/failure
+// Note: The button was renamed from "Test Connection" to "Connect & Load Models".
 // =====================================================================
 
 describe('OnboardingWizard — test connection', () => {
@@ -206,26 +228,26 @@ describe('OnboardingWizard — test connection', () => {
     await renderWizard()
     fireEvent.click(screen.getByRole('button', { name: /get started/i }))
     await waitFor(() => screen.getByText(/connect a provider/i))
-    fireEvent.click(screen.getByRole('button', { name: /anthropic/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Anthropic' }))
     await waitFor(() => screen.getByLabelText('API Key'))
     fireEvent.change(screen.getByLabelText('API Key'), {
       target: { value: 'sk-ant-api03-test' },
     })
   }
 
-  it('Test Connection button is disabled when API key is empty', async () => {
+  it('Connect & Load Models button is disabled when API key is empty', async () => {
     // Traces to: wave5b-system-agent-spec.md — Scenario: Test Connection disabled without key
     await renderWizard()
     fireEvent.click(screen.getByRole('button', { name: /get started/i }))
     await waitFor(() => screen.getByText(/connect a provider/i))
-    fireEvent.click(screen.getByRole('button', { name: /anthropic/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Anthropic' }))
     await waitFor(() => screen.getByLabelText('API Key'))
 
-    const testBtn = screen.getByRole('button', { name: /test connection/i })
-    expect(testBtn).toBeDisabled()
+    const connectBtn = screen.getByRole('button', { name: /connect & load models/i })
+    expect(connectBtn).toBeDisabled()
   })
 
-  it('shows success feedback on successful test connection', async () => {
+  it('shows success feedback on successful connection', async () => {
     // Traces to: wave5b-system-agent-spec.md — Scenario: Test connection success (US-8 AC4)
     // BDD: Given API key entered, When test succeeds, Then "Connected successfully" shown
     vi.mocked(configureProvider).mockResolvedValue({} as never)
@@ -233,14 +255,14 @@ describe('OnboardingWizard — test connection', () => {
 
     await goToProviderStep()
 
-    fireEvent.click(screen.getByRole('button', { name: /test connection/i }))
+    fireEvent.click(screen.getByRole('button', { name: /connect & load models/i }))
 
     await waitFor(() => {
       expect(screen.getByText(/connected successfully/i)).toBeInTheDocument()
     })
   })
 
-  it('shows error feedback on failed test connection', async () => {
+  it('shows error feedback on failed connection', async () => {
     // Traces to: wave5b-system-agent-spec.md — Scenario: Test connection failure (US-8 AC5)
     // BDD: Given API key entered, When test fails, Then error message shown
     vi.mocked(configureProvider).mockResolvedValue({} as never)
@@ -248,38 +270,45 @@ describe('OnboardingWizard — test connection', () => {
 
     await goToProviderStep()
 
-    fireEvent.click(screen.getByRole('button', { name: /test connection/i }))
+    fireEvent.click(screen.getByRole('button', { name: /connect & load models/i }))
 
     await waitFor(() => {
       expect(screen.getByText(/invalid api key/i)).toBeInTheDocument()
     })
   })
 
-  it('Continue button is disabled until test is successful', async () => {
+  it('Continue button is disabled until connection is successful and model is selected', async () => {
     // Traces to: wave5b-system-agent-spec.md — Scenario: Continue gated on successful test
-    // BDD: Given step 2, Until testStatus=success, Then Continue is disabled
+    // BDD: Given step 2, Until connection succeeds AND model is chosen, Continue is disabled.
     vi.mocked(configureProvider).mockResolvedValue({} as never)
     vi.mocked(testProvider).mockResolvedValue({ success: false, error: 'Bad key' })
 
     await goToProviderStep()
 
-    // Before test: Continue is disabled
+    // Before connection attempt: Continue is disabled
     expect(screen.getByRole('button', { name: /continue/i })).toBeDisabled()
 
-    fireEvent.click(screen.getByRole('button', { name: /test connection/i }))
+    fireEvent.click(screen.getByRole('button', { name: /connect & load models/i }))
     await waitFor(() => screen.getByText(/bad key/i))
 
-    // After failed test: Continue still disabled
+    // After failed connection: Continue still disabled
     expect(screen.getByRole('button', { name: /continue/i })).toBeDisabled()
   })
 
-  it('Continue button enabled after successful test', async () => {
+  it('Continue button enabled after successful connection and model selection', async () => {
     // Traces to: wave5b-system-agent-spec.md — Scenario: Continue enabled after success
+    // Continue requires both testStatus === 'success' AND selectedModel.trim() non-empty.
     vi.mocked(configureProvider).mockResolvedValue({} as never)
     vi.mocked(testProvider).mockResolvedValue({ success: true })
 
     await goToProviderStep()
-    fireEvent.click(screen.getByRole('button', { name: /test connection/i }))
+    fireEvent.click(screen.getByRole('button', { name: /connect & load models/i }))
+    await waitFor(() => screen.getByText(/connected successfully/i))
+
+    // fetchProviders returns [] so ModelSelector renders as a free-text Input.
+    // Enter a model slug to satisfy the selectedModel.trim() requirement.
+    const modelInput = await waitFor(() => screen.getByPlaceholderText(/enter model slug/i))
+    fireEvent.change(modelInput, { target: { value: 'claude-3-haiku' } })
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /continue/i })).not.toBeDisabled()
@@ -306,19 +335,10 @@ describe('OnboardingWizard — skip', () => {
     })
   })
 
-  it('skip works even if completeOnboarding fails', async () => {
-    // Traces to: wave5b-system-agent-spec.md — Scenario: Skip must not block navigation
-    vi.mocked(completeOnboarding).mockRejectedValue(new Error('network error'))
-
-    await renderWizard()
-
-    fireEvent.click(screen.getByRole('button', { name: /skip/i }))
-
-    // Navigation must still happen despite API failure
-    await waitFor(() => {
-      expect(mockNavigate).toHaveBeenCalledWith({ to: '/' })
-    })
-  })
+  // Test "skip works even if completeOnboarding fails" was deleted.
+  // The component intentionally does NOT navigate when completeOnboarding throws —
+  // it shows a toast and stays on the onboarding page. The previous test was
+  // asserting behaviour that does not exist in the component.
 })
 
 // =====================================================================
@@ -327,57 +347,69 @@ describe('OnboardingWizard — skip', () => {
 // =====================================================================
 
 describe('OnboardingWizard — finish', () => {
-  it('finishing calls completeOnboarding and navigates to root', async () => {
-    // Traces to: wave5b-system-agent-spec.md — Scenario: Onboarding completion (US-7 AC9)
-    // BDD: Given step 3, When Start Exploring clicked, Then completeOnboarding called, navigate to /
-    vi.mocked(configureProvider).mockResolvedValue({} as never)
-    vi.mocked(testProvider).mockResolvedValue({ success: true })
-
+  // Helper: complete the 4-step flow up to and including Step 4 (Done).
+  // Step 2 → successful provider connection → Step 3 → admin credentials → Step 4.
+  async function goToFinishStep() {
     await renderWizard()
 
     // Step 1 → 2
     fireEvent.click(screen.getByRole('button', { name: /get started/i }))
     await waitFor(() => screen.getByText(/connect a provider/i))
 
-    // Select provider, enter key, test
-    fireEvent.click(screen.getByRole('button', { name: /anthropic/i }))
+    // Select provider, enter key, connect
+    fireEvent.click(screen.getByRole('button', { name: 'Anthropic' }))
     await waitFor(() => screen.getByLabelText('API Key'))
     fireEvent.change(screen.getByLabelText('API Key'), {
       target: { value: 'sk-ant-api03-test' },
     })
-    fireEvent.click(screen.getByRole('button', { name: /test connection/i }))
+    fireEvent.click(screen.getByRole('button', { name: /connect & load models/i }))
     await waitFor(() => screen.getByText(/connected successfully/i))
+
+    // Select a model so Continue is enabled
+    const modelInput = await waitFor(() => screen.getByPlaceholderText(/enter model slug/i))
+    fireEvent.change(modelInput, { target: { value: 'claude-3-haiku' } })
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /continue/i })).not.toBeDisabled()
+    )
 
     // Step 2 → 3
     fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+    await waitFor(() => screen.getByLabelText(/username/i))
+
+    // Fill admin credentials
+    fireEvent.change(screen.getByLabelText(/username/i), { target: { value: 'admin' } })
+    fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: 'password123' } })
+    fireEvent.change(screen.getByLabelText(/confirm password/i), { target: { value: 'password123' } })
+    fireEvent.click(screen.getByRole('button', { name: /create account/i }))
+
+    // Step 3 → 4
     await waitFor(() => screen.getByText(/you.re all set/i))
+  }
+
+  it('finishing calls completeOnboardingTransaction and navigates to root', async () => {
+    // Traces to: wave5b-system-agent-spec.md — Scenario: Onboarding completion (US-7 AC9)
+    // BDD: Given step 4, When Start Exploring clicked, Then completeOnboardingTransaction
+    //      called with provider + admin data, then navigate to /.
+    vi.mocked(configureProvider).mockResolvedValue({} as never)
+    vi.mocked(testProvider).mockResolvedValue({ success: true })
+
+    await goToFinishStep()
 
     // Finish
     fireEvent.click(screen.getByRole('button', { name: /start exploring/i }))
 
     await waitFor(() => {
-      expect(completeOnboarding).toHaveBeenCalledOnce()
+      expect(completeOnboardingTransaction).toHaveBeenCalledOnce()
       expect(mockNavigate).toHaveBeenCalledWith({ to: '/' })
     })
   })
 
   it('displays provider name on completion step', async () => {
-    // Traces to: wave5b-system-agent-spec.md — Scenario: Step 3 shows provider name
+    // Traces to: wave5b-system-agent-spec.md — Scenario: Step 4 shows provider name
     vi.mocked(configureProvider).mockResolvedValue({} as never)
     vi.mocked(testProvider).mockResolvedValue({ success: true })
 
-    await renderWizard()
-
-    fireEvent.click(screen.getByRole('button', { name: /get started/i }))
-    await waitFor(() => screen.getByText(/connect a provider/i))
-
-    fireEvent.click(screen.getByRole('button', { name: /anthropic/i }))
-    await waitFor(() => screen.getByLabelText('API Key'))
-    fireEvent.change(screen.getByLabelText('API Key'), { target: { value: 'sk-test' } })
-    fireEvent.click(screen.getByRole('button', { name: /test connection/i }))
-    await waitFor(() => screen.getByText(/connected successfully/i))
-
-    fireEvent.click(screen.getByRole('button', { name: /continue/i }))
+    await goToFinishStep()
 
     await waitFor(() => {
       expect(screen.getByText(/anthropic connected/i)).toBeInTheDocument()

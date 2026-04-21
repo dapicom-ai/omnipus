@@ -36,9 +36,13 @@ This file tracks features referenced by E2E tests that are not yet implemented i
   `ExecApprovalBlock` renders inside the chat composer area but does not use
   `data-testid="approval-modal"`. There is no stable selector to drive the approve flow.
 
-- [ ] **Subagent collapsed block UI** (`handoff.spec.ts (b)`)
-  No `data-testid="subagent-collapsed"` component. Subagent output arrives as plain
-  assistant message text with no distinct collapsible UI.
+- [x] **Subagent collapsed block UI** (`handoff.spec.ts (b)`, `subagent.spec.ts`)
+  RESOLVED by Sprint H (H1+H2): `SubagentBlock.tsx` implements `data-testid="subagent-collapsed"`
+  (collapsed header) and `data-testid="subagent-expanded"` (expanded body). The backend now emits
+  `subagent_start` / `subagent_end` WS frames; the frontend chat reducer groups frames by span.
+  REMAINING GAP: `ToolCallBadge.tsx` lacks `data-testid="tool-call-badge"` on its root div —
+  nested badges inside the expanded block are not selectable by testid. frontend-lead must add
+  `data-testid="tool-call-badge"` to fix this. Tracks: BDD Scenario 4, FR-H-008.
 
 - [ ] **Agent handoff transcript labels in DOM** (`handoff.spec.ts (a)`)
   AssistantMessage does not annotate each message with the handoff-chain agent's name
@@ -73,7 +77,9 @@ This file tracks features referenced by E2E tests that are not yet implemented i
 - [ ] Messages list wrapper → `data-testid="messages-list"`
 - [ ] Approval modal → `data-testid="approval-modal"`
 - [ ] Agent-removed banner → `data-testid="agent-removed-banner"`
-- [ ] Subagent collapsed block → `data-testid="subagent-collapsed"`
+- [x] Subagent collapsed block → `data-testid="subagent-collapsed"` (RESOLVED by Sprint H / H2)
+- [x] Subagent expanded body → `data-testid="subagent-expanded"` (RESOLVED by Sprint H / H2)
+- [ ] Nested ToolCallBadge inside SubagentBlock → `data-testid="tool-call-badge"` (NEEDED for BDD Scenario 4, E2E rows 20-22)
 - [ ] Dev-mode banner → `data-testid="dev-mode-banner"`
 - [ ] Version toast → `data-testid="version-toast"`
 - [ ] Always-allow toggle → `data-testid="always-allow-toggle"`

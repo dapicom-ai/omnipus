@@ -268,7 +268,7 @@ function SessionItem({ session, agents, isActive, onSelect, onDeleted }: Session
 
 export function SessionPanel() {
   const { sessionPanelOpen, closeSessionPanel } = useUiStore()
-  const { activeSessionId, activeAgentId, setActiveSession, attachToSession } = useSessionStore()
+  const { activeSessionId, activeAgentId, setActiveSession, attachToSession, setActiveAgentType } = useSessionStore()
   const queryClient = useQueryClient()
 
   const [searchValue, setSearchValue] = useState('')
@@ -301,12 +301,25 @@ export function SessionPanel() {
   })
 
   const handleSelectSession = (session: Session) => {
-    if (session.type === 'task') {
-      attachToSession(session.id, 'task', session.title, session.agent_id)
-    } else {
-      const agentId = session.active_agent_id ?? session.agent_id
+    // Always trigger the WS attach_session flow so Sprint I's replay pipeline
+    // emits tool_call_start / tool_call_result / subagent_start / subagent_end
+    // frames. Without this, chat sessions render only the filtered REST payload
+    // (user/assistant text) and tool-call history is silently dropped
+    // (ChatScreen.tsx filters non-text entries from historyData).
+    //
+    // Do NOT also call setActiveSession — it calls resetChatSession() a second
+    // time, wiping the state attachToSession just initialized (including
+    // isReplaying=true and attachedSessionType).
+    const agentId = session.active_agent_id ?? session.agent_id
+    attachToSession(session.id, session.type, session.title, agentId)
+    if (session.type !== 'task') {
+      // Track the active agent type for composer behavior (chat-only concern).
+      // Set directly via the store — no reset, no double-attach.
       const agent = agents.find((a) => a.id === agentId)
-      setActiveSession(session.id, agentId, agent?.type ?? null)
+      if (agent?.type) {
+        // W3-8: use the dedicated store action instead of direct setState bypass.
+        setActiveAgentType(agent.type)
+      }
     }
     closeSessionPanel()
   }
