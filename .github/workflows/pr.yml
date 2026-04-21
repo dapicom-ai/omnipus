@@ -323,8 +323,12 @@ jobs:
         # which is needed in case the credential seed step is extended in future.
         run: |
           set -euo pipefail
+          # --sandbox=off until #103 (Landlock ABI v4 kernel 6.8 incompatibility)
+          # lands. Sprint J fail-closes on capable kernels when Apply() fails;
+          # this E2E smoke doesn't need kernel enforcement (covered by
+          # tests/security/sandbox_enforcement_linux_test.go subprocess harness).
           OMNIPUS_MASTER_KEY=${{ secrets.OMNIPUS_MASTER_KEY_CI }} \
-            ./omnipus gateway --allow-empty > /tmp/omnipus.log 2>&1 &
+            ./omnipus gateway --allow-empty --sandbox=off > /tmp/omnipus.log 2>&1 &
           GATEWAY_PID=$!
           echo "${GATEWAY_PID}" > /tmp/omnipus.pid
 

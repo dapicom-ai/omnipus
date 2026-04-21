@@ -80,7 +80,12 @@ jobs:
           # Supply a deterministic master key so the credential store unlocks
           # without prompting (Plan 3 §1 locked-decision: env takes priority).
           export OMNIPUS_MASTER_KEY="0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
-          ./omnipus gateway --allow-empty > omnipus.log 2>&1 &
+          # --sandbox=off until #103 (Landlock ABI v4 kernel 6.8 incompatibility)
+          # lands. Sprint J correctly fail-closes at boot when Apply() fails on a
+          # capable kernel; the smoke test only needs a /health round-trip so we
+          # skip sandbox-apply here. Real kernel enforcement is proven by
+          # tests/security/sandbox_enforcement_linux_test.go (subprocess harness).
+          ./omnipus gateway --allow-empty --sandbox=off > omnipus.log 2>&1 &
           PID=$!
           echo "gateway pid=$PID"
 
