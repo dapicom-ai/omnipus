@@ -3,6 +3,7 @@ package audit
 import (
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // Default redaction patterns for SEC-16.
@@ -18,6 +19,45 @@ var defaultPatterns = []string{
 }
 
 const redactedValue = "[REDACTED]"
+
+// sensitiveFieldNames is the set of normalized field names whose values are always
+// replaced with [REDACTED] regardless of value content (SEC-16 field-name layer).
+//
+// Normalization: lowercase the key, then strip all '_' and '-' characters.
+// This means "API_KEY", "api-key", "ApiKey", and "apikey" all collapse to "apikey"
+// and match the same entry. Build the set once at package init for O(1) lookup.
+var sensitiveFieldNames = func() map[string]struct{} {
+	raw := []string{
+		// Passwords
+		"password", "pwd", "passwd", "passphrase",
+		// Secrets
+		"secret", "secrets",
+		// Tokens
+		"token", "accesstoken", "refreshtoken", "idtoken", "csrftoken", "xsrftoken",
+		// API keys
+		"apikey", "apikey", "apikey",
+		// Authorization
+		"authorization", "auth", "bearer",
+		// Private/signing keys
+		"privatekey", "signingkey",
+		// Client secrets
+		"clientsecret",
+	}
+	m := make(map[string]struct{}, len(raw))
+	for _, k := range raw {
+		m[k] = struct{}{}
+	}
+	return m
+}()
+
+// normalizeKey lowercases s and strips all '-' and '_' characters so that
+// "API_KEY", "api-key", "ApiKey", and "apikey" all map to the same normalized form.
+func normalizeKey(s string) string {
+	s = strings.ToLower(s)
+	s = strings.ReplaceAll(s, "_", "")
+	s = strings.ReplaceAll(s, "-", "")
+	return s
+}
 
 // Redactor replaces sensitive patterns in audit log entries (SEC-16).
 type Redactor struct {
@@ -66,11 +106,35 @@ func (r *Redactor) Redact(s string) string {
 	return s
 }
 
-// redactMap recursively redacts string values in a map.
+// redactField returns [REDACTED] if the field name is in the sensitive set (first
+// layer), otherwise falls through to value-pattern redaction on string values
+// (second layer). Non-string values for non-sensitive keys are walked recursively.
+//
+// Layering order:
+//  1. Field-name match (case-insensitive, separator-stripped) → always [REDACTED]
+//  2. Value-pattern match on string → [REDACTED] if a known secret pattern matches
+//  3. Structural walk (map, slice) → recurse with key context from the parent map
+func (r *Redactor) redactField(key string, value any) any {
+	if !r.enabled {
+		return value
+	}
+	if _, sensitive := sensitiveFieldNames[normalizeKey(key)]; sensitive {
+		// Already redacted? Leave it to avoid double-wrapping.
+		if s, ok := value.(string); ok && s == redactedValue {
+			return value
+		}
+		return redactedValue
+	}
+	// Not a sensitive field name — fall through to value-level redaction.
+	return r.redactValue(value)
+}
+
+// redactMap recursively redacts values in a map, applying field-name detection
+// at each key before falling back to value-pattern redaction.
 func (r *Redactor) redactMap(m map[string]any) map[string]any {
 	result := make(map[string]any, len(m))
 	for k, v := range m {
-		result[k] = r.redactValue(v)
+		result[k] = r.redactField(k, v)
 	}
 	return result
 }
