@@ -137,11 +137,11 @@ func TestPolicyGlob_ToolNameGlobRouting(t *testing.T) {
 			globalPolicies: map[string]policy.ToolPolicy{
 				"fs.*": policy.ToolPolicyAsk,
 			},
-			agentAllow:    []string{"fs.read"},
-			agentDeny:     nil,
-			tool:          "fs.read",
-			wantDecision:  true,
-			wantPolicy:    "allow", // agent explicit allow wins over global ask floor
+			agentAllow:   []string{"fs.read"},
+			agentDeny:    nil,
+			tool:         "fs.read",
+			wantDecision: true,
+			wantPolicy:   "allow", // agent explicit allow wins over global ask floor
 		},
 		// Row 10: prefix-only (no wildcard) — "fs" does not match "fs.read"
 		{
@@ -173,7 +173,6 @@ func TestPolicyGlob_ToolNameGlobRouting(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc // capture range variable for parallel subtests
 		t.Run(tc.name, func(t *testing.T) {
 			// BDD: Given a SecurityConfig built from the test case
 			defaultPol := policy.PolicyDeny // deny-by-default per project security posture
@@ -288,8 +287,8 @@ func TestPolicyGlob_GlobMatcherDirectly(t *testing.T) {
 		{"*", "", true},
 		// Question mark
 		{"fs.rea?", "fs.read", true},
-		{"fs.rea?", "fs.reads", false},  // one ? can only match one char
-		{"fs.rea?", "fs.rea", false},    // ? needs exactly one char
+		{"fs.rea?", "fs.reads", false}, // one ? can only match one char
+		{"fs.rea?", "fs.rea", false},   // ? needs exactly one char
 		{"fs.?ead", "fs.read", true},
 		// Prefix only (no wildcard)
 		{"fs", "fs.read", false},
@@ -298,7 +297,7 @@ func TestPolicyGlob_GlobMatcherDirectly(t *testing.T) {
 		{"fs.r*", "fs.read", true},
 		{"fs.r*", "fs.write", false},
 		{"web_?earch", "web_search", true},
-		{"web_?earch", "web_bearch", true},  // ? matches any single char
+		{"web_?earch", "web_bearch", true}, // ? matches any single char
 		{"web_?earch", "web_search_extra", false},
 	}
 
@@ -389,10 +388,10 @@ func TestPolicyGlob_EvaluatorReturnsExplainableDecision(t *testing.T) {
 
 	// Evaluate a variety of tool names — every decision must be explainable.
 	scenarios := []struct {
-		name       string
-		agentID    string
-		tool       string
-		policy     *policy.AgentPolicy
+		name    string
+		agentID string
+		tool    string
+		policy  *policy.AgentPolicy
 	}{
 		{
 			name:    "no_policy_deny_default",

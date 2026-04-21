@@ -220,8 +220,9 @@ func TestSSRFWiring_AllowInternalOverride(t *testing.T) {
 
 	t.Run("allowed_host_passes_through", func(t *testing.T) {
 		// BDD: When CheckURL is called for the whitelisted IP
-		serverHost := strings.TrimPrefix(server.URL, "http://")
-		serverHost, _, _ = net.SplitHostPort(serverHost)
+		// (server.URL derivation retained for documentation — the real check runs
+		//  directly against the allowlisted IP below, not the httptest server.)
+		_ = strings.TrimPrefix
 
 		// Direct IP check on the allowlisted address
 		err := checkerWithAllow.CheckURL(ctx, "http://"+allowedIP+"/api/v1/data")
@@ -314,18 +315,11 @@ func TestSSRFWiring_6to4Addresses(t *testing.T) {
 		"2002:7f00:0001:: must parse as a valid IPv6 address")
 
 	err := checker.CheckIP(sixToFourLoopback)
-	if err == nil {
-		// If the checker does not yet unwrap 6to4, report as BLOCKED (implementation gap)
-		// rather than silently passing. This exposes the gap to the implementing agent.
-		t.Fatalf("BLOCKED (#78): SSRFChecker does not block 6to4 address 2002:7f00:0001:: "+
-			"(encodes 127.0.0.1) — expected rejection, got nil error. "+
-			"The backend-lead agent for issue #78 must implement 6to4 unwrapping in CheckIP.")
-	}
-	// If err != nil, the 6to4 address was blocked — correct behavior.
+	require.Error(t, err,
+		"6to4 address 2002:7f00:0001:: encodes 127.0.0.1 and must be rejected by CheckIP")
 	assert.True(t,
 		ssrfErrContains(err, "ssrf", "private", "blocked"),
 		"6to4 loopback address must be blocked with an identifiable reason; got: %q", err.Error())
-	t.Logf("PASS: 6to4 address blocked: %v", err)
 }
 
 // TestSSRFWiring_PublicAddressAllowed — non-blocking assertion

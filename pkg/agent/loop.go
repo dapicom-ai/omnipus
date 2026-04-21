@@ -116,7 +116,7 @@ type AgentLoop struct {
 	// ssrfChecker is the singleton SSRFChecker built from cfg.Sandbox.SSRF at
 	// startup (SEC-24). It is nil when SSRF protection is disabled. All outbound
 	// HTTP tool surfaces (web_search, skills installer, browser, exec proxy)
-	// receive this instance so the allow_internal policy is honoured uniformly.
+	// receive this instance so the allow_internal policy is honored uniformly.
 	ssrfChecker *security.SSRFChecker
 
 	// Wave 4: Browser automation manager (US-4/US-6/US-7). Nil when browser
@@ -349,7 +349,7 @@ func NewAgentLoop(
 
 	// SEC-24: Build the singleton SSRFChecker from config. When SSRF is enabled,
 	// all outbound HTTP tool surfaces receive this checker so allow_internal is
-	// honoured uniformly. When disabled the checker is nil and callers fall back
+	// honored uniformly. When disabled the checker is nil and callers fall back
 	// to their default (proxy-aware) HTTP clients.
 	if cfg.Sandbox.SSRF.Enabled {
 		al.ssrfChecker = security.NewSSRFChecker(cfg.Sandbox.SSRF.AllowInternal)
@@ -864,7 +864,7 @@ func registerSharedTools(
 				}
 				browserCfg.PersistSession = cfg.Tools.Browser.PersistSession
 
-				// Use the singleton SSRF checker (built from config, honours
+				// Use the singleton SSRF checker (built from config, honors
 				// allow_internal). Fall back to a default checker (no allowlist)
 				// when SSRF is not explicitly enabled — browser tools always
 				// require a non-nil SSRFChecker (see browser.NewBrowserManager).
@@ -1751,7 +1751,7 @@ func GetTaskExecutor(al *AgentLoop) *TaskExecutor {
 // config at startup (SEC-24). Returns nil when SSRF protection is disabled
 // (sandbox.ssrf.enabled = false in config.json). Gateway handlers that make
 // outbound HTTP calls (e.g. the skills installer) should pass this to their
-// HTTP client constructors so allow_internal is honoured consistently.
+// HTTP client constructors so allow_internal is honored consistently.
 func GetSSRFChecker(al *AgentLoop) *security.SSRFChecker {
 	return al.ssrfChecker
 }

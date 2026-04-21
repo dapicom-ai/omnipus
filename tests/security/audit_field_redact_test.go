@@ -28,15 +28,6 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/audit"
 )
 
-// redactorForTest returns a freshly created Redactor with no custom patterns.
-// It uses t.Helper so failures point at the caller.
-func redactorForTest(t *testing.T) *audit.Redactor {
-	t.Helper()
-	r, err := audit.NewRedactor(nil)
-	require.NoError(t, err, "NewRedactor must succeed with nil patterns")
-	return r
-}
-
 // loggerForTest creates a Logger with redaction enabled, backed by a temp dir.
 func loggerForTest(t *testing.T) (*audit.Logger, string) {
 	t.Helper()
@@ -49,19 +40,6 @@ func loggerForTest(t *testing.T) (*audit.Logger, string) {
 	require.NoError(t, err, "NewLogger must succeed")
 	t.Cleanup(func() { _ = logger.Close() })
 	return logger, dir
-}
-
-// readLastEntry reads the last JSONL line from the audit log and decodes it.
-func readLastEntry(t *testing.T, dir string) map[string]any {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(dir, "audit.jsonl"))
-	require.NoError(t, err, "audit.jsonl must exist after a Log() call")
-	require.NotEmpty(t, data, "audit.jsonl must not be empty")
-
-	var m map[string]any
-	require.NoError(t, json.Unmarshal(data, &m),
-		"last audit entry must be valid JSON")
-	return m
 }
 
 // TestAuditFieldRedact_SensitiveFieldAliases — all aliases from the spec
@@ -365,12 +343,12 @@ func TestAuditFieldRedact_EdgeCases_NilEmptyNumberBool(t *testing.T) {
 		Parameters: map[string]any{
 			// Sensitive keys with primitive values — must be [REDACTED] for string-like,
 			// or handled without panic for non-string.
-			"password": nil,          // nil value
-			"token":    "",           // empty string
-			"api_key":  float64(42),  // number (JSON numbers become float64)
-			"secret":   true,         // bool
+			"password": nil,         // nil value
+			"token":    "",          // empty string
+			"api_key":  float64(42), // number (JSON numbers become float64)
+			"secret":   true,        // bool
 			// Non-sensitive key with normal value
-			"count":    float64(99),
+			"count": float64(99),
 		},
 	}
 

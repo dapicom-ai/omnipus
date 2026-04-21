@@ -65,7 +65,7 @@ type restAPI struct {
 	// ssrfChecker enforces SEC-24 SSRF protection on outbound HTTP requests made
 	// by REST handlers (skills installer). Nil when SSRF protection is disabled
 	// in config (sandbox.ssrf.enabled = false). Shared with the agent loop's
-	// singleton so allow_internal is honoured consistently across all surfaces.
+	// singleton so allow_internal is honored consistently across all surfaces.
 	ssrfChecker *security.SSRFChecker
 	// sandboxResult captures the Sprint-J apply outcome (mode, backend,
 	// applied state). Immutable after boot — FR-J-015 forbids hot-reload

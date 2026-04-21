@@ -34,8 +34,8 @@ var sensitiveFieldNames = func() map[string]struct{} {
 		"secret", "secrets",
 		// Tokens
 		"token", "accesstoken", "refreshtoken", "idtoken", "csrftoken", "xsrftoken",
-		// API keys
-		"apikey", "apikey", "apikey",
+		// API keys (normalized — original forms like `api_key`, `api-key`, `API_KEY` all collapse here after normalizeKey strips `_`/`-` and lowercases)
+		"apikey",
 		// Authorization
 		"authorization", "auth", "bearer",
 		// Private/signing keys
