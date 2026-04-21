@@ -129,5 +129,11 @@ func omnipusGracefulShutdown(
 		cp.Close()
 	}
 
+	// Stop the permissive / production-off nag-banner goroutine if one was
+	// armed at boot. Safe to call on nil or never-started state.
+	if runningServices.stopNagBanner != nil {
+		runningServices.stopNagBanner()
+	}
+
 	slog.Info("shutdown: complete")
 }

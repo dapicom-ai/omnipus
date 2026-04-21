@@ -67,6 +67,11 @@ type restAPI struct {
 	// in config (sandbox.ssrf.enabled = false). Shared with the agent loop's
 	// singleton so allow_internal is honoured consistently across all surfaces.
 	ssrfChecker *security.SSRFChecker
+	// sandboxResult captures the Sprint-J apply outcome (mode, backend,
+	// applied state). Immutable after boot — FR-J-015 forbids hot-reload
+	// of sandbox config. HandleSandboxStatus reads this to enrich the
+	// response with mode and disabled_by.
+	sandboxResult *SandboxApplyResult
 	// Lazy-initialized admin-only handler wrappers. Built once on first use so
 	// each incoming PUT request doesn't allocate a fresh middleware chain.
 	adminUpdateConfigOnce    sync.Once
