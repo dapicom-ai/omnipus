@@ -163,6 +163,27 @@ func (sc *SSRFChecker) CheckIP(ip net.IP) error {
 		return nil
 	}
 
+	// 6to4 addresses (RFC 3056 — 2002::/16): the embedded IPv4 address occupies
+	// bytes [2:6] of the IPv6 address. Unwrap and re-check against IPv4 rules so
+	// that e.g. 2002:7f00:0001:: (which encodes 127.0.0.1) is correctly blocked.
+	if len(ip) == net.IPv6len && ip[0] == 0x20 && ip[1] == 0x02 {
+		embedded4 := net.IPv4(ip[2], ip[3], ip[4], ip[5])
+		if err := sc.CheckIP(embedded4); err != nil {
+			return fmt.Errorf("SSRF: 6to4 address %s embeds blocked IPv4: %w", ipStr, err)
+		}
+		// embedded4 is safe; fall through to standard IPv6 checks below.
+	}
+
+	// Teredo addresses (RFC 4380 — 2001:0000::/32): the client's IPv4 address
+	// occupies bytes [12:16], XOR-inverted with 0xFF. Unwrap and re-check.
+	if len(ip) == net.IPv6len && ip[0] == 0x20 && ip[1] == 0x01 && ip[2] == 0x00 && ip[3] == 0x00 {
+		client4 := net.IPv4(ip[12]^0xff, ip[13]^0xff, ip[14]^0xff, ip[15]^0xff)
+		if err := sc.CheckIP(client4); err != nil {
+			return fmt.Errorf("SSRF: Teredo address %s embeds blocked client IPv4: %w", ipStr, err)
+		}
+		// client4 is safe; fall through to standard IPv6 checks below.
+	}
+
 	// Pure IPv6
 	for _, ipNet := range sc.ipv6Nets {
 		if ipNet.Contains(ip) {
