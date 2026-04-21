@@ -38,6 +38,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/media"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	providers_pkg "github.com/dapicom-ai/omnipus/pkg/providers"
+	"github.com/dapicom-ai/omnipus/pkg/security"
 	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/skills"
 	"github.com/dapicom-ai/omnipus/pkg/taskstore"
@@ -61,6 +62,11 @@ type restAPI struct {
 	taskExecutor  *agent.TaskExecutor  // task execution engine
 	credStore     *credentials.Store   // shared unlocked credential store (injected at boot)
 	mediaStore    media.MediaStore     // shared media store for serving media files
+	// ssrfChecker enforces SEC-24 SSRF protection on outbound HTTP requests made
+	// by REST handlers (skills installer). Nil when SSRF protection is disabled
+	// in config (sandbox.ssrf.enabled = false). Shared with the agent loop's
+	// singleton so allow_internal is honoured consistently across all surfaces.
+	ssrfChecker *security.SSRFChecker
 	// Lazy-initialized admin-only handler wrappers. Built once on first use so
 	// each incoming PUT request doesn't allocate a fresh middleware chain.
 	adminUpdateConfigOnce    sync.Once
@@ -1716,7 +1722,11 @@ func (a *restAPI) deleteSkill(w http.ResponseWriter, name string) {
 		jsonErr(w, http.StatusBadRequest, "invalid skill name")
 		return
 	}
-	installer, err := skills.NewSkillInstaller(a.homePath, "", "")
+	// Inject the SSRF checker (SEC-24) so that any outbound HTTP calls made by
+	// the installer (e.g. future hash verification against a registry) are
+	// protected. a.ssrfChecker is nil when SSRF is disabled; the constructor
+	// accepts nil and falls back to a plain HTTP client in that case.
+	installer, err := skills.NewSkillInstallerWithSSRF(a.homePath, "", "", a.ssrfChecker)
 	if err != nil {
 		slog.Error("rest: create skill installer for delete", "error", err)
 		jsonErr(w, http.StatusInternalServerError, "could not initialize skill installer")

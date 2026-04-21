@@ -113,6 +113,12 @@ type AgentLoop struct {
 	// vars (degraded mode — LIM-02).
 	execProxy *security.ExecProxy
 
+	// ssrfChecker is the singleton SSRFChecker built from cfg.Sandbox.SSRF at
+	// startup (SEC-24). It is nil when SSRF protection is disabled. All outbound
+	// HTTP tool surfaces (web_search, skills installer, browser, exec proxy)
+	// receive this instance so the allow_internal policy is honoured uniformly.
+	ssrfChecker *security.SSRFChecker
+
 	// Wave 4: Browser automation manager (US-4/US-6/US-7). Nil when browser
 	// tools are disabled. Shutdown() is called in AgentLoop.Close().
 	browserMgr *browser.BrowserManager
@@ -341,14 +347,24 @@ func NewAgentLoop(
 	logger.InfoCF("agent", "Prompt guard initialized",
 		map[string]any{"strictness": string(al.promptGuard.Strictness())})
 
+	// SEC-24: Build the singleton SSRFChecker from config. When SSRF is enabled,
+	// all outbound HTTP tool surfaces receive this checker so allow_internal is
+	// honoured uniformly. When disabled the checker is nil and callers fall back
+	// to their default (proxy-aware) HTTP clients.
+	if cfg.Sandbox.SSRF.Enabled {
+		al.ssrfChecker = security.NewSSRFChecker(cfg.Sandbox.SSRF.AllowInternal)
+		logger.InfoCF("agent", "SSRF protection enabled",
+			map[string]any{"allow_internal_count": len(cfg.Sandbox.SSRF.AllowInternal)})
+	}
+
 	// SEC-28: Start the loopback SSRF proxy for exec child processes when
 	// enabled. On bind failure we log and fall back to degraded mode (child
 	// processes run without HTTP_PROXY env vars — LIM-02) rather than
 	// failing startup, because exec is a core tool and a proxy bind failure
 	// on a shared port should not take the whole agent loop down.
 	if cfg.Tools.Exec.EnableProxy {
-		ssrfChecker := security.NewSSRFChecker(nil)
-		proxy := security.NewExecProxy(ssrfChecker, nil)
+		// Reuse the singleton SSRF checker (which may be nil when SSRF is disabled).
+		proxy := security.NewExecProxy(al.ssrfChecker, nil)
 		if err := proxy.Start(); err != nil {
 			logger.ErrorCF("agent", "Failed to start exec SSRF proxy; child processes will run without proxy env vars",
 				map[string]any{"error": err.Error()})
@@ -590,6 +606,7 @@ func registerSharedTools(
 			BaiduSearchMaxResults: cfg.Tools.Web.BaiduSearch.MaxResults,
 			BaiduSearchEnabled:    cfg.Tools.Web.BaiduSearch.Enabled,
 			Proxy:                 cfg.Tools.Web.Proxy,
+			SSRFChecker:           al.ssrfChecker, // SEC-24: nil when SSRF disabled
 		})
 		if err != nil {
 			logger.ErrorCF("agent", "Failed to create web search tool", map[string]any{"error": err.Error()})
@@ -847,8 +864,15 @@ func registerSharedTools(
 				}
 				browserCfg.PersistSession = cfg.Tools.Browser.PersistSession
 
-				ssrfChecker := security.NewSSRFChecker(nil)
-				mgr, regErr := browser.RegisterTools(agent.Tools, browserCfg, ssrfChecker)
+				// Use the singleton SSRF checker (built from config, honours
+				// allow_internal). Fall back to a default checker (no allowlist)
+				// when SSRF is not explicitly enabled — browser tools always
+				// require a non-nil SSRFChecker (see browser.NewBrowserManager).
+				browserSSRF := al.ssrfChecker
+				if browserSSRF == nil {
+					browserSSRF = security.NewSSRFChecker(nil)
+				}
+				mgr, regErr := browser.RegisterTools(agent.Tools, browserCfg, browserSSRF)
 				// Note: browser.evaluate stays registered. Policy (see pkg/policy
 				// builtinToolPolicies) denies it by default; operators who need
 				// it set security.tool_policies["browser.evaluate"] = "ask".
@@ -1721,6 +1745,15 @@ func GetTaskStore(al *AgentLoop) *taskstore.TaskStore {
 // GetTaskExecutor returns the shared TaskExecutor (may be nil in tests).
 func GetTaskExecutor(al *AgentLoop) *TaskExecutor {
 	return al.taskExecutor
+}
+
+// GetSSRFChecker returns the singleton SSRFChecker built from the SSRF policy
+// config at startup (SEC-24). Returns nil when SSRF protection is disabled
+// (sandbox.ssrf.enabled = false in config.json). Gateway handlers that make
+// outbound HTTP calls (e.g. the skills installer) should pass this to their
+// HTTP client constructors so allow_internal is honoured consistently.
+func GetSSRFChecker(al *AgentLoop) *security.SSRFChecker {
+	return al.ssrfChecker
 }
 
 // GetSessionStore returns the shared UnifiedStore for new sessions. May be nil

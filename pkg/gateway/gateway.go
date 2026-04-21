@@ -740,6 +740,7 @@ func setupAndStartServices(
 		taskExecutor:  tExecutor,
 		credStore:     credStore,
 		mediaStore:    runningServices.MediaStore,
+		ssrfChecker:   agent.GetSSRFChecker(agentLoop), // SEC-24: nil when SSRF disabled
 	}
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions", api.withAuth(api.HandleSessions))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions/", api.withAuth(api.HandleSessions))
