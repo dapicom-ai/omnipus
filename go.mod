@@ -31,12 +31,13 @@ require (
 	github.com/openai/openai-go/v3 v3.22.0
 	github.com/rivo/tview v0.42.0
 	github.com/rs/zerolog v1.35.0
-	github.com/slack-go/slack v0.17.3
+	github.com/slack-go/slack v0.22.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	github.com/tencent-connect/botgo v0.2.1
 	go.mau.fi/util v0.9.7
 	go.mau.fi/whatsmeow v0.0.0-20260219150138-7ae702b1eed4
+	go.uber.org/goleak v1.3.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/term v0.41.0
 	golang.org/x/time v0.14.0
@@ -98,7 +99,6 @@ require (
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/vektah/gqlparser/v2 v2.5.27 // indirect
 	go.mau.fi/libsignal v0.2.1 // indirect
-	go.uber.org/goleak v1.3.0 // indirect
 	golang.org/x/exp v0.0.0-20260312153236-7ab1446f8b90 // indirect
 	golang.org/x/text v0.35.0 // indirect
 	modernc.org/libc v1.67.6 // indirect
