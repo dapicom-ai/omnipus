@@ -207,7 +207,9 @@ func (c *SlackChannel) SendMedia(ctx context.Context, msg bus.OutboundMediaMessa
 			title = filename
 		}
 
-		_, err = c.api.UploadFileV2Context(ctx, slack.UploadFileV2Parameters{
+		// slack-go 0.20 removed the V2-suffixed API; UploadFileContext now uses
+		// the v2 three-step upload flow internally with the same field set.
+		_, err = c.api.UploadFileContext(ctx, slack.UploadFileParameters{
 			Channel:  channelID,
 			File:     localPath,
 			Filename: filename,
