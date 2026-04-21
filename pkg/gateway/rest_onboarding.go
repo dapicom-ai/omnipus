@@ -327,3 +327,88 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 	}
 	jsonOK(w, resp)
 }
+
+// HandleOnboardingProbeProvider handles POST /api/v1/onboarding/probe-provider.
+//
+// Purpose: during onboarding the SPA needs to test an API key AND fetch the
+// available model list so the user can pick a model — BEFORE onboarding
+// completes and BEFORE a __Host-csrf cookie can be issued (the Secure cookie
+// cannot install over plain HTTP on non-localhost origins).
+//
+// The endpoint is CSRF-exempt (see defaultExemptPaths) and non-persistent:
+// it accepts the api_key in the request body, uses it to fetch the upstream
+// model list, and returns the result. Nothing is written to disk, credentials
+// store, or in-memory config. After onboarding completes, this endpoint
+// returns 409 — post-onboarding admins use the normal PUT /providers/{id}
+// + GET /providers flow (which works because their browser has the cookie
+// by then).
+//
+// Request body:
+//
+//	{"id":"openrouter","api_key":"sk-or-...","endpoint":"https://openrouter.ai/api/v1"}
+//
+// `endpoint` is optional; when omitted, the server uses
+// providers.GetDefaultAPIBase(id).
+//
+// Response shape:
+//
+//	{"success":true,"models":["gpt-4","gpt-4-turbo",...]}     on OK
+//	{"success":false,"error":"401 unauthorized"}               on upstream reject
+//	(HTTP 409)                                                 after onboarding complete
+//	(HTTP 400)                                                 on malformed body / unknown id
+func (a *restAPI) HandleOnboardingProbeProvider(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	// Gate: only usable during bootstrap. Once onboarding is complete the
+	// endpoint still exists (CSRF-exempt path can't be removed dynamically)
+	// but it refuses to serve — admins with a cookie use the standard
+	// /providers/{id} PUT + GET /providers flow instead.
+	if a.onboardingMgr != nil && a.onboardingMgr.IsComplete() {
+		jsonErr(w, http.StatusConflict,
+			"onboarding already complete — use PUT /api/v1/providers/{id} and GET /api/v1/providers to add providers")
+		return
+	}
+
+	var body struct {
+		ID       string `json:"id"`
+		APIKey   string `json:"api_key"`
+		Endpoint string `json:"endpoint"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if body.ID == "" {
+		jsonErr(w, http.StatusBadRequest, "id is required")
+		return
+	}
+	if body.APIKey == "" {
+		jsonErr(w, http.StatusBadRequest, "api_key is required")
+		return
+	}
+
+	baseURL := body.Endpoint
+	if baseURL == "" {
+		baseURL = providers.GetDefaultAPIBase(body.ID)
+	}
+	if baseURL == "" {
+		// Unknown provider and caller didn't supply an endpoint — the probe
+		// cannot proceed without one.
+		jsonErr(w, http.StatusBadRequest,
+			fmt.Sprintf("unknown provider %q and no endpoint override supplied", body.ID))
+		return
+	}
+
+	models, fetchErr := fetchUpstreamModels(baseURL, body.APIKey)
+	if fetchErr != nil {
+		// Upstream probe failure is a 200 with success=false — symmetrical
+		// with POST /providers/{id}/test, so the SPA's error-handling branch
+		// is identical for both flows.
+		jsonOK(w, map[string]any{"success": false, "error": fetchErr.Error()})
+		return
+	}
+
+	jsonOK(w, map[string]any{"success": true, "models": models})
+}

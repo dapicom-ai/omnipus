@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
@@ -18,7 +18,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ModelSelector } from '@/components/ui/model-selector'
-import { configureProvider, testProvider, completeOnboardingTransaction, completeOnboarding, fetchProviders } from '@/lib/api'
+import { probeProvider, completeOnboardingTransaction, completeOnboarding } from '@/lib/api'
 import OmnipusAvatar from '@/assets/logo/omnipus-avatar.svg?url'
 import { PROVIDER_HINTS } from '@/lib/constants'
 import { useUiStore } from '@/store/ui'
@@ -125,15 +125,15 @@ function OnboardingWizard() {
     setTestStatus('testing')
     setTestError('')
     try {
-      await configureProvider(selectedProvider, apiKey.trim())
-      const result = await testProvider(selectedProvider)
+      // Non-persistent test + fetch: the server probes the provider with the
+      // supplied key and returns the model list in one response. Nothing is
+      // saved to disk until the user clicks "Complete" on step 4, which fires
+      // /onboarding/complete with the full payload atomically.
+      const result = await probeProvider(selectedProvider, apiKey.trim())
       if (result.success) {
         setTestStatus('success')
-        // Refetch provider list to get the updated model list for this provider.
-        const freshProviders = await fetchProviders()
-        const providerData = freshProviders.find((p) => p.id === selectedProvider)
-        if (providerData?.models && providerData.models.length > 0) {
-          setAvailableModels(providerData.models)
+        if (result.models && result.models.length > 0) {
+          setAvailableModels(result.models)
         }
       } else {
         setTestStatus('error')
@@ -145,22 +145,10 @@ function OnboardingWizard() {
     }
   }
 
-  // Save the selected model to the backend when it changes
-  useEffect(() => {
-    if (!selectedModel || testStatus !== 'success') return
-    const saveModel = async () => {
-      try {
-        await configureProvider(selectedProvider, undefined, undefined, selectedModel)
-      } catch (err) {
-        console.error('Failed to save model selection:', err)
-        addToast({
-          message: `Failed to save model selection: ${err instanceof Error ? err.message : 'Unknown error'}`,
-          variant: 'error',
-        })
-      }
-    }
-    saveModel()
-  }, [selectedModel, selectedProvider, testStatus])
+  // Model selection is kept purely in local state during onboarding. It gets
+  // persisted to the server as part of /onboarding/complete's payload, so we
+  // intentionally do NOT fire a PUT /providers/{id} here — that would require
+  // a __Host-csrf cookie the browser cannot install over plain HTTP.
 
   const handleFinish = async () => {
     setIsSaving(true)
