@@ -110,10 +110,14 @@ func (p *GitHubCopilotProvider) Chat(
 	if resp == nil {
 		return nil, fmt.Errorf("empty response from copilot")
 	}
-	if resp.Data.Content == nil {
-		return nil, fmt.Errorf("no content in copilot response")
+	// SDK 0.2.0 moved SessionEvent.Data to an interface (SessionEventData). The
+	// final event from SendAndWait on a message turn is typed as AssistantMessageData,
+	// where Content is now a plain string (not *string).
+	msgData, ok := resp.Data.(*copilot.AssistantMessageData)
+	if !ok || msgData.Content == "" {
+		return nil, fmt.Errorf("no content in copilot response (event type %q)", resp.Type)
 	}
-	content := *resp.Data.Content
+	content := msgData.Content
 
 	return &LLMResponse{
 		FinishReason: "stop",
