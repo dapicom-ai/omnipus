@@ -128,7 +128,7 @@ func TestCSRFProtection(t *testing.T) {
 			}
 			// Intentionally omit Authorization header. In a real CSRF attack
 			// the victim's browser cannot auto-send Authorization cross-origin,
-			// only auto-send cookies — that's the scenario we're modelling.
+			// only auto-send cookies — that's the scenario we're modeling.
 			// Also deliberately omit the X-CSRF-Token header AND the cookie.
 			resp, err := gw.HTTPClient.Do(req)
 			require.NoError(t, err)
