@@ -694,17 +694,31 @@ func DescribeBackendWithState(backend SandboxBackend, state ApplyState) Status {
 	} else {
 		status.PolicyApplied = false
 		status.SeccompEnabled = false
-		// Surface the "Apply has not been called" note regardless of
-		// Mode. The note's semantics are "kernel-level sandbox is not
-		// active on this process" — that is equally true when Apply
-		// failed, when Sprint-J wiring is pending, or when mode=off
-		// was explicitly requested. The DisabledBy field lets clients
-		// distinguish the three cases while the Notes array remains
-		// informationally complete for operators scanning status.
-		status.Notes = append(
-			status.Notes,
-			"sandbox backend is capable of kernel-level enforcement but Apply() has not been called on the Omnipus process; child processes are not currently restricted by Landlock or seccomp",
-		)
+		// Phrase the note differently depending on WHY the kernel sandbox
+		// isn't active. An operator who passed --sandbox=off is deliberately
+		// disabling enforcement; surfacing the scary "Apply has not been
+		// called" warning in that case implies the gateway is misconfigured
+		// when the operator explicitly chose this state. Reserve the gap
+		// warning for the unexpected-disabled case (DisabledBy empty), which
+		// really does mean Apply failed or wasn't wired.
+		switch state.DisabledBy {
+		case "cli_flag":
+			status.Notes = append(
+				status.Notes,
+				"Sandbox disabled via --sandbox CLI flag (operator choice). Pass --sandbox=enforce or set gateway.sandbox.mode to re-enable.",
+			)
+		case "config":
+			status.Notes = append(status.Notes,
+				"Sandbox disabled via gateway.sandbox.mode=off in config.json (operator choice).")
+		default:
+			// Unexpected: capable kernel, no DisabledBy marker, but Apply
+			// didn't succeed. That's the original failure mode — keep the
+			// loud warning.
+			status.Notes = append(
+				status.Notes,
+				"sandbox backend is capable of kernel-level enforcement but Apply() has not been called on the Omnipus process; child processes are not currently restricted by Landlock or seccomp",
+			)
+		}
 	}
 
 	if len(state.ExtraNotes) > 0 {

@@ -194,30 +194,44 @@ func TestSandboxApply_NotesAbsentWhenApplied(t *testing.T) {
 	var status sandboxStatusResponse
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&status))
 
-	// BDD: The "not applied" warning is only acceptable when policy_applied=false.
-	// If policy_applied=true (enforce mode landed), no warning note must be present.
+	// BDD: When policy_applied=true (enforce mode), no warning/informational
+	// note about the sandbox being inactive must be present.
+	// When policy_applied=false, the note phrasing depends on DisabledBy
+	// (Bug 2 fix): operator choice vs genuine gap get distinct messages.
 	const notAppliedMsg = "Apply() has not been called"
+	const operatorChoice = "operator choice"
 	if status.PolicyApplied {
 		// After issue #76 is merged: enforce mode active — notes must be clean.
 		for _, note := range status.Notes {
 			assert.NotContains(t, note, notAppliedMsg,
 				"When policy_applied=true, notes must not contain the 'not applied' warning")
+			assert.NotContains(t, note, operatorChoice,
+				"When policy_applied=true, notes must not describe an operator-disabled state")
 		}
 		t.Logf("PASS: sandbox applied (backend=%s), notes clean", status.Backend)
 	} else {
-		// Before issue #76 merges OR on fallback: the gap note should be present
-		// IF the backend is kernel-capable. FallbackBackend has no notes.
+		// Before issue #76 merged OR on fallback OR when the harness disables
+		// the sandbox: the status MUST explain why it isn't active.
+		// FallbackBackend has no notes (nothing to explain).
 		if status.KernelLevel {
 			found := false
 			for _, note := range status.Notes {
-				if strings.Contains(note, notAppliedMsg) || strings.Contains(note, "not applied") {
+				// Either the genuine-gap warning (DisabledBy empty) OR the
+				// operator-disabled informational message (Bug 2) counts as
+				// an adequate explanation — both tell the operator what's
+				// happening. The test harness typically runs with
+				// --sandbox=off, which produces the operator-choice note.
+				if strings.Contains(note, notAppliedMsg) ||
+					strings.Contains(note, "not applied") ||
+					strings.Contains(note, operatorChoice) {
 					found = true
 					break
 				}
 			}
 			assert.True(t, found,
-				"When kernel-capable but Apply() not called (policy_applied=false), "+
-					"notes must explain the gap via 'not applied' message")
+				"When kernel-capable but policy_applied=false, notes must explain "+
+					"either the gap ('Apply() has not been called') or the "+
+					"operator choice ('operator choice')")
 			t.Logf(
 				"Test harness runs with sandbox=off (security-lead scope #1); kernel-level backend %q correctly reports policy_applied=false",
 				status.Backend,

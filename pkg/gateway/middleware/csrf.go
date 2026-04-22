@@ -27,17 +27,27 @@ import (
 	"strings"
 )
 
-// CSRFCookieName is the preferred name when the request is over TLS. The
-// __Host- prefix enforces Secure=true, Domain unset, Path=/ at the browser
-// layer — defense-in-depth against a weaker cookie slipping out.
+// CSRFCookieName is the name of the double-submit cookie under TLS.
+//
+// The __Host- prefix enforces three properties at the browser layer:
+//   - Secure must be set
+//   - Domain must be absent (attaches only to the exact host that issued it)
+//   - Path must be /
+//
+// If any of those are violated the browser refuses to store the cookie.
+// This is defense-in-depth against a weaker cookie slipping out.
 const CSRFCookieName = "__Host-csrf"
 
-// CSRFCookieNameHTTP is the fallback name used on plain-HTTP deployments.
-// Browsers silently drop __Host- cookies without Secure for non-localhost
-// origins, which breaks the SPA on operator-managed plain-HTTP gateways
-// (e.g. behind a reverse proxy that terminates TLS). Operators deploying
-// over plain HTTP accept the weaker same-origin defense intentionally; the
-// double-submit header is still verified.
+// CSRFCookieNameHTTP is the fallback cookie name used when the gateway is
+// reached over plain HTTP. The __Host- prefix requires Secure=true, which
+// browsers enforce by DROPPING the cookie on non-TLS origins (except
+// localhost). On plain-HTTP deployments (dev, self-hosted behind a
+// non-terminating proxy, public-IP test instances without a cert) the
+// __Host- cookie therefore never installs and every double-submit check
+// fails with "csrf cookie missing". Using an un-prefixed name plus
+// Secure=false lets the double-submit pattern still work on HTTP.
+// SameSite=Strict still blocks cross-origin sends — the protection the
+// middleware actually cares about survives the downgrade.
 const CSRFCookieNameHTTP = "csrf"
 
 // CSRFHeaderName is the header that clients must echo with the cookie value.
@@ -301,28 +311,40 @@ func CSRFMiddleware(opts ...Option) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Bearer-token bypass: a browser cannot set an Authorization
-			// header cross-origin without explicit fetch/XHR cooperation that
-			// must come from same-origin script anyway, so the CSRF threat
-			// model (a victim's cookie auto-sent on a cross-origin form POST)
-			// does not apply. Bearer-auth API clients (curl, CLIs, non-browser
-			// SDKs) therefore do not need the cookie.
-			if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+			// Bearer-token requests are not a CSRF target.
+			//
+			// CSRF protection exists to defend AMBIENT credentials —
+			// cookies the browser auto-attaches to cross-origin requests.
+			// An Authorization: Bearer <token> header is NEVER auto-sent
+			// by a browser to a different origin, so a malicious site
+			// cannot cause a victim's browser to include it. Programmatic
+			// clients (curl, API SDKs, mobile apps) supply the header
+			// explicitly and are not susceptible to CSRF either.
+			//
+			// Skipping the cookie/header double-submit check for Bearer
+			// callers fixes the plain-HTTP deployment story: operators
+			// using `curl -H "Authorization: Bearer …"` no longer have
+			// to juggle an impossible-to-install __Host-csrf cookie, and
+			// admin tools that use Bearer tokens work identically on
+			// HTTP and HTTPS.
+			if authHeader := r.Header.Get("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			// Accept either cookie flavor. IssueCSRFCookie branches on the
-			// request's TLS state, so TLS clients get __Host-csrf and plain-HTTP
-			// clients get csrf. The gate accepts whichever the browser is
-			// sending.
-			cookie, err := r.Cookie(CSRFCookieName)
-			if err != nil || cookie.Value == "" {
-				cookie, err = r.Cookie(CSRFCookieNameHTTP)
-				if err != nil || cookie.Value == "" {
-					writeCSRFError(w, "csrf cookie missing")
-					return
-				}
+			// Accept either the TLS-only __Host-csrf cookie OR the
+			// plain-HTTP fallback `csrf` cookie. IssueCSRFCookie picks
+			// which one to issue based on the request that triggered
+			// issuance (TLS → __Host-; HTTP → fallback).
+			var cookieValue string
+			if c, err := r.Cookie(CSRFCookieName); err == nil && c.Value != "" {
+				cookieValue = c.Value
+			} else if c, err := r.Cookie(CSRFCookieNameHTTP); err == nil && c.Value != "" {
+				cookieValue = c.Value
+			}
+			if cookieValue == "" {
+				writeCSRFError(w, "csrf cookie missing")
+				return
 			}
 
 			header := r.Header.Get(CSRFHeaderName)
@@ -331,7 +353,7 @@ func CSRFMiddleware(opts ...Option) func(http.Handler) http.Handler {
 				return
 			}
 
-			if subtle.ConstantTimeCompare([]byte(cookie.Value), []byte(header)) != 1 {
+			if subtle.ConstantTimeCompare([]byte(cookieValue), []byte(header)) != 1 {
 				if reporter != nil {
 					reporter(r, clientIP(r), r.URL.Path)
 				}
@@ -342,21 +364,6 @@ func CSRFMiddleware(opts ...Option) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-// requestIsSecure reports whether the request arrived over TLS, either
-// directly or via a trusted reverse proxy that set X-Forwarded-Proto=https.
-// Deployments terminating TLS at a proxy should configure the proxy to set
-// this header; without it we fall back to assuming plain HTTP and issue the
-// non-prefixed cookie.
-func requestIsSecure(r *http.Request) bool {
-	if r.TLS != nil {
-		return true
-	}
-	if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
-		return true
-	}
-	return false
 }
 
 // IssueCSRFCookie generates a fresh 256-bit random token, base64-url encodes
@@ -376,8 +383,13 @@ func requestIsSecure(r *http.Request) bool {
 // On a dev-mode server bound to plain HTTP (no TLS) the browser will refuse
 // to store a Secure cookie. For localhost this is usually fine because
 // modern browsers treat 127.0.0.1/localhost as a "potentially trustworthy
-// origin" and honor Secure cookies over http. For arbitrary hosts, the
-// gateway must run on TLS.
+// origin" and honor Secure cookies over http. For arbitrary hosts over
+// plain HTTP we fall back to an un-prefixed `csrf` cookie with Secure=false.
+//
+// The caller supplies the originating request so the issuer can see whether
+// the client is TLS-connected; this is best-effort — a reverse proxy that
+// terminates TLS must either forward via H2C/HTTPS or set
+// X-Forwarded-Proto=https so the middleware picks the secure variant.
 func IssueCSRFCookie(w http.ResponseWriter, r *http.Request) error {
 	buf := make([]byte, csrfTokenBytes)
 	if _, err := rand.Read(buf); err != nil {
@@ -385,21 +397,53 @@ func IssueCSRFCookie(w http.ResponseWriter, r *http.Request) error {
 	}
 	token := base64.RawURLEncoding.EncodeToString(buf)
 
-	cookie := &http.Cookie{
+	if requestIsSecure(r) {
+		http.SetCookie(w, &http.Cookie{
+			Name:     CSRFCookieName,
+			Value:    token,
+			Path:     "/",
+			HttpOnly: false,
+			Secure:   true,
+			SameSite: http.SameSiteStrictMode,
+			// No Domain — __Host- forbids it.
+			// No MaxAge — session cookie; lives until the browser closes.
+		})
+		return nil
+	}
+
+	// Plain-HTTP fallback. Same SameSite=Strict protection (the invariant
+	// CSRF cares about). HttpOnly=false so the SPA can read it, Path=/ so
+	// it attaches to every endpoint, no Domain / no MaxAge.
+	http.SetCookie(w, &http.Cookie{
+		Name:     CSRFCookieNameHTTP,
 		Value:    token,
 		Path:     "/",
 		HttpOnly: false,
+		Secure:   false,
 		SameSite: http.SameSiteStrictMode,
-	}
-	if requestIsSecure(r) {
-		cookie.Name = CSRFCookieName
-		cookie.Secure = true
-	} else {
-		cookie.Name = CSRFCookieNameHTTP
-		cookie.Secure = false
-	}
-	http.SetCookie(w, cookie)
+	})
 	return nil
+}
+
+// requestIsSecure detects whether the request reached us over TLS, either
+// directly (r.TLS != nil) or via an ingress that forwards X-Forwarded-Proto.
+// Used by IssueCSRFCookie to pick the cookie flavor.
+func requestIsSecure(r *http.Request) bool {
+	if r == nil {
+		// Defensive: pre-refactor callers had no request handle. Assume
+		// TLS so an older call site still works in spec-compliant mode —
+		// if the cookie ends up Secure on a plain-HTTP origin, the only
+		// consequence is that the browser drops it (the exact pre-fix
+		// behavior).
+		return true
+	}
+	if r.TLS != nil {
+		return true
+	}
+	if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		return true
+	}
+	return false
 }
 
 // writeCSRFError writes a 403 JSON error response. The response shape matches

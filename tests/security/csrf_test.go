@@ -98,6 +98,12 @@ func csrfTargets() []csrfTarget {
 // TestCSRFProtection hard-asserts the double-submit cookie gate on every
 // state-changing endpoint in csrfTargets. The three sub-tests match the
 // failure modes of pkg/gateway/middleware/csrf.go.
+//
+// Note (bug 3 fix): Authorization: Bearer callers are EXEMPT from the CSRF
+// gate — browsers cannot auto-send the Authorization header cross-origin,
+// so Bearer traffic is not a CSRF target. These tests therefore omit the
+// Bearer token from the attack-scenario sub-tests to exercise the
+// cookie-auth code path, which is what the CSRF gate actually guards.
 func TestCSRFProtection(t *testing.T) {
 	gw := testutil.StartTestGateway(t, testutil.WithBearerAuth())
 
@@ -109,7 +115,8 @@ func TestCSRFProtection(t *testing.T) {
 		name := strings.NewReplacer("/", "_", " ", "_").Replace(tgt.path)
 
 		// ------------------------------------------------------------
-		// 1. Cross-origin + NO X-CSRF-Token header → hard-expect 403.
+		// 1. Cross-origin + NO X-CSRF-Token header + NO Bearer →
+		//    hard-expect 403 (the realistic browser-CSRF attacker scenario).
 		// ------------------------------------------------------------
 		t.Run(name+"_no_csrf_header_rejected", func(t *testing.T) {
 			body := bytes.NewReader([]byte(tgt.body))
@@ -119,15 +126,18 @@ func TestCSRFProtection(t *testing.T) {
 			if tgt.needsJSONBody {
 				req.Header.Set("Content-Type", "application/json")
 			}
-			if gw.Token() != "" {
-				req.Header.Set("Authorization", "Bearer "+gw.Token())
-			}
-			// Deliberately omit the X-CSRF-Token header AND the cookie.
+			// Intentionally omit Authorization header. In a real CSRF attack
+			// the victim's browser cannot auto-send Authorization cross-origin,
+			// only auto-send cookies — that's the scenario we're modeling.
+			// Also deliberately omit the X-CSRF-Token header AND the cookie.
 			resp, err := gw.HTTPClient.Do(req)
 			require.NoError(t, err)
 			defer resp.Body.Close()
 
-			// Hard expectation: 403 Forbidden.
+			// Hard expectation: 403 Forbidden from the CSRF gate. Without
+			// Bearer auth the request would 401 at the auth layer — but the
+			// CSRF middleware runs BEFORE auth in the middleware chain, so a
+			// state-changing request with no cookie short-circuits to 403.
 			require.Equal(t, http.StatusForbidden, resp.StatusCode,
 				"CSRF gate must reject %s %s with no cookie/header as 403",
 				tgt.method, tgt.path)
@@ -152,9 +162,7 @@ func TestCSRFProtection(t *testing.T) {
 			if tgt.needsJSONBody {
 				req.Header.Set("Content-Type", "application/json")
 			}
-			if gw.Token() != "" {
-				req.Header.Set("Authorization", "Bearer "+gw.Token())
-			}
+			// Same as above — no Bearer; the attack is cross-origin browser CSRF.
 			// Cookie and header disagree — the classic "forged header"
 			// attack shape. Attacker can set arbitrary headers but cannot
 			// write __Host- cookies from a different origin.

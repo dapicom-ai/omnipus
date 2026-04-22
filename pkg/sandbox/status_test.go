@@ -134,3 +134,63 @@ func TestDescribeBackend_ABI2Features(t *testing.T) {
 	assert.Contains(t, status.LandlockFeatures, "TRUNCATE", "ABI v2 must include TRUNCATE")
 	assert.NotContains(t, status.LandlockFeatures, "IOCTL_DEV", "ABI v2 must not include IOCTL_DEV")
 }
+
+// TestDescribeBackendWithState_DisabledByCliFlag verifies that when the
+// operator explicitly disabled the sandbox via --sandbox=off, the status
+// note describes an operator choice rather than the scary "Apply() has
+// not been called" warning. Bug 2 from public-IP test findings.
+func TestDescribeBackendWithState_DisabledByCliFlag(t *testing.T) {
+	mock := &mockABIBackend{abiVersion: 3, applied: false}
+	status := DescribeBackendWithState(mock, ApplyState{
+		Mode:       ModeOff,
+		DisabledBy: "cli_flag",
+	})
+
+	assert.True(t, status.KernelLevel,
+		"backend is still kernel-capable even when disabled")
+	assert.False(t, status.PolicyApplied, "off mode must NOT report PolicyApplied=true")
+	require.Len(t, status.Notes, 1, "expect exactly one note for this branch")
+	note := status.Notes[0]
+	assert.Contains(t, note, "--sandbox CLI flag",
+		"note must reference the CLI flag as the reason")
+	assert.Contains(t, note, "operator choice",
+		"note must frame the state as a deliberate operator choice")
+	assert.NotContains(t, note, "Apply() has not been called",
+		"must not use the gap-warning wording when operator disabled explicitly")
+}
+
+// TestDescribeBackendWithState_DisabledByConfig verifies the equivalent
+// informational note when the operator set gateway.sandbox.mode=off in
+// config.json. Bug 2 from public-IP test findings.
+func TestDescribeBackendWithState_DisabledByConfig(t *testing.T) {
+	mock := &mockABIBackend{abiVersion: 3, applied: false}
+	status := DescribeBackendWithState(mock, ApplyState{
+		Mode:       ModeOff,
+		DisabledBy: "config",
+	})
+
+	assert.False(t, status.PolicyApplied)
+	require.Len(t, status.Notes, 1)
+	note := status.Notes[0]
+	assert.Contains(t, note, "gateway.sandbox.mode=off",
+		"note must name the config key")
+	assert.Contains(t, note, "operator choice")
+	assert.NotContains(t, note, "Apply() has not been called")
+}
+
+// TestDescribeBackendWithState_UnexpectedGapKeepsWarning verifies that when
+// the kernel is capable, the backend reports not-applied, and there is NO
+// DisabledBy marker, the original "Apply() has not been called" warning
+// still fires — that's a real gap operators need to see.
+func TestDescribeBackendWithState_UnexpectedGapKeepsWarning(t *testing.T) {
+	mock := &mockABIBackend{abiVersion: 3, applied: false}
+	status := DescribeBackendWithState(mock, ApplyState{
+		Mode:       "", // no explicit mode
+		DisabledBy: "",
+	})
+
+	assert.False(t, status.PolicyApplied)
+	require.Len(t, status.Notes, 1)
+	assert.Contains(t, status.Notes[0], "Apply() has not been called",
+		"unexpected-disabled case (no DisabledBy) must still surface the original gap warning")
+}

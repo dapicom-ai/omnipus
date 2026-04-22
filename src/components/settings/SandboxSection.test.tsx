@@ -26,6 +26,11 @@ vi.mock('@/store/auth', () => ({
   ),
 }))
 
+const mockAddToast = vi.fn()
+vi.mock('@/store/ui', () => ({
+  useUiStore: vi.fn(() => ({ addToast: mockAddToast })),
+}))
+
 import { fetchSandboxStatus, fetchSandboxConfig, updateSandboxConfig } from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 import { SandboxSection } from './SandboxSection'
@@ -560,5 +565,119 @@ describe('ABI v4 surfaces', () => {
     })
 
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+})
+
+// ── describe: mode radio ──────────────────────────────────────────────────────
+
+describe('mode radio', () => {
+  it('renders three radio options (Off, Permissive, Enforce) with current value pre-selected', async () => {
+    vi.mocked(fetchSandboxConfig).mockResolvedValue({
+      ...baseConfig,
+      mode: 'permissive',
+    })
+
+    renderSection()
+
+    // Enter mode edit mode
+    const editModeBtn = await screen.findByRole('button', { name: /edit sandbox mode/i })
+    fireEvent.click(editModeBtn)
+
+    await waitFor(() => {
+      const offRadio = screen.getByRole('radio', { name: /sandbox mode: off/i })
+      const permissiveRadio = screen.getByRole('radio', { name: /sandbox mode: permissive/i })
+      const enforceRadio = screen.getByRole('radio', { name: /sandbox mode: enforce/i })
+      expect(offRadio).toBeInTheDocument()
+      expect(permissiveRadio).toBeInTheDocument()
+      expect(enforceRadio).toBeInTheDocument()
+      // Current value (permissive) is pre-selected
+      expect(permissiveRadio).toBeChecked()
+      expect(offRadio).not.toBeChecked()
+      expect(enforceRadio).not.toBeChecked()
+    })
+  })
+
+  it('non-admin: Edit sandbox mode button is not shown', async () => {
+    mockNonAdmin()
+
+    renderSection()
+
+    // Wait for status to load
+    await waitFor(() => {
+      expect(screen.getByText(/process sandbox/i)).toBeInTheDocument()
+    })
+
+    expect(screen.queryByRole('button', { name: /edit sandbox mode/i })).not.toBeInTheDocument()
+    // Radio inputs should not be rendered for non-admin
+    expect(screen.queryByRole('radio', { name: /sandbox mode: off/i })).not.toBeInTheDocument()
+  })
+
+  it('selecting enforce when abi_version >= 4 fires the enforce confirmation modal before PUT', async () => {
+    vi.mocked(fetchSandboxStatus).mockResolvedValue({
+      ...baseStatus,
+      abi_version: 4,
+      issue_ref: '#138',
+    })
+    vi.mocked(fetchSandboxConfig).mockResolvedValue({
+      ...baseConfig,
+      mode: 'permissive',
+    })
+
+    renderSection()
+
+    const editModeBtn = await screen.findByRole('button', { name: /edit sandbox mode/i })
+    fireEvent.click(editModeBtn)
+
+    // Select enforce
+    await waitFor(() => {
+      expect(screen.getByRole('radio', { name: /sandbox mode: enforce/i })).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('radio', { name: /sandbox mode: enforce/i }))
+
+    // Click Save
+    const saveBtn = screen.getByRole('button', { name: /^save$/i })
+    fireEvent.click(saveBtn)
+
+    // Modal should appear before PUT fires
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+      expect(screen.getByRole('dialog')).toHaveTextContent(/kernel incompatibility/i)
+    })
+    expect(updateSandboxConfig).not.toHaveBeenCalled()
+
+    // Confirm — now PUT fires
+    fireEvent.click(screen.getByRole('button', { name: /save anyway/i }))
+
+    await waitFor(() => {
+      expect(updateSandboxConfig).toHaveBeenCalled()
+      const [firstArg] = vi.mocked(updateSandboxConfig).mock.calls[0]
+      expect(firstArg).toMatchObject({ mode: 'enforce' })
+    })
+  })
+
+  it('save sends {mode: "permissive"} on PUT when permissive is selected', async () => {
+    vi.mocked(fetchSandboxConfig).mockResolvedValue({
+      ...baseConfig,
+      mode: 'off',
+    })
+    vi.mocked(updateSandboxConfig).mockResolvedValue({ ...baseConfig, mode: 'permissive', requires_restart: true })
+
+    renderSection()
+
+    const editModeBtn = await screen.findByRole('button', { name: /edit sandbox mode/i })
+    fireEvent.click(editModeBtn)
+
+    await waitFor(() => {
+      expect(screen.getByRole('radio', { name: /sandbox mode: permissive/i })).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('radio', { name: /sandbox mode: permissive/i }))
+
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }))
+
+    await waitFor(() => {
+      expect(updateSandboxConfig).toHaveBeenCalled()
+      const [firstArg] = vi.mocked(updateSandboxConfig).mock.calls[0]
+      expect(firstArg).toMatchObject({ mode: 'permissive' })
+    })
   })
 })

@@ -446,3 +446,60 @@ func TestHandleSandboxConfig_AtomicValidation(t *testing.T) {
 	assert.Equal(t, []any{"/var/log"}, paths,
 		"failed PUT must not mutate disk")
 }
+
+// --- mode field tests (PR #137 + Sprint K merge) ---
+
+// TestHandleSandboxConfig_PUT_ModeValidValues verifies that all three
+// canonical mode values are accepted with 200 and persisted to disk.
+func TestHandleSandboxConfig_PUT_ModeValidValues(t *testing.T) {
+	for _, mode := range []string{"off", "permissive", "enforce"} {
+		t.Run(mode, func(t *testing.T) {
+			api := newTestRestAPIWithHome(t)
+			body := `{"mode":"` + mode + `"}`
+			w := sandboxConfigPUT(t, api, body)
+			require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+			var resp map[string]any
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			assert.Equal(t, true, resp["saved"])
+
+			// Confirm value was persisted to disk.
+			raw, err := os.ReadFile(api.configPath())
+			require.NoError(t, err)
+			var onDisk map[string]any
+			require.NoError(t, json.Unmarshal(raw, &onDisk))
+			sandboxDisk, _ := onDisk["sandbox"].(map[string]any)
+			require.NotNil(t, sandboxDisk)
+			assert.Equal(t, mode, sandboxDisk["mode"],
+				"mode must be persisted on disk")
+		})
+	}
+}
+
+// TestHandleSandboxConfig_PUT_ModeInvalid_Returns400 verifies that an
+// unrecognised mode value is rejected with 400 before any disk write.
+func TestHandleSandboxConfig_PUT_ModeInvalid_Returns400(t *testing.T) {
+	cases := []string{"disabled", "ENFORCE", "1", "", "on"}
+	for _, mode := range cases {
+		t.Run(mode, func(t *testing.T) {
+			api := newTestRestAPIWithHome(t)
+			body := `{"mode":"` + mode + `"}`
+			w := sandboxConfigPUT(t, api, body)
+			assert.Equal(t, http.StatusBadRequest, w.Code,
+				"unrecognised mode %q must return 400; body: %s", mode, w.Body.String())
+		})
+	}
+}
+
+// TestHandleSandboxConfig_PUT_ModeMarksRestartRequired verifies that
+// changing mode sets requires_restart=true in the response. Sandbox mode
+// is applied once at gateway boot (FR-J-015) — changing it requires a restart.
+func TestHandleSandboxConfig_PUT_ModeMarksRestartRequired(t *testing.T) {
+	api := newTestRestAPIWithHome(t)
+	w := sandboxConfigPUT(t, api, `{"mode":"permissive"}`)
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["requires_restart"],
+		"mode change is restart-gated per FR-J-015")
+}

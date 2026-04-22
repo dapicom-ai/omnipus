@@ -1145,6 +1145,9 @@ export function updateRateLimits(body: RateLimitsUpdateBody): Promise<RateLimits
 // Entries may be hostname, exact IP, or CIDR range. Empty slice means "block all".
 export interface SandboxConfigResponse {
   mode?: string
+  // applied_mode is the value the gateway is currently enforcing. It differs
+  // from `mode` when the operator saved a change but hasn't restarted.
+  applied_mode?: string
   allowed_paths?: string[]
   ssrf?: {
     enabled?: boolean
@@ -1161,6 +1164,9 @@ export interface SandboxConfigUpdateBody {
     allow_internal?: string[]
   }
 }
+
+// Legacy alias kept to avoid a rename sweep across consumers.
+export type SandboxConfigUpdate = SandboxConfigUpdateBody
 
 export function fetchSandboxConfig(): Promise<SandboxConfigResponse> {
   return request<SandboxConfigResponse>('/security/sandbox-config')

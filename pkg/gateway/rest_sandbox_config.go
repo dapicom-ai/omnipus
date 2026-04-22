@@ -17,20 +17,36 @@ import (
 )
 
 // sandboxConfigPutBody mirrors the partial-update contract for
-// PUT /api/v1/security/sandbox-config. Both fields are pointer-slices so
-// we can distinguish "omitted" (nil) from "explicitly set to empty list"
-// (non-nil, len 0). Only fields present in the request body are touched
-// on disk; untouched fields retain their existing values.
+// PUT /api/v1/security/sandbox-config. Pointer types allow us to distinguish
+// "omitted" (nil) from "explicitly set to empty list/string" (non-nil).
+// Only fields present in the request body are touched on disk; untouched
+// fields retain their existing values.
+//
+// Accepts both flat fields (wave5/PR #137 contract: ssrf_enabled,
+// ssrf_allow_internal, allow_network_outbound) and nested ssrf object
+// (Sprint K contract: ssrf.allow_internal). Flat fields take precedence
+// when both are present.
 type sandboxConfigPutBody struct {
-	AllowedPaths *[]string                   `json:"allowed_paths,omitempty"`
-	SSRF         *sandboxConfigPutBodySSRF   `json:"ssrf,omitempty"`
+	Mode                 *string                   `json:"mode,omitempty"`
+	AllowNetworkOutbound *bool                     `json:"allow_network_outbound,omitempty"`
+	AllowedPaths         *[]string                 `json:"allowed_paths,omitempty"`
+	SSRFEnabled          *bool                     `json:"ssrf_enabled,omitempty"`
+	SSRFAllowInternal    *[]string                 `json:"ssrf_allow_internal,omitempty"`
+	SSRF                 *sandboxConfigPutBodySSRF `json:"ssrf,omitempty"`
 }
 
-// sandboxConfigPutBodySSRF carries the ssrf sub-object. We intentionally
-// only expose allow_internal here — inventing new config keys would break
-// backward compatibility. Any other ssrf field the client sends is ignored.
+// sandboxConfigPutBodySSRF carries the nested ssrf sub-object for Sprint K
+// clients that send ssrf.allow_internal. Flat ssrf_allow_internal takes
+// precedence when both are present in the same request.
 type sandboxConfigPutBodySSRF struct {
 	AllowInternal *[]string `json:"allow_internal,omitempty"`
+}
+
+// validSandboxModes is the canonical set accepted by putSandboxConfig.
+var validSandboxModes = map[string]bool{
+	"off":        true,
+	"permissive": true,
+	"enforce":    true,
 }
 
 // HandleSandboxConfig handles GET/PUT /api/v1/security/sandbox-config.
@@ -65,6 +81,10 @@ func (a *restAPI) HandleSandboxConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *restAPI) getSandboxConfig(w http.ResponseWriter, r *http.Request) {
+	if a.agentLoop == nil {
+		jsonErr(w, http.StatusServiceUnavailable, "sandbox: agent loop not initialized")
+		return
+	}
 	cfg := a.agentLoop.GetConfig()
 
 	allowedPaths := cfg.Sandbox.AllowedPaths
@@ -76,9 +96,26 @@ func (a *restAPI) getSandboxConfig(w http.ResponseWriter, r *http.Request) {
 		allowInternal = []string{}
 	}
 
+	// applied_mode reflects what the gateway is ACTUALLY running with. It
+	// differs from mode when the operator saved a change but hasn't restarted.
+	applied := ""
+	if a.sandboxResult != nil {
+		applied = string(a.sandboxResult.ApplyState.Mode)
+	}
+
+	// Return both the flat-field shape (wave5 contract, pre-existing tests)
+	// and the nested ssrf object (Sprint K's component reads ssrf.allow_internal).
+	// The flat fields are the canonical wire format; the nested ssrf block is
+	// included for backward-compatible clients. Both are safe to include — JSON
+	// consumers pick what they need.
 	jsonOK(w, map[string]any{
-		"mode":          cfg.Sandbox.ResolvedMode(),
-		"allowed_paths": allowedPaths,
+		"mode":                  cfg.Sandbox.ResolvedMode(),
+		"allow_network_outbound": cfg.Sandbox.AllowNetworkOutbound,
+		"allowed_paths":         allowedPaths,
+		"ssrf_enabled":          cfg.Sandbox.SSRF.Enabled,
+		"ssrf_allow_internal":   allowInternal,
+		"applied_mode":          applied,
+		// Nested ssrf object — consumed by Sprint K's allowed_paths/SSRF editor.
 		"ssrf": map[string]any{
 			"enabled":        cfg.Sandbox.SSRF.Enabled,
 			"allow_internal": allowInternal,
@@ -95,12 +132,34 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve which fields are being updated. Flat ssrf_allow_internal takes
+	// precedence over nested ssrf.allow_internal when both are present.
+	changedMode := body.Mode != nil
+	changedAllowNetworkOutbound := body.AllowNetworkOutbound != nil
 	changedAllowedPaths := body.AllowedPaths != nil
-	changedAllowInternal := body.SSRF != nil && body.SSRF.AllowInternal != nil
+	changedSSRFEnabled := body.SSRFEnabled != nil
 
-	if !changedAllowedPaths && !changedAllowInternal {
-		jsonErr(w, http.StatusBadRequest, "no recognized fields in body — expected allowed_paths or ssrf.allow_internal")
+	// Resolve allow_internal source: flat field takes precedence over nested.
+	var resolvedAllowInternal *[]string
+	if body.SSRFAllowInternal != nil {
+		resolvedAllowInternal = body.SSRFAllowInternal
+	} else if body.SSRF != nil && body.SSRF.AllowInternal != nil {
+		resolvedAllowInternal = body.SSRF.AllowInternal
+	}
+	changedAllowInternal := resolvedAllowInternal != nil
+
+	if !changedMode && !changedAllowNetworkOutbound && !changedAllowedPaths &&
+		!changedSSRFEnabled && !changedAllowInternal {
+		jsonErr(w, http.StatusBadRequest, "at least one field required — expected mode, allowed_paths, or ssrf.allow_internal")
 		return
+	}
+
+	// Validate mode value before any disk writes.
+	if changedMode {
+		if !validSandboxModes[*body.Mode] {
+			jsonErr(w, http.StatusBadRequest, `invalid sandbox mode — must be one of "off", "permissive", "enforce"`)
+			return
+		}
 	}
 
 	// Strict validation — one bad entry fails the whole PUT, nothing persists.
@@ -112,7 +171,7 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	var ssrfWarnings []string
 	if changedAllowInternal {
-		warnings, err := validateSSRFAllowInternal(*body.SSRF.AllowInternal)
+		warnings, err := validateSSRFAllowInternal(*resolvedAllowInternal)
 		if err != nil {
 			jsonErr(w, http.StatusBadRequest, err.Error())
 			return
@@ -124,6 +183,7 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 	// so the snapshot is taken atomically with the write. Reading before the
 	// lock can yield a stale value when two writers race.
 	var (
+		oldMode          string
 		oldAllowedPaths  []string
 		oldAllowInternal []string
 	)
@@ -137,6 +197,18 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 
 		// Snapshot old values from the just-read map so the audit diff is
 		// consistent with the actual atomic state, not a pre-lock race copy.
+		if changedMode {
+			if s, ok := sandbox["mode"].(string); ok {
+				oldMode = s
+			}
+			sandbox["mode"] = *body.Mode
+			// Clear the legacy Enabled bool when an explicit mode is set, so
+			// ResolvedMode() and humans reading config.json agree.
+			delete(sandbox, "enabled")
+		}
+		if changedAllowNetworkOutbound {
+			sandbox["allow_network_outbound"] = *body.AllowNetworkOutbound
+		}
 		if changedAllowedPaths {
 			if raw, ok := sandbox["allowed_paths"].([]any); ok {
 				for _, v := range raw {
@@ -147,20 +219,25 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 			}
 			sandbox["allowed_paths"] = toAnySlice(*body.AllowedPaths)
 		}
-		if changedAllowInternal {
+		if changedSSRFEnabled || changedAllowInternal {
 			ssrf, _ := sandbox["ssrf"].(map[string]any)
 			if ssrf == nil {
 				ssrf = map[string]any{}
 				sandbox["ssrf"] = ssrf
 			}
-			if raw, ok := ssrf["allow_internal"].([]any); ok {
-				for _, v := range raw {
-					if s, ok := v.(string); ok {
-						oldAllowInternal = append(oldAllowInternal, s)
+			if changedSSRFEnabled {
+				ssrf["enabled"] = *body.SSRFEnabled
+			}
+			if changedAllowInternal {
+				if raw, ok := ssrf["allow_internal"].([]any); ok {
+					for _, v := range raw {
+						if s, ok := v.(string); ok {
+							oldAllowInternal = append(oldAllowInternal, s)
+						}
 					}
 				}
+				ssrf["allow_internal"] = toAnySlice(*resolvedAllowInternal)
 			}
-			ssrf["allow_internal"] = toAnySlice(*body.SSRF.AllowInternal)
 		}
 		return nil
 	}); err != nil {
@@ -173,6 +250,15 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 	// caller — the mutation has already been persisted atomically.
 	if a.agentLoop != nil {
 		if auditLogger := a.agentLoop.AuditLogger(); auditLogger != nil {
+			if changedMode {
+				if err := audit.EmitSecuritySettingChange(
+					r.Context(), auditLogger,
+					"sandbox.mode",
+					oldMode, *body.Mode,
+				); err != nil {
+					slog.Error("rest: audit emit sandbox.mode change", "error", err)
+				}
+			}
 			if changedAllowedPaths {
 				if err := audit.EmitSecuritySettingChange(
 					r.Context(), auditLogger,
@@ -186,7 +272,7 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 				if err := audit.EmitSecuritySettingChange(
 					r.Context(), auditLogger,
 					"sandbox.ssrf.allow_internal",
-					oldAllowInternal, *body.SSRF.AllowInternal,
+					oldAllowInternal, *resolvedAllowInternal,
 				); err != nil {
 					slog.Error("rest: audit emit ssrf.allow_internal change", "error", err)
 				}
@@ -199,17 +285,56 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 	// the actor username so security review catches the divergence.
 	if len(ssrfWarnings) > 0 {
 		actor := actorUsername(r)
-		for _, entry := range ssrfWarnings {
+		for _, warn := range ssrfWarnings {
 			slog.Warn("ssrf: wildcard allow_internal accepted",
 				"event", "ssrf_wildcard_accepted",
-				"entry", entry,
+				"entry", warn,
 				"actor", actor)
 		}
 	}
 
+	// mode and allowed_paths are restart-gated (sandbox applied once at
+	// boot per FR-J-015). ssrf.allow_internal is hot-reload via config poll.
+	partialRestartRequired := changedMode || changedAllowedPaths
+
+	// Return the updated config so the UI can cache-update without a
+	// follow-up GET. Include both flat fields (wave5 contract) and nested
+	// ssrf object (Sprint K contract).
+	if a.agentLoop != nil {
+		cfg := a.agentLoop.GetConfig()
+		allowedPaths := cfg.Sandbox.AllowedPaths
+		if allowedPaths == nil {
+			allowedPaths = []string{}
+		}
+		allowInternal := cfg.Sandbox.SSRF.AllowInternal
+		if allowInternal == nil {
+			allowInternal = []string{}
+		}
+		applied := ""
+		if a.sandboxResult != nil {
+			applied = string(a.sandboxResult.ApplyState.Mode)
+		}
+		jsonOK(w, map[string]any{
+			"saved":                  true,
+			"mode":                   cfg.Sandbox.ResolvedMode(),
+			"allow_network_outbound": cfg.Sandbox.AllowNetworkOutbound,
+			"allowed_paths":          allowedPaths,
+			"ssrf_enabled":           cfg.Sandbox.SSRF.Enabled,
+			"ssrf_allow_internal":    allowInternal,
+			"applied_mode":           applied,
+			"requires_restart":       partialRestartRequired,
+			"ssrf": map[string]any{
+				"enabled":        cfg.Sandbox.SSRF.Enabled,
+				"allow_internal": allowInternal,
+			},
+		})
+		return
+	}
+
+	// Fallback when agentLoop is nil (test harness or startup race).
 	jsonOK(w, map[string]any{
 		"saved":            true,
-		"requires_restart": changedAllowedPaths,
+		"requires_restart": partialRestartRequired,
 	})
 }
 

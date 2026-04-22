@@ -12,6 +12,9 @@ import {
   Trash,
   Plus,
   Warning,
+  PencilSimple,
+  CheckCircle,
+  ArrowCounterClockwise,
 } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -28,8 +31,9 @@ import {
   fetchSandboxConfig,
   updateSandboxConfig,
 } from '@/lib/api'
-import type { SandboxStatus } from '@/lib/api'
+import type { SandboxStatus, SandboxConfigUpdate } from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
+import { useUiStore } from '@/store/ui'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -480,6 +484,7 @@ function SsrfEditor({
 export function SandboxSection(): React.ReactElement {
   const role = useAuthStore((s) => s.role)
   const isAdmin = role === 'admin'
+  const { addToast } = useUiStore()
   const queryClient = useQueryClient()
 
   // ── Status query ───────────────────────────────────────────────────────────
@@ -502,8 +507,21 @@ export function SandboxSection(): React.ReactElement {
     queryFn: fetchSandboxConfig,
   })
 
-  // ── Edit mode ──────────────────────────────────────────────────────────────
-  const [isEditing, setIsEditing] = useState(false)
+  // ── Mode editor state (PR #137) ────────────────────────────────────────────
+  // Separate from the paths/SSRF editing state so the two sections are
+  // independently editable.
+  const [modeEditing, setModeEditing] = useState(false)
+  const [draftMode, setDraftMode] = useState<SandboxConfigUpdate['mode']>()
+
+  const savedMode = configData?.mode as 'enforce' | 'permissive' | 'off' | undefined
+  const effectiveDraftMode = draftMode ?? savedMode
+
+  const restartPending = !!(
+    configData &&
+    configData.applied_mode !== undefined &&
+    configData.applied_mode !== '' &&
+    configData.mode !== configData.applied_mode
+  )
 
   // ── ABI v4 banner state ────────────────────────────────────────────────────
   const [bannerDismissed, setBannerDismissed] = useState(() => {
@@ -521,16 +539,17 @@ export function SandboxSection(): React.ReactElement {
     !bannerDismissed &&
     typeof statusData?.abi_version === 'number' &&
     statusData.abi_version >= 4 &&
-    typeof statusData.issue_ref === 'string'
+    typeof (statusData as SandboxStatus & { issue_ref?: string }).issue_ref === 'string'
 
-  // ── Allowed paths state ────────────────────────────────────────────────────
+  // ── Paths/SSRF editor state (Sprint K) ────────────────────────────────────
+  const [isEditing, setIsEditing] = useState(false)
+
   const [pathList, setPathList] = useState<string[]>([])
   const [newPath, setNewPath] = useState('')
   const [pathAddError, setPathAddError] = useState<string | null>(null)
   const [pathRowErrors, setPathRowErrors] = useState<Record<number, string>>({})
   const [pathRestartedRows, setPathRestartedRows] = useState<Set<number>>(new Set())
 
-  // ── SSRF state ────────────────────────────────────────────────────────────
   const [ssrfList, setSsrfList] = useState<string[]>([])
   const [ssrfActivePreset, setSsrfActivePreset] = useState<number | null>(null)
   const [ssrfAdvancedOpen, setSsrfAdvancedOpen] = useState(false)
@@ -563,7 +582,26 @@ export function SandboxSection(): React.ReactElement {
     }
   }, [configData])
 
-  // ── Config update mutation ─────────────────────────────────────────────────
+  // ── Mode save mutation (PR #137) ───────────────────────────────────────────
+  const { mutate: doSaveMode, isPending: savingMode } = useMutation({
+    mutationFn: updateSandboxConfig,
+    onSuccess: (saved) => {
+      queryClient.setQueryData(['sandbox-config'], saved)
+      void queryClient.invalidateQueries({ queryKey: ['sandbox-config'] })
+      setDraftMode(undefined)
+      setModeEditing(false)
+      addToast({
+        message: saved.requires_restart
+          ? 'Sandbox mode saved — restart the gateway to apply.'
+          : 'Sandbox mode saved.',
+        variant: saved.requires_restart ? 'default' : 'success',
+      })
+    },
+    onError: (err: Error) =>
+      addToast({ message: err.message, variant: 'error' }),
+  })
+
+  // ── Paths/SSRF save mutation (Sprint K) ───────────────────────────────────
   const saveMutation = useMutation({
     mutationFn: (body: Parameters<typeof updateSandboxConfig>[0]) => updateSandboxConfig(body),
     onSuccess: (resp) => {
@@ -649,7 +687,7 @@ export function SandboxSection(): React.ReactElement {
     setNewSsrfEntry('')
   }
 
-  // ── Save orchestration ────────────────────────────────────────────────────
+  // ── Save orchestration (paths/SSRF) ───────────────────────────────────────
 
   function validateSsrfEntries(): boolean {
     const errors: Record<number, string> = {}
@@ -730,6 +768,27 @@ export function SandboxSection(): React.ReactElement {
     setNewSsrfEntry('')
   }
 
+  // ── Mode save handler (PR #137 + Sprint K enforce-modal gate) ─────────────
+  function handleModeSave() {
+    if (!draftMode) return
+
+    const abiVersion = statusData?.abi_version
+    const issueRef = (statusData as (SandboxStatus & { issue_ref?: string }) | undefined)?.issue_ref
+    const isAbi4Incompatible =
+      draftMode === 'enforce' &&
+      typeof abiVersion === 'number' &&
+      abiVersion >= 4 &&
+      typeof issueRef === 'string'
+
+    if (isAbi4Incompatible) {
+      pendingSaveRef.current = () => doSaveMode({ mode: draftMode })
+      setShowEnforceModal(true)
+      return
+    }
+
+    doSaveMode({ mode: draftMode })
+  }
+
   // ── Status display helpers ────────────────────────────────────────────────
 
   function resolveDotVariant(): DotVariant {
@@ -774,6 +833,12 @@ export function SandboxSection(): React.ReactElement {
 
   const hasSsrfErrors = Object.keys(ssrfAdvancedErrors).length > 0
   const saveDisabled = saveMutation.isPending || hasSsrfErrors
+
+  const SANDBOX_MODES: Array<{ value: 'enforce' | 'permissive' | 'off'; label: string; desc: string }> = [
+    { value: 'enforce', label: 'Enforce', desc: 'Kernel-level Landlock + seccomp denies violating syscalls.' },
+    { value: 'permissive', label: 'Permissive', desc: 'Policy computed and logged; violations not blocked (audit-only).' },
+    { value: 'off', label: 'Off', desc: 'Sandbox disabled. Development only; production banner will fire.' },
+  ]
 
   function renderStatusBody(): React.ReactNode {
     if (statusLoading) return <SandboxSkeleton />
@@ -875,7 +940,7 @@ export function SandboxSection(): React.ReactElement {
       {showAbi4Banner && (
         <Abi4Banner
           abiVersion={statusData!.abi_version!}
-          issueRef={statusData!.issue_ref!}
+          issueRef={(statusData as SandboxStatus & { issue_ref?: string }).issue_ref!}
           onDismiss={handleBannerDismiss}
         />
       )}
@@ -886,87 +951,218 @@ export function SandboxSection(): React.ReactElement {
       {/* Config editor — only shown when status loaded successfully */}
       {!statusLoading && !statusIsError && (
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-4">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold text-[var(--color-secondary)]">Sandbox configuration</p>
-            {isAdmin && !isEditing && (
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 px-2 text-xs"
-                onClick={() => setIsEditing(true)}
-                disabled={configLoading}
-              >
-                Edit
-              </Button>
-            )}
-          </div>
-
-          {configLoading ? (
-            <div className="space-y-2 animate-pulse">
-              <div className="h-3 w-3/4 rounded bg-[var(--color-border)]" />
-              <div className="h-3 w-1/2 rounded bg-[var(--color-border)]" />
+          {/* ── Mode radio (PR #137) — top of config section ── */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold text-[var(--color-secondary)]">Sandbox mode</p>
+              {isAdmin && !modeEditing && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 gap-1 text-xs"
+                  aria-label="Edit sandbox mode"
+                  onClick={() => setModeEditing(true)}
+                  disabled={configLoading}
+                >
+                  <PencilSimple size={11} />
+                  Edit
+                </Button>
+              )}
             </div>
-          ) : (
-            <>
-              <AllowedPathsEditor
-                paths={pathList}
-                isEditing={isEditing}
-                rowErrors={pathRowErrors}
-                restartedRows={pathRestartedRows}
-                onDelete={handleDeletePath}
-                newPath={newPath}
-                onNewPathChange={(v) => { setNewPath(v); setPathAddError(null) }}
-                onAdd={handleAddPath}
-                addError={pathAddError}
-              />
 
-              <SsrfEditor
-                list={ssrfList}
-                isEditing={isEditing}
-                activePreset={ssrfActivePreset}
-                advancedOpen={ssrfAdvancedOpen}
-                onAdvancedToggle={() => setSsrfAdvancedOpen((v) => !v)}
-                onPresetClick={handlePresetClick}
-                advancedErrors={ssrfAdvancedErrors}
-                onDeleteAdvanced={handleDeleteSsrfEntry}
-                newSsrfEntry={newSsrfEntry}
-                onNewSsrfEntryChange={(v) => { setNewSsrfEntry(v); setSsrfAddError(null) }}
-                onAddSsrfEntry={handleAddSsrfEntry}
-                ssrfAddError={ssrfAddError}
-              />
+            {/* Restart pending notice */}
+            {restartPending && (
+              <div
+                className="flex items-start gap-2 rounded-md border p-2.5"
+                style={{
+                  borderColor: 'rgba(234,179,8,0.35)',
+                  backgroundColor: 'rgba(234,179,8,0.08)',
+                }}
+                role="status"
+              >
+                <Warning size={14} weight="fill" style={{ color: 'var(--color-warning)' }} className="mt-0.5 shrink-0" />
+                <p className="text-xs leading-relaxed text-[var(--color-secondary)]">
+                  <span className="font-semibold" style={{ color: 'var(--color-warning)' }}>
+                    Restart required.
+                  </span>{' '}
+                  Saved mode is{' '}
+                  <code className="font-mono">{configData?.mode}</code> but the gateway is
+                  currently running with{' '}
+                  <code className="font-mono">{configData?.applied_mode || 'none'}</code>.
+                  Restart the gateway for the change to take effect.
+                </p>
+              </div>
+            )}
 
-              {isAdmin && isEditing && (
-                <div className="flex items-center gap-2 pt-2 border-t border-[var(--color-border)]">
+            {configLoading ? (
+              <div className="space-y-2 animate-pulse">
+                <div className="h-3 w-3/4 rounded bg-[var(--color-border)]" />
+                <div className="h-3 w-1/2 rounded bg-[var(--color-border)]" />
+              </div>
+            ) : modeEditing && isAdmin ? (
+              <>
+                <fieldset className="space-y-2">
+                  <legend className="sr-only">Sandbox mode</legend>
+                  {SANDBOX_MODES.map((m) => (
+                    <label
+                      key={m.value}
+                      className={`flex items-start gap-2 p-2 rounded-md border cursor-pointer transition-colors ${
+                        effectiveDraftMode === m.value
+                          ? 'border-[var(--color-accent)]/50 bg-[var(--color-accent)]/5'
+                          : 'border-[var(--color-border)] hover:bg-[var(--color-surface-2)]'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="sandbox-mode"
+                        value={m.value}
+                        checked={effectiveDraftMode === m.value}
+                        onChange={() => setDraftMode(m.value)}
+                        className="mt-0.5 accent-[var(--color-accent)]"
+                        aria-label={`Sandbox mode: ${m.label}`}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-[var(--color-secondary)]">{m.label}</p>
+                        <p className="text-xs text-[var(--color-muted)] leading-snug">{m.desc}</p>
+                      </div>
+                    </label>
+                  ))}
+                </fieldset>
+                <div className="flex items-center justify-end gap-2 pt-1">
                   <Button
-                    type="button"
-                    size="sm"
-                    className="h-7 px-3 text-xs"
-                    onClick={handleSave}
-                    disabled={saveDisabled}
-                  >
-                    {saveMutation.isPending ? 'Saving\u2026' : 'Save'}
-                  </Button>
-                  <Button
-                    type="button"
                     size="sm"
                     variant="outline"
                     className="h-7 px-3 text-xs"
-                    onClick={handleCancel}
-                    disabled={saveMutation.isPending}
+                    onClick={() => {
+                      setDraftMode(undefined)
+                      setModeEditing(false)
+                    }}
+                    disabled={savingMode}
                   >
                     Cancel
                   </Button>
-                  {saveMutation.isError && (
-                    <p className="text-xs text-[var(--color-error)] flex-1">
-                      {saveMutation.error instanceof Error
-                        ? saveMutation.error.message.replace(/^\d+:\s*/, '')
-                        : 'Save failed'}
-                    </p>
-                  )}
+                  <Button
+                    size="sm"
+                    className="h-7 px-3 text-xs gap-1"
+                    disabled={savingMode || !draftMode || draftMode === savedMode}
+                    onClick={handleModeSave}
+                  >
+                    {savingMode ? (
+                      <>
+                        <ArrowCounterClockwise size={11} className="animate-spin" />
+                        Saving
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle size={11} />
+                        Save
+                      </>
+                    )}
+                  </Button>
                 </div>
+              </>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {SANDBOX_MODES.map((m) => (
+                  <span
+                    key={m.value}
+                    className={`rounded border px-3 py-1 text-xs font-medium ${
+                      effectiveDraftMode === m.value
+                        ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/10 text-[var(--color-accent)]'
+                        : 'border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-muted)]'
+                    }`}
+                  >
+                    {m.label}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ── Paths / SSRF editor (Sprint K) ── */}
+          <div className="space-y-4 border-t border-[var(--color-border)] pt-4">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold text-[var(--color-secondary)]">Sandbox configuration</p>
+              {isAdmin && !isEditing && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => setIsEditing(true)}
+                  disabled={configLoading}
+                >
+                  Edit
+                </Button>
               )}
-            </>
-          )}
+            </div>
+
+            {configLoading ? (
+              <div className="space-y-2 animate-pulse">
+                <div className="h-3 w-3/4 rounded bg-[var(--color-border)]" />
+                <div className="h-3 w-1/2 rounded bg-[var(--color-border)]" />
+              </div>
+            ) : (
+              <>
+                <AllowedPathsEditor
+                  paths={pathList}
+                  isEditing={isEditing}
+                  rowErrors={pathRowErrors}
+                  restartedRows={pathRestartedRows}
+                  onDelete={handleDeletePath}
+                  newPath={newPath}
+                  onNewPathChange={(v) => { setNewPath(v); setPathAddError(null) }}
+                  onAdd={handleAddPath}
+                  addError={pathAddError}
+                />
+
+                <SsrfEditor
+                  list={ssrfList}
+                  isEditing={isEditing}
+                  activePreset={ssrfActivePreset}
+                  advancedOpen={ssrfAdvancedOpen}
+                  onAdvancedToggle={() => setSsrfAdvancedOpen((v) => !v)}
+                  onPresetClick={handlePresetClick}
+                  advancedErrors={ssrfAdvancedErrors}
+                  onDeleteAdvanced={handleDeleteSsrfEntry}
+                  newSsrfEntry={newSsrfEntry}
+                  onNewSsrfEntryChange={(v) => { setNewSsrfEntry(v); setSsrfAddError(null) }}
+                  onAddSsrfEntry={handleAddSsrfEntry}
+                  ssrfAddError={ssrfAddError}
+                />
+
+                {isAdmin && isEditing && (
+                  <div className="flex items-center gap-2 pt-2 border-t border-[var(--color-border)]">
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-7 px-3 text-xs"
+                      onClick={handleSave}
+                      disabled={saveDisabled}
+                    >
+                      {saveMutation.isPending ? 'Saving…' : 'Save'}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-3 text-xs"
+                      onClick={handleCancel}
+                      disabled={saveMutation.isPending}
+                    >
+                      Cancel
+                    </Button>
+                    {saveMutation.isError && (
+                      <p className="text-xs text-[var(--color-error)] flex-1">
+                        {saveMutation.error instanceof Error
+                          ? saveMutation.error.message.replace(/^\d+:\s*/, '')
+                          : 'Save failed'}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
         </div>
       )}
 
@@ -1008,7 +1204,7 @@ export function SandboxSection(): React.ReactElement {
             <DialogTitle>Kernel incompatibility warning</DialogTitle>
             <DialogDescription>
               {statusData && typeof statusData.abi_version === 'number' && statusData.abi_version >= 4
-                ? `Your kernel reports Landlock ABI v${statusData.abi_version} (issue ${statusData.issue_ref ?? ''}). Enforce mode will cause the gateway to exit with code 78 at next boot. Save anyway?`
+                ? `Your kernel reports Landlock ABI v${statusData.abi_version} (issue ${(statusData as SandboxStatus & { issue_ref?: string }).issue_ref ?? ''}). Enforce mode will cause the gateway to exit with code 78 at next boot. Save anyway?`
                 : 'Enforce mode may cause issues with your current kernel configuration. Save anyway?'}
             </DialogDescription>
           </DialogHeader>
