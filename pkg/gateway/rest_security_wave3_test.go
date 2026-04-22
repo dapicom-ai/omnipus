@@ -21,7 +21,7 @@ import (
 // These tests exercise the operator-facing surface added in Wave 3:
 //   - GET /api/v1/security/exec-proxy-status
 //
-// HandlePromptGuard tests are in rest_prompt_guard_test.go (Sprint K FR-004).
+// HandlePromptGuard tests are in rest_prompt_guard_test.go.
 
 // TestHandleExecProxyStatus_Disabled returns enabled=false, running=false
 // when cfg.Tools.Exec.EnableProxy is not set. This is the default state

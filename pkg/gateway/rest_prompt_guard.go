@@ -17,14 +17,14 @@ import (
 
 // HandlePromptGuard handles GET/PUT /api/v1/security/prompt-guard.
 //
-// GET returns the current prompt-injection level (SEC-25):
+// GET returns the current prompt-injection level:
 //
 //	{"level": "low"|"medium"|"high", "requires_restart": false}
 //
 // PUT accepts {"level": "low"|"medium"|"high"} (case-sensitive), persists to
 // config.sandbox.prompt_injection_level via safeUpdateConfigJSON, triggers a
 // hot-reload via awaitReload, and emits a security_setting_change audit entry.
-// Changes take effect immediately — requires_restart is always false (FR-004).
+// Changes take effect immediately — requires_restart is false on successful reload.
 // PUT is admin-only; non-admin requests receive 403.
 func (a *restAPI) HandlePromptGuard(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -89,10 +89,21 @@ func (a *restAPI) putPromptGuard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = audit.EmitSecuritySettingChange(r.Context(), a.agentLoop.AuditLogger(),
-		"sandbox.prompt_injection_level", oldLevel, body.Level)
+	if auditErr := audit.EmitSecuritySettingChange(r.Context(), a.agentLoop.AuditLogger(),
+		"sandbox.prompt_injection_level", oldLevel, body.Level); auditErr != nil {
+		slog.Error("rest: audit emit prompt guard change", "error", auditErr)
+	}
 
-	a.awaitReload()
+	if reloadErr := a.awaitReload(); reloadErr != nil {
+		slog.Info("rest: prompt guard level updated (restart required)", "level", body.Level)
+		jsonOK(w, map[string]any{
+			"saved":            true,
+			"requires_restart": true,
+			"applied_level":    body.Level,
+			"warning":          "config saved to disk but hot-reload failed; restart the gateway to apply",
+		})
+		return
+	}
 
 	slog.Info("rest: prompt guard level updated", "level", body.Level)
 

@@ -86,10 +86,10 @@ type services struct {
 	manualReloadChan chan struct{}
 	reloading        atomic.Bool
 	credStore        *credentials.Store
-	// sandboxResult is the Sprint-J Apply/Install outcome. Populated by
+	// sandboxResult is the Apply/Install outcome from boot. Populated by
 	// applySandbox before services start (and before any HTTP listener
-	// binds). Read-only after initialization — FR-J-015 forbids hot-reload
-	// of sandbox config, so this never changes for the process lifetime.
+	// binds). Read-only after initialization — sandbox config has no
+	// hot-reload path, so this never changes for the process lifetime.
 	sandboxResult *SandboxApplyResult
 	// stopNagBanner cancels the permissive / production-off nag goroutine
 	// on shutdown. No-op when no banner was armed.
@@ -552,11 +552,11 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 		agentLoop.Run(agentLoopCtx)
 	}()
 
-	// Launch the nightly retention sweep goroutine (k03 / FR-008 / MIN-002).
-	// Uses ctx (not agentLoopCtx) so it shuts down on gateway stop regardless
-	// of agent-loop liveness. GetSessionStore returns the shared UnifiedStore;
-	// when nil (misconfigured home) the goroutine is a no-op — getCfg returning
-	// a nil-nil cfg path is guarded inside executeSweepTick.
+	// Launch the nightly retention sweep goroutine. Uses ctx (not agentLoopCtx)
+	// so it shuts down on gateway stop regardless of agent-loop liveness.
+	// GetSessionStore returns the shared UnifiedStore; when nil (misconfigured
+	// home) the goroutine is a no-op — getCfg returning a nil cfg is guarded
+	// inside executeSweepTick.
 	if sharedStore := agentLoop.GetSessionStore(); sharedStore != nil {
 		startRetentionSweepLoop(ctx, sharedStore, agentLoop.GetConfig, 24*time.Hour)
 	}
@@ -868,7 +868,7 @@ func setupAndStartServices(
 		mediaStore:    runningServices.MediaStore,
 		ssrfChecker:   agent.GetSSRFChecker(agentLoop), // SEC-24: nil when SSRF disabled
 		sandboxResult: sandboxResult,                   // Sprint J: immutable post-boot snapshot
-		appliedConfig: deepCopyConfig(cfg),             // k08: boot-time snapshot for pending-restart diff
+		appliedConfig: mustDeepCopyConfig(cfg),           // boot-time snapshot for pending-restart diff
 	}
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions", api.withAuth(api.HandleSessions))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions/", api.withAuth(api.HandleSessions))

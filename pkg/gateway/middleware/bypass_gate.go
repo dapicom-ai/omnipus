@@ -14,10 +14,10 @@ import (
 )
 
 // RequireNotBypass gates admin-only user-management and security-setting
-// endpoints (FR-019 / MAJ-006). When gateway.dev_mode_bypass is true every
-// request is auth'd as admin, so these endpoints would otherwise be
-// anonymously reachable — a catastrophic elevation. Returning 503 disables
-// the surface entirely in that mode.
+// endpoints. When gateway.dev_mode_bypass is true every request is auth'd
+// as admin, so these endpoints would otherwise be anonymously reachable —
+// a catastrophic elevation. Returning 503 disables the surface entirely in
+// that mode.
 //
 // The config is read from the request context (written by
 // configSnapshotMiddleware). If the snapshot is missing we fail closed with

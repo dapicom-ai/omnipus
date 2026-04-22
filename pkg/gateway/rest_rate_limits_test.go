@@ -20,9 +20,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/config"
 )
 
-// rest_rate_limits_test.go — Sprint K FR-005 / MIN-004 PUT rate-limits tests.
-//
-// TestHandleRateLimits_* covers the PUT semantics introduced in k12.
+// TestHandleRateLimits_* covers the PUT rate-limits semantics.
 // GET semantics (disabled/enabled/wave4 MethodNotAllowed) remain in
 // rest_security_wave4_test.go.
 

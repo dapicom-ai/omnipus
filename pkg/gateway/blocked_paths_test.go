@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// --- matchBlockedPath unit tests (FR-018 / MAJ-004) ---
+// --- matchBlockedPath unit tests ---
 
 func TestMatchBlockedPath_NestedGatewayUsers(t *testing.T) {
 	body := map[string]any{

@@ -7,7 +7,9 @@
 package gateway
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
@@ -20,7 +22,7 @@ import (
 // the SSRF checker performs the authoritative resolve at request time.
 var hostnameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.-]*$`)
 
-// validateAllowedPaths enforces Sprint K US-6 (k13) validation rules:
+// validateAllowedPaths enforces allowed_paths validation rules:
 //   - each entry must be non-empty
 //   - absolute ("/" or "~/" prefix); no relative paths
 //   - no ".." segments anywhere
@@ -65,11 +67,16 @@ func validateAllowedPaths(entries []string) error {
 		}
 		fi, err := os.Lstat(resolved)
 		if err != nil {
-			// Missing paths are accepted — operators can pre-configure.
-			// Any other error (permission denied on parent, etc.) also
-			// passes through silently; the sandbox layer will handle
-			// access failures at enforcement time.
-			continue
+			if errors.Is(err, fs.ErrNotExist) {
+				// Missing paths are accepted — operators can pre-configure
+				// paths that do not exist yet. The sandbox layer handles
+				// access failures at enforcement time.
+				continue
+			}
+			// EACCES, EIO, ELOOP, or any other error means the path exists
+			// but cannot be inspected. Surface as a 400 at save time rather
+			// than silently permitting an un-inspectable entry.
+			return fmt.Errorf("allowed_paths[%q]: %w", entry, err)
 		}
 		if fi.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("allowed_paths entry %q must not end in a symlink", entry)
@@ -87,8 +94,8 @@ var wildcardCIDRs = map[string]struct{}{
 	"::/0":      {},
 }
 
-// validateSSRFAllowInternal enforces Sprint K US-7 (k14) validation rules
-// without inventing any new config shape (CRIT-001 resolution).
+// validateSSRFAllowInternal enforces ssrf.allow_internal validation rules
+// without inventing any new config shape.
 //
 // Each entry must parse as one of:
 //   - a CIDR via net.ParseCIDR

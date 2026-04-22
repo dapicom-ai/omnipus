@@ -80,8 +80,8 @@ func TestHandlePromptGuard_InvalidLevelRejected(t *testing.T) {
 	}
 }
 
-// TestHandlePromptGuard_HotReload verifies that the PUT response always
-// carries requires_restart:false (FR-004 — hot-reload, no restart needed).
+// TestHandlePromptGuard_HotReload verifies that the PUT response carries
+// requires_restart:false on successful hot-reload (no restart needed).
 func TestHandlePromptGuard_HotReload(t *testing.T) {
 	api := newTestRestAPIWithHome(t)
 	w := promptGuardPUT(t, api, "high")

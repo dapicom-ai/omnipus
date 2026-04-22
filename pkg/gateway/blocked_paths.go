@@ -9,9 +9,8 @@ package gateway
 // Each entry must be routed through its dedicated endpoint so that policy
 // validation, admin-only guards, and audit logging are applied.
 //
-// Sprint K / FR-018 / MAJ-004: replaces the former flat blockedKeys map
-// that only matched TOP-LEVEL keys. The former shape allowed an attacker
-// holding an admin token to ship
+// This replaces the former flat blockedKeys map that only matched TOP-LEVEL
+// keys. The former shape allowed an attacker holding an admin token to ship
 //
 //	PUT /api/v1/config {"gateway":{"users":[...new admin...]}}
 //

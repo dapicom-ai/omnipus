@@ -13,11 +13,11 @@ import (
 // rest_security_wave3.go — Wave 3 operator-facing REST endpoints.
 //
 // This file wires one endpoint:
-//   - GET /api/v1/security/exec-proxy-status (SEC-28 lifecycle inspection)
+//   - GET /api/v1/security/exec-proxy-status
 //
 // HandlePromptGuard was originally in this file but was superseded by the
-// k11 implementation in rest_prompt_guard.go (Sprint K FR-004) which adds
-// hot-reload support and uses EmitSecuritySettingChange for audit logging.
+// implementation in rest_prompt_guard.go, which adds hot-reload support
+// and uses EmitSecuritySettingChange for audit logging.
 
 // HandleExecProxyStatus handles GET /api/v1/security/exec-proxy-status.
 //

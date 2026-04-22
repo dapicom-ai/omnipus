@@ -12,7 +12,6 @@ import (
 	"net/http"
 
 	"github.com/dapicom-ai/omnipus/pkg/audit"
-	"github.com/dapicom-ai/omnipus/pkg/config"
 )
 
 // HandleSandboxAuditLog handles PUT /api/v1/security/audit-log.
@@ -41,12 +40,6 @@ func (a *restAPI) HandleSandboxAuditLog(w http.ResponseWriter, r *http.Request) 
 		})
 
 	case http.MethodPut:
-		role, _ := r.Context().Value(RoleContextKey{}).(config.UserRole)
-		if role != config.UserRoleAdmin {
-			jsonErr(w, http.StatusForbidden, "admin required")
-			return
-		}
-
 		var body struct {
 			Enabled *bool `json:"enabled"`
 		}
@@ -76,10 +69,13 @@ func (a *restAPI) HandleSandboxAuditLog(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
-		_ = audit.EmitSecuritySettingChange(r.Context(), a.agentLoop.AuditLogger(), "sandbox.audit_log", oldEnabled, newEnabled)
+		if err := audit.EmitSecuritySettingChange(r.Context(), a.agentLoop.AuditLogger(), "sandbox.audit_log", oldEnabled, newEnabled); err != nil {
+			slog.Error("rest: audit emit audit_log change", "error", err)
+		}
 
-		a.awaitReload()
-
+		// audit_log is in RestartGatedKeys — changing it requires a restart to
+		// swap file handles. Do not call awaitReload here; the requires_restart
+		// response field informs the admin.
 		jsonOK(w, map[string]any{
 			"saved":            true,
 			"requires_restart": true,

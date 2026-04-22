@@ -26,6 +26,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/gateway/ctxkey"
+	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	"github.com/dapicom-ai/omnipus/pkg/taskstore"
 )
@@ -189,8 +190,8 @@ func readDiskUsers(t *testing.T, api *restAPI) []map[string]any {
 
 // TestHandleUserCreate_ReturnsUserAndRoleOnly verifies that POST /users
 // returns 201 with {username, role} — and crucially NO "token" field.
-// CRIT-003: no bearer token may be issued at creation time; the new user
-// must log in with their password to obtain a token.
+// No bearer token may be issued at creation time; the new user must log in
+// with their password to obtain a token.
 func TestHandleUserCreate_ReturnsUserAndRoleOnly(t *testing.T) {
 	api, _, _ := newUserMgmtAPIWithAdmin(t)
 	body := `{"username":"alice","role":"user","password":"alice-secret-123"}`
@@ -203,7 +204,7 @@ func TestHandleUserCreate_ReturnsUserAndRoleOnly(t *testing.T) {
 	assert.Equal(t, "alice", resp["username"])
 	assert.Equal(t, "user", resp["role"])
 	_, hasToken := resp["token"]
-	assert.False(t, hasToken, "response MUST NOT include a token field (CRIT-003)")
+	assert.False(t, hasToken, "response MUST NOT include a token field")
 	_, hasTokenHash := resp["token_hash"]
 	assert.False(t, hasTokenHash, "response MUST NOT include a token_hash field")
 	_, hasPasswordHash := resp["password_hash"]
@@ -211,7 +212,7 @@ func TestHandleUserCreate_ReturnsUserAndRoleOnly(t *testing.T) {
 }
 
 // TestHandleUserCreate_ThenLoginWithPassword_IssuesToken verifies the
-// complete CRIT-003 flow: create without token, then login with password
+// create-then-login flow: create without token, then login with password
 // returns a canonical bearer (omnipus_<64 hex>).
 func TestHandleUserCreate_ThenLoginWithPassword_IssuesToken(t *testing.T) {
 	api, _, _ := newUserMgmtAPIWithAdmin(t)
@@ -311,7 +312,7 @@ func TestHandleUserCreate_NonAdmin403(t *testing.T) {
 	api, _, _ := newUserMgmtAPIWithAdmin(t)
 	body := `{"username":"alice","role":"user","password":"alice-pass-123"}`
 	w := httptest.NewRecorder()
-	api.HandleUserCreate(w, nonAdminRequest(http.MethodPost, "/api/v1/users", body))
+	middleware.RequireAdmin(http.HandlerFunc(api.HandleUserCreate)).ServeHTTP(w, nonAdminRequest(http.MethodPost, "/api/v1/users", body))
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
@@ -371,7 +372,7 @@ func TestHandleUsersList_NoHashesInResponse(t *testing.T) {
 func TestHandleUsersList_NonAdmin403(t *testing.T) {
 	api, _, _ := newUserMgmtAPIWithAdmin(t)
 	w := httptest.NewRecorder()
-	api.HandleUsersList(w, nonAdminRequest(http.MethodGet, "/api/v1/users", ""))
+	middleware.RequireAdmin(http.HandlerFunc(api.HandleUsersList)).ServeHTTP(w, nonAdminRequest(http.MethodGet, "/api/v1/users", ""))
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
@@ -430,7 +431,7 @@ func TestHandleUserDelete_HappyPath(t *testing.T) {
 
 // TestHandleUserDelete_LastAdminGuardInsideWriteLock documents that the
 // last-admin guard is evaluated INSIDE the safeUpdateConfigJSON callback
-// against the JSON map just read from disk (MAJ-005 ordering property).
+// against the JSON map just read from disk.
 //
 // A direct TOCTOU test requires hooks the callback does not expose; instead
 // we run a happy-path scenario where the guard would fire if the callback
@@ -438,7 +439,7 @@ func TestHandleUserDelete_HappyPath(t *testing.T) {
 // admin-being-demoted-concurrently. The guard MUST see the freshly-read
 // slice and fire correctly.
 //
-// See k19 for the actual concurrent race harness.
+// See rest_users_race_test.go for the actual concurrent race harness.
 func TestHandleUserDelete_LastAdminGuardInsideWriteLock(t *testing.T) {
 	hash, err := bcrypt.GenerateFromPassword([]byte("admin-pw"), bcrypt.MinCost)
 	require.NoError(t, err)
@@ -472,7 +473,7 @@ func TestHandleUserDelete_LastAdminGuardInsideWriteLock(t *testing.T) {
 
 // TestHandleUserDelete_AuditEntry_OmitsHashes verifies the captured audit
 // record's old_value contains {username, role} ONLY — no password_hash
-// or token_hash (MIN-003).
+// or token_hash.
 func TestHandleUserDelete_AuditEntry_OmitsHashes(t *testing.T) {
 	hash, err := bcrypt.GenerateFromPassword([]byte("admin-pw"), bcrypt.MinCost)
 	require.NoError(t, err)
@@ -681,7 +682,7 @@ func TestHandleUserResetPassword_NonAdmin403(t *testing.T) {
 	api, _, _ := newUserMgmtAPIWithAdmin(t)
 	body := `{"password":"new-password-22"}`
 	w := httptest.NewRecorder()
-	api.HandleUserResetPassword(w, nonAdminRequest(http.MethodPut, "/api/v1/users/admin/password", body))
+	middleware.RequireAdmin(http.HandlerFunc(api.HandleUserResetPassword)).ServeHTTP(w, nonAdminRequest(http.MethodPut, "/api/v1/users/admin/password", body))
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
@@ -705,7 +706,7 @@ func TestHandleUserResetPassword_RejectsShortPassword(t *testing.T) {
 
 // TestHandleUserResetPassword_AuditRedacted verifies that the captured
 // audit record's new_value has the password replaced with the
-// "***redacted***" sentinel from the FR-020 redactor.
+// "***redacted***" sentinel from the audit redactor.
 func TestHandleUserResetPassword_AuditRedacted(t *testing.T) {
 	pwHash, err := bcrypt.GenerateFromPassword([]byte("admin-pw"), bcrypt.MinCost)
 	require.NoError(t, err)
@@ -733,55 +734,6 @@ func TestHandleUserResetPassword_AuditRedacted(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, string(raw), "new-secret-reset",
 		"raw password must not appear anywhere in the audit record")
-}
-
-// --- DevMode bypass: belt-and-suspenders defensive checks ---
-
-// TestHandleUsersEndpoints_DevModeBypass_Return503 verifies that when
-// gateway.dev_mode_bypass is true EVERY user-management endpoint returns
-// 503 from the handler's top-of-function defensive check — independent
-// of the k20 middleware wiring.
-func TestHandleUsersEndpoints_DevModeBypass_Return503(t *testing.T) {
-	hash, err := bcrypt.GenerateFromPassword([]byte("pw"), bcrypt.MinCost)
-	require.NoError(t, err)
-	users := []any{
-		map[string]any{"username": "admin", "password_hash": string(hash), "token_hash": "", "role": "admin"},
-	}
-	api, _ := newUserMgmtAPI(t, users)
-
-	// Flip dev_mode_bypass ON in the in-memory config.
-	cfg := api.agentLoop.GetConfig()
-	cfg.Gateway.DevModeBypass = true
-	api.agentLoop.SwapConfig(cfg)
-
-	type call struct {
-		name    string
-		method  string
-		path    string
-		body    string
-		handler func(http.ResponseWriter, *http.Request)
-	}
-	calls := []call{
-		{"list", http.MethodGet, "/api/v1/users", "", api.HandleUsersList},
-		{"create", http.MethodPost, "/api/v1/users",
-			`{"username":"alice","role":"user","password":"password-123"}`, api.HandleUserCreate},
-		{"delete", http.MethodDelete, "/api/v1/users/admin", "", api.HandleUserDelete},
-		{"change-role", http.MethodPatch, "/api/v1/users/admin/role",
-			`{"role":"user"}`, api.HandleUserChangeRole},
-		{"reset-password", http.MethodPut, "/api/v1/users/admin/password",
-			`{"password":"new-fresh-pw-0"}`, api.HandleUserResetPassword},
-	}
-	for _, c := range calls {
-		t.Run(c.name, func(t *testing.T) {
-			w := httptest.NewRecorder()
-			c.handler(w, adminRequest(c.method, c.path, c.body))
-
-			assert.Equal(t, http.StatusServiceUnavailable, w.Code,
-				"%s must return 503 in dev-mode-bypass, body: %s", c.name, w.Body.String())
-			assert.Contains(t, w.Body.String(), "dev-mode-bypass",
-				"%s 503 response must name dev-mode-bypass", c.name)
-		})
-	}
 }
 
 // --- method-not-allowed sanity checks ---
@@ -815,10 +767,10 @@ func TestHandleUsersEndpoints_MethodNotAllowed(t *testing.T) {
 // TestRoute_POST_Users_Reaches_HandleUserCreate verifies the three-way method
 // dispatch registered at /api/v1/users. Without this test a future collapse of
 // the dispatcher back to a single handler (GET only) would silently regress the
-// Sprint K user-create flow (k30 E2E found POST returning 405).
+// Route dispatch test for POST /api/v1/users (found POST returning 405 in E2E).
 //
 // The test calls the handlers directly with the correct method — the same
-// method guard that sprintKAdmin's dispatcher invokes — which exercises the
+// method guard that the adminWrap dispatcher invokes — which exercises the
 // exact code path that was broken: HandleUserCreate was implemented but
 // unreachable because the route only wired HandleUsersList.
 func TestRoute_POST_Users_Reaches_HandleUserCreate(t *testing.T) {

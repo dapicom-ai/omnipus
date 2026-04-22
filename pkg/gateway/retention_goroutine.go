@@ -17,7 +17,7 @@ import (
 )
 
 // retentionSweepMu serialises nightly-sweep ticks against the on-demand
-// POST /api/v1/security/retention/sweep endpoint (k16). Both paths acquire
+// POST /api/v1/security/retention/sweep endpoint. Both paths acquire
 // this mutex before calling the sweep function so they never run concurrently.
 var retentionSweepMu sync.Mutex
 

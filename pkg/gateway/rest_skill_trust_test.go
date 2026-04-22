@@ -45,7 +45,7 @@ func skillTrustPUT(t *testing.T, api *restAPI, level string) *httptest.ResponseR
 }
 
 // TestHandleSkillTrust_AllThreeValuesAccepted verifies each canonical value
-// returns 200 with saved=true and requires_restart=false (FR-003 / MIN-001).
+// returns 200 with saved=true and requires_restart=false.
 func TestHandleSkillTrust_AllThreeValuesAccepted(t *testing.T) {
 	for _, level := range []string{"block_unverified", "warn_unverified", "allow_all"} {
 		t.Run(level, func(t *testing.T) {
@@ -63,7 +63,7 @@ func TestHandleSkillTrust_AllThreeValuesAccepted(t *testing.T) {
 }
 
 // TestHandleSkillTrust_UppercaseRejected verifies that BLOCK_UNVERIFIED (all-caps)
-// returns 400 and the error message lists all three canonical values (MIN-001).
+// returns 400 and the error message lists all three canonical values.
 func TestHandleSkillTrust_UppercaseRejected(t *testing.T) {
 	api := newTestRestAPIWithHome(t)
 	w := skillTrustPUT(t, api, "BLOCK_UNVERIFIED")
@@ -75,7 +75,7 @@ func TestHandleSkillTrust_UppercaseRejected(t *testing.T) {
 	assert.Contains(t, body, "allow_all", "error must list canonical value allow_all")
 }
 
-// TestHandleSkillTrust_MixedCaseRejected verifies that Block_Unverified returns 400 (MIN-001).
+// TestHandleSkillTrust_MixedCaseRejected verifies that Block_Unverified returns 400.
 func TestHandleSkillTrust_MixedCaseRejected(t *testing.T) {
 	api := newTestRestAPIWithHome(t)
 	w := skillTrustPUT(t, api, "Block_Unverified")

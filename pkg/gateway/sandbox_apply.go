@@ -53,8 +53,8 @@ import (
 const ExitSandboxConfig = 78
 
 // landlockABIv4WarnOnce gates the boot-time ABI-v4 warning so it fires
-// exactly once per gateway process (Sprint-K k07). Reset via
-// resetLandlockABIv4WarnForTests in test-only code paths.
+// exactly once per gateway process. Reset via resetLandlockABIv4WarnForTests
+// in test-only code paths.
 var landlockABIv4WarnOnce sync.Once
 
 // readKernelRelease returns the running kernel release string, or "" when
@@ -268,13 +268,12 @@ func applySandbox(opts SandboxApplyOptions) (*SandboxApplyResult, error) {
 		DisabledBy:  disabledBy,
 	}
 
-	// Sprint-K k07 (FR-021 / MAJ-001 / FR-014a): warn once per boot when
-	// the probed Landlock ABI outranks what our backend can negotiate
-	// (v1-v3). Enforce mode is known to fail on these kernels — see issue
-	// #138 / LandlockABI4IssueRef. Operators need the reference surfaced
-	// without greping the source. sync.Once guards against duplicate
-	// emission if Apply re-runs (idempotent Apply still enters this site
-	// only once at boot, but defensively gated).
+	// Warn once per boot when the probed Landlock ABI outranks what our
+	// backend can negotiate (v1-v3). Enforce mode is known to fail on these
+	// kernels — see issue #138 / LandlockABI4IssueRef. Operators need the
+	// reference surfaced without grepping the source. sync.Once guards
+	// against duplicate emission if Apply re-runs (idempotent Apply still
+	// enters this site only once at boot, but defensively gated).
 	if rep, ok := backend.(interface{ ABIVersion() int }); ok {
 		warnLandlockABIv4Once(rep.ABIVersion())
 	}

@@ -16,12 +16,12 @@ import (
 )
 
 // EventSecuritySettingChange is the audit event emitted when an admin mutates a
-// security-relevant config key (Sprint K FR-020 / MIN-003).
+// security-relevant config key.
 const EventSecuritySettingChange = "security_setting_change"
 
-// redactedSentinel is the replacement value used by FR-020 for keys whose names
-// match the sensitive-name filter. This is intentionally a different sentinel
-// from the SEC-16 string-level `[REDACTED]`: FR-020 logs a distinct
+// redactedSentinel is the replacement value used for keys whose names match
+// the sensitive-name filter. This is intentionally a different sentinel from
+// the string-level `[REDACTED]` used elsewhere: this logs a distinct
 // "***redacted***" string so that security_setting_change entries can be
 // visually distinguished from other audit categories.
 const redactedSentinel = "***redacted***"
@@ -37,7 +37,7 @@ var sensitiveSubstrings = []string{"password", "token", "api_key", "secret"}
 // resource, old_value, new_value — with old_value and new_value recursively
 // redacted for sensitive keys (password/token/api_key/secret, case-insensitive).
 //
-// Behaviour contract (FR-020 / MIN-003):
+// Behaviour contract:
 //   - logger == nil → no-op, returns nil (audit log disabled).
 //   - actor missing from ctx → actor="" and a slog.Warn is emitted, but the
 //     audit entry IS still written (an audit trail of unauthenticated or

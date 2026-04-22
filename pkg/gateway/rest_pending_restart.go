@@ -8,13 +8,14 @@ package gateway
 
 import (
 	"encoding/json"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"reflect"
 	"strings"
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
-	"github.com/dapicom-ai/omnipus/pkg/gateway/ctxkey"
 )
 
 // RestartGatedKeys is the authoritative list of config keys that require a
@@ -63,12 +64,6 @@ func (a *restAPI) HandlePendingRestart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	role, _ := r.Context().Value(ctxkey.RoleContextKey{}).(config.UserRole)
-	if role != config.UserRoleAdmin {
-		jsonErr(w, http.StatusForbidden, "admin required")
-		return
-	}
-
 	raw, err := os.ReadFile(a.configPath())
 	if err != nil {
 		jsonErr(w, http.StatusInternalServerError, "failed to read persisted config")
@@ -110,28 +105,46 @@ func (a *restAPI) HandlePendingRestart(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(diffs); err != nil {
-		// Header already written; log only.
-		_ = err
+		// Header already written; can only log.
+		slog.Error("pending-restart: encode failed", "error", err)
 	}
 }
 
 // deepCopyConfig returns a deep copy of cfg via JSON round-trip. It is called
 // exactly once at boot to produce the appliedConfig snapshot; the original cfg
 // may be mutated by hot-reload afterward without affecting the snapshot.
-// Returns nil when cfg is nil.
-func deepCopyConfig(cfg *config.Config) *config.Config {
+// Returns (nil, nil) when cfg is nil. Returns a non-nil error when the
+// JSON round-trip fails — callers must abort boot on error, otherwise the
+// pending-restart diff compares persisted config against an empty map and
+// incorrectly reports every gated key as pending.
+func deepCopyConfig(cfg *config.Config) (*config.Config, error) {
 	if cfg == nil {
-		return nil
+		return nil, nil
 	}
 	raw, err := json.Marshal(cfg)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("pending-restart: failed to marshal boot config: %w", err)
 	}
 	var copy config.Config
 	if err := json.Unmarshal(raw, &copy); err != nil {
-		return nil
+		return nil, fmt.Errorf("pending-restart: failed to unmarshal boot config snapshot: %w", err)
 	}
-	return &copy
+	return &copy, nil
+}
+
+// mustDeepCopyConfig is the boot-time wrapper for deepCopyConfig. It panics
+// when the JSON round-trip fails, aborting boot. This is intentional: a
+// corrupted appliedConfig snapshot would cause every restart-gated key to
+// appear pending immediately after boot, which is misleading and would
+// prevent the admin from ever clearing the restart banner.
+func mustDeepCopyConfig(cfg *config.Config) *config.Config {
+	copy, err := deepCopyConfig(cfg)
+	if err != nil {
+		// Panic here causes cmd/omnipus/main.go's recovery to write the
+		// error to gateway_panic.log and exit non-zero.
+		panic(fmt.Sprintf("pending-restart: boot snapshot failed: %v", err))
+	}
+	return copy
 }
 
 // getAtPath extracts a value from a nested map[string]any using a dotted path

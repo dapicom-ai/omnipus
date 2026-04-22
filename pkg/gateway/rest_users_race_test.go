@@ -21,7 +21,7 @@ import (
 // TestHandleUserChangeRole_ConcurrentDemotion_OneWins proves that the
 // last-admin guard in HandleUserChangeRole is evaluated INSIDE the
 // safeUpdateConfigJSON callback (post-configMu-acquire), not against a
-// pre-lock snapshot (MAJ-005).
+// pre-lock snapshot.
 //
 // Setup per iteration: exactly two admins (alice, bob), zero non-admin users.
 // Race: goroutine A demotes alice→user; goroutine B demotes bob→user.
@@ -36,8 +36,6 @@ import (
 //
 // The test is deterministic by construction: with the guard inside the write
 // lock the two outcomes are always {200,409} — never {200,200} or {409,409}.
-//
-// Traces to: sprint-k-security-ui-parity-spec.md line 809 (US-10 AC-8, MAJ-005)
 func TestHandleUserChangeRole_ConcurrentDemotion_OneWins(t *testing.T) {
 	const iterations = 100
 
@@ -129,7 +127,6 @@ func TestHandleUserChangeRole_ConcurrentDemotion_OneWins(t *testing.T) {
 // the canonical ErrLastAdmin message, not a generic 500.
 //
 // Runs a single iteration (not 100) — the error message is deterministic.
-// Traces to: sprint-k-security-ui-parity-spec.md line 809 (US-10 AC-8, MAJ-005)
 func TestHandleUserChangeRole_ConcurrentDemotion_ConflictBodyMessage(t *testing.T) {
 	hash, err := bcrypt.GenerateFromPassword([]byte("pw"), bcrypt.MinCost)
 	require.NoError(t, err)

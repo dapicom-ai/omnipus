@@ -27,7 +27,7 @@ var canonicalDMScopes = [4]routing.DMScope{
 }
 
 // dmScopeInvalidMsg lists all four canonical values so callers can correct
-// legacy "global" or case-variant inputs. Matches MAJ-002 rejection requirement.
+// legacy "global" or case-variant inputs.
 var dmScopeInvalidMsg = fmt.Sprintf(
 	`dm_scope must be exactly one of: %q, %q, %q, %q`,
 	string(routing.DMScopeMain),
@@ -111,7 +111,26 @@ func (a *restAPI) putSessionScope(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.awaitReload()
+	if reloadErr := a.awaitReload(); reloadErr != nil {
+		if a.agentLoop != nil {
+			if auditLogger := a.agentLoop.AuditLogger(); auditLogger != nil {
+				if err := audit.EmitSecuritySettingChange(
+					r.Context(), auditLogger,
+					"session.dm_scope", oldScope, body.DMScope,
+				); err != nil {
+					slog.Error("rest: audit emit session dm_scope change", "error", err)
+				}
+			}
+		}
+		slog.Info("rest: session dm_scope updated (restart required)", "dm_scope", body.DMScope)
+		jsonOK(w, map[string]any{
+			"saved":            true,
+			"requires_restart": true,
+			"applied_dm_scope": oldScope,
+			"warning":          "config saved to disk but hot-reload failed; restart the gateway to apply",
+		})
+		return
+	}
 
 	if a.agentLoop != nil {
 		if auditLogger := a.agentLoop.AuditLogger(); auditLogger != nil {
@@ -122,7 +141,7 @@ func (a *restAPI) putSessionScope(w http.ResponseWriter, r *http.Request) {
 				oldScope,
 				body.DMScope,
 			); err != nil {
-				slog.Warn("rest: audit emit session dm_scope change", "error", err)
+				slog.Error("rest: audit emit session dm_scope change", "error", err)
 			}
 		}
 	}

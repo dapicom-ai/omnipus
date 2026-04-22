@@ -17,7 +17,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 )
 
-// rest_rate_limits.go — Sprint K FR-005 / MIN-004 rate-limits endpoint.
+// rest_rate_limits.go — rate-limits endpoint.
 //
 // GET  /api/v1/security/rate-limits — returns current config + live daily cost.
 // PUT  /api/v1/security/rate-limits — partial update to config.sandbox.rate_limits.
@@ -138,7 +138,32 @@ func (a *restAPI) putRateLimits(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.awaitReload()
+	if reloadErr := a.awaitReload(); reloadErr != nil {
+		if auditLogger := a.agentLoop.AuditLogger(); auditLogger != nil {
+			newCfg := a.agentLoop.GetConfig().Sandbox.RateLimits
+			if err := audit.EmitSecuritySettingChange(
+				r.Context(), auditLogger, "sandbox.rate_limits",
+				map[string]any{
+					"daily_cost_cap_usd":              oldCfg.DailyCostCapUSD,
+					"max_agent_llm_calls_per_hour":    oldCfg.MaxAgentLLMCallsPerHour,
+					"max_agent_tool_calls_per_minute": oldCfg.MaxAgentToolCallsPerMinute,
+				},
+				map[string]any{
+					"daily_cost_cap_usd":              newCfg.DailyCostCapUSD,
+					"max_agent_llm_calls_per_hour":    newCfg.MaxAgentLLMCallsPerHour,
+					"max_agent_tool_calls_per_minute": newCfg.MaxAgentToolCallsPerMinute,
+				},
+			); err != nil {
+				slog.Error("rest: audit log rate limits update", "error", err)
+			}
+		}
+		jsonOK(w, map[string]any{
+			"saved":            true,
+			"requires_restart": true,
+			"warning":          "config saved to disk but hot-reload failed; restart the gateway to apply",
+		})
+		return
+	}
 
 	// Build new snapshot for audit and response.
 	newCfg := a.agentLoop.GetConfig().Sandbox.RateLimits
@@ -159,7 +184,7 @@ func (a *restAPI) putRateLimits(w http.ResponseWriter, r *http.Request) {
 				"max_agent_tool_calls_per_minute": newCfg.MaxAgentToolCallsPerMinute,
 			},
 		); err != nil {
-			slog.Warn("rest: audit log rate limits update", "error", err)
+			slog.Error("rest: audit log rate limits update", "error", err)
 		}
 	}
 

@@ -27,8 +27,8 @@ type sandboxConfigPutBody struct {
 }
 
 // sandboxConfigPutBodySSRF carries the ssrf sub-object. We intentionally
-// only expose allow_internal here — CRIT-001 forbids inventing new keys.
-// Any other ssrf field the client sends is ignored (documented in tests).
+// only expose allow_internal here — inventing new config keys would break
+// backward compatibility. Any other ssrf field the client sends is ignored.
 type sandboxConfigPutBodySSRF struct {
 	AllowInternal *[]string `json:"allow_internal,omitempty"`
 }
@@ -49,8 +49,8 @@ type sandboxConfigPutBodySSRF struct {
 // PUT accepts a partial body — any subset of {allowed_paths, ssrf.allow_internal}.
 // On validation success each changed field is persisted atomically via
 // safeUpdateConfigJSON; the response reports requires_restart=true iff
-// allowed_paths was in the body (Sprint K US-6 — restart-gated per
-// RestartGatedKeys). ssrf.allow_internal is hot-reload (SC-005).
+// allowed_paths was in the body (restart-gated per RestartGatedKeys).
+// ssrf.allow_internal is hot-reload.
 //
 // Admin-only: non-admin PUT returns 403.
 func (a *restAPI) HandleSandboxConfig(w http.ResponseWriter, r *http.Request) {
@@ -58,11 +58,6 @@ func (a *restAPI) HandleSandboxConfig(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		a.getSandboxConfig(w, r)
 	case http.MethodPut:
-		role, _ := r.Context().Value(ctxkey.RoleContextKey{}).(config.UserRole)
-		if role != config.UserRoleAdmin {
-			jsonErr(w, http.StatusForbidden, "admin required")
-			return
-		}
 		a.putSandboxConfig(w, r)
 	default:
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -125,20 +120,13 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 		ssrfWarnings = warnings
 	}
 
-	// Capture old values for auditing before mutating config.json. Each
-	// field is audited separately so operators see a clean per-resource
-	// history.
-	cfg := a.agentLoop.GetConfig()
+	// Capture old values for auditing inside the safeUpdateConfigJSON callback
+	// so the snapshot is taken atomically with the write. Reading before the
+	// lock can yield a stale value when two writers race.
 	var (
 		oldAllowedPaths  []string
 		oldAllowInternal []string
 	)
-	if changedAllowedPaths {
-		oldAllowedPaths = append([]string(nil), cfg.Sandbox.AllowedPaths...)
-	}
-	if changedAllowInternal {
-		oldAllowInternal = append([]string(nil), cfg.Sandbox.SSRF.AllowInternal...)
-	}
 
 	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
 		sandbox, _ := m["sandbox"].(map[string]any)
@@ -146,7 +134,17 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 			sandbox = map[string]any{}
 			m["sandbox"] = sandbox
 		}
+
+		// Snapshot old values from the just-read map so the audit diff is
+		// consistent with the actual atomic state, not a pre-lock race copy.
 		if changedAllowedPaths {
+			if raw, ok := sandbox["allowed_paths"].([]any); ok {
+				for _, v := range raw {
+					if s, ok := v.(string); ok {
+						oldAllowedPaths = append(oldAllowedPaths, s)
+					}
+				}
+			}
 			sandbox["allowed_paths"] = toAnySlice(*body.AllowedPaths)
 		}
 		if changedAllowInternal {
@@ -154,6 +152,13 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 			if ssrf == nil {
 				ssrf = map[string]any{}
 				sandbox["ssrf"] = ssrf
+			}
+			if raw, ok := ssrf["allow_internal"].([]any); ok {
+				for _, v := range raw {
+					if s, ok := v.(string); ok {
+						oldAllowInternal = append(oldAllowInternal, s)
+					}
+				}
 			}
 			ssrf["allow_internal"] = toAnySlice(*body.SSRF.AllowInternal)
 		}
@@ -174,7 +179,7 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 					"sandbox.allowed_paths",
 					oldAllowedPaths, *body.AllowedPaths,
 				); err != nil {
-					slog.Warn("rest: audit emit allowed_paths change", "error", err)
+					slog.Error("rest: audit emit allowed_paths change", "error", err)
 				}
 			}
 			if changedAllowInternal {
@@ -183,7 +188,7 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 					"sandbox.ssrf.allow_internal",
 					oldAllowInternal, *body.SSRF.AllowInternal,
 				); err != nil {
-					slog.Warn("rest: audit emit ssrf.allow_internal change", "error", err)
+					slog.Error("rest: audit emit ssrf.allow_internal change", "error", err)
 				}
 			}
 		}

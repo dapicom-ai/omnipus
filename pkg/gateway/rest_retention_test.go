@@ -23,6 +23,7 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/gateway/ctxkey"
+	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 )
 
 // retentionPUT is a helper that issues a PUT /api/v1/security/retention as admin.
@@ -168,7 +169,7 @@ func TestHandleRetention_PUT_HotReload(t *testing.T) {
 }
 
 // TestHandleRetention_PUT_NonAdmin403 verifies that a non-admin request receives
-// 403 Forbidden.
+// 403 Forbidden. The check is enforced by RequireAdmin middleware.
 func TestHandleRetention_PUT_NonAdmin403(t *testing.T) {
 	api := newTestRestAPIWithHome(t)
 
@@ -176,7 +177,7 @@ func TestHandleRetention_PUT_NonAdmin403(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPut, "/api/v1/security/retention", strings.NewReader(`{"session_days": 7}`))
 	r = r.WithContext(ctx)
 	w := httptest.NewRecorder()
-	api.HandleRetention(w, r)
+	middleware.RequireAdmin(http.HandlerFunc(api.HandleRetention)).ServeHTTP(w, r)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
@@ -350,7 +351,8 @@ func TestHandleRetentionSweep_DisabledReturnsSkipped(t *testing.T) {
 }
 
 // TestHandleRetentionSweep_NonAdmin403 verifies that a non-admin request to
-// POST /retention/sweep receives 403 Forbidden.
+// POST /retention/sweep receives 403 Forbidden. The check is enforced by
+// RequireAdmin middleware.
 func TestHandleRetentionSweep_NonAdmin403(t *testing.T) {
 	api := newTestRestAPIWithHome(t)
 
@@ -358,7 +360,7 @@ func TestHandleRetentionSweep_NonAdmin403(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/security/retention/sweep", nil)
 	r = r.WithContext(ctx)
 	w := httptest.NewRecorder()
-	api.HandleRetentionSweep(w, r)
+	middleware.RequireAdmin(http.HandlerFunc(api.HandleRetentionSweep)).ServeHTTP(w, r)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }

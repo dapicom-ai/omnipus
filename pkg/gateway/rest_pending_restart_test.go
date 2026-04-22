@@ -19,6 +19,7 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/gateway/ctxkey"
+	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 )
 
 // withAdminCtx returns a request with the admin role injected into context.
@@ -161,13 +162,14 @@ func TestHandlePendingRestart_SetThenRevertClearsDiff(t *testing.T) {
 }
 
 // TestHandlePendingRestart_NonAdmin403 verifies that a non-admin caller
-// receives 403.
+// receives 403. The check is enforced by RequireAdmin middleware, which is
+// part of the production adminWrap chain.
 func TestHandlePendingRestart_NonAdmin403(t *testing.T) {
 	api := newPendingRestartAPI(t, nil, map[string]any{})
 
 	w := httptest.NewRecorder()
 	r := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/config/pending-restart", nil))
-	api.HandlePendingRestart(w, r)
+	middleware.RequireAdmin(http.HandlerFunc(api.HandlePendingRestart)).ServeHTTP(w, r)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }

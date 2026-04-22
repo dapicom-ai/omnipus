@@ -24,6 +24,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/gateway/ctxkey"
+	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	"github.com/dapicom-ai/omnipus/pkg/taskstore"
 )
@@ -127,7 +128,8 @@ func TestHandleSandboxAuditLog_ResponseShape(t *testing.T) {
 }
 
 // TestHandleSandboxAuditLog_NonAdmin403 verifies that a user-role request
-// receives 403 Forbidden.
+// receives 403 Forbidden. The check is enforced by RequireAdmin middleware,
+// which is part of the production adminWrap chain.
 func TestHandleSandboxAuditLog_NonAdmin403(t *testing.T) {
 	api := newTestRestAPIWithHome(t)
 
@@ -137,7 +139,7 @@ func TestHandleSandboxAuditLog_NonAdmin403(t *testing.T) {
 	r = r.WithContext(ctx)
 	w := httptest.NewRecorder()
 
-	api.HandleSandboxAuditLog(w, r)
+	middleware.RequireAdmin(http.HandlerFunc(api.HandleSandboxAuditLog)).ServeHTTP(w, r)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }

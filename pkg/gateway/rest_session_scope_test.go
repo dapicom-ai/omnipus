@@ -38,7 +38,7 @@ func sessionScopePUT(t *testing.T, api *restAPI, dmScope string) *httptest.Respo
 }
 
 // TestHandleSessionDMScope_AllFourValuesAccepted verifies each canonical DMScope
-// value returns 200 with saved=true and requires_restart=true (FR-007 / MAJ-002).
+// value returns 200 with saved=true and requires_restart=true.
 func TestHandleSessionDMScope_AllFourValuesAccepted(t *testing.T) {
 	canonicalValues := []string{
 		string(routing.DMScopeMain),
@@ -61,7 +61,7 @@ func TestHandleSessionDMScope_AllFourValuesAccepted(t *testing.T) {
 }
 
 // TestHandleSessionDMScope_GlobalRejected verifies that the legacy "global" value
-// is rejected with 400 and the error lists all four canonical values (MAJ-002).
+// is rejected with 400 and the error lists all four canonical values.
 func TestHandleSessionDMScope_GlobalRejected(t *testing.T) {
 	api := newTestRestAPIWithHome(t)
 	w := sessionScopePUT(t, api, "global")

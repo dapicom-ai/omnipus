@@ -1612,7 +1612,7 @@ func (a *restAPI) refreshConfigAndRewireServices(configPath string) error {
 func (a *restAPI) updateConfig(w http.ResponseWriter, r *http.Request) {
 	// Read the raw body once so we can decode it into two shapes: a RawMessage
 	// map for the existing deep-merge persistence path, and a fully-typed
-	// map[string]any for the blockedPaths walker (FR-018) which needs to
+	// map[string]any for the blockedPaths walker which needs to
 	// recurse into nested objects.
 	rawBody, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -1635,11 +1635,11 @@ func (a *restAPI) updateConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Block security-sensitive paths at ANY nesting depth (FR-018 / MAJ-004).
-	// The walker handles both nested bodies ({"gateway":{"users":[...]}}) and
-	// dot-path literal keys ({"gateway.users":[...]}). Rejected requests
-	// persist NOTHING — we return before safeUpdateConfigJSON is ever called,
-	// so benign sibling keys in the same body are not written either.
+	// Block security-sensitive paths at ANY nesting depth. The walker handles
+	// both nested bodies ({"gateway":{"users":[...]}}) and dot-path literal
+	// keys ({"gateway.users":[...]}). Rejected requests persist NOTHING — we
+	// return before safeUpdateConfigJSON is ever called, so benign sibling
+	// keys in the same body are not written either.
 	var typedBody map[string]any
 	if decodeErr := json.Unmarshal(rawBody, &typedBody); decodeErr != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
@@ -1970,26 +1970,26 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	cm.RegisterHTTPHandler("/api/v1/security/exec-allowlist", a.withAuth(a.HandleExecAllowlist))
 	// Wave 3 security endpoints (SEC-25, SEC-28).
 	cm.RegisterHTTPHandler("/api/v1/security/exec-proxy-status", a.withAuth(a.HandleExecProxyStatus))
-	// Sprint K admin-only security endpoints (FR-012 / FR-013 / FR-019).
+	// Admin-only security endpoints.
 	// Chain: withAuth → RequireAdmin → RequireNotBypass → handler.
 	// CSRF is enforced by the global WrapHTTPHandler layer (no per-handler wiring needed).
-	sprintKAdmin := func(h http.HandlerFunc) http.HandlerFunc {
+	adminWrap := func(h http.HandlerFunc) http.HandlerFunc {
 		return a.withAuth(
 			middleware.RequireAdmin(
 				http.HandlerFunc(middleware.RequireNotBypass(h)),
 			).ServeHTTP,
 		)
 	}
-	cm.RegisterHTTPHandler("/api/v1/config/pending-restart", sprintKAdmin(a.HandlePendingRestart))
-	cm.RegisterHTTPHandler("/api/v1/security/audit-log", sprintKAdmin(a.HandleSandboxAuditLog))
-	cm.RegisterHTTPHandler("/api/v1/security/skill-trust", sprintKAdmin(a.HandleSkillTrust))
-	cm.RegisterHTTPHandler("/api/v1/security/prompt-guard", sprintKAdmin(a.HandlePromptGuard))
-	cm.RegisterHTTPHandler("/api/v1/security/rate-limits", sprintKAdmin(a.HandleRateLimits))
-	cm.RegisterHTTPHandler("/api/v1/security/sandbox-config", sprintKAdmin(a.HandleSandboxConfig))
-	cm.RegisterHTTPHandler("/api/v1/security/session-scope", sprintKAdmin(a.HandleSessionScope))
-	cm.RegisterHTTPHandler("/api/v1/security/retention", sprintKAdmin(a.HandleRetention))
-	cm.RegisterHTTPHandler("/api/v1/security/retention/sweep", sprintKAdmin(a.HandleRetentionSweep))
-	cm.RegisterHTTPHandler("/api/v1/users", sprintKAdmin(func(w http.ResponseWriter, r *http.Request) {
+	cm.RegisterHTTPHandler("/api/v1/config/pending-restart", adminWrap(a.HandlePendingRestart))
+	cm.RegisterHTTPHandler("/api/v1/security/audit-log", adminWrap(a.HandleSandboxAuditLog))
+	cm.RegisterHTTPHandler("/api/v1/security/skill-trust", adminWrap(a.HandleSkillTrust))
+	cm.RegisterHTTPHandler("/api/v1/security/prompt-guard", adminWrap(a.HandlePromptGuard))
+	cm.RegisterHTTPHandler("/api/v1/security/rate-limits", adminWrap(a.HandleRateLimits))
+	cm.RegisterHTTPHandler("/api/v1/security/sandbox-config", adminWrap(a.HandleSandboxConfig))
+	cm.RegisterHTTPHandler("/api/v1/security/session-scope", adminWrap(a.HandleSessionScope))
+	cm.RegisterHTTPHandler("/api/v1/security/retention", adminWrap(a.HandleRetention))
+	cm.RegisterHTTPHandler("/api/v1/security/retention/sweep", adminWrap(a.HandleRetentionSweep))
+	cm.RegisterHTTPHandler("/api/v1/users", adminWrap(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			a.HandleUsersList(w, r)
@@ -1999,7 +1999,7 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 			jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	}))
-	cm.RegisterHTTPHandler("/api/v1/users/", sprintKAdmin(a.handleUsersWithParam))
+	cm.RegisterHTTPHandler("/api/v1/users/", adminWrap(a.handleUsersWithParam))
 	// Wave 5 security endpoints (SEC-01/02/03).
 	cm.RegisterHTTPHandler("/api/v1/security/sandbox-status", a.withAuth(a.HandleSandboxStatus))
 	// GET /api/v1/security/tool-policies — read available to all authenticated
@@ -2053,7 +2053,7 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 //	PATCH  /api/v1/users/{username}/role     → HandleUserChangeRole
 //
 // Unrecognized method+path combinations return 405 or 404 respectively.
-// Auth and bypass guards are applied by the enclosing sprintKAdmin wrapper;
+// Auth and bypass guards are applied by the enclosing adminWrap wrapper;
 // this function only handles dispatch.
 func (a *restAPI) handleUsersWithParam(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path

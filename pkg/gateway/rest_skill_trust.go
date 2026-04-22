@@ -18,7 +18,7 @@ import (
 )
 
 // validSkillTrustLevels is the closed set of accepted values for sandbox.skill_trust.
-// Comparison is exact (case-sensitive) per MIN-001: no silent normalization.
+// Comparison is exact (case-sensitive): no silent normalization.
 var validSkillTrustLevels = [3]string{
 	string(config.SkillTrustBlockUnverified),
 	string(config.SkillTrustWarnUnverified),
@@ -34,7 +34,7 @@ const skillTrustInvalidMsg = `level must be exactly one of: "block_unverified", 
 // GET returns the current skill trust level from config.
 // PUT accepts {"level": string} and persists sandbox.skill_trust via safeUpdateConfigJSON.
 // Only the three canonical values are accepted; any other string (including
-// case-variants) is rejected with 400 — no silent normalization (MIN-001).
+// case-variants) is rejected with 400 — no silent normalization.
 //
 // Response shape (PUT 200):
 //
@@ -122,7 +122,7 @@ func (a *restAPI) putSkillTrust(w http.ResponseWriter, r *http.Request) {
 				oldLevel,
 				body.Level,
 			); err != nil {
-				slog.Warn("rest: audit emit skill trust change", "error", err)
+				slog.Error("rest: audit emit skill trust change", "error", err)
 			}
 		}
 	}

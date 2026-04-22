@@ -23,7 +23,7 @@ import (
 
 // ErrLastAdmin is the sentinel returned from inside a safeUpdateConfigJSON
 // callback when a delete-user or role-demote mutation would leave the
-// deployment with zero administrators. The Sprint K MAJ-005 guard MUST run
+// deployment with zero administrators. The last-admin guard MUST run
 // against the JSON map that was just read under configMu — not against a
 // stale pre-lock snapshot — so two admins concurrently demoting each other
 // cannot both pass the check and leave the system admin-less.
@@ -42,7 +42,7 @@ var errUserExists = errors.New("user already exists")
 // paths, audit log keys, and URL path segments. The first character must be
 // alphanumeric (no leading dash/dot/underscore) to reduce path-traversal
 // style surface; total length is 2-63 characters. The regex matches
-// exactly — no trimming, no normalization (MIN-001 convention).
+// exactly — no trimming, no normalization.
 var usernameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{1,62}$`)
 
 // usernameInvalidMsg is returned verbatim in 400 responses. The message
@@ -63,9 +63,6 @@ const roleInvalidMsg = `role must be exactly "admin" or "user"`
 func (a *restAPI) HandleUsersList(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	if !assertAdminNotBypass(a, w, r) {
 		return
 	}
 
@@ -94,15 +91,11 @@ func (a *restAPI) HandleUsersList(w http.ResponseWriter, r *http.Request) {
 //
 // Then the entry is persisted via safeUpdateConfigJSON. TokenHash is
 // deliberately left empty at creation — the created user obtains a bearer
-// token only by logging in via POST /api/v1/auth/login. This closes the
-// CRIT-003 gap where admin-created users would receive a token at creation
-// time, letting any admin silently issue tokens without proof of password.
+// token only by logging in via POST /api/v1/auth/login. No token at
+// creation time, so no admin can silently issue tokens without proof of password.
 func (a *restAPI) HandleUserCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	if !assertAdminNotBypass(a, w, r) {
 		return
 	}
 
@@ -166,7 +159,7 @@ func (a *restAPI) HandleUserCreate(w http.ResponseWriter, r *http.Request) {
 		users = append(users, map[string]any{
 			"username":      body.Username,
 			"password_hash": string(passwordHash),
-			"token_hash":    "", // CRIT-003: no token at creation time.
+			"token_hash":    "", // no token at creation time — user must log in explicitly.
 			"role":          body.Role,
 		})
 		gw["users"] = users
@@ -181,7 +174,22 @@ func (a *restAPI) HandleUserCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.awaitReload()
+	if err := a.awaitReload(); err != nil {
+		emitUserAudit(r, a, "gateway.users."+body.Username, nil, map[string]any{
+			"username": body.Username,
+			"role":     body.Role,
+			"password": body.Password,
+		})
+		slog.Info("rest: user created (restart required)", "username", body.Username, "role", body.Role)
+		w.WriteHeader(http.StatusCreated)
+		jsonBodyOnlyCreated(w, map[string]any{
+			"username":         body.Username,
+			"role":             body.Role,
+			"requires_restart": true,
+			"warning":          "config saved to disk but hot-reload failed; restart the gateway to apply",
+		})
+		return
+	}
 	emitUserAudit(r, a, "gateway.users."+body.Username, nil, map[string]any{
 		"username": body.Username,
 		"role":     body.Role,
@@ -200,16 +208,13 @@ func (a *restAPI) HandleUserCreate(w http.ResponseWriter, r *http.Request) {
 // Admin-only; dev-mode-bypass disables the endpoint (503).
 //
 // The last-admin guard runs INSIDE the safeUpdateConfigJSON callback
-// against the just-read JSON map — critical for MAJ-005. Two admins
-// concurrently deleting each other race on configMu; the second caller
-// sees the first caller's write on disk and blocks. A check outside the
-// lock would admit both and strand the deployment.
+// against the just-read JSON map. Two admins concurrently deleting each
+// other race on configMu; the second caller sees the first caller's write
+// on disk and blocks. A check outside the lock would admit both and strand
+// the deployment.
 func (a *restAPI) HandleUserDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	if !assertAdminNotBypass(a, w, r) {
 		return
 	}
 	username, err := extractUsernameFromPath(r, "/api/v1/users/")
@@ -279,11 +284,24 @@ func (a *restAPI) HandleUserDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.awaitReload()
-	// MIN-003: old_value contains {username, role} only — no hash fields,
-	// even though EmitSecuritySettingChange's recursive redactor would
-	// mask them. Belt-and-suspenders: don't hand the audit pipeline data
-	// it shouldn't see.
+	if reloadErr := a.awaitReload(); reloadErr != nil {
+		// Old value contains {username, role} only — no hash fields.
+		emitUserAudit(r, a, "gateway.users."+username, map[string]any{
+			"username": username,
+			"role":     removedRole,
+		}, nil)
+		slog.Info("rest: user deleted (restart required)", "username", username)
+		jsonOK(w, map[string]any{
+			"username":         username,
+			"deleted":          true,
+			"requires_restart": true,
+			"warning":          "config saved to disk but hot-reload failed; restart the gateway to apply",
+		})
+		return
+	}
+	// Old value contains {username, role} only — no hash fields, even though
+	// EmitSecuritySettingChange's recursive redactor would mask them.
+	// Belt-and-suspenders: don't hand the audit pipeline data it shouldn't see.
 	emitUserAudit(r, a, "gateway.users."+username, map[string]any{
 		"username": username,
 		"role":     removedRole,
@@ -299,14 +317,11 @@ func (a *restAPI) HandleUserDelete(w http.ResponseWriter, r *http.Request) {
 // HandleUserChangeRole handles PATCH /api/v1/users/{username}/role.
 // Admin-only; dev-mode-bypass disables the endpoint (503).
 //
-// Same last-admin guard as delete: evaluated inside the callback against
-// the post-mutation slice.
+// The last-admin guard is evaluated inside the callback against the
+// post-mutation slice — same rationale as HandleUserDelete.
 func (a *restAPI) HandleUserChangeRole(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPatch {
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	if !assertAdminNotBypass(a, w, r) {
 		return
 	}
 	username, err := extractUsernameFromPath(r, "/api/v1/users/")
@@ -382,7 +397,17 @@ func (a *restAPI) HandleUserChangeRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.awaitReload()
+	if reloadErr := a.awaitReload(); reloadErr != nil {
+		emitUserAudit(r, a, "gateway.users."+username+".role", oldRole, body.Role)
+		slog.Info("rest: user role changed (restart required)", "username", username, "old", oldRole, "new", body.Role)
+		jsonOK(w, map[string]any{
+			"username":         username,
+			"role":             body.Role,
+			"requires_restart": true,
+			"warning":          "config saved to disk but hot-reload failed; restart the gateway to apply",
+		})
+		return
+	}
 	emitUserAudit(r, a, "gateway.users."+username+".role", oldRole, body.Role)
 
 	slog.Info("rest: user role changed", "username", username, "old", oldRole, "new", body.Role)
@@ -395,9 +420,8 @@ func (a *restAPI) HandleUserChangeRole(w http.ResponseWriter, r *http.Request) {
 // HandleUserResetPassword handles PUT /api/v1/users/{username}/password.
 // Admin-only; dev-mode-bypass disables the endpoint (503).
 //
-// MAJ-003 resolution: this is an ADMIN-resets-another-user's-password
-// endpoint — NOT self-change-password. The self-change flow remains the
-// pre-existing POST /api/v1/auth/change-password (MAJ-007).
+// This is the ADMIN-resets-another-user's-password endpoint — NOT
+// self-change-password. The self-change flow is POST /api/v1/auth/change-password.
 //
 // The callback performs two mutations atomically:
 //  1. Sets the target user's password_hash to bcrypt(newPassword).
@@ -410,9 +434,6 @@ func (a *restAPI) HandleUserChangeRole(w http.ResponseWriter, r *http.Request) {
 func (a *restAPI) HandleUserResetPassword(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPut {
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	if !assertAdminNotBypass(a, w, r) {
 		return
 	}
 	username, err := extractUsernameFromPath(r, "/api/v1/users/")
@@ -485,7 +506,20 @@ func (a *restAPI) HandleUserResetPassword(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	a.awaitReload()
+	if reloadErr := a.awaitReload(); reloadErr != nil {
+		emitUserAudit(r, a, "gateway.users."+username+".password",
+			map[string]any{"password": ""},
+			map[string]any{"password": body.Password},
+		)
+		slog.Info("rest: user password reset by admin (restart required)", "username", username)
+		jsonOK(w, map[string]any{
+			"username":         username,
+			"password_reset":   true,
+			"requires_restart": true,
+			"warning":          "config saved to disk but hot-reload failed; restart the gateway to apply",
+		})
+		return
+	}
 	emitUserAudit(r, a, "gateway.users."+username+".password",
 		map[string]any{"password": ""},            // redacted to "***redacted***".
 		map[string]any{"password": body.Password}, // redacted to "***redacted***".
@@ -522,7 +556,7 @@ func extractUsernameFromPath(r *http.Request, prefix string) (string, error) {
 // exactly "admin". Non-map entries and entries missing the role key are
 // skipped. Used by the last-admin guard inside safeUpdateConfigJSON
 // callbacks — MUST be called against the in-progress map, never against a
-// pre-lock snapshot (MAJ-005).
+// pre-lock snapshot.
 func countAdmins(users []any) int {
 	n := 0
 	for _, u := range users {
@@ -537,36 +571,6 @@ func countAdmins(users []any) int {
 	return n
 }
 
-// assertAdminNotBypass performs the two defensive checks every user-
-// management endpoint runs at the top of its handler:
-//
-//  1. dev_mode_bypass — 503 if the server is currently running in bypass
-//     mode. k20 will wrap each route with middleware.RequireNotBypass, but
-//     belt-and-suspenders guarantees that a misconfigured handler chain
-//     cannot accidentally expose user management to anonymous callers.
-//
-//  2. admin role in context — 403 if the caller is not admin. This is the
-//     same check RequireAdmin middleware performs, duplicated here so the
-//     endpoints remain safe when called from tests that bypass middleware
-//     and from any future refactor that changes route wiring.
-//
-// Returns true if the request should proceed; false if a response has
-// already been written.
-func assertAdminNotBypass(a *restAPI, w http.ResponseWriter, r *http.Request) bool {
-	if a != nil && a.agentLoop != nil {
-		cfg := a.agentLoop.GetConfig()
-		if cfg != nil && cfg.Gateway.DevModeBypass {
-			jsonErr(w, http.StatusServiceUnavailable, "user management disabled in dev-mode-bypass")
-			return false
-		}
-	}
-	role, _ := r.Context().Value(RoleContextKey{}).(config.UserRole)
-	if role != config.UserRoleAdmin {
-		jsonErr(w, http.StatusForbidden, "admin required")
-		return false
-	}
-	return true
-}
 
 // emitUserAudit emits a security_setting_change audit record if the audit
 // logger is enabled. Errors are logged at Warn and swallowed — user-
@@ -581,7 +585,7 @@ func emitUserAudit(r *http.Request, a *restAPI, resource string, oldValue, newVa
 		return
 	}
 	if err := audit.EmitSecuritySettingChange(r.Context(), logger, resource, oldValue, newValue); err != nil {
-		slog.Warn("rest: audit emit user change", "resource", resource, "error", err)
+		slog.Error("rest: audit emit user change", "resource", resource, "error", err)
 	}
 }
 
@@ -591,6 +595,6 @@ func emitUserAudit(r *http.Request, a *restAPI, resource string, oldValue, newVa
 func jsonBodyOnlyCreated(w http.ResponseWriter, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(body); err != nil {
-		slog.Debug("rest: write created response body failed", "error", err)
+		slog.Warn("rest: write created response body failed", "error", err)
 	}
 }

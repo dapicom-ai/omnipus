@@ -17,7 +17,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/sandbox"
 )
 
-// TestLandlockABIv4_BootLogOnce verifies Sprint-K k07:
+// TestLandlockABIv4_BootLogOnce verifies:
 //   - abi_version=4 triggers exactly one slog.Warn with event=landlock_abi_warning
 //   - a second invocation of the warn site does NOT produce a second entry
 //     (the sync.Once guard holds for the lifetime of the gateway process)

@@ -25,6 +25,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/gateway/ctxkey"
+	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 )
 
 // sandboxConfigPUT issues PUT /api/v1/security/sandbox-config with the
@@ -330,7 +331,7 @@ func TestHandleSandboxConfig_NonAdmin403(t *testing.T) {
 		strings.NewReader(`{"allowed_paths":["/var/log"]}`))
 	r.Header.Set("Content-Type", "application/json")
 	r = withNonAdminRole(r)
-	api.HandleSandboxConfig(w, r)
+	middleware.RequireAdmin(http.HandlerFunc(api.HandleSandboxConfig)).ServeHTTP(w, r)
 	assert.Equal(t, http.StatusForbidden, w.Code, "non-admin must receive 403")
 }
 

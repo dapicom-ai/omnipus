@@ -13,8 +13,6 @@ import (
 	"net/http"
 
 	"github.com/dapicom-ai/omnipus/pkg/audit"
-	"github.com/dapicom-ai/omnipus/pkg/config"
-	"github.com/dapicom-ai/omnipus/pkg/gateway/ctxkey"
 )
 
 // HandleRetention handles GET and PUT /api/v1/security/retention.
@@ -38,11 +36,6 @@ func (a *restAPI) HandleRetention(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		a.getRetention(w, r)
 	case http.MethodPut:
-		role, _ := r.Context().Value(ctxkey.RoleContextKey{}).(config.UserRole)
-		if role != config.UserRoleAdmin {
-			jsonErr(w, http.StatusForbidden, "admin required")
-			return
-		}
 		a.putRetention(w, r)
 	default:
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -151,7 +144,7 @@ func (a *restAPI) putRetention(w http.ResponseWriter, r *http.Request) {
 					"disabled":     newRet.Disabled,
 				},
 			); err != nil {
-				slog.Warn("rest: audit emit retention change", "error", err)
+				slog.Error("rest: audit emit retention change", "error", err)
 			}
 		}
 	}
@@ -181,13 +174,6 @@ func (a *restAPI) HandleRetentionSweep(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-
-	role, _ := r.Context().Value(ctxkey.RoleContextKey{}).(config.UserRole)
-	if role != config.UserRoleAdmin {
-		jsonErr(w, http.StatusForbidden, "admin required")
-		return
-	}
-
 	a.postRetentionSweep(w, r)
 }
 
@@ -232,7 +218,7 @@ func (a *restAPI) postRetentionSweep(w http.ResponseWriter, r *http.Request) {
 				map[string]any{"days": days},
 				map[string]any{"removed": removed},
 			); auditErr != nil {
-				slog.Warn("rest: audit emit retention sweep", "error", auditErr)
+				slog.Error("rest: audit emit retention sweep", "error", auditErr)
 			}
 		}
 	}

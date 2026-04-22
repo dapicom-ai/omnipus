@@ -14,8 +14,8 @@ import (
 )
 
 // ResetLandlockABIv4WarnForTests resets the sync.Once that gates the
-// Sprint-K k07 one-shot ABI-v4 boot warning so tests can exercise the
-// emission path repeatedly in the same process.
+// one-shot ABI-v4 boot warning so tests can exercise the emission path
+// repeatedly in the same process.
 func ResetLandlockABIv4WarnForTests() {
 	landlockABIv4WarnOnce = sync.Once{}
 }
