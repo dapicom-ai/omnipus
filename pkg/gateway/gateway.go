@@ -552,6 +552,15 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 		agentLoop.Run(agentLoopCtx)
 	}()
 
+	// Launch the nightly retention sweep goroutine (k03 / FR-008 / MIN-002).
+	// Uses ctx (not agentLoopCtx) so it shuts down on gateway stop regardless
+	// of agent-loop liveness. GetSessionStore returns the shared UnifiedStore;
+	// when nil (misconfigured home) the goroutine is a no-op — getCfg returning
+	// a nil-nil cfg path is guarded inside executeSweepTick.
+	if sharedStore := agentLoop.GetSessionStore(); sharedStore != nil {
+		startRetentionSweepLoop(ctx, sharedStore, agentLoop.GetConfig, 24*time.Hour)
+	}
+
 	// Wire a second degraded check: report 503 when the agent loop has died.
 	runningServices.HealthServer.SetDegradedFunc(func() (bool, string) {
 		if agentLoopDead.Load() {
