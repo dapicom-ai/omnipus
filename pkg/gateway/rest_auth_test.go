@@ -4,6 +4,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -1143,6 +1144,141 @@ func TestHandleChangePassword_Unauthenticated(t *testing.T) {
 	api.HandleChangePassword(w, req)
 
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+// --- FR-016 / CRIT-003 regression guards (k29, Sprint K) ---
+
+// TestGenerateUserToken_EntropyAndFormat verifies the canonical bearer token
+// format (omnipus_<64 hex chars>) and entropy properties required by FR-016.
+//
+// Three properties are asserted:
+//  1. Format: every token matches ^omnipus_[0-9a-f]{64}$.
+//  2. Byte length: the hex portion decodes to exactly 32 bytes (proves the
+//     ">= 32 bytes" floor from FR-016 is met by the implementation, not
+//     padded with zeroes or truncated).
+//  3. Uniqueness: 100 invocations produce 100 distinct tokens (no collision
+//     from a broken RNG, hardcoded seed, or constant return value).
+//
+// Traces to: sprint-k-security-ui-parity-spec.md FR-016 (token entropy).
+func TestGenerateUserToken_EntropyAndFormat(t *testing.T) {
+	const invocations = 100
+
+	seen := make(map[string]struct{}, invocations)
+	for i := 0; i < invocations; i++ {
+		tok, err := generateUserToken("")
+		require.NoError(t, err, "generateUserToken must not error (invocation %d)", i)
+
+		assert.Regexp(t, `^omnipus_[0-9a-f]{64}$`, tok,
+			"token must match omnipus_<64 hex> format (invocation %d)", i)
+
+		hexPart := strings.TrimPrefix(tok, "omnipus_")
+		decoded, decErr := hex.DecodeString(hexPart)
+		require.NoError(t, decErr, "hex portion must be valid hex (invocation %d)", i)
+		assert.Len(t, decoded, 32,
+			"hex portion must decode to exactly 32 bytes per FR-016 (invocation %d)", i)
+
+		seen[tok] = struct{}{}
+	}
+
+	assert.Len(t, seen, invocations,
+		"all %d token invocations must be distinct — collisions indicate broken entropy", invocations)
+}
+
+// TestHandleLogin_StoresBcryptedTokenHash verifies that HandleLogin writes a
+// bcrypt hash of the plaintext token to disk, and that the plaintext token
+// string never appears in config.json (CRIT-003 / FR-016).
+//
+// BDD: Given a user "hashcheckuser" with a known password,
+// When POST /api/v1/auth/login succeeds,
+// Then config.json contains token_hash = bcrypt(plaintext token),
+// And the plaintext token string is NOT present anywhere in config.json.
+//
+// Traces to: sprint-k-security-ui-parity-spec.md CRIT-003, FR-016.
+func TestHandleLogin_StoresBcryptedTokenHash(t *testing.T) {
+	api, tmpDir := newTestRestAPIWithUser(t, "hashcheckuser", "hash-check-pw-123")
+
+	loginBody := `{"username":"hashcheckuser","password":"hash-check-pw-123"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(loginBody))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	api.HandleLogin(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "login must succeed: %s", w.Body.String())
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	plaintextToken, ok := resp["token"].(string)
+	require.True(t, ok && plaintextToken != "", "login response must contain a non-empty token")
+
+	raw, err := os.ReadFile(filepath.Join(tmpDir, "config.json"))
+	require.NoError(t, err)
+
+	var diskCfg map[string]any
+	require.NoError(t, json.Unmarshal(raw, &diskCfg))
+	gw := diskCfg["gateway"].(map[string]any)
+	usersRaw := gw["users"].([]any)
+	require.Len(t, usersRaw, 1)
+	userMap := usersRaw[0].(map[string]any)
+
+	tokenHash, _ := userMap["token_hash"].(string)
+	require.NotEmpty(t, tokenHash, "token_hash must be written to disk after login")
+
+	require.NoError(t,
+		bcrypt.CompareHashAndPassword([]byte(tokenHash), []byte(plaintextToken)),
+		"token_hash on disk must be bcrypt of the plaintext token returned to the caller")
+
+	assert.False(t, strings.Contains(string(raw), plaintextToken),
+		"plaintext token must NOT appear anywhere in config.json — hash-only storage required by CRIT-003")
+}
+
+// TestHandleLogin_OverwritesTokenHash_AfterRepeatedLogin verifies that each
+// successful login rotates the token and its hash, proving the CRIT-003
+// resolution: no two coexisting token lifecycles.
+//
+// BDD: Given a user "rotateuser",
+// When POST /api/v1/auth/login is called twice,
+// Then the token returned by login-2 differs from the token returned by login-1,
+// And the token_hash on disk after login-2 differs from the token_hash after login-1.
+//
+// Traces to: sprint-k-security-ui-parity-spec.md CRIT-003.
+func TestHandleLogin_OverwritesTokenHash_AfterRepeatedLogin(t *testing.T) {
+	api, tmpDir := newTestRestAPIWithUser(t, "rotateuser", "rotate-pass-123")
+
+	doLogin := func() (plaintextToken, diskHash string) {
+		t.Helper()
+		body := `{"username":"rotateuser","password":"rotate-pass-123"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		api.HandleLogin(w, req)
+		require.Equal(t, http.StatusOK, w.Code, "login must succeed: %s", w.Body.String())
+
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		tok, _ := resp["token"].(string)
+		require.NotEmpty(t, tok, "login response must include token")
+
+		raw, err := os.ReadFile(filepath.Join(tmpDir, "config.json"))
+		require.NoError(t, err)
+		var diskCfg map[string]any
+		require.NoError(t, json.Unmarshal(raw, &diskCfg))
+		gw := diskCfg["gateway"].(map[string]any)
+		usersRaw := gw["users"].([]any)
+		require.Len(t, usersRaw, 1)
+		userMap := usersRaw[0].(map[string]any)
+		hash, _ := userMap["token_hash"].(string)
+		require.NotEmpty(t, hash, "token_hash must be non-empty after login")
+
+		return tok, hash
+	}
+
+	tok1, hash1 := doLogin()
+	tok2, hash2 := doLogin()
+
+	assert.NotEqual(t, tok1, tok2,
+		"each login must issue a cryptographically distinct plaintext token")
+	assert.NotEqual(t, hash1, hash2,
+		"each login must overwrite token_hash with a new bcrypt hash — CRIT-003 rotation proof")
 }
 
 // --- apiRateLimiter tests ---
