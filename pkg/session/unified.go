@@ -59,6 +59,12 @@ type UnifiedStore struct {
 	backend *memory.JSONLStore
 }
 
+// BaseDir returns the root directory of this store.
+// Exported for tests that need to create fixture files directly in the store.
+func (us *UnifiedStore) BaseDir() string {
+	return us.baseDir
+}
+
 // validateSessionID rejects IDs that could escape the base directory.
 func validateSessionID(id string) error {
 	if id == "" || strings.Contains(id, "/") || strings.Contains(id, "\\") ||
