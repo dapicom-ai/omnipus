@@ -2,9 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
-// Wave 5b spec tests — DiagnosticsSection frontend tests
-// Traces to: wave5b-system-agent-spec.md — US-10 Doctor diagnostics UI BDD scenarios
-
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>()
   return {
@@ -14,7 +11,6 @@ vi.mock('@/lib/api', async (importOriginal) => {
   }
 })
 
-// Mock store
 vi.mock('@/store/ui', () => ({
   useUiStore: vi.fn(() => ({ addToast: vi.fn() })),
 }))
@@ -46,14 +42,11 @@ beforeEach(() => {
 })
 
 // =====================================================================
-// Scenario: Empty state — no diagnostics run yet (US-10 AC1)
-// Traces to: wave5b-system-agent-spec.md — Scenario: Empty state before doctor run
+// Scenario: Empty state — no diagnostics run yet
 // =====================================================================
 
 describe('DiagnosticsSection — empty state', () => {
   it('shows empty state message when no diagnostics have been run', async () => {
-    // Traces to: wave5b-system-agent-spec.md — Scenario: No run yet shows placeholder (US-10 AC1)
-    // BDD: Given no doctor results, When DiagnosticsSection renders, Then empty state shown
     vi.mocked(fetchDoctorResults).mockResolvedValue(null)
 
     renderSection()
@@ -64,7 +57,6 @@ describe('DiagnosticsSection — empty state', () => {
   })
 
   it('shows run diagnostics button in all states', async () => {
-    // Traces to: wave5b-system-agent-spec.md — Scenario: Run diagnostics button always visible
     vi.mocked(fetchDoctorResults).mockResolvedValue(null)
 
     renderSection()
@@ -76,8 +68,122 @@ describe('DiagnosticsSection — empty state', () => {
 })
 
 // =====================================================================
-// Scenario: Display last results (US-10 AC2, AC3)
-// Traces to: wave5b-system-agent-spec.md — Scenario: Doctor results display
+// TestDiagnostics_ScoreDisplay_HigherIsBetter
+// =====================================================================
+
+describe('TestDiagnostics_ScoreDisplay_HigherIsBetter', () => {
+  it('renders score 90 as 90/100 Excellent with success color', async () => {
+    vi.mocked(fetchDoctorResults).mockResolvedValue({
+      score: 90,
+      issues: [],
+      checked_at: '2026-01-01T00:00:00Z',
+    })
+
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.getByText('90')).toBeInTheDocument()
+      expect(screen.getByText('/100')).toBeInTheDocument()
+      expect(screen.getAllByText('Excellent').length).toBeGreaterThan(0)
+    })
+
+    const label = screen.getByText('Excellent', {
+      selector: 'span.text-xs',
+    })
+    expect(label).toHaveStyle({ color: 'var(--color-success)' })
+  })
+})
+
+// =====================================================================
+// TestDiagnostics_ScoreLabel_ByBucket
+// =====================================================================
+
+describe('TestDiagnostics_ScoreLabel_ByBucket', () => {
+  it.each([
+    { score: 100, expectedLabel: 'Excellent', colorVar: '--color-success' },
+    { score: 90, expectedLabel: 'Excellent', colorVar: '--color-success' },
+    { score: 89, expectedLabel: 'Good', colorVar: '--color-success' },
+    { score: 67, expectedLabel: 'Good', colorVar: '--color-success' },
+    { score: 66, expectedLabel: 'At risk', colorVar: '--color-warning' },
+    { score: 34, expectedLabel: 'At risk', colorVar: '--color-warning' },
+    { score: 33, expectedLabel: 'Critical', colorVar: '--color-error' },
+    { score: 0, expectedLabel: 'Critical', colorVar: '--color-error' },
+  ])('score=$score → $expectedLabel ($colorVar)', async ({ score, expectedLabel, colorVar }) => {
+    const client = makeClient()
+    vi.mocked(fetchDoctorResults).mockResolvedValue({
+      score,
+      issues: [],
+      checked_at: '2026-01-01T00:00:00Z',
+    })
+
+    const { unmount } = render(
+      <QueryClientProvider client={client}>
+        <DiagnosticsSection />
+      </QueryClientProvider>
+    )
+
+    await waitFor(() => {
+      expect(screen.getAllByText(expectedLabel).length).toBeGreaterThan(0)
+    })
+
+    const label = screen.getAllByText(expectedLabel)[0]
+    expect(label).toHaveStyle({ color: `var(${colorVar})` })
+
+    unmount()
+  })
+})
+
+// =====================================================================
+// TestDiagnostics_ToastAfterRun
+// =====================================================================
+
+describe('TestDiagnostics_ToastAfterRun', () => {
+  it('shows toast containing "security score: 90/100" after run completes', async () => {
+    vi.mocked(fetchDoctorResults).mockResolvedValue(null)
+    vi.mocked(runDoctor).mockResolvedValue({
+      score: 90,
+      issues: [],
+      checked_at: new Date().toISOString(),
+    })
+
+    renderSection()
+
+    await waitFor(() => screen.getByRole('button', { name: /run diagnostics/i }))
+    fireEvent.click(screen.getByRole('button', { name: /run diagnostics/i }))
+
+    await waitFor(() => {
+      expect(mockAddToast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining('security score: 90/100'),
+        })
+      )
+    })
+  })
+})
+
+// =====================================================================
+// TestDiagnostics_ProgressBarWidth
+// =====================================================================
+
+describe('TestDiagnostics_ProgressBarWidth', () => {
+  it('progress bar width is 75% when score is 75', async () => {
+    vi.mocked(fetchDoctorResults).mockResolvedValue({
+      score: 75,
+      issues: [],
+      checked_at: '2026-01-01T00:00:00Z',
+    })
+
+    renderSection()
+
+    await waitFor(() => {
+      const bar = screen.getByTestId('progress-bar')
+      expect(bar).toHaveStyle({ width: '75%' })
+    })
+  })
+})
+
+// =====================================================================
+// Scenario: Display last results
 // =====================================================================
 
 describe('DiagnosticsSection — results display', () => {
@@ -111,9 +217,7 @@ describe('DiagnosticsSection — results display', () => {
     ],
   }
 
-  it('renders risk score when results are loaded', async () => {
-    // Traces to: wave5b-system-agent-spec.md — Scenario: Risk score gauge displayed (US-10 AC2)
-    // BDD: Given doctor result with score=42, Then score "42" is shown
+  it('renders security score when results are loaded', async () => {
     vi.mocked(fetchDoctorResults).mockResolvedValue(fullResult)
 
     renderSection()
@@ -124,7 +228,6 @@ describe('DiagnosticsSection — results display', () => {
   })
 
   it('displays the last run timestamp', async () => {
-    // Traces to: wave5b-system-agent-spec.md — Scenario: Last run time displayed (US-10 AC2)
     vi.mocked(fetchDoctorResults).mockResolvedValue(fullResult)
 
     renderSection()
@@ -135,8 +238,6 @@ describe('DiagnosticsSection — results display', () => {
   })
 
   it('groups issues by severity: high, medium, low', async () => {
-    // Traces to: wave5b-system-agent-spec.md — Scenario: Issues grouped by severity (US-10 AC3)
-    // BDD: Given results with issues of all 3 severities, Then groups HIGH, MEDIUM, LOW visible
     vi.mocked(fetchDoctorResults).mockResolvedValue(fullResult)
 
     renderSection()
@@ -149,7 +250,6 @@ describe('DiagnosticsSection — results display', () => {
   })
 
   it('displays issue titles in the issues list', async () => {
-    // Traces to: wave5b-system-agent-spec.md — Scenario: Issue titles visible
     vi.mocked(fetchDoctorResults).mockResolvedValue(fullResult)
 
     renderSection()
@@ -161,37 +261,9 @@ describe('DiagnosticsSection — results display', () => {
     })
   })
 
-  it('shows risk score label based on score value', async () => {
-    // Traces to: wave5b-system-agent-spec.md — Scenario: Risk label changes with score (US-10 AC2)
-    // Dataset from spec: score≤10 → Excellent, ≤33 → Low, ≤66 → Medium, ≤85 → High, >85 → Critical
-    const cases: Array<{ score: number; label: string }> = [
-      { score: 5, label: 'Excellent' },
-      { score: 20, label: 'Low risk' },
-      { score: 50, label: 'Medium risk' },
-      { score: 75, label: 'High risk' },
-      { score: 95, label: 'Critical' },
-    ]
-
-    for (const { score, label } of cases) {
-      const client = makeClient()
-      vi.mocked(fetchDoctorResults).mockResolvedValue({ score, issues: [], checked_at: '2026-01-01T00:00:00Z' })
-      const { unmount } = render(
-        <QueryClientProvider client={client}>
-          <DiagnosticsSection />
-        </QueryClientProvider>
-      )
-
-      await waitFor(() => {
-        expect(screen.getAllByText(label).length).toBeGreaterThan(0)
-      })
-      unmount()
-    }
-  })
-
   it('shows all clear message when no issues', async () => {
-    // Traces to: wave5b-system-agent-spec.md — Scenario: All clear message when score is 0
     vi.mocked(fetchDoctorResults).mockResolvedValue({
-      score: 0,
+      score: 100,
       issues: [],
       checked_at: '2026-01-01T00:00:00Z',
     })
@@ -202,11 +274,20 @@ describe('DiagnosticsSection — results display', () => {
       expect(screen.getByText(/no issues found/i)).toBeInTheDocument()
     })
   })
+
+  it('card title reads "Security Score"', async () => {
+    vi.mocked(fetchDoctorResults).mockResolvedValue(fullResult)
+
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.getByText('Security Score')).toBeInTheDocument()
+    })
+  })
 })
 
 // =====================================================================
-// Scenario: Issue card expand/collapse (US-10 AC4)
-// Traces to: wave5b-system-agent-spec.md — Scenario: Issue card details expandable
+// Scenario: Issue card expand/collapse
 // =====================================================================
 
 describe('DiagnosticsSection — issue card interaction', () => {
@@ -227,18 +308,14 @@ describe('DiagnosticsSection — issue card interaction', () => {
   }
 
   it('clicking an issue card expands it to show description and recommendation', async () => {
-    // Traces to: wave5b-system-agent-spec.md — Scenario: Issue card expand shows details (US-10 AC4)
-    // BDD: Given issue card visible, When clicked, Then description + recommendation shown
     vi.mocked(fetchDoctorResults).mockResolvedValue(resultWithIssue)
 
     renderSection()
 
     await waitFor(() => screen.getByText('Landlock not enabled'))
 
-    // Issue description and recommendation not shown initially (collapsed)
     expect(screen.queryByText(/kernel filesystem sandbox is disabled/i)).not.toBeInTheDocument()
 
-    // Click to expand
     fireEvent.click(screen.getByText('Landlock not enabled'))
 
     await waitFor(() => {
@@ -248,7 +325,6 @@ describe('DiagnosticsSection — issue card interaction', () => {
   })
 
   it('shows action link when present', async () => {
-    // Traces to: wave5b-system-agent-spec.md — Scenario: Action link visible in expanded card
     vi.mocked(fetchDoctorResults).mockResolvedValue(resultWithIssue)
 
     renderSection()
@@ -262,18 +338,15 @@ describe('DiagnosticsSection — issue card interaction', () => {
   })
 
   it('clicking expanded card collapses it', async () => {
-    // Traces to: wave5b-system-agent-spec.md — Scenario: Issue card collapse
     vi.mocked(fetchDoctorResults).mockResolvedValue(resultWithIssue)
 
     renderSection()
 
     await waitFor(() => screen.getByText('Landlock not enabled'))
 
-    // Expand
     fireEvent.click(screen.getByText('Landlock not enabled'))
     await waitFor(() => screen.getByText(/kernel filesystem sandbox is disabled/i))
 
-    // Collapse
     fireEvent.click(screen.getByText('Landlock not enabled'))
     await waitFor(() => {
       expect(screen.queryByText(/kernel filesystem sandbox is disabled/i)).not.toBeInTheDocument()
@@ -282,17 +355,14 @@ describe('DiagnosticsSection — issue card interaction', () => {
 })
 
 // =====================================================================
-// Scenario: Run diagnostics button (US-10 AC5)
-// Traces to: wave5b-system-agent-spec.md — Scenario: Run diagnostics updates results
+// Scenario: Run diagnostics button
 // =====================================================================
 
 describe('DiagnosticsSection — run diagnostics', () => {
   it('clicking Run diagnostics calls runDoctor API', async () => {
-    // Traces to: wave5b-system-agent-spec.md — Scenario: Doctor run triggered from UI (US-10 AC5)
-    // BDD: Given DiagnosticsSection, When Run diagnostics clicked, Then runDoctor API called
     vi.mocked(fetchDoctorResults).mockResolvedValue(null)
     vi.mocked(runDoctor).mockResolvedValue({
-      score: 10,
+      score: 85,
       issues: [],
       checked_at: new Date().toISOString(),
     })
@@ -308,8 +378,7 @@ describe('DiagnosticsSection — run diagnostics', () => {
     })
   })
 
-  it('shows toast with risk score after successful run', async () => {
-    // Traces to: wave5b-system-agent-spec.md — Scenario: Doctor run shows toast on completion
+  it('shows toast with score after successful run', async () => {
     vi.mocked(fetchDoctorResults).mockResolvedValue(null)
     vi.mocked(runDoctor).mockResolvedValue({
       score: 25,
@@ -330,9 +399,8 @@ describe('DiagnosticsSection — run diagnostics', () => {
   })
 
   it('updates displayed results after run completes', async () => {
-    // Traces to: wave5b-system-agent-spec.md — Scenario: Results update after run (US-10 AC5)
     const newResult: DoctorResult = {
-      score: 15,
+      score: 80,
       issues: [],
       checked_at: new Date().toISOString(),
     }
@@ -346,13 +414,11 @@ describe('DiagnosticsSection — run diagnostics', () => {
     fireEvent.click(screen.getByRole('button', { name: /run diagnostics/i }))
 
     await waitFor(() => {
-      // Score from the new result is shown
-      expect(screen.getByText('15')).toBeInTheDocument()
+      expect(screen.getByText('80')).toBeInTheDocument()
     })
   })
 
   it('shows error toast if run diagnostics fails', async () => {
-    // Traces to: wave5b-system-agent-spec.md — Scenario: Doctor run error handling
     vi.mocked(fetchDoctorResults).mockResolvedValue(null)
     vi.mocked(runDoctor).mockRejectedValue(new Error('doctor unavailable'))
 
@@ -369,9 +435,7 @@ describe('DiagnosticsSection — run diagnostics', () => {
   })
 
   it('run diagnostics button is disabled while running', async () => {
-    // Traces to: wave5b-system-agent-spec.md — Scenario: Run button disabled during execution
     vi.mocked(fetchDoctorResults).mockResolvedValue(null)
-    // Never resolve — stay in "running" state
     vi.mocked(runDoctor).mockReturnValue(new Promise(() => {}))
 
     renderSection()
