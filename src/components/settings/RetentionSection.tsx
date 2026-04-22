@@ -6,10 +6,9 @@ import { fetchRetention, updateRetention, triggerRetentionSweep, retentionMode }
 import type { RetentionUpdateBody, RetentionMode } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { useAuthStore } from '@/store/auth'
+import { SaveStatus, useSaveStatus } from './SaveStatus'
 
 // ── Mode helpers ───────────────────────────────────────────────────────────────
-// RetentionMode and retentionMode() are imported from @/lib/api — single
-// canonical classification shared with the Go backend enum.
 
 function buildBody(mode: RetentionMode, customDays: number): RetentionUpdateBody {
   if (mode === 'default') return { session_days: 0, disabled: false }
@@ -84,32 +83,42 @@ export function RetentionSection(): React.ReactElement {
 
   const [mode, setMode] = useState<RetentionMode>('default')
   const [customDays, setCustomDays] = useState(30)
-  const [isDirty, setIsDirty] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
   const [isDisabledOnServer, setIsDisabledOnServer] = useState(false)
+  // Track server mode for revert on cancel
+  const [serverMode, setServerMode] = useState<RetentionMode>('default')
+
+  const { state: saveState, setState: setSaveState, errorMessage, setErrorMessage } = useSaveStatus()
 
   useEffect(() => {
-    if (!data || isDirty) return
+    if (!data) return
     const m = retentionMode(data)
     setMode(m)
+    setServerMode(m)
     setIsDisabledOnServer(!!data.disabled)
     if (m === 'custom' && data.session_days && data.session_days > 0) {
       setCustomDays(data.session_days)
     }
-  }, [data, isDirty])
+  }, [data])
 
   const { mutate: save, isPending: isSaving } = useMutation({
     mutationFn: (body: RetentionUpdateBody) => updateRetention(body),
+    onMutate: () => setSaveState('saving'),
     onSuccess: (resp) => {
-      setIsDirty(false)
+      setSaveState('saved')
       setIsDisabledOnServer(!!resp.disabled)
+      const m = retentionMode(resp)
+      setServerMode(m)
       queryClient.setQueryData(['retention'], {
         session_days: resp.session_days,
         disabled: resp.disabled,
       })
-      addToast({ message: 'Retention settings saved', variant: 'success' })
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: Error) => {
+      setSaveState('error')
+      setErrorMessage(err.message)
+      addToast({ message: err.message, variant: 'error' })
+    },
   })
 
   const { mutate: sweep, isPending: isSweeping } = useMutation({
@@ -118,7 +127,6 @@ export function RetentionSection(): React.ReactElement {
       addToast({ message: `Sweep complete — ${resp.removed} session(s) removed`, variant: 'success' })
     },
     onError: (err: Error) => {
-      // Detect 409 sweep-in-progress
       if (err.message.includes('409') || err.message.toLowerCase().includes('sweep in progress')) {
         addToast({ message: 'A sweep is already running — try again in a moment.', variant: 'error' })
       } else {
@@ -127,17 +135,32 @@ export function RetentionSection(): React.ReactElement {
     },
   })
 
-  function handleSave() {
-    if (mode === 'forever') {
+  function handleModeChange(m: RetentionMode) {
+    if (m === mode) return
+    setMode(m)
+    if (m === 'forever') {
+      // Intercept — show confirmation before saving
       setShowConfirm(true)
       return
     }
-    save(buildBody(mode, customDays))
+    save(buildBody(m, customDays))
   }
 
   function confirmDisable() {
     setShowConfirm(false)
     save(buildBody('forever', customDays))
+  }
+
+  function cancelDisable() {
+    // Revert mode back to server value
+    setMode(serverMode)
+    setShowConfirm(false)
+  }
+
+  function handleCustomDaysBlur() {
+    if (mode === 'custom') {
+      save(buildBody('custom', customDays))
+    }
   }
 
   if (isLoading) return <Skeleton />
@@ -156,15 +179,18 @@ export function RetentionSection(): React.ReactElement {
       {showConfirm && (
         <ConfirmModal
           onConfirm={confirmDisable}
-          onCancel={() => setShowConfirm(false)}
+          onCancel={cancelDisable}
         />
       )}
 
       <section className="space-y-3">
-        <h3 className="text-sm font-medium text-[var(--color-secondary)] flex items-center gap-1.5">
-          <Clock size={14} className="text-[var(--color-muted)]" />
-          Session Retention
-        </h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium text-[var(--color-secondary)] flex items-center gap-1.5">
+            <Clock size={14} className="text-[var(--color-muted)]" />
+            Session Retention
+          </h3>
+          <SaveStatus state={saveState} errorMessage={errorMessage} />
+        </div>
 
         {/* Persistent warning when retention is disabled on server */}
         {isDisabledOnServer && (
@@ -186,7 +212,6 @@ export function RetentionSection(): React.ReactElement {
 
           {/* Mode selector */}
           <div className="space-y-2" role="radiogroup" aria-label="Retention mode">
-            {/* Default 90 days */}
             {(['default', 'custom', 'forever'] as const).map((m) => {
               const isActive = mode === m
               const labels: Record<RetentionMode, string> = {
@@ -201,12 +226,7 @@ export function RetentionSection(): React.ReactElement {
                   role="radio"
                   aria-checked={isActive}
                   disabled={!isAdmin}
-                  onClick={() => {
-                    if (mode !== m) {
-                      setMode(m)
-                      setIsDirty(true)
-                    }
-                  }}
+                  onClick={() => handleModeChange(m)}
                   className={[
                     'w-full text-left rounded-md border p-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed',
                     isActive
@@ -251,10 +271,9 @@ export function RetentionSection(): React.ReactElement {
                   max={365}
                   value={customDays}
                   disabled={!isAdmin}
-                  onChange={(e) => {
-                    setCustomDays(Number(e.target.value))
-                    setIsDirty(true)
-                  }}
+                  onChange={(e) => setCustomDays(Number(e.target.value))}
+                  onMouseUp={handleCustomDaysBlur}
+                  onTouchEnd={handleCustomDaysBlur}
                   className="flex-1 accent-[var(--color-accent)] disabled:opacity-60"
                   aria-label="Retention days slider"
                 />
@@ -267,8 +286,8 @@ export function RetentionSection(): React.ReactElement {
                   onChange={(e) => {
                     const v = Math.max(1, Math.min(365, Number(e.target.value)))
                     setCustomDays(v)
-                    setIsDirty(true)
                   }}
+                  onBlur={handleCustomDaysBlur}
                   className="w-16 rounded border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 py-1 text-sm text-[var(--color-secondary)] text-center disabled:opacity-60 disabled:cursor-not-allowed"
                   aria-label="Retention days number"
                 />
@@ -277,33 +296,20 @@ export function RetentionSection(): React.ReactElement {
             </div>
           )}
 
-          <div className="flex items-center justify-between gap-2">
-            {/* Sweep button — admin only, hidden when disabled */}
-            {isAdmin && !isDisabledOnServer && (
+          {/* Sweep button — admin only, hidden when disabled */}
+          {isAdmin && !isDisabledOnServer && (
+            <div className="pt-1">
               <Button
                 size="sm"
                 variant="ghost"
-                disabled={isSweeping}
+                disabled={isSweeping || isSaving}
                 onClick={() => sweep()}
               >
                 <Broom size={13} className="mr-1.5" />
                 {isSweeping ? 'Running sweep...' : 'Run sweep now'}
               </Button>
-            )}
-
-            {isAdmin && (
-              <div className="ml-auto">
-                <Button
-                  size="sm"
-                  variant="default"
-                  disabled={!isDirty || isSaving}
-                  onClick={handleSave}
-                >
-                  {isSaving ? 'Saving...' : 'Save'}
-                </Button>
-              </div>
-            )}
-          </div>
+            </div>
+          )}
         </div>
       </section>
     </>

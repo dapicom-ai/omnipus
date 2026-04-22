@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { BookOpen } from '@phosphor-icons/react'
-import { Button } from '@/components/ui/button'
 import { fetchAuditLogToggle, updateAuditLog } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { useAuthStore } from '@/store/auth'
+import { SaveStatus, useSaveStatus } from './SaveStatus'
 
 // ── Skeleton ──────────────────────────────────────────────────────────────────
 
@@ -31,25 +31,34 @@ export function AuditLogSection(): React.ReactElement {
   })
 
   const [enabled, setEnabled] = useState(false)
-  const [isDirty, setIsDirty] = useState(false)
   const [restartRequired, setRestartRequired] = useState(false)
 
-  useEffect(() => {
-    if (!data || isDirty) return
-    setEnabled(data.enabled)
-    // AuditLogToggle does not carry requires_restart — it comes from the PUT response only.
-  }, [data, isDirty])
+  const { state: saveState, setState: setSaveState, errorMessage, setErrorMessage } = useSaveStatus()
 
-  const { mutate: save, isPending } = useMutation({
+  useEffect(() => {
+    if (!data) return
+    setEnabled(data.enabled)
+  }, [data])
+
+  const { mutate: save } = useMutation({
     mutationFn: (val: boolean) => updateAuditLog(val),
+    onMutate: () => setSaveState('saving'),
     onSuccess: (resp) => {
-      setIsDirty(false)
+      setSaveState('saved')
       if (resp.requires_restart) setRestartRequired(true)
       queryClient.setQueryData(['audit-log-toggle'], { enabled: resp.applied_enabled, requires_restart: resp.requires_restart })
-      addToast({ message: 'Audit log setting saved', variant: 'success' })
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: Error) => {
+      setSaveState('error')
+      setErrorMessage(err.message)
+      addToast({ message: err.message, variant: 'error' })
+    },
   })
+
+  function handleChange(checked: boolean) {
+    setEnabled(checked)
+    save(checked)
+  }
 
   if (isLoading) return <Skeleton />
 
@@ -73,6 +82,7 @@ export function AuditLogSection(): React.ReactElement {
             </span>
           )}
         </h3>
+        <SaveStatus state={saveState} errorMessage={errorMessage} />
       </div>
 
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-4">
@@ -88,29 +98,13 @@ export function AuditLogSection(): React.ReactElement {
             aria-label="Enable audit log"
             checked={enabled}
             disabled={!isAdmin}
-            onChange={(e) => {
-              setEnabled(e.target.checked)
-              setIsDirty(true)
-            }}
+            onChange={(e) => handleChange(e.target.checked)}
             className="w-4 h-4 accent-[var(--color-accent)] cursor-pointer disabled:cursor-not-allowed"
           />
           <span className="text-sm text-[var(--color-secondary)]">
             {enabled ? 'Enabled' : 'Disabled'}
           </span>
         </label>
-
-        {isAdmin && (
-          <div className="flex justify-end">
-            <Button
-              size="sm"
-              variant="default"
-              disabled={!isDirty || isPending}
-              onClick={() => save(enabled)}
-            >
-              {isPending ? 'Saving...' : 'Save'}
-            </Button>
-          </div>
-        )}
       </div>
     </section>
   )

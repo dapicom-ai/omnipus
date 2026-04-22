@@ -68,9 +68,7 @@ describe('SkillTrustSection — radio rendering', () => {
 
     const radios = screen.getAllByRole('radio')
     const values = radios.map((r) => r.getAttribute('aria-checked'))
-    // Confirm three radios exist
     expect(radios.length).toBe(3)
-    // Confirm warn_unverified is selected by default
     expect(values).toContain('true')
   })
 
@@ -95,11 +93,10 @@ describe('SkillTrustSection — radio rendering', () => {
     expect(screen.getByText(/accept any skill/i)).toBeInTheDocument()
   })
 
-  it('does not render any uppercase level values (block_unverified, warn_unverified, allow_all must be lowercase)', async () => {
+  it('does not render any uppercase level values', async () => {
     vi.mocked(fetchSkillTrust).mockResolvedValue({ level: 'warn_unverified' })
     renderSection()
     await waitFor(() => screen.getAllByRole('radio'))
-    // None of the aria-label or role="radio" buttons should contain uppercase variants
     const content = document.body.textContent ?? ''
     expect(content).not.toMatch(/BLOCK_UNVERIFIED|WARN_UNVERIFIED|ALLOW_ALL/)
   })
@@ -112,11 +109,15 @@ describe('SkillTrustSection — radio rendering', () => {
 describe('SkillTrustSection — allow_all warning', () => {
   it('shows amber warning panel when allow_all is selected', async () => {
     vi.mocked(fetchSkillTrust).mockResolvedValue({ level: 'warn_unverified' })
+    vi.mocked(updateSkillTrust).mockResolvedValue({
+      saved: true,
+      requires_restart: false,
+      applied_level: 'allow_all',
+    })
     renderSection()
 
     await waitFor(() => screen.getAllByRole('radio'))
 
-    // Click the allow_all radio (third one)
     const radios = screen.getAllByRole('radio')
     fireEvent.click(radios[2])
 
@@ -136,11 +137,11 @@ describe('SkillTrustSection — allow_all warning', () => {
 })
 
 // =====================================================================
-// Save fires updateSkillTrust with canonical value
+// Autosave fires updateSkillTrust on radio click (no Save button)
 // =====================================================================
 
-describe('SkillTrustSection — save', () => {
-  it('save fires updateSkillTrust with block_unverified', async () => {
+describe('SkillTrustSection — autosave', () => {
+  it('clicking block_unverified radio fires updateSkillTrust immediately (no Save button)', async () => {
     vi.mocked(fetchSkillTrust).mockResolvedValue({ level: 'warn_unverified' })
     vi.mocked(updateSkillTrust).mockResolvedValue({
       saved: true,
@@ -155,11 +156,32 @@ describe('SkillTrustSection — save', () => {
     const radios = screen.getAllByRole('radio')
     fireEvent.click(radios[0]) // block_unverified
 
-    const saveBtn = screen.getByRole('button', { name: /save/i })
-    fireEvent.click(saveBtn)
-
     await waitFor(() => {
       expect(updateSkillTrust).toHaveBeenCalledWith('block_unverified')
+    })
+  })
+
+  it('no Save button is rendered for admin', async () => {
+    vi.mocked(fetchSkillTrust).mockResolvedValue({ level: 'warn_unverified' })
+    renderSection()
+
+    await waitFor(() => screen.getAllByRole('radio'))
+    expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument()
+  })
+
+  it('shows SaveStatus "Saving…" while mutation is in flight', async () => {
+    vi.mocked(fetchSkillTrust).mockResolvedValue({ level: 'warn_unverified' })
+    vi.mocked(updateSkillTrust).mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve({ saved: true, requires_restart: false, applied_level: 'block_unverified' }), 50))
+    )
+
+    renderSection()
+
+    await waitFor(() => screen.getAllByRole('radio'))
+    fireEvent.click(screen.getAllByRole('radio')[0])
+
+    await waitFor(() => {
+      expect(screen.getByText(/saving/i)).toBeInTheDocument()
     })
   })
 
@@ -175,20 +197,35 @@ describe('SkillTrustSection — save', () => {
 
     await waitFor(() => screen.getAllByRole('radio'))
     fireEvent.click(screen.getAllByRole('radio')[0])
-    fireEvent.click(screen.getByRole('button', { name: /save/i }))
 
     await waitFor(() => {
       expect(screen.getByText(/restart required/i)).toBeInTheDocument()
     })
   })
+
+  it('shows error toast when mutation fails', async () => {
+    vi.mocked(fetchSkillTrust).mockResolvedValue({ level: 'warn_unverified' })
+    vi.mocked(updateSkillTrust).mockRejectedValue(new Error('network error'))
+
+    renderSection()
+
+    await waitFor(() => screen.getAllByRole('radio'))
+    fireEvent.click(screen.getAllByRole('radio')[0])
+
+    await waitFor(() => {
+      expect(mockAddToast).toHaveBeenCalledWith(
+        expect.objectContaining({ variant: 'error' })
+      )
+    })
+  })
 })
 
 // =====================================================================
-// Non-admin: Save hidden
+// Non-admin: no Save button, radios disabled
 // =====================================================================
 
 describe('SkillTrustSection — non-admin', () => {
-  it('hides Save button for non-admin', async () => {
+  it('does not render a Save button for non-admin', async () => {
     vi.mocked(useAuthStore).mockImplementation(
       ((selector: (s: { role?: string; user?: { username: string } }) => unknown) =>
         selector({ role: 'user', user: { username: 'testuser' } })) as never,

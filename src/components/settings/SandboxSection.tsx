@@ -12,9 +12,6 @@ import {
   Trash,
   Plus,
   Warning,
-  PencilSimple,
-  CheckCircle,
-  ArrowCounterClockwise,
 } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -31,9 +28,10 @@ import {
   fetchSandboxConfig,
   updateSandboxConfig,
 } from '@/lib/api'
-import type { SandboxStatus, SandboxConfigUpdateBody } from '@/lib/api'
+import type { SandboxStatus } from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 import { useUiStore } from '@/store/ui'
+import { SaveStatus, useSaveStatus } from './SaveStatus'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -251,7 +249,7 @@ function Abi4Banner({
 
 interface AllowedPathsEditorProps {
   paths: string[]
-  isEditing: boolean
+  isAdmin: boolean
   rowErrors: Record<number, string>
   restartedRows: Set<number>
   onDelete: (index: number) => void
@@ -263,7 +261,7 @@ interface AllowedPathsEditorProps {
 
 function AllowedPathsEditor({
   paths,
-  isEditing,
+  isAdmin,
   rowErrors,
   restartedRows,
   onDelete,
@@ -295,7 +293,7 @@ function AllowedPathsEditor({
                   restart required
                 </span>
               )}
-              {isEditing && (
+              {isAdmin && (
                 <button
                   type="button"
                   aria-label={`Delete path ${p}`}
@@ -313,7 +311,7 @@ function AllowedPathsEditor({
         ))}
       </div>
 
-      {isEditing && (
+      {isAdmin && (
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <Input
@@ -351,7 +349,7 @@ function AllowedPathsEditor({
 
 interface SsrfEditorProps {
   list: string[]
-  isEditing: boolean
+  isAdmin: boolean
   activePreset: number | null
   advancedOpen: boolean
   onAdvancedToggle: () => void
@@ -366,7 +364,7 @@ interface SsrfEditorProps {
 
 function SsrfEditor({
   list,
-  isEditing,
+  isAdmin,
   activePreset,
   advancedOpen,
   onAdvancedToggle,
@@ -389,14 +387,14 @@ function SsrfEditor({
           <button
             key={preset.label}
             type="button"
-            disabled={!isEditing}
+            disabled={!isAdmin}
             onClick={() => onPresetClick(idx)}
             className={[
               'rounded border px-3 py-1 text-xs transition-colors focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)]',
               activePreset === idx
                 ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/10 text-[var(--color-accent)]'
                 : 'border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-muted)] hover:border-[var(--color-accent)]/50',
-              !isEditing ? 'opacity-60 cursor-default' : 'cursor-pointer',
+              !isAdmin ? 'opacity-60 cursor-default' : 'cursor-pointer',
             ].join(' ')}
             aria-pressed={activePreset === idx}
           >
@@ -426,7 +424,7 @@ function SsrfEditor({
                 <span className="flex-1 text-xs font-mono text-[var(--color-secondary)] break-all">
                   {entry}
                 </span>
-                {isEditing && (
+                {isAdmin && (
                   <button
                     type="button"
                     aria-label={`Delete SSRF entry ${entry}`}
@@ -443,7 +441,7 @@ function SsrfEditor({
             </div>
           ))}
 
-          {isEditing && (
+          {isAdmin && (
             <div className="space-y-1 pt-1">
               <div className="flex items-center gap-2">
                 <Input
@@ -507,14 +505,9 @@ export function SandboxSection(): React.ReactElement {
     queryFn: fetchSandboxConfig,
   })
 
-  // ── Mode editor state ─────────────────────────────────────────────────────
-  // Separate from the paths/SSRF editing state so the two sections are
-  // independently editable.
-  const [modeEditing, setModeEditing] = useState(false)
-  const [draftMode, setDraftMode] = useState<SandboxConfigUpdateBody['mode']>()
-
+  // ── Mode state ─────────────────────────────────────────────────────────────
+  const [currentMode, setCurrentMode] = useState<'enforce' | 'permissive' | 'off' | undefined>()
   const savedMode = configData?.mode as 'enforce' | 'permissive' | 'off' | undefined
-  const effectiveDraftMode = draftMode ?? savedMode
 
   const restartPending = !!(
     configData &&
@@ -542,8 +535,6 @@ export function SandboxSection(): React.ReactElement {
     typeof (statusData as SandboxStatus & { issue_ref?: string }).issue_ref === 'string'
 
   // ── Paths/SSRF editor state ───────────────────────────────────────────────
-  const [isEditing, setIsEditing] = useState(false)
-
   const [pathList, setPathList] = useState<string[]>([])
   const [newPath, setNewPath] = useState('')
   const [pathAddError, setPathAddError] = useState<string | null>(null)
@@ -557,10 +548,13 @@ export function SandboxSection(): React.ReactElement {
   const [newSsrfEntry, setNewSsrfEntry] = useState('')
   const [ssrfAddError, setSsrfAddError] = useState<string | null>(null)
 
-  // ── Modal state (wildcard SSRF + enforce-mode confirmation) ───────────────
+  // ── Modal state ───────────────────────────────────────────────────────────
   const [showWildcardModal, setShowWildcardModal] = useState(false)
   const [showEnforceModal, setShowEnforceModal] = useState(false)
   const pendingSaveRef = useRef<(() => void) | null>(null)
+
+  // ── Save status ────────────────────────────────────────────────────────────
+  const { state: saveState, setState: setSaveState, errorMessage, setErrorMessage } = useSaveStatus()
 
   // ── Sync from config query ─────────────────────────────────────────────────
   useEffect(() => {
@@ -580,33 +574,36 @@ export function SandboxSection(): React.ReactElement {
       setSsrfActivePreset(null)
       setSsrfAdvancedOpen(true)
     }
+
+    // Sync mode
+    setCurrentMode(configData.mode as 'enforce' | 'permissive' | 'off' | undefined)
   }, [configData])
 
   // ── Mode save mutation ────────────────────────────────────────────────────
-  const { mutate: doSaveMode, isPending: savingMode } = useMutation({
+  const { mutate: doSaveMode } = useMutation({
     mutationFn: updateSandboxConfig,
+    onMutate: () => setSaveState('saving'),
     onSuccess: (saved) => {
+      setSaveState('saved')
       queryClient.setQueryData(['sandbox-config'], saved)
       void queryClient.invalidateQueries({ queryKey: ['sandbox-config'] })
-      setDraftMode(undefined)
-      setModeEditing(false)
-      addToast({
-        message: saved.requires_restart
-          ? 'Sandbox mode saved — restart the gateway to apply.'
-          : 'Sandbox mode saved.',
-        variant: saved.requires_restart ? 'default' : 'success',
-      })
     },
-    onError: (err: Error) =>
-      addToast({ message: err.message, variant: 'error' }),
+    onError: (err: Error) => {
+      setSaveState('error')
+      setErrorMessage(err.message)
+      addToast({ message: err.message, variant: 'error' })
+      // Revert to server mode
+      setCurrentMode(savedMode)
+    },
   })
 
   // ── Paths/SSRF save mutation ──────────────────────────────────────────────
   const saveMutation = useMutation({
     mutationFn: (body: Parameters<typeof updateSandboxConfig>[0]) => updateSandboxConfig(body),
+    onMutate: () => setSaveState('saving'),
     onSuccess: (resp) => {
+      setSaveState('saved')
       void queryClient.invalidateQueries({ queryKey: ['sandbox-config'] })
-      setIsEditing(false)
       setPathAddError(null)
       setSsrfAddError(null)
       setPathRowErrors({})
@@ -616,6 +613,8 @@ export function SandboxSection(): React.ReactElement {
       }
     },
     onError: (err: Error) => {
+      setSaveState('error')
+      setErrorMessage(err.message)
       const msg = err.message.replace(/^\d+:\s*/, '')
       const pathRowMatch = /allowed_paths\[(\d+)\]:\s*(.+)/.exec(msg)
       if (pathRowMatch) {
@@ -633,10 +632,32 @@ export function SandboxSection(): React.ReactElement {
     },
   })
 
+  // ── Commit helper (paths + SSRF) ──────────────────────────────────────────
+  function commitPathsSsrf(paths: string[], ssrf: string[]) {
+    setPathRowErrors({})
+    setSsrfAdvancedErrors({})
+    saveMutation.mutate({
+      allowed_paths: paths,
+      ssrf: { allow_internal: ssrf },
+    })
+  }
+
+  function commitPathsSsrfWithWildcardCheck(paths: string[], ssrf: string[]) {
+    const hasWildcard = ssrf.some(isWildcardEntry)
+    if (hasWildcard) {
+      pendingSaveRef.current = () => commitPathsSsrf(paths, ssrf)
+      setShowWildcardModal(true)
+      return
+    }
+    commitPathsSsrf(paths, ssrf)
+  }
+
   // ── Allowed paths handlers ─────────────────────────────────────────────────
   function handleDeletePath(index: number) {
-    setPathList((prev) => prev.filter((_, i) => i !== index))
+    const next = pathList.filter((_, i) => i !== index)
+    setPathList(next)
     setPathRowErrors({})
+    commitPathsSsrf(next, ssrfList)
   }
 
   function handleAddPath() {
@@ -646,25 +667,28 @@ export function SandboxSection(): React.ReactElement {
       return
     }
     setPathAddError(null)
-    setPathList((prev) => [...prev, trimmed])
+    const next = [...pathList, trimmed]
+    setPathList(next)
     setNewPath('')
+    commitPathsSsrf(next, ssrfList)
   }
 
   // ── SSRF handlers ─────────────────────────────────────────────────────────
   function handlePresetClick(idx: number) {
+    const nextSsrf = [...SSRF_PRESETS[idx].list]
     setSsrfActivePreset(idx)
-    setSsrfList([...SSRF_PRESETS[idx].list])
+    setSsrfList(nextSsrf)
     setSsrfAdvancedErrors({})
+    commitPathsSsrfWithWildcardCheck(pathList, nextSsrf)
   }
 
   function handleDeleteSsrfEntry(idx: number) {
-    setSsrfList((prev) => {
-      const next = prev.filter((_, i) => i !== idx)
-      const matchedPreset = SSRF_PRESETS.findIndex((p) => listsMatch(next, p.list))
-      setSsrfActivePreset(matchedPreset >= 0 ? matchedPreset : null)
-      return next
-    })
+    const next = ssrfList.filter((_, i) => i !== idx)
+    setSsrfList(next)
     setSsrfAdvancedErrors({})
+    const matchedPreset = SSRF_PRESETS.findIndex((p) => listsMatch(next, p.list))
+    setSsrfActivePreset(matchedPreset >= 0 ? matchedPreset : null)
+    commitPathsSsrf(pathList, next)
   }
 
   function handleAddSsrfEntry() {
@@ -678,51 +702,15 @@ export function SandboxSection(): React.ReactElement {
       return
     }
     setSsrfAddError(null)
-    setSsrfList((prev) => {
-      const next = [...prev, trimmed]
-      const matchedPreset = SSRF_PRESETS.findIndex((p) => listsMatch(next, p.list))
-      setSsrfActivePreset(matchedPreset >= 0 ? matchedPreset : null)
-      return next
-    })
+    const next = [...ssrfList, trimmed]
+    setSsrfList(next)
     setNewSsrfEntry('')
+    const matchedPreset = SSRF_PRESETS.findIndex((p) => listsMatch(next, p.list))
+    setSsrfActivePreset(matchedPreset >= 0 ? matchedPreset : null)
+    commitPathsSsrfWithWildcardCheck(pathList, next)
   }
 
-  // ── Save orchestration (paths/SSRF) ───────────────────────────────────────
-
-  function validateSsrfEntries(): boolean {
-    const errors: Record<number, string> = {}
-    ssrfList.forEach((entry, i) => {
-      if (!isValidSsrfEntry(entry)) {
-        errors[i] = 'invalid entry — expected hostname, IP, or CIDR'
-      }
-    })
-    setSsrfAdvancedErrors(errors)
-    return Object.keys(errors).length === 0
-  }
-
-  function executeSave() {
-    saveMutation.mutate({
-      allowed_paths: pathList,
-      ssrf: { allow_internal: ssrfList },
-    })
-  }
-
-  function handleSave() {
-    setPathRowErrors({})
-    setSsrfAdvancedErrors({})
-
-    if (!validateSsrfEntries()) return
-
-    const hasWildcard = ssrfList.some(isWildcardEntry)
-    if (hasWildcard) {
-      pendingSaveRef.current = executeSave
-      setShowWildcardModal(true)
-      return
-    }
-
-    executeSave()
-  }
-
+  // ── Wildcard modal handlers ───────────────────────────────────────────────
   function handleWildcardConfirm() {
     setShowWildcardModal(false)
     if (pendingSaveRef.current) {
@@ -734,8 +722,17 @@ export function SandboxSection(): React.ReactElement {
   function handleWildcardCancel() {
     setShowWildcardModal(false)
     pendingSaveRef.current = null
+    // Revert SSRF list to server state
+    if (configData) {
+      const serverSsrf = configData.ssrf?.allow_internal ?? []
+      setSsrfList(serverSsrf)
+      const matchedPreset = SSRF_PRESETS.findIndex((p) => listsMatch(serverSsrf, p.list))
+      setSsrfActivePreset(matchedPreset >= 0 ? matchedPreset : null)
+      setSsrfAdvancedOpen(matchedPreset < 0)
+    }
   }
 
+  // ── Enforce modal handlers ────────────────────────────────────────────────
   function handleEnforceModalConfirm() {
     setShowEnforceModal(false)
     if (pendingSaveRef.current) {
@@ -747,46 +744,31 @@ export function SandboxSection(): React.ReactElement {
   function handleEnforceModalCancel() {
     setShowEnforceModal(false)
     pendingSaveRef.current = null
+    // Revert to previous mode
+    setCurrentMode(savedMode)
   }
 
-  function handleCancel() {
-    if (configData) {
-      const paths = configData.allowed_paths ?? []
-      setPathList(paths)
-      const allowInternal = configData.ssrf?.allow_internal ?? []
-      setSsrfList(allowInternal)
-      const matchedPreset = SSRF_PRESETS.findIndex((p) => listsMatch(allowInternal, p.list))
-      setSsrfActivePreset(matchedPreset >= 0 ? matchedPreset : null)
-      setSsrfAdvancedOpen(matchedPreset < 0)
-    }
-    setIsEditing(false)
-    setPathAddError(null)
-    setSsrfAddError(null)
-    setPathRowErrors({})
-    setSsrfAdvancedErrors({})
-    setNewPath('')
-    setNewSsrfEntry('')
-  }
+  // ── Mode change handler ────────────────────────────────────────────────────
+  function handleModeChange(mode: 'enforce' | 'permissive' | 'off') {
+    if (mode === currentMode) return
 
-  // ── Mode save handler (with enforce-modal gate) ───────────────────────────
-  function handleModeSave() {
-    if (!draftMode) return
+    setCurrentMode(mode)
 
     const abiVersion = statusData?.abi_version
     const issueRef = (statusData as (SandboxStatus & { issue_ref?: string }) | undefined)?.issue_ref
     const isAbi4Incompatible =
-      draftMode === 'enforce' &&
+      mode === 'enforce' &&
       typeof abiVersion === 'number' &&
       abiVersion >= 4 &&
       typeof issueRef === 'string'
 
     if (isAbi4Incompatible) {
-      pendingSaveRef.current = () => doSaveMode({ mode: draftMode })
+      pendingSaveRef.current = () => doSaveMode({ mode })
       setShowEnforceModal(true)
       return
     }
 
-    doSaveMode({ mode: draftMode })
+    doSaveMode({ mode })
   }
 
   // ── Status display helpers ────────────────────────────────────────────────
@@ -831,14 +813,13 @@ export function SandboxSection(): React.ReactElement {
       statusData.seccomp_enabled)
   )
 
-  const hasSsrfErrors = Object.keys(ssrfAdvancedErrors).length > 0
-  const saveDisabled = saveMutation.isPending || hasSsrfErrors
-
   const SANDBOX_MODES: Array<{ value: 'enforce' | 'permissive' | 'off'; label: string; desc: string }> = [
     { value: 'enforce', label: 'Enforce', desc: 'Kernel-level Landlock + seccomp denies violating syscalls.' },
     { value: 'permissive', label: 'Permissive', desc: 'Policy computed and logged; violations not blocked (audit-only).' },
     { value: 'off', label: 'Off', desc: 'Sandbox disabled. Development only; production banner will fire.' },
   ]
+
+  const effectiveMode = currentMode ?? savedMode
 
   function renderStatusBody(): React.ReactNode {
     if (statusLoading) return <SandboxSkeleton />
@@ -924,16 +905,19 @@ export function SandboxSection(): React.ReactElement {
           <Cpu size={14} className="text-[var(--color-muted)]" />
           Process Sandbox
         </h3>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-7 px-2 gap-1 text-xs"
-          aria-label="Refresh sandbox status"
-          onClick={() => { void statusRefetch() }}
-          disabled={statusFetching}
-        >
-          <ArrowsClockwise size={11} className={statusFetching ? 'animate-spin' : undefined} />
-        </Button>
+        <div className="flex items-center gap-2">
+          <SaveStatus state={saveState} errorMessage={errorMessage} />
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 px-2 gap-1 text-xs"
+            aria-label="Refresh sandbox status"
+            onClick={() => { void statusRefetch() }}
+            disabled={statusFetching}
+          >
+            <ArrowsClockwise size={11} className={statusFetching ? 'animate-spin' : undefined} />
+          </Button>
+        </div>
       </div>
 
       {/* ABI v4 compatibility banner */}
@@ -953,22 +937,7 @@ export function SandboxSection(): React.ReactElement {
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-4">
           {/* ── Mode radio — top of config section ── */}
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-semibold text-[var(--color-secondary)]">Sandbox mode</p>
-              {isAdmin && !modeEditing && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 px-2 gap-1 text-xs"
-                  aria-label="Edit sandbox mode"
-                  onClick={() => setModeEditing(true)}
-                  disabled={configLoading}
-                >
-                  <PencilSimple size={11} />
-                  Edit
-                </Button>
-              )}
-            </div>
+            <p className="text-xs font-semibold text-[var(--color-secondary)]">Sandbox mode</p>
 
             {/* Restart pending notice */}
             {restartPending && (
@@ -999,75 +968,41 @@ export function SandboxSection(): React.ReactElement {
                 <div className="h-3 w-3/4 rounded bg-[var(--color-border)]" />
                 <div className="h-3 w-1/2 rounded bg-[var(--color-border)]" />
               </div>
-            ) : modeEditing && isAdmin ? (
-              <>
-                <fieldset className="space-y-2">
-                  <legend className="sr-only">Sandbox mode</legend>
-                  {SANDBOX_MODES.map((m) => (
-                    <label
-                      key={m.value}
-                      className={`flex items-start gap-2 p-2 rounded-md border cursor-pointer transition-colors ${
-                        effectiveDraftMode === m.value
-                          ? 'border-[var(--color-accent)]/50 bg-[var(--color-accent)]/5'
-                          : 'border-[var(--color-border)] hover:bg-[var(--color-surface-2)]'
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name="sandbox-mode"
-                        value={m.value}
-                        checked={effectiveDraftMode === m.value}
-                        onChange={() => setDraftMode(m.value)}
-                        className="mt-0.5 accent-[var(--color-accent)]"
-                        aria-label={`Sandbox mode: ${m.label}`}
-                      />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-[var(--color-secondary)]">{m.label}</p>
-                        <p className="text-xs text-[var(--color-muted)] leading-snug">{m.desc}</p>
-                      </div>
-                    </label>
-                  ))}
-                </fieldset>
-                <div className="flex items-center justify-end gap-2 pt-1">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 px-3 text-xs"
-                    onClick={() => {
-                      setDraftMode(undefined)
-                      setModeEditing(false)
-                    }}
-                    disabled={savingMode}
+            ) : isAdmin ? (
+              <fieldset className="space-y-2">
+                <legend className="sr-only">Sandbox mode</legend>
+                {SANDBOX_MODES.map((m) => (
+                  <label
+                    key={m.value}
+                    className={`flex items-start gap-2 p-2 rounded-md border cursor-pointer transition-colors ${
+                      effectiveMode === m.value
+                        ? 'border-[var(--color-accent)]/50 bg-[var(--color-accent)]/5'
+                        : 'border-[var(--color-border)] hover:bg-[var(--color-surface-2)]'
+                    }`}
                   >
-                    Cancel
-                  </Button>
-                  <Button
-                    size="sm"
-                    className="h-7 px-3 text-xs gap-1"
-                    disabled={savingMode || !draftMode || draftMode === savedMode}
-                    onClick={handleModeSave}
-                  >
-                    {savingMode ? (
-                      <>
-                        <ArrowCounterClockwise size={11} className="animate-spin" />
-                        Saving
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle size={11} />
-                        Save
-                      </>
-                    )}
-                  </Button>
-                </div>
-              </>
+                    <input
+                      type="radio"
+                      name="sandbox-mode"
+                      value={m.value}
+                      checked={effectiveMode === m.value}
+                      onChange={() => handleModeChange(m.value)}
+                      className="mt-0.5 accent-[var(--color-accent)]"
+                      aria-label={`Sandbox mode: ${m.label}`}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-[var(--color-secondary)]">{m.label}</p>
+                      <p className="text-xs text-[var(--color-muted)] leading-snug">{m.desc}</p>
+                    </div>
+                  </label>
+                ))}
+              </fieldset>
             ) : (
               <div className="flex flex-wrap gap-2">
                 {SANDBOX_MODES.map((m) => (
                   <span
                     key={m.value}
                     className={`rounded border px-3 py-1 text-xs font-medium ${
-                      effectiveDraftMode === m.value
+                      effectiveMode === m.value
                         ? 'border-[var(--color-accent)] bg-[var(--color-accent)]/10 text-[var(--color-accent)]'
                         : 'border-[var(--color-border)] bg-[var(--color-surface-2)] text-[var(--color-muted)]'
                     }`}
@@ -1081,20 +1016,7 @@ export function SandboxSection(): React.ReactElement {
 
           {/* ── Paths / SSRF editor ── */}
           <div className="space-y-4 border-t border-[var(--color-border)] pt-4">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-semibold text-[var(--color-secondary)]">Sandbox configuration</p>
-              {isAdmin && !isEditing && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 px-2 text-xs"
-                  onClick={() => setIsEditing(true)}
-                  disabled={configLoading}
-                >
-                  Edit
-                </Button>
-              )}
-            </div>
+            <p className="text-xs font-semibold text-[var(--color-secondary)]">Sandbox configuration</p>
 
             {configLoading ? (
               <div className="space-y-2 animate-pulse">
@@ -1105,7 +1027,7 @@ export function SandboxSection(): React.ReactElement {
               <>
                 <AllowedPathsEditor
                   paths={pathList}
-                  isEditing={isEditing}
+                  isAdmin={isAdmin}
                   rowErrors={pathRowErrors}
                   restartedRows={pathRestartedRows}
                   onDelete={handleDeletePath}
@@ -1117,7 +1039,7 @@ export function SandboxSection(): React.ReactElement {
 
                 <SsrfEditor
                   list={ssrfList}
-                  isEditing={isEditing}
+                  isAdmin={isAdmin}
                   activePreset={ssrfActivePreset}
                   advancedOpen={ssrfAdvancedOpen}
                   onAdvancedToggle={() => setSsrfAdvancedOpen((v) => !v)}
@@ -1130,35 +1052,12 @@ export function SandboxSection(): React.ReactElement {
                   ssrfAddError={ssrfAddError}
                 />
 
-                {isAdmin && isEditing && (
-                  <div className="flex items-center gap-2 pt-2 border-t border-[var(--color-border)]">
-                    <Button
-                      type="button"
-                      size="sm"
-                      className="h-7 px-3 text-xs"
-                      onClick={handleSave}
-                      disabled={saveDisabled}
-                    >
-                      {saveMutation.isPending ? 'Saving…' : 'Save'}
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="h-7 px-3 text-xs"
-                      onClick={handleCancel}
-                      disabled={saveMutation.isPending}
-                    >
-                      Cancel
-                    </Button>
-                    {saveMutation.isError && (
-                      <p className="text-xs text-[var(--color-error)] flex-1">
-                        {saveMutation.error instanceof Error
-                          ? saveMutation.error.message.replace(/^\d+:\s*/, '')
-                          : 'Save failed'}
-                      </p>
-                    )}
-                  </div>
+                {saveMutation.isError && (
+                  <p className="text-xs text-[var(--color-error)]">
+                    {saveMutation.error instanceof Error
+                      ? saveMutation.error.message.replace(/^\d+:\s*/, '')
+                      : 'Save failed'}
+                  </p>
                 )}
               </>
             )}

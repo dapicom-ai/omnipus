@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Gauge } from '@phosphor-icons/react'
-import { Button } from '@/components/ui/button'
 import { fetchRateLimits, updateRateLimits } from '@/lib/api'
 import type { RateLimitsUpdateBody } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { useAuthStore } from '@/store/auth'
+import { SaveStatus, useSaveStatus } from './SaveStatus'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -30,10 +30,10 @@ interface FieldProps {
   error: string
   disabled: boolean
   onChange: (v: string) => void
-  onValidate: (v: string) => void
+  onBlur: (v: string) => void
 }
 
-function Field({ label, hint, value, error, disabled, onChange, onValidate }: FieldProps) {
+function Field({ label, hint, value, error, disabled, onChange, onBlur }: FieldProps) {
   return (
     <div className="space-y-1">
       <label className="text-xs font-medium text-[var(--color-secondary)]">{label}</label>
@@ -44,7 +44,7 @@ function Field({ label, hint, value, error, disabled, onChange, onValidate }: Fi
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
-        onBlur={(e) => onValidate(e.target.value)}
+        onBlur={(e) => onBlur(e.target.value)}
         className={[
           'w-full rounded-md border px-3 py-1.5 text-sm bg-[var(--color-surface-2)] text-[var(--color-secondary)] outline-none transition-colors disabled:opacity-60 disabled:cursor-not-allowed',
           error
@@ -100,10 +100,12 @@ export function RateLimitsSection(): React.ReactElement {
   const [llmPerHourErr, setLlmPerHourErr] = useState('')
   const [toolPerMinErr, setToolPerMinErr] = useState('')
 
-  // Track which fields have changed relative to server values
+  // Track server values to build partial update body
   const [serverCostCap, setServerCostCap] = useState<number | undefined>()
   const [serverLlmPerHour, setServerLlmPerHour] = useState<number | undefined>()
   const [serverToolPerMin, setServerToolPerMin] = useState<number | undefined>()
+
+  const { state: saveState, setState: setSaveState, errorMessage, setErrorMessage } = useSaveStatus()
 
   useEffect(() => {
     if (!data) return
@@ -118,61 +120,59 @@ export function RateLimitsSection(): React.ReactElement {
     setServerToolPerMin(tpm)
   }, [data])
 
-  function validateCostCap(val: string) {
+  function validateCostCap(val: string): boolean {
     if (!isNonNegativeDecimal(val)) {
       setCostCapErr('Must be a non-negative number (e.g. 25.50). 0 = unlimited.')
-    } else {
-      setCostCapErr('')
+      return false
     }
+    setCostCapErr('')
+    return true
   }
 
-  function validateLlmPerHour(val: string) {
+  function validateLlmPerHour(val: string): boolean {
     if (!isNonNegativeInteger(val)) {
-      setCostCapErr('')
       setLlmPerHourErr('Must be a non-negative integer. 0 = unlimited.')
-    } else {
-      setLlmPerHourErr('')
+      return false
     }
+    setLlmPerHourErr('')
+    return true
   }
 
-  function validateToolPerMin(val: string) {
+  function validateToolPerMin(val: string): boolean {
     if (!isNonNegativeInteger(val)) {
       setToolPerMinErr('Must be a non-negative integer. 0 = unlimited.')
-    } else {
-      setToolPerMinErr('')
+      return false
     }
+    setToolPerMinErr('')
+    return true
   }
 
-  const hasErrors = !!(costCapErr || llmPerHourErr || toolPerMinErr)
-
   // Build partial update body — only include changed fields
-  function buildUpdateBody(): RateLimitsUpdateBody {
+  function buildUpdateBody(cc: string, lph: string, tpm: string): RateLimitsUpdateBody {
     const body: RateLimitsUpdateBody = {}
-    if (costCap !== '' && Number(costCap) !== serverCostCap) {
-      body.daily_cost_cap_usd = Number(costCap)
-    } else if (costCap === '' && serverCostCap !== undefined) {
-      // field cleared — no change
-    } else if (costCap !== '' && serverCostCap === undefined) {
-      body.daily_cost_cap_usd = Number(costCap)
+    if (cc !== '' && Number(cc) !== serverCostCap) {
+      body.daily_cost_cap_usd = Number(cc)
+    } else if (cc !== '' && serverCostCap === undefined) {
+      body.daily_cost_cap_usd = Number(cc)
     }
-    if (llmPerHour !== '' && Number(llmPerHour) !== serverLlmPerHour) {
-      body.max_agent_llm_calls_per_hour = Number(llmPerHour)
-    } else if (llmPerHour !== '' && serverLlmPerHour === undefined) {
-      body.max_agent_llm_calls_per_hour = Number(llmPerHour)
+    if (lph !== '' && Number(lph) !== serverLlmPerHour) {
+      body.max_agent_llm_calls_per_hour = Number(lph)
+    } else if (lph !== '' && serverLlmPerHour === undefined) {
+      body.max_agent_llm_calls_per_hour = Number(lph)
     }
-    if (toolPerMin !== '' && Number(toolPerMin) !== serverToolPerMin) {
-      body.max_agent_tool_calls_per_minute = Number(toolPerMin)
-    } else if (toolPerMin !== '' && serverToolPerMin === undefined) {
-      body.max_agent_tool_calls_per_minute = Number(toolPerMin)
+    if (tpm !== '' && Number(tpm) !== serverToolPerMin) {
+      body.max_agent_tool_calls_per_minute = Number(tpm)
+    } else if (tpm !== '' && serverToolPerMin === undefined) {
+      body.max_agent_tool_calls_per_minute = Number(tpm)
     }
     return body
   }
 
-  const isDirty = Object.keys(buildUpdateBody()).length > 0
-
-  const { mutate: save, isPending } = useMutation({
+  const { mutate: save } = useMutation({
     mutationFn: (body: RateLimitsUpdateBody) => updateRateLimits(body),
+    onMutate: () => setSaveState('saving'),
     onSuccess: (resp) => {
+      setSaveState('saved')
       queryClient.setQueryData(['rate-limits-k'], resp)
       const cc = resp.daily_cost_cap_usd
       const lph = resp.max_agent_llm_calls_per_hour
@@ -180,10 +180,31 @@ export function RateLimitsSection(): React.ReactElement {
       setServerCostCap(cc)
       setServerLlmPerHour(lph)
       setServerToolPerMin(tpm)
-      addToast({ message: 'Rate limits saved', variant: 'success' })
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: Error) => {
+      setSaveState('error')
+      setErrorMessage(err.message)
+      addToast({ message: err.message, variant: 'error' })
+    },
   })
+
+  function handleCostCapBlur(val: string) {
+    if (!validateCostCap(val)) return
+    const body = buildUpdateBody(val, llmPerHour, toolPerMin)
+    if (Object.keys(body).length > 0) save(body)
+  }
+
+  function handleLlmPerHourBlur(val: string) {
+    if (!validateLlmPerHour(val)) return
+    const body = buildUpdateBody(costCap, val, toolPerMin)
+    if (Object.keys(body).length > 0) save(body)
+  }
+
+  function handleToolPerMinBlur(val: string) {
+    if (!validateToolPerMin(val)) return
+    const body = buildUpdateBody(costCap, llmPerHour, val)
+    if (Object.keys(body).length > 0) save(body)
+  }
 
   if (isLoading) return <Skeleton />
 
@@ -197,15 +218,17 @@ export function RateLimitsSection(): React.ReactElement {
 
   return (
     <section className="space-y-3">
-      <h3 className="text-sm font-medium text-[var(--color-secondary)] flex items-center gap-1.5">
-        <Gauge size={14} className="text-[var(--color-muted)]" />
-        Rate Limits
-      </h3>
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium text-[var(--color-secondary)] flex items-center gap-1.5">
+          <Gauge size={14} className="text-[var(--color-muted)]" />
+          Rate Limits
+        </h3>
+        <SaveStatus state={saveState} errorMessage={errorMessage} />
+      </div>
 
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-4">
         <p className="text-xs text-[var(--color-muted)] leading-relaxed">
-          Set spending and throughput caps. Use 0 to mean unlimited. Leave a field empty to leave it
-          unchanged.
+          Set spending and throughput caps. Use 0 to mean unlimited. Changes apply when you leave each field.
         </p>
 
         <Field
@@ -215,7 +238,7 @@ export function RateLimitsSection(): React.ReactElement {
           error={costCapErr}
           disabled={!isAdmin}
           onChange={(v) => { setCostCap(v); setCostCapErr('') }}
-          onValidate={validateCostCap}
+          onBlur={handleCostCapBlur}
         />
 
         <Field
@@ -225,7 +248,7 @@ export function RateLimitsSection(): React.ReactElement {
           error={llmPerHourErr}
           disabled={!isAdmin}
           onChange={(v) => { setLlmPerHour(v); setLlmPerHourErr('') }}
-          onValidate={validateLlmPerHour}
+          onBlur={handleLlmPerHourBlur}
         />
 
         <Field
@@ -235,29 +258,8 @@ export function RateLimitsSection(): React.ReactElement {
           error={toolPerMinErr}
           disabled={!isAdmin}
           onChange={(v) => { setToolPerMin(v); setToolPerMinErr('') }}
-          onValidate={validateToolPerMin}
+          onBlur={handleToolPerMinBlur}
         />
-
-        {isAdmin && (
-          <div className="flex justify-end">
-            <Button
-              size="sm"
-              variant="default"
-              disabled={hasErrors || isPending || (!isDirty && !hasErrors)}
-              onClick={() => {
-                // Re-validate all before submit
-                validateCostCap(costCap)
-                validateLlmPerHour(llmPerHour)
-                validateToolPerMin(toolPerMin)
-                if (!hasErrors) {
-                  save(buildUpdateBody())
-                }
-              }}
-            >
-              {isPending ? 'Saving...' : 'Save'}
-            </Button>
-          </div>
-        )}
       </div>
     </section>
   )

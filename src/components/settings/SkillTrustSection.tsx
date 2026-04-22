@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Package, Warning } from '@phosphor-icons/react'
-import { Button } from '@/components/ui/button'
 import { fetchSkillTrust, updateSkillTrust } from '@/lib/api'
 import type { SkillTrustLevel } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { useAuthStore } from '@/store/auth'
+import { SaveStatus, useSaveStatus } from './SaveStatus'
 
 // ── Level metadata ────────────────────────────────────────────────────────────
 
@@ -54,24 +54,34 @@ export function SkillTrustSection(): React.ReactElement {
   })
 
   const [selected, setSelected] = useState<SkillTrustLevel>('warn_unverified')
-  const [isDirty, setIsDirty] = useState(false)
   const [restartRequired, setRestartRequired] = useState(false)
 
-  useEffect(() => {
-    if (!data || isDirty) return
-    setSelected(data.level)
-  }, [data, isDirty])
+  const { state: saveState, setState: setSaveState, errorMessage, setErrorMessage } = useSaveStatus()
 
-  const { mutate: save, isPending } = useMutation({
+  useEffect(() => {
+    if (!data) return
+    setSelected(data.level)
+  }, [data])
+
+  const { mutate: save } = useMutation({
     mutationFn: (level: SkillTrustLevel) => updateSkillTrust(level),
+    onMutate: () => setSaveState('saving'),
     onSuccess: (resp) => {
-      setIsDirty(false)
+      setSaveState('saved')
       if (resp.requires_restart) setRestartRequired(true)
       queryClient.setQueryData(['skill-trust'], { level: resp.applied_level })
-      addToast({ message: 'Skill trust level saved', variant: 'success' })
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: Error) => {
+      setSaveState('error')
+      setErrorMessage(err.message)
+      addToast({ message: err.message, variant: 'error' })
+    },
   })
+
+  function handleChange(level: SkillTrustLevel) {
+    setSelected(level)
+    save(level)
+  }
 
   if (isLoading) return <Skeleton />
 
@@ -95,6 +105,7 @@ export function SkillTrustSection(): React.ReactElement {
             </span>
           )}
         </h3>
+        <SaveStatus state={saveState} errorMessage={errorMessage} />
       </div>
 
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-4">
@@ -113,10 +124,7 @@ export function SkillTrustSection(): React.ReactElement {
                 aria-checked={isActive}
                 disabled={!isAdmin}
                 onClick={() => {
-                  if (selected !== lvl.value) {
-                    setSelected(lvl.value)
-                    setIsDirty(true)
-                  }
+                  if (selected !== lvl.value) handleChange(lvl.value)
                 }}
                 className={[
                   'w-full text-left rounded-md border p-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed',
@@ -163,19 +171,6 @@ export function SkillTrustSection(): React.ReactElement {
               This disables one of your key supply-chain protections. Prefer{' '}
               <span className="font-mono">warn_unverified</span> for normal operation.
             </p>
-          </div>
-        )}
-
-        {isAdmin && (
-          <div className="flex justify-end">
-            <Button
-              size="sm"
-              variant="default"
-              disabled={!isDirty || isPending}
-              onClick={() => save(selected)}
-            >
-              {isPending ? 'Saving...' : 'Save'}
-            </Button>
           </div>
         )}
       </div>

@@ -86,25 +86,75 @@ describe('RetentionSection — mode rendering', () => {
 })
 
 // =====================================================================
-// Disabled mode → confirmation modal on Save
+// Autosave: non-forever modes save immediately on click
 // =====================================================================
 
-describe('RetentionSection — disabled mode confirmation', () => {
-  it('selecting Disabled and clicking Save shows confirmation modal', async () => {
+describe('RetentionSection — autosave on radio click', () => {
+  it('clicking Default fires updateRetention immediately (no Save button)', async () => {
+    vi.mocked(fetchRetention).mockResolvedValue({ session_days: 30, disabled: false })
+    vi.mocked(updateRetention).mockResolvedValue({
+      saved: true,
+      requires_restart: false,
+      session_days: 0,
+      disabled: false,
+    })
+
+    renderSection()
+
+    await waitFor(() => screen.getAllByRole('radio'))
+    // Start from custom, click default
+    fireEvent.click(screen.getAllByRole('radio')[0]) // default
+
+    await waitFor(() => {
+      expect(updateRetention).toHaveBeenCalledWith({ session_days: 0, disabled: false })
+    })
+  })
+
+  it('no Save button is rendered', async () => {
+    vi.mocked(fetchRetention).mockResolvedValue({ session_days: 0, disabled: false })
+    renderSection()
+
+    await waitFor(() => screen.getAllByRole('radio'))
+    expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument()
+  })
+
+  it('shows SaveStatus "Saving…" while mutation is in flight', async () => {
+    vi.mocked(fetchRetention).mockResolvedValue({ session_days: 30, disabled: false })
+    vi.mocked(updateRetention).mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve({ saved: true, requires_restart: false, session_days: 0, disabled: false }), 50))
+    )
+
+    renderSection()
+
+    await waitFor(() => screen.getAllByRole('radio'))
+    fireEvent.click(screen.getAllByRole('radio')[0])
+
+    await waitFor(() => {
+      expect(screen.getByText(/saving/i)).toBeInTheDocument()
+    })
+  })
+})
+
+// =====================================================================
+// Disabled mode → confirmation modal intercepts autosave
+// =====================================================================
+
+describe('RetentionSection — disabled mode confirmation modal', () => {
+  it('clicking Disabled (forever) shows confirmation modal before saving', async () => {
     vi.mocked(fetchRetention).mockResolvedValue({ session_days: 0, disabled: false })
 
     renderSection()
 
     await waitFor(() => screen.getAllByRole('radio'))
     const radios = screen.getAllByRole('radio')
-    fireEvent.click(radios[2]) // disabled
-
-    fireEvent.click(screen.getByRole('button', { name: /save/i }))
+    fireEvent.click(radios[2]) // disabled/forever
 
     await waitFor(() => {
       expect(screen.getByRole('dialog')).toBeInTheDocument()
     })
     expect(screen.getByText(/accumulate indefinitely/i)).toBeInTheDocument()
+    // Mutation should NOT have fired yet
+    expect(updateRetention).not.toHaveBeenCalled()
   })
 
   it('Continue on modal fires updateRetention with disabled: true', async () => {
@@ -120,7 +170,6 @@ describe('RetentionSection — disabled mode confirmation', () => {
 
     await waitFor(() => screen.getAllByRole('radio'))
     fireEvent.click(screen.getAllByRole('radio')[2]) // disabled
-    fireEvent.click(screen.getByRole('button', { name: /save/i }))
 
     await waitFor(() => screen.getByRole('dialog'))
     fireEvent.click(screen.getByRole('button', { name: /continue/i }))
@@ -130,17 +179,20 @@ describe('RetentionSection — disabled mode confirmation', () => {
     })
   })
 
-  it('Cancel on modal does NOT fire updateRetention', async () => {
+  it('Cancel on modal does NOT fire updateRetention and reverts mode', async () => {
     vi.mocked(fetchRetention).mockResolvedValue({ session_days: 0, disabled: false })
 
     renderSection()
 
     await waitFor(() => screen.getAllByRole('radio'))
     fireEvent.click(screen.getAllByRole('radio')[2])
-    fireEvent.click(screen.getByRole('button', { name: /save/i }))
 
     await waitFor(() => screen.getByRole('dialog'))
     fireEvent.click(screen.getByRole('button', { name: /cancel/i }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
 
     expect(updateRetention).not.toHaveBeenCalled()
   })
@@ -226,11 +278,11 @@ describe('RetentionSection — sweep button', () => {
 })
 
 // =====================================================================
-// Non-admin: Save hidden
+// Non-admin: no Save button
 // =====================================================================
 
 describe('RetentionSection — non-admin', () => {
-  it('hides Save button for non-admin', async () => {
+  it('does not render a Save button for non-admin', async () => {
     vi.mocked(useAuthStore).mockImplementation(
       ((selector: (s: { role?: string; user?: { username: string } }) => unknown) =>
         selector({ role: 'user', user: { username: 'testuser' } })) as never,

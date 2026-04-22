@@ -85,11 +85,11 @@ describe('PromptGuardSection — radio rendering', () => {
 })
 
 // =====================================================================
-// Save fires updatePromptGuardLevel with correct value
+// Autosave fires updatePromptGuardLevel on radio click (no Save button)
 // =====================================================================
 
-describe('PromptGuardSection — save', () => {
-  it('selecting high and saving fires updatePromptGuardLevel with level: high', async () => {
+describe('PromptGuardSection — autosave', () => {
+  it('clicking high radio fires updatePromptGuardLevel immediately (no Save button)', async () => {
     vi.mocked(fetchPromptGuardLevel).mockResolvedValue({ level: 'medium' })
     vi.mocked(updatePromptGuardLevel).mockResolvedValue({
       saved: true,
@@ -103,10 +103,50 @@ describe('PromptGuardSection — save', () => {
     const radios = screen.getAllByRole('radio')
     fireEvent.click(radios[2]) // high is the third
 
-    fireEvent.click(screen.getByRole('button', { name: /save/i }))
-
     await waitFor(() => {
       expect(updatePromptGuardLevel).toHaveBeenCalledWith('high')
+    })
+  })
+
+  it('no Save button is rendered', async () => {
+    vi.mocked(fetchPromptGuardLevel).mockResolvedValue({ level: 'medium' })
+    renderSection()
+
+    await waitFor(() => screen.getAllByRole('radio'))
+    expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument()
+  })
+
+  it('shows SaveStatus "Saving…" while mutation is in flight', async () => {
+    vi.mocked(fetchPromptGuardLevel).mockResolvedValue({ level: 'medium' })
+    vi.mocked(updatePromptGuardLevel).mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve({ saved: true, requires_restart: false, applied_level: 'high' }), 50))
+    )
+
+    renderSection()
+
+    await waitFor(() => screen.getAllByRole('radio'))
+    fireEvent.click(screen.getAllByRole('radio')[2])
+
+    await waitFor(() => {
+      expect(screen.getByText(/saving/i)).toBeInTheDocument()
+    })
+  })
+
+  it('shows SaveStatus "Saved" after successful mutation', async () => {
+    vi.mocked(fetchPromptGuardLevel).mockResolvedValue({ level: 'low' })
+    vi.mocked(updatePromptGuardLevel).mockResolvedValue({
+      saved: true,
+      requires_restart: false,
+      applied_level: 'medium',
+    })
+
+    renderSection()
+
+    await waitFor(() => screen.getAllByRole('radio'))
+    fireEvent.click(screen.getAllByRole('radio')[1]) // medium
+
+    await waitFor(() => {
+      expect(screen.getByText(/saved/i)).toBeInTheDocument()
     })
   })
 
@@ -122,7 +162,6 @@ describe('PromptGuardSection — save', () => {
 
     await waitFor(() => screen.getAllByRole('radio'))
     fireEvent.click(screen.getAllByRole('radio')[2])
-    fireEvent.click(screen.getByRole('button', { name: /save/i }))
 
     await waitFor(() => {
       expect(updatePromptGuardLevel).toHaveBeenCalled()
@@ -130,34 +169,29 @@ describe('PromptGuardSection — save', () => {
     expect(screen.queryByText(/restart required/i)).not.toBeInTheDocument()
   })
 
-  it('shows success toast on save', async () => {
+  it('shows error toast on save failure', async () => {
     vi.mocked(fetchPromptGuardLevel).mockResolvedValue({ level: 'low' })
-    vi.mocked(updatePromptGuardLevel).mockResolvedValue({
-      saved: true,
-      requires_restart: false,
-      applied_level: 'medium',
-    })
+    vi.mocked(updatePromptGuardLevel).mockRejectedValue(new Error('network error'))
 
     renderSection()
 
     await waitFor(() => screen.getAllByRole('radio'))
-    fireEvent.click(screen.getAllByRole('radio')[1]) // medium
-    fireEvent.click(screen.getByRole('button', { name: /save/i }))
+    fireEvent.click(screen.getAllByRole('radio')[1])
 
     await waitFor(() => {
       expect(mockAddToast).toHaveBeenCalledWith(
-        expect.objectContaining({ variant: 'success' })
+        expect.objectContaining({ variant: 'error' })
       )
     })
   })
 })
 
 // =====================================================================
-// Non-admin: Save hidden
+// Non-admin: no Save button
 // =====================================================================
 
 describe('PromptGuardSection — non-admin', () => {
-  it('hides Save button for non-admin', async () => {
+  it('does not render a Save button for non-admin', async () => {
     vi.mocked(useAuthStore).mockImplementation(
       ((selector: (s: { role?: string; user?: { username: string } }) => unknown) =>
         selector({ role: 'user', user: { username: 'testuser' } })) as never,

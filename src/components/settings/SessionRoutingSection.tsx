@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowsSplit } from '@phosphor-icons/react'
-import { Button } from '@/components/ui/button'
 import { fetchSessionScope, updateSessionScope } from '@/lib/api'
 import type { DMScope } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { useAuthStore } from '@/store/auth'
+import { SaveStatus, useSaveStatus } from './SaveStatus'
 
 // ── Scope metadata ────────────────────────────────────────────────────────────
 
@@ -59,24 +59,34 @@ export function SessionRoutingSection(): React.ReactElement {
   })
 
   const [selected, setSelected] = useState<DMScope>('per-channel-peer')
-  const [isDirty, setIsDirty] = useState(false)
   const [restartRequired, setRestartRequired] = useState(false)
 
-  useEffect(() => {
-    if (!data || isDirty) return
-    setSelected(data.dm_scope)
-  }, [data, isDirty])
+  const { state: saveState, setState: setSaveState, errorMessage, setErrorMessage } = useSaveStatus()
 
-  const { mutate: save, isPending } = useMutation({
+  useEffect(() => {
+    if (!data) return
+    setSelected(data.dm_scope)
+  }, [data])
+
+  const { mutate: save } = useMutation({
     mutationFn: (scope: DMScope) => updateSessionScope(scope),
+    onMutate: () => setSaveState('saving'),
     onSuccess: (resp) => {
-      setIsDirty(false)
+      setSaveState('saved')
       if (resp.requires_restart) setRestartRequired(true)
       queryClient.setQueryData(['session-scope'], { dm_scope: resp.applied_dm_scope })
-      addToast({ message: 'Session routing saved', variant: 'success' })
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: Error) => {
+      setSaveState('error')
+      setErrorMessage(err.message)
+      addToast({ message: err.message, variant: 'error' })
+    },
   })
+
+  function handleChange(scope: DMScope) {
+    setSelected(scope)
+    save(scope)
+  }
 
   if (isLoading) return <Skeleton />
 
@@ -101,6 +111,7 @@ export function SessionRoutingSection(): React.ReactElement {
             </span>
           )}
         </h3>
+        <SaveStatus state={saveState} errorMessage={errorMessage} />
       </div>
 
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-4">
@@ -120,10 +131,7 @@ export function SessionRoutingSection(): React.ReactElement {
                 aria-checked={isActive}
                 disabled={!isAdmin}
                 onClick={() => {
-                  if (selected !== sc.value) {
-                    setSelected(sc.value)
-                    setIsDirty(true)
-                  }
+                  if (selected !== sc.value) handleChange(sc.value)
                 }}
                 className={[
                   'w-full text-left rounded-md border p-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed',
@@ -158,19 +166,6 @@ export function SessionRoutingSection(): React.ReactElement {
             )
           })}
         </div>
-
-        {isAdmin && (
-          <div className="flex justify-end">
-            <Button
-              size="sm"
-              variant="default"
-              disabled={!isDirty || isPending}
-              onClick={() => save(selected)}
-            >
-              {isPending ? 'Saving...' : 'Save'}
-            </Button>
-          </div>
-        )}
       </div>
     </section>
   )

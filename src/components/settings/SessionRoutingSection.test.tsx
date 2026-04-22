@@ -99,11 +99,11 @@ describe('SessionRoutingSection — radio rendering', () => {
 })
 
 // =====================================================================
-// Save fires updateSessionScope with canonical value
+// Autosave fires updateSessionScope on radio click (no Save button)
 // =====================================================================
 
-describe('SessionRoutingSection — save', () => {
-  it('save fires updateSessionScope with dm_scope: main', async () => {
+describe('SessionRoutingSection — autosave', () => {
+  it('clicking main radio fires updateSessionScope immediately (no Save button)', async () => {
     vi.mocked(fetchSessionScope).mockResolvedValue({ dm_scope: 'per-channel-peer' })
     vi.mocked(updateSessionScope).mockResolvedValue({
       saved: true,
@@ -115,14 +115,13 @@ describe('SessionRoutingSection — save', () => {
 
     await waitFor(() => screen.getAllByRole('radio'))
     fireEvent.click(screen.getAllByRole('radio')[0]) // main
-    fireEvent.click(screen.getByRole('button', { name: /save/i }))
 
     await waitFor(() => {
       expect(updateSessionScope).toHaveBeenCalledWith('main')
     })
   })
 
-  it('save fires updateSessionScope with dm_scope: per-peer', async () => {
+  it('clicking per-peer radio fires updateSessionScope immediately', async () => {
     vi.mocked(fetchSessionScope).mockResolvedValue({ dm_scope: 'per-channel-peer' })
     vi.mocked(updateSessionScope).mockResolvedValue({
       saved: true,
@@ -134,10 +133,33 @@ describe('SessionRoutingSection — save', () => {
 
     await waitFor(() => screen.getAllByRole('radio'))
     fireEvent.click(screen.getAllByRole('radio')[1]) // per-peer
-    fireEvent.click(screen.getByRole('button', { name: /save/i }))
 
     await waitFor(() => {
       expect(updateSessionScope).toHaveBeenCalledWith('per-peer')
+    })
+  })
+
+  it('no Save button is rendered', async () => {
+    vi.mocked(fetchSessionScope).mockResolvedValue({ dm_scope: 'per-channel-peer' })
+    renderSection()
+
+    await waitFor(() => screen.getAllByRole('radio'))
+    expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument()
+  })
+
+  it('shows SaveStatus "Saving…" while mutation is in flight', async () => {
+    vi.mocked(fetchSessionScope).mockResolvedValue({ dm_scope: 'per-channel-peer' })
+    vi.mocked(updateSessionScope).mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve({ saved: true, requires_restart: true, applied_dm_scope: 'main' }), 50))
+    )
+
+    renderSection()
+
+    await waitFor(() => screen.getAllByRole('radio'))
+    fireEvent.click(screen.getAllByRole('radio')[0])
+
+    await waitFor(() => {
+      expect(screen.getByText(/saving/i)).toBeInTheDocument()
     })
   })
 
@@ -153,20 +175,35 @@ describe('SessionRoutingSection — save', () => {
 
     await waitFor(() => screen.getAllByRole('radio'))
     fireEvent.click(screen.getAllByRole('radio')[0])
-    fireEvent.click(screen.getByRole('button', { name: /save/i }))
 
     await waitFor(() => {
       expect(screen.getByText(/restart required/i)).toBeInTheDocument()
     })
   })
+
+  it('shows error toast when mutation fails', async () => {
+    vi.mocked(fetchSessionScope).mockResolvedValue({ dm_scope: 'per-channel-peer' })
+    vi.mocked(updateSessionScope).mockRejectedValue(new Error('network error'))
+
+    renderSection()
+
+    await waitFor(() => screen.getAllByRole('radio'))
+    fireEvent.click(screen.getAllByRole('radio')[0])
+
+    await waitFor(() => {
+      expect(mockAddToast).toHaveBeenCalledWith(
+        expect.objectContaining({ variant: 'error' })
+      )
+    })
+  })
 })
 
 // =====================================================================
-// Non-admin: Save hidden
+// Non-admin: no Save button
 // =====================================================================
 
 describe('SessionRoutingSection — non-admin', () => {
-  it('hides Save button for non-admin', async () => {
+  it('does not render a Save button for non-admin', async () => {
     vi.mocked(useAuthStore).mockImplementation(
       ((selector: (s: { role?: string; user?: { username: string } }) => unknown) =>
         selector({ role: 'user', user: { username: 'testuser' } })) as never,

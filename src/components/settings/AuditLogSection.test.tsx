@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 vi.mock('@/lib/api', async (importOriginal) => {
@@ -52,11 +52,11 @@ beforeEach(() => {
 })
 
 // =====================================================================
-// Toggle off → on → save → updateAuditLog called with {enabled: true}
+// Toggle fires mutation immediately on change (autosave)
 // =====================================================================
 
-describe('AuditLogSection — save flow', () => {
-  it('toggling off→on and saving calls updateAuditLog with enabled: true', async () => {
+describe('AuditLogSection — autosave on toggle', () => {
+  it('toggling off→on immediately calls updateAuditLog with enabled: true (no Save button needed)', async () => {
     vi.mocked(fetchAuditLogToggle).mockResolvedValue({ enabled: false } as never)
     vi.mocked(updateAuditLog).mockResolvedValue({
       saved: true,
@@ -70,17 +70,42 @@ describe('AuditLogSection — save flow', () => {
     expect(checkbox).not.toBeChecked()
 
     fireEvent.click(checkbox)
-    expect(checkbox).toBeChecked()
-
-    const saveBtn = screen.getByRole('button', { name: /save/i })
-    fireEvent.click(saveBtn)
 
     await waitFor(() => {
       expect(updateAuditLog).toHaveBeenCalledWith(true)
     })
   })
 
-  it('shows Restart required badge after save when server returns requires_restart: true', async () => {
+  it('no Save button is rendered', async () => {
+    vi.mocked(fetchAuditLogToggle).mockResolvedValue({ enabled: false } as never)
+
+    renderSection()
+
+    await screen.findByRole('switch')
+    expect(screen.queryByRole('button', { name: /save/i })).not.toBeInTheDocument()
+  })
+
+  it('shows SaveStatus "Saving…" then "Saved" in happy path', async () => {
+    vi.mocked(fetchAuditLogToggle).mockResolvedValue({ enabled: false } as never)
+    vi.mocked(updateAuditLog).mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve({ saved: true, requires_restart: false, applied_enabled: true }), 50))
+    )
+
+    renderSection()
+
+    const checkbox = await screen.findByRole('switch')
+    fireEvent.click(checkbox)
+
+    await waitFor(() => {
+      expect(screen.getByText(/saving/i)).toBeInTheDocument()
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText(/saved/i)).toBeInTheDocument()
+    })
+  })
+
+  it('shows restart required badge after save when server returns requires_restart: true', async () => {
     vi.mocked(fetchAuditLogToggle).mockResolvedValue({ enabled: false } as never)
     vi.mocked(updateAuditLog).mockResolvedValue({
       saved: true,
@@ -92,31 +117,9 @@ describe('AuditLogSection — save flow', () => {
 
     const checkbox = await screen.findByRole('switch')
     fireEvent.click(checkbox)
-    fireEvent.click(screen.getByRole('button', { name: /save/i }))
 
     await waitFor(() => {
       expect(screen.getByText(/restart required/i)).toBeInTheDocument()
-    })
-  })
-
-  it('shows success toast after save', async () => {
-    vi.mocked(fetchAuditLogToggle).mockResolvedValue({ enabled: false } as never)
-    vi.mocked(updateAuditLog).mockResolvedValue({
-      saved: true,
-      requires_restart: false,
-      applied_enabled: true,
-    })
-
-    renderSection()
-
-    const checkbox = await screen.findByRole('switch')
-    fireEvent.click(checkbox)
-    fireEvent.click(screen.getByRole('button', { name: /save/i }))
-
-    await waitFor(() => {
-      expect(mockAddToast).toHaveBeenCalledWith(
-        expect.objectContaining({ variant: 'success' })
-      )
     })
   })
 
@@ -128,7 +131,6 @@ describe('AuditLogSection — save flow', () => {
 
     const checkbox = await screen.findByRole('switch')
     fireEvent.click(checkbox)
-    fireEvent.click(screen.getByRole('button', { name: /save/i }))
 
     await waitFor(() => {
       expect(mockAddToast).toHaveBeenCalledWith(
@@ -136,14 +138,28 @@ describe('AuditLogSection — save flow', () => {
       )
     })
   })
+
+  it('shows SaveStatus "Save failed" indicator on error', async () => {
+    vi.mocked(fetchAuditLogToggle).mockResolvedValue({ enabled: false } as never)
+    vi.mocked(updateAuditLog).mockRejectedValue(new Error('network error'))
+
+    renderSection()
+
+    const checkbox = await screen.findByRole('switch')
+    fireEvent.click(checkbox)
+
+    await waitFor(() => {
+      expect(screen.getByText(/save failed/i)).toBeInTheDocument()
+    })
+  })
 })
 
 // =====================================================================
-// Non-admin: Save button hidden, input disabled
+// Non-admin: no Save button, input disabled
 // =====================================================================
 
 describe('AuditLogSection — non-admin', () => {
-  it('hides Save button for non-admin users', async () => {
+  it('does not render a Save button for non-admin users', async () => {
     vi.mocked(useAuthStore).mockImplementation(
       ((selector: (s: { role?: string; user?: { username: string } }) => unknown) =>
         selector({ role: 'user', user: { username: 'testuser' } })) as never,
@@ -167,5 +183,38 @@ describe('AuditLogSection — non-admin', () => {
 
     const checkbox = await screen.findByRole('switch')
     expect(checkbox).toBeDisabled()
+  })
+})
+
+// =====================================================================
+// SaveStatus auto-revert to idle after 2s
+// =====================================================================
+
+describe('AuditLogSection — SaveStatus auto-revert', () => {
+  it('SaveStatus disappears after 2 seconds following a successful save', async () => {
+    // Use real timers for the mutation flow; saved status sets a 2s timeout
+    vi.mocked(fetchAuditLogToggle).mockResolvedValue({ enabled: false } as never)
+    vi.mocked(updateAuditLog).mockResolvedValue({
+      saved: true,
+      requires_restart: false,
+      applied_enabled: true,
+    })
+
+    renderSection()
+
+    const checkbox = await screen.findByRole('switch')
+    fireEvent.click(checkbox)
+
+    // Wait for mutation to complete and "Saved" to appear
+    await waitFor(() => {
+      expect(screen.getByText(/saved/i)).toBeInTheDocument()
+    })
+
+    // Advance time by 2.1s using real timers — wait for "Saved" to disappear
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 2100))
+    })
+
+    expect(screen.queryByText(/saved/i)).not.toBeInTheDocument()
   })
 })

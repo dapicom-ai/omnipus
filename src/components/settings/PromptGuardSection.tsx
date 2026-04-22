@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Shield } from '@phosphor-icons/react'
-import { Button } from '@/components/ui/button'
 import { fetchPromptGuardLevel, updatePromptGuardLevel } from '@/lib/api'
 import type { PromptInjectionLevel } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { useAuthStore } from '@/store/auth'
+import { SaveStatus, useSaveStatus } from './SaveStatus'
 
 // ── Level metadata ────────────────────────────────────────────────────────────
 
@@ -56,24 +56,34 @@ export function PromptGuardSection(): React.ReactElement {
   })
 
   const [selected, setSelected] = useState<PromptInjectionLevel>('medium')
-  const [isDirty, setIsDirty] = useState(false)
   const [restartRequired, setRestartRequired] = useState(false)
 
-  useEffect(() => {
-    if (!data || isDirty) return
-    setSelected(data.level)
-  }, [data, isDirty])
+  const { state: saveState, setState: setSaveState, errorMessage, setErrorMessage } = useSaveStatus()
 
-  const { mutate: save, isPending } = useMutation({
+  useEffect(() => {
+    if (!data) return
+    setSelected(data.level)
+  }, [data])
+
+  const { mutate: save } = useMutation({
     mutationFn: (level: PromptInjectionLevel) => updatePromptGuardLevel(level),
+    onMutate: () => setSaveState('saving'),
     onSuccess: (resp) => {
-      setIsDirty(false)
+      setSaveState('saved')
       if (resp.requires_restart) setRestartRequired(true)
       queryClient.setQueryData(['prompt-guard-k'], { level: resp.applied_level })
-      addToast({ message: 'Prompt guard level saved', variant: 'success' })
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: Error) => {
+      setSaveState('error')
+      setErrorMessage(err.message)
+      addToast({ message: err.message, variant: 'error' })
+    },
   })
+
+  function handleChange(level: PromptInjectionLevel) {
+    setSelected(level)
+    save(level)
+  }
 
   if (isLoading) return <Skeleton />
 
@@ -98,6 +108,7 @@ export function PromptGuardSection(): React.ReactElement {
             </span>
           )}
         </h3>
+        <SaveStatus state={saveState} errorMessage={errorMessage} />
       </div>
 
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-4">
@@ -116,10 +127,7 @@ export function PromptGuardSection(): React.ReactElement {
                 aria-checked={isActive}
                 disabled={!isAdmin}
                 onClick={() => {
-                  if (selected !== lvl.value) {
-                    setSelected(lvl.value)
-                    setIsDirty(true)
-                  }
+                  if (selected !== lvl.value) handleChange(lvl.value)
                 }}
                 className={[
                   'w-full text-left rounded-md border p-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed',
@@ -154,19 +162,6 @@ export function PromptGuardSection(): React.ReactElement {
             )
           })}
         </div>
-
-        {isAdmin && (
-          <div className="flex justify-end">
-            <Button
-              size="sm"
-              variant="default"
-              disabled={!isDirty || isPending}
-              onClick={() => save(selected)}
-            >
-              {isPending ? 'Saving...' : 'Save'}
-            </Button>
-          </div>
-        )}
       </div>
     </section>
   )
