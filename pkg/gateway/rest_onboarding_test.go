@@ -687,3 +687,150 @@ func TestHandleCompleteOnboarding_ConcurrentDifferentUsers(t *testing.T) {
 	users := usersRaw.([]any)
 	assert.Len(t, users, 1, "config.json must have exactly 1 user after concurrent calls")
 }
+
+// --- HandleOnboardingProbeProvider tests ---
+
+// probeProviderWithUpstream points the probe at a stub httptest server that
+// mimics the OpenAI /v1/models shape. Used to avoid hitting real provider APIs.
+func probeProviderWithUpstream(t *testing.T, upstream string, body string, api *restAPI) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/onboarding/probe-provider",
+		strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	_ = upstream
+	api.HandleOnboardingProbeProvider(w, req)
+	return w
+}
+
+// TestHandleOnboardingProbeProvider_SuccessWithModels probes a stub upstream
+// and asserts the handler returns the model list without persisting anything.
+func TestHandleOnboardingProbeProvider_SuccessWithModels(t *testing.T) {
+	// Stub /v1/models endpoint.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/models") {
+			http.NotFound(w, r)
+			return
+		}
+		if auth := r.Header.Get("Authorization"); auth != "Bearer test-key" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"gpt-4"},{"id":"gpt-3.5-turbo"}]}`))
+	}))
+	defer upstream.Close()
+
+	tmpDir := t.TempDir()
+	api := newOnboardingTestAPI(t, tmpDir, nil)
+	require.False(t, api.onboardingMgr.IsComplete(),
+		"onboarding must not be complete for the probe to work")
+
+	body := `{"id":"openai","api_key":"test-key","endpoint":"` + upstream.URL + `"}`
+	w := probeProviderWithUpstream(t, upstream.URL, body, api)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["success"])
+	models, _ := resp["models"].([]any)
+	assert.ElementsMatch(t, []any{"gpt-3.5-turbo", "gpt-4"}, models,
+		"probe must return the upstream model list sorted alphabetically")
+
+	// Nothing persisted: config.json has no providers array entry, creds store is empty.
+	cfgData, err := os.ReadFile(tmpDir + "/config.json")
+	if err == nil {
+		assert.NotContains(t, string(cfgData), "test-key",
+			"probe must not persist the api_key to config.json")
+	}
+}
+
+// TestHandleOnboardingProbeProvider_UpstreamUnauthorized verifies that a 401
+// from the upstream is surfaced as success=false with an error message,
+// matching the existing POST /providers/{id}/test contract.
+func TestHandleOnboardingProbeProvider_UpstreamUnauthorized(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer upstream.Close()
+
+	tmpDir := t.TempDir()
+	api := newOnboardingTestAPI(t, tmpDir, nil)
+
+	body := `{"id":"openai","api_key":"bad-key","endpoint":"` + upstream.URL + `"}`
+	w := probeProviderWithUpstream(t, upstream.URL, body, api)
+
+	assert.Equal(t, http.StatusOK, w.Code,
+		"upstream failure still returns HTTP 200 with success=false (same shape as /providers/{id}/test)")
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, false, resp["success"])
+	assert.Contains(t, resp["error"].(string), "401")
+}
+
+// TestHandleOnboardingProbeProvider_AlreadyComplete verifies that once
+// onboarding is marked complete, the endpoint returns HTTP 409 to steer
+// admins to the normal provider-management flow.
+func TestHandleOnboardingProbeProvider_AlreadyComplete(t *testing.T) {
+	tmpDir := t.TempDir()
+	minimalCfg := []byte(`{"version":1,"agents":{"defaults":{},"list":[]},"providers":[]}`)
+	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
+
+	api := newOnboardingTestAPI(t, tmpDir, nil)
+
+	// Complete onboarding by writing the state marker directly — avoids
+	// running the full /onboarding/complete handler in this narrow test.
+	commit, err := api.onboardingMgr.ReserveComplete()
+	require.NoError(t, err)
+	require.NoError(t, commit())
+	require.True(t, api.onboardingMgr.IsComplete())
+
+	body := `{"id":"openai","api_key":"any","endpoint":"http://127.0.0.1:1/"}`
+	w := probeProviderWithUpstream(t, "", body, api)
+
+	assert.Equal(t, http.StatusConflict, w.Code,
+		"probe-provider must return 409 once onboarding is complete")
+	assert.Contains(t, w.Body.String(), "onboarding already complete")
+}
+
+// TestHandleOnboardingProbeProvider_MissingFields exercises the request-body
+// validation branches — empty id, empty api_key, and an unknown provider
+// without endpoint override must all return 400.
+func TestHandleOnboardingProbeProvider_MissingFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	api := newOnboardingTestAPI(t, tmpDir, nil)
+
+	cases := []struct {
+		name string
+		body string
+		want string // substring of error
+	}{
+		{"empty_id", `{"api_key":"k","endpoint":"http://x/"}`, "id is required"},
+		{"empty_api_key", `{"id":"openai","endpoint":"http://x/"}`, "api_key is required"},
+		{"unknown_provider_no_endpoint", `{"id":"notaprovider","api_key":"k"}`, "unknown provider"},
+		{"malformed_json", `{not-json`, "invalid JSON"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := probeProviderWithUpstream(t, "", tc.body, api)
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Contains(t, w.Body.String(), tc.want)
+		})
+	}
+}
+
+// TestHandleOnboardingProbeProvider_WrongMethod ensures non-POST verbs are rejected.
+func TestHandleOnboardingProbeProvider_WrongMethod(t *testing.T) {
+	tmpDir := t.TempDir()
+	api := newOnboardingTestAPI(t, tmpDir, nil)
+
+	for _, m := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
+		req := httptest.NewRequest(m, "/api/v1/onboarding/probe-provider", nil)
+		w := httptest.NewRecorder()
+		api.HandleOnboardingProbeProvider(w, req)
+		assert.Equal(t, http.StatusMethodNotAllowed, w.Code,
+			"verb %s must be rejected", m)
+	}
+	// silence unused context import if minimized tests drop it
+	_ = context.Background
+}

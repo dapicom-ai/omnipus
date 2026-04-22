@@ -27,6 +27,7 @@ const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 //   - /api/v1/auth/register-admin — first-boot admin account creation.
 const CSRF_EXEMPT_PATHS = new Set<string>([
   '/api/v1/onboarding/complete',
+  '/api/v1/onboarding/probe-provider',
   '/api/v1/auth/login',
   '/api/v1/auth/register-admin',
 ])
@@ -676,6 +677,32 @@ export async function completeOnboardingTransaction(req: CompleteOnboardingReque
   return request<LoginResponse>('/onboarding/complete', {
     method: 'POST',
     body: JSON.stringify(req),
+  })
+}
+
+// probeProvider is a non-persistent "test + fetch model list" call used during
+// onboarding, before the __Host-csrf cookie can be issued. It accepts the
+// api_key in the request body, asks the server to hit the provider's /models
+// endpoint with that key, and returns both a success flag and the model list.
+// Nothing is written to disk or in-memory config.
+//
+// After onboarding completes, the server returns HTTP 409 from this endpoint.
+// Admins who want to add providers post-onboarding use configureProvider
+// (PUT /providers/{id}) + fetchProviders (GET /providers) — both work
+// because the browser has the __Host-csrf cookie at that point.
+export interface ProbeProviderResponse {
+  success: boolean
+  models?: string[]
+  error?: string
+}
+export async function probeProvider(
+  id: string,
+  apiKey: string,
+  endpoint?: string,
+): Promise<ProbeProviderResponse> {
+  return request<ProbeProviderResponse>('/onboarding/probe-provider', {
+    method: 'POST',
+    body: JSON.stringify({ id, api_key: apiKey, endpoint: endpoint ?? '' }),
   })
 }
 

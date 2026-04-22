@@ -1975,6 +1975,10 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 		"/api/v1/onboarding/complete",
 		a.withOptionalAuth(withRateLimit(onboardingCompleteLimiter, a.HandleCompleteOnboarding)),
 	)
+	cm.RegisterHTTPHandler(
+		"/api/v1/onboarding/probe-provider",
+		a.withOptionalAuth(withRateLimit(onboardingCompleteLimiter, a.HandleOnboardingProbeProvider)),
+	)
 	cm.RegisterHTTPHandler("/api/v1/auth/login", a.withOptionalAuth(a.HandleLogin))
 	cm.RegisterHTTPHandler(
 		"/api/v1/auth/register-admin",

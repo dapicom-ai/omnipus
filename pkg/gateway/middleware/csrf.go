@@ -83,6 +83,7 @@ const csrfTokenBytes = 32
 // Plan reference: temporal-puzzling-melody.md §1, PR-H.
 var defaultExemptPaths = []string{
 	"/api/v1/onboarding/complete",
+	"/api/v1/onboarding/probe-provider",
 	"/api/v1/auth/login",
 	"/api/v1/auth/register-admin",
 	"/health",
