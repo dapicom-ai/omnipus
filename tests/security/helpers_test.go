@@ -152,16 +152,20 @@ func gatewayWithRBAC(t *testing.T) (gw *testutil.TestGateway, adminToken, userTo
 	require.NotEmpty(t, onboardResp.Token)
 	adminToken = onboardResp.Token
 
-	// Capture the __Host-csrf cookie issued by the onboarding handler
-	// (see pkg/gateway/rest_onboarding.go). All authenticated callers in the
-	// test harness reuse this value to pass the CSRF middleware (issue #97).
+	// Capture whichever CSRF cookie the onboarding handler issued. Bug 3
+	// made the cookie flavor request-aware: __Host-csrf when the request
+	// arrived over TLS (Secure:true, __Host- prefix), otherwise the
+	// un-prefixed `csrf` fallback (Secure:false) so the browser will
+	// accept it on plain HTTP. httptest.NewServer binds plain HTTP so the
+	// fallback is what the handler emits in this harness.
 	for _, c := range resp.Cookies() {
-		if c.Name == "__Host-csrf" {
+		if c.Name == "__Host-csrf" || c.Name == "csrf" {
 			csrfToken = c.Value
 			break
 		}
 	}
-	require.NotEmpty(t, csrfToken, "onboarding response must set __Host-csrf cookie")
+	require.NotEmpty(t, csrfToken,
+		"onboarding response must set either __Host-csrf (TLS) or csrf (plain HTTP) cookie")
 
 	// Add a second (non-admin) user via gw.SeedUser — this writes the user via
 	// the same read-modify-write + /reload path the gateway uses, eliminating

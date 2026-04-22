@@ -310,7 +310,7 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 	// point had no cookie — /api/v1/onboarding/complete is exempt from the
 	// CSRF gate for exactly that reason, see pkg/gateway/middleware/csrf.go)
 	// can make subsequent state-changing requests without a 403. Issue #97.
-	if err := middleware.IssueCSRFCookie(w); err != nil {
+	if err := middleware.IssueCSRFCookie(w, r); err != nil {
 		slog.Error("onboarding: issue CSRF cookie failed", "error", err)
 		jsonErr(w, http.StatusInternalServerError, "session init failed")
 		return

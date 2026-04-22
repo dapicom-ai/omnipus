@@ -1952,6 +1952,11 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	cm.RegisterHTTPHandler("/api/v1/security/rate-limits", a.withAuth(a.HandleRateLimits))
 	// Wave 5 security endpoints (SEC-01/02/03).
 	cm.RegisterHTTPHandler("/api/v1/security/sandbox-status", a.withAuth(a.HandleSandboxStatus))
+	// Sandbox config editing is admin-only — blocking the "sandbox" key in
+	// the generic PUT /api/v1/config (line ~1622) pushes UI edits to this
+	// dedicated endpoint which surfaces the restart-required UX signal.
+	cm.RegisterHTTPHandler("/api/v1/security/sandbox-config",
+		a.withAuth(middleware.RequireAdmin(http.HandlerFunc(a.HandleSandboxConfig)).ServeHTTP))
 	// GET /api/v1/security/tool-policies — read available to all authenticated
 	// users; PUT is admin-only (enforced inside HandleToolPolicies, Issue #98).
 	cm.RegisterHTTPHandler("/api/v1/security/tool-policies", a.withAuth(a.HandleToolPolicies))

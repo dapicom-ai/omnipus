@@ -8,6 +8,7 @@ package middleware
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -278,7 +279,7 @@ func TestCSRF_NilOptionIgnored(t *testing.T) {
 
 func TestIssueCSRFCookie_Attributes(t *testing.T) {
 	rec := httptest.NewRecorder()
-	require.NoError(t, IssueCSRFCookie(rec))
+	require.NoError(t, IssueCSRFCookie(rec, nil))
 
 	cookies := rec.Result().Cookies()
 	require.Len(t, cookies, 1, "exactly one cookie must be set")
@@ -301,7 +302,7 @@ func TestIssueCSRFCookie_TokenIsUnique(t *testing.T) {
 	seen := map[string]bool{}
 	for i := 0; i < 16; i++ {
 		rec := httptest.NewRecorder()
-		require.NoError(t, IssueCSRFCookie(rec))
+		require.NoError(t, IssueCSRFCookie(rec, nil))
 		c := rec.Result().Cookies()[0]
 		assert.False(t, seen[c.Value], "token collision on iteration %d: %q", i, c.Value)
 		seen[c.Value] = true
@@ -310,7 +311,7 @@ func TestIssueCSRFCookie_TokenIsUnique(t *testing.T) {
 
 func TestIssueCSRFCookie_HeaderIsParseable(t *testing.T) {
 	rec := httptest.NewRecorder()
-	require.NoError(t, IssueCSRFCookie(rec))
+	require.NoError(t, IssueCSRFCookie(rec, nil))
 	setCookie := rec.Header().Get("Set-Cookie")
 	require.NotEmpty(t, setCookie)
 
@@ -341,4 +342,127 @@ func TestCSRF_ErrorBody_JSONEncoded(t *testing.T) {
 	var body map[string]string
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, "csrf cookie missing", body["error"])
+}
+
+// --- Bug 3 coverage: Bearer bypass + plain-HTTP cookie downgrade ---
+
+// TestCSRFMiddleware_BearerBypass verifies that a state-changing request
+// carrying an Authorization: Bearer header skips the double-submit check
+// entirely. Browsers cannot auto-send an Authorization header cross-origin,
+// so Bearer-authenticated callers are not a CSRF target — requiring them
+// to juggle the cookie is pure friction and breaks plain-HTTP deployments
+// where the Secure __Host-csrf cookie cannot install.
+func TestCSRFMiddleware_BearerBypass(t *testing.T) {
+	reached := false
+	h := CSRFMiddleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/doctor", nil)
+	req.Header.Set("Authorization", "Bearer sk-test-token")
+	// Intentionally no cookie, no X-Csrf-Token header — the whole point is
+	// that Bearer callers don't need them.
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code,
+		"Bearer-authenticated state-changing request must pass through without a CSRF cookie")
+	assert.True(t, reached, "the inner handler must actually run")
+}
+
+// TestCSRFMiddleware_BearerMustHavePrefix confirms that only the "Bearer "
+// prefix triggers the bypass — a stray Authorization: Basic or malformed
+// header still goes through the normal CSRF check.
+func TestCSRFMiddleware_BearerMustHavePrefix(t *testing.T) {
+	h := CSRFMiddleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler must NOT run when Bearer prefix is absent")
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/doctor", nil)
+	req.Header.Set("Authorization", "Basic dXNlcjpwYXNz")
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code,
+		"non-Bearer Authorization must fall through to the cookie check and 403 without one")
+}
+
+// TestCSRFMiddleware_PlainHTTPCookieAccepted verifies that the middleware
+// accepts the un-prefixed `csrf` cookie issued over plain HTTP, not only
+// the TLS-only __Host-csrf cookie. The two flavors are interchangeable
+// as far as the gate is concerned — the gate cares about "cookie value
+// matches header value", not which name carries the value.
+func TestCSRFMiddleware_PlainHTTPCookieAccepted(t *testing.T) {
+	reached := false
+	h := CSRFMiddleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	const token = "plain-http-token-value"
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/doctor", nil)
+	req.AddCookie(&http.Cookie{Name: CSRFCookieNameHTTP, Value: token})
+	req.Header.Set(CSRFHeaderName, token)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code,
+		"middleware must accept the plain-HTTP `csrf` cookie when it matches the header")
+	assert.True(t, reached, "the inner handler must actually run")
+}
+
+// TestIssueCSRFCookie_PlainHTTPUsesFallbackName verifies that when the
+// request arrives without TLS (r.TLS == nil and no X-Forwarded-Proto=https),
+// IssueCSRFCookie emits the un-prefixed `csrf` cookie with Secure=false so
+// the browser will actually store it on an HTTP origin.
+func TestIssueCSRFCookie_PlainHTTPUsesFallbackName(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/api/v1/onboarding/complete", nil)
+	// req.TLS is nil because it's an http:// URL.
+	rec := httptest.NewRecorder()
+	require.NoError(t, IssueCSRFCookie(rec, req))
+
+	cookies := rec.Result().Cookies()
+	require.Len(t, cookies, 1)
+	c := cookies[0]
+	assert.Equal(t, CSRFCookieNameHTTP, c.Name,
+		"on plain HTTP the fallback `csrf` cookie must be issued instead of __Host-csrf")
+	assert.False(t, c.Secure,
+		"fallback cookie must have Secure=false so the browser actually stores it on HTTP")
+	assert.Equal(t, http.SameSiteStrictMode, c.SameSite,
+		"SameSite=Strict must survive the HTTP downgrade — it's the real CSRF defense")
+	assert.Equal(t, "/", c.Path)
+}
+
+// TestIssueCSRFCookie_HTTPSUsesHostPrefix verifies the secure branch still
+// emits the __Host-csrf cookie with Secure=true when r.TLS is non-nil.
+func TestIssueCSRFCookie_HTTPSUsesHostPrefix(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "https://example.com/api/v1/onboarding/complete", nil)
+	req.TLS = &tls.ConnectionState{} // simulate TLS-connected request
+	rec := httptest.NewRecorder()
+	require.NoError(t, IssueCSRFCookie(rec, req))
+
+	cookies := rec.Result().Cookies()
+	require.Len(t, cookies, 1)
+	c := cookies[0]
+	assert.Equal(t, CSRFCookieName, c.Name, "HTTPS branch must still emit __Host-csrf")
+	assert.True(t, c.Secure, "__Host- prefix requires Secure=true")
+}
+
+// TestIssueCSRFCookie_ForwardedProtoHonored — a reverse proxy terminating
+// TLS and forwarding X-Forwarded-Proto=https must route to the secure
+// branch, so the cookie survives the Strict-Transport-Security dance.
+func TestIssueCSRFCookie_ForwardedProtoHonored(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "http://example.com/api/v1/onboarding/complete", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rec := httptest.NewRecorder()
+	require.NoError(t, IssueCSRFCookie(rec, req))
+
+	cookies := rec.Result().Cookies()
+	require.Len(t, cookies, 1)
+	assert.Equal(t, CSRFCookieName, cookies[0].Name,
+		"X-Forwarded-Proto=https from a terminating proxy must pick the __Host- branch")
 }
