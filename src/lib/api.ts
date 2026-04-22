@@ -996,6 +996,297 @@ export function updatePromptGuard(strictness: PromptGuardStrictness): Promise<Pr
   })
 }
 
+// ── Sprint K Security Admin Endpoints ─────────────────────────────────────────
+//
+// Enums and typed helpers for the 14 new security/admin endpoints introduced in
+// Sprint K (FR-002..FR-011). These are separate from the pre-existing
+// /security/* helpers above — they use Sprint K's canonical request/response
+// shapes and are wired to the admin UI panels.
+
+export type SkillTrustLevel = 'block_unverified' | 'warn_unverified' | 'allow_all'
+export type PromptInjectionLevel = 'low' | 'medium' | 'high'
+export type DMScope = 'main' | 'per-peer' | 'per-channel-peer' | 'per-account-channel-peer'
+
+// PendingRestartEntry represents one config key that has been written to disk
+// but not yet applied to the running process — the running value differs from
+// the persisted value and a restart is required to reconcile them.
+export interface PendingRestartEntry {
+  key: string
+  applied_value: unknown
+  persisted_value: unknown
+}
+
+export function fetchPendingRestart(): Promise<PendingRestartEntry[]> {
+  return request<PendingRestartEntry[]>('/config/pending-restart')
+}
+
+// Audit log toggle — distinct from GET /audit-log (which returns AuditEntry[]).
+// This endpoint controls whether audit logging is enabled at all.
+export interface AuditLogToggle {
+  enabled: boolean
+}
+
+export interface AuditLogUpdateResponse {
+  saved: boolean
+  requires_restart: boolean
+  applied_enabled: boolean
+}
+
+export function fetchAuditLogToggle(): Promise<AuditLogToggle> {
+  return request<AuditLogToggle>('/security/audit-log')
+}
+
+export function updateAuditLog(enabled: boolean): Promise<AuditLogUpdateResponse> {
+  return request<AuditLogUpdateResponse>('/security/audit-log', {
+    method: 'PUT',
+    body: JSON.stringify({ enabled }),
+  })
+}
+
+// Skill trust — controls how unverified community skills are handled.
+export interface SkillTrustResponse {
+  level: SkillTrustLevel
+}
+
+export interface SkillTrustUpdateResponse {
+  saved: boolean
+  requires_restart: boolean
+  applied_level: SkillTrustLevel
+}
+
+export interface SkillTrustUpdateBody {
+  level: SkillTrustLevel
+}
+
+export function fetchSkillTrust(): Promise<SkillTrustResponse> {
+  return request<SkillTrustResponse>('/security/skill-trust')
+}
+
+export function updateSkillTrust(level: SkillTrustLevel): Promise<SkillTrustUpdateResponse> {
+  return request<SkillTrustUpdateResponse>('/security/skill-trust', {
+    method: 'PUT',
+    body: JSON.stringify({ level } satisfies SkillTrustUpdateBody),
+  })
+}
+
+// Prompt guard (Sprint K shape) — uses `level` field, aligns with PromptInjectionLevel.
+export interface PromptGuardKResponse {
+  level: PromptInjectionLevel
+}
+
+export interface PromptGuardKUpdateResponse {
+  saved: boolean
+  requires_restart: boolean
+  applied_level: PromptInjectionLevel
+}
+
+export interface PromptGuardKUpdateBody {
+  level: PromptInjectionLevel
+}
+
+export function fetchPromptGuardLevel(): Promise<PromptGuardKResponse> {
+  return request<PromptGuardKResponse>('/security/prompt-guard')
+}
+
+export function updatePromptGuardLevel(level: PromptInjectionLevel): Promise<PromptGuardKUpdateResponse> {
+  return request<PromptGuardKUpdateResponse>('/security/prompt-guard', {
+    method: 'PUT',
+    body: JSON.stringify({ level } satisfies PromptGuardKUpdateBody),
+  })
+}
+
+// Rate limits (Sprint K shape) — adds write support and new field names.
+export interface RateLimitsKResponse {
+  daily_cost_cap_usd?: number
+  max_agent_llm_calls_per_hour?: number
+  max_agent_tool_calls_per_minute?: number
+}
+
+export interface RateLimitsKUpdateBody {
+  daily_cost_cap_usd?: number
+  max_agent_llm_calls_per_hour?: number
+  max_agent_tool_calls_per_minute?: number
+}
+
+export function fetchRateLimitsK(): Promise<RateLimitsKResponse> {
+  return request<RateLimitsKResponse>('/security/rate-limits')
+}
+
+export function updateRateLimits(body: RateLimitsKUpdateBody): Promise<RateLimitsKResponse> {
+  return request<RateLimitsKResponse>('/security/rate-limits', {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+}
+
+// Sandbox config — mode, allowed paths, and SSRF controls.
+export interface SandboxConfigResponse {
+  mode?: string
+  allowed_paths?: string[]
+  ssrf?: {
+    enabled?: boolean
+    allow_internal?: boolean
+  }
+}
+
+export interface SandboxConfigUpdateBody {
+  mode?: string
+  allowed_paths?: string[]
+  ssrf?: {
+    enabled?: boolean
+    allow_internal?: boolean
+  }
+}
+
+export function fetchSandboxConfig(): Promise<SandboxConfigResponse> {
+  return request<SandboxConfigResponse>('/security/sandbox-config')
+}
+
+export function updateSandboxConfig(body: SandboxConfigUpdateBody): Promise<SandboxConfigResponse> {
+  return request<SandboxConfigResponse>('/security/sandbox-config', {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+}
+
+// Session scope — controls DM conversation isolation granularity.
+export interface SessionScopeResponse {
+  dm_scope: DMScope
+}
+
+export interface SessionScopeUpdateBody {
+  dm_scope: DMScope
+}
+
+export interface SessionScopeUpdateResponse {
+  saved: boolean
+  requires_restart: boolean
+  applied_dm_scope: DMScope
+}
+
+export function fetchSessionScope(): Promise<SessionScopeResponse> {
+  return request<SessionScopeResponse>('/security/session-scope')
+}
+
+export function updateSessionScope(dm_scope: DMScope): Promise<SessionScopeUpdateResponse> {
+  return request<SessionScopeUpdateResponse>('/security/session-scope', {
+    method: 'PUT',
+    body: JSON.stringify({ dm_scope } satisfies SessionScopeUpdateBody),
+  })
+}
+
+// Retention — session log retention policy.
+export interface RetentionResponse {
+  session_days?: number
+  disabled?: boolean
+}
+
+export interface RetentionUpdateBody {
+  session_days?: number
+  disabled?: boolean
+}
+
+export interface RetentionUpdateResponse {
+  saved: boolean
+  requires_restart: boolean
+  applied: RetentionResponse
+}
+
+export function fetchRetention(): Promise<RetentionResponse> {
+  return request<RetentionResponse>('/security/retention')
+}
+
+export function updateRetention(body: RetentionUpdateBody): Promise<RetentionUpdateResponse> {
+  return request<RetentionUpdateResponse>('/security/retention', {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+}
+
+// Retention sweep — immediately purge sessions beyond the retention window.
+export interface RetentionSweepResponse {
+  removed: number
+  skipped_reason?: string
+}
+
+export function triggerRetentionSweep(): Promise<RetentionSweepResponse> {
+  return request<RetentionSweepResponse>('/security/retention/sweep', { method: 'POST' })
+}
+
+// Users — list, create, delete, reset password, change role.
+export interface UserEntry {
+  username: string
+  role: UserRole
+  has_password: boolean
+  has_active_token: boolean
+}
+
+export interface CreateUserBody {
+  username: string
+  role: UserRole
+  password: string
+}
+
+export interface CreateUserResponse {
+  username: string
+  role: UserRole
+}
+
+export interface DeleteUserResponse {
+  deleted: true
+}
+
+export interface ResetUserPasswordBody {
+  password: string
+}
+
+export interface ResetUserPasswordResponse {
+  username: string
+  password_reset: true
+}
+
+export interface UpdateUserRoleBody {
+  role: UserRole
+}
+
+export interface UpdateUserRoleResponse {
+  username: string
+  role: UserRole
+}
+
+export function fetchUsers(): Promise<UserEntry[]> {
+  return request<UserEntry[]>('/users')
+}
+
+export async function createUser(body: CreateUserBody): Promise<CreateUserResponse> {
+  const response = await request<CreateUserResponse & { token?: string }>('/users', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+  if ('token' in response) {
+    throw new Error('unexpected token in create response')
+  }
+  return response
+}
+
+export function deleteUser(username: string): Promise<DeleteUserResponse> {
+  return request<DeleteUserResponse>(`/users/${encodeURIComponent(username)}`, { method: 'DELETE' })
+}
+
+export function resetUserPassword(username: string, password: string): Promise<ResetUserPasswordResponse> {
+  return request<ResetUserPasswordResponse>(`/users/${encodeURIComponent(username)}/password`, {
+    method: 'PUT',
+    body: JSON.stringify({ password } satisfies ResetUserPasswordBody),
+  })
+}
+
+export function updateUserRole(username: string, role: UserRole): Promise<UpdateUserRoleResponse> {
+  return request<UpdateUserRoleResponse>(`/users/${encodeURIComponent(username)}/role`, {
+    method: 'PATCH',
+    body: JSON.stringify({ role } satisfies UpdateUserRoleBody),
+  })
+}
+
 // ── Exec Proxy ────────────────────────────────────────────────────────────────
 
 export interface ExecProxyStatus {

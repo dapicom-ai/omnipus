@@ -1,0 +1,26 @@
+import { useQuery } from '@tanstack/react-query'
+import { fetchPendingRestart, type PendingRestartEntry } from '@/lib/api'
+
+export const PENDING_RESTART_QUERY_KEY = ['pending-restart'] as const
+
+export const PENDING_RESTART_POLL_INTERVAL = 10_000
+
+export function usePendingRestart(): {
+  entries: PendingRestartEntry[]
+  isLoading: boolean
+  isError: boolean
+  refetch: () => Promise<unknown>
+} {
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: PENDING_RESTART_QUERY_KEY,
+    queryFn: fetchPendingRestart,
+    refetchInterval: PENDING_RESTART_POLL_INTERVAL,
+  })
+
+  return {
+    entries: data ?? [],
+    isLoading,
+    isError,
+    refetch,
+  }
+}
