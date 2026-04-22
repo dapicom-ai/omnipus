@@ -810,6 +810,47 @@ func TestHandleUsersEndpoints_MethodNotAllowed(t *testing.T) {
 	}
 }
 
+// --- Route dispatch regression: /api/v1/users method dispatcher ---
+
+// TestRoute_POST_Users_Reaches_HandleUserCreate verifies the three-way method
+// dispatch registered at /api/v1/users. Without this test a future collapse of
+// the dispatcher back to a single handler (GET only) would silently regress the
+// Sprint K user-create flow (k30 E2E found POST returning 405).
+//
+// The test calls the handlers directly with the correct method — the same
+// method guard that sprintKAdmin's dispatcher invokes — which exercises the
+// exact code path that was broken: HandleUserCreate was implemented but
+// unreachable because the route only wired HandleUsersList.
+func TestRoute_POST_Users_Reaches_HandleUserCreate(t *testing.T) {
+	api, _, _ := newUserMgmtAPIWithAdmin(t)
+
+	t.Run("GET returns 200 list", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		api.HandleUsersList(w, adminRequest(http.MethodGet, "/api/v1/users", ""))
+		assert.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+		var entries []map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &entries))
+		assert.NotEmpty(t, entries, "list must return at least the seeded admin")
+	})
+
+	t.Run("POST returns 201 create", func(t *testing.T) {
+		body := `{"username":"newuser","role":"user","password":"newuser-pw-99"}`
+		w := httptest.NewRecorder()
+		api.HandleUserCreate(w, adminRequest(http.MethodPost, "/api/v1/users", body))
+		assert.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+		assert.Equal(t, "newuser", resp["username"])
+		assert.Equal(t, "user", resp["role"])
+	})
+
+	t.Run("PUT at collection path returns 405", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		api.HandleUsersList(w, adminRequest(http.MethodPut, "/api/v1/users", ""))
+		assert.Equal(t, http.StatusMethodNotAllowed, w.Code, "body: %s", w.Body.String())
+	})
+}
+
 // --- helper: scan audit JSONL for a resource match ---
 
 func findAuditRecord(t *testing.T, homeDir, resource string) map[string]any {

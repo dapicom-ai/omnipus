@@ -1989,7 +1989,16 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	cm.RegisterHTTPHandler("/api/v1/security/session-scope", sprintKAdmin(a.HandleSessionScope))
 	cm.RegisterHTTPHandler("/api/v1/security/retention", sprintKAdmin(a.HandleRetention))
 	cm.RegisterHTTPHandler("/api/v1/security/retention/sweep", sprintKAdmin(a.HandleRetentionSweep))
-	cm.RegisterHTTPHandler("/api/v1/users", sprintKAdmin(a.HandleUsersList))
+	cm.RegisterHTTPHandler("/api/v1/users", sprintKAdmin(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			a.HandleUsersList(w, r)
+		case http.MethodPost:
+			a.HandleUserCreate(w, r)
+		default:
+			jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	}))
 	cm.RegisterHTTPHandler("/api/v1/users/", sprintKAdmin(a.handleUsersWithParam))
 	// Wave 5 security endpoints (SEC-01/02/03).
 	cm.RegisterHTTPHandler("/api/v1/security/sandbox-status", a.withAuth(a.HandleSandboxStatus))
