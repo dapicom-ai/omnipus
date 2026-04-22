@@ -140,6 +140,15 @@ func (l *Logger) Log(entry *Entry) error {
 		return fmt.Errorf("audit: marshal failed: %w", err)
 	}
 
+	return l.writeLine(data)
+}
+
+// writeLine appends a single pre-marshalled JSON object as a JSONL record to the
+// audit file, performing rotation and degraded-mode guarding identically to Log.
+// It is reused by helpers that emit non-Entry-shaped records (e.g. security
+// setting changes with flat top-level fields like actor/resource/old_value).
+// The caller is responsible for any redaction before marshalling.
+func (l *Logger) writeLine(data []byte) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -148,7 +157,6 @@ func (l *Logger) Log(entry *Entry) error {
 		return fmt.Errorf("audit: operating in degraded mode")
 	}
 
-	// Check rotation
 	today := time.Now().UTC().Format("2006-01-02")
 	if today != l.currentDate || l.currentSize >= l.maxSize {
 		if rotateErr := l.rotate(); rotateErr != nil {
