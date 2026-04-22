@@ -1,4 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
+import { useQuery } from '@tanstack/react-query'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { ProvidersSection } from '@/components/settings/ProvidersSection'
 import { SecuritySection } from '@/components/settings/SecuritySection'
@@ -7,12 +8,26 @@ import { DataSection } from '@/components/settings/DataSection'
 import { RoutingSection } from '@/components/settings/RoutingSection'
 import { ProfileSection } from '@/components/settings/ProfileSection'
 import { AboutSection } from '@/components/settings/AboutSection'
+import { UsersSection } from '@/components/settings/UsersSection'
 import { useAuthStore } from '@/store/auth'
 import { DevicesSection } from '@/components/settings/DevicesSection'
+import { RestartBanner } from '@/components/settings/RestartBanner'
+import { fetchConfig } from '@/lib/api'
 
 function SettingsScreen() {
   const role = useAuthStore((s) => s.role)
   const isAdmin = role === 'admin'
+
+  const { data: config } = useQuery({
+    queryKey: ['config'],
+    queryFn: fetchConfig,
+    enabled: isAdmin,
+    staleTime: 30_000,
+  })
+
+  const devModeBypass = Boolean(config?.gateway?.dev_mode_bypass)
+  // Access tab is only shown to admins AND when dev_mode_bypass is off.
+  const showAccessTab = isAdmin && !devModeBypass
 
   return (
     <div className="absolute inset-0 overflow-y-auto">
@@ -25,6 +40,8 @@ function SettingsScreen() {
           </p>
         </div>
 
+        <RestartBanner />
+
         <Tabs defaultValue="providers">
           {/* Sticky tab bar — stays visible while scrolling tab content */}
           <TabsList className="mb-6 flex-wrap h-auto gap-1 sticky top-0 z-10 bg-[var(--color-primary)] py-2 -mx-1 px-1">
@@ -35,6 +52,7 @@ function SettingsScreen() {
             <TabsTrigger value="routing">Routing</TabsTrigger>
             <TabsTrigger value="profile">Profile</TabsTrigger>
             {isAdmin && <TabsTrigger value="devices">Devices</TabsTrigger>}
+            {showAccessTab && <TabsTrigger value="access">Access</TabsTrigger>}
             <TabsTrigger value="about">About</TabsTrigger>
           </TabsList>
 
@@ -65,6 +83,12 @@ function SettingsScreen() {
           {isAdmin && (
             <TabsContent value="devices">
               <DevicesSection />
+            </TabsContent>
+          )}
+
+          {isAdmin && (
+            <TabsContent value="access">
+              <UsersSection devModeBypass={devModeBypass} />
             </TabsContent>
           )}
 
