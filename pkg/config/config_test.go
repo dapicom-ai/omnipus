@@ -1482,3 +1482,22 @@ func TestDeprecatedEnableFlagsAreIgnored(t *testing.T) {
 	// The matching behavioral contract lives in pkg/policy tests (browser.evaluate
 	// is denied by default via builtinToolPolicies).
 }
+
+func TestRetention_ZeroSessionDaysStillMeansDefault90(t *testing.T) {
+	r := OmnipusRetentionConfig{SessionDays: 0}
+	if got := r.RetentionSessionDays(); got != 90 {
+		t.Errorf("RetentionSessionDays() = %d; want 90 for zero SessionDays", got)
+	}
+}
+
+func TestRetention_DisabledFlagMeansKeepForever(t *testing.T) {
+	enabled := OmnipusRetentionConfig{Disabled: false}
+	if enabled.IsDisabled() {
+		t.Error("IsDisabled() = true; want false when Disabled field is false")
+	}
+
+	disabled := OmnipusRetentionConfig{Disabled: true}
+	if !disabled.IsDisabled() {
+		t.Error("IsDisabled() = false; want true when Disabled field is true")
+	}
+}

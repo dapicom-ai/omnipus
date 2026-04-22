@@ -159,6 +159,10 @@ type OmnipusStorageConfig struct {
 type OmnipusRetentionConfig struct {
 	// SessionDays is how many days transcript partitions are kept. 0 = use default (90 days).
 	SessionDays int `json:"session_days,omitempty"`
+	// Disabled means transcripts are kept forever (no retention enforcement).
+	// This is orthogonal to SessionDays: setting Disabled=true suppresses deletion
+	// regardless of what SessionDays says.
+	Disabled bool `json:"disabled,omitempty"`
 	// ArchiveBeforeDelete compresses old partitions to .jsonl.gz before deletion.
 	ArchiveBeforeDelete bool `json:"archive_before_delete,omitempty"`
 	// KeepCompactionSummary preserves last_compaction_summary in meta.json
@@ -173,6 +177,9 @@ func (r OmnipusRetentionConfig) RetentionSessionDays() int {
 	}
 	return r.SessionDays
 }
+
+// IsDisabled reports whether retention enforcement is entirely suppressed (keep forever).
+func (r OmnipusRetentionConfig) IsDisabled() bool { return r.Disabled }
 
 // OmnipusCompactionConfig holds context compression settings per Appendix E §E.5.3.
 type OmnipusCompactionConfig struct {
