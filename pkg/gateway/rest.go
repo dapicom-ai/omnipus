@@ -1970,9 +1970,27 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	cm.RegisterHTTPHandler("/api/v1/security/exec-allowlist", a.withAuth(a.HandleExecAllowlist))
 	// Wave 3 security endpoints (SEC-25, SEC-28).
 	cm.RegisterHTTPHandler("/api/v1/security/exec-proxy-status", a.withAuth(a.HandleExecProxyStatus))
-	cm.RegisterHTTPHandler("/api/v1/security/prompt-guard", a.withAuth(a.HandlePromptGuard))
-	// Wave 4 security endpoints (SEC-26).
-	cm.RegisterHTTPHandler("/api/v1/security/rate-limits", a.withAuth(a.HandleRateLimits))
+	// Sprint K admin-only security endpoints (FR-012 / FR-013 / FR-019).
+	// Chain: withAuth → RequireAdmin → RequireNotBypass → handler.
+	// CSRF is enforced by the global WrapHTTPHandler layer (no per-handler wiring needed).
+	sprintKAdmin := func(h http.HandlerFunc) http.HandlerFunc {
+		return a.withAuth(
+			middleware.RequireAdmin(
+				http.HandlerFunc(middleware.RequireNotBypass(h)),
+			).ServeHTTP,
+		)
+	}
+	cm.RegisterHTTPHandler("/api/v1/config/pending-restart", sprintKAdmin(a.HandlePendingRestart))
+	cm.RegisterHTTPHandler("/api/v1/security/audit-log", sprintKAdmin(a.HandleSandboxAuditLog))
+	cm.RegisterHTTPHandler("/api/v1/security/skill-trust", sprintKAdmin(a.HandleSkillTrust))
+	cm.RegisterHTTPHandler("/api/v1/security/prompt-guard", sprintKAdmin(a.HandlePromptGuard))
+	cm.RegisterHTTPHandler("/api/v1/security/rate-limits", sprintKAdmin(a.HandleRateLimits))
+	cm.RegisterHTTPHandler("/api/v1/security/sandbox-config", sprintKAdmin(a.HandleSandboxConfig))
+	cm.RegisterHTTPHandler("/api/v1/security/session-scope", sprintKAdmin(a.HandleSessionScope))
+	cm.RegisterHTTPHandler("/api/v1/security/retention", sprintKAdmin(a.HandleRetention))
+	cm.RegisterHTTPHandler("/api/v1/security/retention/sweep", sprintKAdmin(a.HandleRetentionSweep))
+	cm.RegisterHTTPHandler("/api/v1/users", sprintKAdmin(a.HandleUsersList))
+	cm.RegisterHTTPHandler("/api/v1/users/", sprintKAdmin(a.handleUsersWithParam))
 	// Wave 5 security endpoints (SEC-01/02/03).
 	cm.RegisterHTTPHandler("/api/v1/security/sandbox-status", a.withAuth(a.HandleSandboxStatus))
 	// GET /api/v1/security/tool-policies — read available to all authenticated
@@ -2014,6 +2032,32 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	// File upload endpoints (Milestone 3).
 	cm.RegisterHTTPHandler("/api/v1/upload", a.withUploadAuth(a.HandleUpload))
 	cm.RegisterHTTPHandler("/api/v1/uploads/", a.withOptionalAuth(a.HandleServeUpload))
+}
+
+// handleUsersWithParam dispatches /api/v1/users/{username}[/subpath] requests
+// to the appropriate user-management handler based on HTTP method and path suffix.
+//
+// Routing table:
+//
+//	DELETE /api/v1/users/{username}          → HandleUserDelete
+//	PUT    /api/v1/users/{username}/password → HandleUserResetPassword
+//	PATCH  /api/v1/users/{username}/role     → HandleUserChangeRole
+//
+// Unrecognized method+path combinations return 405 or 404 respectively.
+// Auth and bypass guards are applied by the enclosing sprintKAdmin wrapper;
+// this function only handles dispatch.
+func (a *restAPI) handleUsersWithParam(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+	switch {
+	case strings.HasSuffix(path, "/password") && r.Method == http.MethodPut:
+		a.HandleUserResetPassword(w, r)
+	case strings.HasSuffix(path, "/role") && r.Method == http.MethodPatch:
+		a.HandleUserChangeRole(w, r)
+	case r.Method == http.MethodDelete:
+		a.HandleUserDelete(w, r)
+	default:
+		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
 }
 
 // rotateGatewayToken generates a new random bearer token, persists it to config, and returns it.
