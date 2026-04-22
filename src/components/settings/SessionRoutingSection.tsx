@@ -1,32 +1,35 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Shield } from '@phosphor-icons/react'
+import { ArrowsSplit } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
-import { fetchPromptGuardLevel, updatePromptGuardLevel } from '@/lib/api'
-import type { PromptInjectionLevel } from '@/lib/api'
+import { fetchSessionScope, updateSessionScope } from '@/lib/api'
+import type { DMScope } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { useAuthStore } from '@/store/auth'
 
-// ── Level metadata ────────────────────────────────────────────────────────────
+// ── Scope metadata ────────────────────────────────────────────────────────────
 
-const LEVELS: { value: PromptInjectionLevel; label: string; subtitle: string }[] = [
+const SCOPES: { value: DMScope; label: string; subtitle: string }[] = [
   {
-    value: 'low',
-    label: 'Low',
-    subtitle:
-      'Minimal sanitization. Tool output reaches the model with only basic cleanup.',
+    value: 'main',
+    label: 'Main',
+    subtitle: 'One session per agent across all DMs',
   },
   {
-    value: 'medium',
-    label: 'Medium',
-    subtitle:
-      'Balanced sanitization. Strips common prompt-injection patterns from tool output. (Default.)',
+    value: 'per-peer',
+    label: 'Per peer',
+    subtitle: 'Separate session per sender identity',
   },
   {
-    value: 'high',
-    label: 'High',
+    value: 'per-channel-peer',
+    label: 'Per channel + peer',
+    subtitle: 'Separate session per (channel, sender). Default.',
+  },
+  {
+    value: 'per-account-channel-peer',
+    label: 'Per account + channel + peer',
     subtitle:
-      'Aggressive sanitization. Strips more patterns — may clip legitimate content.',
+      'Separate session per (bot account, channel, sender). Use when one bot serves multiple tenants.',
   },
 ]
 
@@ -35,42 +38,42 @@ const LEVELS: { value: PromptInjectionLevel; label: string; subtitle: string }[]
 function Skeleton() {
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-3 animate-pulse">
-      <div className="h-4 w-40 rounded bg-[var(--color-border)]" />
-      <div className="h-3 w-full rounded bg-[var(--color-border)]" />
-      <div className="h-3 w-full rounded bg-[var(--color-border)]" />
+      {[0, 1, 2, 3].map((i) => (
+        <div key={i} className="h-14 rounded bg-[var(--color-border)]" />
+      ))}
     </div>
   )
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function PromptGuardSection(): React.ReactElement {
+export function SessionRoutingSection(): React.ReactElement {
   const { addToast } = useUiStore()
   const queryClient = useQueryClient()
   const role = useAuthStore((s) => s.role)
   const isAdmin = role === 'admin'
 
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['prompt-guard-k'],
-    queryFn: fetchPromptGuardLevel,
+    queryKey: ['session-scope'],
+    queryFn: fetchSessionScope,
   })
 
-  const [selected, setSelected] = useState<PromptInjectionLevel>('medium')
+  const [selected, setSelected] = useState<DMScope>('per-channel-peer')
   const [isDirty, setIsDirty] = useState(false)
   const [restartRequired, setRestartRequired] = useState(false)
 
   useEffect(() => {
     if (!data || isDirty) return
-    setSelected(data.level)
+    setSelected(data.dm_scope)
   }, [data, isDirty])
 
   const { mutate: save, isPending } = useMutation({
-    mutationFn: (level: PromptInjectionLevel) => updatePromptGuardLevel(level),
+    mutationFn: (scope: DMScope) => updateSessionScope(scope),
     onSuccess: (resp) => {
       setIsDirty(false)
       if (resp.requires_restart) setRestartRequired(true)
-      queryClient.setQueryData(['prompt-guard-k'], { level: resp.applied_level })
-      addToast({ message: 'Prompt guard level saved', variant: 'success' })
+      queryClient.setQueryData(['session-scope'], { dm_scope: resp.applied_dm_scope })
+      addToast({ message: 'Session routing saved', variant: 'success' })
     },
     onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
   })
@@ -80,7 +83,7 @@ export function PromptGuardSection(): React.ReactElement {
   if (isError) {
     return (
       <p className="text-sm" style={{ color: 'var(--color-error)' }}>
-        Failed to load prompt guard settings:{' '}
+        Failed to load session routing settings:{' '}
         {error instanceof Error ? error.message : 'Unknown error'}
       </p>
     )
@@ -90,8 +93,8 @@ export function PromptGuardSection(): React.ReactElement {
     <section className="space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium text-[var(--color-secondary)] flex items-center gap-1.5">
-          <Shield size={14} className="text-[var(--color-muted)]" />
-          Prompt Injection Defense
+          <ArrowsSplit size={14} className="text-[var(--color-muted)]" />
+          Session Routing
           {restartRequired && (
             <span className="ml-2 text-[10px] uppercase tracking-wider text-[var(--color-warning)] border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/10 rounded px-1.5 py-0.5">
               Restart required
@@ -102,22 +105,23 @@ export function PromptGuardSection(): React.ReactElement {
 
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-4">
         <p className="text-xs text-[var(--color-muted)] leading-relaxed">
-          Controls how untrusted tool output is sanitised before passing to the agent.
+          Controls how DM conversation context is isolated. Changing this setting requires a
+          gateway restart.
         </p>
 
-        <div className="space-y-2" role="radiogroup" aria-label="Prompt injection defense level">
-          {LEVELS.map((lvl) => {
-            const isActive = selected === lvl.value
+        <div className="space-y-2" role="radiogroup" aria-label="Session routing scope">
+          {SCOPES.map((sc) => {
+            const isActive = selected === sc.value
             return (
               <button
-                key={lvl.value}
+                key={sc.value}
                 type="button"
                 role="radio"
                 aria-checked={isActive}
                 disabled={!isAdmin}
                 onClick={() => {
-                  if (selected !== lvl.value) {
-                    setSelected(lvl.value)
+                  if (selected !== sc.value) {
+                    setSelected(sc.value)
                     setIsDirty(true)
                   }
                 }}
@@ -144,11 +148,11 @@ export function PromptGuardSection(): React.ReactElement {
                       isActive ? 'text-[var(--color-secondary)]' : 'text-[var(--color-muted)]',
                     ].join(' ')}
                   >
-                    {lvl.label}
+                    {sc.label}
                   </span>
                 </div>
                 <p className="text-xs text-[var(--color-muted)] mt-1 ml-5 leading-relaxed">
-                  {lvl.subtitle}
+                  {sc.subtitle}
                 </p>
               </button>
             )

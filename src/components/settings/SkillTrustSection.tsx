@@ -1,32 +1,30 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Shield } from '@phosphor-icons/react'
+import { Package, Warning } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
-import { fetchPromptGuardLevel, updatePromptGuardLevel } from '@/lib/api'
-import type { PromptInjectionLevel } from '@/lib/api'
+import { fetchSkillTrust, updateSkillTrust } from '@/lib/api'
+import type { SkillTrustLevel } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { useAuthStore } from '@/store/auth'
 
 // ── Level metadata ────────────────────────────────────────────────────────────
 
-const LEVELS: { value: PromptInjectionLevel; label: string; subtitle: string }[] = [
+const LEVELS: { value: SkillTrustLevel; label: string; subtitle: string }[] = [
   {
-    value: 'low',
-    label: 'Low',
-    subtitle:
-      'Minimal sanitization. Tool output reaches the model with only basic cleanup.',
+    value: 'block_unverified',
+    label: 'Block unverified',
+    subtitle: 'Block skills without a verifiable hash',
   },
   {
-    value: 'medium',
-    label: 'Medium',
-    subtitle:
-      'Balanced sanitization. Strips common prompt-injection patterns from tool output. (Default.)',
+    value: 'warn_unverified',
+    label: 'Warn unverified',
+    subtitle: 'Warn but allow (default)',
   },
   {
-    value: 'high',
-    label: 'High',
+    value: 'allow_all',
+    label: 'Allow all',
     subtitle:
-      'Aggressive sanitization. Strips more patterns — may clip legitimate content.',
+      'Accept any skill — disables hash verification. Only use with a trusted skills registry.',
   },
 ]
 
@@ -44,18 +42,18 @@ function Skeleton() {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export function PromptGuardSection(): React.ReactElement {
+export function SkillTrustSection(): React.ReactElement {
   const { addToast } = useUiStore()
   const queryClient = useQueryClient()
   const role = useAuthStore((s) => s.role)
   const isAdmin = role === 'admin'
 
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['prompt-guard-k'],
-    queryFn: fetchPromptGuardLevel,
+    queryKey: ['skill-trust'],
+    queryFn: fetchSkillTrust,
   })
 
-  const [selected, setSelected] = useState<PromptInjectionLevel>('medium')
+  const [selected, setSelected] = useState<SkillTrustLevel>('warn_unverified')
   const [isDirty, setIsDirty] = useState(false)
   const [restartRequired, setRestartRequired] = useState(false)
 
@@ -65,12 +63,12 @@ export function PromptGuardSection(): React.ReactElement {
   }, [data, isDirty])
 
   const { mutate: save, isPending } = useMutation({
-    mutationFn: (level: PromptInjectionLevel) => updatePromptGuardLevel(level),
+    mutationFn: (level: SkillTrustLevel) => updateSkillTrust(level),
     onSuccess: (resp) => {
       setIsDirty(false)
       if (resp.requires_restart) setRestartRequired(true)
-      queryClient.setQueryData(['prompt-guard-k'], { level: resp.applied_level })
-      addToast({ message: 'Prompt guard level saved', variant: 'success' })
+      queryClient.setQueryData(['skill-trust'], { level: resp.applied_level })
+      addToast({ message: 'Skill trust level saved', variant: 'success' })
     },
     onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
   })
@@ -80,8 +78,7 @@ export function PromptGuardSection(): React.ReactElement {
   if (isError) {
     return (
       <p className="text-sm" style={{ color: 'var(--color-error)' }}>
-        Failed to load prompt guard settings:{' '}
-        {error instanceof Error ? error.message : 'Unknown error'}
+        Failed to load skill trust settings: {error instanceof Error ? error.message : 'Unknown error'}
       </p>
     )
   }
@@ -90,8 +87,8 @@ export function PromptGuardSection(): React.ReactElement {
     <section className="space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium text-[var(--color-secondary)] flex items-center gap-1.5">
-          <Shield size={14} className="text-[var(--color-muted)]" />
-          Prompt Injection Defense
+          <Package size={14} className="text-[var(--color-muted)]" />
+          Skill Trust
           {restartRequired && (
             <span className="ml-2 text-[10px] uppercase tracking-wider text-[var(--color-warning)] border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/10 rounded px-1.5 py-0.5">
               Restart required
@@ -102,10 +99,10 @@ export function PromptGuardSection(): React.ReactElement {
 
       <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-4">
         <p className="text-xs text-[var(--color-muted)] leading-relaxed">
-          Controls how untrusted tool output is sanitised before passing to the agent.
+          Controls how unverified community skills are handled during installation and execution.
         </p>
 
-        <div className="space-y-2" role="radiogroup" aria-label="Prompt injection defense level">
+        <div className="space-y-2" role="radiogroup" aria-label="Skill trust level">
           {LEVELS.map((lvl) => {
             const isActive = selected === lvl.value
             return (
@@ -154,6 +151,20 @@ export function PromptGuardSection(): React.ReactElement {
             )
           })}
         </div>
+
+        {/* Warning panel when allow_all is selected */}
+        {selected === 'allow_all' && (
+          <div
+            role="alert"
+            className="flex items-start gap-2 rounded-md border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/8 p-3"
+          >
+            <Warning size={14} weight="fill" className="mt-0.5 shrink-0" style={{ color: 'var(--color-warning)' }} />
+            <p className="text-xs leading-relaxed" style={{ color: 'var(--color-warning)' }}>
+              This disables one of your key supply-chain protections. Prefer{' '}
+              <span className="font-mono">warn_unverified</span> for normal operation.
+            </p>
+          </div>
+        )}
 
         {isAdmin && (
           <div className="flex justify-end">
