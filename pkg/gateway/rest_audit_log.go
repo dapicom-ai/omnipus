@@ -56,12 +56,7 @@ func (a *restAPI) HandleSandboxAuditLog(w http.ResponseWriter, r *http.Request) 
 		newEnabled := *body.Enabled
 
 		if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
-			sandbox, _ := m["sandbox"].(map[string]any)
-			if sandbox == nil {
-				sandbox = map[string]any{}
-				m["sandbox"] = sandbox
-			}
-			sandbox["audit_log"] = newEnabled
+			ensureMap(m, "sandbox")["audit_log"] = newEnabled
 			return nil
 		}); err != nil {
 			slog.Error("rest: update sandbox audit_log", "error", err)

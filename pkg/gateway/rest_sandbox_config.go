@@ -180,11 +180,7 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
-		sandbox, _ := m["sandbox"].(map[string]any)
-		if sandbox == nil {
-			sandbox = map[string]any{}
-			m["sandbox"] = sandbox
-		}
+		sandbox := ensureMap(m, "sandbox")
 
 		// Snapshot old values from the just-read map so the audit diff is
 		// consistent with the actual atomic state, not a pre-lock race copy.
@@ -211,11 +207,7 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 			sandbox["allowed_paths"] = toAnySlice(*body.AllowedPaths)
 		}
 		if changedSSRFEnabled || changedAllowInternal {
-			ssrf, _ := sandbox["ssrf"].(map[string]any)
-			if ssrf == nil {
-				ssrf = map[string]any{}
-				sandbox["ssrf"] = ssrf
-			}
+			ssrf := ensureMap(m, "sandbox", "ssrf")
 			if changedSSRFEnabled {
 				ssrf["enabled"] = *body.SSRFEnabled
 			}

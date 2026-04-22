@@ -1555,6 +1555,33 @@ func (a *restAPI) safeUpdateConfigJSON(mutate func(m map[string]any) error) erro
 	return nil
 }
 
+// ensureMap walks m through the given keys, creating intermediate map[string]any
+// nodes as needed, and returns the deepest map. Panics only on a non-map value
+// at a pre-existing key (a legitimate config.json corruption that should abort
+// the request handler). Pure function — callers are already inside
+// safeUpdateConfigJSON's mutex, so no locking here.
+func ensureMap(m map[string]any, keys ...string) map[string]any {
+	cur := m
+	for _, k := range keys {
+		existing, ok := cur[k]
+		if !ok {
+			next := map[string]any{}
+			cur[k] = next
+			cur = next
+			continue
+		}
+		// Already exists — must be a map. Panic surfaces as 500 to the caller,
+		// which is correct: a non-map node where a map is expected means
+		// config.json on disk is structurally broken.
+		nested, ok := existing.(map[string]any)
+		if !ok {
+			panic(fmt.Sprintf("ensureMap: expected map at key %q, got %T", k, existing))
+		}
+		cur = nested
+	}
+	return cur
+}
+
 // refreshConfigAndRewireServices loads a fresh config from disk, re-resolves the
 // credential bundle, registers all resolved plaintexts with the sensitive-data
 // replacer, and atomically swaps the in-memory config on the agent loop.

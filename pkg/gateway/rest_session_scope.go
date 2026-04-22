@@ -97,12 +97,7 @@ func (a *restAPI) putSessionScope(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
-		session, _ := m["session"].(map[string]any)
-		if session == nil {
-			session = map[string]any{}
-			m["session"] = session
-		}
-		session["dm_scope"] = body.DMScope
+		ensureMap(m, "session")["dm_scope"] = body.DMScope
 		return nil
 	}); err != nil {
 		slog.Error("rest: update session dm_scope", "error", err)

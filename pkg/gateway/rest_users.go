@@ -351,34 +351,19 @@ func (a *restAPI) HandleUserChangeRole(w http.ResponseWriter, r *http.Request) {
 
 	var oldRole string
 	if updErr := a.safeUpdateConfigJSON(func(m map[string]any) error {
-		gw, _ := m["gateway"].(map[string]any)
-		if gw == nil {
-			return errUserAbsent
+		if err := a.findAndMutateUser(m, username, func(u map[string]any) error {
+			oldRole, _ = u["role"].(string)
+			u["role"] = body.Role
+			return nil
+		}); err != nil {
+			return err
 		}
-		raw, ok := gw["users"]
-		if !ok || raw == nil {
-			return errUserAbsent
-		}
-		users, isArr := raw.([]any)
-		if !isArr {
-			return fmt.Errorf("gateway.users is not an array")
-		}
-		found := false
-		for _, u := range users {
-			um, ok := u.(map[string]any)
-			if !ok {
-				continue
-			}
-			if name, _ := um["username"].(string); name == username {
-				oldRole, _ = um["role"].(string)
-				um["role"] = body.Role
-				found = true
-				break
-			}
-		}
-		if !found {
-			return errUserAbsent
-		}
+		// Last-admin guard evaluated against the POST-mutation slice. The guard
+		// MUST run here, inside the callback, after the role flip — two admins
+		// concurrently demoting each other race on configMu; the second writer
+		// sees the first's committed state and the guard blocks it.
+		gw := m["gateway"].(map[string]any)
+		users := gw["users"].([]any)
 		if countAdmins(users) == 0 {
 			return ErrLastAdmin
 		}
@@ -470,32 +455,13 @@ func (a *restAPI) HandleUserResetPassword(w http.ResponseWriter, r *http.Request
 	}
 
 	if updErr := a.safeUpdateConfigJSON(func(m map[string]any) error {
-		gw, _ := m["gateway"].(map[string]any)
-		if gw == nil {
-			return errUserAbsent
-		}
-		raw, ok := gw["users"]
-		if !ok || raw == nil {
-			return errUserAbsent
-		}
-		users, isArr := raw.([]any)
-		if !isArr {
-			return fmt.Errorf("gateway.users is not an array")
-		}
-		for _, u := range users {
-			um, ok := u.(map[string]any)
-			if !ok {
-				continue
-			}
-			if name, _ := um["username"].(string); name == username {
-				um["password_hash"] = string(newHash)
-				// Zero token_hash in the SAME transaction so the target
-				// user's currently-issued bearer 401s after the refresh.
-				um["token_hash"] = ""
-				return nil
-			}
-		}
-		return errUserAbsent
+		return a.findAndMutateUser(m, username, func(u map[string]any) error {
+			u["password_hash"] = string(newHash)
+			// Zero token_hash in the SAME transaction so the target
+			// user's currently-issued bearer 401s after the refresh.
+			u["token_hash"] = ""
+			return nil
+		})
 	}); updErr != nil {
 		if errors.Is(updErr, errUserAbsent) {
 			jsonErr(w, http.StatusNotFound, "user not found")
@@ -533,6 +499,37 @@ func (a *restAPI) HandleUserResetPassword(w http.ResponseWriter, r *http.Request
 }
 
 // --- helpers ---
+
+// findAndMutateUser walks m["gateway"]["users"] looking for an entry whose
+// "username" field equals the given name, passes it to mutate, and returns.
+// Returns errUserAbsent when no match is found. Any error from mutate
+// propagates up — callers like HandleUserChangeRole use this to abort
+// safeUpdateConfigJSON with ErrLastAdmin when the mutation leaves zero admins.
+//
+// The function modifies the user map in place. Callers that REPLACE the
+// entire user entry (e.g. HandleUserDelete splicing out an entry) or APPEND
+// a new entry (e.g. HandleUserCreate) should not use this helper — they manage
+// the slice directly inside their own safeUpdateConfigJSON callback.
+func (a *restAPI) findAndMutateUser(m map[string]any, username string, mutate func(u map[string]any) error) error {
+	gw, ok := m["gateway"].(map[string]any)
+	if !ok {
+		return fmt.Errorf("findAndMutateUser: gateway is not a map: %T", m["gateway"])
+	}
+	raw, ok := gw["users"].([]any)
+	if !ok {
+		return fmt.Errorf("findAndMutateUser: gateway.users is not an array: %T", gw["users"])
+	}
+	for _, entry := range raw {
+		u, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if u["username"] == username {
+			return mutate(u)
+		}
+	}
+	return errUserAbsent
+}
 
 // extractUsernameFromPath returns the path segment after prefix, or an error
 // if the segment is empty. The caller is expected to further trim subpath

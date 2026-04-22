@@ -111,16 +111,7 @@ func (a *restAPI) putRateLimits(w http.ResponseWriter, r *http.Request) {
 	oldCfg := a.agentLoop.GetConfig().Sandbox.RateLimits
 
 	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
-		sandbox, _ := m["sandbox"].(map[string]any)
-		if sandbox == nil {
-			sandbox = map[string]any{}
-			m["sandbox"] = sandbox
-		}
-		rl, _ := sandbox["rate_limits"].(map[string]any)
-		if rl == nil {
-			rl = map[string]any{}
-			sandbox["rate_limits"] = rl
-		}
+		rl := ensureMap(m, "sandbox", "rate_limits")
 		if newCap != nil {
 			rl["daily_cost_cap_usd"] = *newCap
 		}

@@ -99,12 +99,7 @@ func (a *restAPI) putSkillTrust(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
-		sandbox, _ := m["sandbox"].(map[string]any)
-		if sandbox == nil {
-			sandbox = map[string]any{}
-			m["sandbox"] = sandbox
-		}
-		sandbox["skill_trust"] = body.Level
+		ensureMap(m, "sandbox")["skill_trust"] = body.Level
 		return nil
 	}); err != nil {
 		slog.Error("rest: update skill trust", "error", err)

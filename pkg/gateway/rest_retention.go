@@ -103,16 +103,7 @@ func (a *restAPI) putRetention(w http.ResponseWriter, r *http.Request) {
 	oldRet := oldCfg.Storage.Retention
 
 	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
-		storage, _ := m["storage"].(map[string]any)
-		if storage == nil {
-			storage = map[string]any{}
-			m["storage"] = storage
-		}
-		retention, _ := storage["retention"].(map[string]any)
-		if retention == nil {
-			retention = map[string]any{}
-			storage["retention"] = retention
-		}
+		retention := ensureMap(m, "storage", "retention")
 		if newSessionDays != nil {
 			retention["session_days"] = *newSessionDays
 		}

@@ -70,12 +70,7 @@ func (a *restAPI) putPromptGuard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
-		sandbox, _ := m["sandbox"].(map[string]any)
-		if sandbox == nil {
-			sandbox = map[string]any{}
-			m["sandbox"] = sandbox
-		}
-		sandbox["prompt_injection_level"] = body.Level
+		ensureMap(m, "sandbox")["prompt_injection_level"] = body.Level
 		return nil
 	}); err != nil {
 		slog.Error("rest: update prompt_injection_level", "error", err)
