@@ -26,14 +26,14 @@ import (
 //
 // Exported so tests and future refactors can reference the canonical list
 // without duplicating it.
-var RestartGatedKeys = []string{
-	"sandbox.mode",
-	"sandbox.enabled",
-	"sandbox.audit_log",
-	"sandbox.allowed_paths",
-	"session.dm_scope",
-	"gateway.port",
-	"gateway.users",
+var RestartGatedKeys = []config.ConfigKey{
+	config.SandboxMode,
+	config.SandboxEnabled,
+	config.SandboxAuditLog,
+	config.SandboxAllowedPaths,
+	config.SessionDMScope,
+	config.GatewayPort,
+	config.GatewayUsers,
 }
 
 // pendingRestartEntry is a single restart-required change: the dotted key
@@ -88,11 +88,11 @@ func (a *restAPI) HandlePendingRestart(w http.ResponseWriter, r *http.Request) {
 
 	diffs := make([]pendingRestartEntry, 0)
 	for _, key := range RestartGatedKeys {
-		pv := getAtPath(persisted, key)
-		av := getAtPath(applied, key)
+		pv := getAtPath(persisted, string(key))
+		av := getAtPath(applied, string(key))
 		if !reflect.DeepEqual(pv, av) {
 			diffs = append(diffs, pendingRestartEntry{
-				Key:            key,
+				Key:            string(key),
 				PersistedValue: pv,
 				AppliedValue:   av,
 			})

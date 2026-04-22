@@ -58,7 +58,7 @@ func TestPromptGuard_InitializedFromConfig(t *testing.T) {
 					},
 				},
 				Sandbox: config.OmnipusSandboxConfig{
-					PromptInjectionLevel: tc.configLevel,
+					PromptInjectionLevel: config.PromptInjectionLevel(tc.configLevel),
 				},
 			}
 			al := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{})

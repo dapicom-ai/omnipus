@@ -5,6 +5,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"reflect"
 	"strings"
@@ -60,6 +61,112 @@ func TestSSRFConfig_AllowInternalRemainsStringList(t *testing.T) {
 	// against a future re-introduction.
 	if _, leaked := rt.FieldByName("AllowInternalCIDRs"); leaked {
 		t.Fatalf("OmnipusSSRFConfig.AllowInternalCIDRs must not exist — regression")
+	}
+}
+
+// --- SkillTrustLevel UnmarshalJSON ---
+
+// TestSkillTrustLevel_UnmarshalJSON_ValidValues confirms all three canonical
+// strings round-trip through UnmarshalJSON without error.
+func TestSkillTrustLevel_UnmarshalJSON_ValidValues(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want SkillTrustLevel
+	}{
+		{`"block_unverified"`, SkillTrustBlockUnverified},
+		{`"warn_unverified"`, SkillTrustWarnUnverified},
+		{`"allow_all"`, SkillTrustAllowAll},
+	}
+	for _, tc := range cases {
+		t.Run(tc.raw, func(t *testing.T) {
+			var got SkillTrustLevel
+			if err := json.Unmarshal([]byte(tc.raw), &got); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSkillTrustLevel_UnmarshalJSON_UppercaseRejected confirms that
+// uppercased variants ("BLOCK_UNVERIFIED") are rejected at decode time.
+func TestSkillTrustLevel_UnmarshalJSON_UppercaseRejected(t *testing.T) {
+	var got SkillTrustLevel
+	if err := json.Unmarshal([]byte(`"BLOCK_UNVERIFIED"`), &got); err == nil {
+		t.Fatal("expected error for BLOCK_UNVERIFIED, got nil")
+	}
+}
+
+// TestSkillTrustLevel_UnmarshalJSON_UnknownRejected confirms that arbitrary
+// unknown strings are rejected at decode time.
+func TestSkillTrustLevel_UnmarshalJSON_UnknownRejected(t *testing.T) {
+	var got SkillTrustLevel
+	if err := json.Unmarshal([]byte(`"ridiculous"`), &got); err == nil {
+		t.Fatal("expected error for unknown value, got nil")
+	}
+}
+
+// TestSkillTrustLevel_UnmarshalJSON_EmptyAccepted confirms that the empty
+// string is accepted (omitted field in config.json).
+func TestSkillTrustLevel_UnmarshalJSON_EmptyAccepted(t *testing.T) {
+	var got SkillTrustLevel
+	if err := json.Unmarshal([]byte(`""`), &got); err != nil {
+		t.Fatalf("unexpected error for empty string: %v", err)
+	}
+}
+
+// --- PromptInjectionLevel UnmarshalJSON ---
+
+// TestPromptInjectionLevel_UnmarshalJSON_ValidValues confirms all three
+// canonical strings round-trip through UnmarshalJSON without error.
+func TestPromptInjectionLevel_UnmarshalJSON_ValidValues(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want PromptInjectionLevel
+	}{
+		{`"low"`, PromptInjectionLow},
+		{`"medium"`, PromptInjectionMedium},
+		{`"high"`, PromptInjectionHigh},
+	}
+	for _, tc := range cases {
+		t.Run(tc.raw, func(t *testing.T) {
+			var got PromptInjectionLevel
+			if err := json.Unmarshal([]byte(tc.raw), &got); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestPromptInjectionLevel_UnmarshalJSON_UppercaseRejected confirms that
+// "MEDIUM" is rejected at decode time.
+func TestPromptInjectionLevel_UnmarshalJSON_UppercaseRejected(t *testing.T) {
+	var got PromptInjectionLevel
+	if err := json.Unmarshal([]byte(`"MEDIUM"`), &got); err == nil {
+		t.Fatal("expected error for MEDIUM, got nil")
+	}
+}
+
+// TestPromptInjectionLevel_UnmarshalJSON_UnknownRejected confirms that
+// arbitrary unknown strings are rejected at decode time.
+func TestPromptInjectionLevel_UnmarshalJSON_UnknownRejected(t *testing.T) {
+	var got PromptInjectionLevel
+	if err := json.Unmarshal([]byte(`"ridiculous"`), &got); err == nil {
+		t.Fatal("expected error for unknown value, got nil")
+	}
+}
+
+// TestPromptInjectionLevel_UnmarshalJSON_EmptyAccepted confirms that the
+// empty string is accepted (config may legitimately omit this field).
+func TestPromptInjectionLevel_UnmarshalJSON_EmptyAccepted(t *testing.T) {
+	var got PromptInjectionLevel
+	if err := json.Unmarshal([]byte(`""`), &got); err != nil {
+		t.Fatalf("unexpected error for empty string: %v", err)
 	}
 }
 

@@ -1,6 +1,9 @@
 package routing
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestBuildAgentMainSessionKey(t *testing.T) {
 	got := BuildAgentMainSessionKey("sales")
@@ -203,5 +206,67 @@ func TestIsSubagentSessionKey(t *testing.T) {
 		if got := IsSubagentSessionKey(tt.input); got != tt.want {
 			t.Errorf("IsSubagentSessionKey(%q) = %v, want %v", tt.input, got, tt.want)
 		}
+	}
+}
+
+// --- DMScope UnmarshalJSON ---
+
+// TestDMScope_UnmarshalJSON_ValidValues confirms all four canonical strings
+// round-trip through UnmarshalJSON without error.
+func TestDMScope_UnmarshalJSON_ValidValues(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want DMScope
+	}{
+		{`"main"`, DMScopeMain},
+		{`"per-peer"`, DMScopePerPeer},
+		{`"per-channel-peer"`, DMScopePerChannelPeer},
+		{`"per-account-channel-peer"`, DMScopePerAccountChannelPeer},
+	}
+	for _, tc := range cases {
+		t.Run(tc.raw, func(t *testing.T) {
+			var got DMScope
+			if err := json.Unmarshal([]byte(tc.raw), &got); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDMScope_UnmarshalJSON_UppercaseRejected confirms that "MAIN" is
+// rejected at decode time.
+func TestDMScope_UnmarshalJSON_UppercaseRejected(t *testing.T) {
+	var got DMScope
+	if err := json.Unmarshal([]byte(`"MAIN"`), &got); err == nil {
+		t.Fatal("expected error for MAIN, got nil")
+	}
+}
+
+// TestDMScope_UnmarshalJSON_UnknownRejected confirms that arbitrary unknown
+// strings (including legacy "global") are rejected at decode time.
+func TestDMScope_UnmarshalJSON_UnknownRejected(t *testing.T) {
+	cases := []string{`"global"`, `"ridiculous"`, `"per_peer"`}
+	for _, raw := range cases {
+		t.Run(raw, func(t *testing.T) {
+			var got DMScope
+			if err := json.Unmarshal([]byte(raw), &got); err == nil {
+				t.Fatalf("expected error for %s, got nil", raw)
+			}
+		})
+	}
+}
+
+// TestDMScope_UnmarshalJSON_EmptyAccepted confirms that the empty string is
+// accepted (some tests and zero-value configs use it).
+func TestDMScope_UnmarshalJSON_EmptyAccepted(t *testing.T) {
+	var got DMScope
+	if err := json.Unmarshal([]byte(`""`), &got); err != nil {
+		t.Fatalf("unexpected error for empty string: %v", err)
+	}
+	if got != "" {
+		t.Errorf("got %q, want empty string", got)
 	}
 }

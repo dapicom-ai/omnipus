@@ -19,6 +19,19 @@ import (
 // security-relevant config key.
 const EventSecuritySettingChange = "security_setting_change"
 
+// SecurityChangeRecord is the canonical wire shape for the
+// security_setting_change audit event. Exported so tests and future
+// downstream consumers can decode the JSONL into a typed value rather
+// than map[string]any.
+type SecurityChangeRecord struct {
+	Timestamp string `json:"timestamp"`
+	Event     string `json:"event"`
+	Actor     string `json:"actor"`
+	Resource  string `json:"resource"`
+	OldValue  any    `json:"old_value"`
+	NewValue  any    `json:"new_value"`
+}
+
 // redactedSentinel is the replacement value used for keys whose names match
 // the sensitive-name filter. This is intentionally a different sentinel from
 // the string-level `[REDACTED]` used elsewhere: this logs a distinct
@@ -59,13 +72,13 @@ func EmitSecuritySettingChange(ctx context.Context, logger *Logger, resource str
 			"resource", resource)
 	}
 
-	record := map[string]any{
-		"timestamp": time.Now().UTC().Format(time.RFC3339Nano),
-		"event":     EventSecuritySettingChange,
-		"actor":     actor,
-		"resource":  resource,
-		"old_value": redactSensitive(oldValue),
-		"new_value": redactSensitive(newValue),
+	record := SecurityChangeRecord{
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		Event:     EventSecuritySettingChange,
+		Actor:     actor,
+		Resource:  resource,
+		OldValue:  redactSensitive(oldValue),
+		NewValue:  redactSensitive(newValue),
 	}
 
 	data, err := json.Marshal(record)

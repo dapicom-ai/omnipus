@@ -349,7 +349,7 @@ func NewAgentLoop(
 	// untrusted-tool allowlist before invoking it, so trusted results are
 	// never sanitized even when the guard is non-nil.
 	al.promptGuard = security.NewPromptGuardFromConfig(policy.PromptGuardConfig{
-		Strictness: cfg.Sandbox.PromptInjectionLevel,
+		Strictness: string(cfg.Sandbox.PromptInjectionLevel),
 	})
 	logger.InfoCF("agent", "Prompt guard initialized",
 		map[string]any{"strictness": string(al.promptGuard.Strictness())})

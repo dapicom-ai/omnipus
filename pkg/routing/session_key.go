@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -14,6 +15,27 @@ const (
 	DMScopePerChannelPeer        DMScope = "per-channel-peer"
 	DMScopePerAccountChannelPeer DMScope = "per-account-channel-peer"
 )
+
+// UnmarshalJSON validates and deserializes a DMScope from JSON.
+// Empty string is accepted (some tests and zero-value configs use it).
+// Any non-empty unrecognized value is rejected at decode time so a typo in
+// config.json causes a boot-time error rather than a silent default.
+func (s *DMScope) UnmarshalJSON(data []byte) error {
+	var raw string
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	switch DMScope(raw) {
+	case DMScopeMain, DMScopePerPeer, DMScopePerChannelPeer, DMScopePerAccountChannelPeer:
+		*s = DMScope(raw)
+		return nil
+	case "":
+		*s = ""
+		return nil
+	default:
+		return fmt.Errorf("invalid dm_scope: %q (must be one of: main, per-peer, per-channel-peer, per-account-channel-peer)", raw)
+	}
+}
 
 // RoutePeer represents a chat peer with kind and ID.
 type RoutePeer struct {

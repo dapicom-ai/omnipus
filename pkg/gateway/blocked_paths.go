@@ -4,6 +4,8 @@
 
 package gateway
 
+import "github.com/dapicom-ai/omnipus/pkg/config"
+
 // blockedPaths lists dotted configuration paths that the generic
 // PUT /api/v1/config endpoint must refuse to mutate at any nesting depth.
 // Each entry must be routed through its dedicated endpoint so that policy
@@ -16,12 +18,12 @@ package gateway
 //
 // and win the whole deployment, because "gateway.users" is one level below
 // the "gateway" top-level key that the flat map guarded.
-var blockedPaths = []string{
+var blockedPaths = []config.ConfigKey{
 	"sandbox",
 	"credentials",
 	"security",
-	"gateway.users",
-	"gateway.dev_mode_bypass",
+	config.GatewayUsers,
+	config.GatewayDevModeBypass,
 }
 
 // matchBlockedPath reports whether body contains any entry in blocked at any
@@ -44,7 +46,7 @@ var blockedPaths = []string{
 // path exactly. A blocked path with ancestors (e.g. "gateway.users") also
 // matches when the request nests the ancestor and sets the leaf
 // (body["gateway"]["users"]).
-func matchBlockedPath(body map[string]any, blocked []string) (string, bool) {
+func matchBlockedPath(body map[string]any, blocked []config.ConfigKey) (string, bool) {
 	if len(body) == 0 || len(blocked) == 0 {
 		return "", false
 	}
@@ -53,8 +55,8 @@ func matchBlockedPath(body map[string]any, blocked []string) (string, bool) {
 	// dots are emitted verbatim as part of the path).
 	present := collectPaths(body)
 	for _, bp := range blocked {
-		if _, ok := present[bp]; ok {
-			return bp, true
+		if _, ok := present[string(bp)]; ok {
+			return string(bp), true
 		}
 	}
 	return "", false
