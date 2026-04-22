@@ -203,6 +203,21 @@ func (a *restAPI) withAuth(handler http.HandlerFunc) http.HandlerFunc {
 	return a.withAuthAndBodyLimit(handler, 1<<20) // 1 MB
 }
 
+// adminWrap composes the canonical admin middleware chain around h:
+//
+//	withAuth → RequireAdmin → RequireNotBypass → h
+//
+// Exposed as a method so Sprint K admin-endpoint registrations outside
+// registerAdditionalEndpoints can reuse the same chain verbatim, and so
+// future refactors (e.g. adding a new admin middleware) update one site.
+func (a *restAPI) adminWrap(h http.HandlerFunc) http.HandlerFunc {
+	return a.withAuth(
+		middleware.RequireAdmin(
+			http.HandlerFunc(middleware.RequireNotBypass(h)),
+		).ServeHTTP,
+	)
+}
+
 func jsonOK(w http.ResponseWriter, body any) {
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -1998,23 +2013,16 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	// Admin-only security endpoints.
 	// Chain: withAuth → RequireAdmin → RequireNotBypass → handler.
 	// CSRF is enforced by the global WrapHTTPHandler layer (no per-handler wiring needed).
-	adminWrap := func(h http.HandlerFunc) http.HandlerFunc {
-		return a.withAuth(
-			middleware.RequireAdmin(
-				http.HandlerFunc(middleware.RequireNotBypass(h)),
-			).ServeHTTP,
-		)
-	}
-	cm.RegisterHTTPHandler("/api/v1/config/pending-restart", adminWrap(a.HandlePendingRestart))
-	cm.RegisterHTTPHandler("/api/v1/security/audit-log", adminWrap(a.HandleSandboxAuditLog))
-	cm.RegisterHTTPHandler("/api/v1/security/skill-trust", adminWrap(a.HandleSkillTrust))
-	cm.RegisterHTTPHandler("/api/v1/security/prompt-guard", adminWrap(a.HandlePromptGuard))
-	cm.RegisterHTTPHandler("/api/v1/security/rate-limits", adminWrap(a.HandleRateLimits))
-	cm.RegisterHTTPHandler("/api/v1/security/sandbox-config", adminWrap(a.HandleSandboxConfig))
-	cm.RegisterHTTPHandler("/api/v1/security/session-scope", adminWrap(a.HandleSessionScope))
-	cm.RegisterHTTPHandler("/api/v1/security/retention", adminWrap(a.HandleRetention))
-	cm.RegisterHTTPHandler("/api/v1/security/retention/sweep", adminWrap(a.HandleRetentionSweep))
-	cm.RegisterHTTPHandler("/api/v1/users", adminWrap(func(w http.ResponseWriter, r *http.Request) {
+	cm.RegisterHTTPHandler("/api/v1/config/pending-restart", a.adminWrap(a.HandlePendingRestart))
+	cm.RegisterHTTPHandler("/api/v1/security/audit-log", a.adminWrap(a.HandleSandboxAuditLog))
+	cm.RegisterHTTPHandler("/api/v1/security/skill-trust", a.adminWrap(a.HandleSkillTrust))
+	cm.RegisterHTTPHandler("/api/v1/security/prompt-guard", a.adminWrap(a.HandlePromptGuard))
+	cm.RegisterHTTPHandler("/api/v1/security/rate-limits", a.adminWrap(a.HandleRateLimits))
+	cm.RegisterHTTPHandler("/api/v1/security/sandbox-config", a.adminWrap(a.HandleSandboxConfig))
+	cm.RegisterHTTPHandler("/api/v1/security/session-scope", a.adminWrap(a.HandleSessionScope))
+	cm.RegisterHTTPHandler("/api/v1/security/retention", a.adminWrap(a.HandleRetention))
+	cm.RegisterHTTPHandler("/api/v1/security/retention/sweep", a.adminWrap(a.HandleRetentionSweep))
+	cm.RegisterHTTPHandler("/api/v1/users", a.adminWrap(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			a.HandleUsersList(w, r)
@@ -2024,7 +2032,7 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 			jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
 	}))
-	cm.RegisterHTTPHandler("/api/v1/users/", adminWrap(a.handleUsersWithParam))
+	cm.RegisterHTTPHandler("/api/v1/users/", a.adminWrap(a.handleUsersWithParam))
 	// Wave 5 security endpoints (SEC-01/02/03).
 	cm.RegisterHTTPHandler("/api/v1/security/sandbox-status", a.withAuth(a.HandleSandboxStatus))
 	// /api/v1/security/sandbox-config is registered above with adminWrap — do NOT

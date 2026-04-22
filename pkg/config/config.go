@@ -181,6 +181,45 @@ func (r OmnipusRetentionConfig) RetentionSessionDays() int {
 // IsDisabled reports whether retention enforcement is entirely suppressed (keep forever).
 func (r OmnipusRetentionConfig) IsDisabled() bool { return r.Disabled }
 
+// RetentionMode summarizes the (session_days, disabled) pair into one of
+// three operator-facing states. Use Mode() on OmnipusRetentionConfig to
+// derive it; the underlying struct fields remain the authoritative
+// storage shape for backward compatibility (see
+// TestRetention_ZeroSessionDaysStillMeansDefault90).
+type RetentionMode int
+
+const (
+	RetentionDefault RetentionMode = iota // session_days <= 0 && !Disabled
+	RetentionCustom                       // session_days > 0 && !Disabled
+	RetentionForever                      // Disabled == true
+)
+
+// String returns a lowercase stable label ("default" / "custom" / "forever").
+// Used by log lines and by TS consumers via the wire.
+func (m RetentionMode) String() string {
+	switch m {
+	case RetentionCustom:
+		return "custom"
+	case RetentionForever:
+		return "forever"
+	default:
+		return "default"
+	}
+}
+
+// Mode classifies the retention config into one of three states.
+// Disabled takes precedence over SessionDays — setting disabled: true with
+// session_days: 99 still means "forever".
+func (r OmnipusRetentionConfig) Mode() RetentionMode {
+	if r.Disabled {
+		return RetentionForever
+	}
+	if r.SessionDays > 0 {
+		return RetentionCustom
+	}
+	return RetentionDefault
+}
+
 // OmnipusCompactionConfig holds context compression settings per Appendix E §E.5.3.
 type OmnipusCompactionConfig struct {
 	Enabled        bool `json:"enabled,omitempty"`

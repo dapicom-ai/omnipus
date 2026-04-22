@@ -645,4 +645,32 @@ describe('Security API helpers', () => {
       await expect(updateUserRole('alice', 'user')).rejects.toThrow('400')
     })
   })
+
+  // ── retentionMode helper ────────────────────────────────────────────────────
+  describe('retentionMode', () => {
+    it('returns "default" when session_days is 0 and disabled is false', async () => {
+      const { retentionMode } = await import('./api')
+      expect(retentionMode({ session_days: 0, disabled: false })).toBe('default')
+    })
+
+    it('returns "default" when both fields are absent', async () => {
+      const { retentionMode } = await import('./api')
+      expect(retentionMode({})).toBe('default')
+    })
+
+    it('returns "custom" when session_days > 0 and disabled is false', async () => {
+      const { retentionMode } = await import('./api')
+      expect(retentionMode({ session_days: 30, disabled: false })).toBe('custom')
+    })
+
+    it('returns "forever" when disabled is true', async () => {
+      const { retentionMode } = await import('./api')
+      expect(retentionMode({ session_days: 0, disabled: true })).toBe('forever')
+    })
+
+    it('returns "forever" when disabled is true even with session_days > 0 (disabled takes precedence)', async () => {
+      const { retentionMode } = await import('./api')
+      expect(retentionMode({ session_days: 99, disabled: true })).toBe('forever')
+    })
+  })
 })

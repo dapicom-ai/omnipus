@@ -1173,6 +1173,21 @@ export function updateSessionScope(dm_scope: DMScope): Promise<SessionScopeUpdat
 }
 
 // Retention — session log retention policy.
+
+// RetentionMode mirrors the Go pkg/config.RetentionMode enum. Derive with
+// retentionMode(resp) from the flat wire shape; the backend does not send
+// this as a field.
+export type RetentionMode = 'default' | 'custom' | 'forever'
+
+export function retentionMode(resp: {
+  session_days?: number
+  disabled?: boolean
+}): RetentionMode {
+  if (resp.disabled) return 'forever'
+  if ((resp.session_days ?? 0) > 0) return 'custom'
+  return 'default'
+}
+
 export interface RetentionResponse {
   session_days?: number
   disabled?: boolean

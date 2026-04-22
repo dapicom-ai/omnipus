@@ -2,20 +2,14 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Clock, Broom, Warning } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
-import { fetchRetention, updateRetention, triggerRetentionSweep } from '@/lib/api'
-import type { RetentionUpdateBody } from '@/lib/api'
+import { fetchRetention, updateRetention, triggerRetentionSweep, retentionMode } from '@/lib/api'
+import type { RetentionUpdateBody, RetentionMode } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { useAuthStore } from '@/store/auth'
 
-// ── Mode type ─────────────────────────────────────────────────────────────────
-
-type RetentionMode = 'default' | 'custom' | 'disabled'
-
-function resolveMode(sessionDays: number | undefined, disabled: boolean | undefined): RetentionMode {
-  if (disabled) return 'disabled'
-  if (!sessionDays || sessionDays === 0) return 'default'
-  return 'custom'
-}
+// ── Mode helpers ───────────────────────────────────────────────────────────────
+// RetentionMode and retentionMode() are imported from @/lib/api — single
+// canonical classification shared with the Go backend enum.
 
 function buildBody(mode: RetentionMode, customDays: number): RetentionUpdateBody {
   if (mode === 'default') return { session_days: 0, disabled: false }
@@ -96,7 +90,7 @@ export function RetentionSection(): React.ReactElement {
 
   useEffect(() => {
     if (!data || isDirty) return
-    const m = resolveMode(data.session_days, data.disabled)
+    const m = retentionMode(data)
     setMode(m)
     setIsDisabledOnServer(!!data.disabled)
     if (m === 'custom' && data.session_days && data.session_days > 0) {
@@ -134,7 +128,7 @@ export function RetentionSection(): React.ReactElement {
   })
 
   function handleSave() {
-    if (mode === 'disabled') {
+    if (mode === 'forever') {
       setShowConfirm(true)
       return
     }
@@ -143,7 +137,7 @@ export function RetentionSection(): React.ReactElement {
 
   function confirmDisable() {
     setShowConfirm(false)
-    save(buildBody('disabled', customDays))
+    save(buildBody('forever', customDays))
   }
 
   if (isLoading) return <Skeleton />
@@ -193,12 +187,12 @@ export function RetentionSection(): React.ReactElement {
           {/* Mode selector */}
           <div className="space-y-2" role="radiogroup" aria-label="Retention mode">
             {/* Default 90 days */}
-            {(['default', 'custom', 'disabled'] as const).map((m) => {
+            {(['default', 'custom', 'forever'] as const).map((m) => {
               const isActive = mode === m
               const labels: Record<RetentionMode, string> = {
                 default: 'Default (90 days)',
                 custom: 'Custom',
-                disabled: 'Disabled (keep forever)',
+                forever: 'Disabled (keep forever)',
               }
               return (
                 <button
