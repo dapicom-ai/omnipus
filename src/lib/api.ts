@@ -303,6 +303,10 @@ export interface Config {
     token?: string
     hot_reload?: boolean
     log_level?: string
+    // dev_mode_bypass is read-only in the UI — it cannot be toggled via the
+    // config PUT endpoint (which blocks it via blockedPaths). The UI uses this
+    // to hide admin-only controls that are inoperative when bypass is on.
+    dev_mode_bypass?: boolean
   }
   security: {
     policy_mode: 'allow' | 'deny'
@@ -369,6 +373,7 @@ function rawToFrontendConfig(raw: Record<string, unknown>): Config {
       token: gateway.token as string | undefined,
       hot_reload: gateway.hot_reload as boolean | undefined,
       log_level: gateway.log_level as string | undefined,
+      dev_mode_bypass: gateway.dev_mode_bypass as boolean | undefined,
     },
     security: {
       policy_mode: validEnum(security.policy_mode, VALID_POLICY_MODES, 'deny'),
@@ -1120,13 +1125,16 @@ export function updateRateLimits(body: RateLimitsKUpdateBody): Promise<RateLimit
 }
 
 // Sandbox config — mode, allowed paths, and SSRF controls.
+// allow_internal is []string matching OmnipusSSRFConfig.AllowInternal in pkg/config/sandbox.go.
+// Entries may be hostname, exact IP, or CIDR range. Empty slice means "block all".
 export interface SandboxConfigResponse {
   mode?: string
   allowed_paths?: string[]
   ssrf?: {
     enabled?: boolean
-    allow_internal?: boolean
+    allow_internal?: string[]
   }
+  requires_restart?: boolean
 }
 
 export interface SandboxConfigUpdateBody {
@@ -1134,7 +1142,7 @@ export interface SandboxConfigUpdateBody {
   allowed_paths?: string[]
   ssrf?: {
     enabled?: boolean
-    allow_internal?: boolean
+    allow_internal?: string[]
   }
 }
 
@@ -1382,6 +1390,9 @@ export interface SandboxStatus {
   kernel_level: boolean
   policy_applied: boolean
   abi_version?: number
+  // issue_ref is present when abi_version >= 4 — identifies the tracking issue
+  // for the unsupported ABI. Pull from server response; never hardcode.
+  issue_ref?: string
   blocked_syscalls?: string[]
   seccomp_enabled: boolean
   landlock_features?: string[]
