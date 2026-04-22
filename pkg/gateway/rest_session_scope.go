@@ -13,7 +13,6 @@ import (
 	"net/http"
 
 	"github.com/dapicom-ai/omnipus/pkg/audit"
-	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 	"github.com/dapicom-ai/omnipus/pkg/routing"
 )
 
@@ -55,7 +54,7 @@ func (a *restAPI) HandleSessionScope(w http.ResponseWriter, r *http.Request) {
 		})
 
 	case http.MethodPut:
-		middleware.RequireAdmin(http.HandlerFunc(a.putSessionScope)).ServeHTTP(w, r)
+		a.putSessionScope(w, r)
 
 	default:
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")

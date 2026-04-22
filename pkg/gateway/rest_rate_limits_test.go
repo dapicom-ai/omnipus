@@ -7,10 +7,13 @@
 package gateway
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -18,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 )
 
 // TestHandleRateLimits_* covers the PUT rate-limits semantics.
@@ -189,7 +193,9 @@ func TestHandleRateLimits_NonAdmin403(t *testing.T) {
 	ctx := context.WithValue(r.Context(), RoleContextKey{}, config.UserRoleUser)
 	r = r.WithContext(ctx)
 	w := httptest.NewRecorder()
-	api.HandleRateLimits(w, r)
+	// Route through RequireAdmin as adminWrap does at registration time — the
+	// inner handler no longer re-wraps it.
+	middleware.RequireAdmin(http.HandlerFunc(api.HandleRateLimits)).ServeHTTP(w, r)
 	assert.Equal(t, http.StatusForbidden, w.Code, "user-role caller must receive 403")
 }
 
@@ -201,4 +207,68 @@ func TestHandleRateLimits_MethodNotAllowed(t *testing.T) {
 	r := httptest.NewRequest(http.MethodDelete, "/api/v1/security/rate-limits", nil)
 	api.HandleRateLimits(w, r)
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+// TestHandleRateLimits_EmitsAuditEntry verifies that a successful PUT to
+// /api/v1/security/rate-limits emits a security_setting_change JSONL record
+// with resource=="sandbox.rate_limits" and the correct actor field.
+//
+// Pattern mirrors TestHandleSandboxAuditLog_EmitsAuditEntry in
+// rest_audit_log_test.go. The audit logger is wired by newTestRestAPIWithAuditLog
+// (Sandbox.AuditLog=true). The JSONL is written to tmpDir/system/.
+//
+// Traces to: temporal-puzzling-melody.md Wave 1C — FR-020 rate-limits audit
+// emission coverage gap identified by test-analyzer review.
+func TestHandleRateLimits_EmitsAuditEntry(t *testing.T) {
+	api, tmpDir := newTestRestAPIWithAuditLog(t)
+
+	body := strings.NewReader(`{"daily_cost_cap_usd":25.5}`)
+	r := httptest.NewRequest(http.MethodPut, "/api/v1/security/rate-limits", body)
+	r.Header.Set("Content-Type", "application/json")
+	r = r.WithContext(adminCtx())
+	w := httptest.NewRecorder()
+
+	api.HandleRateLimits(w, r)
+
+	require.Equal(t, http.StatusOK, w.Code, "PUT must succeed: %s", w.Body)
+
+	systemDir := filepath.Join(tmpDir, "system")
+	entries, err := os.ReadDir(systemDir)
+	require.NoError(t, err, "system dir must exist after audit emit")
+	require.NotEmpty(t, entries, "at least one audit file must exist")
+
+	var found bool
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+			continue
+		}
+		f, err := os.Open(filepath.Join(systemDir, entry.Name()))
+		require.NoError(t, err)
+		defer f.Close()
+
+		scanner := bufio.NewScanner(f)
+		for scanner.Scan() {
+			var record map[string]any
+			if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+				continue
+			}
+			if record["event"] != "security_setting_change" {
+				continue
+			}
+			if record["resource"] != "sandbox.rate_limits" {
+				continue
+			}
+			assert.Equal(t, "sandbox.rate_limits", record["resource"], "resource must match")
+			assert.Equal(t, "admin", record["actor"], "actor must be the admin username")
+			// Verify the new_value reflects the change — catches a no-op audit emit.
+			newVal, _ := record["new_value"].(map[string]any)
+			assert.NotNil(t, newVal, "new_value must be an object")
+			assert.Equal(t, float64(25.5), newVal["daily_cost_cap_usd"],
+				"new_value.daily_cost_cap_usd must match the PUT body")
+			found = true
+		}
+		require.NoError(t, scanner.Err())
+	}
+
+	assert.True(t, found, "security_setting_change record with resource=sandbox.rate_limits must appear in audit JSONL")
 }

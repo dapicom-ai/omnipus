@@ -595,6 +595,6 @@ func emitUserAudit(r *http.Request, a *restAPI, resource string, oldValue, newVa
 func jsonBodyOnlyCreated(w http.ResponseWriter, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(body); err != nil {
-		slog.Warn("rest: write created response body failed", "error", err)
+		slog.Error("rest: write created response body failed", "error", err)
 	}
 }

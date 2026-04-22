@@ -22,6 +22,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/gateway/ctxkey"
+	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 	"github.com/dapicom-ai/omnipus/pkg/routing"
 )
 
@@ -136,7 +137,9 @@ func TestHandleSessionDMScope_NonAdmin403(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPut, "/api/v1/security/session-scope", strings.NewReader(payload))
 	r.Header.Set("Content-Type", "application/json")
 	r = withNonAdminRole(r)
-	api.HandleSessionScope(w, r)
+	// Route through RequireAdmin as adminWrap does at registration time — the
+	// inner handler no longer re-wraps it.
+	middleware.RequireAdmin(http.HandlerFunc(api.HandleSessionScope)).ServeHTTP(w, r)
 
 	assert.Equal(t, http.StatusForbidden, w.Code, "non-admin must receive 403")
 }

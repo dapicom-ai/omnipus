@@ -181,6 +181,13 @@ const (
 	metadataKeyParentPeerID    = "parent_peer_id"
 )
 
+// ErrReloadNotConfigured is returned by TriggerReload when no reload function
+// has been registered. This is normal in unit-test environments where the full
+// gateway reload pipeline is not wired. Production always configures the reload
+// function during startup, so callers outside tests should treat this as
+// unexpected and log accordingly.
+var ErrReloadNotConfigured = errors.New("reload not configured")
+
 func NewAgentLoop(
 	cfg *config.Config,
 	msgBus *bus.MessageBus,
@@ -1962,7 +1969,7 @@ func (al *AgentLoop) SetReloadFunc(fn func() error) {
 // ("reload already in progress") rather than queuing a second reload.
 func (al *AgentLoop) TriggerReload() error {
 	if al.reloadFunc == nil {
-		return fmt.Errorf("reload not configured")
+		return ErrReloadNotConfigured
 	}
 	return al.reloadFunc()
 }
@@ -4938,7 +4945,7 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 	}
 	rt.ReloadConfig = func() error {
 		if al.reloadFunc == nil {
-			return fmt.Errorf("reload not configured")
+			return ErrReloadNotConfigured
 		}
 		return al.reloadFunc()
 	}

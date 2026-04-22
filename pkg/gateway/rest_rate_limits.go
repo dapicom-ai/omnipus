@@ -14,7 +14,6 @@ import (
 	"net/http"
 
 	"github.com/dapicom-ai/omnipus/pkg/audit"
-	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 )
 
 // rest_rate_limits.go — rate-limits endpoint.
@@ -33,7 +32,7 @@ func (a *restAPI) HandleRateLimits(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		a.getRateLimits(w, r)
 	case http.MethodPut:
-		middleware.RequireAdmin(http.HandlerFunc(a.putRateLimits)).ServeHTTP(w, r)
+		a.putRateLimits(w, r)
 	default:
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 	}

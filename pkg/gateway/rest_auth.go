@@ -23,6 +23,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 )
@@ -669,7 +670,7 @@ func generateUserToken(_ string) (string, error) {
 // reload function during startup.
 func (a *restAPI) awaitReload() error {
 	if err := a.agentLoop.TriggerReload(); err != nil {
-		if err.Error() == "reload not configured" {
+		if errors.Is(err, agent.ErrReloadNotConfigured) {
 			// Unit-test environment — no reload pipeline wired; treat as no-op.
 			return nil
 		}

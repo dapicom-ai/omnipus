@@ -14,7 +14,6 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/config"
-	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 )
 
 // validSkillTrustLevels is the closed set of accepted values for sandbox.skill_trust.
@@ -56,7 +55,7 @@ func (a *restAPI) HandleSkillTrust(w http.ResponseWriter, r *http.Request) {
 		})
 
 	case http.MethodPut:
-		middleware.RequireAdmin(http.HandlerFunc(a.putSkillTrust)).ServeHTTP(w, r)
+		a.putSkillTrust(w, r)
 
 	default:
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
