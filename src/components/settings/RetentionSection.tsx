@@ -108,8 +108,11 @@ export function RetentionSection(): React.ReactElement {
     mutationFn: (body: RetentionUpdateBody) => updateRetention(body),
     onSuccess: (resp) => {
       setIsDirty(false)
-      setIsDisabledOnServer(!!resp.applied?.disabled)
-      queryClient.setQueryData(['retention'], resp.applied)
+      setIsDisabledOnServer(!!resp.disabled)
+      queryClient.setQueryData(['retention'], {
+        session_days: resp.session_days,
+        disabled: resp.disabled,
+      })
       addToast({ message: 'Retention settings saved', variant: 'success' })
     },
     onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),

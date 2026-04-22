@@ -109,7 +109,8 @@ describe('RetentionSection — disabled mode confirmation', () => {
     vi.mocked(updateRetention).mockResolvedValue({
       saved: true,
       requires_restart: false,
-      applied: { session_days: 0, disabled: true },
+      session_days: 0,
+      disabled: true,
     })
 
     renderSection()

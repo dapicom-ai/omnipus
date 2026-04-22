@@ -1218,10 +1218,14 @@ export interface RetentionUpdateBody {
   disabled?: boolean
 }
 
+// Matches the handler at pkg/gateway/rest_retention.go's putRetention response:
+// flat {saved, requires_restart, session_days, disabled}. An earlier nested
+// `applied: {...}` shape never shipped — the handler always wrote flat.
 export interface RetentionUpdateResponse {
   saved: boolean
   requires_restart: boolean
-  applied: RetentionResponse
+  session_days: number
+  disabled: boolean
 }
 
 export function fetchRetention(): Promise<RetentionResponse> {
