@@ -17,18 +17,27 @@ import type { DoctorResult, DoctorIssue } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 
 // US-10: Doctor results diagnostics panel for Settings → Security
+//
+// The doctor API returns a numeric `score` field that semantically counts
+// RISK (deductions of -5/-10/-20 from an initial 100 per severity tier) —
+// higher on the wire means worse. The UI flips it to a conventional
+// "Security Score" where higher = better, because users consistently
+// misread a "Risk Score" of 90 as an A-grade. Backend contract unchanged;
+// the inversion lives entirely here.
+function toSecurityScore(risk: number): number {
+  return Math.max(0, Math.min(100, 100 - risk))
+}
 
-function getRiskLabel(score: number): string {
-  if (score <= 10) return 'Excellent'
-  if (score <= 33) return 'Low risk'
-  if (score <= 66) return 'Medium risk'
-  if (score <= 85) return 'High risk'
+function getSecurityLabel(securityScore: number): string {
+  if (securityScore >= 90) return 'Excellent'
+  if (securityScore >= 67) return 'Good'
+  if (securityScore >= 34) return 'At risk'
   return 'Critical'
 }
 
-function getRiskColor(score: number): string {
-  if (score <= 33) return 'var(--color-success)'
-  if (score <= 66) return 'var(--color-warning)'
+function getSecurityColor(securityScore: number): string {
+  if (securityScore >= 67) return 'var(--color-success)'
+  if (securityScore >= 34) return 'var(--color-warning)'
   return 'var(--color-error)'
 }
 
@@ -71,9 +80,10 @@ export function DiagnosticsSection() {
     mutationFn: runDoctor,
     onSuccess: (result) => {
       queryClient.setQueryData(['doctor'], result)
+      const securityScore = toSecurityScore(result.score)
       addToast({
-        message: `Diagnostics complete — risk score: ${result.score}/100`,
-        variant: result.score <= 33 ? 'success' : 'error',
+        message: `Diagnostics complete — security score: ${securityScore}/100`,
+        variant: securityScore >= 67 ? 'success' : 'error',
       })
     },
     onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
@@ -89,7 +99,8 @@ export function DiagnosticsSection() {
       } as const)
     : null
 
-  const riskColor = result ? getRiskColor(result.score) : undefined
+  const securityScore = result ? toSecurityScore(result.score) : 0
+  const scoreColor = result ? getSecurityColor(securityScore) : undefined
 
   return (
     <section className="space-y-4">
@@ -155,7 +166,7 @@ export function DiagnosticsSection() {
         </div>
       ) : result ? (
         <div className="space-y-4">
-          {/* Risk score card */}
+          {/* Security score card */}
           <div
             className="rounded-lg border p-4 space-y-3"
             style={{
@@ -165,27 +176,28 @@ export function DiagnosticsSection() {
           >
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                {result.score <= 33 ? (
-                  <ShieldCheck size={15} weight="fill" style={{ color: riskColor }} />
+                {securityScore >= 67 ? (
+                  <ShieldCheck size={15} weight="fill" style={{ color: scoreColor }} />
                 ) : (
-                  <ShieldWarning size={15} weight="fill" style={{ color: riskColor }} />
+                  <ShieldWarning size={15} weight="fill" style={{ color: scoreColor }} />
                 )}
                 <span className="text-sm font-medium" style={{ color: 'var(--color-secondary)' }}>
-                  Risk Score
+                  Security Score
                 </span>
               </div>
               <div className="flex items-baseline gap-1">
-                <span className="text-2xl font-headline font-bold" style={{ color: riskColor }}>
-                  {result.score}
+                <span className="text-2xl font-headline font-bold" style={{ color: scoreColor }}>
+                  {securityScore}
                 </span>
                 <span className="text-xs" style={{ color: 'var(--color-muted)' }}>/100</span>
-                <span className="text-xs font-semibold ml-1.5" style={{ color: riskColor }}>
-                  {getRiskLabel(result.score)}
+                <span className="text-xs font-semibold ml-1.5" style={{ color: scoreColor }}>
+                  {getSecurityLabel(securityScore)}
                 </span>
               </div>
             </div>
 
-            {/* Custom-colored progress bar */}
+            {/* Custom-colored progress bar — width scales with security, so
+                a green fill grows as the posture improves. */}
             <div>
               <div
                 className="w-full h-2 rounded-full overflow-hidden"
@@ -194,17 +206,17 @@ export function DiagnosticsSection() {
                 <div
                   className="h-full rounded-full transition-all duration-700"
                   style={{
-                    width: `${result.score}%`,
-                    backgroundColor: riskColor,
+                    width: `${securityScore}%`,
+                    backgroundColor: scoreColor,
                   }}
                 />
               </div>
               <div className="flex justify-between mt-1">
                 <span className="text-[10px]" style={{ color: 'var(--color-muted)' }}>
-                  No issues
+                  Critical
                 </span>
                 <span className="text-[10px]" style={{ color: 'var(--color-muted)' }}>
-                  Critical
+                  Excellent
                 </span>
               </div>
             </div>

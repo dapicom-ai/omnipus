@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   ShieldCheck,
   ShieldWarning,
@@ -9,10 +9,20 @@ import {
   CaretUp,
   XCircle,
   Cpu,
+  PencilSimple,
+  CheckCircle,
+  ArrowCounterClockwise,
+  Warning,
 } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
-import { fetchSandboxStatus } from '@/lib/api'
-import type { SandboxStatus } from '@/lib/api'
+import {
+  fetchSandboxStatus,
+  fetchSandboxConfig,
+  updateSandboxConfig,
+} from '@/lib/api'
+import type { SandboxStatus, SandboxConfig, SandboxConfigUpdate } from '@/lib/api'
+import { useAuthStore } from '@/store/auth'
+import { useUiStore } from '@/store/ui'
 
 // ── Status dot ────────────────────────────────────────────────────────────────
 
@@ -125,11 +135,57 @@ function CapabilitiesPanel({ data }: { data: SandboxStatus }) {
 
 export function SandboxSection(): React.ReactElement {
   const [expanded, setExpanded] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const role = useAuthStore((s) => s.role)
+  const isAdmin = role === 'admin'
+  const { addToast } = useUiStore()
+  const queryClient = useQueryClient()
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['sandbox-status'],
     queryFn: fetchSandboxStatus,
   })
+
+  // Editable sandbox config — only fetched when the operator is an admin
+  // AND has opened the editor. Keeps the read-only path unaffected.
+  const {
+    data: config,
+    isLoading: configLoading,
+    refetch: refetchConfig,
+  } = useQuery<SandboxConfig>({
+    queryKey: ['sandbox-config'],
+    queryFn: fetchSandboxConfig,
+    enabled: isAdmin && editing,
+  })
+
+  // Local draft — diverges from `config` once the operator touches a
+  // control. On Save we send only the changed fields (pointer-null
+  // semantics on the server side).
+  const [draftMode, setDraftMode] = useState<SandboxConfigUpdate['mode']>()
+
+  const { mutate: doSave, isPending: saving } = useMutation({
+    mutationFn: updateSandboxConfig,
+    onSuccess: (saved) => {
+      queryClient.setQueryData(['sandbox-config'], saved)
+      addToast({
+        message: saved.requires_restart
+          ? 'Sandbox config saved — restart the gateway to apply.'
+          : 'Sandbox config saved.',
+        variant: saved.requires_restart ? 'default' : 'success',
+      })
+      setDraftMode(undefined)
+    },
+    onError: (err: Error) =>
+      addToast({ message: err.message, variant: 'error' }),
+  })
+
+  const savedMode = config?.mode
+  const effectiveDraftMode = draftMode ?? savedMode
+  const restartPending = !!(
+    config &&
+    config.applied_mode !== '' &&
+    config.mode !== config.applied_mode
+  )
 
   // Derived display values — computed with explicit branches rather than
   // nested ternaries for readability.
@@ -265,6 +321,111 @@ export function SandboxSection(): React.ReactElement {
     )
   }
 
+  // ── Editor body ─────────────────────────────────────────────────────
+  function renderEditor(): React.ReactNode {
+    if (configLoading || !config) {
+      return <SandboxSkeleton />
+    }
+    const modes: Array<{ value: 'enforce' | 'permissive' | 'off'; label: string; desc: string }> = [
+      { value: 'enforce', label: 'Enforce', desc: 'Kernel-level Landlock + seccomp denies violating syscalls.' },
+      { value: 'permissive', label: 'Permissive', desc: 'Policy computed and logged; violations not blocked (audit-only).' },
+      { value: 'off', label: 'Off', desc: 'Sandbox disabled. Development only; production banner will fire.' },
+    ]
+    return (
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-4">
+        {/* Restart banner — fires when a saved change hasn't taken effect yet. */}
+        {restartPending && (
+          <div
+            className="flex items-start gap-2 rounded-md border p-2.5"
+            style={{
+              borderColor: 'rgba(234,179,8,0.35)',
+              backgroundColor: 'rgba(234,179,8,0.08)',
+            }}
+            role="status"
+          >
+            <Warning size={14} weight="fill" style={{ color: 'var(--color-warning)' }} className="mt-0.5 shrink-0" />
+            <p className="text-xs leading-relaxed text-[var(--color-secondary)]">
+              <span className="font-semibold" style={{ color: 'var(--color-warning)' }}>
+                Restart required.
+              </span>{' '}
+              Saved mode is <code className="font-mono">{config.mode}</code> but the
+              gateway is currently running with{' '}
+              <code className="font-mono">{config.applied_mode || 'none'}</code>.
+              Restart the gateway for the change to take effect.
+            </p>
+          </div>
+        )}
+
+        {/* Mode radio group */}
+        <fieldset className="space-y-2">
+          <legend className="text-xs font-semibold uppercase tracking-wider text-[var(--color-muted)]">
+            Sandbox mode
+          </legend>
+          {modes.map((m) => (
+            <label
+              key={m.value}
+              className={`flex items-start gap-2 p-2 rounded-md border cursor-pointer transition-colors ${
+                effectiveDraftMode === m.value
+                  ? 'border-[var(--color-accent)]/50 bg-[var(--color-accent)]/5'
+                  : 'border-[var(--color-border)] hover:bg-[var(--color-surface-2)]'
+              }`}
+            >
+              <input
+                type="radio"
+                name="sandbox-mode"
+                value={m.value}
+                checked={effectiveDraftMode === m.value}
+                onChange={() => setDraftMode(m.value)}
+                className="mt-0.5 accent-[var(--color-accent)]"
+                aria-label={`Sandbox mode: ${m.label}`}
+              />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-[var(--color-secondary)]">{m.label}</p>
+                <p className="text-xs text-[var(--color-muted)] leading-snug">{m.desc}</p>
+              </div>
+            </label>
+          ))}
+        </fieldset>
+
+        {/* Save / Cancel */}
+        <div className="flex items-center justify-end gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 px-3 text-xs"
+            onClick={() => {
+              setDraftMode(undefined)
+              setEditing(false)
+            }}
+            disabled={saving}
+          >
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            className="h-7 px-3 text-xs gap-1"
+            disabled={saving || !draftMode || draftMode === savedMode}
+            onClick={() => {
+              if (draftMode) doSave({ mode: draftMode })
+            }}
+          >
+            {saving ? (
+              <>
+                <ArrowCounterClockwise size={11} className="animate-spin" />
+                Saving
+              </>
+            ) : (
+              <>
+                <CheckCircle size={11} />
+                Save
+              </>
+            )}
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
@@ -272,22 +433,41 @@ export function SandboxSection(): React.ReactElement {
           <Cpu size={14} className="text-[var(--color-muted)]" />
           Process Sandbox
         </h3>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-7 px-2 gap-1 text-xs"
-          aria-label="Refresh sandbox status"
-          onClick={() => { void refetch() }}
-          disabled={isFetching}
-        >
-          <ArrowsClockwise
-            size={11}
-            className={isFetching ? 'animate-spin' : undefined}
-          />
-        </Button>
+        <div className="flex items-center gap-2">
+          {/* Edit button — admin-only. Opens the editor beneath the status card. */}
+          {isAdmin && !editing && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 px-2 gap-1 text-xs"
+              aria-label="Edit sandbox configuration"
+              onClick={() => setEditing(true)}
+            >
+              <PencilSimple size={11} />
+              Edit
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 px-2 gap-1 text-xs"
+            aria-label="Refresh sandbox status"
+            onClick={() => {
+              void refetch()
+              if (editing) void refetchConfig()
+            }}
+            disabled={isFetching}
+          >
+            <ArrowsClockwise
+              size={11}
+              className={isFetching ? 'animate-spin' : undefined}
+            />
+          </Button>
+        </div>
       </div>
 
       {renderBody()}
+      {isAdmin && editing && renderEditor()}
     </section>
   )
 }

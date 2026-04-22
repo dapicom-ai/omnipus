@@ -111,16 +111,33 @@ describe('DiagnosticsSection — results display', () => {
     ],
   }
 
-  it('renders risk score when results are loaded', async () => {
-    // Traces to: wave5b-system-agent-spec.md — Scenario: Risk score gauge displayed (US-10 AC2)
-    // BDD: Given doctor result with score=42, Then score "42" is shown
+  it('renders security score (100 − risk) when results are loaded', async () => {
+    // Traces to: wave5b-system-agent-spec.md — Scenario: Score gauge displayed (US-10 AC2)
+    // BDD: Given doctor result with risk score=42, Then security score "58" is shown
+    // (bug 1 fix: UI flips the backend risk score so higher = better)
     vi.mocked(fetchDoctorResults).mockResolvedValue(fullResult)
 
     renderSection()
 
     await waitFor(() => {
-      expect(screen.getByText('42')).toBeInTheDocument()
+      expect(screen.getByText('58')).toBeInTheDocument()
     })
+    // The raw backend risk number (42) must NOT be shown to the user, so
+    // this assertion guards against a regression that would bring the
+    // confusing "Risk Score 42 — Medium" labeling back.
+    expect(screen.queryByText('42')).not.toBeInTheDocument()
+  })
+
+  it('uses the "Security Score" label (not "Risk Score")', async () => {
+    // Traces to: bug 1 from public-IP test findings — users mis-read
+    // "Risk Score: 90" as a high grade when it's actually 90/100 risk.
+    vi.mocked(fetchDoctorResults).mockResolvedValue(fullResult)
+    renderSection()
+    await waitFor(() => {
+      expect(screen.getByText(/security score/i)).toBeInTheDocument()
+    })
+    // The old label must be gone to prevent confusing operators.
+    expect(screen.queryByText(/^\s*risk score\s*$/i)).not.toBeInTheDocument()
   })
 
   it('displays the last run timestamp', async () => {
@@ -161,20 +178,23 @@ describe('DiagnosticsSection — results display', () => {
     })
   })
 
-  it('shows risk score label based on score value', async () => {
-    // Traces to: wave5b-system-agent-spec.md — Scenario: Risk label changes with score (US-10 AC2)
-    // Dataset from spec: score≤10 → Excellent, ≤33 → Low, ≤66 → Medium, ≤85 → High, >85 → Critical
-    const cases: Array<{ score: number; label: string }> = [
-      { score: 5, label: 'Excellent' },
-      { score: 20, label: 'Low risk' },
-      { score: 50, label: 'Medium risk' },
-      { score: 75, label: 'High risk' },
-      { score: 95, label: 'Critical' },
+  it('shows security label derived from (100 − risk)', async () => {
+    // Traces to: bug 1 fix — thresholds operate on security score, not risk.
+    //   security >= 90 → "Excellent"
+    //   security >= 67 → "Good"
+    //   security >= 34 → "At risk"
+    //   security  < 34 → "Critical"
+    const cases: Array<{ risk: number; label: string }> = [
+      { risk: 5, label: 'Excellent' }, // security 95
+      { risk: 20, label: 'Good' }, // security 80
+      { risk: 50, label: 'At risk' }, // security 50
+      { risk: 75, label: 'Critical' }, // security 25
+      { risk: 95, label: 'Critical' }, // security 5
     ]
 
-    for (const { score, label } of cases) {
+    for (const { risk, label } of cases) {
       const client = makeClient()
-      vi.mocked(fetchDoctorResults).mockResolvedValue({ score, issues: [], checked_at: '2026-01-01T00:00:00Z' })
+      vi.mocked(fetchDoctorResults).mockResolvedValue({ score: risk, issues: [], checked_at: '2026-01-01T00:00:00Z' })
       const { unmount } = render(
         <QueryClientProvider client={client}>
           <DiagnosticsSection />
@@ -308,8 +328,8 @@ describe('DiagnosticsSection — run diagnostics', () => {
     })
   })
 
-  it('shows toast with risk score after successful run', async () => {
-    // Traces to: wave5b-system-agent-spec.md — Scenario: Doctor run shows toast on completion
+  it('shows toast with security score after successful run', async () => {
+    // Traces to: bug 1 fix — toast says "security score: 75/100" (not raw risk 25).
     vi.mocked(fetchDoctorResults).mockResolvedValue(null)
     vi.mocked(runDoctor).mockResolvedValue({
       score: 25,
@@ -324,13 +344,15 @@ describe('DiagnosticsSection — run diagnostics', () => {
 
     await waitFor(() => {
       expect(mockAddToast).toHaveBeenCalledWith(
-        expect.objectContaining({ message: expect.stringContaining('25') })
+        expect.objectContaining({
+          message: expect.stringMatching(/security score:\s*75\/100/i),
+        })
       )
     })
   })
 
-  it('updates displayed results after run completes', async () => {
-    // Traces to: wave5b-system-agent-spec.md — Scenario: Results update after run (US-10 AC5)
+  it('updates displayed security score after run completes', async () => {
+    // Traces to: bug 1 fix — displayed number is 100 − risk (85 for risk=15).
     const newResult: DoctorResult = {
       score: 15,
       issues: [],
@@ -346,8 +368,8 @@ describe('DiagnosticsSection — run diagnostics', () => {
     fireEvent.click(screen.getByRole('button', { name: /run diagnostics/i }))
 
     await waitFor(() => {
-      // Score from the new result is shown
-      expect(screen.getByText('15')).toBeInTheDocument()
+      // Security score 85 (= 100 − 15) is shown
+      expect(screen.getByText('85')).toBeInTheDocument()
     })
   })
 

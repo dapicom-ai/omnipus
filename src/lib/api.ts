@@ -10,7 +10,13 @@
 const BASE_URL = import.meta.env.VITE_API_URL ?? ''
 
 // CSRF_COOKIE_NAME must match pkg/gateway/middleware/csrf.go CSRFCookieName.
+// On HTTPS origins the server issues `__Host-csrf` (Secure, prefix-enforced).
+// On plain-HTTP origins (dev, self-hosted without TLS) the __Host- cookie
+// can't install, so the server falls back to `csrf` (Secure=false) —
+// CSRF_COOKIE_NAME_HTTP below. readCSRFCookie() prefers __Host-csrf and
+// falls back to csrf, matching whatever the server actually set.
 const CSRF_COOKIE_NAME = '__Host-csrf'
+const CSRF_COOKIE_NAME_HTTP = 'csrf'
 const CSRF_HEADER_NAME = 'X-CSRF-Token'
 const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
@@ -32,29 +38,34 @@ const CSRF_EXEMPT_PATHS = new Set<string>([
   '/api/v1/auth/register-admin',
 ])
 
-// readCSRFCookie parses document.cookie and returns the __Host-csrf value,
-// or null if the cookie is absent. We intentionally do not cache — cookies
-// can change after login/logout/onboarding and caching would cause stale
-// tokens on the next state-changing call.
+// readCSRFCookie parses document.cookie and returns the CSRF token value,
+// or null if neither the TLS nor the HTTP variant is present. We prefer
+// __Host-csrf when both are somehow present (shouldn't happen in practice)
+// because that's the stronger cookie. We intentionally do not cache —
+// cookies can change after login/logout/onboarding and caching would cause
+// stale tokens on the next state-changing call.
 function readCSRFCookie(): string | null {
   if (typeof document === 'undefined') return null
-  const prefix = `${CSRF_COOKIE_NAME}=`
-  // document.cookie is a single string of "a=b; c=d" pairs. We walk the
-  // pairs manually rather than split on ";" because cookie values can
-  // contain "=" (and base64 tokens certainly can).
-  for (const part of document.cookie.split(';')) {
-    const trimmed = part.trim()
-    if (trimmed.startsWith(prefix)) {
-      const raw = trimmed.slice(prefix.length)
-      // Apply decodeURIComponent defensively: if the browser percent-encoded
-      // the cookie value (e.g. standard base64 "=", "+", "/"), we decode it
-      // so the header value matches what the server originally set. If
-      // decoding fails (malformed sequence such as a lone "%"), fall back to
-      // the raw string and let the server compare verbatim.
-      try {
-        return decodeURIComponent(raw)
-      } catch {
-        return raw
+  // Try the TLS name first, then the plain-HTTP fallback.
+  for (const name of [CSRF_COOKIE_NAME, CSRF_COOKIE_NAME_HTTP]) {
+    const prefix = `${name}=`
+    // document.cookie is a single string of "a=b; c=d" pairs. We walk the
+    // pairs manually rather than split on ";" because cookie values can
+    // contain "=" (and base64 tokens certainly can).
+    for (const part of document.cookie.split(';')) {
+      const trimmed = part.trim()
+      if (trimmed.startsWith(prefix)) {
+        const raw = trimmed.slice(prefix.length)
+        // Apply decodeURIComponent defensively: if the browser percent-encoded
+        // the cookie value (e.g. standard base64 "=", "+", "/"), we decode it
+        // so the header value matches what the server originally set. If
+        // decoding fails (malformed sequence such as a lone "%"), fall back to
+        // the raw string and let the server compare verbatim.
+        try {
+          return decodeURIComponent(raw)
+        } catch {
+          return raw
+        }
       }
     }
   }
@@ -93,15 +104,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // instead of a cryptic "403 csrf cookie missing" from the network tab
   // and also prevents a cascade of dependent requests firing during a
   // broken auth state.
+  //
+  // Bearer-authenticated requests are not subject to the double-submit check
+  // server-side (browsers cannot auto-send an Authorization header cross-
+  // origin), so they must not be blocked here either — otherwise a logged-in
+  // SPA on plain HTTP where the Secure cookie couldn't install would hit an
+  // eager false-positive.
   const method = (init?.method ?? 'GET').toUpperCase()
+  const hasBearer = 'Authorization' in getAuthHeaders()
   if (
     STATE_CHANGING_METHODS.has(method) &&
     !isPathCSRFExempt(path) &&
+    !hasBearer &&
     readCSRFCookie() === null
   ) {
     throw new Error(
       `CSRF cookie missing — cannot ${method} ${path}. ` +
-        `Log in or complete onboarding first so the server can issue the __Host-csrf cookie.`,
+        `Log in or complete onboarding first so the server can issue the CSRF cookie.`,
     )
   }
 
@@ -1099,4 +1118,39 @@ export interface SandboxStatus {
 
 export function fetchSandboxStatus(): Promise<SandboxStatus> {
   return request<SandboxStatus>('/security/sandbox-status')
+}
+
+// SandboxConfig mirrors the editable subset of config.OmnipusSandboxConfig
+// exposed by GET/PUT /api/v1/security/sandbox-config. applied_mode reflects
+// what the gateway is CURRENTLY running; it differs from mode when the
+// operator saved a change that won't take effect until the gateway restarts.
+export interface SandboxConfig {
+  mode: 'enforce' | 'permissive' | 'off' | string
+  allow_network_outbound: boolean
+  allowed_paths: string[]
+  ssrf_enabled: boolean
+  ssrf_allow_internal: string[]
+  applied_mode: string
+  requires_restart?: boolean
+}
+
+// SandboxConfigUpdate is the partial-update shape accepted by PUT. Fields
+// not present are left untouched on disk.
+export interface SandboxConfigUpdate {
+  mode?: 'enforce' | 'permissive' | 'off'
+  allow_network_outbound?: boolean
+  allowed_paths?: string[]
+  ssrf_enabled?: boolean
+  ssrf_allow_internal?: string[]
+}
+
+export function fetchSandboxConfig(): Promise<SandboxConfig> {
+  return request<SandboxConfig>('/security/sandbox-config')
+}
+
+export function updateSandboxConfig(update: SandboxConfigUpdate): Promise<SandboxConfig> {
+  return request<SandboxConfig>('/security/sandbox-config', {
+    method: 'PUT',
+    body: JSON.stringify(update),
+  })
 }
