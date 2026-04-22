@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   ShieldCheck,
@@ -33,7 +33,7 @@ import { useAuthStore } from '@/store/auth'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const ABI4_BANNER_SESSION_KEY = 'sprint-k:abi4-banner-dismissed'
+const ABI4_BANNER_SESSION_KEY = 'omnipus:abi4-banner-dismissed'
 
 // SSRF preset definitions
 const SSRF_PRESETS = [
@@ -211,7 +211,7 @@ function CapabilitiesPanel({ data }: { data: SandboxStatus }) {
   )
 }
 
-// ── ABI v4 Banner (k25) ───────────────────────────────────────────────────────
+// ── ABI v4 Banner ─────────────────────────────────────────────────────────────
 
 function Abi4Banner({
   abiVersion,
@@ -243,7 +243,7 @@ function Abi4Banner({
   )
 }
 
-// ── Allowed Paths Editor (k23) ────────────────────────────────────────────────
+// ── Allowed Paths Editor ──────────────────────────────────────────────────────
 
 interface AllowedPathsEditorProps {
   paths: string[]
@@ -343,7 +343,7 @@ function AllowedPathsEditor({
   )
 }
 
-// ── SSRF Editor (k24) ─────────────────────────────────────────────────────────
+// ── SSRF Editor ───────────────────────────────────────────────────────────────
 
 interface SsrfEditorProps {
   list: string[]
@@ -496,7 +496,7 @@ export function SandboxSection(): React.ReactElement {
     queryFn: fetchSandboxStatus,
   })
 
-  // ── Config query (k23/k24) ─────────────────────────────────────────────────
+  // ── Config query ──────────────────────────────────────────────────────────
   const { data: configData, isLoading: configLoading } = useQuery({
     queryKey: ['sandbox-config'],
     queryFn: fetchSandboxConfig,
@@ -505,17 +505,17 @@ export function SandboxSection(): React.ReactElement {
   // ── Edit mode ──────────────────────────────────────────────────────────────
   const [isEditing, setIsEditing] = useState(false)
 
-  // ── ABI v4 banner state (k25) ──────────────────────────────────────────────
+  // ── ABI v4 banner state ────────────────────────────────────────────────────
   const [bannerDismissed, setBannerDismissed] = useState(() => {
     if (typeof sessionStorage === 'undefined') return false
     return sessionStorage.getItem(ABI4_BANNER_SESSION_KEY) === 'dismissed'
   })
 
-  const handleBannerDismiss = useCallback(() => {
+  function handleBannerDismiss() {
     sessionStorage.setItem(ABI4_BANNER_SESSION_KEY, 'dismissed')
     localStorage.setItem(ABI4_BANNER_SESSION_KEY, new Date().toISOString())
     setBannerDismissed(true)
-  }, [])
+  }
 
   const showAbi4Banner =
     !bannerDismissed &&
@@ -523,14 +523,14 @@ export function SandboxSection(): React.ReactElement {
     statusData.abi_version >= 4 &&
     typeof statusData.issue_ref === 'string'
 
-  // ── Allowed paths state (k23) ──────────────────────────────────────────────
+  // ── Allowed paths state ────────────────────────────────────────────────────
   const [pathList, setPathList] = useState<string[]>([])
   const [newPath, setNewPath] = useState('')
   const [pathAddError, setPathAddError] = useState<string | null>(null)
   const [pathRowErrors, setPathRowErrors] = useState<Record<number, string>>({})
   const [pathRestartedRows, setPathRestartedRows] = useState<Set<number>>(new Set())
 
-  // ── SSRF state (k24) ──────────────────────────────────────────────────────
+  // ── SSRF state ────────────────────────────────────────────────────────────
   const [ssrfList, setSsrfList] = useState<string[]>([])
   const [ssrfActivePreset, setSsrfActivePreset] = useState<number | null>(null)
   const [ssrfAdvancedOpen, setSsrfAdvancedOpen] = useState(false)
@@ -538,7 +538,7 @@ export function SandboxSection(): React.ReactElement {
   const [newSsrfEntry, setNewSsrfEntry] = useState('')
   const [ssrfAddError, setSsrfAddError] = useState<string | null>(null)
 
-  // ── Modal state (k24 wildcard + k25 enforce) ───────────────────────────────
+  // ── Modal state (wildcard SSRF + enforce-mode confirmation) ───────────────
   const [showWildcardModal, setShowWildcardModal] = useState(false)
   const [showEnforceModal, setShowEnforceModal] = useState(false)
   const pendingSaveRef = useRef<(() => void) | null>(null)
@@ -871,7 +871,7 @@ export function SandboxSection(): React.ReactElement {
         </Button>
       </div>
 
-      {/* ABI v4 banner (k25) */}
+      {/* ABI v4 compatibility banner */}
       {showAbi4Banner && (
         <Abi4Banner
           abiVersion={statusData!.abi_version!}
@@ -970,7 +970,7 @@ export function SandboxSection(): React.ReactElement {
         </div>
       )}
 
-      {/* Wildcard SSRF confirmation modal (k24) */}
+      {/* Wildcard SSRF confirmation modal */}
       <Dialog
         open={showWildcardModal}
         onOpenChange={(open) => { if (!open) handleWildcardCancel() }}
@@ -998,7 +998,7 @@ export function SandboxSection(): React.ReactElement {
         </DialogContent>
       </Dialog>
 
-      {/* ABI v4 enforce-mode confirmation modal (k25) */}
+      {/* ABI v4 enforce-mode confirmation modal */}
       <Dialog
         open={showEnforceModal}
         onOpenChange={(open) => { if (!open) handleEnforceModalCancel() }}

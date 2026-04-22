@@ -1,21 +1,16 @@
 // sprint-k-hot-reload.spec.ts
 //
-// SC-005: Hot-reloadable changes (prompt-injection-level, rate-limits) take
+// Hot-reloadable changes (prompt-injection-level, rate-limits) take
 // effect within 2 seconds of save without a process restart.
-//
-// Traces to:
-//   - sprint-k-security-ui-parity-spec.md line 176-178 (US-4 acceptance scenarios)
-//   - sprint-k-security-ui-parity-spec.md line 190-192 (US-5 acceptance scenarios)
-//   - sprint-k-security-ui-parity-spec.md line 582-588 (BDD: prompt-guard hot-reload)
 //
 // Approach: GET-readback variant.
 //
-// The spec's observable contract for SC-005 is that "the change takes effect
-// within 2s" — the simplest externally-verifiable proxy is that a GET of the
-// endpoint reads back the new value within 2s of the PUT completing.
-// pkg/gateway/rest_prompt_guard.go and rest_rate_limits.go both call
-// a.awaitReload() before returning, so by the time PUT responds the config is
-// already reloaded.  A follow-up GET within 2s MUST return the new value.
+// The observable contract is that "the change takes effect within 2s" —
+// the simplest externally-verifiable proxy is that a GET of the endpoint reads
+// back the new value within 2s of the PUT completing. The gateway's
+// rest_prompt_guard.go and rest_rate_limits.go both call a.awaitReload()
+// before returning, so by the time PUT responds the config is already reloaded.
+// A follow-up GET within 2s MUST return the new value.
 //
 // LLM-observable assertions (sanitizer picks up new level, rate limiter
 // rejects a second call) are not implemented here because they require:
@@ -24,10 +19,9 @@
 // Both tests softSkip when OPENROUTER_API_KEY is absent so they are visible
 // (not suppressed) in CI without a key.
 //
-// Gateway lifecycle: this spec starts its own Sprint K gateway on port 5551
-// with a throwaway OMNIPUS_HOME. It does NOT rely on the globally-started
-// gateway from global-setup.ts, which may be an older binary without Sprint K
-// endpoints. The Sprint K binary is specified via OMNIPUS_BINARY env
+// Gateway lifecycle: this spec starts its own gateway on port 5551 with a
+// throwaway OMNIPUS_HOME. It does NOT rely on the globally-started gateway
+// from global-setup.ts. The binary is specified via OMNIPUS_BINARY env
 // (default: /tmp/omnipus-sprint-k).
 //
 // CSRF handling: we call the login endpoint via fetch() to get a bearer token
@@ -59,7 +53,7 @@ let csrfToken = '';
 test.use({ storageState: { cookies: [], origins: [] } });
 test.use({ baseURL: `http://localhost:${GATEWAY_PORT}` });
 
-// ── Start the Sprint K gateway once for all tests in this file ────────────────
+// ── Start the gateway once for all tests in this file ─────────────────────────
 test.beforeAll(async () => {
   handle = await startGateway({ port: GATEWAY_PORT });
 
@@ -89,7 +83,7 @@ test.afterAll(async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Helper: authenticated PUT to the Sprint K gateway.
+// Helper: authenticated PUT to the gateway.
 // Uses fetch() directly (not page.request) because this spec's tests are
 // API-only — no browser navigation is needed for the GET-readback checks.
 // ---------------------------------------------------------------------------
@@ -120,7 +114,7 @@ async function authedPut(
 }
 
 // ---------------------------------------------------------------------------
-// Helper: authenticated GET from the Sprint K gateway.
+// Helper: authenticated GET from the gateway.
 // ---------------------------------------------------------------------------
 async function authedGet(path: string): Promise<{ status: number; body: unknown }> {
   const res = await fetch(`${handle.baseURL}${path}`, {
@@ -138,9 +132,6 @@ async function authedGet(path: string): Promise<{ status: number; body: unknown 
 // ---------------------------------------------------------------------------
 // Test 1: prompt-injection hot-reload
 //
-// Traces to: sprint-k-security-ui-parity-spec.md line 582-588 (US-4 AC-1)
-//            SC-005 (hot-reloadable within 2s)
-//
 // Variant: GET-readback fallback.
 // Rationale: the LLM-observable variant requires a live LLM to produce tool
 // results containing injection patterns.
@@ -149,20 +140,16 @@ async function authedGet(path: string): Promise<{ status: number; body: unknown 
 //   PUT level=low  → GET must return level=low   (not hardcoded "medium")
 //   PUT level=high → GET must return level=high  (different input, different output)
 // ---------------------------------------------------------------------------
-test('prompt-injection hot-reload: GET reflects new level within 2s of PUT (SC-005, US-4)', async () => {
-  // softSkip when no OPENROUTER_API_KEY — spec mandates this gate even for
-  // the GET-readback variant because the hot-reload spec is part of the
-  // LLM-flow test family (US-4 AC-1 says "next web_fetch reflects high-strictness
-  // sanitization").  Without the key the full spec intent cannot be validated.
-  //
-  // Traces to: task prompt "softSkip rules" + sprint-k spec SC-005 footnote.
+test('prompt-injection hot-reload: GET reflects new level within 2s of PUT', async () => {
+  // softSkip when no OPENROUTER_API_KEY — the hot-reload spec requires a live
+  // LLM to validate the full intent (sanitizer picks up new level).
+  // Without the key the full spec intent cannot be validated.
   test.skip(
     !process.env.OPENROUTER_API_KEY,
     'OPENROUTER_API_KEY not set — hot-reload E2E requires a live LLM',
   );
 
   // ── Step 1: set to "low" as the known starting state ────────────────────
-  // Traces to: sprint-k spec US-4 AC-1 (Given admin picks level, When save succeeds)
   const putLow = await authedPut('/api/v1/security/prompt-guard', { level: 'low' });
   expect(putLow.status, 'PUT level=low must return 200').toBe(200);
   expect(
@@ -171,15 +158,13 @@ test('prompt-injection hot-reload: GET reflects new level within 2s of PUT (SC-0
   ).toBe(true);
   expect(
     (putLow.body as Record<string, unknown>).requires_restart,
-    'PUT low: requires_restart must be false (hot-reloadable per FR-004)',
+    'PUT low: requires_restart must be false (hot-reloadable)',
   ).toBe(false);
 
   // ── Step 2: verify GET reads back "low" within 2s ───────────────────────
   // The awaitReload() call inside putPromptGuard blocks until the config poll
   // completes, so the very next GET should already see the new value.
-  // We use expect.poll with a 2000ms budget to match SC-005's 2s envelope.
-  //
-  // Traces to: SC-005 ("within 2 seconds of save")
+  // We use expect.poll with a 2000ms budget to match the 2s hot-reload envelope.
   await expect
     .poll(
       async () => {
@@ -197,8 +182,7 @@ test('prompt-injection hot-reload: GET reflects new level within 2s of PUT (SC-0
   // ── Step 3: differentiation — set to "high" and verify GET differs ──────
   // This catches hardcoded GET responses: if the endpoint always returns "medium"
   // regardless of what was saved, the assertion below will fail.
-  //
-  // Traces to: qa-lead anti-shortcut rule: "two different inputs → two different outputs"
+  // Anti-shortcut: two different inputs must produce two different outputs.
   const putHigh = await authedPut('/api/v1/security/prompt-guard', { level: 'high' });
   expect(putHigh.status, 'PUT level=high must return 200').toBe(200);
   expect(
@@ -226,8 +210,7 @@ test('prompt-injection hot-reload: GET reflects new level within 2s of PUT (SC-0
     )
     .toBe('high');
 
-  // ── Step 4: validate invalid level rejected (US-4 AC-2) ─────────────────
-  // Traces to: sprint-k-security-ui-parity-spec.md line 590-593 (Scenario: Invalid value rejected)
+  // ── Step 4: validate invalid level rejected ──────────────────────────────
   const putBad = await authedPut('/api/v1/security/prompt-guard', { level: 'extreme' });
   expect(putBad.status, 'invalid level must return 400').toBe(400);
 
@@ -238,9 +221,6 @@ test('prompt-injection hot-reload: GET reflects new level within 2s of PUT (SC-0
 // ---------------------------------------------------------------------------
 // Test 2: rate-limit hot-reload
 //
-// Traces to: sprint-k-security-ui-parity-spec.md line 190-192 (US-5 AC-1)
-//            SC-005 (hot-reloadable within 2s)
-//
 // Variant: GET-readback fallback.
 // Rationale: the LLM-observable variant requires issuing two real agent LLM
 // calls (1st succeeds, 2nd gets 429) which needs a live LLM key and a way to
@@ -250,17 +230,15 @@ test('prompt-injection hot-reload: GET reflects new level within 2s of PUT (SC-0
 //   PUT max_agent_llm_calls_per_hour=100 → GET must return 100
 //   PUT max_agent_llm_calls_per_hour=1   → GET must return 1 (different output)
 // ---------------------------------------------------------------------------
-test('rate-limit hot-reload: GET reflects new cap within 2s of PUT (SC-005, US-5)', async () => {
-  // softSkip when no OPENROUTER_API_KEY — same rationale as Test 1.
-  // The US-5 full intent (agent call exceeding 200/hr gets rate-limited) requires
-  // a live LLM.  Without the key we cannot validate the full spec intent.
+test('rate-limit hot-reload: GET reflects new cap within 2s of PUT', async () => {
+  // softSkip when no OPENROUTER_API_KEY — the hot-reload spec requires a live
+  // LLM to validate the full intent (second agent call exceeding the cap gets 429).
   test.skip(
     !process.env.OPENROUTER_API_KEY,
     'OPENROUTER_API_KEY not set — hot-reload E2E requires a live LLM',
   );
 
   // ── Step 1: set a known baseline (100 LLM calls/hour, no cost cap) ──────
-  // Traces to: US-5 AC-1 (Given admin enters a value, When they save)
   const putBaseline = await authedPut('/api/v1/security/rate-limits', {
     max_agent_llm_calls_per_hour: 100,
     daily_cost_cap_usd: 0,
@@ -273,11 +251,11 @@ test('rate-limit hot-reload: GET reflects new cap within 2s of PUT (SC-005, US-5
   ).toBe(true);
   expect(
     (putBaseline.body as Record<string, unknown>).requires_restart,
-    'PUT baseline: requires_restart must be false (hot-reloadable per FR-005)',
+    'PUT baseline: requires_restart must be false (hot-reloadable)',
   ).toBe(false);
 
   // ── Step 2: verify GET reads back 100 within 2s ──────────────────────────
-  // Traces to: SC-005 ("within 2 seconds of save")
+  // Verify within the 2s hot-reload envelope.
   await expect
     .poll(
       async () => {
@@ -329,16 +307,15 @@ test('rate-limit hot-reload: GET reflects new cap within 2s of PUT (SC-005, US-5
     )
     .toBe(1);
 
-  // ── Step 4: validate negative value rejected (US-5 AC-2) ─────────────────
-  // Traces to: sprint-k spec US-5 AC-2 ("negative value → save button disabled /
-  // API rejects with 400")
+  // ── Step 4: validate negative value rejected ─────────────────────────────
+  // Negative values must be rejected with 400 — save button disabled / API guard.
   const putNeg = await authedPut('/api/v1/security/rate-limits', {
     max_agent_llm_calls_per_hour: -5,
   });
   expect(putNeg.status, 'negative max_agent_llm_calls_per_hour must return 400').toBe(400);
 
   // ── Step 5: validate partial-update semantics — only send one field ───────
-  // Traces to: FR-005 "partial updates" — unset fields must not be zeroed.
+  // Partial updates: unset fields must not be zeroed.
   // First record that we set llm_calls=1 above; now only change cost cap.
   const putPartial = await authedPut('/api/v1/security/rate-limits', {
     daily_cost_cap_usd: 25.5,

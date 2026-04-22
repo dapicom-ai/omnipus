@@ -3,6 +3,7 @@ import { ArrowsClockwise } from '@phosphor-icons/react'
 import { usePendingRestart, PENDING_RESTART_QUERY_KEY } from '@/store/restart'
 import { useAuthStore } from '@/store/auth'
 import type { PendingRestartEntry } from '@/lib/api'
+import type { ApiError } from '@/store/restart'
 
 // formatValue produces a human-readable transition string for a config value.
 // Objects and arrays are represented as "(modified)" to avoid unreadable JSON blobs.
@@ -29,14 +30,37 @@ function EntryRow({ entry }: { entry: PendingRestartEntry }) {
 // making a /pending-restart request for non-admin users at all.
 function RestartBannerInner() {
   const queryClient = useQueryClient()
-  const { entries, isLoading, isError } = usePendingRestart()
+  const { entries, isLoading, isError, error } = usePendingRestart()
 
   // Loading first fetch: render nothing to avoid flicker.
   if (isLoading && entries.length === 0) return null
 
-  // Error (includes 403 from server, 503 for dev_mode_bypass):
-  // treat as "not available" and hide.
-  if (isError) return null
+  // Suppress the banner for expected non-error conditions:
+  //   403 — non-admin path (should not reach here but guard defensively)
+  //   503 — dev_mode_bypass is active; pending-restart is inoperative
+  // All other errors (500, network failures, etc.) show a visible retry state
+  // so an admin who just saved a restart-gated setting is not left in the dark.
+  if (isError) {
+    const status = (error as ApiError | null)?.status
+    if (status === 403 || status === 503) return null
+    return (
+      <div
+        role="status"
+        className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] px-4 py-3 mb-6 flex items-center justify-between gap-4"
+      >
+        <span className="text-sm text-[var(--color-muted)]">
+          Could not check pending restart-required changes.
+        </span>
+        <button
+          type="button"
+          className="shrink-0 text-xs text-[var(--color-secondary)] underline hover:no-underline focus:outline-none focus:ring-1 focus:ring-[var(--color-accent)] rounded"
+          onClick={() => { void queryClient.invalidateQueries({ queryKey: [...PENDING_RESTART_QUERY_KEY] }) }}
+        >
+          Retry
+        </button>
+      </div>
+    )
+  }
 
   // Empty diff: no changes pending, hide banner.
   if (entries.length === 0) return null

@@ -1,10 +1,7 @@
 /**
- * sprint-k-user-crud.spec.ts — E2E: admin creates second admin, no token modal (k30)
+ * sprint-k-user-crud.spec.ts — E2E: admin creates second admin, no token modal
  *
- * Traces to: docs/plan/sprint-k-security-ui-parity-spec.md — US-10 holdout scenario
- * "Second admin can log in and administer" (lines 344–353)
- *
- * Task: k30-e2e-admin-creates-second-admin
+ * Traces to: US-10 AC-8 (last-admin guard) — admin creates second admin who can log in and administer.
  *
  * IMPORTANT: This spec manages its own gateway lifecycle (port 5050).
  * It does NOT rely on the globally-started gateway from global-setup.ts.
@@ -14,12 +11,12 @@
  * Run with:
  *   OMNIPUS_BINARY=/tmp/omnipus-sprint-k npx playwright test tests/e2e/sprint-k-user-crud.spec.ts
  *
- * SPRINT K CONTRACT BEING TESTED:
- *   - US-10 AC-1: Create user → NO token shown, toast says "User created. They can now log in with the password you set."
- *   - US-10 AC-2: Login as new admin succeeds, Access tab visible (admin role works)
- *   - US-10 AC-2: Second admin can delete first admin (not last admin, so allowed)
- *   - US-10 AC-2: Last-admin guard: deleting the only remaining admin is blocked by UI
- *   - US-10 AC-9: Access tab is visible for admins when dev_mode_bypass is off
+ * CONTRACT BEING TESTED:
+ *   - Create user: no token shown, toast says "User created. They can now log in with the password you set."
+ *   - Login as new admin succeeds, Access tab visible (admin role works)
+ *   - Second admin can delete first admin (not last admin, so allowed)
+ *   - Last-admin guard: deleting the only remaining admin is blocked by UI
+ *   - Access tab is visible for admins when dev_mode_bypass is off
  */
 
 import { test, expect, type Page } from '@playwright/test';
@@ -136,8 +133,7 @@ test.afterAll(async () => {
 
 // ── Test: SPA embed verification ──────────────────────────────────────────────
 
-test('(a) Sprint K SPA embed contains user-management UI', async () => {
-  // Traces to: CLAUDE.md SPA Embed Pipeline — "verify sync"
+test('(a) SPA embed contains user-management UI', async () => {
   // assertSprintKEmbedPresent() was already called in startGateway().
   // This test documents the contract explicitly so failures are loud.
   assertSprintKEmbedPresent(); // re-assert in test context for clear FAIL message
@@ -146,7 +142,6 @@ test('(a) Sprint K SPA embed contains user-management UI', async () => {
 // ── Test: Admin creates second admin without token modal ───────────────────────
 
 test('(b) admin creates second admin — no token or Copy button appears', async ({ page }) => {
-  // Traces to: sprint-k-security-ui-parity-spec.md line 345
   // BDD: Given admin on Settings → Access → Users
   //      When they click "Add user", fill {username, role=admin, password}
   //      Then POST returns {username, role} with NO token; UI shows success toast without any token string
@@ -178,14 +173,13 @@ test('(b) admin creates second admin — no token or Copy button appears', async
 
   // ── Then: SUCCESS TOAST must appear with the right message ────────────────
   // UsersSection.tsx: 'User created. They can now log in with the password you set.'
-  // Traces to: sprint-k spec US-10 AC-1
+  // Traces to: US-10 AC-1 (no token at creation time)
   await expect(
     page.getByText('User created. They can now log in with the password you set.'),
   ).toBeVisible({ timeout: 15_000 });
 
   // ── Then: NO token string "omnipus_" anywhere on the page ─────────────────
-  // Traces to: sprint-k-security-ui-parity-spec.md line 321 — "no token is displayed"
-  // CRIT-003 resolution: token creation is removed from Create flow entirely.
+  // Token creation is removed from the Create flow entirely — no token is displayed.
   const pageContent = await page.content();
   expect(pageContent, 'Page must not contain a bearer token string').not.toMatch(
     /omnipus_[0-9a-f]{64}/i,
@@ -193,7 +187,7 @@ test('(b) admin creates second admin — no token or Copy button appears', async
 
   // ── Then: NO "Copy" button in dialog or toast ─────────────────────────────
   // A "Copy" button would be the tell-tale sign of a token-copy affordance.
-  // Traces to: CRIT-003 resolution — "no one-time-token modal"
+  // No one-time-token modal should appear.
   const copyButton = page.getByRole('button', { name: /copy/i }).first();
   // Use toBeHidden rather than toBeVisible negation for reliable assertion
   await expect(copyButton).toBeHidden();
@@ -208,7 +202,6 @@ test('(b) admin creates second admin — no token or Copy button appears', async
 // ── Test: Second admin can log in ─────────────────────────────────────────────
 
 test('(c) second admin can log in and sees Access tab', async ({ page }) => {
-  // Traces to: sprint-k-security-ui-parity-spec.md line 344 (US-10 holdout)
   // BDD: Given second-admin was created with role=admin
   //      When they log in via the login form
   //      Then login succeeds and the Access tab is visible (admin privilege active)
@@ -237,7 +230,6 @@ test('(c) second admin can log in and sees Access tab', async ({ page }) => {
 // ── Test: Second admin deletes first admin ────────────────────────────────────
 
 test('(d) second admin deletes first-admin and deployment remains with >=1 admin', async ({ page }) => {
-  // Traces to: sprint-k-security-ui-parity-spec.md line 344 (US-10 holdout)
   // BDD: Given second-admin is logged in as admin
   //      When they delete first-admin (who is NOT the last admin)
   //      Then deletion succeeds, first-admin row disappears, second-admin remains
@@ -287,7 +279,7 @@ test('(d) second admin deletes first-admin and deployment remains with >=1 admin
 // ── Test: Last-admin guard — UI blocks self-deletion when only admin ───────────
 
 test('(e) last-admin guard: delete button disabled when second-admin is the only admin', async ({ page }) => {
-  // Traces to: sprint-k-security-ui-parity-spec.md line 346 (US-10 AC-2)
+  // Traces to: US-10 AC-8 (last-admin guard)
   // BDD: Given second-admin is the only admin remaining
   //      When they open the per-row menu on their own row
   //      Then the Delete option is disabled (grayed out) — UI-level guard
@@ -319,7 +311,7 @@ test('(e) last-admin guard: delete button disabled when second-admin is the only
 // ── Test: Backend last-admin guard — direct API call returns 409 ───────────────
 
 test('(f) backend last-admin guard: DELETE /api/v1/users/{last-admin} returns 409', async ({ page }) => {
-  // Traces to: sprint-k-security-ui-parity-spec.md line 346 (US-10 AC-2)
+  // Traces to: US-10 AC-8 (last-admin guard)
   // BDD: Given second-admin is the only admin
   //      When a direct API DELETE bypasses the disabled UI button
   //      Then the server returns 409 (guard runs inside safeUpdateConfigJSON callback)
@@ -363,7 +355,6 @@ test('(f) backend last-admin guard: DELETE /api/v1/users/{last-admin} returns 40
 
   // Attempt to DELETE second-admin (the only remaining admin) via API directly.
   // This bypasses the disabled UI button in test (e) to prove the backend guard is enforced.
-  // Traces to: sprint-k spec line 328 — "Last-admin guard INSIDE safeUpdateConfigJSON callback"
   const res = await page.request.delete(`${GATEWAY_URL}/api/v1/users/${SECOND_ADMIN.username}`, {
     headers: {
       Authorization: `Bearer ${token}`,
@@ -373,9 +364,7 @@ test('(f) backend last-admin guard: DELETE /api/v1/users/{last-admin} returns 40
     },
   });
 
-  // The backend returns 409 when the last-admin guard fires
-  // Traces to: sprint-k-security-ui-parity-spec.md line 328
-  // "Last-admin guard evaluated INSIDE the safeUpdateConfigJSON callback"
+  // The backend returns 409 when the last-admin guard fires.
   expect(res.status(), 'last-admin DELETE must return 409').toBe(409);
   const body = (await res.json()) as { error?: string };
   expect(body.error?.toLowerCase(), 'error message must reference admin/zero/last').toMatch(

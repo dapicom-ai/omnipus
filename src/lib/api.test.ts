@@ -172,7 +172,7 @@ describe('api request: X-CSRF-Token header uses decoded cookie value', () => {
   })
 })
 
-// ── Sprint K: security admin helpers ──────────────────────────────────────────
+// ── Security admin helpers ─────────────────────────────────────────────────────
 //
 // Each test verifies: URL, method, headers (CSRF on state-changing), body, and
 // error-path throwing a typed error on non-2xx.
@@ -188,7 +188,7 @@ function make400Response(errText: string): Response {
   return new Response(errText, { status: 400 })
 }
 
-describe('Sprint K API helpers', () => {
+describe('Security API helpers', () => {
   let fetchSpy: ReturnType<typeof vi.fn>
 
   beforeEach(() => {

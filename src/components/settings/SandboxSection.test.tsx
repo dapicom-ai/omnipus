@@ -92,9 +92,9 @@ beforeEach(() => {
   sessionStorage.clear()
 })
 
-// ── describe: allowed_paths editor (k23) ─────────────────────────────────────
+// ── describe: allowed_paths editor ───────────────────────────────────────────
 
-describe('allowed_paths editor (k23)', () => {
+describe('allowed_paths editor', () => {
   it('renders two rows with read-only badges when allowed_paths has two entries', async () => {
     vi.mocked(fetchSandboxConfig).mockResolvedValue({
       ...baseConfig,
@@ -241,9 +241,9 @@ describe('allowed_paths editor (k23)', () => {
   })
 })
 
-// ── describe: SSRF editor (k24) ───────────────────────────────────────────────
+// ── describe: SSRF editor ─────────────────────────────────────────────────────
 
-describe('SSRF editor (k24)', () => {
+describe('SSRF editor', () => {
   const RFC1918_LIST = ['127.0.0.1', '::1', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', 'fc00::/7']
   const LOOPBACK_LIST = ['127.0.0.1', '::1']
 
@@ -426,9 +426,9 @@ describe('SSRF editor (k24)', () => {
   })
 })
 
-// ── describe: ABI v4 surfaces (k25) ──────────────────────────────────────────
+// ── describe: ABI v4 surfaces ─────────────────────────────────────────────────
 
-describe('ABI v4 surfaces (k25)', () => {
+describe('ABI v4 surfaces', () => {
   it('abi_version=4 + issue_ref → yellow banner visible with issue_ref text', async () => {
     vi.mocked(fetchSandboxStatus).mockResolvedValue({
       ...baseStatus,
@@ -463,7 +463,7 @@ describe('ABI v4 surfaces (k25)', () => {
       expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     })
 
-    expect(sessionStorage.getItem('sprint-k:abi4-banner-dismissed')).toBe('dismissed')
+    expect(sessionStorage.getItem('omnipus:abi4-banner-dismissed')).toBe('dismissed')
   })
 
   it('abi_version=3 → banner NOT rendered', async () => {
@@ -544,7 +544,7 @@ describe('ABI v4 surfaces (k25)', () => {
   })
 
   it('banner is not shown when sessionStorage has dismiss key set', async () => {
-    sessionStorage.setItem('sprint-k:abi4-banner-dismissed', 'dismissed')
+    sessionStorage.setItem('omnipus:abi4-banner-dismissed', 'dismissed')
 
     vi.mocked(fetchSandboxStatus).mockResolvedValue({
       ...baseStatus,

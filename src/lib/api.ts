@@ -1001,12 +1001,11 @@ export function updatePromptGuard(strictness: PromptGuardStrictness): Promise<Pr
   })
 }
 
-// ── Sprint K Security Admin Endpoints ─────────────────────────────────────────
+// ── Security Admin Endpoints ──────────────────────────────────────────────────
 //
-// Enums and typed helpers for the 14 new security/admin endpoints introduced in
-// Sprint K (FR-002..FR-011). These are separate from the pre-existing
-// /security/* helpers above — they use Sprint K's canonical request/response
-// shapes and are wired to the admin UI panels.
+// Enums and typed helpers for the security and admin endpoints.
+// These are separate from the pre-existing /security/* helpers above — they use
+// the canonical request/response shapes and are wired to the admin UI panels.
 
 export type SkillTrustLevel = 'block_unverified' | 'warn_unverified' | 'allow_all'
 export type PromptInjectionLevel = 'low' | 'medium' | 'high'
@@ -1074,51 +1073,63 @@ export function updateSkillTrust(level: SkillTrustLevel): Promise<SkillTrustUpda
   })
 }
 
-// Prompt guard (Sprint K shape) — uses `level` field, aligns with PromptInjectionLevel.
-export interface PromptGuardKResponse {
+// Prompt guard — uses `level` field, aligns with PromptInjectionLevel.
+export interface PromptGuardResponse {
   level: PromptInjectionLevel
 }
 
-export interface PromptGuardKUpdateResponse {
+export interface PromptGuardUpdateResponse {
   saved: boolean
   requires_restart: boolean
   applied_level: PromptInjectionLevel
 }
 
-export interface PromptGuardKUpdateBody {
+export interface PromptGuardUpdateBody {
   level: PromptInjectionLevel
 }
 
-export function fetchPromptGuardLevel(): Promise<PromptGuardKResponse> {
-  return request<PromptGuardKResponse>('/security/prompt-guard')
+export function fetchPromptGuardLevel(): Promise<PromptGuardResponse> {
+  return request<PromptGuardResponse>('/security/prompt-guard')
 }
 
-export function updatePromptGuardLevel(level: PromptInjectionLevel): Promise<PromptGuardKUpdateResponse> {
-  return request<PromptGuardKUpdateResponse>('/security/prompt-guard', {
+export function updatePromptGuardLevel(level: PromptInjectionLevel): Promise<PromptGuardUpdateResponse> {
+  return request<PromptGuardUpdateResponse>('/security/prompt-guard', {
     method: 'PUT',
-    body: JSON.stringify({ level } satisfies PromptGuardKUpdateBody),
+    body: JSON.stringify({ level } satisfies PromptGuardUpdateBody),
   })
 }
 
-// Rate limits (Sprint K shape) — adds write support and new field names.
-export interface RateLimitsKResponse {
+// Type aliases for callers that reference the old PromptGuardK* names.
+export type PromptGuardKResponse = PromptGuardResponse
+export type PromptGuardKUpdateResponse = PromptGuardUpdateResponse
+export type PromptGuardKUpdateBody = PromptGuardUpdateBody
+
+// Rate limits — adds write support and configures spending/throughput caps.
+export interface RateLimitsResponse {
   daily_cost_cap_usd?: number
   max_agent_llm_calls_per_hour?: number
   max_agent_tool_calls_per_minute?: number
 }
 
-export interface RateLimitsKUpdateBody {
+export interface RateLimitsUpdateBody {
   daily_cost_cap_usd?: number
   max_agent_llm_calls_per_hour?: number
   max_agent_tool_calls_per_minute?: number
 }
 
-export function fetchRateLimitsK(): Promise<RateLimitsKResponse> {
-  return request<RateLimitsKResponse>('/security/rate-limits')
+export function fetchRateLimits(): Promise<RateLimitsResponse> {
+  return request<RateLimitsResponse>('/security/rate-limits')
 }
 
-export function updateRateLimits(body: RateLimitsKUpdateBody): Promise<RateLimitsKResponse> {
-  return request<RateLimitsKResponse>('/security/rate-limits', {
+// fetchRateLimitsK is kept as an alias so existing callers continue to work.
+export const fetchRateLimitsK = fetchRateLimits
+
+// Type aliases kept for callers that reference the old names.
+export type RateLimitsKResponse = RateLimitsResponse
+export type RateLimitsKUpdateBody = RateLimitsUpdateBody
+
+export function updateRateLimits(body: RateLimitsUpdateBody): Promise<RateLimitsResponse> {
+  return request<RateLimitsResponse>('/security/rate-limits', {
     method: 'PUT',
     body: JSON.stringify(body),
   })
@@ -1169,6 +1180,8 @@ export interface SessionScopeUpdateBody {
 export interface SessionScopeUpdateResponse {
   saved: boolean
   requires_restart: boolean
+  // applied_dm_scope reflects the value currently in effect. Since DM scope is
+  // restart-gated, this is the previous value until the gateway is restarted.
   applied_dm_scope: DMScope
 }
 
@@ -1307,19 +1320,6 @@ export function fetchExecProxyStatus(): Promise<ExecProxyStatus> {
   return request<ExecProxyStatus>('/security/exec-proxy-status')
 }
 
-// ── Rate Limits ───────────────────────────────────────────────────────────────
-
-export interface RateLimitStatus {
-  enabled: boolean
-  daily_cost_usd: number
-  daily_cost_cap: number
-  max_agent_llm_calls_per_hour: number
-  max_agent_tool_calls_per_minute: number
-}
-
-export function fetchRateLimits(): Promise<RateLimitStatus> {
-  return request<RateLimitStatus>('/security/rate-limits')
-}
 
 // ── Agent Tools ───────────────────────────────────────────────────────────────
 
@@ -1390,8 +1390,8 @@ export interface SandboxStatus {
   kernel_level: boolean
   policy_applied: boolean
   abi_version?: number
-  // issue_ref is present when abi_version >= 4 — identifies the tracking issue
-  // for the unsupported ABI. Pull from server response; never hardcode.
+  // issue_ref is set by the server when a known kernel incompatibility is flagged
+  // (currently ABI v4+). Do NOT hard-code the literal issue number in the UI.
   issue_ref?: string
   blocked_syscalls?: string[]
   seccomp_enabled: boolean

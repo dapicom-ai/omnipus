@@ -1,10 +1,10 @@
 /**
- * sprint-k-setup.ts — Shared gateway lifecycle helpers for Sprint K E2E tests
+ * sprint-k-setup.ts — Shared gateway lifecycle helpers for E2E tests
  *
  * Exports startGateway() / stopGateway() used by test.beforeAll / test.afterAll.
  *
  * Design:
- *   - Starts the Sprint K binary (OMNIPUS_BINARY env or /tmp/omnipus-sprint-k)
+ *   - Starts the Omnipus binary (OMNIPUS_BINARY env or /tmp/omnipus-sprint-k)
  *   - Creates a throwaway OMNIPUS_HOME with mkdtempSync (unique per call)
  *   - Waits for /health to return 200 before resolving
  *   - Onboards a first admin via POST /api/v1/onboarding/complete
@@ -41,7 +41,7 @@ export interface StartGatewayOptions {
 }
 
 /**
- * Verify the embedded SPA contains Sprint K user-management strings.
+ * Verify the embedded SPA contains user-management strings.
  * Fails with a descriptive error if the sync pipeline was skipped.
  * Traces to: CLAUDE.md "SPA Embed Pipeline" — verification step.
  */
@@ -66,7 +66,7 @@ export function assertSprintKEmbedPresent(): void {
   const hasUserManagement = jsFiles.some((f) => {
     try {
       const content = fs.readFileSync(path.join(spaAssetsDir, f), 'utf-8');
-      // "Add user" is the button label in UsersSection.tsx — proves Sprint K UI is embedded.
+      // "Add user" is the button label in UsersSection.tsx — proves the user-management UI is embedded.
       return content.includes('Add user');
     } catch {
       return false;
@@ -74,7 +74,7 @@ export function assertSprintKEmbedPresent(): void {
   });
   if (!hasUserManagement) {
     throw new Error(
-      'BLOCKED: Sprint K frontend not embedded in pkg/gateway/spa/.\n' +
+      'BLOCKED: User-management frontend not embedded in pkg/gateway/spa/.\n' +
         'Run the sync pipeline:\n' +
         '  npm run build && rm -rf pkg/gateway/spa/assets && cp -r dist/spa/* pkg/gateway/spa/\n' +
         '  CGO_ENABLED=0 go build -o /tmp/omnipus-sprint-k ./cmd/omnipus/',
@@ -83,7 +83,7 @@ export function assertSprintKEmbedPresent(): void {
 }
 
 /**
- * Start a Sprint K gateway instance on the given port.
+ * Start a gateway instance on the given port.
  * Returns a GatewayHandle with process info + onboarded admin credentials.
  *
  * Usage:
@@ -105,7 +105,7 @@ export async function startGateway(opts: StartGatewayOptions): Promise<GatewayHa
     );
   }
 
-  // Verify Sprint K SPA is embedded.
+  // Verify the user-management SPA is embedded.
   assertSprintKEmbedPresent();
 
   // Create a throwaway OMNIPUS_HOME — unique per startGateway() call.
