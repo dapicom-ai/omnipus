@@ -8,7 +8,24 @@
 
 package gateway
 
-import "time"
+import (
+	"sync"
+	"time"
+)
+
+// ResetLandlockABIv4WarnForTests resets the sync.Once that gates the
+// Sprint-K k07 one-shot ABI-v4 boot warning so tests can exercise the
+// emission path repeatedly in the same process.
+func ResetLandlockABIv4WarnForTests() {
+	landlockABIv4WarnOnce = sync.Once{}
+}
+
+// WarnLandlockABIv4OnceForTests exposes warnLandlockABIv4Once to
+// in-package tests under an explicit test-only name. Production code
+// calls warnLandlockABIv4Once directly from applySandbox.
+func WarnLandlockABIv4OnceForTests(abiVersion int) {
+	warnLandlockABIv4Once(abiVersion)
+}
 
 // ClearDegradedForTest calls the real clearDegraded closure logic on the
 // services struct. It is used by reload rollback tests to verify that the
