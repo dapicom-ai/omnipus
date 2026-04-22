@@ -24,13 +24,14 @@ import {
   startGateway,
   stopGateway,
   assertUserManagementEmbedPresent,
+  getFreePort,
   type GatewayHandle,
 } from './setup.js';
 
-// ── Constants ──────────────────────────────────────────────────────────────────
+// ── Gateway port (resolved to ephemeral at runtime) ────────────────────────────
 
-const GATEWAY_PORT = 5050;
-const GATEWAY_URL = `http://localhost:${GATEWAY_PORT}`;
+let GATEWAY_PORT: number;
+let GATEWAY_URL: string;
 
 const FIRST_ADMIN = { username: 'first-admin', password: 'first-admin-pass' };
 const SECOND_ADMIN = { username: 'second-admin', password: 'second-admin-pass' };
@@ -39,8 +40,9 @@ const SECOND_ADMIN = { username: 'second-admin', password: 'second-admin-pass' }
 
 // This spec manages its own auth — it starts a blank gateway instance so
 // the global admin.json storageState would reference the wrong token anyway.
+// baseURL is not set at module level because GATEWAY_PORT is resolved at runtime;
+// all page.goto() calls use GATEWAY_URL directly.
 test.use({ storageState: { cookies: [], origins: [] } });
-test.use({ baseURL: GATEWAY_URL });
 
 // ── Shared gateway handle ──────────────────────────────────────────────────────
 let handle: GatewayHandle;
@@ -57,7 +59,7 @@ async function loginViaUI(
   password: string,
 ): Promise<void> {
   // Navigate to root — SPA's hash router redirects to /#/login when unauthenticated.
-  await page.goto('/');
+  await page.goto(GATEWAY_URL);
   // Wait for the login form to appear.
   // The SPA uses HashRouter: unauthenticated root redirects to /#/login.
   await expect(page.locator('#login-username')).toBeVisible({ timeout: 15_000 });
@@ -82,7 +84,7 @@ async function loginViaUI(
 async function navigateToAccessTab(page: Page): Promise<void> {
   // The SPA uses hash routing (createHashHistory). /settings serves index.html which
   // starts at root — must use /#/settings to route to the settings screen.
-  await page.goto('/#/settings');
+  await page.goto(`${GATEWAY_URL}/#/settings`);
   // Wait for the tab list to render
   await expect(page.locator('[role="tablist"]').first()).toBeVisible({ timeout: 15_000 });
   // Click the "Access" tab
@@ -120,6 +122,8 @@ function getUsernameCell(page: Page, username: string) {
 // ── Spec lifecycle ────────────────────────────────────────────────────────────
 
 test.beforeAll(async () => {
+  GATEWAY_PORT = await getFreePort();
+  GATEWAY_URL = `http://localhost:${GATEWAY_PORT}`;
   handle = await startGateway({
     port: GATEWAY_PORT,
     adminUsername: FIRST_ADMIN.username,
@@ -210,7 +214,7 @@ test('(c) second admin can log in and sees Access tab', async ({ page }) => {
 
   // ── Then: Settings → Access tab is visible for admin ─────────────────────
   // Use hash routing (SPA uses createHashHistory).
-  await page.goto('/#/settings');
+  await page.goto(`${GATEWAY_URL}/#/settings`);
   await expect(page.locator('[role="tablist"]').first()).toBeVisible({ timeout: 15_000 });
 
   const accessTab = page.locator('button[role="tab"]', { hasText: 'Access' });

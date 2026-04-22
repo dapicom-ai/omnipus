@@ -338,14 +338,14 @@ describe('Security API helpers', () => {
     })
   })
 
-  // ── fetchRateLimitsK / updateRateLimits ───────────────────────────────────
+  // ── fetchRateLimits / updateRateLimits ────────────────────────────────────
 
-  describe('fetchRateLimitsK', () => {
+  describe('fetchRateLimits', () => {
     it('GET /api/v1/security/rate-limits — returns current limits', async () => {
       fetchSpy.mockResolvedValueOnce(makeOkResponse({ daily_cost_cap_usd: 5, max_agent_llm_calls_per_hour: 100 }))
 
-      const { fetchRateLimitsK } = await import('./api')
-      const result = await fetchRateLimitsK()
+      const { fetchRateLimits } = await import('./api')
+      const result = await fetchRateLimits()
 
       const [url] = fetchSpy.mock.calls[0] as [string, RequestInit]
       expect(url).toContain('/api/v1/security/rate-limits')

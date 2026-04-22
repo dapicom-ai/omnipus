@@ -36,13 +36,9 @@ import { test, expect } from '@playwright/test';
 import {
   startGateway,
   stopGateway,
-  loginAPI,
+  getFreePort,
   type GatewayHandle,
 } from './setup.js';
-
-// ── Gateway port for this spec ─────────────────────────────────────────────────
-// Use 5551 as specified in the task. Must not collide with other specs.
-const GATEWAY_PORT = 5551;
 
 // ── Shared gateway state ───────────────────────────────────────────────────────
 let handle: GatewayHandle;
@@ -50,12 +46,13 @@ let adminToken = '';
 let csrfToken = '';
 
 // This spec manages its own isolated gateway — do NOT use the global storageState.
+// baseURL is not set at module level because the port is resolved at runtime.
 test.use({ storageState: { cookies: [], origins: [] } });
-test.use({ baseURL: `http://localhost:${GATEWAY_PORT}` });
 
 // ── Start the gateway once for all tests in this file ─────────────────────────
 test.beforeAll(async () => {
-  handle = await startGateway({ port: GATEWAY_PORT });
+  const port = await getFreePort();
+  handle = await startGateway({ port });
 
   // Login via API to get the bearer token and CSRF cookie.
   // We use a raw fetch so we can capture the Set-Cookie header.

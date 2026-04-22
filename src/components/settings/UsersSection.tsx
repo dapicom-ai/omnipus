@@ -67,11 +67,14 @@ function AddUserDialog({ open, onOpenChange, onCreated }: AddUserDialogProps) {
 
   const { mutate: submit, isPending } = useMutation({
     mutationFn: () => createUser({ username, role, password }),
-    onSuccess: () => {
+    onSuccess: (resp) => {
       addToast({
         message: 'User created. They can now log in with the password you set.',
         variant: 'success',
       })
+      if (resp.warning) {
+        addToast({ variant: 'warning', message: resp.warning })
+      }
       resetForm()
       onOpenChange(false)
       onCreated()
@@ -225,8 +228,11 @@ function ChangeRoleDialog({ open, onOpenChange, target, onChanged }: ChangeRoleD
 
   const { mutate: submit, isPending } = useMutation({
     mutationFn: () => updateUserRole(target!.username, role),
-    onSuccess: () => {
+    onSuccess: (resp) => {
       addToast({ message: `Role updated for ${target!.username}.`, variant: 'success' })
+      if (resp.warning) {
+        addToast({ variant: 'warning', message: resp.warning })
+      }
       setServerError(null)
       onOpenChange(false)
       onChanged()
@@ -310,11 +316,14 @@ function ResetPasswordDialog({ open, onOpenChange, target, onReset }: ResetPassw
 
   const { mutate: submit, isPending } = useMutation({
     mutationFn: () => resetUserPassword(target!.username, newPassword),
-    onSuccess: () => {
+    onSuccess: (resp) => {
       addToast({
         message: `Password reset for ${target!.username}. Their old bearer token is now invalid.`,
         variant: 'success',
       })
+      if (resp.warning) {
+        addToast({ variant: 'warning', message: resp.warning })
+      }
       setNewPassword('')
       setPasswordError(null)
       setServerError(null)
@@ -521,8 +530,11 @@ function DeleteUserDialog({ open, onOpenChange, target, onDeleted }: DeleteUserD
 
   const { mutate: submit, isPending } = useMutation({
     mutationFn: () => deleteUser(target!.username),
-    onSuccess: () => {
+    onSuccess: (resp) => {
       addToast({ message: `User ${target!.username} deleted.`, variant: 'success' })
+      if (resp.warning) {
+        addToast({ variant: 'warning', message: resp.warning })
+      }
       setInlineError(null)
       onOpenChange(false)
       onDeleted()

@@ -31,7 +31,7 @@ import {
   fetchSandboxConfig,
   updateSandboxConfig,
 } from '@/lib/api'
-import type { SandboxStatus, SandboxConfigUpdate } from '@/lib/api'
+import type { SandboxStatus, SandboxConfigUpdateBody } from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 import { useUiStore } from '@/store/ui'
 
@@ -511,7 +511,7 @@ export function SandboxSection(): React.ReactElement {
   // Separate from the paths/SSRF editing state so the two sections are
   // independently editable.
   const [modeEditing, setModeEditing] = useState(false)
-  const [draftMode, setDraftMode] = useState<SandboxConfigUpdate['mode']>()
+  const [draftMode, setDraftMode] = useState<SandboxConfigUpdateBody['mode']>()
 
   const savedMode = configData?.mode as 'enforce' | 'permissive' | 'off' | undefined
   const effectiveDraftMode = draftMode ?? savedMode

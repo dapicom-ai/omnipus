@@ -4,7 +4,7 @@ import { generateId } from '@/lib/constants'
 export interface Toast {
   id: string
   message: string
-  variant: 'default' | 'error' | 'success'
+  variant: 'default' | 'error' | 'success' | 'warning'
   duration?: number
 }
 

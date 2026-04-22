@@ -14,6 +14,7 @@
  */
 
 import { spawn, type ChildProcess } from 'child_process';
+import { createServer } from 'net';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -21,6 +22,27 @@ import { fileURLToPath } from 'url';
 
 // Default binary used when OMNIPUS_BINARY is not set.
 export const DEFAULT_OMNIPUS_BINARY = '/tmp/omnipus-ci';
+
+/**
+ * Bind an ephemeral port on 0.0.0.0, read the OS-assigned port, then close.
+ * Use this in beforeAll to avoid hardcoded port collisions across CI jobs.
+ */
+export async function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = createServer();
+    srv.listen(0, () => {
+      const addr = srv.address();
+      if (addr && typeof addr === 'object') {
+        const port = addr.port;
+        srv.close(() => resolve(port));
+      } else {
+        srv.close();
+        reject(new Error('could not bind ephemeral port'));
+      }
+    });
+    srv.on('error', reject);
+  });
+}
 
 export interface GatewayHandle {
   process: ChildProcess;

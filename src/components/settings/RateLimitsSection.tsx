@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Gauge } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
-import { fetchRateLimitsK, updateRateLimits } from '@/lib/api'
-import type { RateLimitsKUpdateBody } from '@/lib/api'
+import { fetchRateLimits, updateRateLimits } from '@/lib/api'
+import type { RateLimitsUpdateBody } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { useAuthStore } from '@/store/auth'
 
@@ -87,7 +87,7 @@ export function RateLimitsSection(): React.ReactElement {
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ['rate-limits-k'],
-    queryFn: fetchRateLimitsK,
+    queryFn: fetchRateLimits,
   })
 
   // String state for controlled inputs — allows intermediate values during typing
@@ -146,8 +146,8 @@ export function RateLimitsSection(): React.ReactElement {
   const hasErrors = !!(costCapErr || llmPerHourErr || toolPerMinErr)
 
   // Build partial update body — only include changed fields
-  function buildUpdateBody(): RateLimitsKUpdateBody {
-    const body: RateLimitsKUpdateBody = {}
+  function buildUpdateBody(): RateLimitsUpdateBody {
+    const body: RateLimitsUpdateBody = {}
     if (costCap !== '' && Number(costCap) !== serverCostCap) {
       body.daily_cost_cap_usd = Number(costCap)
     } else if (costCap === '' && serverCostCap !== undefined) {
@@ -171,7 +171,7 @@ export function RateLimitsSection(): React.ReactElement {
   const isDirty = Object.keys(buildUpdateBody()).length > 0
 
   const { mutate: save, isPending } = useMutation({
-    mutationFn: (body: RateLimitsKUpdateBody) => updateRateLimits(body),
+    mutationFn: (body: RateLimitsUpdateBody) => updateRateLimits(body),
     onSuccess: (resp) => {
       queryClient.setQueryData(['rate-limits-k'], resp)
       const cc = resp.daily_cost_cap_usd

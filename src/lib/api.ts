@@ -986,26 +986,6 @@ export function updateExecAllowlist(patterns: string[]): Promise<ExecAllowlist> 
   })
 }
 
-// ── Prompt Guard ──────────────────────────────────────────────────────────────
-
-export type PromptGuardStrictness = 'low' | 'medium' | 'high'
-
-export interface PromptGuardConfig {
-  strictness: PromptGuardStrictness
-  restart_required?: boolean
-}
-
-export function fetchPromptGuard(): Promise<PromptGuardConfig> {
-  return request<PromptGuardConfig>('/security/prompt-guard')
-}
-
-export function updatePromptGuard(strictness: PromptGuardStrictness): Promise<PromptGuardConfig> {
-  return request<PromptGuardConfig>('/security/prompt-guard', {
-    method: 'PUT',
-    body: JSON.stringify({ strictness }),
-  })
-}
-
 // ── Security Admin Endpoints ──────────────────────────────────────────────────
 //
 // Enums and typed helpers for the security and admin endpoints.
@@ -1104,11 +1084,6 @@ export function updatePromptGuardLevel(level: PromptInjectionLevel): Promise<Pro
   })
 }
 
-// Type aliases for callers that reference the old PromptGuardK* names.
-export type PromptGuardKResponse = PromptGuardResponse
-export type PromptGuardKUpdateResponse = PromptGuardUpdateResponse
-export type PromptGuardKUpdateBody = PromptGuardUpdateBody
-
 // Rate limits — adds write support and configures spending/throughput caps.
 export interface RateLimitsResponse {
   daily_cost_cap_usd?: number
@@ -1125,13 +1100,6 @@ export interface RateLimitsUpdateBody {
 export function fetchRateLimits(): Promise<RateLimitsResponse> {
   return request<RateLimitsResponse>('/security/rate-limits')
 }
-
-// fetchRateLimitsK is kept as an alias so existing callers continue to work.
-export const fetchRateLimitsK = fetchRateLimits
-
-// Type aliases kept for callers that reference the old names.
-export type RateLimitsKResponse = RateLimitsResponse
-export type RateLimitsKUpdateBody = RateLimitsUpdateBody
 
 export function updateRateLimits(body: RateLimitsUpdateBody): Promise<RateLimitsResponse> {
   return request<RateLimitsResponse>('/security/rate-limits', {
@@ -1164,9 +1132,6 @@ export interface SandboxConfigUpdateBody {
     allow_internal?: string[]
   }
 }
-
-// Legacy alias kept to avoid a rename sweep across consumers.
-export type SandboxConfigUpdate = SandboxConfigUpdateBody
 
 export function fetchSandboxConfig(): Promise<SandboxConfigResponse> {
   return request<SandboxConfigResponse>('/security/sandbox-config')
@@ -1266,10 +1231,14 @@ export interface CreateUserBody {
 export interface CreateUserResponse {
   username: string
   role: UserRole
+  warning?: string
+  requires_restart?: boolean
 }
 
 export interface DeleteUserResponse {
   deleted: true
+  warning?: string
+  requires_restart?: boolean
 }
 
 export interface ResetUserPasswordBody {
@@ -1279,6 +1248,8 @@ export interface ResetUserPasswordBody {
 export interface ResetUserPasswordResponse {
   username: string
   password_reset: true
+  warning?: string
+  requires_restart?: boolean
 }
 
 export interface UpdateUserRoleBody {
@@ -1288,6 +1259,8 @@ export interface UpdateUserRoleBody {
 export interface UpdateUserRoleResponse {
   username: string
   role: UserRole
+  warning?: string
+  requires_restart?: boolean
 }
 
 export function fetchUsers(): Promise<UserEntry[]> {
