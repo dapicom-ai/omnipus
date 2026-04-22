@@ -72,12 +72,21 @@ type restAPI struct {
 	// of sandbox config. HandleSandboxStatus reads this to enrich the
 	// response with mode and disabled_by.
 	sandboxResult *SandboxApplyResult
+	// appliedConfig is a deep copy of the config that was active when the
+	// gateway process started. It is set once during boot (setupAndStartServices)
+	// and never mutated afterward. HandlePendingRestart compares this snapshot
+	// against the current on-disk config to compute the set of restart-required
+	// changes — keys that differ between persisted and applied represent changes
+	// that will only take effect after a restart.
+	appliedConfig *config.Config
 	// Lazy-initialized admin-only handler wrappers. Built once on first use so
 	// each incoming PUT request doesn't allocate a fresh middleware chain.
 	adminUpdateConfigOnce    sync.Once
 	adminUpdateConfigHandler http.Handler
 	adminPutPoliciesOnce     sync.Once
 	adminPutPoliciesHandler  http.Handler
+	adminPromptGuardOnce     sync.Once
+	adminPromptGuardHandler  http.Handler
 }
 
 // --- CORS / JSON helpers ---
