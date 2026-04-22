@@ -340,3 +340,78 @@ func TestAdminRoutes_UnauthenticatedRequestsRejected(t *testing.T) {
 	}
 	t.Logf("TestAdminRoutes_UnauthenticatedRequestsRejected: %d/%d routes rejected unauthenticated requests", passed, len(allAdminRoutes))
 }
+
+// testMuxRegistrar wraps http.ServeMux to implement httpHandlerRegistrar,
+// allowing registerAdditionalEndpoints to populate a real Go mux in tests.
+type testMuxRegistrar struct {
+	mux *http.ServeMux
+}
+
+func (r *testMuxRegistrar) RegisterHTTPHandler(pattern string, handler http.Handler) {
+	r.mux.Handle(pattern, handler)
+}
+
+// TestSandboxConfigPUT_RealMux_DevModeBypass503 verifies that a PUT to
+// /api/v1/security/sandbox-config returns 503 when dev_mode_bypass=true,
+// exercising the real registerAdditionalEndpoints route chain rather than the
+// parallel test-only chain used by TestAdminRoutes_DevModeBypassReturn503.
+//
+// Defence-in-depth: the matrix test TestAdminRoutes_DevModeBypassReturn503
+// uses a hand-rolled inner chain (RequireAdmin→RequireNotBypass) and skips
+// withAuth entirely. If someone adds a duplicate RegisterHTTPHandler call for
+// /api/v1/security/sandbox-config that drops RequireNotBypass, the matrix test
+// won't catch it — only the source-grep test
+// (TestRegisterHTTPHandler_NoDuplicatePatterns) does. This test exercises the
+// actual production registerAdditionalEndpoints call so any routing downgrade
+// is caught at the HTTP layer.
+//
+// Auth flow: the test pre-injects a config snapshot with DevModeBypass=true
+// into the request context. withAuth reads it via configFromContext; because
+// OMNIPUS_BEARER_TOKEN is empty (newTestRestAPIWithHome clears it) and no
+// users are configured, checkBearerAuth hits the dev-bypass path and returns
+// authenticated-as-admin. RequireAdmin passes (admin role in context).
+// RequireNotBypass then reads the same config snapshot (DevModeBypass=true)
+// and returns 503.
+//
+// Traces to: temporal-puzzling-melody.md Wave 1C — architect follow-up:
+// real-mux bypass test for sandbox-config.
+func TestSandboxConfigPUT_RealMux_DevModeBypass503(t *testing.T) {
+	// newTestRestAPIWithHome clears OMNIPUS_BEARER_TOKEN so no env-token auth
+	// fires; the dev-bypass path in checkBearerAuth is driven by the config
+	// snapshot instead.
+	api := newTestRestAPIWithHome(t)
+
+	// Register all additional endpoints onto a real http.ServeMux.
+	// This exercises the exact same registerAdditionalEndpoints call that
+	// gateway.go makes on startup (production code path, not a hand-rolled chain).
+	mux := http.NewServeMux()
+	api.registerAdditionalEndpoints(&testMuxRegistrar{mux: mux})
+
+	// Build the bypass config snapshot. Pre-injected into the request context so
+	// that (1) checkBearerAuth inside withAuth sees DevModeBypass=true and grants
+	// admin access without a token, and (2) RequireNotBypass sees DevModeBypass=true
+	// and returns 503. withAuth only writes RoleContextKey and UserContextKey — it
+	// does not overwrite ConfigContextKey — so the snapshot survives the full chain.
+	bypassCfg := &config.Config{}
+	bypassCfg.Gateway.DevModeBypass = true
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/security/sandbox-config",
+		strings.NewReader(`{"mode":"permissive"}`))
+	req.Header.Set("Content-Type", "application/json")
+	// checkBearerAuth requires a "Bearer " prefix before it reads the config
+	// for the dev-bypass path. The token value is irrelevant: with no env token
+	// and no users configured, checkBearerAuth will reach the DevModeBypass
+	// branch (line 83 in auth.go) and grant admin access.
+	req.Header.Set("Authorization", "Bearer dev-mode-bypass-sentinel")
+	ctx := context.WithValue(req.Context(), ctxkey.ConfigContextKey{}, bypassCfg)
+	req = req.WithContext(ctx)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code,
+		"PUT /api/v1/security/sandbox-config must return 503 under dev_mode_bypass via real mux; got body: %s",
+		w.Body.String())
+	assert.Contains(t, w.Body.String(), "dev-mode-bypass",
+		"503 body must mention 'dev-mode-bypass'")
+}

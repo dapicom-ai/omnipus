@@ -560,6 +560,45 @@ func TestHandleUserChangeRole_RejectsInvalidRole(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+// TestHandleUserDelete_NonAdmin403 verifies that a user-role (non-admin) caller
+// receives 403 when attempting DELETE /api/v1/users/{username}.
+//
+// The matrix test TestAdminRoutes_AdminOnly already covers this route through
+// the inner middleware chain. This per-handler test makes the admin gate visible
+// to anyone reading rest_users_test.go and exercises the same check at the
+// handler level, providing defence-in-depth against a middleware rewiring.
+//
+// Traces to: temporal-puzzling-melody.md Wave 1C — per-handler NonAdmin403
+// coverage gap identified by test-analyzer #3.
+func TestHandleUserDelete_NonAdmin403(t *testing.T) {
+	api, _, _ := newUserMgmtAPIWithAdmin(t)
+	w := httptest.NewRecorder()
+	middleware.RequireAdmin(
+		http.HandlerFunc(api.HandleUserDelete),
+	).ServeHTTP(w, nonAdminRequest(http.MethodDelete, "/api/v1/users/sometarget", ""))
+	assert.Equal(t, http.StatusForbidden, w.Code,
+		"user-role caller must receive 403 on DELETE /api/v1/users/{username}")
+}
+
+// TestHandleUserChangeRole_NonAdmin403 verifies that a user-role (non-admin)
+// caller receives 403 when attempting PATCH /api/v1/users/{username}/role.
+//
+// Mirrors TestHandleUserDelete_NonAdmin403 and TestHandleUserResetPassword_NonAdmin403;
+// per-handler tests surface the admin gate in the file where the handler lives.
+//
+// Traces to: temporal-puzzling-melody.md Wave 1C — per-handler NonAdmin403
+// coverage gap identified by test-analyzer #3.
+func TestHandleUserChangeRole_NonAdmin403(t *testing.T) {
+	api, _, _ := newUserMgmtAPIWithAdmin(t)
+	body := `{"role":"admin"}`
+	w := httptest.NewRecorder()
+	middleware.RequireAdmin(
+		http.HandlerFunc(api.HandleUserChangeRole),
+	).ServeHTTP(w, nonAdminRequest(http.MethodPatch, "/api/v1/users/sometarget/role", body))
+	assert.Equal(t, http.StatusForbidden, w.Code,
+		"user-role caller must receive 403 on PATCH /api/v1/users/{username}/role")
+}
+
 // --- HandleUserResetPassword ---
 
 // TestHandleUserResetPassword_ZeroesTokenHash verifies that after PUT the
