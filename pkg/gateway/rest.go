@@ -1601,8 +1601,17 @@ func (a *restAPI) refreshConfigAndRewireServices(configPath string) error {
 }
 
 func (a *restAPI) updateConfig(w http.ResponseWriter, r *http.Request) {
+	// Read the raw body once so we can decode it into two shapes: a RawMessage
+	// map for the existing deep-merge persistence path, and a fully-typed
+	// map[string]any for the blockedPaths walker (FR-018) which needs to
+	// recurse into nested objects.
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
 	var updates map[string]json.RawMessage
-	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+	if decodeErr := json.Unmarshal(rawBody, &updates); decodeErr != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
@@ -1617,18 +1626,23 @@ func (a *restAPI) updateConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Block security-sensitive top-level keys — changes to these must go through
-	// their dedicated endpoints to ensure policy validation and audit logging.
-	blocked := map[string]bool{"sandbox": true, "credentials": true, "security": true}
-	for k := range updates {
-		if blocked[k] {
-			jsonErr(
-				w,
-				http.StatusForbidden,
-				fmt.Sprintf("key %q cannot be modified via config endpoint — use the dedicated security endpoints", k),
-			)
-			return
-		}
+	// Block security-sensitive paths at ANY nesting depth (FR-018 / MAJ-004).
+	// The walker handles both nested bodies ({"gateway":{"users":[...]}}) and
+	// dot-path literal keys ({"gateway.users":[...]}). Rejected requests
+	// persist NOTHING — we return before safeUpdateConfigJSON is ever called,
+	// so benign sibling keys in the same body are not written either.
+	var typedBody map[string]any
+	if decodeErr := json.Unmarshal(rawBody, &typedBody); decodeErr != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if path, blocked := matchBlockedPath(typedBody, blockedPaths); blocked {
+		jsonErr(
+			w,
+			http.StatusForbidden,
+			fmt.Sprintf("%s is a blocked path — use the dedicated endpoint", path),
+		)
+		return
 	}
 
 	// Use safeUpdateConfigJSON to hold configMu during the read-modify-write cycle.
