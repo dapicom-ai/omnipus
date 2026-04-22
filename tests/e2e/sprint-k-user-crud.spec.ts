@@ -151,14 +151,6 @@ test('(b) admin creates second admin — no token or Copy button appears', async
   //      When they click "Add user", fill {username, role=admin, password}
   //      Then POST returns {username, role} with NO token; UI shows success toast without any token string
   //
-  // BLOCKED: POST /api/v1/users returns 405 "method not allowed".
-  // HandleUserCreate exists in rest_users.go but is never registered as a route in rest.go (line 1992).
-  // rest.go line 1992 registers HandleUsersList (GET-only) at /api/v1/users.
-  // HandleUserCreate (POST) must also be dispatched from that handler.
-  // Fix required in rest.go by backend-lead: dispatch POST to HandleUserCreate alongside GET→HandleUsersList.
-  // This test is marked test.fail() so it appears as FAIL (loud) not skipped (silent).
-  test.fail(true, 'BLOCKED: POST /api/v1/users → 405 — HandleUserCreate not registered in rest.go line 1992. backend-lead must add route dispatch for POST method.');
-
   await loginViaUI(page, FIRST_ADMIN.username, FIRST_ADMIN.password);
   await navigateToAccessTab(page);
 
@@ -221,11 +213,6 @@ test('(c) second admin can log in and sees Access tab', async ({ page }) => {
   //      When they log in via the login form
   //      Then login succeeds and the Access tab is visible (admin privilege active)
   //
-  // BLOCKED: Depends on test (b) creating second-admin.
-  // test (b) is blocked because POST /api/v1/users → 405 (HandleUserCreate not registered in rest.go line 1992).
-  // Fix required in rest.go by backend-lead before this test can pass.
-  test.fail(true, 'BLOCKED: Depends on test (b) — POST /api/v1/users → 405. See rest.go line 1992.');
-
   await loginViaUI(page, SECOND_ADMIN.username, SECOND_ADMIN.password);
 
   // ── Then: Settings → Access tab is visible for admin ─────────────────────
@@ -255,10 +242,6 @@ test('(d) second admin deletes first-admin and deployment remains with >=1 admin
   //      When they delete first-admin (who is NOT the last admin)
   //      Then deletion succeeds, first-admin row disappears, second-admin remains
   //
-  // BLOCKED: Depends on test (b) creating second-admin.
-  // test (b) is blocked because POST /api/v1/users → 405 (HandleUserCreate not registered in rest.go line 1992).
-  test.fail(true, 'BLOCKED: Depends on test (b) — POST /api/v1/users → 405. See rest.go line 1992.');
-
   await loginViaUI(page, SECOND_ADMIN.username, SECOND_ADMIN.password);
   await navigateToAccessTab(page);
 
@@ -309,10 +292,6 @@ test('(e) last-admin guard: delete button disabled when second-admin is the only
   //      When they open the per-row menu on their own row
   //      Then the Delete option is disabled (grayed out) — UI-level guard
   //
-  // BLOCKED: Depends on test (b) creating second-admin AND test (d) deleting first-admin.
-  // test (b) is blocked because POST /api/v1/users → 405 (HandleUserCreate not registered in rest.go line 1992).
-  test.fail(true, 'BLOCKED: Depends on test (b) — POST /api/v1/users → 405. See rest.go line 1992.');
-
   await loginViaUI(page, SECOND_ADMIN.username, SECOND_ADMIN.password);
   await navigateToAccessTab(page);
 
@@ -347,18 +326,11 @@ test('(f) backend last-admin guard: DELETE /api/v1/users/{last-admin} returns 40
   //
   // This test uses page.request.fetch() to bypass the UI guard and hit the API directly.
   //
-  // NOTE: This test can actually run against first-admin (the only admin in a fresh gateway)
-  // without needing test (b) to have succeeded. The last-admin guard fires for any DELETE
-  // that would leave zero admins. However, we mark it BLOCKED because the full scenario
-  // flow (second-admin deletes first, then first's guard fires) requires test (b) to pass.
-  // The DELETE /api/v1/users/{username} route IS registered via handleUsersWithParam, so
-  // this specific assertion (409 on last-admin) is testable independently.
-  //
-  // PARTIAL: The DELETE route itself works (handleUsersWithParam dispatches it).
-  // We test it against FIRST_ADMIN (the only admin in a fresh gateway) which IS the last admin.
-  // This sub-test is NOT blocked — it tests handleUsersWithParam, not HandleUserCreate.
+  // Precondition: test (d) has already deleted first-admin, so second-admin is the only admin.
+  // second-admin tries to DELETE themselves via the API (bypassing the disabled UI button).
+  // The backend last-admin guard must fire and return 409.
 
-  await loginViaUI(page, FIRST_ADMIN.username, FIRST_ADMIN.password);
+  await loginViaUI(page, SECOND_ADMIN.username, SECOND_ADMIN.password);
 
   // Extract the auth token from localStorage (mirrored from sessionStorage by loginViaUI)
   const token = await page.evaluate(() => {
@@ -389,10 +361,10 @@ test('(f) backend last-admin guard: DELETE /api/v1/users/{last-admin} returns 40
     csrfToken = refreshedCsrf?.value ?? '';
   }
 
-  // Attempt to DELETE first-admin (the ONLY admin in a fresh gateway) via API.
-  // Since test (b) is blocked and second-admin was never created, first-admin is the last admin.
-  // This proves the backend guard fires when you try to delete the last admin.
-  const res = await page.request.delete(`${GATEWAY_URL}/api/v1/users/${FIRST_ADMIN.username}`, {
+  // Attempt to DELETE second-admin (the only remaining admin) via API directly.
+  // This bypasses the disabled UI button in test (e) to prove the backend guard is enforced.
+  // Traces to: sprint-k spec line 328 — "Last-admin guard INSIDE safeUpdateConfigJSON callback"
+  const res = await page.request.delete(`${GATEWAY_URL}/api/v1/users/${SECOND_ADMIN.username}`, {
     headers: {
       Authorization: `Bearer ${token}`,
       ...(csrfToken
