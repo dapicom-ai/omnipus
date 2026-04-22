@@ -83,3 +83,4 @@ tests/e2e/fixtures/.auth/
 # Perf — results ARE committed for trend analysis
 !tests/perf/results/
 !tests/perf/results/**
+gateway.pid
