@@ -4,7 +4,12 @@
 
 package config
 
-import "testing"
+import (
+	"os"
+	"reflect"
+	"strings"
+	"testing"
+)
 
 // TestOmnipusSandboxConfig_ResolvedMode_Precedence verifies the Sprint-J
 // legacy mapping between the new Mode field and the deprecated Enabled
@@ -31,5 +36,60 @@ func TestOmnipusSandboxConfig_ResolvedMode_Precedence(t *testing.T) {
 				t.Errorf("ResolvedMode() = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestSSRFConfig_AllowInternalRemainsStringList pins CRIT-001 from the
+// Sprint K spec: the existing OmnipusSSRFConfig.AllowInternal must stay
+// []string (heterogeneous: hostnames, IPs, CIDRs all in one list). Any
+// refactor that introduces a bool or a separate allow_internal_cidrs
+// field flips the answer to this test and fails loudly — that was the
+// exact mistake the spec's CRIT-001 resolution forbids.
+func TestSSRFConfig_AllowInternalRemainsStringList(t *testing.T) {
+	rt := reflect.TypeOf((*OmnipusSSRFConfig)(nil)).Elem()
+	field, ok := rt.FieldByName("AllowInternal")
+	if !ok {
+		t.Fatalf("OmnipusSSRFConfig.AllowInternal field missing — CRIT-001 regression")
+	}
+	if got := field.Type.String(); got != "[]string" {
+		t.Fatalf("OmnipusSSRFConfig.AllowInternal type = %q, want %q — CRIT-001 regression",
+			got, "[]string")
+	}
+	// Defensively assert no neighbouring field was introduced that would
+	// compete with AllowInternal. "AllowInternalCIDRs" was the shape the
+	// spec's earlier draft proposed and the revision rejected; guard
+	// against a future re-introduction.
+	if _, leaked := rt.FieldByName("AllowInternalCIDRs"); leaked {
+		t.Fatalf("OmnipusSSRFConfig.AllowInternalCIDRs must not exist — CRIT-001 regression")
+	}
+}
+
+// TestAllowedPaths_ReadOnlySemanticDocumented pins CRIT-004: the
+// AllowedPaths field's doc comment must describe READ access only,
+// never write. A drive-by edit that swaps "may read" for "may write"
+// (or drops the phrase) would silently broaden the sandbox grant; this
+// test makes that regression loud.
+func TestAllowedPaths_ReadOnlySemanticDocumented(t *testing.T) {
+	data, err := os.ReadFile("sandbox.go")
+	if err != nil {
+		t.Fatalf("read sandbox.go: %v", err)
+	}
+	src := string(data)
+	idx := strings.Index(src, "AllowedPaths []string")
+	if idx < 0 {
+		t.Fatal("AllowedPaths field declaration not found in sandbox.go — CRIT-004 regression")
+	}
+	// Walk back up to the preceding blank line and collect the doc-comment block.
+	commentBlock := src[:idx]
+	if nl := strings.LastIndex(commentBlock, "\n\n"); nl >= 0 {
+		commentBlock = commentBlock[nl:]
+	}
+	if !strings.Contains(commentBlock, "may read") {
+		t.Fatalf("AllowedPaths doc comment must contain \"may read\" to pin CRIT-004 read-only semantics; got:\n%s",
+			commentBlock)
+	}
+	if strings.Contains(commentBlock, "may write") {
+		t.Fatalf("AllowedPaths doc comment must NOT say \"may write\" — CRIT-004 regression:\n%s",
+			commentBlock)
 	}
 }
