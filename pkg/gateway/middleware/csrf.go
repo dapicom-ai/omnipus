@@ -24,18 +24,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 )
 
-// CSRFCookieName is the name of the double-submit cookie.
-//
-// The __Host- prefix enforces three properties at the browser layer:
-//   - Secure must be set
-//   - Domain must be absent (attaches only to the exact host that issued it)
-//   - Path must be /
-//
-// If any of those are violated the browser refuses to store the cookie.
-// This is defense-in-depth against a weaker cookie slipping out.
+// CSRFCookieName is the preferred name when the request is over TLS. The
+// __Host- prefix enforces Secure=true, Domain unset, Path=/ at the browser
+// layer — defense-in-depth against a weaker cookie slipping out.
 const CSRFCookieName = "__Host-csrf"
+
+// CSRFCookieNameHTTP is the fallback name used on plain-HTTP deployments.
+// Browsers silently drop __Host- cookies without Secure for non-localhost
+// origins, which breaks the SPA on operator-managed plain-HTTP gateways
+// (e.g. behind a reverse proxy that terminates TLS). Operators deploying
+// over plain HTTP accept the weaker same-origin defense intentionally; the
+// double-submit header is still verified.
+const CSRFCookieNameHTTP = "csrf"
 
 // CSRFHeaderName is the header that clients must echo with the cookie value.
 //
@@ -298,10 +301,28 @@ func CSRFMiddleware(opts ...Option) func(http.Handler) http.Handler {
 				return
 			}
 
+			// Bearer-token bypass: a browser cannot set an Authorization
+			// header cross-origin without explicit fetch/XHR cooperation that
+			// must come from same-origin script anyway, so the CSRF threat
+			// model (a victim's cookie auto-sent on a cross-origin form POST)
+			// does not apply. Bearer-auth API clients (curl, CLIs, non-browser
+			// SDKs) therefore do not need the cookie.
+			if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Accept either cookie flavor. IssueCSRFCookie branches on the
+			// request's TLS state, so TLS clients get __Host-csrf and plain-HTTP
+			// clients get csrf. The gate accepts whichever the browser is
+			// sending.
 			cookie, err := r.Cookie(CSRFCookieName)
 			if err != nil || cookie.Value == "" {
-				writeCSRFError(w, "csrf cookie missing")
-				return
+				cookie, err = r.Cookie(CSRFCookieNameHTTP)
+				if err != nil || cookie.Value == "" {
+					writeCSRFError(w, "csrf cookie missing")
+					return
+				}
 			}
 
 			header := r.Header.Get(CSRFHeaderName)
@@ -323,6 +344,21 @@ func CSRFMiddleware(opts ...Option) func(http.Handler) http.Handler {
 	}
 }
 
+// requestIsSecure reports whether the request arrived over TLS, either
+// directly or via a trusted reverse proxy that set X-Forwarded-Proto=https.
+// Deployments terminating TLS at a proxy should configure the proxy to set
+// this header; without it we fall back to assuming plain HTTP and issue the
+// non-prefixed cookie.
+func requestIsSecure(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		return true
+	}
+	return false
+}
+
 // IssueCSRFCookie generates a fresh 256-bit random token, base64-url encodes
 // it, and writes it as the __Host-csrf cookie on the response.
 //
@@ -342,24 +378,27 @@ func CSRFMiddleware(opts ...Option) func(http.Handler) http.Handler {
 // modern browsers treat 127.0.0.1/localhost as a "potentially trustworthy
 // origin" and honor Secure cookies over http. For arbitrary hosts, the
 // gateway must run on TLS.
-func IssueCSRFCookie(w http.ResponseWriter) error {
+func IssueCSRFCookie(w http.ResponseWriter, r *http.Request) error {
 	buf := make([]byte, csrfTokenBytes)
 	if _, err := rand.Read(buf); err != nil {
 		return fmt.Errorf("csrf: rand.Read: %w", err)
 	}
 	token := base64.RawURLEncoding.EncodeToString(buf)
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     CSRFCookieName,
+	cookie := &http.Cookie{
 		Value:    token,
 		Path:     "/",
 		HttpOnly: false,
-		Secure:   true,
 		SameSite: http.SameSiteStrictMode,
-		// No Domain — __Host- forbids it.
-		// No MaxAge — session cookie; lives until the browser closes. The
-		// SPA re-issues on every login/onboarding/refresh.
-	})
+	}
+	if requestIsSecure(r) {
+		cookie.Name = CSRFCookieName
+		cookie.Secure = true
+	} else {
+		cookie.Name = CSRFCookieNameHTTP
+		cookie.Secure = false
+	}
+	http.SetCookie(w, cookie)
 	return nil
 }
 

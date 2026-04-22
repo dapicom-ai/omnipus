@@ -1882,7 +1882,7 @@ func (a *restAPI) runDiagnosticChecks(cfg *config.Config) []map[string]any {
 			"severity":       "medium",
 			"title":          "Sandbox is disabled",
 			"description":    "Filesystem and process sandboxing is not enabled. Agent tool executions run without confinement.",
-			"recommendation": "Enable sandbox in config.json for production use.",
+			"recommendation": "Open Settings → Process Sandbox to enable sandbox mode for production use.",
 		})
 	}
 

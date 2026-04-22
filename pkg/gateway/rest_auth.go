@@ -372,7 +372,7 @@ func (a *restAPI) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	// Cookie mint failure means the OS RNG is broken — refuse to return the
 	// bearer token to avoid issuing a session that cannot make CSRF-protected
 	// requests.
-	if err := middleware.IssueCSRFCookie(w); err != nil {
+	if err := middleware.IssueCSRFCookie(w, r); err != nil {
 		slog.Error("auth: issue CSRF cookie failed", "error", err)
 		jsonErr(w, http.StatusInternalServerError, "session init failed")
 		return
@@ -510,7 +510,7 @@ func (a *restAPI) HandleRegisterAdmin(w http.ResponseWriter, r *http.Request) {
 	// immediately make state-changing requests without being blocked by the
 	// CSRF middleware (issue #97). Cookie mint failure means the OS RNG is
 	// broken — refuse to return the bearer token to prevent an unusable session.
-	if err := middleware.IssueCSRFCookie(w); err != nil {
+	if err := middleware.IssueCSRFCookie(w, r); err != nil {
 		slog.Error("auth: issue CSRF cookie failed", "error", err)
 		jsonErr(w, http.StatusInternalServerError, "session init failed")
 		return

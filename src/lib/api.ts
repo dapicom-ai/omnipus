@@ -9,8 +9,13 @@
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? ''
 
-// CSRF_COOKIE_NAME must match pkg/gateway/middleware/csrf.go CSRFCookieName.
+// The server issues one of two cookie names depending on the request's TLS
+// state. TLS: __Host-csrf (browser enforces Secure + Path=/ + no Domain).
+// Plain HTTP: csrf (no __Host- prefix, Secure=false) — __Host- cookies are
+// silently dropped by browsers on non-localhost plain-HTTP origins.
+// Keep both constants in sync with pkg/gateway/middleware/csrf.go.
 const CSRF_COOKIE_NAME = '__Host-csrf'
+const CSRF_COOKIE_NAME_HTTP = 'csrf'
 const CSRF_HEADER_NAME = 'X-CSRF-Token'
 const STATE_CHANGING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
@@ -38,23 +43,23 @@ const CSRF_EXEMPT_PATHS = new Set<string>([
 // tokens on the next state-changing call.
 function readCSRFCookie(): string | null {
   if (typeof document === 'undefined') return null
-  const prefix = `${CSRF_COOKIE_NAME}=`
-  // document.cookie is a single string of "a=b; c=d" pairs. We walk the
-  // pairs manually rather than split on ";" because cookie values can
-  // contain "=" (and base64 tokens certainly can).
-  for (const part of document.cookie.split(';')) {
-    const trimmed = part.trim()
-    if (trimmed.startsWith(prefix)) {
-      const raw = trimmed.slice(prefix.length)
-      // Apply decodeURIComponent defensively: if the browser percent-encoded
-      // the cookie value (e.g. standard base64 "=", "+", "/"), we decode it
-      // so the header value matches what the server originally set. If
-      // decoding fails (malformed sequence such as a lone "%"), fall back to
-      // the raw string and let the server compare verbatim.
-      try {
-        return decodeURIComponent(raw)
-      } catch {
-        return raw
+  // Try __Host-csrf (TLS) first, then the plain-HTTP fallback.
+  for (const name of [CSRF_COOKIE_NAME, CSRF_COOKIE_NAME_HTTP]) {
+    const prefix = `${name}=`
+    for (const part of document.cookie.split(';')) {
+      const trimmed = part.trim()
+      if (trimmed.startsWith(prefix)) {
+        const raw = trimmed.slice(prefix.length)
+        // Apply decodeURIComponent defensively: if the browser percent-encoded
+        // the cookie value (e.g. standard base64 "=", "+", "/"), we decode it
+        // so the header value matches what the server originally set. If
+        // decoding fails (malformed sequence such as a lone "%"), fall back to
+        // the raw string and let the server compare verbatim.
+        try {
+          return decodeURIComponent(raw)
+        } catch {
+          return raw
+        }
       }
     }
   }
@@ -101,7 +106,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   ) {
     throw new Error(
       `CSRF cookie missing — cannot ${method} ${path}. ` +
-        `Log in or complete onboarding first so the server can issue the __Host-csrf cookie.`,
+        `Log in or complete onboarding first so the server can issue the CSRF cookie.`,
     )
   }
 
@@ -928,7 +933,7 @@ export async function uploadFiles(sessionId: string, files: File[]): Promise<{ f
   // off chance the user explicitly set the cookie externally.
   if (csrf === null) {
     throw new Error(
-      'CSRF cookie missing — cannot upload files. Log in first so the server can issue the __Host-csrf cookie.',
+      'CSRF cookie missing — cannot upload files. Log in first so the server can issue the CSRF cookie.',
     )
   }
   // Build headers by hand because FormData must NOT have a Content-Type

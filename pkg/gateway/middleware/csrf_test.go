@@ -8,6 +8,7 @@ package middleware
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -263,6 +264,58 @@ func TestCSRF_WithClientIPFunc_FallbackRemoteAddr(t *testing.T) {
 	assert.Equal(t, "192.0.2.7:51234", seenIP, "fallback must be r.RemoteAddr")
 }
 
+func TestCSRFMiddleware_BearerBypass(t *testing.T) {
+	h := buildMW()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/doctor", nil)
+	req.Header.Set("Authorization", "Bearer omnipus_abcdef0123456789")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code,
+		"Bearer-auth clients skip the CSRF gate (browsers cannot set Authorization cross-origin)")
+	assert.Equal(t, "next-ran", rec.Body.String())
+}
+
+func TestCSRFMiddleware_BearerBypass_MissingPrefixStillGated(t *testing.T) {
+	h := buildMW()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/doctor", nil)
+	req.Header.Set("Authorization", "Basic dXNlcjpwYXNz")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code,
+		"only Bearer bypass; Basic auth must still be gated")
+}
+
+func TestCSRFMiddleware_PlainHTTPCookieAccepted(t *testing.T) {
+	h := buildMW()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/doctor", nil)
+	req.AddCookie(&http.Cookie{Name: CSRFCookieNameHTTP, Value: "plainvalue"})
+	req.Header.Set(CSRFHeaderName, "plainvalue")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code,
+		"plain-HTTP deployments send csrf (no __Host- prefix); gate accepts it")
+}
+
+func TestCSRFMiddleware_HostCookiePreferredOverPlain(t *testing.T) {
+	h := buildMW()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/doctor", nil)
+	req.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: "hostvalue"})
+	req.AddCookie(&http.Cookie{Name: CSRFCookieNameHTTP, Value: "plainvalue"})
+	req.Header.Set(CSRFHeaderName, "hostvalue")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code,
+		"when both cookies are present, __Host-csrf wins (matches header)")
+}
+
 func TestCSRF_NilOptionIgnored(t *testing.T) {
 	// Passing a nil Option must be safely ignored, not panic. This lets
 	// callers conditionally apply options via a ternary without branching.
@@ -276,32 +329,60 @@ func TestCSRF_NilOptionIgnored(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
-func TestIssueCSRFCookie_Attributes(t *testing.T) {
+func TestIssueCSRFCookie_TLS_Attributes(t *testing.T) {
 	rec := httptest.NewRecorder()
-	require.NoError(t, IssueCSRFCookie(rec))
+	req := httptest.NewRequest(http.MethodPost, "https://example/api/v1/auth/login", nil)
+	req.TLS = &tls.ConnectionState{}
+	require.NoError(t, IssueCSRFCookie(rec, req))
 
 	cookies := rec.Result().Cookies()
 	require.Len(t, cookies, 1, "exactly one cookie must be set")
 	c := cookies[0]
 
-	assert.Equal(t, CSRFCookieName, c.Name, "cookie must be __Host-csrf")
+	assert.Equal(t, CSRFCookieName, c.Name, "TLS request must yield __Host-csrf")
 	assert.Equal(t, "/", c.Path, "__Host- requires Path=/")
 	assert.Empty(t, c.Domain, "__Host- requires no Domain attribute")
 	assert.True(t, c.Secure, "__Host- requires Secure")
 	assert.False(t, c.HttpOnly, "SPA must be able to read the cookie via document.cookie")
 	assert.Equal(t, http.SameSiteStrictMode, c.SameSite, "must be SameSite=Strict for CSRF protection")
-	// 32 random bytes base64-url-encoded = 43 chars (no padding).
 	assert.Len(t, c.Value, 43, "token must be 32 bytes base64-url-encoded without padding")
 }
 
+func TestIssueCSRFCookie_PlainHTTP_Downgrade(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://example/api/v1/auth/login", nil)
+	require.NoError(t, IssueCSRFCookie(rec, req))
+
+	cookies := rec.Result().Cookies()
+	require.Len(t, cookies, 1)
+	c := cookies[0]
+
+	assert.Equal(t, CSRFCookieNameHTTP, c.Name, "plain-HTTP must yield csrf (no __Host- prefix)")
+	assert.False(t, c.Secure, "plain-HTTP cookie must not set Secure (browser would refuse to store)")
+	assert.Equal(t, "/", c.Path)
+	assert.Equal(t, http.SameSiteStrictMode, c.SameSite)
+	assert.False(t, c.HttpOnly)
+}
+
+func TestIssueCSRFCookie_XForwardedProto_HTTPS(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "http://example/api/v1/auth/login", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	require.NoError(t, IssueCSRFCookie(rec, req))
+
+	cookies := rec.Result().Cookies()
+	require.Len(t, cookies, 1)
+	assert.Equal(t, CSRFCookieName, cookies[0].Name, "proxy-terminated TLS must yield __Host-csrf")
+	assert.True(t, cookies[0].Secure)
+}
+
 func TestIssueCSRFCookie_TokenIsUnique(t *testing.T) {
-	// Sanity check: two successive calls produce distinct tokens. Not a
-	// real entropy test (that belongs in a fuzz run), but it catches the
-	// common bug of accidentally returning a constant.
+	req := httptest.NewRequest(http.MethodPost, "https://example/api/v1/auth/login", nil)
+	req.TLS = &tls.ConnectionState{}
 	seen := map[string]bool{}
 	for i := 0; i < 16; i++ {
 		rec := httptest.NewRecorder()
-		require.NoError(t, IssueCSRFCookie(rec))
+		require.NoError(t, IssueCSRFCookie(rec, req))
 		c := rec.Result().Cookies()[0]
 		assert.False(t, seen[c.Value], "token collision on iteration %d: %q", i, c.Value)
 		seen[c.Value] = true
@@ -310,11 +391,12 @@ func TestIssueCSRFCookie_TokenIsUnique(t *testing.T) {
 
 func TestIssueCSRFCookie_HeaderIsParseable(t *testing.T) {
 	rec := httptest.NewRecorder()
-	require.NoError(t, IssueCSRFCookie(rec))
+	req := httptest.NewRequest(http.MethodPost, "https://example/api/v1/auth/login", nil)
+	req.TLS = &tls.ConnectionState{}
+	require.NoError(t, IssueCSRFCookie(rec, req))
 	setCookie := rec.Header().Get("Set-Cookie")
 	require.NotEmpty(t, setCookie)
 
-	// Must include all required attributes literally.
 	assert.True(t, strings.HasPrefix(setCookie, CSRFCookieName+"="),
 		"Set-Cookie must start with __Host-csrf=")
 	assert.Contains(t, setCookie, "Path=/")
