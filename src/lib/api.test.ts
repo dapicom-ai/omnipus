@@ -394,7 +394,7 @@ describe('Sprint K API helpers', () => {
 
   describe('updateSandboxConfig', () => {
     it('PUT /api/v1/security/sandbox-config — sends CSRF and body', async () => {
-      const body = { mode: 'strict', allowed_paths: ['/tmp'], ssrf: { enabled: true, allow_internal: false } }
+      const body = { mode: 'strict', allowed_paths: ['/tmp'], ssrf: { enabled: true, allow_internal: ['127.0.0.1'] } }
       fetchSpy.mockResolvedValueOnce(makeOkResponse(body))
 
       const { updateSandboxConfig } = await import('./api')
