@@ -17,8 +17,9 @@ vi.mock('@/store/ui', () => ({
 }))
 
 vi.mock('@/store/auth', () => ({
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  useAuthStore: vi.fn((selector: any) => selector({ role: 'admin' })),
+  useAuthStore: vi.fn((selector: (s: { role?: string; user?: { username: string } }) => unknown) =>
+    selector({ role: 'admin', user: { username: 'testadmin' } }),
+  ),
 }))
 
 import { fetchRetention, updateRetention, triggerRetentionSweep } from '@/lib/api'
@@ -45,8 +46,10 @@ const mockAddToast = vi.fn()
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(useUiStore).mockReturnValue({ addToast: mockAddToast } as never)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  vi.mocked(useAuthStore).mockImplementation((selector: any) => selector({ role: 'admin' }))
+  vi.mocked(useAuthStore).mockImplementation(
+    ((selector: (s: { role?: string; user?: { username: string } }) => unknown) =>
+      selector({ role: 'admin', user: { username: 'testadmin' } })) as never,
+  )
 })
 
 // =====================================================================
@@ -228,8 +231,10 @@ describe('RetentionSection — sweep button', () => {
 
 describe('RetentionSection — non-admin', () => {
   it('hides Save button for non-admin', async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    vi.mocked(useAuthStore).mockImplementation((selector: any) => selector({ role: 'user' }))
+    vi.mocked(useAuthStore).mockImplementation(
+      ((selector: (s: { role?: string; user?: { username: string } }) => unknown) =>
+        selector({ role: 'user', user: { username: 'testuser' } })) as never,
+    )
     vi.mocked(fetchRetention).mockResolvedValue({ session_days: 0, disabled: false })
 
     renderSection()

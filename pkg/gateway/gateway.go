@@ -412,13 +412,13 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 	msgBus := bus.NewMessageBus()
 	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider)
 
-	// Sprint J (FR-J-001..016): Apply the kernel sandbox to the gateway
-	// process BEFORE any HTTP listener binds. Strict ordering:
+	// Apply the kernel sandbox to the gateway process BEFORE any HTTP listener
+	// binds. Strict ordering:
 	//   unlock → config → NewAgentLoop → applySandbox → setupAndStartServices
-	// where setupAndStartServices ends in ChannelManager.StartAll which
-	// calls ListenAndServe on the shared HTTP server. During the
-	// Apply→Install→listen window, external TCP probes receive
-	// ECONNREFUSED (FR-J-016) because the socket simply does not exist yet.
+	// where setupAndStartServices ends in ChannelManager.StartAll which calls
+	// ListenAndServe on the shared HTTP server. During the Apply→Install→listen
+	// window, external TCP probes receive ECONNREFUSED because the socket does
+	// not exist yet.
 	sandboxResult, sandboxErr := applySandbox(SandboxApplyOptions{
 		CLIMode:  opts.SandboxMode,
 		Cfg:      cfg,
@@ -867,7 +867,7 @@ func setupAndStartServices(
 		credStore:     credStore,
 		mediaStore:    runningServices.MediaStore,
 		ssrfChecker:   agent.GetSSRFChecker(agentLoop), // SEC-24: nil when SSRF disabled
-		sandboxResult: sandboxResult,                   // Sprint J: immutable post-boot snapshot
+		sandboxResult: sandboxResult,                   // immutable post-boot snapshot
 		appliedConfig: mustDeepCopyConfig(cfg),           // boot-time snapshot for pending-restart diff
 	}
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions", api.withAuth(api.HandleSessions))

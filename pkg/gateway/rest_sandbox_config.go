@@ -22,10 +22,9 @@ import (
 // Only fields present in the request body are touched on disk; untouched
 // fields retain their existing values.
 //
-// Accepts both flat fields (wave5/PR #137 contract: ssrf_enabled,
-// ssrf_allow_internal, allow_network_outbound) and nested ssrf object
-// (Sprint K contract: ssrf.allow_internal). Flat fields take precedence
-// when both are present.
+// Accepts both flat fields (ssrf_enabled, ssrf_allow_internal,
+// allow_network_outbound) and nested ssrf object (ssrf.allow_internal).
+// Flat fields take precedence when both are present.
 type sandboxConfigPutBody struct {
 	Mode                 *string                   `json:"mode,omitempty"`
 	AllowNetworkOutbound *bool                     `json:"allow_network_outbound,omitempty"`
@@ -35,7 +34,7 @@ type sandboxConfigPutBody struct {
 	SSRF                 *sandboxConfigPutBodySSRF `json:"ssrf,omitempty"`
 }
 
-// sandboxConfigPutBodySSRF carries the nested ssrf sub-object for Sprint K
+// sandboxConfigPutBodySSRF carries the nested ssrf sub-object for
 // clients that send ssrf.allow_internal. Flat ssrf_allow_internal takes
 // precedence when both are present in the same request.
 type sandboxConfigPutBodySSRF struct {
@@ -51,22 +50,15 @@ var validSandboxModes = map[string]bool{
 
 // HandleSandboxConfig handles GET/PUT /api/v1/security/sandbox-config.
 //
-// GET returns:
+// GET returns the full sandbox config. See pkg/gateway/rest_sandbox_config_test.go
+// for the exact response and request shapes.
 //
-//	{
-//	  "mode":          string,
-//	  "allowed_paths": []string,
-//	  "ssrf": {
-//	    "enabled":        bool,
-//	    "allow_internal": []string
-//	  }
-//	}
-//
-// PUT accepts a partial body — any subset of {allowed_paths, ssrf.allow_internal}.
-// On validation success each changed field is persisted atomically via
-// safeUpdateConfigJSON; the response reports requires_restart=true iff
-// allowed_paths was in the body (restart-gated per RestartGatedKeys).
-// ssrf.allow_internal is hot-reload.
+// PUT accepts a partial body — any subset of
+// {mode, allow_network_outbound, allowed_paths, ssrf_enabled,
+// ssrf_allow_internal, ssrf.allow_internal}. On validation success each
+// changed field is persisted atomically via safeUpdateConfigJSON.
+// mode and allowed_paths are restart-gated (requires_restart=true).
+// ssrf.allow_internal is hot-reload (requires_restart=false).
 //
 // Admin-only: non-admin PUT returns 403.
 func (a *restAPI) HandleSandboxConfig(w http.ResponseWriter, r *http.Request) {
@@ -103,8 +95,7 @@ func (a *restAPI) getSandboxConfig(w http.ResponseWriter, r *http.Request) {
 		applied = string(a.sandboxResult.ApplyState.Mode)
 	}
 
-	// Return both the flat-field shape (wave5 contract, pre-existing tests)
-	// and the nested ssrf object (Sprint K's component reads ssrf.allow_internal).
+	// Return both the flat-field shape and the nested ssrf object.
 	// The flat fields are the canonical wire format; the nested ssrf block is
 	// included for backward-compatible clients. Both are safe to include — JSON
 	// consumers pick what they need.
@@ -115,7 +106,7 @@ func (a *restAPI) getSandboxConfig(w http.ResponseWriter, r *http.Request) {
 		"ssrf_enabled":          cfg.Sandbox.SSRF.Enabled,
 		"ssrf_allow_internal":   allowInternal,
 		"applied_mode":          applied,
-		// Nested ssrf object — consumed by Sprint K's allowed_paths/SSRF editor.
+		// Nested ssrf object for backward-compatible clients.
 		"ssrf": map[string]any{
 			"enabled":        cfg.Sandbox.SSRF.Enabled,
 			"allow_internal": allowInternal,
@@ -293,13 +284,12 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// mode and allowed_paths are restart-gated (sandbox applied once at
-	// boot per FR-J-015). ssrf.allow_internal is hot-reload via config poll.
+	// mode and allowed_paths are restart-gated (sandbox applied once at boot).
+	// ssrf.allow_internal is hot-reload via config poll.
 	partialRestartRequired := changedMode || changedAllowedPaths
 
-	// Return the updated config so the UI can cache-update without a
-	// follow-up GET. Include both flat fields (wave5 contract) and nested
-	// ssrf object (Sprint K contract).
+	// Return the updated config so the UI can cache-update without a follow-up GET.
+	// Include both flat fields and nested ssrf object for backward-compatible clients.
 	if a.agentLoop != nil {
 		cfg := a.agentLoop.GetConfig()
 		allowedPaths := cfg.Sandbox.AllowedPaths

@@ -12,7 +12,6 @@ import (
 	"net/http"
 
 	"github.com/dapicom-ai/omnipus/pkg/audit"
-	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 )
 
 // HandlePromptGuard handles GET/PUT /api/v1/security/prompt-guard.
@@ -40,20 +39,15 @@ func (a *restAPI) HandlePromptGuard(w http.ResponseWriter, r *http.Request) {
 		})
 
 	case http.MethodPut:
-		a.adminPromptGuardOnce.Do(func() {
-			a.adminPromptGuardHandler = middleware.RequireAdmin(
-				http.HandlerFunc(a.putPromptGuard),
-			)
-		})
-		a.adminPromptGuardHandler.ServeHTTP(w, r)
+		a.putPromptGuard(w, r)
 
 	default:
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
 }
 
-// putPromptGuard is the admin-only body of PUT /api/v1/security/prompt-guard.
-// It is called only after RequireAdmin has confirmed the caller holds admin role.
+// putPromptGuard is the handler body for PUT /api/v1/security/prompt-guard.
+// Admin enforcement is handled by adminWrap at route registration in rest.go.
 func (a *restAPI) putPromptGuard(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var body struct {

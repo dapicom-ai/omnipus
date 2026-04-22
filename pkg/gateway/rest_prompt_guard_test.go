@@ -22,6 +22,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/gateway/ctxkey"
+	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 )
 
 // promptGuardPUT is a test helper that issues an authenticated admin PUT to
@@ -93,7 +94,8 @@ func TestHandlePromptGuard_HotReload(t *testing.T) {
 }
 
 // TestHandlePromptGuard_NonAdmin403 verifies that a PUT from a non-admin user
-// returns 403 without mutating config.
+// returns 403 without mutating config. The test wraps HandlePromptGuard with
+// RequireAdmin to mirror the adminWrap applied at route registration in rest.go.
 func TestHandlePromptGuard_NonAdmin403(t *testing.T) {
 	api := newTestRestAPIWithHome(t)
 	payload := `{"level":"high"}`
@@ -101,7 +103,7 @@ func TestHandlePromptGuard_NonAdmin403(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPut, "/api/v1/security/prompt-guard", strings.NewReader(payload))
 	r.Header.Set("Content-Type", "application/json")
 	r = withNonAdminRole(r)
-	api.HandlePromptGuard(w, r)
+	middleware.RequireAdmin(http.HandlerFunc(api.HandlePromptGuard)).ServeHTTP(w, r)
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }

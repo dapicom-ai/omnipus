@@ -507,7 +507,7 @@ export function SandboxSection(): React.ReactElement {
     queryFn: fetchSandboxConfig,
   })
 
-  // ── Mode editor state (PR #137) ────────────────────────────────────────────
+  // ── Mode editor state ─────────────────────────────────────────────────────
   // Separate from the paths/SSRF editing state so the two sections are
   // independently editable.
   const [modeEditing, setModeEditing] = useState(false)
@@ -541,7 +541,7 @@ export function SandboxSection(): React.ReactElement {
     statusData.abi_version >= 4 &&
     typeof (statusData as SandboxStatus & { issue_ref?: string }).issue_ref === 'string'
 
-  // ── Paths/SSRF editor state (Sprint K) ────────────────────────────────────
+  // ── Paths/SSRF editor state ───────────────────────────────────────────────
   const [isEditing, setIsEditing] = useState(false)
 
   const [pathList, setPathList] = useState<string[]>([])
@@ -582,7 +582,7 @@ export function SandboxSection(): React.ReactElement {
     }
   }, [configData])
 
-  // ── Mode save mutation (PR #137) ───────────────────────────────────────────
+  // ── Mode save mutation ────────────────────────────────────────────────────
   const { mutate: doSaveMode, isPending: savingMode } = useMutation({
     mutationFn: updateSandboxConfig,
     onSuccess: (saved) => {
@@ -601,7 +601,7 @@ export function SandboxSection(): React.ReactElement {
       addToast({ message: err.message, variant: 'error' }),
   })
 
-  // ── Paths/SSRF save mutation (Sprint K) ───────────────────────────────────
+  // ── Paths/SSRF save mutation ──────────────────────────────────────────────
   const saveMutation = useMutation({
     mutationFn: (body: Parameters<typeof updateSandboxConfig>[0]) => updateSandboxConfig(body),
     onSuccess: (resp) => {
@@ -768,7 +768,7 @@ export function SandboxSection(): React.ReactElement {
     setNewSsrfEntry('')
   }
 
-  // ── Mode save handler (PR #137 + Sprint K enforce-modal gate) ─────────────
+  // ── Mode save handler (with enforce-modal gate) ───────────────────────────
   function handleModeSave() {
     if (!draftMode) return
 
@@ -951,7 +951,7 @@ export function SandboxSection(): React.ReactElement {
       {/* Config editor — only shown when status loaded successfully */}
       {!statusLoading && !statusIsError && (
         <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-4">
-          {/* ── Mode radio (PR #137) — top of config section ── */}
+          {/* ── Mode radio — top of config section ── */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <p className="text-xs font-semibold text-[var(--color-secondary)]">Sandbox mode</p>
@@ -1079,7 +1079,7 @@ export function SandboxSection(): React.ReactElement {
             )}
           </div>
 
-          {/* ── Paths / SSRF editor (Sprint K) ── */}
+          {/* ── Paths / SSRF editor ── */}
           <div className="space-y-4 border-t border-[var(--color-border)] pt-4">
             <div className="flex items-center justify-between">
               <p className="text-xs font-semibold text-[var(--color-secondary)]">Sandbox configuration</p>

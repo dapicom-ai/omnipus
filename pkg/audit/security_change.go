@@ -133,7 +133,7 @@ func redactSensitive(v any) any {
 }
 
 // isSensitiveKey reports whether key (case-insensitive) contains any of the
-// FR-020 sensitive substrings. Substring semantics catch "password_hash",
+// sensitive substrings. Substring semantics catch "password_hash",
 // "token_hash", "new_password", "client_secret", "api_key_override", etc.
 func isSensitiveKey(key string) bool {
 	lower := strings.ToLower(key)

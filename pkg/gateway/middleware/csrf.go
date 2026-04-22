@@ -429,14 +429,6 @@ func IssueCSRFCookie(w http.ResponseWriter, r *http.Request) error {
 // directly (r.TLS != nil) or via an ingress that forwards X-Forwarded-Proto.
 // Used by IssueCSRFCookie to pick the cookie flavor.
 func requestIsSecure(r *http.Request) bool {
-	if r == nil {
-		// Defensive: pre-refactor callers had no request handle. Assume
-		// TLS so an older call site still works in spec-compliant mode —
-		// if the cookie ends up Secure on a plain-HTTP origin, the only
-		// consequence is that the browser drops it (the exact pre-fix
-		// behavior).
-		return true
-	}
 	if r.TLS != nil {
 		return true
 	}

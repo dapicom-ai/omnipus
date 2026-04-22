@@ -1,16 +1,16 @@
 /**
- * sprint-k-setup.ts — Shared gateway lifecycle helpers for E2E tests
+ * setup.ts — Shared gateway lifecycle helpers for E2E tests
  *
  * Exports startGateway() / stopGateway() used by test.beforeAll / test.afterAll.
  *
  * Design:
- *   - Starts the Omnipus binary (OMNIPUS_BINARY env or /tmp/omnipus-sprint-k)
+ *   - Starts the Omnipus binary (OMNIPUS_BINARY env or /tmp/omnipus-ci)
  *   - Creates a throwaway OMNIPUS_HOME with mkdtempSync (unique per call)
  *   - Waits for /health to return 200 before resolving
  *   - Onboards a first admin via POST /api/v1/onboarding/complete
  *   - Returns the admin credentials so callers can auth-seed their own sessions
  *
- * Traces to: CLAUDE.md "SPA Embed Pipeline" and E2E "Known blockers and workarounds"
+ * See CLAUDE.md "SPA Embed Pipeline" and E2E "Known blockers and workarounds".
  */
 
 import { spawn, type ChildProcess } from 'child_process';
@@ -20,7 +20,7 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 
 // Default binary used when OMNIPUS_BINARY is not set.
-export const DEFAULT_OMNIPUS_BINARY = '/tmp/omnipus-sprint-k';
+export const DEFAULT_OMNIPUS_BINARY = '/tmp/omnipus-ci';
 
 export interface GatewayHandle {
   process: ChildProcess;
@@ -43,9 +43,9 @@ export interface StartGatewayOptions {
 /**
  * Verify the embedded SPA contains user-management strings.
  * Fails with a descriptive error if the sync pipeline was skipped.
- * Traces to: CLAUDE.md "SPA Embed Pipeline" — verification step.
+ * See CLAUDE.md "SPA Embed Pipeline" for the sync steps.
  */
-export function assertSprintKEmbedPresent(): void {
+export function assertUserManagementEmbedPresent(): void {
   const spaAssetsDir = path.join(
     path.dirname(fileURLToPath(import.meta.url)),
     '../../pkg/gateway/spa/assets',
@@ -60,7 +60,7 @@ export function assertSprintKEmbedPresent(): void {
         '  npm run build\n' +
         '  rm -rf pkg/gateway/spa/assets\n' +
         '  cp -r dist/spa/* pkg/gateway/spa/\n' +
-        '  CGO_ENABLED=0 go build -o /tmp/omnipus-sprint-k ./cmd/omnipus/',
+        '  CGO_ENABLED=0 go build -o /tmp/omnipus-ci ./cmd/omnipus/',
     );
   }
   const hasUserManagement = jsFiles.some((f) => {
@@ -77,7 +77,7 @@ export function assertSprintKEmbedPresent(): void {
       'BLOCKED: User-management frontend not embedded in pkg/gateway/spa/.\n' +
         'Run the sync pipeline:\n' +
         '  npm run build && rm -rf pkg/gateway/spa/assets && cp -r dist/spa/* pkg/gateway/spa/\n' +
-        '  CGO_ENABLED=0 go build -o /tmp/omnipus-sprint-k ./cmd/omnipus/',
+        '  CGO_ENABLED=0 go build -o /tmp/omnipus-ci ./cmd/omnipus/',
     );
   }
 }
@@ -101,15 +101,15 @@ export async function startGateway(opts: StartGatewayOptions): Promise<GatewayHa
     throw new Error(
       `BLOCKED: Gateway binary not found at ${binary}.\n` +
         'Build it with:\n' +
-        '  CGO_ENABLED=0 go build -o /tmp/omnipus-sprint-k ./cmd/omnipus/',
+        '  CGO_ENABLED=0 go build -o /tmp/omnipus-ci ./cmd/omnipus/',
     );
   }
 
   // Verify the user-management SPA is embedded.
-  assertSprintKEmbedPresent();
+  assertUserManagementEmbedPresent();
 
   // Create a throwaway OMNIPUS_HOME — unique per startGateway() call.
-  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), `omnipus-k-${opts.port}-`));
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), `omnipus-e2e-${opts.port}-`));
 
   // Pre-write config.json with the port.
   fs.writeFileSync(
@@ -212,7 +212,7 @@ export async function waitForHealth(baseURL: string, timeoutMs = 15_000): Promis
 /**
  * Seed an admin via POST /api/v1/onboarding/complete.
  * Idempotent: 409 is treated as success.
- * Traces to: pkg/gateway/rest_onboarding.go — endpoint is CSRF-exempt.
+ * See pkg/gateway/rest_onboarding.go — endpoint is CSRF-exempt.
  */
 export async function onboardAdmin(
   baseURL: string,
@@ -240,7 +240,7 @@ export async function onboardAdmin(
 
 /**
  * Log in and return the bearer token.
- * Traces to: pkg/gateway/rest_auth.go HandleLogin.
+ * See pkg/gateway/rest_auth.go HandleLogin.
  */
 export async function loginAPI(
   baseURL: string,

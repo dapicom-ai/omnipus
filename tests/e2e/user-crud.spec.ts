@@ -1,15 +1,15 @@
 /**
- * sprint-k-user-crud.spec.ts — E2E: admin creates second admin, no token modal
+ * user-crud.spec.ts — E2E: admin creates second admin, no token modal
  *
- * Traces to: US-10 AC-8 (last-admin guard) — admin creates second admin who can log in and administer.
+ * Last-admin guard: admin creates second admin who can log in and administer.
  *
  * IMPORTANT: This spec manages its own gateway lifecycle (port 5050).
  * It does NOT rely on the globally-started gateway from global-setup.ts.
  * It uses a throwaway OMNIPUS_HOME to avoid polluting the shared fixture state.
  *
- * Gateway is started via OMNIPUS_BINARY env (default: /tmp/omnipus-sprint-k).
+ * Gateway is started via OMNIPUS_BINARY env (default: /tmp/omnipus-ci).
  * Run with:
- *   OMNIPUS_BINARY=/tmp/omnipus-sprint-k npx playwright test tests/e2e/sprint-k-user-crud.spec.ts
+ *   OMNIPUS_BINARY=/tmp/omnipus-ci npx playwright test tests/e2e/user-crud.spec.ts
  *
  * CONTRACT BEING TESTED:
  *   - Create user: no token shown, toast says "User created. They can now log in with the password you set."
@@ -23,9 +23,9 @@ import { test, expect, type Page } from '@playwright/test';
 import {
   startGateway,
   stopGateway,
-  assertSprintKEmbedPresent,
+  assertUserManagementEmbedPresent,
   type GatewayHandle,
-} from './sprint-k-setup.js';
+} from './setup.js';
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -134,9 +134,9 @@ test.afterAll(async () => {
 // ── Test: SPA embed verification ──────────────────────────────────────────────
 
 test('(a) SPA embed contains user-management UI', async () => {
-  // assertSprintKEmbedPresent() was already called in startGateway().
+  // assertUserManagementEmbedPresent() was already called in startGateway().
   // This test documents the contract explicitly so failures are loud.
-  assertSprintKEmbedPresent(); // re-assert in test context for clear FAIL message
+  assertUserManagementEmbedPresent(); // re-assert in test context for clear FAIL message
 });
 
 // ── Test: Admin creates second admin without token modal ───────────────────────
@@ -173,7 +173,7 @@ test('(b) admin creates second admin — no token or Copy button appears', async
 
   // ── Then: SUCCESS TOAST must appear with the right message ────────────────
   // UsersSection.tsx: 'User created. They can now log in with the password you set.'
-  // Traces to: US-10 AC-1 (no token at creation time)
+  // No token is displayed at creation time.
   await expect(
     page.getByText('User created. They can now log in with the password you set.'),
   ).toBeVisible({ timeout: 15_000 });
@@ -239,7 +239,6 @@ test('(d) second admin deletes first-admin and deployment remains with >=1 admin
 
   // Locate the actions menu for first-admin row
   // RowActions renders a button with aria-label="Actions for {username}"
-  // Traces to: UsersSection.tsx line 608: aria-label={`Actions for ${user.username}`}
   const firstAdminActionsBtn = page.getByRole('button', {
     name: `Actions for ${FIRST_ADMIN.username}`,
   });
@@ -279,7 +278,6 @@ test('(d) second admin deletes first-admin and deployment remains with >=1 admin
 // ── Test: Last-admin guard — UI blocks self-deletion when only admin ───────────
 
 test('(e) last-admin guard: delete button disabled when second-admin is the only admin', async ({ page }) => {
-  // Traces to: US-10 AC-8 (last-admin guard)
   // BDD: Given second-admin is the only admin remaining
   //      When they open the per-row menu on their own row
   //      Then the Delete option is disabled (grayed out) — UI-level guard
@@ -288,7 +286,6 @@ test('(e) last-admin guard: delete button disabled when second-admin is the only
   await navigateToAccessTab(page);
 
   // Open the actions menu for second-admin (their own row)
-  // Traces to: UsersSection.tsx line 608: aria-label={`Actions for ${user.username}`}
   const secondAdminActionsBtn = page.getByRole('button', {
     name: `Actions for ${SECOND_ADMIN.username}`,
   });
@@ -311,7 +308,6 @@ test('(e) last-admin guard: delete button disabled when second-admin is the only
 // ── Test: Backend last-admin guard — direct API call returns 409 ───────────────
 
 test('(f) backend last-admin guard: DELETE /api/v1/users/{last-admin} returns 409', async ({ page }) => {
-  // Traces to: US-10 AC-8 (last-admin guard)
   // BDD: Given second-admin is the only admin
   //      When a direct API DELETE bypasses the disabled UI button
   //      Then the server returns 409 (guard runs inside safeUpdateConfigJSON callback)

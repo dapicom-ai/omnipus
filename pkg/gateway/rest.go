@@ -85,8 +85,6 @@ type restAPI struct {
 	adminUpdateConfigHandler http.Handler
 	adminPutPoliciesOnce     sync.Once
 	adminPutPoliciesHandler  http.Handler
-	adminPromptGuardOnce     sync.Once
-	adminPromptGuardHandler  http.Handler
 }
 
 // --- CORS / JSON helpers ---

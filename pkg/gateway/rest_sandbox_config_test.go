@@ -40,7 +40,7 @@ func sandboxConfigPUT(t *testing.T, api *restAPI, body string) *httptest.Respons
 	return w
 }
 
-// --- validation helpers (unit tests for k13/k14 pure functions) ---
+// --- validation helpers (unit tests for pure functions) ---
 
 // TestValidateAllowedPaths_PureFunctionRules exercises validateAllowedPaths
 // against the four documented rules: absolute prefix, no '..' segments,
@@ -134,7 +134,7 @@ func TestValidateSSRFAllowInternal_PureFunctionRules(t *testing.T) {
 	})
 }
 
-// --- allowed_paths handler tests (k13) ---
+// --- allowed_paths handler tests ---
 
 func TestHandleSandboxConfig_AllowedPaths_AbsoluteAccepted(t *testing.T) {
 	api := newTestRestAPIWithHome(t)
@@ -210,7 +210,7 @@ func TestHandleSandboxConfig_AllowedPaths_RestartRequired(t *testing.T) {
 		"allowed_paths is restart-gated per RestartGatedKeys")
 }
 
-// --- ssrf.allow_internal handler tests (k14) ---
+// --- ssrf.allow_internal handler tests ---
 
 func TestHandleSandboxConfig_SSRFAllowInternal_CIDRAccepted(t *testing.T) {
 	api := newTestRestAPIWithHome(t)
@@ -305,7 +305,7 @@ func TestHandleSandboxConfig_SSRFAllowInternal_HotReload(t *testing.T) {
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, false, resp["requires_restart"],
-		"ssrf.allow_internal hot-reloads via 2s config poll (SC-005)")
+		"ssrf.allow_internal hot-reloads via 2s config poll")
 }
 
 // --- shared handler tests ---
@@ -447,7 +447,7 @@ func TestHandleSandboxConfig_AtomicValidation(t *testing.T) {
 		"failed PUT must not mutate disk")
 }
 
-// --- mode field tests (PR #137 + Sprint K merge) ---
+// --- mode field tests ---
 
 // TestHandleSandboxConfig_PUT_ModeValidValues verifies that all three
 // canonical mode values are accepted with 200 and persisted to disk.

@@ -13,8 +13,8 @@ import (
 )
 
 // TestLandlockABI4IssueRef_SingleConstant asserts the exported constant
-// has the expected value (Sprint-K k07) and that no other non-test Go file
-// under pkg/ or cmd/ hardcodes the literal "#138" outside this file.
+// has the expected value and that no other non-test Go file under pkg/ or
+// cmd/ hardcodes the literal "#138" outside this file.
 func TestLandlockABI4IssueRef_SingleConstant(t *testing.T) {
 	if LandlockABI4IssueRef != "#138" {
 		t.Fatalf("LandlockABI4IssueRef = %q, want %q", LandlockABI4IssueRef, "#138")

@@ -69,7 +69,7 @@ type sandboxConfigResponse struct {
 
 	// AppliedMode reflects what the gateway is ACTUALLY running with. It can
 	// differ from Mode above when the operator saved a new mode but hasn't
-	// restarted yet (Sprint J FR-J-015 locks out hot-reload for sandbox).
+	// restarted yet (sandbox mode is applied once at boot; no hot-reload).
 	AppliedMode string `json:"applied_mode"`
 
 	// RequiresRestart is true after a successful PUT — the UI renders a
@@ -80,5 +80,5 @@ type sandboxConfigResponse struct {
 
 // Ensure sandbox import stays in scope; HandleSandboxStatus uses it.
 // HandleSandboxConfig, getSandboxConfig, and putSandboxConfig are declared
-// in rest_sandbox_config.go (Sprint K + PR #137 merge).
+// in rest_sandbox_config.go.
 var _ = sandbox.Status{}

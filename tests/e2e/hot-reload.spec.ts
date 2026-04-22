@@ -1,4 +1,4 @@
-// sprint-k-hot-reload.spec.ts
+// hot-reload.spec.ts
 //
 // Hot-reloadable changes (prompt-injection-level, rate-limits) take
 // effect within 2 seconds of save without a process restart.
@@ -22,7 +22,7 @@
 // Gateway lifecycle: this spec starts its own gateway on port 5551 with a
 // throwaway OMNIPUS_HOME. It does NOT rely on the globally-started gateway
 // from global-setup.ts. The binary is specified via OMNIPUS_BINARY env
-// (default: /tmp/omnipus-sprint-k).
+// (default: /tmp/omnipus-ci).
 //
 // CSRF handling: we call the login endpoint via fetch() to get a bearer token
 // plus the __Host-csrf cookie, then use page.request for PUT calls with both
@@ -38,7 +38,7 @@ import {
   stopGateway,
   loginAPI,
   type GatewayHandle,
-} from './sprint-k-setup.js';
+} from './setup.js';
 
 // ── Gateway port for this spec ─────────────────────────────────────────────────
 // Use 5551 as specified in the task. Must not collide with other specs.
@@ -274,10 +274,8 @@ test('rate-limit hot-reload: GET reflects new cap within 2s of PUT', async () =>
   // ── Step 3: differentiation — change cap to 1, verify GET reads 1 ────────
   // Catches hardcoded responses: if GET always returns 100, this will fail.
   //
-  // This also proves the hot-reload works for the strict cap that the task
-  // spec uses for its "second LLM call is rejected" scenario.
-  //
-  // Traces to: task prompt Test 2 step 2-3 ("Save 1, within 2s issue two agent LLM calls")
+  // This also proves the hot-reload works for a strict cap where a second
+  // agent LLM call exceeding the cap would get rejected.
   const putStrict = await authedPut('/api/v1/security/rate-limits', {
     max_agent_llm_calls_per_hour: 1,
   });
