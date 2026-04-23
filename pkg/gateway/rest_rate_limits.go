@@ -14,6 +14,7 @@ import (
 	"net/http"
 
 	"github.com/dapicom-ai/omnipus/pkg/audit"
+	"github.com/dapicom-ai/omnipus/pkg/config"
 )
 
 // rest_rate_limits.go — rate-limits endpoint.
@@ -62,8 +63,14 @@ func (a *restAPI) getRateLimits(w http.ResponseWriter, r *http.Request) {
 }
 
 // putRateLimits is the admin-only body of PUT /api/v1/security/rate-limits.
-// Called only after RequireAdmin has confirmed the caller holds admin role.
+// withAuth has already confirmed the bearer token is valid; we additionally
+// require the caller to hold the admin role.
 func (a *restAPI) putRateLimits(w http.ResponseWriter, r *http.Request) {
+	role, _ := r.Context().Value(RoleContextKey{}).(config.UserRole)
+	if role != config.UserRoleAdmin {
+		jsonErr(w, http.StatusForbidden, "admin role required")
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 
 	// Decode to map[string]json.RawMessage so we can inspect each field's
