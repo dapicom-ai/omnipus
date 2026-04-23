@@ -47,7 +47,8 @@ func sandboxConfigPUT(t *testing.T, api *restAPI, body string) *httptest.Respons
 // no symlink-final-component, non-empty.
 func TestValidateAllowedPaths_PureFunctionRules(t *testing.T) {
 	t.Run("absolute accepted", func(t *testing.T) {
-		require.NoError(t, validateAllowedPaths([]string{"/var/log", "/tmp"}))
+		// Use t.TempDir() to avoid /tmp which is a symlink on macOS.
+		require.NoError(t, validateAllowedPaths([]string{t.TempDir()}))
 	})
 	t.Run("home prefix accepted", func(t *testing.T) {
 		require.NoError(t, validateAllowedPaths([]string{"~/Documents"}))
