@@ -255,4 +255,3 @@ func parseInt64Field(name string, raw json.RawMessage) (int64, error) {
 	// It parsed as a float but not as int64 — must be a fractional value.
 	return 0, fmt.Errorf("%s: must be an integer, not a float", name)
 }
-

@@ -13,9 +13,8 @@ import (
 	"sync"
 	"testing"
 
-	"golang.org/x/crypto/bcrypt"
-
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // TestHandleUserChangeRole_ConcurrentDemotion_OneWins proves that the

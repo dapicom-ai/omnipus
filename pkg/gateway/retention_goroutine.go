@@ -16,7 +16,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/session"
 )
 
-// retentionSweepMu serialises nightly-sweep ticks against the on-demand
+// retentionSweepMu serializes nightly-sweep ticks against the on-demand
 // POST /api/v1/security/retention/sweep endpoint. Both paths acquire
 // this mutex before calling the sweep function so they never run concurrently.
 var retentionSweepMu sync.Mutex
@@ -41,7 +41,7 @@ var retentionLoopStarted sync.Once
 // integration tests that call the gateway multiple times).
 //
 // Parameters:
-//   - ctx: cancelled by gateway shutdown; the goroutine exits within the next
+//   - ctx: canceled by gateway shutdown; the goroutine exits within the next
 //     ticker interval (at most tickInterval) after cancellation.
 //   - store: the shared UnifiedStore whose sessions are swept.
 //   - getCfg: thunk that returns the current config on each call; the goroutine

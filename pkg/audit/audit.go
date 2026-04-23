@@ -143,11 +143,11 @@ func (l *Logger) Log(entry *Entry) error {
 	return l.writeLine(data)
 }
 
-// writeLine appends a single pre-marshalled JSON object as a JSONL record to the
+// writeLine appends a single pre-marshaled JSON object as a JSONL record to the
 // audit file, performing rotation and degraded-mode guarding identically to Log.
 // It is reused by helpers that emit non-Entry-shaped records (e.g. security
 // setting changes with flat top-level fields like actor/resource/old_value).
-// The caller is responsible for any redaction before marshalling.
+// The caller is responsible for any redaction before marshaling.
 func (l *Logger) writeLine(data []byte) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()

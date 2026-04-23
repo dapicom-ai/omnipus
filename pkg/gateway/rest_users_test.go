@@ -312,7 +312,8 @@ func TestHandleUserCreate_NonAdmin403(t *testing.T) {
 	api, _, _ := newUserMgmtAPIWithAdmin(t)
 	body := `{"username":"alice","role":"user","password":"alice-pass-123"}`
 	w := httptest.NewRecorder()
-	middleware.RequireAdmin(http.HandlerFunc(api.HandleUserCreate)).ServeHTTP(w, nonAdminRequest(http.MethodPost, "/api/v1/users", body))
+	middleware.RequireAdmin(http.HandlerFunc(api.HandleUserCreate)).
+		ServeHTTP(w, nonAdminRequest(http.MethodPost, "/api/v1/users", body))
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
@@ -372,7 +373,8 @@ func TestHandleUsersList_NoHashesInResponse(t *testing.T) {
 func TestHandleUsersList_NonAdmin403(t *testing.T) {
 	api, _, _ := newUserMgmtAPIWithAdmin(t)
 	w := httptest.NewRecorder()
-	middleware.RequireAdmin(http.HandlerFunc(api.HandleUsersList)).ServeHTTP(w, nonAdminRequest(http.MethodGet, "/api/v1/users", ""))
+	middleware.RequireAdmin(http.HandlerFunc(api.HandleUsersList)).
+		ServeHTTP(w, nonAdminRequest(http.MethodGet, "/api/v1/users", ""))
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
@@ -478,7 +480,12 @@ func TestHandleUserDelete_AuditEntry_OmitsHashes(t *testing.T) {
 	hash, err := bcrypt.GenerateFromPassword([]byte("admin-pw"), bcrypt.MinCost)
 	require.NoError(t, err)
 	users := []any{
-		map[string]any{"username": "admin1", "password_hash": string(hash), "token_hash": string(hash), "role": "admin"},
+		map[string]any{
+			"username":      "admin1",
+			"password_hash": string(hash),
+			"token_hash":    string(hash),
+			"role":          "admin",
+		},
 		map[string]any{"username": "admin2", "password_hash": string(hash), "token_hash": "", "role": "admin"},
 	}
 	api, tmpDir := newUserMgmtAPI(t, users)
@@ -566,7 +573,7 @@ func TestHandleUserChangeRole_RejectsInvalidRole(t *testing.T) {
 // The matrix test TestAdminRoutes_AdminOnly already covers this route through
 // the inner middleware chain. This per-handler test makes the admin gate visible
 // to anyone reading rest_users_test.go and exercises the same check at the
-// handler level, providing defence-in-depth against a middleware rewiring.
+// handler level, providing defense-in-depth against a middleware rewiring.
 //
 // Traces to: temporal-puzzling-melody.md Wave 1C — per-handler NonAdmin403
 // coverage gap identified by test-analyzer #3.
@@ -610,8 +617,18 @@ func TestHandleUserResetPassword_ZeroesTokenHash(t *testing.T) {
 	require.NoError(t, err)
 
 	users := []any{
-		map[string]any{"username": "admin", "password_hash": string(pwHash), "token_hash": string(tokHash), "role": "admin"},
-		map[string]any{"username": "alice", "password_hash": string(pwHash), "token_hash": string(tokHash), "role": "user"},
+		map[string]any{
+			"username":      "admin",
+			"password_hash": string(pwHash),
+			"token_hash":    string(tokHash),
+			"role":          "admin",
+		},
+		map[string]any{
+			"username":      "alice",
+			"password_hash": string(pwHash),
+			"token_hash":    string(tokHash),
+			"role":          "user",
+		},
 	}
 	api, _ := newUserMgmtAPI(t, users)
 
@@ -721,7 +738,8 @@ func TestHandleUserResetPassword_NonAdmin403(t *testing.T) {
 	api, _, _ := newUserMgmtAPIWithAdmin(t)
 	body := `{"password":"new-password-22"}`
 	w := httptest.NewRecorder()
-	middleware.RequireAdmin(http.HandlerFunc(api.HandleUserResetPassword)).ServeHTTP(w, nonAdminRequest(http.MethodPut, "/api/v1/users/admin/password", body))
+	middleware.RequireAdmin(http.HandlerFunc(api.HandleUserResetPassword)).
+		ServeHTTP(w, nonAdminRequest(http.MethodPut, "/api/v1/users/admin/password", body))
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 

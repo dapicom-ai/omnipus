@@ -33,7 +33,10 @@ func (s *DMScope) UnmarshalJSON(data []byte) error {
 		*s = ""
 		return nil
 	default:
-		return fmt.Errorf("invalid dm_scope: %q (must be one of: main, per-peer, per-channel-peer, per-account-channel-peer)", raw)
+		return fmt.Errorf(
+			"invalid dm_scope: %q (must be one of: main, per-peer, per-channel-peer, per-account-channel-peer)",
+			raw,
+		)
 	}
 }
 

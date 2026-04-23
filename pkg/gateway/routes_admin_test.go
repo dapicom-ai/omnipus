@@ -103,7 +103,7 @@ var innerOKHandler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Reques
 func buildFullAdminHandler(api *restAPI) http.HandlerFunc {
 	return api.withAuth(
 		middleware.RequireAdmin(
-			http.HandlerFunc(middleware.RequireNotBypass(innerOKHandler)),
+			middleware.RequireNotBypass(innerOKHandler),
 		).ServeHTTP,
 	)
 }
@@ -118,7 +118,7 @@ func buildFullAdminHandler(api *restAPI) http.HandlerFunc {
 // those gates without needing real bcrypt tokens.
 func buildInnerChainHandler() http.Handler {
 	return middleware.RequireAdmin(
-		http.HandlerFunc(middleware.RequireNotBypass(innerOKHandler)),
+		middleware.RequireNotBypass(innerOKHandler),
 	)
 }
 
@@ -191,7 +191,6 @@ func TestAdminRoutes_AllHaveCSRF(t *testing.T) {
 	routes := stateChangingAdminRoutes()
 	passed := 0
 	for _, route := range routes {
-		route := route
 		t.Run(route.method+"_"+route.path, func(t *testing.T) {
 			req := makeAdminCtxRequest(route.method, route.path, route.body)
 			// No CSRF cookie — gate must fire.
@@ -221,7 +220,6 @@ func TestAdminRoutes_AdminOnly(t *testing.T) {
 
 	passed := 0
 	for _, route := range allAdminRoutes {
-		route := route
 		t.Run(route.method+"_"+route.path, func(t *testing.T) {
 			req := makeNonAdminCtxRequest(route.method, route.path, route.body)
 			w := httptest.NewRecorder()
@@ -249,7 +247,6 @@ func TestAdminRoutes_DevModeBypassReturn503(t *testing.T) {
 
 	passed := 0
 	for _, route := range allAdminRoutes {
-		route := route
 		t.Run(route.method+"_"+route.path, func(t *testing.T) {
 			req := makeBypassCtxRequest(route.method, route.path, route.body)
 			w := httptest.NewRecorder()
@@ -262,7 +259,11 @@ func TestAdminRoutes_DevModeBypassReturn503(t *testing.T) {
 			passed++
 		})
 	}
-	t.Logf("TestAdminRoutes_DevModeBypassReturn503: %d/%d routes returned 503 in bypass mode", passed, len(allAdminRoutes))
+	t.Logf(
+		"TestAdminRoutes_DevModeBypassReturn503: %d/%d routes returned 503 in bypass mode",
+		passed,
+		len(allAdminRoutes),
+	)
 }
 
 // TestAdminRoutes_ValidAdminHappyPath verifies that an admin with a valid
@@ -279,7 +280,6 @@ func TestAdminRoutes_ValidAdminHappyPath(t *testing.T) {
 
 	passed := 0
 	for _, route := range allAdminRoutes {
-		route := route
 		t.Run(route.method+"_"+route.path, func(t *testing.T) {
 			req := makeAdminCtxRequest(route.method, route.path, route.body)
 
@@ -317,7 +317,6 @@ func TestAdminRoutes_UnauthenticatedRequestsRejected(t *testing.T) {
 
 	passed := 0
 	for _, route := range allAdminRoutes {
-		route := route
 		t.Run(route.method+"_"+route.path, func(t *testing.T) {
 			var req *http.Request
 			if route.body == "" {
@@ -338,7 +337,11 @@ func TestAdminRoutes_UnauthenticatedRequestsRejected(t *testing.T) {
 			passed++
 		})
 	}
-	t.Logf("TestAdminRoutes_UnauthenticatedRequestsRejected: %d/%d routes rejected unauthenticated requests", passed, len(allAdminRoutes))
+	t.Logf(
+		"TestAdminRoutes_UnauthenticatedRequestsRejected: %d/%d routes rejected unauthenticated requests",
+		passed,
+		len(allAdminRoutes),
+	)
 }
 
 // testMuxRegistrar wraps http.ServeMux to implement httpHandlerRegistrar,
@@ -356,7 +359,7 @@ func (r *testMuxRegistrar) RegisterHTTPHandler(pattern string, handler http.Hand
 // exercising the real registerAdditionalEndpoints route chain rather than the
 // parallel test-only chain used by TestAdminRoutes_DevModeBypassReturn503.
 //
-// Defence-in-depth: the matrix test TestAdminRoutes_DevModeBypassReturn503
+// Defense-in-depth: the matrix test TestAdminRoutes_DevModeBypassReturn503
 // uses a hand-rolled inner chain (RequireAdmin→RequireNotBypass) and skips
 // withAuth entirely. If someone adds a duplicate RegisterHTTPHandler call for
 // /api/v1/security/sandbox-config that drops RequireNotBypass, the matrix test

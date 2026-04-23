@@ -213,7 +213,7 @@ func (a *restAPI) withAuth(handler http.HandlerFunc) http.HandlerFunc {
 func (a *restAPI) adminWrap(h http.HandlerFunc) http.HandlerFunc {
 	return a.withAuth(
 		middleware.RequireAdmin(
-			http.HandlerFunc(middleware.RequireNotBypass(h)),
+			middleware.RequireNotBypass(h),
 		).ServeHTTP,
 	)
 }

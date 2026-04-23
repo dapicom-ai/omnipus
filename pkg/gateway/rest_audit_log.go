@@ -64,7 +64,13 @@ func (a *restAPI) HandleSandboxAuditLog(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
-		if err := audit.EmitSecuritySettingChange(r.Context(), a.agentLoop.AuditLogger(), "sandbox.audit_log", oldEnabled, newEnabled); err != nil {
+		if err := audit.EmitSecuritySettingChange(
+			r.Context(),
+			a.agentLoop.AuditLogger(),
+			"sandbox.audit_log",
+			oldEnabled,
+			newEnabled,
+		); err != nil {
 			slog.Error("rest: audit emit audit_log change", "error", err)
 		}
 

@@ -38,7 +38,7 @@ func (us *UnifiedStore) RetentionSweep(retentionDays int) (int, error) {
 			}
 			rel, err := filepath.Rel(us.baseDir, path)
 			if err != nil {
-				return nil
+				return err
 			}
 			parts := strings.SplitN(rel, string(filepath.Separator), 2)
 			if len(parts) == 1 {
@@ -56,7 +56,7 @@ func (us *UnifiedStore) RetentionSweep(retentionDays int) (int, error) {
 
 		rel, err := filepath.Rel(us.baseDir, path)
 		if err != nil {
-			return nil
+			return err
 		}
 		parts := strings.SplitN(rel, string(filepath.Separator), 3)
 		if len(parts) < 2 {
@@ -82,7 +82,6 @@ func (us *UnifiedStore) RetentionSweep(retentionDays int) (int, error) {
 
 		return nil
 	})
-
 	if err != nil {
 		return removed, err
 	}

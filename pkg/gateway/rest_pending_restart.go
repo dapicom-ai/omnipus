@@ -122,11 +122,11 @@ func deepCopyConfig(cfg *config.Config) (*config.Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("pending-restart: failed to marshal boot config: %w", err)
 	}
-	var copy config.Config
-	if err := json.Unmarshal(raw, &copy); err != nil {
+	var snapshot config.Config
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
 		return nil, fmt.Errorf("pending-restart: failed to unmarshal boot config snapshot: %w", err)
 	}
-	return &copy, nil
+	return &snapshot, nil
 }
 
 // mustDeepCopyConfig is the boot-time wrapper for deepCopyConfig. It panics
@@ -135,13 +135,13 @@ func deepCopyConfig(cfg *config.Config) (*config.Config, error) {
 // appear pending immediately after boot, which is misleading and would
 // prevent the admin from ever clearing the restart banner.
 func mustDeepCopyConfig(cfg *config.Config) *config.Config {
-	copy, err := deepCopyConfig(cfg)
+	snap, err := deepCopyConfig(cfg)
 	if err != nil {
 		// Panic here causes cmd/omnipus/main.go's recovery to write the
 		// error to gateway_panic.log and exit non-zero.
 		panic(fmt.Sprintf("pending-restart: boot snapshot failed: %v", err))
 	}
-	return copy
+	return snap
 }
 
 // getAtPath extracts a value from a nested map[string]any using a dotted path

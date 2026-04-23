@@ -71,7 +71,7 @@ func TestRequireNotBypass_BypassOff_CallsNext(t *testing.T) {
 }
 
 // TestRequireNotBypass_NilConfig_Returns503 verifies the defensive fail-closed
-// behaviour: if configSnapshotMiddleware did not run (no cfg in context) we
+// behavior: if configSnapshotMiddleware did not run (no cfg in context) we
 // must not assume bypass is off — we return 503.
 func TestRequireNotBypass_NilConfig_Returns503(t *testing.T) {
 	called := false

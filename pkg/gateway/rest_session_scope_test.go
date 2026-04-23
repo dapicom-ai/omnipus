@@ -170,13 +170,14 @@ func TestHandleSessionDMScope_EmitsAuditEntry(t *testing.T) {
 		&config.UserConfig{Username: "admin"})
 	ctx = context.WithValue(ctx, RoleContextKey{}, config.UserRoleAdmin)
 
-	if err := audit.EmitSecuritySettingChange(
+	err = audit.EmitSecuritySettingChange(
 		ctx,
 		logger,
 		"session.dm_scope",
 		string(routing.DMScopePerChannelPeer),
 		string(routing.DMScopeMain),
-	); err != nil {
+	)
+	if err != nil {
 		t.Fatalf("EmitSecuritySettingChange must not return an error: %v", err)
 	}
 

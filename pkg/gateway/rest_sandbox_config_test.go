@@ -477,7 +477,7 @@ func TestHandleSandboxConfig_PUT_ModeValidValues(t *testing.T) {
 }
 
 // TestHandleSandboxConfig_PUT_ModeInvalid_Returns400 verifies that an
-// unrecognised mode value is rejected with 400 before any disk write.
+// unrecognized mode value is rejected with 400 before any disk write.
 func TestHandleSandboxConfig_PUT_ModeInvalid_Returns400(t *testing.T) {
 	cases := []string{"disabled", "ENFORCE", "1", "", "on"}
 	for _, mode := range cases {
@@ -486,7 +486,7 @@ func TestHandleSandboxConfig_PUT_ModeInvalid_Returns400(t *testing.T) {
 			body := `{"mode":"` + mode + `"}`
 			w := sandboxConfigPUT(t, api, body)
 			assert.Equal(t, http.StatusBadRequest, w.Code,
-				"unrecognised mode %q must return 400; body: %s", mode, w.Body.String())
+				"unrecognized mode %q must return 400; body: %s", mode, w.Body.String())
 		})
 	}
 }

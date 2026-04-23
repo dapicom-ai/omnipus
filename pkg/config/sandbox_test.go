@@ -55,7 +55,7 @@ func TestSSRFConfig_AllowInternalRemainsStringList(t *testing.T) {
 		t.Fatalf("OmnipusSSRFConfig.AllowInternal type = %q, want %q — regression",
 			got, "[]string")
 	}
-	// Defensively assert no neighbouring field was introduced that would
+	// Defensively assert no neighboring field was introduced that would
 	// compete with AllowInternal. "AllowInternalCIDRs" was the shape the
 	// spec's earlier draft proposed and the revision rejected; guard
 	// against a future re-introduction.

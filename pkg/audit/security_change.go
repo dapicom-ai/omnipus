@@ -50,7 +50,7 @@ var sensitiveSubstrings = []string{"password", "token", "api_key", "secret"}
 // resource, old_value, new_value — with old_value and new_value recursively
 // redacted for sensitive keys (password/token/api_key/secret, case-insensitive).
 //
-// Behaviour contract:
+// Behavior contract:
 //   - logger == nil → no-op, returns nil (audit log disabled).
 //   - actor missing from ctx → actor="" and a slog.Warn is emitted, but the
 //     audit entry IS still written (an audit trail of unauthenticated or

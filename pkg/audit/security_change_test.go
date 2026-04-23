@@ -82,7 +82,7 @@ func TestEmitSecuritySettingChange_ShapeCorrect(t *testing.T) {
 	assert.Equal(t, true, rec["new_value"])
 
 	ts, ok := rec["timestamp"].(string)
-	require.True(t, ok, "timestamp must serialise as a string")
+	require.True(t, ok, "timestamp must serialize as a string")
 	_, parseErr := time.Parse(time.RFC3339Nano, ts)
 	assert.NoError(t, parseErr, "timestamp must be RFC3339Nano-parseable")
 }

@@ -16,9 +16,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/dapicom-ai/omnipus/pkg/session"
 )
 
 func newUnifiedStoreForExternalTest(t *testing.T) *session.UnifiedStore {

@@ -568,7 +568,6 @@ func countAdmins(users []any) int {
 	return n
 }
 
-
 // emitUserAudit emits a security_setting_change audit record if the audit
 // logger is enabled. Errors are logged at Warn and swallowed — user-
 // management mutations are already persisted on disk and we must not 500

@@ -100,12 +100,12 @@ func (a *restAPI) getSandboxConfig(w http.ResponseWriter, r *http.Request) {
 	// included for backward-compatible clients. Both are safe to include — JSON
 	// consumers pick what they need.
 	jsonOK(w, map[string]any{
-		"mode":                  cfg.Sandbox.ResolvedMode(),
+		"mode":                   cfg.Sandbox.ResolvedMode(),
 		"allow_network_outbound": cfg.Sandbox.AllowNetworkOutbound,
-		"allowed_paths":         allowedPaths,
-		"ssrf_enabled":          cfg.Sandbox.SSRF.Enabled,
-		"ssrf_allow_internal":   allowInternal,
-		"applied_mode":          applied,
+		"allowed_paths":          allowedPaths,
+		"ssrf_enabled":           cfg.Sandbox.SSRF.Enabled,
+		"ssrf_allow_internal":    allowInternal,
+		"applied_mode":           applied,
 		// Nested ssrf object for backward-compatible clients.
 		"ssrf": map[string]any{
 			"enabled":        cfg.Sandbox.SSRF.Enabled,
@@ -141,7 +141,11 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 
 	if !changedMode && !changedAllowNetworkOutbound && !changedAllowedPaths &&
 		!changedSSRFEnabled && !changedAllowInternal {
-		jsonErr(w, http.StatusBadRequest, "at least one field required — expected mode, allowed_paths, or ssrf.allow_internal")
+		jsonErr(
+			w,
+			http.StatusBadRequest,
+			"at least one field required — expected mode, allowed_paths, or ssrf.allow_internal",
+		)
 		return
 	}
 

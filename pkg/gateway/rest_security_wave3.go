@@ -58,4 +58,3 @@ func (a *restAPI) HandleExecProxyStatus(w http.ResponseWriter, r *http.Request) 
 		"address": proxy.Addr(),
 	})
 }
-

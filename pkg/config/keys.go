@@ -11,12 +11,12 @@ package config
 type ConfigKey string
 
 const (
-	SandboxMode         ConfigKey = "sandbox.mode"
-	SandboxEnabled      ConfigKey = "sandbox.enabled"
-	SandboxAuditLog     ConfigKey = "sandbox.audit_log"
-	SandboxAllowedPaths ConfigKey = "sandbox.allowed_paths"
-	SessionDMScope      ConfigKey = "session.dm_scope"
-	GatewayPort         ConfigKey = "gateway.port"
-	GatewayUsers        ConfigKey = "gateway.users"
+	SandboxMode          ConfigKey = "sandbox.mode"
+	SandboxEnabled       ConfigKey = "sandbox.enabled"
+	SandboxAuditLog      ConfigKey = "sandbox.audit_log"
+	SandboxAllowedPaths  ConfigKey = "sandbox.allowed_paths"
+	SessionDMScope       ConfigKey = "session.dm_scope"
+	GatewayPort          ConfigKey = "gateway.port"
+	GatewayUsers         ConfigKey = "gateway.users"
 	GatewayDevModeBypass ConfigKey = "gateway.dev_mode_bypass"
 )

@@ -868,7 +868,7 @@ func setupAndStartServices(
 		mediaStore:    runningServices.MediaStore,
 		ssrfChecker:   agent.GetSSRFChecker(agentLoop), // SEC-24: nil when SSRF disabled
 		sandboxResult: sandboxResult,                   // immutable post-boot snapshot
-		appliedConfig: mustDeepCopyConfig(cfg),           // boot-time snapshot for pending-restart diff
+		appliedConfig: mustDeepCopyConfig(cfg),         // boot-time snapshot for pending-restart diff
 	}
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions", api.withAuth(api.HandleSessions))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions/", api.withAuth(api.HandleSessions))
