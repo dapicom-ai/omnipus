@@ -152,9 +152,8 @@ func DefaultPolicy(homePath string, allowedPaths []string, warnFn func(msg strin
 	})
 
 	// Read-only system dependencies required by the gateway at runtime.
-	// Missing paths (e.g. /lib64 on systems that don't split it) are
-	// rejected individually by Apply() and logged as ruleErrors; the
-	// remaining rules still succeed.
+	// Missing paths (e.g. /lib64 on ARM64) are silently skipped by
+	// Apply() with a warning log; the remaining rules still succeed.
 	readOnlySystem := []string{
 		"/proc/self",
 		"/lib",

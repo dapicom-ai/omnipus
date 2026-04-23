@@ -233,6 +233,13 @@ func (lb *LinuxBackend) ApplyWithMode(policy SandboxPolicy, mode Mode) error {
 	for _, rule := range policy.FilesystemRules {
 		rights := lb.accessToLandlockRights(rule.Access)
 		if err := addLandlockPathRule(int(rulesetFd), rule.Path, rights); err != nil {
+			// ENOENT for system paths (e.g. /lib64 on ARM64) is expected —
+			// the directory simply doesn't exist on that architecture. Log
+			// as a warning and skip rather than aborting sandbox setup.
+			if errors.Is(err, unix.ENOENT) {
+				slog.Warn("Landlock: path does not exist, skipping rule", "path", rule.Path)
+				continue
+			}
 			slog.Warn("Landlock: failed to add path rule", "path", rule.Path, "error", err)
 			ruleErrors = append(ruleErrors, fmt.Errorf("path %q: %w", rule.Path, err))
 		}
