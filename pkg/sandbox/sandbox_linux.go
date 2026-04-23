@@ -58,11 +58,19 @@ const (
 	landlockAccessFSMakeSym    uint64 = 1 << 12
 	landlockAccessFSRefer      uint64 = 1 << 13
 	landlockAccessFSTruncate   uint64 = 1 << 14 // ABI v2
-	landlockAccessFSIoctlDev   uint64 = 1 << 15 // ABI v3
+	// landlockAccessFSIoctlDev removed: does not exist in kernel headers on this
+	// system (6.8.0-107). Adding unknown bits to handledAccessFS causes EINVAL.
+)
+
+// Landlock ABI v4 network access rights (kernel 6.8+).
+const (
+	landlockAccessNetBindTcp    uint64 = 1 << 0
+	landlockAccessNetConnectTcp uint64 = 1 << 1
 )
 
 type landlockRulesetAttr struct {
-	handledAccessFS uint64
+	handledAccessFS  uint64
+	handledAccessNet uint64 // ABI v4 only; zero-initialized on older ABIs
 }
 
 type landlockPathBeneathAttr struct {
@@ -115,8 +123,11 @@ func (lb *LinuxBackend) computeRights() {
 	if lb.abiVersion >= 2 {
 		lb.allRights |= landlockAccessFSTruncate
 	}
-	if lb.abiVersion >= 3 {
-		lb.allRights |= landlockAccessFSIoctlDev
+	// Note: landlockAccessFSIoctlDev is commented out because
+	// LANDLOCK_ACCESS_FS_IOCTL does not exist in kernel headers
+	// on this system (6.8.0-107). Setting unknown bits causes EINVAL.
+	if lb.abiVersion >= 4 {
+		lb.allRights |= landlockAccessNetBindTcp | landlockAccessNetConnectTcp
 	}
 }
 
@@ -126,7 +137,7 @@ func (lb *LinuxBackend) Name() string {
 
 func (lb *LinuxBackend) Available() bool { return true }
 
-// ABIVersion returns the detected Landlock ABI version (1-3).
+// ABIVersion returns the detected Landlock ABI version (1-4).
 // Returns 0 if Landlock is not available.
 func (lb *LinuxBackend) ABIVersion() int {
 	return lb.abiVersion
@@ -204,6 +215,9 @@ func (lb *LinuxBackend) ApplyWithMode(policy SandboxPolicy, mode Mode) error {
 
 	// Create ruleset.
 	attr := landlockRulesetAttr{handledAccessFS: lb.allRights}
+	if lb.abiVersion >= 4 {
+		attr.handledAccessNet = landlockAccessNetBindTcp | landlockAccessNetConnectTcp
+	}
 	rulesetFd, _, errno := unix.Syscall(
 		sysLandlockCreateRuleset,
 		uintptr(unsafe.Pointer(&attr)),
@@ -219,6 +233,13 @@ func (lb *LinuxBackend) ApplyWithMode(policy SandboxPolicy, mode Mode) error {
 	for _, rule := range policy.FilesystemRules {
 		rights := lb.accessToLandlockRights(rule.Access)
 		if err := addLandlockPathRule(int(rulesetFd), rule.Path, rights); err != nil {
+			// ENOENT for system paths (e.g. /lib64 on ARM64) is expected —
+			// the directory simply doesn't exist on that architecture. Log
+			// as a warning and skip rather than aborting sandbox setup.
+			if errors.Is(err, unix.ENOENT) {
+				slog.Warn("Landlock: path does not exist, skipping rule", "path", rule.Path)
+				continue
+			}
 			slog.Warn("Landlock: failed to add path rule", "path", rule.Path, "error", err)
 			ruleErrors = append(ruleErrors, fmt.Errorf("path %q: %w", rule.Path, err))
 		}
@@ -303,6 +324,14 @@ func addLandlockPathRule(rulesetFd int, path string, rights uint64) error {
 		return fmt.Errorf("open %q: %w", path, err)
 	}
 	defer unix.Close(fd)
+
+	// READ_DIR is a directory-only access right. The kernel validates that
+	// allowed_access only contains rights valid for the FD type (file vs
+	// directory). Strip READ_DIR for non-directory paths to avoid EINVAL.
+	var stat unix.Stat_t
+	if err := unix.Fstat(fd, &stat); err == nil && stat.Mode&unix.S_IFDIR == 0 {
+		rights &^= landlockAccessFSReadDir
+	}
 
 	pathAttr := landlockPathBeneathAttr{
 		allowedAccess: rights,

@@ -159,6 +159,10 @@ type OmnipusStorageConfig struct {
 type OmnipusRetentionConfig struct {
 	// SessionDays is how many days transcript partitions are kept. 0 = use default (90 days).
 	SessionDays int `json:"session_days,omitempty"`
+	// Disabled means transcripts are kept forever (no retention enforcement).
+	// This is orthogonal to SessionDays: setting Disabled=true suppresses deletion
+	// regardless of what SessionDays says.
+	Disabled bool `json:"disabled,omitempty"`
 	// ArchiveBeforeDelete compresses old partitions to .jsonl.gz before deletion.
 	ArchiveBeforeDelete bool `json:"archive_before_delete,omitempty"`
 	// KeepCompactionSummary preserves last_compaction_summary in meta.json
@@ -172,6 +176,48 @@ func (r OmnipusRetentionConfig) RetentionSessionDays() int {
 		return 90
 	}
 	return r.SessionDays
+}
+
+// IsDisabled reports whether retention enforcement is entirely suppressed (keep forever).
+func (r OmnipusRetentionConfig) IsDisabled() bool { return r.Disabled }
+
+// RetentionMode summarizes the (session_days, disabled) pair into one of
+// three operator-facing states. Use Mode() on OmnipusRetentionConfig to
+// derive it; the underlying struct fields remain the authoritative
+// storage shape for backward compatibility (see
+// TestRetention_ZeroSessionDaysStillMeansDefault90).
+type RetentionMode int
+
+const (
+	RetentionDefault RetentionMode = iota // session_days <= 0 && !Disabled
+	RetentionCustom                       // session_days > 0 && !Disabled
+	RetentionForever                      // Disabled == true
+)
+
+// String returns a lowercase stable label ("default" / "custom" / "forever").
+// Used by log lines and by TS consumers via the wire.
+func (m RetentionMode) String() string {
+	switch m {
+	case RetentionCustom:
+		return "custom"
+	case RetentionForever:
+		return "forever"
+	default:
+		return "default"
+	}
+}
+
+// Mode classifies the retention config into one of three states.
+// Disabled takes precedence over SessionDays — setting disabled: true with
+// session_days: 99 still means "forever".
+func (r OmnipusRetentionConfig) Mode() RetentionMode {
+	if r.Disabled {
+		return RetentionForever
+	}
+	if r.SessionDays > 0 {
+		return RetentionCustom
+	}
+	return RetentionDefault
 }
 
 // OmnipusCompactionConfig holds context compression settings per Appendix E §E.5.3.

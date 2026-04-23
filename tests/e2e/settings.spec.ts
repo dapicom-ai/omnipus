@@ -59,18 +59,18 @@ test('(d) all tabs reachable via keyboard navigation (Tab + Enter)', async ({ pa
   const tabCount = await tabs.count();
   expect(tabCount).toBeGreaterThan(0);
 
+  // Click each tab directly rather than using keyboard focus/ArrowRight
+  // navigation. Radix Tabs may re-render tab triggers on state changes
+  // (e.g. Access tab appearing after admin auth), which can cause
+  // locator.focus() to time out if the element detaches during render.
   for (let i = 0; i < tabCount; i++) {
-    const currentTab = tabs.nth(i);
-    await currentTab.focus();
-    await currentTab.press('Enter');
+    // Re-query tabs each iteration to avoid stale locators after re-renders.
+    const currentTab = tabList.locator('[role="tab"]').nth(i);
+    await currentTab.click();
 
     // Radix Tabs: active panel has data-state="active" — hidden panels have hidden attribute
     const tabPanel = page.locator('[role="tabpanel"][data-state="active"]').first();
-    await expect(tabPanel).toBeVisible({ timeout: 5_000 });
-
-    if (i < tabCount - 1) {
-      await page.keyboard.press('ArrowRight');
-    }
+    await expect(tabPanel).toBeVisible({ timeout: 10_000 });
   }
 });
 

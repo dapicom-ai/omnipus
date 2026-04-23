@@ -1,90 +1,19 @@
-import { useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Gauge, ArrowClockwise, Warning } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { fetchRateLimits } from '@/lib/api'
-import { useUiStore } from '@/store/ui'
 import { cn } from '@/lib/utils'
 
-function costColor(ratio: number): string {
-  if (ratio >= 0.8) return 'bg-red-500'
-  if (ratio >= 0.5) return 'bg-amber-500'
-  if (ratio > 0) return 'bg-emerald-500'
-  return 'bg-[var(--color-muted)]'
-}
-
-function formatLimit(value: number, unit: string): string {
-  return value > 0 ? `${value}/${unit}` : 'No limit'
-}
-
-interface DailyCostBarProps {
-  cap: number
-  cost: number
-}
-
-function DailyCostBar({ cap, cost }: DailyCostBarProps) {
-  const rawRatio = cap > 0 ? cost / cap : 0
-  const clampedPct = Math.round(Math.min(rawRatio, 1) * 100)
-  const exceeded = cap > 0 && cost > cap
-
-  return (
-    <>
-      <div className="flex items-center justify-between text-[10px] text-[var(--color-muted)]">
-        <span>Daily cost</span>
-        <span className={cn(exceeded && 'text-red-400 font-semibold')}>
-          ${cost.toFixed(2)} / ${cap.toFixed(2)}
-          {exceeded && ' — Exceeded'}
-        </span>
-      </div>
-      {/* Render a custom bar so we can change fill colour without a prop chain */}
-      <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-[var(--color-surface-3)]">
-        <div
-          className={cn('h-full rounded-full transition-all duration-500', costColor(rawRatio))}
-          style={{ width: `${clampedPct}%` }}
-        />
-      </div>
-    </>
-  )
+function formatLimit(value: number | undefined, unit: string): string {
+  return value && value > 0 ? `${value}/${unit}` : 'No limit'
 }
 
 export function RateLimitStatusCard() {
-  const addToast = useUiStore((s) => s.addToast)
-  const warnedRef = useRef<'none' | 'warning' | 'exceeded'>('none')
-
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ['rate-limits'],
     queryFn: fetchRateLimits,
     refetchInterval: 10_000,
   })
-
-  useEffect(() => {
-    if (!data || !data.enabled || data.daily_cost_cap <= 0) return
-    const ratio = data.daily_cost_usd / data.daily_cost_cap
-
-    // Reset the warned state when the ratio drops back below the warning
-    // threshold. This handles UTC day rollover (cost resets to 0), cap raises,
-    // and any other reason the ratio would fall — without this reset the toast
-    // only fires once per component lifetime, which means day 2+ gets no
-    // warnings even when blowing through the cap again.
-    if (ratio < 0.8 && warnedRef.current !== 'none') {
-      warnedRef.current = 'none'
-      return
-    }
-
-    if (ratio >= 1.0 && warnedRef.current !== 'exceeded') {
-      warnedRef.current = 'exceeded'
-      addToast({
-        message: `Daily cost cap exceeded: $${data.daily_cost_usd.toFixed(2)} / $${data.daily_cost_cap.toFixed(2)}`,
-        variant: 'error',
-      })
-    } else if (ratio >= 0.8 && ratio < 1.0 && warnedRef.current === 'none') {
-      warnedRef.current = 'warning'
-      addToast({
-        message: `Approaching daily cost cap: $${data.daily_cost_usd.toFixed(2)} / $${data.daily_cost_cap.toFixed(2)} (${Math.round(ratio * 100)}%)`,
-        variant: 'default',
-      })
-    }
-  }, [data, addToast])
 
   function renderBody() {
     if (isError) {
@@ -115,32 +44,41 @@ export function RateLimitStatusCard() {
       )
     }
 
-    if (!data?.enabled) {
+    const hasCap = data?.daily_cost_cap_usd && data.daily_cost_cap_usd > 0
+    const hasLlmLimit = data?.max_agent_llm_calls_per_hour && data.max_agent_llm_calls_per_hour > 0
+    const hasToolLimit = data?.max_agent_tool_calls_per_minute && data.max_agent_tool_calls_per_minute > 0
+
+    if (!hasCap && !hasLlmLimit && !hasToolLimit) {
       return (
         <p className="text-xs text-[var(--color-muted)]">
-          Rate limiting is disabled. Set limits in sandbox.rate_limits.
+          No rate limits configured.
         </p>
       )
     }
 
     return (
       <div className="space-y-2.5">
-        <div className="space-y-1">
-          <DailyCostBar cap={data.daily_cost_cap} cost={data.daily_cost_usd} />
-        </div>
+        {hasCap && (
+          <div className="flex items-center justify-between text-[10px] text-[var(--color-muted)]">
+            <span>Daily cost cap</span>
+            <span className="text-[var(--color-secondary)]">
+              ${data!.daily_cost_cap_usd!.toFixed(2)}
+            </span>
+          </div>
+        )}
 
         {/* Per-agent limits */}
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-[var(--color-muted)]">
           <span>
             LLM calls:{' '}
             <span className="text-[var(--color-secondary)]">
-              {formatLimit(data.max_agent_llm_calls_per_hour, 'hour')}
+              {formatLimit(data?.max_agent_llm_calls_per_hour, 'hour')}
             </span>
           </span>
           <span>
             Tool calls:{' '}
             <span className="text-[var(--color-secondary)]">
-              {formatLimit(data.max_agent_tool_calls_per_minute, 'minute')}
+              {formatLimit(data?.max_agent_tool_calls_per_minute, 'minute')}
             </span>
           </span>
         </div>

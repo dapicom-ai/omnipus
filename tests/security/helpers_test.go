@@ -170,6 +170,8 @@ func gatewayWithRBAC(t *testing.T) (gw *testutil.TestGateway, adminToken, userTo
 	// Add a second (non-admin) user via gw.SeedUser — this writes the user via
 	// the same read-modify-write + /reload path the gateway uses, eliminating
 	// the hand-rolled config-rewrite dance.
+	// beforeWrite disables DevModeBypass so that RequireNotBypass does not block
+	// admin security endpoints during the actual test run.
 	_ = adminHash // already have usable adminToken from onboarding response
 	seedCtx, seedCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer seedCancel()
@@ -178,6 +180,9 @@ func gatewayWithRBAC(t *testing.T) (gw *testutil.TestGateway, adminToken, userTo
 			Username:  "secuser",
 			TokenHash: string(userHash),
 			Role:      config.UserRoleUser,
+		}, func(m map[string]any) {
+			gwSec := m["gateway"].(map[string]any)
+			gwSec["dev_mode_bypass"] = false
 		}),
 		"SeedUser must succeed to add non-admin user",
 	)

@@ -9,12 +9,11 @@
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? ''
 
-// CSRF_COOKIE_NAME must match pkg/gateway/middleware/csrf.go CSRFCookieName.
-// On HTTPS origins the server issues `__Host-csrf` (Secure, prefix-enforced).
-// On plain-HTTP origins (dev, self-hosted without TLS) the __Host- cookie
-// can't install, so the server falls back to `csrf` (Secure=false) —
-// CSRF_COOKIE_NAME_HTTP below. readCSRFCookie() prefers __Host-csrf and
-// falls back to csrf, matching whatever the server actually set.
+// The server issues one of two cookie names depending on the request's TLS
+// state. TLS: __Host-csrf (browser enforces Secure + Path=/ + no Domain).
+// Plain HTTP: csrf (no __Host- prefix, Secure=false) — __Host- cookies are
+// silently dropped by browsers on non-localhost plain-HTTP origins.
+// Keep both constants in sync with pkg/gateway/middleware/csrf.go.
 const CSRF_COOKIE_NAME = '__Host-csrf'
 const CSRF_COOKIE_NAME_HTTP = 'csrf'
 const CSRF_HEADER_NAME = 'X-CSRF-Token'
@@ -38,20 +37,15 @@ const CSRF_EXEMPT_PATHS = new Set<string>([
   '/api/v1/auth/register-admin',
 ])
 
-// readCSRFCookie parses document.cookie and returns the CSRF token value,
-// or null if neither the TLS nor the HTTP variant is present. We prefer
-// __Host-csrf when both are somehow present (shouldn't happen in practice)
-// because that's the stronger cookie. We intentionally do not cache —
-// cookies can change after login/logout/onboarding and caching would cause
-// stale tokens on the next state-changing call.
+// readCSRFCookie parses document.cookie and returns the __Host-csrf value,
+// or null if the cookie is absent. We intentionally do not cache — cookies
+// can change after login/logout/onboarding and caching would cause stale
+// tokens on the next state-changing call.
 function readCSRFCookie(): string | null {
   if (typeof document === 'undefined') return null
-  // Try the TLS name first, then the plain-HTTP fallback.
+  // Try __Host-csrf (TLS) first, then the plain-HTTP fallback.
   for (const name of [CSRF_COOKIE_NAME, CSRF_COOKIE_NAME_HTTP]) {
     const prefix = `${name}=`
-    // document.cookie is a single string of "a=b; c=d" pairs. We walk the
-    // pairs manually rather than split on ";" because cookie values can
-    // contain "=" (and base64 tokens certainly can).
     for (const part of document.cookie.split(';')) {
       const trimmed = part.trim()
       if (trimmed.startsWith(prefix)) {
@@ -104,18 +98,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // instead of a cryptic "403 csrf cookie missing" from the network tab
   // and also prevents a cascade of dependent requests firing during a
   // broken auth state.
-  //
-  // Bearer-authenticated requests are not subject to the double-submit check
-  // server-side (browsers cannot auto-send an Authorization header cross-
-  // origin), so they must not be blocked here either — otherwise a logged-in
-  // SPA on plain HTTP where the Secure cookie couldn't install would hit an
-  // eager false-positive.
   const method = (init?.method ?? 'GET').toUpperCase()
-  const hasBearer = 'Authorization' in getAuthHeaders()
   if (
     STATE_CHANGING_METHODS.has(method) &&
     !isPathCSRFExempt(path) &&
-    !hasBearer &&
     readCSRFCookie() === null
   ) {
     throw new Error(
@@ -322,6 +308,10 @@ export interface Config {
     token?: string
     hot_reload?: boolean
     log_level?: string
+    // dev_mode_bypass is read-only in the UI — it cannot be toggled via the
+    // config PUT endpoint (which blocks it via blockedPaths). The UI uses this
+    // to hide admin-only controls that are inoperative when bypass is on.
+    dev_mode_bypass?: boolean
   }
   security: {
     policy_mode: 'allow' | 'deny'
@@ -388,6 +378,7 @@ function rawToFrontendConfig(raw: Record<string, unknown>): Config {
       token: gateway.token as string | undefined,
       hot_reload: gateway.hot_reload as boolean | undefined,
       log_level: gateway.log_level as string | undefined,
+      dev_mode_bypass: gateway.dev_mode_bypass as boolean | undefined,
     },
     security: {
       policy_mode: validEnum(security.policy_mode, VALID_POLICY_MODES, 'deny'),
@@ -942,7 +933,7 @@ export async function uploadFiles(sessionId: string, files: File[]): Promise<{ f
   // off chance the user explicitly set the cookie externally.
   if (csrf === null) {
     throw new Error(
-      'CSRF cookie missing — cannot upload files. Log in first so the server can issue the __Host-csrf cookie.',
+      'CSRF cookie missing — cannot upload files. Log in first so the server can issue the CSRF cookie.',
     )
   }
   // Build headers by hand because FormData must NOT have a Content-Type
@@ -995,23 +986,328 @@ export function updateExecAllowlist(patterns: string[]): Promise<ExecAllowlist> 
   })
 }
 
-// ── Prompt Guard ──────────────────────────────────────────────────────────────
+// ── Security Admin Endpoints ──────────────────────────────────────────────────
+//
+// Enums and typed helpers for the security and admin endpoints.
+// These are separate from the pre-existing /security/* helpers above — they use
+// the canonical request/response shapes and are wired to the admin UI panels.
 
-export type PromptGuardStrictness = 'low' | 'medium' | 'high'
+export type SkillTrustLevel = 'block_unverified' | 'warn_unverified' | 'allow_all'
+export type PromptInjectionLevel = 'low' | 'medium' | 'high'
+export type DMScope = 'main' | 'per-peer' | 'per-channel-peer' | 'per-account-channel-peer'
 
-export interface PromptGuardConfig {
-  strictness: PromptGuardStrictness
-  restart_required?: boolean
+// PendingRestartEntry represents one config key that has been written to disk
+// but not yet applied to the running process — the running value differs from
+// the persisted value and a restart is required to reconcile them.
+export interface PendingRestartEntry {
+  key: string
+  applied_value: unknown
+  persisted_value: unknown
 }
 
-export function fetchPromptGuard(): Promise<PromptGuardConfig> {
-  return request<PromptGuardConfig>('/security/prompt-guard')
+export function fetchPendingRestart(): Promise<PendingRestartEntry[]> {
+  return request<PendingRestartEntry[]>('/config/pending-restart')
 }
 
-export function updatePromptGuard(strictness: PromptGuardStrictness): Promise<PromptGuardConfig> {
-  return request<PromptGuardConfig>('/security/prompt-guard', {
+// Audit log toggle — distinct from GET /audit-log (which returns AuditEntry[]).
+// This endpoint controls whether audit logging is enabled at all.
+export interface AuditLogToggle {
+  enabled: boolean
+}
+
+export interface AuditLogUpdateResponse {
+  saved: boolean
+  requires_restart: boolean
+  applied_enabled: boolean
+}
+
+export function fetchAuditLogToggle(): Promise<AuditLogToggle> {
+  return request<AuditLogToggle>('/security/audit-log')
+}
+
+export function updateAuditLog(enabled: boolean): Promise<AuditLogUpdateResponse> {
+  return request<AuditLogUpdateResponse>('/security/audit-log', {
     method: 'PUT',
-    body: JSON.stringify({ strictness }),
+    body: JSON.stringify({ enabled }),
+  })
+}
+
+// Skill trust — controls how unverified community skills are handled.
+export interface SkillTrustResponse {
+  level: SkillTrustLevel
+}
+
+export interface SkillTrustUpdateResponse {
+  saved: boolean
+  requires_restart: boolean
+  applied_level: SkillTrustLevel
+}
+
+export interface SkillTrustUpdateBody {
+  level: SkillTrustLevel
+}
+
+export function fetchSkillTrust(): Promise<SkillTrustResponse> {
+  return request<SkillTrustResponse>('/security/skill-trust')
+}
+
+export function updateSkillTrust(level: SkillTrustLevel): Promise<SkillTrustUpdateResponse> {
+  return request<SkillTrustUpdateResponse>('/security/skill-trust', {
+    method: 'PUT',
+    body: JSON.stringify({ level } satisfies SkillTrustUpdateBody),
+  })
+}
+
+// Prompt guard — uses `level` field, aligns with PromptInjectionLevel.
+export interface PromptGuardResponse {
+  level: PromptInjectionLevel
+}
+
+export interface PromptGuardUpdateResponse {
+  saved: boolean
+  requires_restart: boolean
+  applied_level: PromptInjectionLevel
+}
+
+export interface PromptGuardUpdateBody {
+  level: PromptInjectionLevel
+}
+
+export function fetchPromptGuardLevel(): Promise<PromptGuardResponse> {
+  return request<PromptGuardResponse>('/security/prompt-guard')
+}
+
+export function updatePromptGuardLevel(level: PromptInjectionLevel): Promise<PromptGuardUpdateResponse> {
+  return request<PromptGuardUpdateResponse>('/security/prompt-guard', {
+    method: 'PUT',
+    body: JSON.stringify({ level } satisfies PromptGuardUpdateBody),
+  })
+}
+
+// Rate limits — adds write support and configures spending/throughput caps.
+export interface RateLimitsResponse {
+  daily_cost_cap_usd?: number
+  max_agent_llm_calls_per_hour?: number
+  max_agent_tool_calls_per_minute?: number
+}
+
+export interface RateLimitsUpdateBody {
+  daily_cost_cap_usd?: number
+  max_agent_llm_calls_per_hour?: number
+  max_agent_tool_calls_per_minute?: number
+}
+
+export function fetchRateLimits(): Promise<RateLimitsResponse> {
+  return request<RateLimitsResponse>('/security/rate-limits')
+}
+
+export function updateRateLimits(body: RateLimitsUpdateBody): Promise<RateLimitsResponse> {
+  return request<RateLimitsResponse>('/security/rate-limits', {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+}
+
+// Sandbox config — mode, allowed paths, and SSRF controls.
+// allow_internal is []string matching OmnipusSSRFConfig.AllowInternal in pkg/config/sandbox.go.
+// Entries may be hostname, exact IP, or CIDR range. Empty slice means "block all".
+export interface SandboxConfigResponse {
+  mode?: string
+  // applied_mode is the value the gateway is currently enforcing. It differs
+  // from `mode` when the operator saved a change but hasn't restarted.
+  applied_mode?: string
+  allowed_paths?: string[]
+  ssrf?: {
+    enabled?: boolean
+    allow_internal?: string[]
+  }
+  requires_restart?: boolean
+}
+
+export interface SandboxConfigUpdateBody {
+  mode?: string
+  allowed_paths?: string[]
+  ssrf?: {
+    enabled?: boolean
+    allow_internal?: string[]
+  }
+}
+
+export function fetchSandboxConfig(): Promise<SandboxConfigResponse> {
+  return request<SandboxConfigResponse>('/security/sandbox-config')
+}
+
+export function updateSandboxConfig(body: SandboxConfigUpdateBody): Promise<SandboxConfigResponse> {
+  return request<SandboxConfigResponse>('/security/sandbox-config', {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+}
+
+// Session scope — controls DM conversation isolation granularity.
+export interface SessionScopeResponse {
+  dm_scope: DMScope
+}
+
+export interface SessionScopeUpdateBody {
+  dm_scope: DMScope
+}
+
+export interface SessionScopeUpdateResponse {
+  saved: boolean
+  requires_restart: boolean
+  // applied_dm_scope reflects the value currently in effect. Since DM scope is
+  // restart-gated, this is the previous value until the gateway is restarted.
+  applied_dm_scope: DMScope
+}
+
+export function fetchSessionScope(): Promise<SessionScopeResponse> {
+  return request<SessionScopeResponse>('/security/session-scope')
+}
+
+export function updateSessionScope(dm_scope: DMScope): Promise<SessionScopeUpdateResponse> {
+  return request<SessionScopeUpdateResponse>('/security/session-scope', {
+    method: 'PUT',
+    body: JSON.stringify({ dm_scope } satisfies SessionScopeUpdateBody),
+  })
+}
+
+// Retention — session log retention policy.
+
+// RetentionMode mirrors the Go pkg/config.RetentionMode enum. Derive with
+// retentionMode(resp) from the flat wire shape; the backend does not send
+// this as a field.
+export type RetentionMode = 'default' | 'custom' | 'forever'
+
+export function retentionMode(resp: {
+  session_days?: number
+  disabled?: boolean
+}): RetentionMode {
+  if (resp.disabled) return 'forever'
+  if ((resp.session_days ?? 0) > 0) return 'custom'
+  return 'default'
+}
+
+export interface RetentionResponse {
+  session_days?: number
+  disabled?: boolean
+}
+
+export interface RetentionUpdateBody {
+  session_days?: number
+  disabled?: boolean
+}
+
+// Matches the handler at pkg/gateway/rest_retention.go's putRetention response:
+// flat {saved, requires_restart, session_days, disabled}. An earlier nested
+// `applied: {...}` shape never shipped — the handler always wrote flat.
+export interface RetentionUpdateResponse {
+  saved: boolean
+  requires_restart: boolean
+  session_days: number
+  disabled: boolean
+}
+
+export function fetchRetention(): Promise<RetentionResponse> {
+  return request<RetentionResponse>('/security/retention')
+}
+
+export function updateRetention(body: RetentionUpdateBody): Promise<RetentionUpdateResponse> {
+  return request<RetentionUpdateResponse>('/security/retention', {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  })
+}
+
+// Retention sweep — immediately purge sessions beyond the retention window.
+export interface RetentionSweepResponse {
+  removed: number
+  skipped_reason?: string
+}
+
+export function triggerRetentionSweep(): Promise<RetentionSweepResponse> {
+  return request<RetentionSweepResponse>('/security/retention/sweep', { method: 'POST' })
+}
+
+// Users — list, create, delete, reset password, change role.
+export interface UserEntry {
+  username: string
+  role: UserRole
+  has_password: boolean
+  has_active_token: boolean
+}
+
+export interface CreateUserBody {
+  username: string
+  role: UserRole
+  password: string
+}
+
+export interface CreateUserResponse {
+  username: string
+  role: UserRole
+  warning?: string
+  requires_restart?: boolean
+}
+
+export interface DeleteUserResponse {
+  deleted: true
+  warning?: string
+  requires_restart?: boolean
+}
+
+export interface ResetUserPasswordBody {
+  password: string
+}
+
+export interface ResetUserPasswordResponse {
+  username: string
+  password_reset: true
+  warning?: string
+  requires_restart?: boolean
+}
+
+export interface UpdateUserRoleBody {
+  role: UserRole
+}
+
+export interface UpdateUserRoleResponse {
+  username: string
+  role: UserRole
+  warning?: string
+  requires_restart?: boolean
+}
+
+export function fetchUsers(): Promise<UserEntry[]> {
+  return request<UserEntry[]>('/users')
+}
+
+export async function createUser(body: CreateUserBody): Promise<CreateUserResponse> {
+  const response = await request<CreateUserResponse & { token?: string }>('/users', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+  if ('token' in response) {
+    throw new Error('unexpected token in create response')
+  }
+  return response
+}
+
+export function deleteUser(username: string): Promise<DeleteUserResponse> {
+  return request<DeleteUserResponse>(`/users/${encodeURIComponent(username)}`, { method: 'DELETE' })
+}
+
+export function resetUserPassword(username: string, password: string): Promise<ResetUserPasswordResponse> {
+  return request<ResetUserPasswordResponse>(`/users/${encodeURIComponent(username)}/password`, {
+    method: 'PUT',
+    body: JSON.stringify({ password } satisfies ResetUserPasswordBody),
+  })
+}
+
+export function updateUserRole(username: string, role: UserRole): Promise<UpdateUserRoleResponse> {
+  return request<UpdateUserRoleResponse>(`/users/${encodeURIComponent(username)}/role`, {
+    method: 'PATCH',
+    body: JSON.stringify({ role } satisfies UpdateUserRoleBody),
   })
 }
 
@@ -1027,19 +1323,6 @@ export function fetchExecProxyStatus(): Promise<ExecProxyStatus> {
   return request<ExecProxyStatus>('/security/exec-proxy-status')
 }
 
-// ── Rate Limits ───────────────────────────────────────────────────────────────
-
-export interface RateLimitStatus {
-  enabled: boolean
-  daily_cost_usd: number
-  daily_cost_cap: number
-  max_agent_llm_calls_per_hour: number
-  max_agent_tool_calls_per_minute: number
-}
-
-export function fetchRateLimits(): Promise<RateLimitStatus> {
-  return request<RateLimitStatus>('/security/rate-limits')
-}
 
 // ── Agent Tools ───────────────────────────────────────────────────────────────
 
@@ -1110,6 +1393,9 @@ export interface SandboxStatus {
   kernel_level: boolean
   policy_applied: boolean
   abi_version?: number
+  // issue_ref is set by the server when a known kernel incompatibility is flagged
+  // (currently ABI v4+). Do NOT hard-code the literal issue number in the UI.
+  issue_ref?: string
   blocked_syscalls?: string[]
   seccomp_enabled: boolean
   landlock_features?: string[]
@@ -1118,39 +1404,4 @@ export interface SandboxStatus {
 
 export function fetchSandboxStatus(): Promise<SandboxStatus> {
   return request<SandboxStatus>('/security/sandbox-status')
-}
-
-// SandboxConfig mirrors the editable subset of config.OmnipusSandboxConfig
-// exposed by GET/PUT /api/v1/security/sandbox-config. applied_mode reflects
-// what the gateway is CURRENTLY running; it differs from mode when the
-// operator saved a change that won't take effect until the gateway restarts.
-export interface SandboxConfig {
-  mode: 'enforce' | 'permissive' | 'off' | string
-  allow_network_outbound: boolean
-  allowed_paths: string[]
-  ssrf_enabled: boolean
-  ssrf_allow_internal: string[]
-  applied_mode: string
-  requires_restart?: boolean
-}
-
-// SandboxConfigUpdate is the partial-update shape accepted by PUT. Fields
-// not present are left untouched on disk.
-export interface SandboxConfigUpdate {
-  mode?: 'enforce' | 'permissive' | 'off'
-  allow_network_outbound?: boolean
-  allowed_paths?: string[]
-  ssrf_enabled?: boolean
-  ssrf_allow_internal?: string[]
-}
-
-export function fetchSandboxConfig(): Promise<SandboxConfig> {
-  return request<SandboxConfig>('/security/sandbox-config')
-}
-
-export function updateSandboxConfig(update: SandboxConfigUpdate): Promise<SandboxConfig> {
-  return request<SandboxConfig>('/security/sandbox-config', {
-    method: 'PUT',
-    body: JSON.stringify(update),
-  })
 }

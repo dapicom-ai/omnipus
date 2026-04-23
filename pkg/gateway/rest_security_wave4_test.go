@@ -91,11 +91,13 @@ func TestHandleRateLimits_Enabled(t *testing.T) {
 	assert.Equal(t, float64(15), body["max_agent_tool_calls_per_minute"], "tool calls per minute must match config")
 }
 
-// TestHandleRateLimits_MethodNotAllowed returns 405 for non-GET methods.
-func TestHandleRateLimits_MethodNotAllowed(t *testing.T) {
+// TestHandleRateLimitsWave4_MethodNotAllowed returns 405 for unsupported methods.
+// PUT and GET are handled by HandleRateLimits in rest_rate_limits.go; POST and
+// DELETE remain unsupported.
+func TestHandleRateLimitsWave4_MethodNotAllowed(t *testing.T) {
 	api := newTestRestAPIWithHome(t)
 
-	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+	for _, method := range []string{http.MethodPost, http.MethodDelete} {
 		t.Run(method, func(t *testing.T) {
 			w := httptest.NewRecorder()
 			r := httptest.NewRequest(method, "/api/v1/security/rate-limits", nil)

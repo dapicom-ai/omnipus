@@ -279,7 +279,10 @@ func TestCSRF_NilOptionIgnored(t *testing.T) {
 
 func TestIssueCSRFCookie_Attributes(t *testing.T) {
 	rec := httptest.NewRecorder()
-	require.NoError(t, IssueCSRFCookie(rec, nil))
+	// Use a request with TLS set to exercise the secure-cookie path (__Host-csrf).
+	req := httptest.NewRequest(http.MethodGet, "https://example.com/", nil)
+	req.TLS = &tls.ConnectionState{} // non-nil TLS triggers the __Host- cookie branch
+	require.NoError(t, IssueCSRFCookie(rec, req))
 
 	cookies := rec.Result().Cookies()
 	require.Len(t, cookies, 1, "exactly one cookie must be set")
@@ -300,9 +303,11 @@ func TestIssueCSRFCookie_TokenIsUnique(t *testing.T) {
 	// real entropy test (that belongs in a fuzz run), but it catches the
 	// common bug of accidentally returning a constant.
 	seen := map[string]bool{}
+	tlsReq := httptest.NewRequest(http.MethodGet, "https://example.com/", nil)
+	tlsReq.TLS = &tls.ConnectionState{}
 	for i := 0; i < 16; i++ {
 		rec := httptest.NewRecorder()
-		require.NoError(t, IssueCSRFCookie(rec, nil))
+		require.NoError(t, IssueCSRFCookie(rec, tlsReq))
 		c := rec.Result().Cookies()[0]
 		assert.False(t, seen[c.Value], "token collision on iteration %d: %q", i, c.Value)
 		seen[c.Value] = true
@@ -311,7 +316,9 @@ func TestIssueCSRFCookie_TokenIsUnique(t *testing.T) {
 
 func TestIssueCSRFCookie_HeaderIsParseable(t *testing.T) {
 	rec := httptest.NewRecorder()
-	require.NoError(t, IssueCSRFCookie(rec, nil))
+	tlsReq := httptest.NewRequest(http.MethodGet, "https://example.com/", nil)
+	tlsReq.TLS = &tls.ConnectionState{}
+	require.NoError(t, IssueCSRFCookie(rec, tlsReq))
 	setCookie := rec.Header().Get("Set-Cookie")
 	require.NotEmpty(t, setCookie)
 

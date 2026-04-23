@@ -1,4 +1,4 @@
-import { X, CheckCircle, WarningCircle } from '@phosphor-icons/react'
+import { X, CheckCircle, Warning, WarningCircle } from '@phosphor-icons/react'
 import { useUiStore } from '@/store/ui'
 import { cn } from '@/lib/utils'
 
@@ -19,6 +19,8 @@ export function ToastContainer() {
               ? 'bg-[var(--color-surface-2)] border-[var(--color-error)]/30 text-[var(--color-secondary)]'
               : toast.variant === 'success'
               ? 'bg-[var(--color-surface-2)] border-[var(--color-success)]/30 text-[var(--color-secondary)]'
+              : toast.variant === 'warning'
+              ? 'bg-[var(--color-surface-2)] border-[var(--color-accent)]/30 text-[var(--color-secondary)]'
               : 'bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-secondary)]'
           )}
         >
@@ -27,6 +29,9 @@ export function ToastContainer() {
           )}
           {toast.variant === 'success' && (
             <CheckCircle size={16} className="text-[var(--color-success)] shrink-0 mt-0.5" weight="fill" />
+          )}
+          {toast.variant === 'warning' && (
+            <Warning size={16} className="text-[var(--color-accent)] shrink-0 mt-0.5" weight="fill" />
           )}
           <p className="flex-1 text-sm">{toast.message}</p>
           <button

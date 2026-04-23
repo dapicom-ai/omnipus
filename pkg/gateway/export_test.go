@@ -8,7 +8,9 @@
 
 package gateway
 
-import "time"
+import (
+	"time"
+)
 
 // ClearDegradedForTest calls the real clearDegraded closure logic on the
 // services struct. It is used by reload rollback tests to verify that the

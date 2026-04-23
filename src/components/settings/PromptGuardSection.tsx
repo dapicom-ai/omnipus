@@ -1,93 +1,97 @@
 import { useState, useEffect } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Shield } from '@phosphor-icons/react'
-import { fetchPromptGuard, updatePromptGuard } from '@/lib/api'
-import type { PromptGuardStrictness } from '@/lib/api'
-import { useAutoSave } from '@/hooks/useAutoSave'
-import { AutoSaveIndicator } from '@/components/ui/AutoSaveIndicator'
+import { fetchPromptGuardLevel, updatePromptGuardLevel } from '@/lib/api'
+import type { PromptInjectionLevel } from '@/lib/api'
+import { useUiStore } from '@/store/ui'
+import { useAuthStore } from '@/store/auth'
+import { SaveStatus, useSaveStatus } from './SaveStatus'
 
 // ── Level metadata ────────────────────────────────────────────────────────────
 
-const LEVELS: {
-  value: PromptGuardStrictness
-  label: string
-  description: string
-}[] = [
+const LEVELS: { value: PromptInjectionLevel; label: string; subtitle: string }[] = [
   {
     value: 'low',
     label: 'Low',
-    description:
-      'Wraps untrusted tool output in [UNTRUSTED_CONTENT] delimiters. Fewest false positives, lowest protection.',
+    subtitle:
+      'Minimal sanitization. Tool output reaches the model with only basic cleanup.',
   },
   {
     value: 'medium',
     label: 'Medium',
-    description:
-      '(Default) Wraps untrusted content AND escapes known injection phrases like "ignore previous instructions" using zero-width characters.',
+    subtitle:
+      'Balanced sanitization. Strips common prompt-injection patterns from tool output. (Default.)',
   },
   {
     value: 'high',
     label: 'High',
-    description:
-      'Replaces all untrusted content with a placeholder. Highest protection but may lose context — consider using a summarization step before passing to the main agent.',
+    subtitle:
+      'Aggressive sanitization. Strips more patterns — may clip legitimate content.',
   },
 ]
+
+// ── Skeleton ──────────────────────────────────────────────────────────────────
+
+function Skeleton() {
+  return (
+    <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-3 animate-pulse">
+      <div className="h-4 w-40 rounded bg-[var(--color-border)]" />
+      <div className="h-3 w-full rounded bg-[var(--color-border)]" />
+      <div className="h-3 w-full rounded bg-[var(--color-border)]" />
+    </div>
+  )
+}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function PromptGuardSection(): React.ReactElement {
+  const { addToast } = useUiStore()
   const queryClient = useQueryClient()
+  const role = useAuthStore((s) => s.role)
+  const isAdmin = role === 'admin'
 
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ['prompt-guard'],
-    queryFn: fetchPromptGuard,
+  const { data, isLoading, isError, error } = useQuery({
+    queryKey: ['prompt-guard-k'],
+    queryFn: fetchPromptGuardLevel,
   })
 
-  const [selected, setSelected] = useState<PromptGuardStrictness>('medium')
-  const [isDirty, setIsDirty] = useState(false)
-  // restartRequired is "sticky": once a save returns restart_required=true, it
-  // stays true until the page is reloaded. The GET endpoint currently returns
-  // restart_required=false on every read, so we MUST NOT let the useEffect
-  // clobber a true value — that would make the badge flash and disappear on
-  // every refetch. The badge represents "pending restart for unsaved-to-runtime
-  // state", not a server-side property.
+  const [selected, setSelected] = useState<PromptInjectionLevel>('medium')
   const [restartRequired, setRestartRequired] = useState(false)
 
+  const { state: saveState, setState: setSaveState, errorMessage, setErrorMessage } = useSaveStatus()
+
   useEffect(() => {
-    if (!data || isDirty) return
-    setSelected(data.strictness)
-    // Only UPGRADE restartRequired based on GET — never downgrade.
-    if (data.restart_required) {
-      setRestartRequired(true)
-    }
-  }, [data, isDirty])
+    if (!data) return
+    setSelected(data.level)
+  }, [data])
 
-  const { status: saveStatus, error: saveError } = useAutoSave(
-    selected,
-    async (level) => {
-      const serverResp = await updatePromptGuard(level)
-      setSelected(serverResp.strictness)
-      setIsDirty(false)
-      if (serverResp.restart_required) {
-        setRestartRequired(true)
-      }
-      queryClient.setQueryData(['prompt-guard'], serverResp)
+  const { mutate: save } = useMutation({
+    mutationFn: (level: PromptInjectionLevel) => updatePromptGuardLevel(level),
+    onMutate: () => setSaveState('saving'),
+    onSuccess: (resp) => {
+      setSaveState('saved')
+      if (resp.requires_restart) setRestartRequired(true)
+      queryClient.setQueryData(['prompt-guard-k'], { level: resp.applied_level })
     },
-    { disabled: !isDirty },
-  )
+    onError: (err: Error) => {
+      setSaveState('error')
+      setErrorMessage(err.message)
+      addToast({ message: err.message, variant: 'error' })
+    },
+  })
 
-  if (isLoading) {
-    return (
-      <div className="text-sm text-[var(--color-muted)] py-2">
-        Loading prompt guard settings...
-      </div>
-    )
+  function handleChange(level: PromptInjectionLevel) {
+    setSelected(level)
+    save(level)
   }
+
+  if (isLoading) return <Skeleton />
 
   if (isError) {
     return (
-      <p className="text-sm text-red-400">
-        Failed to load prompt injection settings. Please try again.
+      <p className="text-sm" style={{ color: 'var(--color-error)' }}>
+        Failed to load prompt guard settings:{' '}
+        {error instanceof Error ? error.message : 'Unknown error'}
       </p>
     )
   }
@@ -95,49 +99,44 @@ export function PromptGuardSection(): React.ReactElement {
   return (
     <section className="space-y-3">
       <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-sm font-medium text-[var(--color-secondary)] flex items-center gap-1.5">
-            <Shield size={14} className="text-[var(--color-muted)]" />
-            Prompt Injection Defense
-            {restartRequired && (
-              <span className="ml-2 text-[10px] uppercase tracking-wider text-[var(--color-warning)] border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/10 rounded px-1.5 py-0.5">
-                Restart required
-              </span>
-            )}
-          </h3>
-          <p className="text-xs text-[var(--color-muted)] mt-0.5">
-            Controls how untrusted tool output is sanitised before passing to the agent.
-          </p>
-        </div>
-        <AutoSaveIndicator status={saveStatus} error={saveError} />
+        <h3 className="text-sm font-medium text-[var(--color-secondary)] flex items-center gap-1.5">
+          <Shield size={14} className="text-[var(--color-muted)]" />
+          Prompt Injection Defense
+          {restartRequired && (
+            <span className="ml-2 text-[10px] uppercase tracking-wider text-[var(--color-warning)] border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/10 rounded px-1.5 py-0.5">
+              Restart required
+            </span>
+          )}
+        </h3>
+        <SaveStatus state={saveState} errorMessage={errorMessage} />
       </div>
 
-      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-3">
-        {/* Level selector */}
+      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4 space-y-4">
+        <p className="text-xs text-[var(--color-muted)] leading-relaxed">
+          Controls how untrusted tool output is sanitised before passing to the agent.
+        </p>
+
         <div className="space-y-2" role="radiogroup" aria-label="Prompt injection defense level">
-          {LEVELS.map((level) => {
-            const isActive = selected === level.value
+          {LEVELS.map((lvl) => {
+            const isActive = selected === lvl.value
             return (
               <button
-                key={level.value}
+                key={lvl.value}
                 type="button"
                 role="radio"
                 aria-checked={isActive}
+                disabled={!isAdmin}
                 onClick={() => {
-                  if (selected !== level.value) {
-                    setSelected(level.value)
-                    setIsDirty(true)
-                  }
+                  if (selected !== lvl.value) handleChange(lvl.value)
                 }}
                 className={[
-                  'w-full text-left rounded-md border p-3 transition-colors',
+                  'w-full text-left rounded-md border p-3 transition-colors disabled:opacity-60 disabled:cursor-not-allowed',
                   isActive
                     ? 'border-[var(--color-accent)]/60 bg-[var(--color-accent)]/8'
                     : 'border-[var(--color-border)] bg-[var(--color-surface-2)] hover:border-[var(--color-border-hover)]',
                 ].join(' ')}
               >
                 <div className="flex items-center gap-2">
-                  {/* Radio indicator */}
                   <span
                     className={[
                       'flex-shrink-0 inline-block w-3.5 h-3.5 rounded-full border-2 transition-colors',
@@ -150,32 +149,19 @@ export function PromptGuardSection(): React.ReactElement {
                   <span
                     className={[
                       'text-sm font-medium',
-                      isActive
-                        ? 'text-[var(--color-secondary)]'
-                        : 'text-[var(--color-muted)]',
+                      isActive ? 'text-[var(--color-secondary)]' : 'text-[var(--color-muted)]',
                     ].join(' ')}
                   >
-                    {level.label}
+                    {lvl.label}
                   </span>
                 </div>
-                {isActive && (
-                  <p className="text-xs text-[var(--color-muted)] mt-1.5 ml-5 leading-relaxed">
-                    {level.description}
-                  </p>
-                )}
+                <p className="text-xs text-[var(--color-muted)] mt-1 ml-5 leading-relaxed">
+                  {lvl.subtitle}
+                </p>
               </button>
             )
           })}
         </div>
-
-        {/* Applies-to note */}
-        <p className="text-[10px] text-[var(--color-muted)] pt-1 leading-relaxed">
-          Applies to results from:{' '}
-          <span className="font-mono">web_search</span>,{' '}
-          <span className="font-mono">web_fetch</span>,{' '}
-          <span className="font-mono">browser_*</span>,{' '}
-          <span className="font-mono">read_file</span>
-        </p>
       </div>
     </section>
   )

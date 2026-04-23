@@ -351,7 +351,17 @@ func (g *TestGateway) Do(req *http.Request) (*http.Response, error) {
 //
 // ctx controls the maximum wait for reload propagation; use a context with a
 // reasonable deadline (5–10 s is typical for CI).
-func (g *TestGateway) SeedUser(ctx context.Context, u config.UserConfig) error {
+//
+// beforeWrite, if non-nil, is called with the raw config map after the user
+// is appended but before the config is written to disk and reloaded. This lets
+// callers mutate fields such as DevModeBypass without needing a separate
+// write-reload round-trip. Example:
+//
+//	SeedUser(ctx, user, func(m map[string]any) {
+//		gw := m["gateway"].(map[string]any)
+//		gw["dev_mode_bypass"] = false
+//	})
+func (g *TestGateway) SeedUser(ctx context.Context, u config.UserConfig, beforeWrite func(map[string]any)) error {
 	// Read-modify-write the raw JSON to preserve SecureString values.
 	cfgPath := g.configPath
 	raw, err := os.ReadFile(cfgPath)
@@ -381,6 +391,11 @@ func (g *TestGateway) SeedUser(ctx context.Context, u config.UserConfig) error {
 	}
 	gwSection["users"] = append(users, userMap)
 	m["gateway"] = gwSection
+
+	// Allow caller to mutate the config before writing.
+	if beforeWrite != nil {
+		beforeWrite(m)
+	}
 
 	out, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {

@@ -4,6 +4,11 @@
 
 package config
 
+import (
+	"encoding/json"
+	"fmt"
+)
+
 // SkillTrustLevel controls how skills without a verifiable SHA-256 hash are handled (SEC-09).
 type SkillTrustLevel string
 
@@ -15,6 +20,60 @@ const (
 	// SkillTrustAllowAll skips all hash verification. omnipus doctor warns when set.
 	SkillTrustAllowAll SkillTrustLevel = "allow_all"
 )
+
+// UnmarshalJSON validates and deserializes a SkillTrustLevel from JSON.
+// Rejects unknown values at decode time so config.json with a typo fails fast
+// at boot instead of silently resolving to the zero value.
+func (l *SkillTrustLevel) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	switch SkillTrustLevel(s) {
+	case SkillTrustBlockUnverified, SkillTrustWarnUnverified, SkillTrustAllowAll:
+		*l = SkillTrustLevel(s)
+		return nil
+	case "":
+		// empty string means field was omitted — keep zero value
+		*l = ""
+		return nil
+	default:
+		return fmt.Errorf("invalid skill_trust: %q (must be one of: block_unverified, warn_unverified, allow_all)", s)
+	}
+}
+
+// PromptInjectionLevel controls prompt guard aggressiveness (SEC-25).
+type PromptInjectionLevel string
+
+const (
+	// PromptInjectionLow applies minimal prompt sanitization.
+	PromptInjectionLow PromptInjectionLevel = "low"
+	// PromptInjectionMedium applies moderate prompt sanitization (default).
+	PromptInjectionMedium PromptInjectionLevel = "medium"
+	// PromptInjectionHigh applies aggressive prompt sanitization.
+	PromptInjectionHigh PromptInjectionLevel = "high"
+)
+
+// UnmarshalJSON validates and deserializes a PromptInjectionLevel from JSON.
+// Empty string is accepted (config may legitimately omit it — the handler
+// defaults to "medium"). Only genuinely unknown non-empty values are rejected.
+func (l *PromptInjectionLevel) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	switch PromptInjectionLevel(s) {
+	case PromptInjectionLow, PromptInjectionMedium, PromptInjectionHigh:
+		*l = PromptInjectionLevel(s)
+		return nil
+	case "":
+		// empty string means field was omitted — keep zero value
+		*l = ""
+		return nil
+	default:
+		return fmt.Errorf("invalid prompt_injection_level: %q (must be one of: low, medium, high)", s)
+	}
+}
 
 // OmnipusSandboxConfig holds Wave 2 kernel-level sandboxing configuration per
 // BRD SEC-01 through SEC-20 (Landlock, seccomp, Job Objects, RBAC, audit log)
@@ -61,7 +120,7 @@ type OmnipusSandboxConfig struct {
 	// sanitizes untrusted tool results (SEC-25). Valid: "low", "medium"
 	// (default), "high". Affects web_search, web_fetch, browser_*, read_file
 	// results before they enter the LLM's context.
-	PromptInjectionLevel string `json:"prompt_injection_level,omitempty"`
+	PromptInjectionLevel PromptInjectionLevel `json:"prompt_injection_level,omitempty"`
 
 	// RateLimits configures per-agent LLM/tool call limits and the global
 	// daily cost cap (SEC-26). All fields default to 0 (no limit).

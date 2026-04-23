@@ -86,10 +86,10 @@ type services struct {
 	manualReloadChan chan struct{}
 	reloading        atomic.Bool
 	credStore        *credentials.Store
-	// sandboxResult is the Sprint-J Apply/Install outcome. Populated by
+	// sandboxResult is the Apply/Install outcome from boot. Populated by
 	// applySandbox before services start (and before any HTTP listener
-	// binds). Read-only after initialization — FR-J-015 forbids hot-reload
-	// of sandbox config, so this never changes for the process lifetime.
+	// binds). Read-only after initialization — sandbox config has no
+	// hot-reload path, so this never changes for the process lifetime.
 	sandboxResult *SandboxApplyResult
 	// stopNagBanner cancels the permissive / production-off nag goroutine
 	// on shutdown. No-op when no banner was armed.
@@ -412,13 +412,13 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 	msgBus := bus.NewMessageBus()
 	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider)
 
-	// Sprint J (FR-J-001..016): Apply the kernel sandbox to the gateway
-	// process BEFORE any HTTP listener binds. Strict ordering:
+	// Apply the kernel sandbox to the gateway process BEFORE any HTTP listener
+	// binds. Strict ordering:
 	//   unlock → config → NewAgentLoop → applySandbox → setupAndStartServices
-	// where setupAndStartServices ends in ChannelManager.StartAll which
-	// calls ListenAndServe on the shared HTTP server. During the
-	// Apply→Install→listen window, external TCP probes receive
-	// ECONNREFUSED (FR-J-016) because the socket simply does not exist yet.
+	// where setupAndStartServices ends in ChannelManager.StartAll which calls
+	// ListenAndServe on the shared HTTP server. During the Apply→Install→listen
+	// window, external TCP probes receive ECONNREFUSED because the socket does
+	// not exist yet.
 	sandboxResult, sandboxErr := applySandbox(SandboxApplyOptions{
 		CLIMode:  opts.SandboxMode,
 		Cfg:      cfg,
@@ -551,6 +551,15 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 		}()
 		agentLoop.Run(agentLoopCtx)
 	}()
+
+	// Launch the nightly retention sweep goroutine. Uses ctx (not agentLoopCtx)
+	// so it shuts down on gateway stop regardless of agent-loop liveness.
+	// GetSessionStore returns the shared UnifiedStore; when nil (misconfigured
+	// home) the goroutine is a no-op — getCfg returning a nil cfg is guarded
+	// inside executeSweepTick.
+	if sharedStore := agentLoop.GetSessionStore(); sharedStore != nil {
+		startRetentionSweepLoop(ctx, sharedStore, agentLoop.GetConfig, 24*time.Hour)
+	}
 
 	// Wire a second degraded check: report 503 when the agent loop has died.
 	runningServices.HealthServer.SetDegradedFunc(func() (bool, string) {
@@ -858,7 +867,8 @@ func setupAndStartServices(
 		credStore:     credStore,
 		mediaStore:    runningServices.MediaStore,
 		ssrfChecker:   agent.GetSSRFChecker(agentLoop), // SEC-24: nil when SSRF disabled
-		sandboxResult: sandboxResult,                   // Sprint J: immutable post-boot snapshot
+		sandboxResult: sandboxResult,                   // immutable post-boot snapshot
+		appliedConfig: mustDeepCopyConfig(cfg),         // boot-time snapshot for pending-restart diff
 	}
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions", api.withAuth(api.HandleSessions))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions/", api.withAuth(api.HandleSessions))

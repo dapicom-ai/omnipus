@@ -80,12 +80,7 @@ jobs:
           # Supply a deterministic master key so the credential store unlocks
           # without prompting (Plan 3 §1 locked-decision: env takes priority).
           export OMNIPUS_MASTER_KEY="0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
-          # --sandbox=off until #103 (Landlock ABI v4 kernel 6.8 incompatibility)
-          # lands. Sprint J correctly fail-closes at boot when Apply() fails on a
-          # capable kernel; the smoke test only needs a /health round-trip so we
-          # skip sandbox-apply here. Real kernel enforcement is proven by
-          # tests/security/sandbox_enforcement_linux_test.go (subprocess harness).
-          ./omnipus gateway --allow-empty --sandbox=off > omnipus.log 2>&1 &
+          ./omnipus gateway --allow-empty > omnipus.log 2>&1 &
           PID=$!
           echo "gateway pid=$PID"
 
@@ -109,5 +104,21 @@ jobs:
 
           echo "gateway did not become ready within 30 s; log follows:" >&2
           cat omnipus.log >&2
-          kill "$PID" || true
+          # Diagnose: check if the process is still running and capture exit code.
+          if kill -0 "$PID" 2>/dev/null; then
+            echo "process $PID is still running — killing" >&2
+            kill "$PID" || true
+          else
+            wait "$PID" 2>/dev/null && EXIT_CODE=$? || EXIT_CODE=$?
+            echo "process $PID already exited with code $EXIT_CODE" >&2
+          fi
+          # Dump panic log if present.
+          PANIC_LOG="${OMNIPUS_HOME}/logs/gateway_panic.log"
+          if [ -f "$PANIC_LOG" ]; then
+            echo "=== panic log ===" >&2
+            cat "$PANIC_LOG" >&2
+          fi
+          # Dump dmesg for seccomp/signal kills (requires no password on GH runners).
+          echo "=== recent dmesg ===" >&2
+          dmesg | grep -i -E "seccomp|sigsys|killed|oom" | tail -5 >&2 || true
           exit 1

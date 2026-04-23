@@ -304,7 +304,10 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Trigger a reload so the in-memory config picks up the new user.
-	a.awaitReload()
+	// Reload failure is non-fatal — token is on disk and active after next config poll.
+	if err := a.awaitReload(); err != nil {
+		slog.Warn("onboarding: hot-reload after complete failed; token active after next restart", "error", err)
+	}
 
 	// Issue a __Host-csrf cookie so the onboarding client (which up to this
 	// point had no cookie — /api/v1/onboarding/complete is exempt from the

@@ -72,6 +72,13 @@ type restAPI struct {
 	// of sandbox config. HandleSandboxStatus reads this to enrich the
 	// response with mode and disabled_by.
 	sandboxResult *SandboxApplyResult
+	// appliedConfig is a deep copy of the config that was active when the
+	// gateway process started. It is set once during boot (setupAndStartServices)
+	// and never mutated afterward. HandlePendingRestart compares this snapshot
+	// against the current on-disk config to compute the set of restart-required
+	// changes — keys that differ between persisted and applied represent changes
+	// that will only take effect after a restart.
+	appliedConfig *config.Config
 	// Lazy-initialized admin-only handler wrappers. Built once on first use so
 	// each incoming PUT request doesn't allocate a fresh middleware chain.
 	adminUpdateConfigOnce    sync.Once
@@ -194,6 +201,21 @@ func (a *restAPI) withAuthAndBodyLimit(handler http.HandlerFunc, bodyLimit int64
 // and a 1 MB request body size limit to prevent unbounded memory allocation.
 func (a *restAPI) withAuth(handler http.HandlerFunc) http.HandlerFunc {
 	return a.withAuthAndBodyLimit(handler, 1<<20) // 1 MB
+}
+
+// adminWrap composes the canonical admin middleware chain around h:
+//
+//	withAuth → RequireAdmin → RequireNotBypass → h
+//
+// Exposed as a method so Sprint K admin-endpoint registrations outside
+// registerAdditionalEndpoints can reuse the same chain verbatim, and so
+// future refactors (e.g. adding a new admin middleware) update one site.
+func (a *restAPI) adminWrap(h http.HandlerFunc) http.HandlerFunc {
+	return a.withAuth(
+		middleware.RequireAdmin(
+			middleware.RequireNotBypass(h),
+		).ServeHTTP,
+	)
 }
 
 func jsonOK(w http.ResponseWriter, body any) {
@@ -1548,6 +1570,33 @@ func (a *restAPI) safeUpdateConfigJSON(mutate func(m map[string]any) error) erro
 	return nil
 }
 
+// ensureMap walks m through the given keys, creating intermediate map[string]any
+// nodes as needed, and returns the deepest map. Panics only on a non-map value
+// at a pre-existing key (a legitimate config.json corruption that should abort
+// the request handler). Pure function — callers are already inside
+// safeUpdateConfigJSON's mutex, so no locking here.
+func ensureMap(m map[string]any, keys ...string) map[string]any {
+	cur := m
+	for _, k := range keys {
+		existing, ok := cur[k]
+		if !ok {
+			next := map[string]any{}
+			cur[k] = next
+			cur = next
+			continue
+		}
+		// Already exists — must be a map. Panic surfaces as 500 to the caller,
+		// which is correct: a non-map node where a map is expected means
+		// config.json on disk is structurally broken.
+		nested, ok := existing.(map[string]any)
+		if !ok {
+			panic(fmt.Sprintf("ensureMap: expected map at key %q, got %T", k, existing))
+		}
+		cur = nested
+	}
+	return cur
+}
+
 // refreshConfigAndRewireServices loads a fresh config from disk, re-resolves the
 // credential bundle, registers all resolved plaintexts with the sensitive-data
 // replacer, and atomically swaps the in-memory config on the agent loop.
@@ -1601,8 +1650,17 @@ func (a *restAPI) refreshConfigAndRewireServices(configPath string) error {
 }
 
 func (a *restAPI) updateConfig(w http.ResponseWriter, r *http.Request) {
+	// Read the raw body once so we can decode it into two shapes: a RawMessage
+	// map for the existing deep-merge persistence path, and a fully-typed
+	// map[string]any for the blockedPaths walker which needs to
+	// recurse into nested objects.
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
 	var updates map[string]json.RawMessage
-	if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+	if decodeErr := json.Unmarshal(rawBody, &updates); decodeErr != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
@@ -1617,18 +1675,23 @@ func (a *restAPI) updateConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Block security-sensitive top-level keys — changes to these must go through
-	// their dedicated endpoints to ensure policy validation and audit logging.
-	blocked := map[string]bool{"sandbox": true, "credentials": true, "security": true}
-	for k := range updates {
-		if blocked[k] {
-			jsonErr(
-				w,
-				http.StatusForbidden,
-				fmt.Sprintf("key %q cannot be modified via config endpoint — use the dedicated security endpoints", k),
-			)
-			return
-		}
+	// Block security-sensitive paths at ANY nesting depth. The walker handles
+	// both nested bodies ({"gateway":{"users":[...]}}) and dot-path literal
+	// keys ({"gateway.users":[...]}). Rejected requests persist NOTHING — we
+	// return before safeUpdateConfigJSON is ever called, so benign sibling
+	// keys in the same body are not written either.
+	var typedBody map[string]any
+	if decodeErr := json.Unmarshal(rawBody, &typedBody); decodeErr != nil {
+		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	if path, blocked := matchBlockedPath(typedBody, blockedPaths); blocked {
+		jsonErr(
+			w,
+			http.StatusForbidden,
+			fmt.Sprintf("%s is a blocked path — use the dedicated endpoint", path),
+		)
+		return
 	}
 
 	// Use safeUpdateConfigJSON to hold configMu during the read-modify-write cycle.
@@ -1859,7 +1922,7 @@ func (a *restAPI) runDiagnosticChecks(cfg *config.Config) []map[string]any {
 			"severity":       "medium",
 			"title":          "Sandbox is disabled",
 			"description":    "Filesystem and process sandboxing is not enabled. Agent tool executions run without confinement.",
-			"recommendation": "Enable sandbox in config.json for production use.",
+			"recommendation": "Open Settings → Process Sandbox to enable sandbox mode for production use.",
 		})
 	}
 
@@ -1947,16 +2010,34 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	cm.RegisterHTTPHandler("/api/v1/security/exec-allowlist", a.withAuth(a.HandleExecAllowlist))
 	// Wave 3 security endpoints (SEC-25, SEC-28).
 	cm.RegisterHTTPHandler("/api/v1/security/exec-proxy-status", a.withAuth(a.HandleExecProxyStatus))
-	cm.RegisterHTTPHandler("/api/v1/security/prompt-guard", a.withAuth(a.HandlePromptGuard))
-	// Wave 4 security endpoints (SEC-26).
+	// Admin-only security endpoints.
+	// Chain: withAuth → RequireAdmin → RequireNotBypass → handler.
+	// CSRF is enforced by the global WrapHTTPHandler layer (no per-handler wiring needed).
+	cm.RegisterHTTPHandler("/api/v1/config/pending-restart", a.adminWrap(a.HandlePendingRestart))
+	cm.RegisterHTTPHandler("/api/v1/security/audit-log", a.adminWrap(a.HandleSandboxAuditLog))
+	cm.RegisterHTTPHandler("/api/v1/security/skill-trust", a.adminWrap(a.HandleSkillTrust))
+	cm.RegisterHTTPHandler("/api/v1/security/prompt-guard", a.adminWrap(a.HandlePromptGuard))
 	cm.RegisterHTTPHandler("/api/v1/security/rate-limits", a.withAuth(a.HandleRateLimits))
+	cm.RegisterHTTPHandler("/api/v1/security/sandbox-config", a.adminWrap(a.HandleSandboxConfig))
+	cm.RegisterHTTPHandler("/api/v1/security/session-scope", a.adminWrap(a.HandleSessionScope))
+	cm.RegisterHTTPHandler("/api/v1/security/retention", a.adminWrap(a.HandleRetention))
+	cm.RegisterHTTPHandler("/api/v1/security/retention/sweep", a.adminWrap(a.HandleRetentionSweep))
+	cm.RegisterHTTPHandler("/api/v1/users", a.adminWrap(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			a.HandleUsersList(w, r)
+		case http.MethodPost:
+			a.HandleUserCreate(w, r)
+		default:
+			jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	}))
+	cm.RegisterHTTPHandler("/api/v1/users/", a.adminWrap(a.handleUsersWithParam))
 	// Wave 5 security endpoints (SEC-01/02/03).
 	cm.RegisterHTTPHandler("/api/v1/security/sandbox-status", a.withAuth(a.HandleSandboxStatus))
-	// Sandbox config editing is admin-only — blocking the "sandbox" key in
-	// the generic PUT /api/v1/config (line ~1622) pushes UI edits to this
-	// dedicated endpoint which surfaces the restart-required UX signal.
-	cm.RegisterHTTPHandler("/api/v1/security/sandbox-config",
-		a.withAuth(middleware.RequireAdmin(http.HandlerFunc(a.HandleSandboxConfig)).ServeHTTP))
+	// /api/v1/security/sandbox-config is registered above with adminWrap — do NOT
+	// re-register here; Go ServeMux takes the last registration, and a lighter
+	// wrapper here would silently drop the dev_mode_bypass gate.
 	// GET /api/v1/security/tool-policies — read available to all authenticated
 	// users; PUT is admin-only (enforced inside HandleToolPolicies, Issue #98).
 	cm.RegisterHTTPHandler("/api/v1/security/tool-policies", a.withAuth(a.HandleToolPolicies))
@@ -1996,6 +2077,32 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	// File upload endpoints (Milestone 3).
 	cm.RegisterHTTPHandler("/api/v1/upload", a.withUploadAuth(a.HandleUpload))
 	cm.RegisterHTTPHandler("/api/v1/uploads/", a.withOptionalAuth(a.HandleServeUpload))
+}
+
+// handleUsersWithParam dispatches /api/v1/users/{username}[/subpath] requests
+// to the appropriate user-management handler based on HTTP method and path suffix.
+//
+// Routing table:
+//
+//	DELETE /api/v1/users/{username}          → HandleUserDelete
+//	PUT    /api/v1/users/{username}/password → HandleUserResetPassword
+//	PATCH  /api/v1/users/{username}/role     → HandleUserChangeRole
+//
+// Unrecognized method+path combinations return 405 or 404 respectively.
+// Auth and bypass guards are applied by the enclosing adminWrap wrapper;
+// this function only handles dispatch.
+func (a *restAPI) handleUsersWithParam(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+	switch {
+	case strings.HasSuffix(path, "/password") && r.Method == http.MethodPut:
+		a.HandleUserResetPassword(w, r)
+	case strings.HasSuffix(path, "/role") && r.Method == http.MethodPatch:
+		a.HandleUserChangeRole(w, r)
+	case r.Method == http.MethodDelete:
+		a.HandleUserDelete(w, r)
+	default:
+		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
 }
 
 // rotateGatewayToken generates a new random bearer token, persists it to config, and returns it.

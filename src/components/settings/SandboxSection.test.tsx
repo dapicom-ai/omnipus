@@ -1,0 +1,705 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+
+// ── Module mocks ──────────────────────────────────────────────────────────────
+
+vi.mock('@/lib/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/api')>()
+  return {
+    ...actual,
+    fetchSandboxStatus: vi.fn(),
+    fetchSandboxConfig: vi.fn(),
+    updateSandboxConfig: vi.fn(),
+  }
+})
+
+vi.mock('@/store/auth', () => ({
+  useAuthStore: vi.fn((selector: Parameters<typeof import('@/store/auth').useAuthStore>[0]) =>
+    selector({
+      token: 'test-token',
+      role: 'admin',
+      username: 'admin',
+      setToken: vi.fn(),
+      clearAuth: vi.fn(),
+    })
+  ),
+}))
+
+const mockAddToast = vi.fn()
+vi.mock('@/store/ui', () => ({
+  useUiStore: vi.fn(() => ({ addToast: mockAddToast })),
+}))
+
+import { fetchSandboxStatus, fetchSandboxConfig, updateSandboxConfig } from '@/lib/api'
+import { useAuthStore } from '@/store/auth'
+import { SandboxSection } from './SandboxSection'
+import type { SandboxStatus, SandboxConfigResponse } from '@/lib/api'
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function makeClient() {
+  return new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
+}
+
+function renderSection() {
+  const client = makeClient()
+  const utils = render(
+    <QueryClientProvider client={client}>
+      <SandboxSection />
+    </QueryClientProvider>
+  )
+  return { ...utils, client }
+}
+
+const baseStatus: SandboxStatus = {
+  backend: 'landlock',
+  available: true,
+  kernel_level: true,
+  policy_applied: true,
+  seccomp_enabled: true,
+}
+
+const baseConfig: SandboxConfigResponse = {
+  mode: 'permissive',
+  allowed_paths: [],
+  ssrf: { allow_internal: [] },
+  requires_restart: false,
+}
+
+function mockNonAdmin() {
+  vi.mocked(useAuthStore).mockImplementation(
+    (selector: Parameters<typeof useAuthStore>[0]) =>
+      selector({ token: 'test-token', role: 'user', username: 'alice', setToken: vi.fn(), clearAuth: vi.fn() }) as never
+  )
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  vi.mocked(fetchSandboxStatus).mockResolvedValue(baseStatus)
+  vi.mocked(fetchSandboxConfig).mockResolvedValue(baseConfig)
+  vi.mocked(updateSandboxConfig).mockResolvedValue({ ...baseConfig, requires_restart: true })
+  // Reset auth mock to admin after clearAllMocks
+  vi.mocked(useAuthStore).mockImplementation(
+    (selector: Parameters<typeof useAuthStore>[0]) =>
+      selector({ token: 'test-token', role: 'admin', username: 'admin', setToken: vi.fn(), clearAuth: vi.fn() }) as never
+  )
+  // Reset localStorage/sessionStorage
+  localStorage.clear()
+  sessionStorage.clear()
+})
+
+// ── describe: allowed_paths editor ───────────────────────────────────────────
+
+describe('allowed_paths editor', () => {
+  it('renders two rows with read-only badges when allowed_paths has two entries', async () => {
+    vi.mocked(fetchSandboxConfig).mockResolvedValue({
+      ...baseConfig,
+      allowed_paths: ['/a', '/b'],
+    })
+
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.getByText('/a')).toBeInTheDocument()
+      expect(screen.getByText('/b')).toBeInTheDocument()
+    })
+
+    const roBadges = screen.getAllByText('read-only')
+    expect(roBadges).toHaveLength(2)
+  })
+
+  it('shows Filesystem paths the sandbox may read heading', async () => {
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.getByText(/Filesystem paths the sandbox may read/i)).toBeInTheDocument()
+    })
+  })
+
+  it('no Edit button for paths section (autosave — Add/Delete commit immediately)', async () => {
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.getByText(/Filesystem paths the sandbox may read/i)).toBeInTheDocument()
+    })
+
+    // No edit button — editor is always visible for admin
+    expect(screen.queryByRole('button', { name: /^edit$/i })).not.toBeInTheDocument()
+  })
+
+  it('typing /c in the path input and clicking Add fires updateSandboxConfig immediately', async () => {
+    vi.mocked(fetchSandboxConfig).mockResolvedValue({
+      ...baseConfig,
+      allowed_paths: ['/a', '/b'],
+    })
+
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: /new allowed path/i })).toBeInTheDocument()
+    })
+
+    const input = screen.getByRole('textbox', { name: /new allowed path/i })
+    fireEvent.change(input, { target: { value: '/c' } })
+
+    const addBtn = screen.getByRole('button', { name: /add path/i })
+    fireEvent.click(addBtn)
+
+    await waitFor(() => {
+      expect(screen.getByText('/c')).toBeInTheDocument()
+    })
+
+    await waitFor(() => {
+      expect(updateSandboxConfig).toHaveBeenCalled()
+      const [firstArg] = vi.mocked(updateSandboxConfig).mock.calls[0]
+      expect(firstArg).toMatchObject({
+        allowed_paths: ['/a', '/b', '/c'],
+      })
+    })
+  })
+
+  it('server 400 for relative path displays inline error on the failing row', async () => {
+    vi.mocked(fetchSandboxConfig).mockResolvedValue({
+      ...baseConfig,
+      allowed_paths: ['./foo'],
+    })
+    vi.mocked(updateSandboxConfig).mockRejectedValue(
+      new Error('400: allowed_paths[0]: must be absolute — `./foo` is relative')
+    )
+
+    renderSection()
+
+    // Add a new path to trigger a save
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: /new allowed path/i })).toBeInTheDocument()
+    })
+
+    const input = screen.getByRole('textbox', { name: /new allowed path/i })
+    fireEvent.change(input, { target: { value: '/valid' } })
+    fireEvent.click(screen.getByRole('button', { name: /add path/i }))
+
+    await waitFor(() => {
+      const errors = screen.getAllByText(/must be absolute/i)
+      expect(errors.length).toBeGreaterThan(0)
+    })
+  })
+
+  it('non-admin role: no Add button, no Delete buttons for paths', async () => {
+    mockNonAdmin()
+    vi.mocked(fetchSandboxConfig).mockResolvedValue({
+      ...baseConfig,
+      allowed_paths: ['/a'],
+    })
+
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.getByText('/a')).toBeInTheDocument()
+    })
+
+    // No Edit button for non-admin
+    expect(screen.queryByRole('button', { name: /^edit$/i })).not.toBeInTheDocument()
+    // No Add button
+    expect(screen.queryByRole('button', { name: /add path/i })).not.toBeInTheDocument()
+    // No Save button
+    expect(screen.queryByRole('button', { name: /^save$/i })).not.toBeInTheDocument()
+    // No delete buttons for paths
+    expect(screen.queryByRole('button', { name: /delete path/i })).not.toBeInTheDocument()
+  })
+
+  it('delete button fires updateSandboxConfig immediately without Save button', async () => {
+    vi.mocked(fetchSandboxConfig).mockResolvedValue({
+      ...baseConfig,
+      allowed_paths: ['/a', '/b'],
+    })
+
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.getByText('/a')).toBeInTheDocument()
+    })
+
+    // Delete first path — no Edit mode needed
+    const deleteBtn = screen.getByRole('button', { name: /delete path \/a/i })
+    fireEvent.click(deleteBtn)
+
+    await waitFor(() => {
+      expect(screen.queryByText('/a')).not.toBeInTheDocument()
+      expect(screen.getByText('/b')).toBeInTheDocument()
+    })
+
+    await waitFor(() => {
+      expect(updateSandboxConfig).toHaveBeenCalledWith(
+        expect.objectContaining({ allowed_paths: ['/b'] })
+      )
+    })
+  })
+
+  it('read-only badge has a tooltip with the correct text', async () => {
+    vi.mocked(fetchSandboxConfig).mockResolvedValue({
+      ...baseConfig,
+      allowed_paths: ['/etc'],
+    })
+
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.getByText('/etc')).toBeInTheDocument()
+    })
+
+    const badge = screen.getByText('read-only')
+    fireEvent.mouseEnter(badge)
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/AllowedPaths entries grant read-only access/i)
+      ).toBeInTheDocument()
+    })
+  })
+})
+
+// ── describe: SSRF editor ─────────────────────────────────────────────────────
+
+describe('SSRF editor', () => {
+  const RFC1918_LIST = ['127.0.0.1', '::1', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', 'fc00::/7']
+  const LOOPBACK_LIST = ['127.0.0.1', '::1']
+
+  it('clicking "Allow RFC1918 + loopback" fires updateSandboxConfig immediately with exact preset list', async () => {
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /allow rfc1918 \+ loopback/i })).toBeInTheDocument()
+    })
+
+    const rfc1918Btn = screen.getByRole('button', { name: /allow rfc1918 \+ loopback/i })
+    fireEvent.click(rfc1918Btn)
+
+    await waitFor(() => {
+      expect(updateSandboxConfig).toHaveBeenCalled()
+      const [firstArg] = vi.mocked(updateSandboxConfig).mock.calls[0]
+      expect(firstArg).toMatchObject({
+        ssrf: { allow_internal: RFC1918_LIST },
+      })
+    })
+  })
+
+  it('stored list matching preset (order-insensitive) → preset button is highlighted as active on mount', async () => {
+    const shuffled = ['::1', '127.0.0.1']
+    vi.mocked(fetchSandboxConfig).mockResolvedValue({
+      ...baseConfig,
+      ssrf: { allow_internal: shuffled },
+    })
+
+    renderSection()
+
+    await waitFor(() => {
+      const loopbackBtn = screen.getByRole('button', { name: /allow loopback only/i })
+      expect(loopbackBtn).toHaveAttribute('aria-pressed', 'true')
+    })
+  })
+
+  it('stored list with internal.corp (no preset match) → Advanced mode auto-expands', async () => {
+    vi.mocked(fetchSandboxConfig).mockResolvedValue({
+      ...baseConfig,
+      ssrf: { allow_internal: ['internal.corp'] },
+    })
+
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.getByText('internal.corp')).toBeInTheDocument()
+    })
+
+    const blockAllBtn = screen.getByRole('button', { name: /block all/i })
+    const loopbackBtn = screen.getByRole('button', { name: /allow loopback only/i })
+    const rfc1918Btn = screen.getByRole('button', { name: /allow rfc1918 \+ loopback/i })
+    expect(blockAllBtn).toHaveAttribute('aria-pressed', 'false')
+    expect(loopbackBtn).toHaveAttribute('aria-pressed', 'false')
+    expect(rfc1918Btn).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('malformed CIDR entry in Advanced mode → inline error, Add rejected', async () => {
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /advanced \(custom list\)/i })).toBeInTheDocument()
+    })
+
+    const advancedToggle = screen.getByRole('button', { name: /advanced \(custom list\)/i })
+    fireEvent.click(advancedToggle)
+
+    const input = screen.getByRole('textbox', { name: /new ssrf allow entry/i })
+    fireEvent.change(input, { target: { value: '10.0.0/8' } })
+    const addBtn = screen.getByRole('button', { name: /add ssrf entry/i })
+    fireEvent.click(addBtn)
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/invalid entry — expected hostname, IP, or CIDR/i)
+      ).toBeInTheDocument()
+    })
+
+    expect(screen.getByText(/invalid entry — expected hostname, IP, or CIDR/i)).toBeInTheDocument()
+    // updateSandboxConfig should NOT have been called
+    expect(updateSandboxConfig).not.toHaveBeenCalled()
+  })
+
+  it('adding 0.0.0.0/0 triggers wildcard confirmation modal; PUT fires only on confirm', async () => {
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /advanced \(custom list\)/i })).toBeInTheDocument()
+    })
+
+    const advancedToggle = screen.getByRole('button', { name: /advanced \(custom list\)/i })
+    fireEvent.click(advancedToggle)
+
+    const input = screen.getByRole('textbox', { name: /new ssrf allow entry/i })
+    fireEvent.change(input, { target: { value: '0.0.0.0/0' } })
+    fireEvent.click(screen.getByRole('button', { name: /add ssrf entry/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText('0.0.0.0/0')).toBeInTheDocument()
+    })
+
+    // Modal should appear immediately (autosave with wildcard check)
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+      expect(screen.getByRole('dialog')).toHaveTextContent(/disable ssrf protection/i)
+    })
+
+    // PUT should NOT have fired yet
+    expect(updateSandboxConfig).not.toHaveBeenCalled()
+
+    // Click Save anyway — PUT should fire
+    fireEvent.click(screen.getByRole('button', { name: /save anyway/i }))
+
+    await waitFor(() => {
+      expect(updateSandboxConfig).toHaveBeenCalled()
+      const [firstArg] = vi.mocked(updateSandboxConfig).mock.calls[0]
+      expect(firstArg).toMatchObject({
+        ssrf: { allow_internal: expect.arrayContaining(['0.0.0.0/0']) },
+      })
+    })
+  })
+
+  it('cancelling wildcard modal prevents PUT from firing', async () => {
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /advanced \(custom list\)/i })).toBeInTheDocument()
+    })
+
+    const advancedToggle = screen.getByRole('button', { name: /advanced \(custom list\)/i })
+    fireEvent.click(advancedToggle)
+
+    const input = screen.getByRole('textbox', { name: /new ssrf allow entry/i })
+    fireEvent.change(input, { target: { value: '0.0.0.0/0' } })
+    fireEvent.click(screen.getByRole('button', { name: /add ssrf entry/i }))
+
+    await waitFor(() => screen.getByText('0.0.0.0/0'))
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    expect(updateSandboxConfig).not.toHaveBeenCalled()
+  })
+
+  it('clicking "Block all" preset fires updateSandboxConfig immediately with empty allow_internal', async () => {
+    vi.mocked(fetchSandboxConfig).mockResolvedValue({
+      ...baseConfig,
+      ssrf: { allow_internal: LOOPBACK_LIST },
+    })
+
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /block all/i })).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /block all/i }))
+
+    await waitFor(() => {
+      expect(updateSandboxConfig).toHaveBeenCalled()
+      const [firstArg] = vi.mocked(updateSandboxConfig).mock.calls[0]
+      expect(firstArg).toMatchObject({
+        ssrf: { allow_internal: [] },
+      })
+    })
+  })
+})
+
+// ── describe: ABI v4 surfaces ─────────────────────────────────────────────────
+
+describe('ABI v4 surfaces', () => {
+  it('abi_version=4 + issue_ref → yellow banner visible with issue_ref text', async () => {
+    vi.mocked(fetchSandboxStatus).mockResolvedValue({
+      ...baseStatus,
+      abi_version: 4,
+      issue_ref: '#138',
+    })
+
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+      expect(screen.getByRole('alert')).toHaveTextContent('#138')
+    })
+  })
+
+  it('dismiss button stores sessionStorage key and hides banner', async () => {
+    vi.mocked(fetchSandboxStatus).mockResolvedValue({
+      ...baseStatus,
+      abi_version: 4,
+      issue_ref: '#138',
+    })
+
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: /dismiss for session/i }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+
+    expect(sessionStorage.getItem('omnipus:abi4-banner-dismissed')).toBe('dismissed')
+  })
+
+  it('abi_version=3 → banner NOT rendered', async () => {
+    vi.mocked(fetchSandboxStatus).mockResolvedValue({
+      ...baseStatus,
+      abi_version: 3,
+    })
+
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+  })
+
+  it('abi_version field absent from response → banner NOT rendered', async () => {
+    vi.mocked(fetchSandboxStatus).mockResolvedValue({
+      ...baseStatus,
+    })
+
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.getByText('landlock')).toBeInTheDocument()
+    })
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('banner contains abi_version in text', async () => {
+    vi.mocked(fetchSandboxStatus).mockResolvedValue({
+      ...baseStatus,
+      abi_version: 5,
+      issue_ref: '#200',
+    })
+
+    renderSection()
+
+    await waitFor(() => {
+      const banner = screen.getByRole('alert')
+      expect(banner).toHaveTextContent('Landlock v5')
+      expect(banner).toHaveTextContent('#200')
+    })
+  })
+
+  it('issue_ref from server response appears in banner — not hardcoded', async () => {
+    vi.mocked(fetchSandboxStatus).mockResolvedValue({
+      ...baseStatus,
+      abi_version: 4,
+      issue_ref: '#999-CUSTOM',
+    })
+
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('#999-CUSTOM')
+    })
+  })
+
+  it('banner is NOT shown when abi_version=4 but issue_ref is absent', async () => {
+    vi.mocked(fetchSandboxStatus).mockResolvedValue({
+      ...baseStatus,
+      abi_version: 4,
+    })
+
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+  })
+
+  it('banner is not shown when sessionStorage has dismiss key set', async () => {
+    sessionStorage.setItem('omnipus:abi4-banner-dismissed', 'dismissed')
+
+    vi.mocked(fetchSandboxStatus).mockResolvedValue({
+      ...baseStatus,
+      abi_version: 4,
+      issue_ref: '#138',
+    })
+
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.getByText(/process sandbox/i)).toBeInTheDocument()
+    })
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+})
+
+// ── describe: mode radio (autosave — no Edit button) ─────────────────────────
+
+describe('mode radio', () => {
+  it('renders three radio options (Off, Permissive, Enforce) with current value pre-selected — no Edit button', async () => {
+    vi.mocked(fetchSandboxConfig).mockResolvedValue({
+      ...baseConfig,
+      mode: 'permissive',
+    })
+
+    renderSection()
+
+    await waitFor(() => {
+      const offRadio = screen.getByRole('radio', { name: /sandbox mode: off/i })
+      const permissiveRadio = screen.getByRole('radio', { name: /sandbox mode: permissive/i })
+      const enforceRadio = screen.getByRole('radio', { name: /sandbox mode: enforce/i })
+      expect(offRadio).toBeInTheDocument()
+      expect(permissiveRadio).toBeInTheDocument()
+      expect(enforceRadio).toBeInTheDocument()
+      // Current value (permissive) is pre-selected
+      expect(permissiveRadio).toBeChecked()
+      expect(offRadio).not.toBeChecked()
+      expect(enforceRadio).not.toBeChecked()
+    })
+
+    // No Edit button for mode section — autosave
+    expect(screen.queryByRole('button', { name: /edit sandbox mode/i })).not.toBeInTheDocument()
+  })
+
+  it('non-admin: radio inputs are not shown (display-only badges instead)', async () => {
+    mockNonAdmin()
+
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.getByText(/process sandbox/i)).toBeInTheDocument()
+    })
+
+    // Radio inputs should not be rendered for non-admin
+    expect(screen.queryByRole('radio', { name: /sandbox mode: off/i })).not.toBeInTheDocument()
+  })
+
+  it('selecting enforce when abi_version >= 4 fires the enforce confirmation modal before PUT', async () => {
+    vi.mocked(fetchSandboxStatus).mockResolvedValue({
+      ...baseStatus,
+      abi_version: 4,
+      issue_ref: '#138',
+    })
+    vi.mocked(fetchSandboxConfig).mockResolvedValue({
+      ...baseConfig,
+      mode: 'permissive',
+    })
+
+    renderSection()
+
+    // Radios are always shown for admin — no Edit button needed
+    await waitFor(() => {
+      expect(screen.getByRole('radio', { name: /sandbox mode: enforce/i })).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('radio', { name: /sandbox mode: enforce/i }))
+
+    // Modal should appear before PUT fires
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+      expect(screen.getByRole('dialog')).toHaveTextContent(/kernel incompatibility/i)
+    })
+    expect(updateSandboxConfig).not.toHaveBeenCalled()
+
+    // Confirm — now PUT fires
+    fireEvent.click(screen.getByRole('button', { name: /save anyway/i }))
+
+    await waitFor(() => {
+      expect(updateSandboxConfig).toHaveBeenCalled()
+      const [firstArg] = vi.mocked(updateSandboxConfig).mock.calls[0]
+      expect(firstArg).toMatchObject({ mode: 'enforce' })
+    })
+  })
+
+  it('changing mode from off → permissive fires PUT immediately with {mode: "permissive"}', async () => {
+    vi.mocked(fetchSandboxConfig).mockResolvedValue({
+      ...baseConfig,
+      mode: 'off',
+    })
+    vi.mocked(updateSandboxConfig).mockResolvedValue({ ...baseConfig, mode: 'permissive', requires_restart: true })
+
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.getByRole('radio', { name: /sandbox mode: permissive/i })).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('radio', { name: /sandbox mode: permissive/i }))
+
+    await waitFor(() => {
+      expect(updateSandboxConfig).toHaveBeenCalled()
+      const [firstArg] = vi.mocked(updateSandboxConfig).mock.calls[0]
+      expect(firstArg).toMatchObject({ mode: 'permissive' })
+    })
+  })
+
+  it('cancelling enforce modal reverts radio selection', async () => {
+    vi.mocked(fetchSandboxStatus).mockResolvedValue({
+      ...baseStatus,
+      abi_version: 4,
+      issue_ref: '#138',
+    })
+    vi.mocked(fetchSandboxConfig).mockResolvedValue({
+      ...baseConfig,
+      mode: 'permissive',
+    })
+
+    renderSection()
+
+    await waitFor(() => {
+      expect(screen.getByRole('radio', { name: /sandbox mode: enforce/i })).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('radio', { name: /sandbox mode: enforce/i }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+    })
+
+    // Cancel — should revert to permissive, PUT not called
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    expect(updateSandboxConfig).not.toHaveBeenCalled()
+
+    // Permissive should still be checked
+    await waitFor(() => {
+      expect(screen.getByRole('radio', { name: /sandbox mode: permissive/i })).toBeChecked()
+    })
+  })
+})

@@ -1482,3 +1482,63 @@ func TestDeprecatedEnableFlagsAreIgnored(t *testing.T) {
 	// The matching behavioral contract lives in pkg/policy tests (browser.evaluate
 	// is denied by default via builtinToolPolicies).
 }
+
+func TestRetention_ZeroSessionDaysStillMeansDefault90(t *testing.T) {
+	r := OmnipusRetentionConfig{SessionDays: 0}
+	if got := r.RetentionSessionDays(); got != 90 {
+		t.Errorf("RetentionSessionDays() = %d; want 90 for zero SessionDays", got)
+	}
+}
+
+func TestRetention_DisabledFlagMeansKeepForever(t *testing.T) {
+	enabled := OmnipusRetentionConfig{Disabled: false}
+	if enabled.IsDisabled() {
+		t.Error("IsDisabled() = true; want false when Disabled field is false")
+	}
+
+	disabled := OmnipusRetentionConfig{Disabled: true}
+	if !disabled.IsDisabled() {
+		t.Error("IsDisabled() = false; want true when Disabled field is true")
+	}
+}
+
+func TestOmnipusRetentionConfig_Mode_Default(t *testing.T) {
+	r := OmnipusRetentionConfig{SessionDays: 0, Disabled: false}
+	if got := r.Mode(); got != RetentionDefault {
+		t.Errorf("Mode() = %v; want RetentionDefault for {SessionDays:0, Disabled:false}", got)
+	}
+	if got := r.Mode().String(); got != "default" {
+		t.Errorf("Mode().String() = %q; want \"default\"", got)
+	}
+}
+
+func TestOmnipusRetentionConfig_Mode_Custom(t *testing.T) {
+	r := OmnipusRetentionConfig{SessionDays: 30, Disabled: false}
+	if got := r.Mode(); got != RetentionCustom {
+		t.Errorf("Mode() = %v; want RetentionCustom for {SessionDays:30, Disabled:false}", got)
+	}
+	if got := r.Mode().String(); got != "custom" {
+		t.Errorf("Mode().String() = %q; want \"custom\"", got)
+	}
+}
+
+func TestOmnipusRetentionConfig_Mode_Forever(t *testing.T) {
+	r := OmnipusRetentionConfig{SessionDays: 0, Disabled: true}
+	if got := r.Mode(); got != RetentionForever {
+		t.Errorf("Mode() = %v; want RetentionForever for {SessionDays:0, Disabled:true}", got)
+	}
+	if got := r.Mode().String(); got != "forever" {
+		t.Errorf("Mode().String() = %q; want \"forever\"", got)
+	}
+}
+
+func TestOmnipusRetentionConfig_Mode_DisabledTakesPrecedence(t *testing.T) {
+	// Disabled:true with a non-zero SessionDays must still resolve to RetentionForever.
+	r := OmnipusRetentionConfig{SessionDays: 99, Disabled: true}
+	if got := r.Mode(); got != RetentionForever {
+		t.Errorf("Mode() = %v; want RetentionForever when Disabled=true overrides SessionDays=99", got)
+	}
+	if got := r.Mode().String(); got != "forever" {
+		t.Errorf("Mode().String() = %q; want \"forever\"", got)
+	}
+}

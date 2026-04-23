@@ -23,6 +23,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 )
@@ -357,7 +358,11 @@ func (a *restAPI) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Reload in-memory config so withAuth middleware picks up the new token hash.
-	a.awaitReload()
+	// Reload failure is non-fatal for login — the token is on disk and will be
+	// picked up on the next config poll.
+	if err := a.awaitReload(); err != nil {
+		slog.Warn("auth: hot-reload after login failed; token active after next restart", "error", err)
+	}
 
 	// Reset rate limit counter on successful login.
 	globalLoginLimiter.recordSuccess(ip, body.Username)
@@ -497,7 +502,10 @@ func (a *restAPI) HandleRegisterAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Reload in-memory config so withAuth middleware picks up the new token hash immediately.
-	a.awaitReload()
+	// Reload failure is non-fatal — token is on disk and active after next config poll.
+	if err := a.awaitReload(); err != nil {
+		slog.Warn("auth: hot-reload after register-admin failed; token active after next restart", "error", err)
+	}
 
 	// Issue a __Host-csrf cookie so the newly-registered admin can
 	// immediately make state-changing requests without being blocked by the
@@ -554,7 +562,9 @@ func (a *restAPI) HandleLogout(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, "logout failed")
 		return
 	}
-	a.awaitReload()
+	if err := a.awaitReload(); err != nil {
+		slog.Warn("auth: hot-reload after logout failed", "error", err)
+	}
 	jsonOK(w, map[string]any{"success": true})
 }
 
@@ -635,7 +645,9 @@ func (a *restAPI) HandleChangePassword(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, "password change failed")
 		return
 	}
-	a.awaitReload()
+	if err := a.awaitReload(); err != nil {
+		slog.Warn("auth: hot-reload after change-password failed", "error", err)
+	}
 	jsonOK(w, map[string]any{"success": true})
 }
 
@@ -649,11 +661,22 @@ func generateUserToken(_ string) (string, error) {
 }
 
 // awaitReload triggers a config reload and waits briefly for it to complete.
-// Non-fatal: if reload fails, config is on disk and subsequent requests will work after restart.
-func (a *restAPI) awaitReload() {
+// Returns an error when reload fails so callers can surface requires_restart to
+// the admin — disk write succeeded, but in-memory state is not yet updated.
+//
+// The special case "reload not configured" (reloadFunc == nil) is treated as a
+// no-op rather than an error: this condition is normal in unit tests where the
+// full gateway reload pipeline is not wired. Production always configures the
+// reload function during startup.
+func (a *restAPI) awaitReload() error {
 	if err := a.agentLoop.TriggerReload(); err != nil {
+		if errors.Is(err, agent.ErrReloadNotConfigured) {
+			// Unit-test environment — no reload pipeline wired; treat as no-op.
+			return nil
+		}
 		slog.Error("config reload failed", "error", err)
-		return
+		return err
 	}
 	time.Sleep(100 * time.Millisecond)
+	return nil
 }

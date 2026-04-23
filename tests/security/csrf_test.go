@@ -99,11 +99,11 @@ func csrfTargets() []csrfTarget {
 // state-changing endpoint in csrfTargets. The three sub-tests match the
 // failure modes of pkg/gateway/middleware/csrf.go.
 //
-// Note (bug 3 fix): Authorization: Bearer callers are EXEMPT from the CSRF
-// gate — browsers cannot auto-send the Authorization header cross-origin,
-// so Bearer traffic is not a CSRF target. These tests therefore omit the
-// Bearer token from the attack-scenario sub-tests to exercise the
-// cookie-auth code path, which is what the CSRF gate actually guards.
+// Authorization: Bearer callers are EXEMPT from the CSRF gate — browsers
+// cannot auto-send the Authorization header cross-origin, so Bearer traffic
+// is not a CSRF target. These tests therefore omit the Bearer token from the
+// attack-scenario sub-tests to exercise the cookie-auth code path, which is
+// what the CSRF gate actually guards.
 func TestCSRFProtection(t *testing.T) {
 	gw := testutil.StartTestGateway(t, testutil.WithBearerAuth())
 
