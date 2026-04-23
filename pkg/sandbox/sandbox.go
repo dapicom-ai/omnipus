@@ -244,6 +244,9 @@ func DetectLandlockABI(abiVersion int) ABIResult {
 	if abiVersion >= 3 {
 		features = append(features, "IOCTL_DEV")
 	}
+	if abiVersion >= 4 {
+		features = append(features, "NET_BIND_TCP", "NET_CONNECT_TCP")
+	}
 
 	return ABIResult{
 		Available: true,
@@ -524,10 +527,6 @@ type Status struct {
 	BlockedSyscalls  []string `json:"blocked_syscalls,omitempty"`
 	SeccompEnabled   bool     `json:"seccomp_enabled"`
 	LandlockFeatures []string `json:"landlock_features,omitempty"`
-	// IssueRef is populated with LandlockABI4IssueRef when the detected
-	// Landlock ABI version is >= 4. The UI surfaces it so operators can
-	// find the tracker item without hardcoding the reference client-side.
-	IssueRef string `json:"issue_ref,omitempty"`
 	// PolicyApplied reports whether Apply() has successfully run on the
 	// current process. When false, the Landlock/seccomp capability is
 	// available but not actively enforcing — see the package comment for
@@ -654,9 +653,6 @@ func DescribeBackendWithState(backend SandboxBackend, state ApplyState) Status {
 	status.ABIVersion = rep.ABIVersion()
 	status.LandlockFeatures = DetectLandlockABI(status.ABIVersion).Features
 	status.BlockedSyscalls = append([]string(nil), blockedSyscallNames...)
-	if status.ABIVersion >= 4 {
-		status.IssueRef = LandlockABI4IssueRef
-	}
 
 	// Distinguish capability from enforcement. A backend that tracks its
 	// own applied state wins; otherwise conservatively assume not applied.

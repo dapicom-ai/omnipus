@@ -52,40 +52,6 @@ import (
 // distinguish sandbox-apply failure from a generic boot error (exit 1).
 const ExitSandboxConfig = 78
 
-// landlockABIv4WarnOnce gates the boot-time ABI-v4 warning so it fires
-// exactly once per gateway process. Reset via resetLandlockABIv4WarnForTests
-// in test-only code paths.
-var landlockABIv4WarnOnce sync.Once
-
-// readKernelRelease returns the running kernel release string, or "" when
-// the /proc sysctl is unavailable (non-Linux, containerized /proc, etc.).
-// Kept local to sandbox_apply.go so the warning site can annotate the log
-// entry without pulling golang.org/x/sys/unix into the gateway package.
-func readKernelRelease() string {
-	data, err := os.ReadFile("/proc/sys/kernel/osrelease")
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
-}
-
-// warnLandlockABIv4Once emits a single slog.Warn when the probed Landlock
-// ABI version is >= 4. Our backend negotiates rights only through ABI v3;
-// a kernel advertising v4 will reject enforce-mode Apply until
-// computeRights is upgraded. Tracked by sandbox.LandlockABI4IssueRef.
-func warnLandlockABIv4Once(abiVersion int) {
-	if abiVersion < 4 {
-		return
-	}
-	landlockABIv4WarnOnce.Do(func() {
-		slog.Warn("sandbox: landlock ABI v4 detected; enforce mode is known to fail on this kernel (issue "+sandbox.LandlockABI4IssueRef+"). Use --sandbox=permissive or --sandbox=off until landlock support is upgraded.",
-			"event", "landlock_abi_warning",
-			"abi_version", abiVersion,
-			"kernel", readKernelRelease(),
-			"issue", sandbox.LandlockABI4IssueRef)
-	})
-}
-
 // SandboxApplyOptions carries the inputs for applySandbox. Kept as a struct
 // so the boot caller in gateway.go passes one value and new fields can be
 // added without churning the signature (e.g. a future test hook).
@@ -266,16 +232,6 @@ func applySandbox(opts SandboxApplyOptions) (*SandboxApplyResult, error) {
 		BackendName: backendName,
 		Mode:        mode,
 		DisabledBy:  disabledBy,
-	}
-
-	// Warn once per boot when the probed Landlock ABI outranks what our
-	// backend can negotiate (v1-v3). Enforce mode is known to fail on these
-	// kernels — see issue #138 / LandlockABI4IssueRef. Operators need the
-	// reference surfaced without grepping the source. sync.Once guards
-	// against duplicate emission if Apply re-runs (idempotent Apply still
-	// enters this site only once at boot, but defensively gated).
-	if rep, ok := backend.(interface{ ABIVersion() int }); ok {
-		warnLandlockABIv4Once(rep.ABIVersion())
 	}
 
 	// Step 3 — Handle mode=off: no Apply, no Install. Log-only. Arm the

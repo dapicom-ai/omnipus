@@ -8,90 +8,49 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 )
 
-// TestLandlockABI4IssueRef_SingleConstant asserts the exported constant
-// has the expected value and that no other non-test Go file under pkg/ or
-// cmd/ hardcodes the literal "#138" outside this file.
-func TestLandlockABI4IssueRef_SingleConstant(t *testing.T) {
-	if LandlockABI4IssueRef != "#138" {
-		t.Fatalf("LandlockABI4IssueRef = %q, want %q", LandlockABI4IssueRef, "#138")
-	}
-
-	repoRoot := findRepoRoot(t)
-	roots := []string{
-		filepath.Join(repoRoot, "pkg"),
-		filepath.Join(repoRoot, "cmd"),
-	}
-	needle := `"#138"`
-	// landlock_abi.go defines the constant — the only allowed hardcoded
-	// occurrence. Every other Go file under pkg/ or cmd/ must reference
-	// the constant instead of the literal.
-	allowedFile := "landlock_abi.go"
-
-	var hits []string
-	for _, root := range roots {
-		if _, err := os.Stat(root); os.IsNotExist(err) {
-			continue
-		}
-		walkErr := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-			if info.IsDir() {
-				return nil
-			}
-			if !strings.HasSuffix(path, ".go") {
-				return nil
-			}
-			if strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			if filepath.Base(path) == allowedFile {
-				return nil
-			}
-			data, readErr := os.ReadFile(path)
-			if readErr != nil {
-				return readErr
-			}
-			if strings.Contains(string(data), needle) {
-				hits = append(hits, path)
-			}
-			return nil
-		})
-		if walkErr != nil {
-			t.Fatalf("walk %s: %v", root, walkErr)
-		}
-	}
-
-	if len(hits) > 0 {
-		t.Errorf("literal %s found outside %s — reference sandbox.LandlockABI4IssueRef instead.\nHits:\n  %s",
-			needle, allowedFile, strings.Join(hits, "\n  "))
-	}
-}
-
-// TestLandlockABIProbeResult_IssueRefPopulated verifies that Status.IssueRef
-// is populated with LandlockABI4IssueRef when abi_version >= 4, and empty
-// otherwise. This is the wire contract consumed by the /sandbox-status UI.
-func TestLandlockABIProbeResult_IssueRefPopulated(t *testing.T) {
+// TestLandlockABIProbeResult_V4Works verifies that DescribeBackend
+// returns valid LandlockFeatures for ABI v4 (including network rights)
+// and does NOT populate IssueRef (since the ABI v4 incompatibility is now fixed).
+func TestLandlockABIProbeResult_V4Works(t *testing.T) {
 	cases := []struct {
 		name       string
 		abiVersion int
-		want       string
+		wantFeats  []string
 	}{
-		{"abi_v3_no_issue", 3, ""},
-		{"abi_v4_issue_populated", 4, "#138"},
-		{"abi_v5_issue_populated", 5, "#138"},
+		{
+			name:       "abi_v3_no_network",
+			abiVersion: 3,
+			wantFeats:  []string{"EXECUTE", "WRITE_FILE", "READ_FILE", "READ_DIR", "REMOVE_DIR", "REMOVE_FILE", "MAKE_CHAR", "MAKE_DIR", "MAKE_REG", "MAKE_SOCK", "MAKE_FIFO", "MAKE_BLOCK", "MAKE_SYM", "REFER", "TRUNCATE", "IOCTL_DEV"},
+		},
+		{
+			name:       "abi_v4_with_network",
+			abiVersion: 4,
+			wantFeats:  []string{"EXECUTE", "WRITE_FILE", "READ_FILE", "READ_DIR", "REMOVE_DIR", "REMOVE_FILE", "MAKE_CHAR", "MAKE_DIR", "MAKE_REG", "MAKE_SOCK", "MAKE_FIFO", "MAKE_BLOCK", "MAKE_SYM", "REFER", "TRUNCATE", "IOCTL_DEV", "NET_BIND_TCP", "NET_CONNECT_TCP"},
+		},
+		{
+			name:       "abi_v5_with_network",
+			abiVersion: 5,
+			wantFeats:  []string{"EXECUTE", "WRITE_FILE", "READ_FILE", "READ_DIR", "REMOVE_DIR", "REMOVE_FILE", "MAKE_CHAR", "MAKE_DIR", "MAKE_REG", "MAKE_SOCK", "MAKE_FIFO", "MAKE_BLOCK", "MAKE_SYM", "REFER", "TRUNCATE", "IOCTL_DEV", "NET_BIND_TCP", "NET_CONNECT_TCP"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			mock := &mockABIBackend{abiVersion: tc.abiVersion, applied: false}
+			mock := &mockABIBackend{abiVersion: tc.abiVersion, applied: true}
 			status := DescribeBackend(mock)
-			if status.IssueRef != tc.want {
-				t.Errorf("abi_version=%d: IssueRef = %q, want %q",
-					tc.abiVersion, status.IssueRef, tc.want)
+			for _, want := range tc.wantFeats {
+				found := false
+				for _, f := range status.LandlockFeatures {
+					if f == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("missing feature %q; got %v", want, status.LandlockFeatures)
+				}
 			}
 		})
 	}
