@@ -265,7 +265,12 @@ jobs:
           fi
 
       - name: Build gateway binary
-        run: CGO_ENABLED=0 go build -o omnipus ./cmd/omnipus/
+        # Build to /tmp/omnipus-ci so self-managed-gateway specs (hot-reload,
+        # user-crud) that use setup.ts DEFAULT_OMNIPUS_BINARY find it. Also
+        # keep a copy as ./omnipus for the global-setup gateway.
+        run: |
+          CGO_ENABLED=0 go build -o /tmp/omnipus-ci ./cmd/omnipus/
+          cp /tmp/omnipus-ci ./omnipus
 
       - name: Prepare gateway home directory
         # Fresh directory every run — never reuse state between jobs.
