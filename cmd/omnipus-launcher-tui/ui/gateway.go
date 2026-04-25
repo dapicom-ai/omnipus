@@ -17,6 +17,8 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+
+	"github.com/dapicom-ai/omnipus/pkg/config"
 )
 
 const pidFileName = "gateway.pid"
@@ -27,11 +29,7 @@ type gatewayStatus struct {
 }
 
 func getPidPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
-	return filepath.Join(home, ".omnipus", pidFileName)
+	return filepath.Join(config.OmnipusHomeDir(), pidFileName)
 }
 
 func isProcessRunning(pid int) bool {

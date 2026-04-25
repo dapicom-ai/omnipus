@@ -135,6 +135,17 @@ func NewAgentInstance(
 		contextBuilder.WithAgentInfo(agentID, agentName)
 	}
 
+	// Memory tools (FR-016, FR-017): register remember, recall_memory, and
+	// retrospective for all agents except omnipus-system and main.
+	// Subagents DO receive these tools — they are not in the ExcludedSpawn/
+	// ExcludedSubagent/ExcludedHandoff lists so CloneExcept leaves them intact.
+	if agentID != "omnipus-system" && agentID != "main" {
+		memAdapter := NewMemoryStoreAdapter(contextBuilder.Memory())
+		toolsRegistry.Register(tools.NewRememberTool(memAdapter, nil))
+		toolsRegistry.Register(tools.NewRecallMemoryTool(memAdapter))
+		toolsRegistry.Register(tools.NewRetrospectiveTool(memAdapter, nil))
+	}
+
 	maxIter := defaults.MaxToolIterations
 	if maxIter == 0 {
 		maxIter = 20
@@ -257,38 +268,35 @@ func resolveAgentWorkspace(agentCfg *config.AgentConfig, defaults *config.AgentD
 		return expandHome(defaults.Workspace)
 	}
 	// Per-agent isolated workspace (FUNC-11). Each custom agent gets its own
-	// directory under ~/.omnipus/agents/{id}/, matching the REST API convention.
-	home, err := os.UserHomeDir()
-	if err == nil {
-		// H4: validate that the resolved path is actually under ~/.omnipus/agents/
-		// after cleaning, to guard against path traversal via crafted agent IDs.
-		safeBase := filepath.Join(home, ".omnipus", "agents")
-		// Strip any path separators or ".." from the agent ID.
-		sanitizedID := filepath.Base(filepath.Clean(agentCfg.ID))
-		if sanitizedID == "." || sanitizedID == ".." || sanitizedID == "" {
-			// The agent ID sanitized to an unusable value. Use a UUID-based directory
-			// name to avoid colliding with the reserved "main" workspace that
-			// routing.NormalizeAgentID would return for empty/dot inputs.
-			fallbackID := "agent-" + uuid.New().String()
-			logger.WarnCF("agent", "Suspicious agent ID after sanitization; using UUID fallback workspace",
-				map[string]any{"original_id": agentCfg.ID, "sanitized": sanitizedID, "fallback_id": fallbackID})
-			return filepath.Join(safeBase, fallbackID)
-		}
-		resolved := filepath.Join(safeBase, sanitizedID)
-		if !strings.HasPrefix(filepath.Clean(resolved), safeBase) {
-			logger.WarnCF("agent", "Agent workspace path escapes base directory; using fallback",
-				map[string]any{"agent_id": agentCfg.ID, "resolved": resolved})
-			return filepath.Join(
-				expandHome(defaults.Workspace),
-				"..",
-				"workspace-"+routing.NormalizeAgentID(agentCfg.ID),
-			)
-		}
-		return resolved
+	// directory under $OMNIPUS_HOME/agents/{id}/, matching the REST API convention.
+	// Honour OMNIPUS_HOME via config.OmnipusHomeDir — never read UserHomeDir ad-hoc,
+	// which would write custom-agent data to $HOME/.omnipus even when the operator
+	// set OMNIPUS_HOME elsewhere.
+	safeBase := filepath.Join(config.OmnipusHomeDir(), "agents")
+	// H4: validate that the resolved path is actually under the agents base
+	// after cleaning, to guard against path traversal via crafted agent IDs.
+	// Strip any path separators or ".." from the agent ID.
+	sanitizedID := filepath.Base(filepath.Clean(agentCfg.ID))
+	if sanitizedID == "." || sanitizedID == ".." || sanitizedID == "" {
+		// The agent ID sanitized to an unusable value. Use a UUID-based directory
+		// name to avoid colliding with the reserved "main" workspace that
+		// routing.NormalizeAgentID would return for empty/dot inputs.
+		fallbackID := "agent-" + uuid.New().String()
+		logger.WarnCF("agent", "Suspicious agent ID after sanitization; using UUID fallback workspace",
+			map[string]any{"original_id": agentCfg.ID, "sanitized": sanitizedID, "fallback_id": fallbackID})
+		return filepath.Join(safeBase, fallbackID)
 	}
-	// Fallback: sibling directory of default workspace.
-	id := routing.NormalizeAgentID(agentCfg.ID)
-	return filepath.Join(expandHome(defaults.Workspace), "..", "workspace-"+id)
+	resolved := filepath.Join(safeBase, sanitizedID)
+	if !strings.HasPrefix(filepath.Clean(resolved), safeBase) {
+		logger.WarnCF("agent", "Agent workspace path escapes base directory; using fallback",
+			map[string]any{"agent_id": agentCfg.ID, "resolved": resolved})
+		return filepath.Join(
+			expandHome(defaults.Workspace),
+			"..",
+			"workspace-"+routing.NormalizeAgentID(agentCfg.ID),
+		)
+	}
+	return resolved
 }
 
 // resolveAgentModel resolves the primary model for an agent.

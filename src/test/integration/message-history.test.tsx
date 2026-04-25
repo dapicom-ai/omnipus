@@ -1,15 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { act } from 'react'
+import { useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ChatThread } from '@/components/chat/ChatThread'
+import { AssistantRuntimeProvider, ThreadPrimitive, MessagePrimitive } from '@assistant-ui/react'
 import { useChatStore } from '@/store/chat'
+import { useOmnipusRuntime } from '@/lib/omnipus-runtime'
 import type { Message } from '@/lib/api'
 
 // test_message_history_load (test #25)
 // Traces to: wave5a-wire-ui-spec.md — Scenario: Previous messages load on session navigation
 //             wave5a-wire-ui-spec.md — Scenario: Multi-day session merges partitions
 //             wave5a-wire-ui-spec.md — Scenario: Compaction entries render as system messages
+//
+// Ported to run against the AssistantUI surface (see chat-streaming.test.tsx
+// harness). The original ChatThread component has been removed.
 
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>()
@@ -30,21 +36,63 @@ function makeClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } })
 }
 
+function HistoryLoader({ sessionId }: { sessionId: string }) {
+  const setMessages = useChatStore((s) => s.setMessages)
+  const { data } = useQuery({
+    queryKey: ['messages', sessionId],
+    queryFn: () => fetchSessionMessages(sessionId),
+    enabled: !!sessionId,
+  })
+  useEffect(() => {
+    if (data) setMessages(data)
+  }, [data, setMessages])
+  return null
+}
+
+function HistoryHarness({ sessionId }: { sessionId: string }) {
+  const runtime = useOmnipusRuntime()
+  return (
+    <AssistantRuntimeProvider runtime={runtime}>
+      <HistoryLoader sessionId={sessionId} />
+      <ThreadPrimitive.Root>
+        <div role="log" aria-label="Chat messages">
+          <ThreadPrimitive.Messages
+            components={{
+              UserMessage: () => (
+                <MessagePrimitive.Root>
+                  <MessagePrimitive.Parts />
+                </MessagePrimitive.Root>
+              ),
+              AssistantMessage: () => (
+                <MessagePrimitive.Root>
+                  <MessagePrimitive.Parts />
+                </MessagePrimitive.Root>
+              ),
+              SystemMessage: () => (
+                <MessagePrimitive.Root>
+                  <MessagePrimitive.Parts />
+                </MessagePrimitive.Root>
+              ),
+            }}
+          />
+        </div>
+      </ThreadPrimitive.Root>
+    </AssistantRuntimeProvider>
+  )
+}
+
 function wrapper({ children }: { children: React.ReactNode }) {
   return <QueryClientProvider client={makeClient()}>{children}</QueryClientProvider>
 }
 
 beforeEach(() => {
-  act(() => {
-    useChatStore.setState({ messages: [], toolCalls: {}, pendingApprovals: [] })
-  })
+  act(() => { useChatStore.getState().resetSession() })
   vi.mocked(fetchSessionMessages).mockResolvedValue(mockMessages)
 })
 
 describe('message history integration (test #25)', () => {
   it('loads and renders all messages in chronological order', async () => {
-    // Traces to: wave5a-wire-ui-spec.md — Scenario: Previous messages load on session navigation (AC1)
-    render(<ChatThread sessionId="sess_aws" />, { wrapper })
+    render(<HistoryHarness sessionId="sess_aws" />, { wrapper })
 
     await waitFor(() => {
       expect(screen.getByText(/What are AWS m5 instance prices/i)).toBeInTheDocument()
@@ -53,18 +101,15 @@ describe('message history integration (test #25)', () => {
   })
 
   it('merges messages from multiple day partitions in chronological order', async () => {
-    // Traces to: wave5a-wire-ui-spec.md — Scenario: Multi-day session merges partitions (AC2)
-    render(<ChatThread sessionId="sess_aws" />, { wrapper })
+    render(<HistoryHarness sessionId="sess_aws" />, { wrapper })
 
     await waitFor(() => {
-      // Messages from 2026-03-28 and 2026-03-29 should both appear
       expect(screen.getByText(/What about m5.xlarge/i)).toBeInTheDocument()
     })
   })
 
   it('renders compaction entry as system message', async () => {
-    // Traces to: wave5a-wire-ui-spec.md — Scenario: Compaction entries render as system messages (AC5)
-    render(<ChatThread sessionId="sess_aws" />, { wrapper })
+    render(<HistoryHarness sessionId="sess_aws" />, { wrapper })
 
     await waitFor(() => {
       expect(screen.getByText(/context compacted/i)).toBeInTheDocument()
@@ -72,15 +117,13 @@ describe('message history integration (test #25)', () => {
   })
 
   it('renders empty chat when session has no messages', async () => {
-    // Traces to: wave5a-wire-ui-spec.md — Scenario: Empty session shows no messages
     vi.mocked(fetchSessionMessages).mockResolvedValue([])
-    const { container } = render(<ChatThread sessionId="sess_empty" />, { wrapper })
+    const { container } = render(<HistoryHarness sessionId="sess_empty" />, { wrapper })
 
     await waitFor(() => {
-      // ChatThread renders the message log — empty means no message items
       const logEl = container.querySelector('[role="log"]')
       expect(logEl).toBeTruthy()
-      expect(logEl?.children.length).toBe(0)
+      expect(logEl?.textContent?.trim() ?? '').toBe('')
     })
   })
 })

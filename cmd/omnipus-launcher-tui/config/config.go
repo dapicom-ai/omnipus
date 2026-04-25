@@ -15,16 +15,14 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/fileutil"
 )
 
-// DefaultConfigPath returns the default path to the tui.toml config file.
+// DefaultConfigPath returns the default path to the tui.toml config file
+// under OMNIPUS_HOME (falling back to $HOME/.omnipus via the canonical resolver).
 func DefaultConfigPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
-	return filepath.Join(home, ".omnipus", "tui.toml")
+	return filepath.Join(config.OmnipusHomeDir(), "tui.toml")
 }
 
 // TUIConfig is the top-level structure of ~/.omnipus/tui.toml.
@@ -151,15 +149,11 @@ func (p *Provider) UsersForScheme(schemeName string) []User {
 	return out
 }
 
-// SyncSelectedModelToMainConfig syncs the currently selected model to ~/.omnipus/config.json
-// Adds/replaces a "tui-prefer" model entry and sets it as the default model.
-// Preserves all other existing fields in the config file unchanged.
+// SyncSelectedModelToMainConfig syncs the currently selected model to the gateway's
+// config.json under OMNIPUS_HOME. Adds/replaces a "tui-prefer" model entry and sets
+// it as the default model. Preserves all other existing fields unchanged.
 func SyncSelectedModelToMainConfig(scheme Scheme, user User, modelID string) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		home = "."
-	}
-	mainConfigPath := filepath.Join(home, ".omnipus", "config.json")
+	mainConfigPath := filepath.Join(config.OmnipusHomeDir(), "config.json")
 
 	var cfg map[string]any
 	if data, readErr := os.ReadFile(mainConfigPath); readErr == nil {

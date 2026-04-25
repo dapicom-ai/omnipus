@@ -16,6 +16,7 @@ import (
 
 	"github.com/chromedp/chromedp"
 
+	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/security"
 )
@@ -33,18 +34,16 @@ type BrowserConfig struct {
 }
 
 // DefaultConfig returns a BrowserConfig with spec-defined defaults.
-// Returns an error if the user home directory cannot be determined.
+// Uses config.OmnipusHomeDir so the browser profile lands under OMNIPUS_HOME
+// rather than $HOME/.omnipus. The error return is retained for API stability
+// but currently always nil — the resolver has its own fallback chain.
 func DefaultConfig() (BrowserConfig, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return BrowserConfig{}, fmt.Errorf("browser: cannot determine home directory: %w", err)
-	}
 	return BrowserConfig{
 		Enabled:     false,
 		Headless:    true,
 		PageTimeout: 30 * time.Second,
 		MaxTabs:     5,
-		ProfileDir:  filepath.Join(homeDir, ".omnipus", "browser", "profiles", "default"),
+		ProfileDir:  filepath.Join(config.OmnipusHomeDir(), "browser", "profiles", "default"),
 	}, nil
 }
 

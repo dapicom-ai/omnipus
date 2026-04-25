@@ -15,6 +15,8 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+
+	"github.com/dapicom-ai/omnipus/pkg/config"
 )
 
 func (a *App) newChannelsPage() tview.Primitive {
@@ -35,11 +37,7 @@ func (a *App) newChannelsPage() tview.Primitive {
 		sel := list.GetCurrentItem()
 		list.Clear()
 
-		home, err := os.UserHomeDir()
-		if err != nil {
-			home = "."
-		}
-		configPath := filepath.Join(home, ".omnipus", "config.json")
+		configPath := filepath.Join(config.OmnipusHomeDir(), "config.json")
 
 		var cfg map[string]any
 		if data, err := os.ReadFile(configPath); err == nil {

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/session"
 )
@@ -126,4 +127,125 @@ func executeSweepTick(store *session.UnifiedStore, getCfg func() *config.Config)
 		"removed", removed,
 		"duration_ms", durationMs,
 	)
+}
+
+// retentionRetroSweepFn is the function called to sweep retro files per agent.
+// Tests replace this variable with a mock.
+var retentionRetroSweepFn func(al *agent.AgentLoop, retentionDays int) int = func(al *agent.AgentLoop, retentionDays int) int {
+	return executeRetroSweep(al, retentionDays)
+}
+
+// retentionRetroLoopStarted ensures the retro sweep goroutine is launched at most once.
+var retentionRetroLoopStarted sync.Once
+
+// startRetentionRetroSweepLoop launches the nightly retro sweep goroutine (FR-031).
+// The goroutine iterates all agents in the registry and calls SweepRetros on
+// each agent's MemoryStore. It is guarded by retentionRetroLoopStarted so it
+// runs exactly once per process.
+func startRetentionRetroSweepLoop(
+	ctx context.Context,
+	agentLoop *agent.AgentLoop,
+	getCfg func() *config.Config,
+	tickInterval time.Duration,
+) {
+	if agentLoop == nil {
+		return
+	}
+	retentionRetroLoopStarted.Do(func() {
+		go runRetentionRetroSweepLoop(ctx, agentLoop, getCfg, tickInterval)
+	})
+}
+
+func runRetentionRetroSweepLoop(
+	ctx context.Context,
+	agentLoop *agent.AgentLoop,
+	getCfg func() *config.Config,
+	tickInterval time.Duration,
+) {
+	ticker := time.NewTicker(tickInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			executeRetroSweepTick(agentLoop, getCfg)
+		}
+	}
+}
+
+func executeRetroSweepTick(agentLoop *agent.AgentLoop, getCfg func() *config.Config) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("retention_retro_sweep: tick panic recovered",
+				"event", "retention_retro_sweep_panic",
+				"panic", r,
+			)
+		}
+	}()
+
+	cfg := getCfg()
+	if cfg == nil {
+		return
+	}
+
+	ret := cfg.Storage.Retention
+	if ret.IsDisabled() {
+		return
+	}
+
+	retentionDays := ret.RetentionMemoryRetrosDays()
+
+	retentionSweepMu.Lock()
+	defer retentionSweepMu.Unlock()
+
+	start := time.Now()
+	deleted := retentionRetroSweepFn(agentLoop, retentionDays)
+	durationMs := time.Since(start).Milliseconds()
+
+	slog.Info("retention_retro_sweep: completed",
+		"event", "retention_retro_sweep",
+		"deleted_files", deleted,
+		"duration_ms", durationMs,
+		"retention_days", retentionDays,
+	)
+}
+
+// executeRetroSweep iterates all agents and calls SweepRetros on each agent's MemoryStore.
+// Returns the total count of deleted retro files.
+func executeRetroSweep(agentLoop *agent.AgentLoop, retentionDays int) int {
+	registry := agentLoop.GetRegistry()
+	if registry == nil {
+		return 0
+	}
+
+	totalDeleted := 0
+	for _, agentID := range registry.ListAgentIDs() {
+		agentInst, ok := registry.GetAgent(agentID)
+		if !ok || agentInst == nil || agentInst.ContextBuilder == nil {
+			continue
+		}
+		memory := agentInst.ContextBuilder.Memory()
+		if memory == nil {
+			continue
+		}
+		deleted, err := memory.SweepRetros(retentionDays)
+		if err != nil {
+			slog.Warn("retention_retro_sweep: sweep failed for agent",
+				"agent_id", agentID,
+				"error", err,
+			)
+			continue
+		}
+		if deleted > 0 {
+			slog.Info("retention_retro_sweep: swept retros for agent",
+				"agent_id", agentID,
+				"deleted", deleted,
+				"retention_days", retentionDays,
+			)
+		}
+		totalDeleted += deleted
+	}
+	return totalDeleted
 }

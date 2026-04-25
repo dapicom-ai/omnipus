@@ -83,6 +83,54 @@ func TestSerializeMessages_PlainText(t *testing.T) {
 	}
 }
 
+func TestSerializeMessages_DropsOrphanToolResult(t *testing.T) {
+	// Regression for Anthropic 400 on follow-up turn: tool_result with no
+	// matching tool_use in the preceding assistant message.
+	messages := []Message{
+		{Role: "user", Content: "hi"},
+		{Role: "assistant", ToolCalls: []ToolCall{{ID: "call_good", Name: "search"}}},
+		{Role: "tool", ToolCallID: "call_good", Content: "result-ok"},
+		{Role: "tool", ToolCallID: "call_orphan", Content: "result-orphan"}, // must be dropped
+		{Role: "user", Content: "follow-up"},
+	}
+	result := SerializeMessages(messages)
+	data, _ := json.Marshal(result)
+	var msgs []map[string]any
+	json.Unmarshal(data, &msgs)
+
+	// Expect 4 messages: user, assistant, one tool (good), user — orphan dropped.
+	if len(msgs) != 4 {
+		t.Fatalf("expected 4 serialized messages (orphan dropped), got %d: %s", len(msgs), string(data))
+	}
+	if id, _ := msgs[2]["tool_call_id"].(string); id != "call_good" {
+		t.Errorf("surviving tool message should be call_good, got tool_call_id=%v", msgs[2]["tool_call_id"])
+	}
+	for _, m := range msgs {
+		if id, _ := m["tool_call_id"].(string); id == "call_orphan" {
+			t.Fatalf("orphan tool_result leaked into serialized output: %v", m)
+		}
+	}
+}
+
+func TestSerializeMessages_ResetsDeclaredToolUsesOnNewUserTurn(t *testing.T) {
+	// After a plain user message, prior assistant tool_call_ids no longer apply —
+	// a tool_result following the new user turn without a preceding assistant
+	// must be dropped even if an earlier assistant had declared that id.
+	messages := []Message{
+		{Role: "assistant", ToolCalls: []ToolCall{{ID: "call_turn1", Name: "search"}}},
+		{Role: "tool", ToolCallID: "call_turn1", Content: "r1"},
+		{Role: "user", Content: "follow-up"},
+		{Role: "tool", ToolCallID: "call_turn1", Content: "duplicate-orphan"}, // drop
+	}
+	result := SerializeMessages(messages)
+	data, _ := json.Marshal(result)
+	var msgs []map[string]any
+	json.Unmarshal(data, &msgs)
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 serialized messages, got %d: %s", len(msgs), string(data))
+	}
+}
+
 func TestSerializeMessages_WithMedia(t *testing.T) {
 	messages := []Message{
 		{Role: "user", Content: "describe this", Media: []string{"data:image/png;base64,abc123"}},
@@ -141,7 +189,11 @@ func TestSerializeMessages_WithAudioMedia(t *testing.T) {
 }
 
 func TestSerializeMessages_MediaWithToolCallID(t *testing.T) {
+	// Must include the declaring assistant so sanitizeOrphanToolResults keeps the
+	// tool message — otherwise an isolated tool message is treated as an orphan
+	// and dropped at the wire boundary.
 	messages := []Message{
+		{Role: "assistant", ToolCalls: []ToolCall{{ID: "call_1", Name: "vision_lookup"}}},
 		{Role: "tool", Content: "result", Media: []string{"data:image/png;base64,xyz"}, ToolCallID: "call_1"},
 	}
 	result := SerializeMessages(messages)
@@ -150,8 +202,8 @@ func TestSerializeMessages_MediaWithToolCallID(t *testing.T) {
 	var msgs []map[string]any
 	json.Unmarshal(data, &msgs)
 
-	if msgs[0]["tool_call_id"] != "call_1" {
-		t.Errorf("tool_call_id not preserved, got %v", msgs[0]["tool_call_id"])
+	if msgs[1]["tool_call_id"] != "call_1" {
+		t.Errorf("tool_call_id not preserved, got %v", msgs[1]["tool_call_id"])
 	}
 }
 

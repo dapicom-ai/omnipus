@@ -233,6 +233,14 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// FR-053: invalidate all ContextBuilder caches so the next agent turn
+	// picks up the new sandbox/network preamble without a restart.
+	if a.agentLoop != nil {
+		if reg := a.agentLoop.ContextBuilderRegistry(); reg != nil {
+			reg.InvalidateAllContextBuilders()
+		}
+	}
+
 	// Audit each changed field. Errors are logged, never surface to the
 	// caller — the mutation has already been persisted atomically.
 	if a.agentLoop != nil {

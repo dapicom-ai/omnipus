@@ -215,7 +215,13 @@ func (lb *LinuxBackend) ApplyWithMode(policy SandboxPolicy, mode Mode) error {
 
 	// Create ruleset.
 	attr := landlockRulesetAttr{handledAccessFS: lb.allRights}
-	if lb.abiVersion >= 4 {
+	// Only declare handledAccessNet when the caller has opted *out* of outbound
+	// network access. With no network allow-rules wired up, declaring these
+	// rights on ABI-4+ kernels produces an unconditional deny-all on connect()
+	// — which silently breaks LLM provider calls. Until a proper allow-list is
+	// implemented, the kill-switch on SandboxPolicy.AllowNetworkOutbound keeps
+	// the ABI-4 behaviour matching the ABI-3 one (no network sandboxing).
+	if lb.abiVersion >= 4 && !policy.AllowNetworkOutbound {
 		attr.handledAccessNet = landlockAccessNetBindTcp | landlockAccessNetConnectTcp
 	}
 	rulesetFd, _, errno := unix.Syscall(

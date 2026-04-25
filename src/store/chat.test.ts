@@ -574,6 +574,179 @@ describe('ChatStore_GroupsFramesBySpan', () => {
   })
 })
 
+// textAtSpanStart — mirror of textAtToolCallStart for subagent spans.
+// buildContentParts uses this offset to render SubagentBlock inline with text
+// instead of stacking it at the bottom of the message.
+describe('ChatStore_SpanSnapshot_TextAtSpanStart', () => {
+  beforeEach(() => {
+    act(() => { useChatStore.getState().resetSession() })
+  })
+
+  it('captures current assistant content when subagent_start fires', () => {
+    act(() => {
+      useChatStore.getState().updateLastAssistantMessage('Let me research ', false)
+      useChatStore.getState().handleFrame({
+        type: 'subagent_start',
+        span_id: 'span_mid',
+        parent_call_id: 'p1',
+        task_label: 'research',
+      })
+    })
+
+    const state = useChatStore.getState()
+    expect(state.spanOrder).toEqual(['span_mid'])
+    expect(state.textAtSpanStart['span_mid']).toBe('Let me research ')
+  })
+
+  it('snapshot is empty string when subagent_start arrives before any tokens', () => {
+    act(() => {
+      useChatStore.getState().updateLastAssistantMessage('', false)
+      useChatStore.getState().handleFrame({
+        type: 'subagent_start',
+        span_id: 'span_first',
+        parent_call_id: 'p2',
+        task_label: 'early',
+      })
+    })
+
+    expect(useChatStore.getState().textAtSpanStart['span_first']).toBe('')
+  })
+
+  it('snapshot is taken at subagent_start arrival, not at orphan-buffered tool-call arrival', () => {
+    // Buffered tool_call_start arrives while text is empty; tokens stream in;
+    // then subagent_start fires. The snapshot must reflect the text *at span-open*,
+    // not the earlier orphan-frame arrival.
+    act(() => {
+      useChatStore.getState().updateLastAssistantMessage('', false)
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'early_tool',
+        tool: 'fs.read',
+        params: {},
+        parent_call_id: 'p3',
+      })
+    })
+
+    act(() => {
+      useChatStore.getState().updateLastAssistantMessage('some text has streamed ', false)
+    })
+
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'subagent_start',
+        span_id: 'span_late',
+        parent_call_id: 'p3',
+        task_label: 'delayed span',
+      })
+    })
+
+    expect(useChatStore.getState().textAtSpanStart['span_late']).toBe('some text has streamed ')
+  })
+
+  it('spanOrder preserves insertion order for sibling spans', () => {
+    act(() => {
+      useChatStore.getState().updateLastAssistantMessage('a', false)
+      useChatStore.getState().handleFrame({
+        type: 'subagent_start',
+        span_id: 'span_a',
+        parent_call_id: 'pa',
+        task_label: 'first',
+      })
+      useChatStore.getState().updateLastAssistantMessage('b', false)
+      useChatStore.getState().handleFrame({
+        type: 'subagent_start',
+        span_id: 'span_b',
+        parent_call_id: 'pb',
+        task_label: 'second',
+      })
+    })
+
+    const state = useChatStore.getState()
+    expect(state.spanOrder).toEqual(['span_a', 'span_b'])
+    expect(state.textAtSpanStart['span_a']).toBe('a')
+    expect(state.textAtSpanStart['span_b']).toBe('ab')
+  })
+
+  it('tool calls from a completed turn do not leak into the next turn\'s assistant message', () => {
+    // Regression for the Jim session bug: a follow-up user message made every
+    // prior-turn tool call re-render inside the new assistant bubble.
+    // Verified at the store level by checking toolCallMessageId attribution.
+    act(() => {
+      // Turn 1: assistant placeholder, one tool call, done.
+      useChatStore.setState({ messages: [], isStreaming: false })
+      useChatStore.getState().appendMessage({
+        id: 'asst_turn1',
+        session_id: 's',
+        role: 'assistant',
+        content: '',
+        timestamp: '2026-04-24T00:00:00Z',
+        status: 'streaming',
+        isStreaming: true,
+      })
+      useChatStore.setState({ isStreaming: true })
+      useChatStore.getState().handleFrame({ type: 'token', content: 'hi' })
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'tc_turn1',
+        tool: 'exec',
+        params: {},
+      })
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_result',
+        call_id: 'tc_turn1',
+        tool: 'exec',
+        result: 'ok',
+        status: 'success',
+      })
+      useChatStore.getState().handleFrame({ type: 'done' })
+    })
+
+    act(() => {
+      // Turn 2: new assistant placeholder, a fresh tool call on top.
+      useChatStore.getState().appendMessage({
+        id: 'asst_turn2',
+        session_id: 's',
+        role: 'assistant',
+        content: '',
+        timestamp: '2026-04-24T00:00:01Z',
+        status: 'streaming',
+        isStreaming: true,
+      })
+      useChatStore.setState({ isStreaming: true })
+      useChatStore.getState().handleFrame({ type: 'token', content: 'reply' })
+      useChatStore.getState().handleFrame({
+        type: 'tool_call_start',
+        call_id: 'tc_turn2',
+        tool: 'exec',
+        params: {},
+      })
+    })
+
+    const state = useChatStore.getState()
+    expect(state.toolCallMessageId['tc_turn1']).toBe('asst_turn1')
+    expect(state.toolCallMessageId['tc_turn2']).toBe('asst_turn2')
+  })
+
+  it('resetSession clears spanOrder and textAtSpanStart', () => {
+    act(() => {
+      useChatStore.getState().updateLastAssistantMessage('hi', false)
+      useChatStore.getState().handleFrame({
+        type: 'subagent_start',
+        span_id: 'span_reset',
+        parent_call_id: 'pr',
+        task_label: 'before reset',
+      })
+    })
+    expect(useChatStore.getState().spanOrder).toHaveLength(1)
+
+    act(() => { useChatStore.getState().resetSession() })
+
+    const state = useChatStore.getState()
+    expect(state.spanOrder).toEqual([])
+    expect(state.textAtSpanStart).toEqual({})
+  })
+})
+
 // TDD row 12: ChatStore_OrphanFrame_FallsBackFlat
 // Traces to: sprint-h-subagent-block-spec.md Edge (out-of-order), FR-H-009
 

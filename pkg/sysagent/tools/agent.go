@@ -296,16 +296,13 @@ func (t *AgentCreateTool) Execute(_ context.Context, args map[string]any) *tools
 	}
 
 	// Create agent workspace and write personality files.
-	// Use deps.Home (OMNIPUS_HOME) as base — reliable in containers where HOME may be unset.
+	// Prefer deps.Home (explicit injection), else fall back to the canonical
+	// resolver which honours OMNIPUS_HOME and only reaches for UserHomeDir as
+	// a last resort. Never compute the leak-prone pattern (UserHomeDir + ".omnipus")
+	// inline — that bypasses OMNIPUS_HOME on containers where HOME is set.
 	omnipusHome := t.deps.Home
 	if omnipusHome == "" {
-		if h, err := os.UserHomeDir(); err == nil {
-			omnipusHome = h + "/.omnipus"
-		} else {
-			return tools.ErrorResult(errorJSON("WORKSPACE_ERROR",
-				"cannot determine home directory: "+err.Error(),
-				"Set OMNIPUS_HOME environment variable"))
-		}
+		omnipusHome = config.OmnipusHomeDir()
 	}
 	wsPath := omnipusHome + "/agents/" + finalID
 	if err := datamodel.InitAgentWorkspace(omnipusHome, finalID); err != nil {
@@ -501,12 +498,10 @@ func (t *AgentUpdateTool) Execute(_ context.Context, args map[string]any) *tools
 		))
 	}
 
-	// Write workspace files if provided. Use deps.Home as base.
+	// Write workspace files if provided. Prefer deps.Home, else canonical resolver.
 	omnipusHome := t.deps.Home
 	if omnipusHome == "" {
-		if h, err := os.UserHomeDir(); err == nil {
-			omnipusHome = h + "/.omnipus"
-		}
+		omnipusHome = config.OmnipusHomeDir()
 	}
 	wsPath := omnipusHome + "/agents/" + id
 	if v, ok := args["soul"].(string); ok && strings.TrimSpace(v) != "" {

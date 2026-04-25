@@ -41,11 +41,7 @@ type contextTokensFile struct {
 }
 
 func omnipusHomeDir() string {
-	if home := os.Getenv(config.EnvHome); home != "" {
-		return home
-	}
-	userHome, _ := os.UserHomeDir()
-	return filepath.Join(userHome, ".omnipus")
+	return config.OmnipusHomeDir()
 }
 
 // genWeixinAccountKey derives a stable, opaque file-path key for this Weixin account.

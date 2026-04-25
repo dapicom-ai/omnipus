@@ -34,6 +34,14 @@ type mediaStoreAware interface {
 	SetMediaStore(store media.MediaStore)
 }
 
+// auditLoggerAware is implemented by tools that need direct access to the
+// audit logger for emitting their own specialised audit events (e.g. memory
+// tools that must log content_sha256 without relying on the registry's generic
+// tool_call entry). The registry propagates the logger on SetAuditLogger.
+type auditLoggerAware interface {
+	SetAuditLogger(logger *audit.Logger)
+}
+
 func NewToolRegistry() *ToolRegistry {
 	return &ToolRegistry{
 		tools: make(map[string]*ToolEntry),
@@ -55,6 +63,9 @@ func (r *ToolRegistry) Register(tool Tool) {
 	}
 	if aware, ok := tool.(mediaStoreAware); ok && r.mediaStore != nil {
 		aware.SetMediaStore(r.mediaStore)
+	}
+	if aware, ok := tool.(auditLoggerAware); ok && r.auditLogger != nil {
+		aware.SetAuditLogger(r.auditLogger)
 	}
 	r.version.Add(1)
 	logger.DebugCF("tools", "Registered core tool", map[string]any{"name": name})
@@ -97,10 +108,17 @@ func (r *ToolRegistry) SetMediaStore(store media.MediaStore) {
 
 // SetAuditLogger injects an audit Logger into the registry for tool execution
 // audit logging (SEC-15). Following the SetMediaStore pattern for dependency injection.
+// Also propagates the logger to any registered tools that implement auditLoggerAware
+// (e.g. memory tools that emit their own specialised audit events).
 func (r *ToolRegistry) SetAuditLogger(logger *audit.Logger) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.auditLogger = logger
+	for _, entry := range r.tools {
+		if aware, ok := entry.Tool.(auditLoggerAware); ok {
+			aware.SetAuditLogger(logger)
+		}
+	}
 }
 
 // Unregister removes a tool from the registry. Used by fail-closed paths where

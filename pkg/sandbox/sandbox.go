@@ -35,6 +35,16 @@ type PathRule struct {
 type SandboxPolicy struct {
 	FilesystemRules   []PathRule
 	InheritToChildren bool
+
+	// AllowNetworkOutbound is a kill-switch for Landlock's ABI-4 network
+	// enforcement. When true, the ruleset is created without handledAccessNet
+	// so outbound TCP connect() is unrestricted. When false, network rights
+	// are declared — but with no allow-rules wired up this degrades to a
+	// deny-all, which breaks LLM provider calls. The wiring is safe to flip
+	// to false only after an allow-list (ports / CIDRs) is implemented; for
+	// now every caller should pass true, matching the pre-kernel-6.8
+	// behaviour when the ABI didn't exist.
+	AllowNetworkOutbound bool
 }
 
 // Mode selects how the sandbox enforces policy. Sprint J / BRD SEC-01..03.
@@ -204,8 +214,14 @@ func DefaultPolicy(homePath string, allowedPaths []string, warnFn func(msg strin
 	}
 
 	return SandboxPolicy{
-		FilesystemRules:   rules,
-		InheritToChildren: true,
+		FilesystemRules: rules,
+		// Default to true: when AllowNetworkOutbound is absent from the policy
+		// the caller almost always wants a working network stack. Flipping it
+		// to false today gives the user a silently-broken deny-all because no
+		// network allow-list is implemented yet — track that work before
+		// changing the default.
+		AllowNetworkOutbound: true,
+		InheritToChildren:    true,
 	}
 }
 

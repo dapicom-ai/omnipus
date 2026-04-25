@@ -2,12 +2,10 @@ package auth
 
 import (
 	"encoding/json"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
 
-	"github.com/dapicom-ai/omnipus/pkg"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/fileutil"
 )
@@ -42,16 +40,7 @@ func (c *AuthCredential) NeedsRefresh() bool {
 }
 
 func authFilePath() string {
-	if home := os.Getenv(config.EnvHome); home != "" {
-		return filepath.Join(home, "auth.json")
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		// Log at Warn but continue with empty home; the caller will get a bad path
-		// rather than a panic. This matches the graceful-degradation policy.
-		slog.Warn("auth: UserHomeDir failed; auth file path may be incorrect", "error", err)
-	}
-	return filepath.Join(home, pkg.DefaultOmnipusHome, "auth.json")
+	return filepath.Join(config.OmnipusHomeDir(), "auth.json")
 }
 
 func LoadStore() (*AuthStore, error) {

@@ -561,6 +561,14 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 		startRetentionSweepLoop(ctx, sharedStore, agentLoop.GetConfig, 24*time.Hour)
 	}
 
+	// FR-031: Launch the nightly retro sweep goroutine alongside the session sweep.
+	// Iterates all agents and calls SweepRetros per MemoryStore.
+	startRetentionRetroSweepLoop(ctx, agentLoop, agentLoop.GetConfig, 24*time.Hour)
+
+	// FR-032/FR-032a: Bootstrap recap pass — on gateway start, re-cap sessions
+	// that lack LAST_SESSION.md. Runs once in a goroutine.
+	go agentLoop.BootstrapRecapPass(ctx)
+
 	// Wire a second degraded check: report 503 when the agent loop has died.
 	runningServices.HealthServer.SetDegradedFunc(func() (bool, string) {
 		if agentLoopDead.Load() {

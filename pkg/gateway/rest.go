@@ -43,6 +43,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/skills"
 	"github.com/dapicom-ai/omnipus/pkg/taskstore"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
+	"github.com/dapicom-ai/omnipus/pkg/validation"
 )
 
 // Version is set at build time via -ldflags "-X github.com/dapicom-ai/omnipus/pkg/gateway.Version=x.y.z".
@@ -752,13 +753,10 @@ func agentWorkspacePath(cfg interface {
 	if agentID != "" && agentID != "omnipus-system" {
 		base := omnipusHome
 		if base == "" {
-			// Fallback to ~/.omnipus if homePath not provided.
-			home, err := os.UserHomeDir()
-			if err != nil {
-				slog.Error("rest: agentWorkspacePath: UserHomeDir failed", "error", err)
-				return cfg.WorkspacePath(), fmt.Errorf("UserHomeDir: %w", err)
-			}
-			base = filepath.Join(home, ".omnipus")
+			// Thread through the same canonical resolver the rest of the code uses —
+			// previously we reached for UserHomeDir here, which silently leaked
+			// agent data to $HOME/.omnipus even when OMNIPUS_HOME was set.
+			base = config.OmnipusHomeDir()
 		}
 		agentDir := filepath.Join(base, "agents", agentID)
 		cleaned := filepath.Clean(agentDir)
@@ -1720,6 +1718,15 @@ func (a *restAPI) updateConfig(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
 		return
 	}
+
+	// FR-061: any config mutation may touch env-preamble-relevant state
+	// (dev_mode_bypass, sandbox fields, routing, etc.). Invalidating every
+	// agent's cached system prompt is cheap — one stat-less clear per
+	// ContextBuilder — and guarantees the next turn reflects reality.
+	if reg := a.agentLoop.ContextBuilderRegistry(); reg != nil {
+		reg.InvalidateAllContextBuilders()
+	}
+
 	a.getConfig(w)
 }
 
@@ -2295,16 +2302,13 @@ func (a *restAPI) listTasks(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, tasks)
 }
 
-// validateEntityID rejects IDs that contain path separators, "..", or null bytes
-// to prevent path traversal attacks.
+// validateEntityID is a thin forwarder to pkg/validation.EntityID. The real
+// implementation moved out of this file as part of FR-062 / MAJ-002 so
+// pkg/agent (memory retros) can use the same validator without a gateway
+// import cycle. This wrapper is kept so every existing call site in the
+// gateway package continues to compile unchanged.
 func validateEntityID(id string) error {
-	if id == "" {
-		return fmt.Errorf("id must not be empty")
-	}
-	if strings.ContainsAny(id, "/\\") || strings.Contains(id, "..") || strings.ContainsRune(id, 0) {
-		return fmt.Errorf("invalid id")
-	}
-	return nil
+	return validation.EntityID(id)
 }
 
 func (a *restAPI) getTask(w http.ResponseWriter, id string) {

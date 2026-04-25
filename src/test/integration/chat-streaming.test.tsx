@@ -2,15 +2,22 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import { act } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { AssistantRuntimeProvider, ThreadPrimitive, MessagePrimitive } from '@assistant-ui/react'
 import { useChatStore } from '@/store/chat'
 import { useConnectionStore } from '@/store/connection'
 import { useSessionStore } from '@/store/session'
-import { ChatThread } from '@/components/chat/ChatThread'
+import { useOmnipusRuntime } from '@/lib/omnipus-runtime'
+import { SubagentBlock } from '@/components/chat/SubagentBlock'
 
 // test_chat_streaming_integration (test #24)
 // test_cancel_integration (test #40)
 // Traces to: wave5a-wire-ui-spec.md — Scenario: User sends message and receives streaming response
 //             wave5a-wire-ui-spec.md — Scenario: Cancel during streaming preserves partial response
+//
+// These tests run against the real AssistantUI surface via useOmnipusRuntime,
+// mirroring what ChatScreen mounts in production. A minimal harness is used
+// instead of ChatScreen because ChatScreen requires a TanStack Router context
+// (irrelevant to the behaviours under test).
 
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>()
@@ -21,18 +28,60 @@ function makeClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false } } })
 }
 
+function SubagentSpanPart(props: { data: { spanId: string } }) {
+  const messages = useChatStore((s) => s.messages)
+  const span = messages
+    .flatMap((m) => (m.role === 'assistant' ? m.spans ?? [] : []))
+    .find((s) => s.spanId === props.data.spanId)
+  if (!span) return null
+  return <SubagentBlock span={span} />
+}
+
+function ChatHarness() {
+  const runtime = useOmnipusRuntime()
+  return (
+    <AssistantRuntimeProvider runtime={runtime}>
+      <ThreadPrimitive.Root>
+        <div role="log" aria-label="Chat messages">
+          <ThreadPrimitive.Messages
+            components={{
+              UserMessage: () => (
+                <MessagePrimitive.Root>
+                  <MessagePrimitive.Parts />
+                </MessagePrimitive.Root>
+              ),
+              AssistantMessage: () => (
+                <MessagePrimitive.Root>
+                  <MessagePrimitive.Parts
+                    components={{
+                      data: {
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        by_name: { 'subagent-span': SubagentSpanPart as any },
+                      },
+                    }}
+                  />
+                </MessagePrimitive.Root>
+              ),
+              SystemMessage: () => (
+                <MessagePrimitive.Root>
+                  <MessagePrimitive.Parts />
+                </MessagePrimitive.Root>
+              ),
+            }}
+          />
+        </div>
+      </ThreadPrimitive.Root>
+    </AssistantRuntimeProvider>
+  )
+}
+
 function wrapper({ children }: { children: React.ReactNode }) {
   return <QueryClientProvider client={makeClient()}>{children}</QueryClientProvider>
 }
 
 beforeEach(() => {
   act(() => {
-    useChatStore.setState({
-      messages: [],
-      isStreaming: false,
-      toolCalls: {},
-      pendingApprovals: [],
-    })
+    useChatStore.getState().resetSession()
     useConnectionStore.setState({ connection: null, isConnected: false, connectionError: null })
     useSessionStore.setState({ activeSessionId: null, activeAgentId: null })
   })
@@ -40,8 +89,7 @@ beforeEach(() => {
 
 describe('chat streaming integration (test #24) — token rendering', () => {
   it('renders tokens incrementally as handleFrame is called', async () => {
-    // Traces to: wave5a-wire-ui-spec.md — Scenario: User sends message and receives streaming response
-    render(<ChatThread />, { wrapper })
+    render(<ChatHarness />, { wrapper })
 
     act(() => {
       useChatStore.getState().appendMessage({
@@ -73,8 +121,7 @@ describe('chat streaming integration (test #24) — token rendering', () => {
   })
 
   it('clears streaming state and renders final content on done frame', async () => {
-    // Traces to: wave5a-wire-ui-spec.md — Scenario: Streaming response completes with markdown
-    render(<ChatThread />, { wrapper })
+    render(<ChatHarness />, { wrapper })
 
     act(() => {
       useChatStore.getState().appendMessage({
@@ -100,12 +147,9 @@ describe('chat streaming integration (test #24) — token rendering', () => {
   })
 
   it('records connectionError on error frame when no assistant message exists', async () => {
-    // Traces to: wave5a-wire-ui-spec.md — Scenario: WebSocket connection error during streaming
-    // When NO assistant message exists, error frames are connection-level and set connectionError.
-    render(<ChatThread />, { wrapper })
+    render(<ChatHarness />, { wrapper })
 
     act(() => {
-      // No assistant message appended — error is connection-level
       useChatStore.setState({ isStreaming: true })
       useChatStore.getState().handleFrame({ type: 'error', message: 'Connection lost' })
     })
@@ -117,8 +161,7 @@ describe('chat streaming integration (test #24) — token rendering', () => {
   })
 
   it('does NOT set connectionError on error frame when assistant message exists', async () => {
-    // Message-level errors update the message inline without setting the global banner
-    render(<ChatThread />, { wrapper })
+    render(<ChatHarness />, { wrapper })
 
     act(() => {
       useChatStore.getState().appendMessage({
@@ -136,9 +179,7 @@ describe('chat streaming integration (test #24) — token rendering', () => {
 
     await waitFor(() => {
       expect(useChatStore.getState().isStreaming).toBe(false)
-      // Message-level error does NOT set connectionError
       expect(useConnectionStore.getState().connectionError).toBeNull()
-      // Instead, the message itself has error status
       const msg = useChatStore.getState().messages.find((m) => m.id === 'asst_3')
       expect(msg?.status).toBe('error')
     })
@@ -147,9 +188,8 @@ describe('chat streaming integration (test #24) — token rendering', () => {
 
 describe('cancel integration (test #40)', () => {
   it('sends cancel frame and marks partial response as interrupted', async () => {
-    // Traces to: wave5a-wire-ui-spec.md — test_cancel_integration (test #40)
     const mockSend = vi.fn()
-    render(<ChatThread />, { wrapper })
+    render(<ChatHarness />, { wrapper })
 
     act(() => {
       useChatStore.getState().appendMessage({
@@ -168,6 +208,7 @@ describe('cancel integration (test #40)', () => {
           disconnect: vi.fn(),
           connect: vi.fn(),
           isConnected: true,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } as any,
         isConnected: true,
       })
@@ -175,14 +216,56 @@ describe('cancel integration (test #40)', () => {
       useChatStore.getState().cancelStream()
     })
 
-    // Cancel frame sent
     expect(mockSend).toHaveBeenCalledWith({ type: 'cancel', session_id: 'sess_cancel' })
 
-    // Partial response preserved with interrupted status
     await waitFor(() => {
       const msg = useChatStore.getState().messages.find((m) => m.id === 'asst_cancel')
       expect(msg?.status).toBe('interrupted')
       expect(msg?.content).toBe('Here is the analysis of...')
     })
+  })
+})
+
+describe('subagent inline ordering — regression for "span at bottom" bug', () => {
+  it('renders SubagentBlock between text runs when the span fires mid-stream', async () => {
+    render(<ChatHarness />, { wrapper })
+
+    act(() => {
+      useChatStore.getState().appendMessage({
+        id: 'asst_span',
+        session_id: 'sess_test',
+        role: 'assistant',
+        content: '',
+        timestamp: new Date().toISOString(),
+        status: 'streaming',
+        isStreaming: true,
+      })
+      useChatStore.setState({ isStreaming: true })
+      // Stream text, then open a span mid-stream, then stream more text.
+      useChatStore.getState().handleFrame({ type: 'token', content: 'Let me research ' })
+      useChatStore.getState().handleFrame({
+        type: 'subagent_start',
+        span_id: 'span_inline',
+        parent_call_id: 'p_inline',
+        task_label: 'research request',
+      })
+      useChatStore.getState().handleFrame({ type: 'token', content: 'and then summarise.' })
+    })
+
+    // Both text segments present.
+    await waitFor(() => {
+      expect(screen.getByText(/Let me research/i)).toBeInTheDocument()
+      expect(screen.getByText(/and then summarise/i)).toBeInTheDocument()
+    })
+
+    // The subagent block must sit between them in document order —
+    // that's the whole point of this regression test.
+    const research = screen.getByText(/Let me research/i)
+    const summary = screen.getByText(/and then summarise/i)
+    const subagentHeader = screen.getByTestId('subagent-collapsed')
+    const order = [research, subagentHeader, summary]
+    // compareDocumentPosition: a.compareDocumentPosition(b) & FOLLOWING returns non-zero when b follows a.
+    expect(order[0].compareDocumentPosition(order[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(order[1].compareDocumentPosition(order[2]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 })
