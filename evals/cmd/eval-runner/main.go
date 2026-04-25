@@ -278,6 +278,11 @@ func seedConfig(homeDir, agentModel string) error {
     "allow_empty": true,
     "dev_mode_bypass": true
   },
+  "agents": {
+    "defaults": {
+      "workspace": "` + homeDir + `"
+    }
+  },
   "model": "",
   "model_list": {}
 }`
