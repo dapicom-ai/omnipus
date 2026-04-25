@@ -301,7 +301,7 @@ func startGateway(ctx context.Context, omnipusBin, homeDir string) (*gatewayHand
 		"OMNIPUS_BEARER_TOKEN=",
 	)
 	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
+	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start gateway: %w", err)
 	}
