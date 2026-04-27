@@ -833,10 +833,7 @@ func TestHandleLogout_Success(t *testing.T) {
 
 	api.HandleLogout(w, req)
 
-	require.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, true, resp["success"], "logout must return {success:true}")
+	require.Equal(t, http.StatusNoContent, w.Code, "logout must return 204 No Content")
 
 	// Verify persistence: token_hash is cleared in config.json on disk.
 	diskData, err := os.ReadFile(filepath.Join(tmpDir, "config.json"))

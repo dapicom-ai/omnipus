@@ -10,6 +10,7 @@
 //   • Sovereign Deep styling for inline code and links
 
 import { memo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
@@ -21,6 +22,8 @@ import {
 import { SyntaxHighlighter, CopyCodeHeader } from './shiki-highlighter'
 import { ImageLightbox } from './image-lightbox'
 import { rehypePhosphorEmoji } from '@/lib/rehype-phosphor-emoji'
+import { rewriteLegacyURL } from '@/lib/preview-url'
+import { fetchAboutInfo } from '@/lib/api'
 import * as PhosphorIcons from '@phosphor-icons/react'
 import type { ComponentPropsWithoutRef } from 'react'
 
@@ -57,11 +60,16 @@ function MarkdownImage({ src, alt }: ComponentPropsWithoutRef<'img'>) {
   )
 }
 
-// ── Component map ─────────────────────────────────────────────────────────────
+// ── Static component map (all renderers except `a`) ──────────────────────────
 // memoizeMarkdownComponents wraps each renderer with React.memo and compares
 // the AST node for bailout — this is performance-critical for streaming.
+//
+// The `a` renderer is NOT in this static map because it needs the `previewPort`
+// value from /api/v1/about, which must be read inside a React component via
+// useQuery. We pass a per-render `a` renderer via the `components` prop on
+// MarkdownTextPrimitive; all other renderers come from this shared memoized map.
 
-const markdownComponents = memoizeMarkdownComponents({
+const staticMarkdownComponents = memoizeMarkdownComponents({
   // Shiki-powered block code (replaces default <pre><code> rendering).
   // Also handles language="mermaid" by routing to MermaidDiagram.
   SyntaxHighlighter,
@@ -129,19 +137,6 @@ const markdownComponents = memoizeMarkdownComponents({
     <hr {...props} className="my-4 border-[var(--color-border)]" />
   ),
 
-  // Links open in new tab
-  a: ({ href, children, ...props }) => (
-    <a
-      {...props}
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="text-[var(--color-accent)] underline underline-offset-2 hover:opacity-80 transition-opacity"
-    >
-      {children}
-    </a>
-  ),
-
   // Span renderer: intercepts data-phosphor-icon spans from rehypePhosphorEmoji
   span: PhosphorEmojiSpan,
 
@@ -150,9 +145,47 @@ const markdownComponents = memoizeMarkdownComponents({
 })
 
 // ── MarkdownText component ────────────────────────────────────────────────────
-// Usage: <MarkdownText /> inside MessagePrimitive.Parts (reads text from context)
+// Usage: <MarkdownText /> inside MessagePrimitive.Parts (reads text from context).
+//
+// The `a` renderer is built inside the component so it can call useQuery to
+// read the previewPort from /api/v1/about. The rewrite is skipped entirely
+// when previewPort is falsy (aboutInfo not yet loaded), so port 0 is never
+// substituted into a URL (which would produce ERR_UNSAFE_PORT). After
+// aboutInfo loads and the component re-renders, the correct port is applied.
 
 function MarkdownTextImpl() {
+  const { data: aboutInfo } = useQuery({
+    queryKey: ['about'],
+    queryFn: fetchAboutInfo,
+    staleTime: 5 * 60 * 1000,
+  })
+
+  // previewPort is null until aboutInfo resolves. When it is falsy (0, null,
+  // undefined) we skip the rewrite entirely and pass the original href through
+  // unchanged — substituting port 0 would produce ERR_UNSAFE_PORT (F-16).
+  // Once aboutInfo loads and re-renders the component, the correct port is used.
+  const previewPort = aboutInfo?.preview_port ?? null
+
+  const markdownComponents = {
+    ...staticMarkdownComponents,
+    a: ({ href, children, ...props }: ComponentPropsWithoutRef<'a'>) => {
+      const rewritten = previewPort
+        ? rewriteLegacyURL(href ?? '', window.location.hostname, previewPort)
+        : (href ?? '')
+      return (
+        <a
+          {...props}
+          href={rewritten}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[var(--color-accent)] underline underline-offset-2 hover:opacity-80 transition-opacity"
+        >
+          {children}
+        </a>
+      )
+    },
+  }
+
   return (
     <MarkdownTextPrimitive
       remarkPlugins={[remarkGfm, remarkMath]}

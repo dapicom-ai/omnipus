@@ -1,0 +1,61 @@
+//go:build !cgo
+
+// Omnipus - Ultra-lightweight personal AI agent
+// License: MIT
+// Copyright (c) 2026 Omnipus contributors
+
+// Package agent — Tier13Deps carrier for serve_workspace, build_static, and
+// run_in_workspace tool wiring.
+//
+// Tier13Deps bundles the shared infrastructure instances that are created once
+// at gateway boot and passed down into every NewAgentInstance call. Keeping
+// them in a single struct avoids threading six extra parameters through the
+// existing function call chain.
+
+package agent
+
+import (
+	"github.com/dapicom-ai/omnipus/pkg/sandbox"
+)
+
+// Tier13Deps carries the shared singletons required to register the Tier 1
+// (serve_workspace), Tier 2 (build_static), and Tier 3 (run_in_workspace)
+// tools for non-system agents.
+//
+// All fields are nullable — a nil registry / proxy means the corresponding
+// tool is not registered (graceful degradation when the gateway skips Tier
+// 2/3 setup, e.g. in unit tests that only need Tier 1).
+type Tier13Deps struct {
+	// ServedSubdirs is the process-wide serve_workspace registration map.
+	// Non-nil when the gateway has initialised it at boot.
+	ServedSubdirs *ServedSubdirs
+
+	// EgressProxy is the shared Tier 2 / Tier 3 egress HTTP/HTTPS proxy.
+	// Non-nil when sandbox.NewEgressProxy succeeded at boot.
+	EgressProxy *sandbox.EgressProxy
+
+	// DevServerRegistry is the process-wide run_in_workspace registration map.
+	// Non-nil when the gateway has initialised it at boot.
+	DevServerRegistry *sandbox.DevServerRegistry
+
+	// GatewayBaseURL is the base URL (scheme + host + port) of the running
+	// gateway's MAIN listener, e.g. "http://localhost:3000".
+	//
+	// Deprecated: kept for one release for replay safety on transcripts that
+	// embedded URLs minted before the two-port topology landed (FR-021). Use
+	// GatewayPreviewBaseURL for new tool URL emission. Will be removed after
+	// 2026-Q3.
+	GatewayBaseURL string
+
+	// GatewayPreviewBaseURL is the base URL of the gateway's PREVIEW
+	// listener, e.g. "http://localhost:3001" or "https://preview.acme.com".
+	// Sourced from cfg.Gateway.PreviewOrigin when set, otherwise computed
+	// from cfg.Gateway.Host + cfg.Gateway.PreviewPort at boot.
+	//
+	// serve_workspace and run_in_workspace use this to build the absolute
+	// /serve/<agent>/<token>/ and /dev/<agent>/<token>/ URLs returned in
+	// their tool results. The preview origin is browser-cross-origin to the
+	// SPA's main origin, providing the T-01 mitigation (parent.localStorage
+	// access throws SecurityError).
+	GatewayPreviewBaseURL string
+}

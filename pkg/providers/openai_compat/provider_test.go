@@ -830,11 +830,7 @@ func TestSerializeMessages_WithMedia(t *testing.T) {
 }
 
 func TestSerializeMessages_MediaWithToolCallID(t *testing.T) {
-	// Include the declaring assistant so sanitizeOrphanToolResults keeps the
-	// tool message — a lone tool_result is an orphan and gets dropped at the
-	// wire boundary to prevent Anthropic/OpenAI 400s on follow-up turns.
 	messages := []protocoltypes.Message{
-		{Role: "assistant", ToolCalls: []protocoltypes.ToolCall{{ID: "call_1", Name: "vision"}}},
 		{Role: "tool", Content: "image result", Media: []string{"data:image/png;base64,xyz"}, ToolCallID: "call_1"},
 	}
 	result := common.SerializeMessages(messages)
@@ -843,12 +839,12 @@ func TestSerializeMessages_MediaWithToolCallID(t *testing.T) {
 	var msgs []map[string]any
 	json.Unmarshal(data, &msgs)
 
-	if msgs[1]["tool_call_id"] != "call_1" {
-		t.Fatalf("tool_call_id not preserved with media, got %v", msgs[1]["tool_call_id"])
+	if msgs[0]["tool_call_id"] != "call_1" {
+		t.Fatalf("tool_call_id not preserved with media, got %v", msgs[0]["tool_call_id"])
 	}
 	// Content should be multipart array
-	if _, ok := msgs[1]["content"].([]any); !ok {
-		t.Fatalf("expected array content, got %T", msgs[1]["content"])
+	if _, ok := msgs[0]["content"].([]any); !ok {
+		t.Fatalf("expected array content, got %T", msgs[0]["content"])
 	}
 }
 

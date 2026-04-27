@@ -25,7 +25,8 @@ func TestBrowserToolRegistration(t *testing.T) {
 	cfg, err := DefaultConfig()
 	require.NoError(t, err, "DefaultConfig must not error")
 	ssrf := security.NewSSRFChecker(nil)
-	mgr, err := RegisterTools(registry, cfg, ssrf)
+	// evaluateEnabled=true: verify browser.evaluate is included in the 7 registered tools.
+	mgr, err := RegisterTools(registry, cfg, ssrf, true)
 	require.NoError(t, err, "RegisterTools must not return an error with valid config")
 	require.NotNil(t, mgr, "RegisterTools must return a non-nil BrowserManager")
 
@@ -60,7 +61,7 @@ func TestBrowserToolNames(t *testing.T) {
 	cfg, err := DefaultConfig()
 	require.NoError(t, err)
 	ssrf := security.NewSSRFChecker(nil)
-	_, err = RegisterTools(registry, cfg, ssrf)
+	_, err = RegisterTools(registry, cfg, ssrf, true)
 	require.NoError(t, err)
 
 	toolNames := []string{

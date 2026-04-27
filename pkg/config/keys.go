@@ -11,7 +11,7 @@ package config
 type ConfigKey string
 
 const (
-	SandboxMode          ConfigKey = "sandbox.mode"
+	SandboxModeKey       ConfigKey = "sandbox.mode"
 	SandboxEnabled       ConfigKey = "sandbox.enabled"
 	SandboxAuditLog      ConfigKey = "sandbox.audit_log"
 	SandboxAllowedPaths  ConfigKey = "sandbox.allowed_paths"
@@ -19,4 +19,12 @@ const (
 	GatewayPort          ConfigKey = "gateway.port"
 	GatewayUsers         ConfigKey = "gateway.users"
 	GatewayDevModeBypass ConfigKey = "gateway.dev_mode_bypass"
+
+	// Preview listener restart-gated keys (FR-027b).
+	GatewayPreviewPort            ConfigKey = "gateway.preview_port"
+	GatewayPreviewHost            ConfigKey = "gateway.preview_host"
+	GatewayPreviewOrigin          ConfigKey = "gateway.preview_origin"
+	GatewayPublicURL              ConfigKey = "gateway.public_url"
+	GatewayPreviewListenerEnabled ConfigKey = "gateway.preview_listener_enabled"
+	ToolsRunInWorkspaceWarmup     ConfigKey = "tools.run_in_workspace.warmup_timeout_seconds"
 )

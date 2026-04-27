@@ -14,6 +14,8 @@ import { FileTreeViewUI, FileListAliasDotUI } from "./tools/FileTreeView";
 import { WebSearchResultUI } from "./tools/WebSearchResult";
 import { WebFetchPreviewUI } from "./tools/WebFetchPreview";
 import { BrowserNavigateUI, BrowserNavigateUnderscoreUI } from "./tools/BrowserNavigate";
+import { ServeWorkspaceUI } from "./tools/ServeWorkspaceUI";
+import { RunInWorkspaceUI } from "./tools/RunInWorkspaceUI";
 import {
   BrowserClickUI, BrowserClickUnderscoreUI,
   BrowserTypeUI, BrowserTypeUnderscoreUI,
@@ -78,6 +80,8 @@ export function OmnipusRuntimeProvider({ children }: { children: React.ReactNode
        *   file.list         → FileListAliasDotUI        (BRD alias)
        *   web_search        → WebSearchResultUI         (search the web)
        *   web_fetch         → WebFetchPreviewUI         (fetch a URL)
+       *   serve_workspace   → ServeWorkspaceUI          (serve static workspace dir)
+       *   run_in_workspace  → RunInWorkspaceUI          (run dev server in workspace)
        *   browser.navigate  → BrowserNavigateUI         (browser navigation + screenshot)
        *   browser_navigate  → BrowserNavigateUnderscoreUI (underscore variant)
        *   browser.click     → BrowserClickUI             (click element by selector)
@@ -104,6 +108,8 @@ export function OmnipusRuntimeProvider({ children }: { children: React.ReactNode
       <FileListAliasDotUI />
       <WebSearchResultUI />
       <WebFetchPreviewUI />
+      <ServeWorkspaceUI />
+      <RunInWorkspaceUI />
       <BrowserNavigateUI />
       <BrowserNavigateUnderscoreUI />
       <BrowserClickUI />

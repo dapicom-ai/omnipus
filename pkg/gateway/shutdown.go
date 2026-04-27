@@ -129,6 +129,24 @@ func omnipusGracefulShutdown(
 		cp.Close()
 	}
 
+	// Step 6: Stop Tier 1/3 preview-tool registries so their janitor goroutines exit.
+	// servedSubdirs.Stop() is idempotent and safe to call even when Stop was never
+	// explicitly called (the janitor goroutine exits when the stop channel closes).
+	// devServers.Close() SIGTERMs any remaining dev-server children, preventing zombie
+	// processes from outliving the gateway.
+	slog.Info("shutdown: step 6 — stopping Tier 1/3 preview registries")
+	if runningServices.servedSubdirs != nil {
+		runningServices.servedSubdirs.Stop()
+	}
+	if runningServices.devServers != nil {
+		runningServices.devServers.Close()
+	}
+	if runningServices.egressProxy != nil {
+		if epErr := runningServices.egressProxy.Close(); epErr != nil {
+			slog.Warn("shutdown: egress proxy close error", "error", epErr)
+		}
+	}
+
 	// Stop the permissive / production-off nag-banner goroutine if one was
 	// armed at boot. Safe to call on nil or never-started state.
 	if runningServices.stopNagBanner != nil {

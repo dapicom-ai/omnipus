@@ -165,6 +165,7 @@ CGO_ENABLED=0 go build -o omnipus ./cmd/omnipus/
 
 # 2. Run the gateway (binds 0.0.0.0:3000 by default)
 ./omnipus gateway
+# The gateway opens two ports: 5000 (SPA + API) and 5001 (preview iframes). Open both in your firewall.
 
 # 3. Open http://localhost:3000 and follow the onboarding wizard:
 #    Welcome → Provider → API Key → Model → Admin Account → Done
@@ -250,22 +251,6 @@ The full design is written down, not vibes:
 | [Appendix C](docs/BRD/Omnipus_BRD_AppendixC_UI_Spec.md) | Full UI / UX spec |
 | [Appendix D](docs/BRD/Omnipus_BRD_AppendixD_System_Agent.md) | System agent and system tools |
 | [Appendix E](docs/BRD/Omnipus_BRD_AppendixE_DataModel.md) | File-based data model and directory structure |
-
----
-
-## Known limitations
-
-### Network sandboxing via Landlock is an on / off switch, not an allow-list
-
-Omnipus targets kernel-level sandboxing via Landlock. On kernel 6.8+ the Landlock ABI v4 added network rights (`LANDLOCK_ACCESS_NET_BIND_TCP`, `LANDLOCK_ACCESS_NET_CONNECT_TCP`), but the allow-list plumbing for outbound destinations (per-port / per-CIDR rules) is not yet wired up. Until that lands, Omnipus runs Landlock **without** declaring network rights — i.e. outbound TCP is unrestricted inside the sandbox. The config key `sandbox.allow_network_outbound` is accepted but is treated as "true" regardless of value; a warning is logged if you explicitly set it to false.
-
-Tracked as a follow-up; a real implementation will require both declaring the rights on ABI-4+ and adding allow-rules for the configured outbound endpoints so that LLM provider calls continue to succeed.
-
-If you are on **kernel < 6.8** none of this applies — Landlock ABI v3 has no concept of network rights.
-
-### Sandbox UI controls are disabled when `gateway.dev_mode_bypass` is on
-
-`dev_mode_bypass` authenticates every incoming request as admin. To prevent anonymous access to destructive admin endpoints, the gateway rejects PUT `/api/v1/security/sandbox-config` with HTTP 503 while bypass is active. The UI does not yet pre-disable the toggle, so you'll only see the error after you hit save. Disable bypass in `config.json` (set `gateway.dev_mode_bypass: false`) once you have a real admin login set up.
 
 ---
 

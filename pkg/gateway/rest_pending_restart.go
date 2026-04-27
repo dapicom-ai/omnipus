@@ -27,13 +27,21 @@ import (
 // Exported so tests and future refactors can reference the canonical list
 // without duplicating it.
 var RestartGatedKeys = []config.ConfigKey{
-	config.SandboxMode,
+	config.SandboxModeKey,
 	config.SandboxEnabled,
 	config.SandboxAuditLog,
 	config.SandboxAllowedPaths,
 	config.SessionDMScope,
 	config.GatewayPort,
 	config.GatewayUsers,
+	// Preview listener fields require restart because changing a listener's bind
+	// address or port mid-process races with active connections (FR-027b, MR-02).
+	config.GatewayPreviewPort,
+	config.GatewayPreviewHost,
+	config.GatewayPreviewOrigin,
+	config.GatewayPublicURL,
+	config.GatewayPreviewListenerEnabled,
+	config.ToolsRunInWorkspaceWarmup,
 }
 
 // pendingRestartEntry is a single restart-required change: the dotted key

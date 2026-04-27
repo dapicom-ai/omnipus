@@ -31,6 +31,7 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/sandbox"
 	"github.com/dapicom-ai/omnipus/pkg/coreagent"
 	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/fileutil"
@@ -43,7 +44,6 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/skills"
 	"github.com/dapicom-ai/omnipus/pkg/taskstore"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
-	"github.com/dapicom-ai/omnipus/pkg/validation"
 )
 
 // Version is set at build time via -ldflags "-X github.com/dapicom-ai/omnipus/pkg/gateway.Version=x.y.z".
@@ -86,6 +86,18 @@ type restAPI struct {
 	adminUpdateConfigHandler http.Handler
 	adminPutPoliciesOnce     sync.Once
 	adminPutPoliciesHandler  http.Handler
+
+	// devServers is the gateway-wide Tier 3 dev-server registry. Shared with
+	// the run_in_workspace tool via the agent instance. HandleDevProxy reads
+	// this to validate tokens and resolve the upstream loopback port.
+	// Nil when Tier 3 is not supported on the current platform (non-Linux).
+	devServers *sandbox.DevServerRegistry
+
+	// servedSubdirs is the gateway-wide serve_workspace registration map.
+	// Shared with the serve_workspace tool via the agent instance.
+	// HandleServeProxy reads this to validate tokens and resolve the served
+	// directory. Nil when serve_workspace is not configured.
+	servedSubdirs *agent.ServedSubdirs
 }
 
 // --- CORS / JSON helpers ---
@@ -560,6 +572,12 @@ func (a *restAPI) HandleAgents(w http.ResponseWriter, r *http.Request) {
 		} else {
 			jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
+	case http.MethodPatch:
+		if agentID != "" {
+			a.patchAgentOwnership(w, r, agentID)
+		} else {
+			jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
 	default:
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
@@ -753,10 +771,13 @@ func agentWorkspacePath(cfg interface {
 	if agentID != "" && agentID != "omnipus-system" {
 		base := omnipusHome
 		if base == "" {
-			// Thread through the same canonical resolver the rest of the code uses —
-			// previously we reached for UserHomeDir here, which silently leaked
-			// agent data to $HOME/.omnipus even when OMNIPUS_HOME was set.
-			base = config.OmnipusHomeDir()
+			// Fallback to ~/.omnipus if homePath not provided.
+			home, err := os.UserHomeDir()
+			if err != nil {
+				slog.Error("rest: agentWorkspacePath: UserHomeDir failed", "error", err)
+				return cfg.WorkspacePath(), fmt.Errorf("UserHomeDir: %w", err)
+			}
+			base = filepath.Join(home, ".omnipus")
 		}
 		agentDir := filepath.Join(base, "agents", agentID)
 		cleaned := filepath.Clean(agentDir)
@@ -1718,15 +1739,6 @@ func (a *restAPI) updateConfig(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
 		return
 	}
-
-	// FR-061: any config mutation may touch env-preamble-relevant state
-	// (dev_mode_bypass, sandbox fields, routing, etc.). Invalidating every
-	// agent's cached system prompt is cheap — one stat-less clear per
-	// ContextBuilder — and guarantees the next turn reflects reality.
-	if reg := a.agentLoop.ContextBuilderRegistry(); reg != nil {
-		reg.InvalidateAllContextBuilders()
-	}
-
 	a.getConfig(w)
 }
 
@@ -2086,6 +2098,19 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	cm.RegisterHTTPHandler("/api/v1/uploads/", a.withOptionalAuth(a.HandleServeUpload))
 }
 
+// registerPreviewEndpoints registers /serve/ and /dev/ on the preview mux ONLY
+// (FR-005, FR-006). These paths are not registered on the main mux.
+//
+// Auth model: token-only (FR-023). No RequireSessionCookieOrBearer, no
+// RequireMatchingOriginOnStateChanging (FR-023a).
+//
+// Handler implementations (HandleServeWorkspace, HandleDevProxy) are provided
+// by Track B (rest_serve.go, rest_dev.go).
+func (a *restAPI) registerPreviewEndpoints(cm previewHandlerRegistrar) {
+	cm.RegisterPreviewHandler("/serve/", http.HandlerFunc(a.HandleServeWorkspace))
+	cm.RegisterPreviewHandler("/dev/", http.HandlerFunc(a.HandleDevProxy))
+}
+
 // handleUsersWithParam dispatches /api/v1/users/{username}[/subpath] requests
 // to the appropriate user-management handler based on HTTP method and path suffix.
 //
@@ -2154,6 +2179,14 @@ func (a *restAPI) rotateGatewayToken(w http.ResponseWriter, r *http.Request) {
 // httpHandlerRegistrar is the subset of channels.Manager used for route registration.
 type httpHandlerRegistrar interface {
 	RegisterHTTPHandler(pattern string, handler http.Handler)
+}
+
+// previewHandlerRegistrar is the subset of channels.Manager used to register
+// routes on the preview mux (FR-005). Separate from httpHandlerRegistrar so
+// that existing test mocks implementing the main-mux interface do not need to
+// be updated when preview routes are added.
+type previewHandlerRegistrar interface {
+	RegisterPreviewHandler(pattern string, handler http.Handler)
 }
 
 // --- App State ---
@@ -2302,13 +2335,16 @@ func (a *restAPI) listTasks(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, tasks)
 }
 
-// validateEntityID is a thin forwarder to pkg/validation.EntityID. The real
-// implementation moved out of this file as part of FR-062 / MAJ-002 so
-// pkg/agent (memory retros) can use the same validator without a gateway
-// import cycle. This wrapper is kept so every existing call site in the
-// gateway package continues to compile unchanged.
+// validateEntityID rejects IDs that contain path separators, "..", or null bytes
+// to prevent path traversal attacks.
 func validateEntityID(id string) error {
-	return validation.EntityID(id)
+	if id == "" {
+		return fmt.Errorf("id must not be empty")
+	}
+	if strings.ContainsAny(id, "/\\") || strings.Contains(id, "..") || strings.ContainsRune(id, 0) {
+		return fmt.Errorf("invalid id")
+	}
+	return nil
 }
 
 func (a *restAPI) getTask(w http.ResponseWriter, id string) {

@@ -199,7 +199,7 @@ func applySandbox(opts SandboxApplyOptions) (*SandboxApplyResult, error) {
 	cfgMode := ""
 	cfgEnabledSet := false
 	if opts.Cfg != nil {
-		cfgMode = opts.Cfg.Sandbox.Mode
+		cfgMode = string(opts.Cfg.Sandbox.Mode)
 		// Detect "Enabled was written to config" vs "Enabled defaulted
 		// to the zero value". Presence of any Sandbox field indicates
 		// the operator touched the section.
@@ -292,15 +292,6 @@ func applySandbox(opts SandboxApplyOptions) (*SandboxApplyResult, error) {
 		allowedPaths = opts.Cfg.Sandbox.AllowedPaths
 	}
 	policy := sandbox.DefaultPolicy(opts.HomePath, allowedPaths, warnFn)
-	// DefaultPolicy.AllowNetworkOutbound=true is currently the only safe value
-	// — see its doc comment. The config field sandbox.allow_network_outbound
-	// is retained for future use once a real network allow-list lands; until
-	// then we force-allow so LLM provider calls always succeed, and emit a
-	// warning if the operator explicitly set it to false so the intent
-	// doesn't get silently ignored.
-	if opts.Cfg != nil && !opts.Cfg.Sandbox.AllowNetworkOutbound {
-		slog.Warn("sandbox: allow_network_outbound=false is not yet enforceable (no network allow-list); outbound TCP stays permitted to avoid breaking LLM provider calls")
-	}
 
 	// Step 6 — Apply Landlock. Seccomp Install MUST run after this
 	// (FR-J-002) because seccomp filters all syscalls including

@@ -28,6 +28,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
+	"github.com/dapicom-ai/omnipus/pkg/sandbox"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/dingtalk"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/discord"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/feishu"
@@ -106,6 +107,15 @@ type services struct {
 	reloadMu       sync.Mutex
 	reloadDegraded bool
 	reloadError    error
+
+	// Tier 1/3 preview-tool registries. Created once at boot; closed on shutdown.
+	// servedSubdirs is always non-nil after a successful boot with preview enabled.
+	// devServers is non-nil on the same condition.
+	// egressProxy is non-nil when sandbox.EgressAllowList is non-empty or egress
+	// enforcement is enabled.
+	servedSubdirs *agent.ServedSubdirs
+	devServers    *sandbox.DevServerRegistry
+	egressProxy   *sandbox.EgressProxy
 }
 
 type startupBlockedProvider struct {
@@ -561,14 +571,6 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 		startRetentionSweepLoop(ctx, sharedStore, agentLoop.GetConfig, 24*time.Hour)
 	}
 
-	// FR-031: Launch the nightly retro sweep goroutine alongside the session sweep.
-	// Iterates all agents and calls SweepRetros per MemoryStore.
-	startRetentionRetroSweepLoop(ctx, agentLoop, agentLoop.GetConfig, 24*time.Hour)
-
-	// FR-032/FR-032a: Bootstrap recap pass — on gateway start, re-cap sessions
-	// that lack LAST_SESSION.md. Runs once in a goroutine.
-	go agentLoop.BootstrapRecapPass(ctx)
-
 	// Wire a second degraded check: report 503 when the agent loop has died.
 	runningServices.HealthServer.SetDegradedFunc(func() (bool, string) {
 		if agentLoopDead.Load() {
@@ -840,11 +842,96 @@ func setupAndStartServices(
 		fmt.Println("⚠ Warning: No channels enabled")
 	}
 
+	// Validate preview config and apply computed defaults (FR-001..FR-005, FR-027, FR-028).
+	// ValidateAndApplyPreviewDefaults mutates cfg.Gateway in-place.
+	if err = cfg.Gateway.ValidateAndApplyPreviewDefaults(); err != nil {
+		return nil, fmt.Errorf("gateway config: %w", err)
+	}
+	// Apply warmup timeout default (FR-013 / CR-04).
+	cfg.Tools.ApplyWarmupTimeoutDefault()
+
 	addr := fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
 	runningServices.HealthServer = health.NewServer(cfg.Gateway.Host, cfg.Gateway.Port)
 	runningServices.ChannelManager.SetupHTTPServer(addr, runningServices.HealthServer)
 
-	allowedOrigin := "http://" + net.JoinHostPort(cfg.Gateway.Host, strconv.Itoa(cfg.Gateway.Port))
+	// Compute the main gateway origin for CORS and CSP frame-ancestors.
+	// Use PublicURL when set (reverse-proxy deployment); otherwise derive from host:port.
+	// When host is a wildcard (0.0.0.0, ::), allowedOrigin is empty and the WARN
+	// is emitted below (FR-007e / MR-03).
+	allowedOrigin := middleware.CanonicalGatewayOrigin(cfg)
+	if allowedOrigin == "" {
+		// Wildcard bind host and no public_url → frame-ancestors must fall back to *.
+		// Log once at WARN so operators know to set gateway.public_url for strict control.
+		//
+		// NOTE: this WARN is emitted at boot only and is NOT re-evaluated on
+		// hot-reload of gateway.public_url. Operators changing the field at
+		// runtime must restart the gateway for the WARN to re-fire on the new
+		// value and for the new origin to take effect in CSP headers.
+		slog.Warn("frame-ancestors fallback to '*' — set gateway.public_url for strict embedding control",
+			"host", cfg.Gateway.Host)
+	}
+
+	// Set up the preview listener when enabled (FR-001, FR-020).
+	previewListenerEnabled := cfg.Gateway.IsPreviewListenerEnabled()
+	var gatewayPreviewBaseURL string
+	if previewListenerEnabled {
+		previewHost := cfg.Gateway.PreviewHost
+		previewPort := int(cfg.Gateway.PreviewPort)
+		previewAddr := fmt.Sprintf("%s:%d", previewHost, previewPort)
+		runningServices.ChannelManager.SetupPreviewServer(previewAddr)
+		// Compute the preview base URL for tool result generation.
+		if cfg.Gateway.PreviewOrigin != "" {
+			gatewayPreviewBaseURL = cfg.Gateway.PreviewOrigin
+		} else {
+			scheme := "http"
+			if cfg.Gateway.PublicURL != "" {
+				// Inherit the scheme from PublicURL when preview_origin is not set.
+				if len(cfg.Gateway.PublicURL) >= 5 && cfg.Gateway.PublicURL[:5] == "https" {
+					scheme = "https"
+				}
+			}
+			gatewayPreviewBaseURL = fmt.Sprintf("%s://%s",
+				scheme,
+				net.JoinHostPort(previewHost, strconv.Itoa(previewPort)),
+			)
+		}
+	}
+	// Construct the Tier 1 (serve_workspace) and Tier 3 (run_in_workspace)
+	// shared registries. These are created regardless of previewListenerEnabled so
+	// that operators who run on the single-port fallback still get serve_workspace.
+	// run_in_workspace requires the DevServerRegistry; the tool itself gates to Linux.
+	servedSubdirs := agent.NewServedSubdirs()
+	devServers := sandbox.NewDevServerRegistry()
+	runningServices.servedSubdirs = servedSubdirs
+	runningServices.devServers = devServers
+
+	// F-9: wire audit-set cleanup so evicted tokens don't re-emit serve.served
+	// / dev.proxied on the rare cap-reset path. The callbacks are injected here
+	// rather than in the registry constructors to avoid an import cycle
+	// (gateway → agent/sandbox is fine; agent/sandbox → gateway would cycle).
+	servedSubdirs.SetOnEvict(purgeFirstServedTokensBulk)
+	devServers.SetOnEvict(purgeFirstServedTokens)
+
+	// Start the egress proxy only when allow-list entries are configured.
+	// An empty allow-list means deny-all, which is enforced by the proxy itself;
+	// the proxy is still useful for audit logging even with an empty list.
+	var egressProxy *sandbox.EgressProxy
+	if egressProx, epErr := sandbox.NewEgressProxy(cfg.Sandbox.EgressAllowList, nil); epErr != nil {
+		slog.Warn("gateway: egress proxy failed to start; run_in_workspace will run without egress enforcement",
+			"error", epErr)
+	} else {
+		egressProxy = egressProx
+		runningServices.egressProxy = egressProxy
+	}
+
+	// Build and wire Tier13Deps into every agent via the agent loop.
+	tier13 := agent.Tier13Deps{
+		ServedSubdirs:         servedSubdirs,
+		DevServerRegistry:     devServers,
+		EgressProxy:           egressProxy,
+		GatewayPreviewBaseURL: gatewayPreviewBaseURL,
+	}
+	agentLoop.WireTier13Deps(tier13)
 
 	// SSE chat endpoint — kept for backward compatibility; streaming tokens now route through WebSocket.
 	sseHandler := newSSEHandler(msgBus, nil, allowedOrigin, func() *config.Config { return cfg })
@@ -877,6 +964,8 @@ func setupAndStartServices(
 		ssrfChecker:   agent.GetSSRFChecker(agentLoop), // SEC-24: nil when SSRF disabled
 		sandboxResult: sandboxResult,                   // immutable post-boot snapshot
 		appliedConfig: mustDeepCopyConfig(cfg),         // boot-time snapshot for pending-restart diff
+		servedSubdirs: runningServices.servedSubdirs,   // serve_workspace token registry
+		devServers:    runningServices.devServers,       // run_in_workspace process registry
 	}
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions", api.withAuth(api.HandleSessions))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions/", api.withAuth(api.HandleSessions))
@@ -894,6 +983,15 @@ func setupAndStartServices(
 	// These return proper JSON responses instead of letting the SPA catch-all
 	// serve HTML (which causes "Unexpected token '<'" JSON parse errors).
 	api.registerAdditionalEndpoints(runningServices.ChannelManager)
+
+	// Register /serve/ and /dev/ on the preview mux (FR-005, FR-006).
+	// These paths are intentionally absent from the main mux — any hit on
+	// <main_host>:<port>/serve/... returns 404 from the catch-all handler.
+	// The preview mux has no auth middleware: the URL path token is the credential (FR-023).
+	// Handler implementations belong to Track B (rest_serve.go / rest_dev.go).
+	if previewListenerEnabled {
+		api.registerPreviewEndpoints(runningServices.ChannelManager)
+	}
 
 	// Catch-all for any /api/ path not registered — returns JSON 404 instead of SPA HTML.
 	// Do not echo r.URL.Path in the response; that leaks internal routing details.
@@ -919,6 +1017,16 @@ func setupAndStartServices(
 	// request handlers see a consistent config even during hot-reload.
 	if err = runningServices.ChannelManager.WrapHTTPHandler(api.configSnapshotMiddleware); err != nil {
 		return nil, fmt.Errorf("wrapping HTTP handler: %w", err)
+	}
+	// F-13: wrap the preview server with the same middleware. Without this,
+	// handlers on the preview mux (HandleServeWorkspace, HandleDevProxy) call
+	// configFromContext(r.Context()) which returns nil and falls back to a
+	// live read of the config pointer — a torn read during hot-reload.
+	// WrapPreviewHandler is a no-op when the preview listener is disabled.
+	if previewListenerEnabled {
+		if err = runningServices.ChannelManager.WrapPreviewHandler(api.configSnapshotMiddleware); err != nil {
+			return nil, fmt.Errorf("wrapping preview handler: %w", err)
+		}
 	}
 
 	// Wrap with CSRF double-submit-cookie middleware (SEC / issue #97).
@@ -969,6 +1077,16 @@ func setupAndStartServices(
 
 	if err = runningServices.ChannelManager.StartAll(context.Background()); err != nil {
 		return nil, fmt.Errorf("error starting channels: %w", err)
+	}
+
+	// Boot logging (FR-020): main listener first, then preview (or disabled message).
+	mainAddr := fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
+	slog.Info("gateway listening on " + mainAddr)
+	if previewListenerEnabled {
+		previewAddr := fmt.Sprintf("%s:%d", cfg.Gateway.PreviewHost, int(cfg.Gateway.PreviewPort))
+		slog.Info("preview listening on " + previewAddr)
+	} else {
+		slog.Info("preview listener disabled by config")
 	}
 
 	fmt.Printf(

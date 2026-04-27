@@ -174,7 +174,25 @@ OMNIPUS_BEARER_TOKEN="" ./omnipus gateway --allow-empty &
 
 1. **Port conflict with other apps** — Port 3000 is the default. If another app (e.g., Next.js) is running on 3000, the gateway silently fails to bind. Check with `lsof -i :3000 | grep LISTEN`. Fix: set a different port in `$OMNIPUS_HOME/config.json` under `gateway.port` (e.g., 5000) before starting.
 
-2. **Onboarding requires auth bypass** — The onboarding flow calls API endpoints that require bearer auth before an admin account exists. Set `"dev_mode_bypass": true` in `config.json` under `gateway` after the first run creates the config, then restart the gateway. This is a pre-existing bug (the onboarding endpoints should use `withOptionalAuth`).
+2. **`gateway.dev_mode_bypass` — what it is and when to use it**
+
+   The auth decision tree in `pkg/gateway/auth.go:55-98` (`checkBearerAuth`, called by `withAuth`) is:
+
+   1. No `Authorization: Bearer …` header → 401 always. Bypass never fires.
+   2. `cfg.Gateway.Users` populated → token must match a registered user.
+   3. `OMNIPUS_BEARER_TOKEN` env set → token must constant-time-equal the env value.
+   4. No users **and** no env token → `dev_mode_bypass: true` lets the caller through as admin (one-time stderr WARN); `dev_mode_bypass: false` returns 401 "no users configured, complete onboarding first".
+
+   **Onboarding does NOT need bypass.** `/api/v1/state`, `/api/v1/onboarding/*`, `/api/v1/auth/login`, `/api/v1/auth/register-admin`, `/api/v1/providers`, `/api/v1/media/`, `/api/v1/uploads/` are wired with `withOptionalAuth` (see `pkg/gateway/rest.go` ~L2004-2098), which never calls `checkBearerAuth`. The SPA onboarding wizard works on a fresh install with `dev_mode_bypass: false` and zero users.
+
+   **When to set `dev_mode_bypass: true`:**
+   - Driving a `withAuth`-protected endpoint (e.g., `curl /api/v1/agents`, `/api/v1/sessions`, `/api/v1/config`) before onboarding has minted a real admin user.
+   - Go test scaffolding — `pkg/gateway/routes_admin_test.go`, `websocket_m4_test.go`, etc. flip the flag so admin-route tests don't have to register users + log in just to authenticate.
+   - Electron / local-dev shells where you intentionally don't want a login step.
+
+   **Defense-in-depth contract:** the paired `RequireNotBypass` middleware (see `TestSandboxConfigPUT_RealMux_DevModeBypass503`) explicitly returns **503** when `dev_mode_bypass=true` is set, on a hand-picked allow-list of high-blast-radius admin routes (e.g., sandbox-config PUT). The flag is loud and self-limiting by design — never set it in production, never remove the `RequireNotBypass` guard without an ADR.
+
+   **Default: `false`.** Only flip it on for the three use cases above. The previous CLAUDE.md note claiming bypass was *required* for onboarding was incorrect and has been removed.
 
 3. **Model must support tool use** — Omnipus sends tools with every LLM request. If the selected model doesn't support tool use (e.g., `google/gemma-2-9b-it` on OpenRouter), the LLM call returns a 404 with "No endpoints found that support tool use." Use a tool-capable model like `z-ai/glm-5-turbo`, `google/gemini-2.5-flash`, or `anthropic/claude-3.5-haiku`.
 
@@ -193,3 +211,11 @@ After frontend+backend changes, verify these flows on the embedded SPA:
 7. **Skills & Tools** — 4 tabs, empty states
 8. **Sidebar** — All nav items, active highlighting
 9. **Console errors** — Zero JS errors (WebSocket reconnect warnings are acceptable)
+
+### Operator configuration: two-port preview
+
+The gateway opens two listeners by default. `gateway.port` (default `5000`) serves the SPA and the authenticated API. `gateway.preview_port` (default `5001`) serves agent-generated HTML previews on a separate origin, providing browser-level isolation between the SPA's admin token and content produced by agents. To run on a single firewall port — for example, through a systemd socket-activated deployment that allocates only one port — set `gateway.preview_listener_enabled = false`. This disables the second listener and falls back to serving preview content on the main port, which removes the cross-origin isolation guarantee.
+
+Reverse-proxy operators who terminate TLS at nginx or Caddy should set `gateway.public_url` and `gateway.preview_origin` to the fully-qualified HTTPS URLs that the browser reaches (e.g. `https://omnipus.example.com` and `https://preview.omnipus.example.com`). The gateway uses these values to build correct `Content-Security-Policy` and `frame-ancestors` headers. See `docs/operations/reverse-proxy.md` for complete nginx and Caddy configuration examples.
+
+On Android/Termux, `gateway.preview_listener_enabled` defaults to `false` because Termux processes typically cannot bind a second network port without additional permissions. The gateway detects the Termux environment at boot and applies this default automatically.

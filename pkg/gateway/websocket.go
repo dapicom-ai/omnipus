@@ -23,14 +23,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"golang.org/x/crypto/bcrypt"
-
 	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/pairing"
 	"github.com/dapicom-ai/omnipus/pkg/session"
-	"github.com/dapicom-ai/omnipus/pkg/validation"
 )
 
 // replayLiveBufferCap is the capacity of replayDivertCh (FR-I-009).
@@ -42,7 +39,7 @@ const replayLiveBufferCap = 1000
 
 // wsClientFrame is a message sent from the browser to the server over WebSocket.
 type wsClientFrame struct {
-	Type      string `json:"type"`                 // "auth" | "message" | "cancel" | "exec_approval_response" | "attach_session" | "session_close" | "device_pairing_response"
+	Type      string `json:"type"`                 // "auth" | "message" | "cancel" | "exec_approval_response" | "attach_session" | "device_pairing_response"
 	Token     string `json:"token,omitempty"`      // for "auth"
 	Content   string `json:"content,omitempty"`    // for "message"
 	SessionID string `json:"session_id,omitempty"` // for "message" / "cancel" / "attach_session"
@@ -421,7 +418,7 @@ func (h *WSHandler) authenticateWS(conn *websocket.Conn, wc *wsConn) bool {
 	// 1. Check per-user list (RBAC — bcrypt token hash lookup).
 	if len(cfg.Gateway.Users) > 0 {
 		for _, user := range cfg.Gateway.Users {
-			if err := bcrypt.CompareHashAndPassword([]byte(user.TokenHash), []byte(rawToken)); err == nil {
+			if user.TokenHash.Verify(rawToken) == nil {
 				wc.role = user.Role
 				conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 				return true
@@ -530,41 +527,10 @@ func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsCo
 				"requested_session_id", frame.SessionID,
 			)
 			if frame.SessionID != "" {
-				// FR-024 lazy CAS: if this agent already has an active session that
-				// differs from the one being attached, close the prior session.
-				if frame.AgentID != "" {
-					if prior, ok := h.agentLoop.GetCurrentSession(frame.AgentID); ok && prior != "" && prior != frame.SessionID {
-						priorSID := prior
-						go func() {
-							defer func() {
-								if r := recover(); r != nil {
-									slog.Error("ws: lazy CloseSession panic recovered",
-										"session_id", priorSID,
-										"panic", r,
-									)
-								}
-							}()
-							h.agentLoop.CloseSession(priorSID, "lazy")
-						}()
-					}
-					h.agentLoop.SetCurrentSession(frame.AgentID, frame.SessionID)
-				}
 				h.handleAttachSession(ctx, chatID, sessionID, frame.SessionID, wc)
 			} else {
 				slog.Warn("ws: attach_session with empty session_id", "chat_id", chatID)
 			}
-		case "session_close":
-			// FR-023: explicit session close request from the client.
-			if frame.SessionID == "" {
-				sendConnFrame(wc, wsServerFrame{Type: "error", Message: "session_close requires session_id"})
-				continue
-			}
-			if err := validation.EntityID(frame.SessionID); err != nil {
-				sendConnFrame(wc, wsServerFrame{Type: "error", Message: "invalid session_id"})
-				continue
-			}
-			h.agentLoop.CloseSession(frame.SessionID, "explicit")
-			sendConnFrame(wc, wsServerFrame{Type: "session_close_ack", ID: frame.SessionID})
 		case "ping":
 			// Client heartbeat — no action needed, the WebSocket pong handler keeps the connection alive
 		case "device_pairing_response":

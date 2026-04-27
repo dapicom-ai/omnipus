@@ -77,65 +77,11 @@ type openaiMessage struct {
 	ToolCallID       string     `json:"tool_call_id,omitempty"`
 }
 
-// sanitizeOrphanToolResults drops tool_result messages whose tool_call_id is
-// not declared by the most recent assistant message. Both OpenAI-compat and
-// Anthropic (via OpenRouter/Azure) error the whole request if a tool_result
-// references an id with no matching tool_use — Anthropic returns a 400:
-//
-//	"Each tool_result block must have a corresponding tool_use block in the previous message."
-//
-// Orphans happen when a persisted assistant message is missing a tool_use it
-// actually issued (observed on OpenRouter provider rotation mid-stream). This
-// sanitizer is a defensive shim at the wire boundary so the next turn does not
-// fail — the root fix belongs in the agent loop's persistence path.
-func sanitizeOrphanToolResults(messages []Message) []Message {
-	out := make([]Message, 0, len(messages))
-	declared := map[string]bool{} // tool_call_ids declared by the MOST RECENT assistant
-	for _, m := range messages {
-		switch m.Role {
-		case "assistant":
-			declared = make(map[string]bool, len(m.ToolCalls))
-			for _, tc := range m.ToolCalls {
-				if tc.ID != "" {
-					declared[tc.ID] = true
-				}
-			}
-			out = append(out, m)
-		case "tool":
-			if m.ToolCallID == "" || !declared[m.ToolCallID] {
-				logger.WarnCF("providers.common", "dropping orphan tool_result (no matching tool_use in preceding assistant)",
-					map[string]any{"tool_call_id": m.ToolCallID})
-				continue
-			}
-			out = append(out, m)
-		case "user":
-			if m.ToolCallID != "" {
-				// Some providers allow role="user" to carry a tool_result — same rule applies.
-				if !declared[m.ToolCallID] {
-					logger.WarnCF("providers.common", "dropping orphan tool_result (user-role)",
-						map[string]any{"tool_call_id": m.ToolCallID})
-					continue
-				}
-			} else {
-				// A regular user message ends the assistant-tool-result block.
-				declared = map[string]bool{}
-			}
-			out = append(out, m)
-		default:
-			out = append(out, m)
-		}
-	}
-	return out
-}
-
 // SerializeMessages converts internal Message structs to the OpenAI wire format.
 //   - Strips SystemParts (unknown to third-party endpoints)
 //   - Converts messages with Media to multipart content format (text + image_url parts)
 //   - Preserves ToolCallID, ToolCalls, and ReasoningContent for all messages
-//   - Drops orphan tool_result messages whose tool_call_id is not declared by
-//     the most recent assistant message, preventing provider-side 400 errors.
 func SerializeMessages(messages []Message) []any {
-	messages = sanitizeOrphanToolResults(messages)
 	out := make([]any, 0, len(messages))
 	for _, m := range messages {
 		if len(m.Media) == 0 {

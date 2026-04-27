@@ -429,7 +429,7 @@ func (g *TestGateway) SeedUser(ctx context.Context, u config.UserConfig, beforeW
 
 	// Poll with the new user's token (if non-empty) until the auth middleware
 	// accepts it (non-401), confirming reload has propagated.
-	if u.TokenHash == "" {
+	if u.TokenHash.IsZero() {
 		// No token to probe with — caller must verify independently.
 		return nil
 	}

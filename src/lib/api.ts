@@ -277,6 +277,53 @@ export interface ToolCall {
   error?: string
 }
 
+// ── Tool Results ──────────────────────────────────────────────────────────────
+//
+// Typed shapes for the JSON result payloads emitted by specific tools.
+// These are parsed from ToolCall.result (which is `unknown` on the wire) by
+// the tool-UI components in src/components/chat/tools/.
+//
+// FR-008: serve_workspace result schema.
+// FR-008a / CR-03: run_in_workspace result schema (migrated from SilentResult).
+
+/**
+ * Result emitted by the `serve_workspace` tool.
+ *
+ * `path` is the relative preview path (e.g. `"/serve/<agent>/<token>/"`).
+ * `url` is the absolute URL preserved for transcript replay safety — old
+ * transcripts may contain legacy `0.0.0.0` URLs that the SPA rewrites via
+ * `rewriteLegacyURL` in `src/lib/preview-url.ts`.
+ */
+export interface ServeWorkspaceResult {
+  /** Relative preview path, e.g. `"/serve/<agent>/<token>/"`. */
+  path: string
+  /** Absolute URL — preserved for replay safety; may contain legacy hosts. */
+  url: string
+  /** ISO-8601 token expiry timestamp. */
+  expires_at: string
+}
+
+/**
+ * Result emitted by the `run_in_workspace` tool (FR-008a / CR-03).
+ *
+ * `path` is the relative dev preview path (e.g. `"/dev/<agent>/<token>/"`).
+ * `url` is the absolute URL preserved for transcript replay safety.
+ * `command` is the command string that was executed.
+ * `port` is the local port the dev server is listening on (inside the workspace).
+ */
+export interface RunInWorkspaceResult {
+  /** Relative dev path, e.g. `"/dev/<agent>/<token>/"`. */
+  path: string
+  /** Absolute URL — preserved for replay safety; may contain legacy hosts. */
+  url: string
+  /** ISO-8601 token expiry timestamp. */
+  expires_at: string
+  /** The command string that was executed (e.g. `"npm run dev"`). */
+  command: string
+  /** Local port the dev server is listening on inside the workspace. */
+  port: number
+}
+
 export async function fetchSessions(agentId?: string, type?: Session['type']): Promise<Session[]> {
   const params: Record<string, string> = {}
   if (agentId) params.agent_id = agentId
@@ -858,10 +905,38 @@ export interface AboutInfo {
   os: string
   arch: string
   uptime_seconds: number
+  // Preview listener fields — added by FR-009 / iframe-preview feature.
+  // preview_port is the port the preview listener is bound on (default:
+  // gateway.port + 1). Absent when preview_listener_enabled is false.
+  preview_port?: number
+  // preview_origin is the fully-qualified origin operators set via
+  // gateway.preview_origin (e.g. "https://preview.acme.com"). Absent when
+  // not configured — the SPA constructs the iframe URL from hostname +
+  // preview_port in that case.
+  preview_origin?: string
+  // preview_listener_enabled reflects whether the preview listener is bound.
+  // Absent on old gateway versions that predate this feature (treat as true).
+  preview_listener_enabled?: boolean
+  // warmup_timeout_seconds is sourced from
+  // cfg.Tools.RunInWorkspace.WarmupTimeoutSeconds (default 60). Used by
+  // RunInWorkspaceUI to cap the warmup polling loop.
+  warmup_timeout_seconds?: number
 }
 
 export function fetchAboutInfo(): Promise<AboutInfo> {
   return request<AboutInfo>('/about')
+}
+
+/**
+ * Returns whether the preview listener is enabled.
+ *
+ * `preview_listener_enabled` is an optional bool where `undefined` means "true"
+ * — old gateway versions that predate the field did not include it, and those
+ * versions always ran the preview listener. Reading the field directly risks
+ * treating `undefined` as falsy; use this accessor instead.
+ */
+export function isPreviewListenerEnabled(info: AboutInfo | undefined): boolean {
+  return info?.preview_listener_enabled !== false
 }
 
 // ── Audit Log ─────────────────────────────────────────────────────────────────

@@ -12,10 +12,13 @@ import (
 const Logo = pkg.Logo
 
 // GetOmnipusHome returns the omnipus home directory.
-// Thin re-export of the canonical resolver so CLI callers that already depend
-// on this helper keep working without touching each call site.
+// Priority: $OMNIPUS_HOME > ~/.omnipus
 func GetOmnipusHome() string {
-	return config.OmnipusHomeDir()
+	if home := os.Getenv(config.EnvHome); home != "" {
+		return home
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, pkg.DefaultOmnipusHome)
 }
 
 func GetConfigPath() string {

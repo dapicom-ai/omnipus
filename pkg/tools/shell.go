@@ -18,6 +18,7 @@ import (
 
 	"github.com/creack/pty"
 
+	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/constants"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
@@ -122,6 +123,20 @@ type ExecTool struct {
 	// When non-nil, PrepareCmd injects HTTP_PROXY/HTTPS_PROXY env vars before
 	// Start() and CmdDone() is called exactly once after cmd.Wait() returns.
 	execProxy ExecChildProxy
+	// auditLogger receives path.access_denied events for workspace-guard
+	// rejections. Nil means audit logging is disabled (best-effort).
+	auditLogger *audit.Logger
+}
+
+// SetAuditLogger injects an audit.Logger into the ExecTool so that
+// path.access_denied events are emitted on workspace-guard rejections.
+// Satisfies the auditLoggerAware contract used by the ToolRegistry.
+// Calling this on a nil ExecTool is a no-op.
+func (t *ExecTool) SetAuditLogger(l *audit.Logger) {
+	if t == nil {
+		return
+	}
+	t.auditLogger = l
 }
 
 var (

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/fileutil"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 )
@@ -89,15 +90,27 @@ func validatePathWithAllowPaths(path, workspace string, restrict bool, patterns 
 // grandparent of the current workspace.
 // Example: workspace=~/.omnipus/agents/agent-A, absPath=~/.omnipus/agents/agent-B/x
 // → agentsRoot = ~/.omnipus/agents, under agentsRoot but not under workspace → true
+//
+// The workspace root itself (absPath == absWorkspace) is always allowed; this
+// handles the common case of an agent serving "." which resolves to its own
+// workspace root without a trailing separator.
 func isCrossAgentPath(absPath, absWorkspace string) bool {
-	agentsRoot := filepath.Dir(filepath.Clean(absWorkspace))
-	if agentsRoot == absWorkspace || agentsRoot == "." {
+	cleanWorkspace := filepath.Clean(absWorkspace)
+	cleanPath := filepath.Clean(absPath)
+
+	// The workspace root itself is never a cross-agent path.
+	if cleanPath == cleanWorkspace {
+		return false
+	}
+
+	agentsRoot := filepath.Dir(cleanWorkspace)
+	if agentsRoot == cleanWorkspace || agentsRoot == "." {
 		return false // can't derive agents root
 	}
 	agentsRootSlash := agentsRoot + string(filepath.Separator)
-	workspaceSlash := absWorkspace + string(filepath.Separator)
-	return strings.HasPrefix(absPath, agentsRootSlash) &&
-		!strings.HasPrefix(absPath, workspaceSlash)
+	workspaceSlash := cleanWorkspace + string(filepath.Separator)
+	return strings.HasPrefix(cleanPath, agentsRootSlash) &&
+		!strings.HasPrefix(cleanPath, workspaceSlash)
 }
 
 func isAllowedPath(path string, patterns []*regexp.Regexp) bool {
@@ -273,8 +286,12 @@ func isWithinWorkspace(candidate, workspace string) bool {
 }
 
 type ReadFileTool struct {
-	fs      fileSystem
-	maxSize int64
+	fs           fileSystem
+	maxSize      int64
+	allowPathsLen int
+	// auditLogger receives path.access_denied events on workspace-guard
+	// rejections. Nil means audit logging is disabled (best-effort).
+	auditLogger *audit.Logger
 }
 
 func NewReadFileTool(
@@ -294,9 +311,21 @@ func NewReadFileTool(
 	}
 
 	return &ReadFileTool{
-		fs:      buildFs(workspace, restrict, patterns),
-		maxSize: maxSize,
+		fs:            buildFs(workspace, restrict, patterns),
+		maxSize:       maxSize,
+		allowPathsLen: len(patterns),
 	}
+}
+
+// SetAuditLogger injects an audit.Logger so that path.access_denied events are
+// emitted on workspace-guard rejections. Satisfies the auditLoggerAware
+// contract used by the ToolRegistry. Calling this on a nil ReadFileTool is a
+// no-op.
+func (t *ReadFileTool) SetAuditLogger(l *audit.Logger) {
+	if t == nil {
+		return
+	}
+	t.auditLogger = l
 }
 
 func (t *ReadFileTool) Name() string {
@@ -361,6 +390,9 @@ func (t *ReadFileTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 
 	file, err := t.fs.Open(path)
 	if err != nil {
+		// Emit a path.access_denied audit entry on workspace-guard rejections.
+		// emitPathAccessDenied is a no-op when t.auditLogger is nil (best-effort).
+		emitPathAccessDenied(ctx, t.auditLogger, t.Name(), path, err, t.allowPathsLen)
 		return ErrorResult(err.Error())
 	}
 	defer file.Close()

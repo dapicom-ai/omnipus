@@ -27,7 +27,6 @@ import {
   fetchSandboxStatus,
   fetchSandboxConfig,
   updateSandboxConfig,
-  fetchConfig,
 } from '@/lib/api'
 import type { SandboxStatus } from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
@@ -485,33 +484,6 @@ export function SandboxSection(): React.ReactElement {
   const isAdmin = role === 'admin'
   const { addToast } = useUiStore()
   const queryClient = useQueryClient()
-
-  // When gateway.dev_mode_bypass is on, the admin-security endpoints
-  // (including PUT /api/v1/security/sandbox-config) return 503 to avoid
-  // letting anonymous requests toggle the sandbox. Matching that here
-  // with a pre-emptive disabled banner so operators don't click "save"
-  // and get a surprise error.
-  const { data: cfg } = useQuery({
-    queryKey: ['config'],
-    queryFn: fetchConfig,
-    enabled: isAdmin,
-    staleTime: 30_000,
-  })
-  const devModeBypass = Boolean(cfg?.gateway?.dev_mode_bypass)
-
-  if (devModeBypass) {
-    return (
-      <div className="rounded-lg border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/10 px-4 py-3 flex items-start gap-2">
-        <Warning size={16} className="text-[var(--color-warning)] shrink-0 mt-0.5" />
-        <p className="text-sm text-[var(--color-warning)]">
-          Sandbox controls are disabled in dev-mode-bypass. Set{' '}
-          <code className="font-mono text-xs">gateway.dev_mode_bypass</code> to{' '}
-          <code className="font-mono text-xs">false</code> in{' '}
-          <code className="font-mono text-xs">config.json</code> (and restart) to use these controls.
-        </p>
-      </div>
-    )
-  }
 
   // ── Status query ───────────────────────────────────────────────────────────
   const [statusExpanded, setStatusExpanded] = useState(false)

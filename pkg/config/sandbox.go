@@ -42,6 +42,41 @@ func (l *SkillTrustLevel) UnmarshalJSON(data []byte) error {
 	}
 }
 
+// SandboxMode controls how kernel-level sandboxing enforces policy at boot
+// (Sprint J). Typed enum so a typo in config.json fails decoding rather than
+// silently falling back to the legacy Enabled flag.
+type SandboxMode string
+
+const (
+	// SandboxModeEnforce activates kernel-level sandboxing (Landlock/seccomp/JobObjects).
+	SandboxModeEnforce SandboxMode = "enforce"
+	// SandboxModePermissive logs policy violations without blocking (audit-only).
+	SandboxModePermissive SandboxMode = "permissive"
+	// SandboxModeOff disables sandboxing — development only.
+	SandboxModeOff SandboxMode = "off"
+)
+
+// UnmarshalJSON validates and deserializes a SandboxMode from JSON. Empty is
+// accepted (config may omit it; boot validator falls back to legacy Enabled).
+// Unknown non-empty values are rejected so typos like "enfroce" fail at
+// load time rather than silently behaving as Mode="" → legacy fallback.
+func (m *SandboxMode) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	switch SandboxMode(s) {
+	case SandboxModeEnforce, SandboxModePermissive, SandboxModeOff:
+		*m = SandboxMode(s)
+		return nil
+	case "":
+		*m = ""
+		return nil
+	default:
+		return fmt.Errorf("invalid sandbox.mode: %q (must be one of: enforce, permissive, off)", s)
+	}
+}
+
 // PromptInjectionLevel controls prompt guard aggressiveness (SEC-25).
 type PromptInjectionLevel string
 
@@ -75,6 +110,54 @@ func (l *PromptInjectionLevel) UnmarshalJSON(data []byte) error {
 	}
 }
 
+// PortRange is a pair of int32 values representing [min, max] port bounds
+// (inclusive on both ends). Used for DevServerPortRange in OmnipusSandboxConfig.
+type PortRange [2]int32
+
+// IsZero reports whether the PortRange is the zero value (both fields zero).
+// Used by the boot validator to detect "not configured" so it can apply the
+// default [18000, 18999] range without overwriting an explicit [0, 0] (which
+// is not a valid range and will be rejected by the sandbox layer anyway).
+func (r PortRange) IsZero() bool {
+	return r[0] == 0 && r[1] == 0
+}
+
+// Min returns the lower bound (inclusive). Named accessor for callsite clarity
+// since PortRange is an array type.
+func (r PortRange) Min() int32 { return r[0] }
+
+// Max returns the upper bound (inclusive). Named accessor.
+func (r PortRange) Max() int32 { return r[1] }
+
+// Validate checks that the PortRange has Min in [1, 65535], Max in [1, 65535],
+// and Min <= Max. Returns nil for the zero-value range (the boot validator
+// applies a default before invoking this). Callers that expect a configured
+// range MUST check IsZero() first.
+func (r PortRange) Validate() error {
+	if r.IsZero() {
+		return nil
+	}
+	if r[0] < 1 || r[0] > 65535 {
+		return fmt.Errorf("dev_server_port_range min %d out of [1,65535]", r[0])
+	}
+	if r[1] < 1 || r[1] > 65535 {
+		return fmt.Errorf("dev_server_port_range max %d out of [1,65535]", r[1])
+	}
+	if r[0] > r[1] {
+		return fmt.Errorf("dev_server_port_range min %d > max %d", r[0], r[1])
+	}
+	return nil
+}
+
+// Contains reports whether p falls within the inclusive [Min, Max] range.
+// Returns false for the zero range to avoid accepting port 0 as valid.
+func (r PortRange) Contains(p int32) bool {
+	if r.IsZero() {
+		return false
+	}
+	return p >= r[0] && p <= r[1]
+}
+
 // OmnipusSandboxConfig holds Wave 2 kernel-level sandboxing configuration per
 // BRD SEC-01 through SEC-20 (Landlock, seccomp, Job Objects, RBAC, audit log)
 // and Sprint-J sandbox-apply wiring (FR-J-001..016).
@@ -82,14 +165,57 @@ func (l *PromptInjectionLevel) UnmarshalJSON(data []byte) error {
 // All fields default to the most restrictive safe value when omitted.
 // Populated from config.json under the "sandbox" key.
 type OmnipusSandboxConfig struct {
+	// MaxConcurrentDevServers caps the number of run_in_workspace dev servers
+	// (Tier 3) that can be running concurrently across all agents. Default 4
+	// (applied by the boot validator).
+	MaxConcurrentDevServers int32 `json:"max_concurrent_dev_servers,omitempty"`
+
+	// MaxConcurrentBuilds caps the number of build_static (Tier 2) processes
+	// running concurrently. Default 2 (applied by the boot validator).
+	MaxConcurrentBuilds int32 `json:"max_concurrent_builds,omitempty"`
+
+	// DevServerPortRange is the [min, max] inclusive port range for Tier 3
+	// (run_in_workspace) dev servers. Default [18000, 18999] applied by the
+	// boot validator when the field is zero.
+	DevServerPortRange PortRange `json:"dev_server_port_range,omitempty"`
+
+	// EgressAllowList is the operator-controlled host allow-list for the
+	// egress proxy used by Tier 2 (build_static) and Tier 3
+	// (run_in_workspace) child processes. Entries may be exact hostnames or
+	// "*.x" wildcard patterns. Default: ["registry.npmjs.org", "github.com",
+	// "raw.githubusercontent.com"] applied by the boot validator when empty.
+	EgressAllowList []string `json:"egress_allow_list,omitempty"`
+
+	// Tier3Commands extends the baseline Tier 3 dev-server command allow-list
+	// with operator-defined commands (e.g. "remix dev"). Each entry is a full
+	// "binary subcommand" string. Comparison is case-sensitive exact-prefix.
+	Tier3Commands []string `json:"tier3_commands,omitempty"`
+
+	// PathGuardAuditFailClosed controls behaviour when the audit logger
+	// fails during a Tier 2 (build_static) or Tier 3 (run_in_workspace)
+	// invocation. When nil or true (default via ResolveBool), the tool
+	// refuses to run without a guaranteed compliance trail. When explicitly
+	// set to false, the audit failure is logged at Error and execution
+	// proceeds (operator opt-out).
+	PathGuardAuditFailClosed *bool `json:"path_guard_audit_fail_closed,omitempty"`
+
+	// BrowserEvaluateEnabled gates browser.evaluate (arbitrary JS execution).
+	// Defaults to false (deny-by-default per SEC-04/SEC-06). Must be explicitly
+	// opted in by the operator. Mirrors Tools.Browser.EvaluateEnabled but
+	// lives here so it can be managed alongside other sandbox-level controls
+	// without touching the Tools subtree.
+	BrowserEvaluateEnabled bool `json:"browser_evaluate_enabled,omitempty"`
+
 	// Mode selects how the sandbox enforces policy at boot (Sprint J).
-	// Valid values: "enforce" (default on capable kernels), "permissive"
-	// (audit-only), "off" (disabled — development only).
+	// Valid values: SandboxModeEnforce (default on capable kernels),
+	// SandboxModePermissive (audit-only), SandboxModeOff (development only).
+	// Unknown values are rejected at config-load time by SandboxMode's
+	// UnmarshalJSON.
 	//
 	// When Mode is empty, the legacy Enabled field controls behavior
 	// (Enabled=true → enforce, Enabled=false → off) for backwards
 	// compatibility with configs written before Sprint J.
-	Mode string `json:"mode,omitempty"`
+	Mode SandboxMode `json:"mode,omitempty"`
 
 	// Enabled activates kernel-level sandboxing. Deprecated: use Mode
 	// instead. Kept for backwards compatibility — Enabled=true maps to
@@ -184,10 +310,10 @@ type OmnipusRateLimitsConfig struct {
 // config file says.
 func (s OmnipusSandboxConfig) ResolvedMode() string {
 	if s.Mode != "" {
-		return s.Mode
+		return string(s.Mode)
 	}
 	if s.Enabled {
-		return "enforce"
+		return string(SandboxModeEnforce)
 	}
-	return "off"
+	return string(SandboxModeOff)
 }

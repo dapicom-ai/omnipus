@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	mathrand "math/rand"
+	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -168,11 +171,6 @@ type OmnipusRetentionConfig struct {
 	// KeepCompactionSummary preserves last_compaction_summary in meta.json
 	// even when all partitions are purged by the retention policy.
 	KeepCompactionSummary bool `json:"keep_compaction_summary,omitempty"`
-	// MemoryRetrosDays is how many days of retrospective files to keep per
-	// agent under memory/sessions/YYYY-MM-DD/*_retro.md. 0 → use default (30).
-	// Sweeps alongside SessionDays from the gateway retention goroutine.
-	// Spec v7 FR-034.
-	MemoryRetrosDays int `json:"memory_retros_days,omitempty"`
 }
 
 // RetentionSessionDays returns the configured session retention days, defaulting to 90.
@@ -185,16 +183,6 @@ func (r OmnipusRetentionConfig) RetentionSessionDays() int {
 
 // IsDisabled reports whether retention enforcement is entirely suppressed (keep forever).
 func (r OmnipusRetentionConfig) IsDisabled() bool { return r.Disabled }
-
-// RetentionMemoryRetrosDays returns the configured retro retention, defaulting
-// to 30. Spec v7 FR-034 — used by MemoryStore.SweepRetros and the recall search
-// horizon.
-func (r OmnipusRetentionConfig) RetentionMemoryRetrosDays() int {
-	if r.MemoryRetrosDays <= 0 {
-		return 30
-	}
-	return r.MemoryRetrosDays
-}
 
 // RetentionMode summarizes the (session_days, disabled) pair into one of
 // three operator-facing states. Use Mode() on OmnipusRetentionConfig to
@@ -465,6 +453,10 @@ type AgentConfig struct {
 	// Tools, when non-nil, overrides scope-based tool visibility for this agent.
 	// Nil means all tools allowed by the agent's type are available.
 	Tools *AgentToolsCfg `json:"tools,omitempty"`
+	// OwnerUsername is the username of the user who created this agent.
+	// Set at creation time; only the owner or an admin may access the agent's
+	// resources. Empty string for system/core agents.
+	OwnerUsername string `json:"owner_username,omitempty"`
 }
 
 // IsActive returns the effective active state of this agent.
@@ -623,8 +615,11 @@ type ToolFeedbackConfig struct {
 
 type AgentDefaults struct {
 	Workspace                 string             `json:"workspace"                       env:"OMNIPUS_AGENTS_DEFAULTS_WORKSPACE"`
-	RestrictToWorkspace       bool               `json:"restrict_to_workspace"           env:"OMNIPUS_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
-	AllowReadOutsideWorkspace bool               `json:"allow_read_outside_workspace"    env:"OMNIPUS_AGENTS_DEFAULTS_ALLOW_READ_OUTSIDE_WORKSPACE"`
+	// RestrictToWorkspace and AllowReadOutsideWorkspace are removed from the v1
+	// schema (FR-001). Tags use json:"-" so SaveConfig never serialises them;
+	// validateRemovedKeys rejects any v1 config that still carries these keys.
+	RestrictToWorkspace       bool               `json:"-"                               env:"OMNIPUS_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
+	AllowReadOutsideWorkspace bool               `json:"-"                               env:"OMNIPUS_AGENTS_DEFAULTS_ALLOW_READ_OUTSIDE_WORKSPACE"`
 	Provider                  string             `json:"provider"                        env:"OMNIPUS_AGENTS_DEFAULTS_PROVIDER"`
 	ModelName                 string             `json:"model_name"                      env:"OMNIPUS_AGENTS_DEFAULTS_MODEL_NAME"`
 	ModelFallbacks            []string           `json:"model_fallbacks,omitempty"`
@@ -645,85 +640,6 @@ type AgentDefaults struct {
 	TimeoutSeconds            int                `json:"timeout_seconds"                 env:"OMNIPUS_AGENTS_DEFAULTS_TIMEOUT_SECONDS"` // per-turn timeout in seconds; 0 = disabled
 	CanDelegateTo             []string           `json:"can_delegate_to,omitempty"`
 	DefaultAgentID            string             `json:"default_agent_id,omitempty"      env:"OMNIPUS_DEFAULT_AGENT_ID"`
-
-	// AutoRecapEnabled gates the session-end recap pipeline (Fix C, FR-033).
-	// When false, CloseSession is a no-op and no background LLM calls are made.
-	// Opt-in by design: recaps cost money.
-	AutoRecapEnabled bool `json:"auto_recap_enabled" env:"OMNIPUS_AGENTS_DEFAULTS_AUTO_RECAP_ENABLED"`
-
-	// IdleTimeoutMinutes drives the per-session idle ticker that triggers a
-	// recap when the user disappears without explicitly closing. 0 → 30.
-	// Spec v7 FR-035.
-	IdleTimeoutMinutes int `json:"idle_timeout_minutes" env:"OMNIPUS_AGENTS_DEFAULTS_IDLE_TIMEOUT_MINUTES"`
-
-	// BootstrapRecapEnabled is a SECOND opt-in specifically for the boot-time
-	// pass that sweeps orphaned sessions and generates a recap for each. Split
-	// from AutoRecapEnabled because a boot burst has a different risk profile
-	// (unbounded cost amplification). FR-032a / MAJ-007. Default false.
-	BootstrapRecapEnabled bool `json:"bootstrap_recap_enabled" env:"OMNIPUS_AGENTS_DEFAULTS_BOOTSTRAP_RECAP_ENABLED"`
-
-	// BootstrapRecapMaxPerMinute rate-limits the bootstrap pass. Default 5.
-	BootstrapRecapMaxPerMinute int `json:"bootstrap_recap_max_per_minute" env:"OMNIPUS_AGENTS_DEFAULTS_BOOTSTRAP_RECAP_MAX_PER_MINUTE"`
-
-	// BootstrapRecapDailyBudgetUSD caps total estimated spend across a single
-	// bootstrap pass. Units: USD. Default 1.00. Per-process-boot, not calendar-day.
-	BootstrapRecapDailyBudgetUSD float64 `json:"bootstrap_recap_daily_budget_usd" env:"OMNIPUS_AGENTS_DEFAULTS_BOOTSTRAP_RECAP_DAILY_BUDGET_USD"`
-
-	// RecapModelAllowList overrides the compiled-in cheap-model allow-list used
-	// by FR-029a to fail-closed at boot if recap_model is too expensive. Empty
-	// slice → use the package-level default.
-	//
-	// Entries are PREFIX-matched against the resolved recap model name
-	// (strings.HasPrefix). An operator adding "claude-sonnet-" matches every
-	// claude-sonnet release; writing "claude-sonnet-*" literally will not
-	// match anything because the asterisk is treated as part of the prefix.
-	RecapModelAllowList []string `json:"recap_model_allow_list,omitempty"`
-}
-
-// DefaultRecapModelAllowList is the compiled-in set of models considered cheap
-// enough for session-end recaps under SC-010b. Spec v7 FR-029a. If you add a
-// model family here, confirm its input pricing is ≤ $1/Mtok and it does not
-// charge for thinking/reasoning tokens by default.
-var DefaultRecapModelAllowList = []string{
-	"claude-sonnet-",
-	"claude-haiku-",
-	"gpt-4o-mini",
-	"gpt-4.1-mini",
-	"z-ai/glm-",
-	"gemini-flash-",
-}
-
-// ResolveRecapModelAllowList returns the configured allow-list if non-empty,
-// else the compiled default.
-func (d *AgentDefaults) ResolveRecapModelAllowList() []string {
-	if len(d.RecapModelAllowList) > 0 {
-		return d.RecapModelAllowList
-	}
-	return DefaultRecapModelAllowList
-}
-
-// GetIdleTimeoutMinutes returns the idle timeout, defaulting to 30.
-func (d *AgentDefaults) GetIdleTimeoutMinutes() int {
-	if d.IdleTimeoutMinutes <= 0 {
-		return 30
-	}
-	return d.IdleTimeoutMinutes
-}
-
-// GetBootstrapRecapMaxPerMinute returns the rate limit, defaulting to 5.
-func (d *AgentDefaults) GetBootstrapRecapMaxPerMinute() int {
-	if d.BootstrapRecapMaxPerMinute <= 0 {
-		return 5
-	}
-	return d.BootstrapRecapMaxPerMinute
-}
-
-// GetBootstrapRecapDailyBudgetUSD returns the cost cap, defaulting to $1.00.
-func (d *AgentDefaults) GetBootstrapRecapDailyBudgetUSD() float64 {
-	if d.BootstrapRecapDailyBudgetUSD <= 0 {
-		return 1.00
-	}
-	return d.BootstrapRecapDailyBudgetUSD
 }
 
 const DefaultMaxMediaSize = 20 * 1024 * 1024 // 20 MB
@@ -1128,11 +1044,12 @@ func (r *UserRole) UnmarshalJSON(data []byte) error {
 
 // UserConfig holds per-user authentication and authorization settings.
 type UserConfig struct {
-	Username     string   `json:"username,omitempty"`
-	PasswordHash string   `json:"password_hash,omitempty"` // bcrypt hash
-	TokenHash    string   `json:"token_hash,omitempty"`    // bcrypt hash of bearer token
-	Role         UserRole `json:"role"`
-	Name         string   `json:"name,omitempty"`
+	Username     string     `json:"username,omitempty"`
+	PasswordHash string     `json:"password_hash,omitempty"`     // bcrypt hash
+	TokenHash    BcryptHash `json:"token_hash,omitempty"`        // bcrypt hash of bearer token
+	SessionTokenHash BcryptHash `json:"session_token_hash,omitempty"` // bcrypt hash of session cookie token
+	Role         UserRole   `json:"role"`
+	Name         string     `json:"name,omitempty"`
 }
 
 type GatewayConfig struct {
@@ -1143,6 +1060,47 @@ type GatewayConfig struct {
 	Token         string       `json:"token,omitempty"           env:"-"` // Bearer token stored for reference; runtime auth uses OMNIPUS_BEARER_TOKEN env var
 	Users         []UserConfig `json:"users,omitempty"           env:"-"` // Per-user RBAC user list
 	DevModeBypass bool         `json:"dev_mode_bypass,omitempty" env:"-"` // Opt-in flag to allow unauthenticated access in development. NEVER set to true in production.
+
+	// Preview listener fields (FR-001..FR-005, FR-027, FR-028).
+	// PreviewPort is the port for the preview listener that serves /serve/ and /dev/.
+	// When zero, defaults to Port+1 at boot. Must differ from Port when preview is enabled.
+	PreviewPort int32 `json:"preview_port,omitempty" env:"OMNIPUS_GATEWAY_PREVIEW_PORT"`
+	// PreviewHost is the bind host for the preview listener.
+	// When empty, defaults to Host at boot. Operators set to 127.0.0.1 to keep
+	// the preview listener private behind a reverse proxy.
+	PreviewHost string `json:"preview_host,omitempty" env:"OMNIPUS_GATEWAY_PREVIEW_HOST"`
+	// PreviewOrigin is the browser-facing origin of the preview listener, used when
+	// a reverse proxy is in front (e.g. "https://preview.omnipus.acme.com").
+	// When set, PreviewListenerEnabled must be true. Must parse as a URL with scheme.
+	PreviewOrigin string `json:"preview_origin,omitempty" env:"OMNIPUS_GATEWAY_PREVIEW_ORIGIN"`
+	// PublicURL is the browser-facing origin of the main gateway listener, used when
+	// a reverse proxy is in front (e.g. "https://omnipus.acme.com").
+	// When set, it overrides the Host:Port-derived origin in frame-ancestors CSP directives.
+	PublicURL string `json:"public_url,omitempty" env:"OMNIPUS_GATEWAY_PUBLIC_URL"`
+	// PreviewListenerEnabled controls whether the preview listener is started.
+	// Defaults to true on Linux/macOS/Windows, false on Android/Termux.
+	// Setting false disables the preview listener entirely and forces link-only
+	// rendering in tool UIs (emergency rollback knob).
+	PreviewListenerEnabled *bool `json:"preview_listener_enabled,omitempty" env:"OMNIPUS_GATEWAY_PREVIEW_LISTENER_ENABLED"`
+
+	// AuthMismatchLogLevel controls the log level emitted when the gateway
+	// detects an authentication mismatch (e.g. token supplied but does not
+	// match, or user not found). Valid values: "debug", "info", "warn"
+	// (default "warn", applied by the boot validator).
+	//
+	// Operators who run in environments where mismatches are expected (e.g.
+	// a load balancer health-check that always sends a dummy token) can lower
+	// this to "info" or "debug" to reduce noise in structured logs.
+	AuthMismatchLogLevel string `json:"auth_mismatch_log_level,omitempty" env:"OMNIPUS_GATEWAY_AUTH_MISMATCH_LOG_LEVEL"`
+
+	// TrustXFF controls whether the gateway reads the X-Forwarded-For header
+	// to determine the client IP for audit logging. Default false.
+	//
+	// Set to true ONLY when the gateway is behind a trusted reverse proxy that
+	// correctly sets X-Forwarded-For. On plain-HTTP / single-binary deployments
+	// with no proxy, any client can spoof their audit IP by sending this header.
+	// See docs/operations/reverse-proxy.md for setup instructions.
+	TrustXFF bool `json:"trust_xff,omitempty" env:"OMNIPUS_GATEWAY_TRUST_XFF"`
 }
 
 type ToolDiscoveryConfig struct {
@@ -1369,6 +1327,52 @@ type ToolsConfig struct {
 	WebFetch        ToolConfig         `json:"web_fetch"         yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_WEB_FETCH_"`
 	WriteFile       ToolConfig         `json:"write_file"        yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_WRITE_FILE_"`
 	Browser         BrowserToolConfig  `json:"browser"           yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_BROWSER_"`
+	// RunInWorkspace holds configuration for the run_in_workspace tool (FR-013, CR-04).
+	RunInWorkspace RunInWorkspaceConfig `json:"run_in_workspace,omitempty" yaml:"-"`
+
+	// BuildStatic holds configuration for the build_static Tier 2 tool
+	// (FR-046b). Timeout and memory limits are validated at boot by
+	// validateBootConfig (validator.go).
+	BuildStatic BuildStaticConfig `json:"build_static,omitempty" yaml:"-"`
+
+	// ServeWorkspace holds configuration for the serve_workspace tool
+	// (FR-001..FR-005). Duration bounds are validated at boot.
+	ServeWorkspace ServeWorkspaceConfig `json:"serve_workspace,omitempty" yaml:"-"`
+}
+
+// RunInWorkspaceConfig holds configuration for the run_in_workspace tool (FR-013, CR-04).
+// Maps to config.json: tools.run_in_workspace.*
+type RunInWorkspaceConfig struct {
+	// WarmupTimeoutSeconds is the maximum number of seconds to wait for a dev server
+	// to become responsive after spawning. Default is 60. The SPA polls via a
+	// hidden probe-iframe (not cross-origin fetch) every 2 s up to this limit.
+	WarmupTimeoutSeconds int32 `json:"warmup_timeout_seconds,omitempty"`
+}
+
+// BuildStaticConfig holds configuration for the build_static Tier 2 tool
+// (FR-046b). Maps to config.json: tools.build_static.*
+type BuildStaticConfig struct {
+	// TimeoutSeconds is the wall-clock hard-kill deadline for the npm install
+	// + build command pair. Default 300 s (applied by the boot validator).
+	// Valid range: [1, 3600].
+	TimeoutSeconds int32 `json:"timeout_seconds,omitempty"`
+
+	// MemoryLimitBytes caps the child's address space (Linux RLIMIT_AS,
+	// Windows JOB_OBJECT_LIMIT_PROCESS_MEMORY). Default 512 MiB (applied by
+	// the boot validator). Valid range: [64 MiB, ~4 GiB].
+	MemoryLimitBytes uint64 `json:"memory_limit_bytes,omitempty"`
+}
+
+// ServeWorkspaceConfig holds configuration for the serve_workspace tool.
+// Maps to config.json: tools.serve_workspace.*
+type ServeWorkspaceConfig struct {
+	// MaxDurationSeconds is the maximum registration lifetime in seconds.
+	// Default 86400 (24 h), applied by the boot validator when zero.
+	MaxDurationSeconds int32 `json:"max_duration_seconds,omitempty"`
+
+	// MinDurationSeconds is the minimum registration lifetime in seconds.
+	// Default 60, applied by the boot validator when zero.
+	MinDurationSeconds int32 `json:"min_duration_seconds,omitempty"`
 }
 
 // BrowserToolConfig holds browser automation settings (Wave 4, US-4/US-6/US-7).
@@ -1493,6 +1497,14 @@ func loadConfigInternal(path string, store CredentialStore) (*Config, error) {
 	if e := json.Unmarshal(data, &versionInfo); e != nil {
 		return nil, fmt.Errorf("failed to detect config version: %w", e)
 	}
+
+	// Reject removed keys only for v1+ configs (FR-001). Legacy v0 configs may
+	// legitimately contain restrict_to_workspace; we migrate them instead.
+	if versionInfo.Version >= CurrentVersion {
+		if err := validateRemovedKeys(data); err != nil {
+			return nil, err
+		}
+	}
 	if len(data) <= 10 {
 		logger.Warn(fmt.Sprintf("content is [%s]", string(data)))
 		return DefaultConfig(), nil
@@ -1565,7 +1577,17 @@ func loadConfigInternal(path string, store CredentialStore) (*Config, error) {
 
 	// Ensure Workspace has a default if not set
 	if cfg.Agents.Defaults.Workspace == "" {
-		cfg.Agents.Defaults.Workspace = filepath.Join(OmnipusHomeDir(), pkg.WorkspaceName)
+		homePath, homeErr := os.UserHomeDir()
+		if homeErr != nil {
+			logger.WarnCF("config", "UserHomeDir failed; workspace path may be incomplete",
+				map[string]any{"error": homeErr.Error()})
+		}
+		if omnipusHome := os.Getenv(EnvHome); omnipusHome != "" {
+			homePath = omnipusHome
+		} else if homePath != "" {
+			homePath = filepath.Join(homePath, pkg.DefaultOmnipusHome)
+		}
+		cfg.Agents.Defaults.Workspace = filepath.Join(homePath, pkg.WorkspaceName)
 	}
 
 	migrateProviderFields(cfg)
@@ -1573,6 +1595,13 @@ func loadConfigInternal(path string, store CredentialStore) (*Config, error) {
 	// carries explicit false values, warn once so operators know their flag has
 	// no effect and should migrate to security.tool_policies for "deny".
 	cfg.Tools.warnDeprecatedEnableFlags()
+
+	// Apply defaults and validate bounds for all security-relevant fields
+	// (FR-001, FR-002a, numeric sandbox fields, AuthMismatchLogLevel).
+	if err := validateBootConfig(cfg); err != nil {
+		return nil, err
+	}
+
 	return cfg, nil
 }
 
@@ -1719,6 +1748,123 @@ func (c *Config) ValidateProviders() error {
 	return nil
 }
 
+// previewListenerEnabledDefault returns the platform-appropriate default for
+// gateway.preview_listener_enabled: true on Linux/macOS/Windows, false on Android.
+// Per FR-027 / MR-09.
+func previewListenerEnabledDefault() bool {
+	return runtime.GOOS != "android"
+}
+
+// normaliseIPv6Host strips surrounding brackets from an IPv6 address so that
+// "[::]" and "::" compare as equal. Per FR-028.
+func normaliseIPv6Host(h string) string {
+	h = strings.TrimPrefix(h, "[")
+	h = strings.TrimSuffix(h, "]")
+	return h
+}
+
+// IsPreviewListenerEnabled resolves the effective value of gateway.preview_listener_enabled.
+// Returns the configured value when set; falls back to the platform default
+// (true on Linux/macOS/Windows, false on Android/Termux — FR-027/MR-09).
+func (g *GatewayConfig) IsPreviewListenerEnabled() bool {
+	if g.PreviewListenerEnabled != nil {
+		return *g.PreviewListenerEnabled
+	}
+	return previewListenerEnabledDefault()
+}
+
+// ValidateAndApplyPreviewDefaults validates gateway preview fields and applies
+// computed defaults (preview port derivation, preview host defaulting,
+// warmup timeout default). It MUTATES g in place.
+//
+// Validation order (FR-027c, MR-06, MR-08, MN-01):
+//  1. Main port ∈ [1, 65535]
+//  2. Resolve preview_listener_enabled (default: platform-specific)
+//  3. If preview disabled → skip remaining preview checks
+//  4. Resolve preview_port (field if set, else port+1; overflow → error)
+//  5. preview_port ∈ [1, 65535]
+//  6. preview_port != port (only when preview enabled)
+//  7. Resolve preview_host (default to host); normalise IPv6 brackets
+//  8. If preview_origin set → must parse with scheme
+//  9. If public_url set → must parse with scheme
+//  10. If preview_origin set but preview_listener_enabled=false → error
+func (g *GatewayConfig) ValidateAndApplyPreviewDefaults() error {
+	// 1. Main port range check.
+	if g.Port < 1 || g.Port > 65535 {
+		return fmt.Errorf("gateway.port %d is out of range [1, 65535]", g.Port)
+	}
+
+	// 2. Resolve preview_listener_enabled.
+	enabled := g.IsPreviewListenerEnabled()
+
+	// 3. Skip remaining checks when preview is disabled.
+	if !enabled {
+		// 10. preview_origin requires enabled=true.
+		if g.PreviewOrigin != "" {
+			return fmt.Errorf("preview_origin requires preview_listener_enabled = true")
+		}
+		return nil
+	}
+
+	// 4. Resolve preview_port.
+	if g.PreviewPort == 0 {
+		derived := int64(g.Port) + 1
+		if derived > 65535 {
+			return fmt.Errorf(
+				"auto-derived preview port %s is out of range; set gateway.preview_port explicitly",
+				strconv.FormatInt(derived, 10),
+			)
+		}
+		g.PreviewPort = int32(derived)
+	}
+
+	// 5. Preview port range check.
+	if g.PreviewPort < 1 || g.PreviewPort > 65535 {
+		return fmt.Errorf("gateway.preview_port %d is out of range [1, 65535]", g.PreviewPort)
+	}
+
+	// 6. Preview port must differ from main port.
+	if int(g.PreviewPort) == g.Port {
+		return fmt.Errorf("gateway.preview_port must differ from gateway.port")
+	}
+
+	// 7. Resolve preview_host (default to host); normalise IPv6 brackets.
+	if g.PreviewHost == "" {
+		g.PreviewHost = g.Host
+	}
+	// Normalise both sides for the comparison to avoid spurious bind-twice failures
+	// (e.g. "[::] == ::").
+	if normaliseIPv6Host(g.PreviewHost) == normaliseIPv6Host(g.Host) && g.PreviewHost != g.Host {
+		g.PreviewHost = g.Host
+	}
+
+	// 8. preview_origin must parse with scheme if set.
+	if g.PreviewOrigin != "" {
+		u, err := url.Parse(g.PreviewOrigin)
+		if err != nil || u.Scheme == "" {
+			return fmt.Errorf("gateway.preview_origin %q must be a URL with a scheme (e.g. https://preview.example.com)", g.PreviewOrigin)
+		}
+	}
+
+	// 9. public_url must parse with scheme if set.
+	if g.PublicURL != "" {
+		u, err := url.Parse(g.PublicURL)
+		if err != nil || u.Scheme == "" {
+			return fmt.Errorf("gateway.public_url %q must be a URL with a scheme (e.g. https://omnipus.example.com)", g.PublicURL)
+		}
+	}
+
+	return nil
+}
+
+// ApplyWarmupTimeoutDefault ensures tools.run_in_workspace.warmup_timeout_seconds
+// has the default value of 60 when unset. Called by the boot validator.
+func (t *ToolsConfig) ApplyWarmupTimeoutDefault() {
+	if t.RunInWorkspace.WarmupTimeoutSeconds <= 0 {
+		t.RunInWorkspace.WarmupTimeoutSeconds = 60
+	}
+}
+
 // SetUserTokenHash sets the token hash for a user identified by username.
 func (c *Config) SetUserTokenHash(username, token string) error {
 	for i := range c.Gateway.Users {
@@ -1727,7 +1873,7 @@ func (c *Config) SetUserTokenHash(username, token string) error {
 			if err != nil {
 				return fmt.Errorf("bcrypt hash failed: %w", err)
 			}
-			c.Gateway.Users[i].TokenHash = hash
+			c.Gateway.Users[i].TokenHash = BcryptHash(hash)
 			return nil
 		}
 	}

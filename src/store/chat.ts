@@ -99,16 +99,6 @@ interface ChatStore {
   toolCalls: Record<string, ToolCall & { call_id: string }>
   toolCallOrder: string[]
   textAtToolCallStart: Record<string, string> // snapshot of assistant content when each tool call started
-  // Attributes each live tool call to the assistant message it belongs to.
-  // Without this, a second turn's buildContentParts would "steal" tool calls
-  // from earlier turns because toolCallOrder is a global insertion list that
-  // never migrates into msg.tool_calls during live streaming.
-  toolCallMessageId: Record<string, string>
-  // Subagent span insertion order + text snapshots, mirroring the tool-call pair so
-  // buildContentParts can interleave spans inline with text and tool calls instead
-  // of stacking them at the end of the message (FR-H-008 rendering fix).
-  spanOrder: string[]
-  textAtSpanStart: Record<string, string>
   startToolCall: (callId: string, tool: string, params: Record<string, unknown>) => void
   resolveToolCall: (callId: string, result: unknown, status: 'success' | 'error', durationMs?: number, error?: string) => void
   cancelToolCall: (callId: string) => void
@@ -175,9 +165,6 @@ const CLEAN_SESSION_STATE = {
   toolCalls: {} as Record<string, ToolCall & { call_id: string }>,
   toolCallOrder: [] as string[],
   textAtToolCallStart: {} as Record<string, string>,
-  toolCallMessageId: {} as Record<string, string>,
-  spanOrder: [] as string[],
-  textAtSpanStart: {} as Record<string, string>,
   pendingApprovals: [] as ExecApprovalRequest[],
   sessionTokens: 0,
   sessionCost: 0,
@@ -320,18 +307,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   toolCalls: {},
   toolCallOrder: [],
   textAtToolCallStart: {},
-  toolCallMessageId: {},
-  spanOrder: [],
-  textAtSpanStart: {},
   startToolCall: (callId, tool, params) =>
     set((state) => {
-      // Capture the current assistant message text so we can interleave tool calls with text during rendering.
-      // Also capture the message id so the tool call stays attributed to this turn when the next turn starts —
-      // toolCallOrder is a global insertion list, so without messageId scoping, a new (last) assistant message
-      // would steal every tool call from prior turns on render.
+      // Capture the current assistant message text so we can interleave tool calls with text during rendering
       const lastMsg = state.messages[state.messages.length - 1]
       const textSnapshot = (lastMsg?.role === 'assistant' ? lastMsg.content : '') ?? ''
-      const ownerMessageId = lastMsg?.role === 'assistant' ? lastMsg.id : ''
       return {
         toolCalls: {
           ...state.toolCalls,
@@ -339,7 +319,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         },
         toolCallOrder: [...state.toolCallOrder, callId],
         textAtToolCallStart: { ...state.textAtToolCallStart, [callId]: textSnapshot },
-        toolCallMessageId: { ...state.toolCallMessageId, [callId]: ownerMessageId },
       }
     }),
 
@@ -383,12 +362,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const msgs = [...state.messages]
       const lastIdx = msgs.map((m) => m.role).lastIndexOf('assistant')
       if (lastIdx === -1) return {}
-      // Snapshot the assistant content at the moment subagent_start arrives.
-      // buildContentParts uses this offset to interleave the span inline between
-      // text and tool calls — mirrors textAtToolCallStart for flat tool calls.
-      // Capturing here (not at orphan-buffered frame arrival) means the span
-      // renders where the user actually sees it open.
-      const textSnapshot = msgs[lastIdx].content ?? ''
       const span: SubagentSpanRunning = {
         spanId: frame.span_id,
         parentCallId: frame.parent_call_id,
@@ -440,11 +413,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         ...msgs[lastIdx],
         spans: [...(msgs[lastIdx].spans ?? []), span],
       }
-      return {
-        messages: msgs,
-        spanOrder: [...state.spanOrder, frame.span_id],
-        textAtSpanStart: { ...state.textAtSpanStart, [frame.span_id]: textSnapshot },
-      }
+      return { messages: msgs }
     }),
 
   // FR-H-008: finalize span status, duration, finalResult

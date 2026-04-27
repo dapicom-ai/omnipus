@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
-
-	"github.com/dapicom-ai/omnipus/pkg/config"
 )
 
 type wecomRoute struct {
@@ -37,7 +35,10 @@ func newReqIDStore(path string) *reqIDStore {
 }
 
 func defaultReqIDStorePath() string {
-	return filepath.Join(config.OmnipusHomeDir(), "wecom", "reqid-store.json")
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, ".omnipus", "wecom", "reqid-store.json")
+	}
+	return filepath.Join(os.TempDir(), "omnipus-wecom-reqid-store.json")
 }
 
 func (s *reqIDStore) Put(chatID, reqID string, chatType uint32, ttl time.Duration) error {

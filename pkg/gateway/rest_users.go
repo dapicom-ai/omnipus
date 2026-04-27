@@ -73,7 +73,7 @@ func (a *restAPI) HandleUsersList(w http.ResponseWriter, r *http.Request) {
 			"username":         u.Username,
 			"role":             string(u.Role),
 			"has_password":     u.PasswordHash != "",
-			"has_active_token": u.TokenHash != "",
+			"has_active_token": !u.TokenHash.IsZero(),
 		}
 		out = append(out, entry)
 	}

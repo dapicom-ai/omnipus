@@ -72,7 +72,7 @@ func newUserMgmtAPI(t *testing.T, users []any) (*restAPI, string) {
 		cfg.Gateway.Users = append(cfg.Gateway.Users, config.UserConfig{
 			Username:     asString(um["username"]),
 			PasswordHash: asString(um["password_hash"]),
-			TokenHash:    asString(um["token_hash"]),
+			TokenHash:    config.BcryptHash(asString(um["token_hash"])),
 			Role:         config.UserRole(asString(um["role"])),
 		})
 	}

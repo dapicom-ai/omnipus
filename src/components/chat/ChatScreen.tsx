@@ -239,17 +239,21 @@ function InlineMedia() {
   )
 }
 
-// SubagentSpanPart is mounted by AssistantUI via components.data.by_name['subagent-span'].
-// buildContentParts emits { type: 'data-subagent-span', data: { spanId } } parts at the
-// correct text offset, so this component renders the SubagentBlock inline between text
-// runs instead of appending every span at the bottom of the message.
-function SubagentSpanPart(props: { data: { spanId: string } }) {
+// Renders subagent spans attached to the current message (FR-H-008).
+// useMessage().id corresponds to the store message's id (set in omnipus-runtime convertMessage).
+function SubagentSpansRenderer() {
+  const message = useMessage()
   const messages = useChatStore((s) => s.messages)
-  const span = messages
-    .flatMap((m) => (m.role === 'assistant' ? m.spans ?? [] : []))
-    .find((s) => s.spanId === props.data.spanId)
-  if (!span) return null
-  return <SubagentBlock span={span} />
+  const storeMsg = messages.find((m) => m.id === message.id)
+  const spans = storeMsg?.spans ?? []
+  if (spans.length === 0) return null
+  return (
+    <>
+      {spans.map((span) => (
+        <SubagentBlock key={span.spanId} span={span} />
+      ))}
+    </>
+  )
 }
 
 function AssistantMessageAvatar() {
@@ -289,22 +293,17 @@ function AssistantMessage() {
           <InlineThinkingIndicator />
           {/* Use components prop so AssistantUI can inject registered tool UIs
               (from makeAssistantToolUI) automatically by tool name. Unregistered
-              tools fall through to FallbackToolUI (generic JSON badge).
-              data.by_name['subagent-span'] is how subagent blocks land inline at
-              the correct text offset (see buildContentParts in omnipus-runtime.ts). */}
+              tools fall through to FallbackToolUI (generic JSON badge). */}
           <MessagePrimitive.Parts
             components={{
               Text: AssistantTextPart,
               tools: {
                 Fallback: FallbackToolUI as unknown as import('@assistant-ui/react').ToolCallMessagePartComponent,
               },
-              data: {
-                by_name: {
-                  'subagent-span': SubagentSpanPart as unknown as import('@assistant-ui/react').DataMessagePartComponent,
-                },
-              },
             }}
           />
+          {/* Subagent spans — rendered per-message, keyed by span_id (FR-H-008) */}
+          <SubagentSpansRenderer />
           <InlineMedia />
         </div>
 

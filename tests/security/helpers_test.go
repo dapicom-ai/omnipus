@@ -178,7 +178,7 @@ func gatewayWithRBAC(t *testing.T) (gw *testutil.TestGateway, adminToken, userTo
 	require.NoError(t,
 		gw.SeedUser(seedCtx, config.UserConfig{
 			Username:  "secuser",
-			TokenHash: string(userHash),
+			TokenHash: config.BcryptHash(userHash),
 			Role:      config.UserRoleUser,
 		}, func(m map[string]any) {
 			gwSec := m["gateway"].(map[string]any)

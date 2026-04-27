@@ -209,7 +209,8 @@ func TestBrowserToolRegistration_WithScope(t *testing.T) {
 	cfg, err := DefaultConfig()
 	require.NoError(t, err)
 	ssrf := security.NewSSRFChecker(nil)
-	_, err = RegisterTools(registry, cfg, ssrf)
+	// evaluateEnabled=true: include browser.evaluate in the expected tool set.
+	_, err = RegisterTools(registry, cfg, ssrf, true)
 	require.NoError(t, err)
 
 	expectedTools := []string{
@@ -236,7 +237,8 @@ func TestBrowserToolsAlwaysRegisterRegardlessOfLegacyFlag(t *testing.T) {
 
 	// RegisterTools succeeds; the browser manager is created but Chromium is
 	// not launched until the first tool is invoked (lazy start).
-	mgr, err := RegisterTools(registry, cfg, ssrf)
+	// evaluateEnabled=true: explicitly opt in to browser.evaluate registration.
+	mgr, err := RegisterTools(registry, cfg, ssrf, true)
 	require.NoError(t, err)
 	require.NotNil(t, mgr)
 
@@ -246,10 +248,11 @@ func TestBrowserToolsAlwaysRegisterRegardlessOfLegacyFlag(t *testing.T) {
 	assert.True(t, ok, "RegisterTools registers tools regardless of Enabled flag")
 	assert.NotNil(t, tool)
 
-	// browser.evaluate must also register; policy denies it by default via
-	// pkg/policy.builtinToolPolicies. Operators opt in explicitly.
+	// browser.evaluate must also register when evaluateEnabled=true; policy
+	// denies it by default via pkg/policy.builtinToolPolicies. Operators opt in
+	// explicitly by setting security.tool_policies["browser.evaluate"]="allow".
 	evalTool, ok := registry.Get("browser.evaluate")
-	assert.True(t, ok, "browser.evaluate stays registered; policy controls invocation")
+	assert.True(t, ok, "browser.evaluate stays registered when evaluateEnabled=true; policy controls invocation")
 	assert.NotNil(t, evalTool)
 }
 
@@ -268,7 +271,9 @@ func TestSSRFBlocksPrivateNavigation(t *testing.T) {
 	ssrf := security.NewSSRFChecker(nil)
 
 	registry := tools.NewToolRegistry()
-	mgr, err := RegisterTools(registry, cfg, ssrf)
+	// evaluateEnabled=false: this test only uses browser.navigate, so no need
+	// to register browser.evaluate.
+	mgr, err := RegisterTools(registry, cfg, ssrf, false)
 	require.NoError(t, err)
 	defer mgr.Shutdown()
 

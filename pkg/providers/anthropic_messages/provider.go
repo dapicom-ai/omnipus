@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -149,50 +148,6 @@ func (p *Provider) GetDefaultModel() string {
 	return "claude-sonnet-4.6"
 }
 
-// lastAssistantDeclaresToolUse walks back through the already-built api messages and
-// returns true if the most recent assistant message declares a tool_use block with id.
-// Anthropic rejects the request with HTTP 400 when a tool_result block references a
-// tool_use_id that is not declared by the preceding assistant message:
-//
-//	"Each tool_result block must have a corresponding tool_use block in the previous message."
-//
-// This happens when the session store ends up with an orphan tool_result — e.g. because
-// an earlier assistant message was written without one of its tool_use blocks (known
-// desync on provider rotation mid-stream). We drop orphans here as a defensive shim
-// so the follow-up turn does not 400; the root cause fix belongs in the agent loop's
-// assistant-message persistence.
-func lastAssistantDeclaresToolUse(apiMessages []any, id string) bool {
-	if id == "" {
-		return false
-	}
-	for i := len(apiMessages) - 1; i >= 0; i-- {
-		msg, ok := apiMessages[i].(map[string]any)
-		if !ok {
-			continue
-		}
-		if msg["role"] != "assistant" {
-			continue
-		}
-		blocks, ok := msg["content"].([]any)
-		if !ok {
-			return false
-		}
-		for _, b := range blocks {
-			bm, ok := b.(map[string]any)
-			if !ok {
-				continue
-			}
-			if bm["type"] == "tool_use" {
-				if bid, _ := bm["id"].(string); bid == id {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	return false
-}
-
 // mergeToolResultIntoLastUser appends toolResultBlock to the last user message's content
 // if it already holds tool_result blocks. Returns the updated slice and true if merged,
 // or the original slice and false if a new message must be appended instead.
@@ -251,13 +206,6 @@ func buildRequestBody(
 
 		case "user":
 			if msg.ToolCallID != "" {
-				// Drop orphan tool_result whose id is not declared by the preceding
-				// assistant message — Anthropic rejects the whole request otherwise.
-				if !lastAssistantDeclaresToolUse(apiMessages, msg.ToolCallID) {
-					slog.Warn("anthropic_messages: dropping orphan tool_result (no matching tool_use in preceding assistant)",
-						"tool_use_id", msg.ToolCallID)
-					continue
-				}
 				// Tool result message — merge into previous user message if it contains tool_results
 				toolResultBlock := map[string]any{
 					"type":        "tool_result",
@@ -315,13 +263,6 @@ func buildRequestBody(
 			})
 
 		case "tool":
-			// Drop orphan tool_result whose id is not declared by the preceding
-			// assistant message — Anthropic rejects the whole request otherwise.
-			if !lastAssistantDeclaresToolUse(apiMessages, msg.ToolCallID) {
-				slog.Warn("anthropic_messages: dropping orphan tool_result (no matching tool_use in preceding assistant)",
-					"tool_use_id", msg.ToolCallID)
-				continue
-			}
 			// Tool result (alternative format) — merge into previous user message if it contains tool_results
 			toolResultBlock := map[string]any{
 				"type":        "tool_result",

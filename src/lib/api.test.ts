@@ -674,3 +674,55 @@ describe('Security API helpers', () => {
     })
   })
 })
+
+// ── F-34 — isPreviewListenerEnabled accessor ───────────────────────────────────
+//
+// preview_listener_enabled is an optional bool where undefined semantically
+// means "true" (old gateway versions that predate the field always ran the
+// preview listener). Reading the field directly risks treating undefined as
+// falsy; the accessor encapsulates this polarity safely.
+//
+// Traces to: docs/specs/chat-served-iframe-preview-spec.md — F-34 polarity accessor
+
+describe('isPreviewListenerEnabled', () => {
+  it('returns true when info is undefined (old gateway — no field present)', async () => {
+    // Traces to: chat-served-iframe-preview-spec.md — F-34: undefined → true
+    const { isPreviewListenerEnabled } = await import('./api')
+    expect(isPreviewListenerEnabled(undefined)).toBe(true)
+  })
+
+  it('returns true when preview_listener_enabled is undefined (field absent on new gateway)', async () => {
+    // Traces to: chat-served-iframe-preview-spec.md — F-34: field absent → true
+    const { isPreviewListenerEnabled } = await import('./api')
+    // Cast: AboutInfo requires version/go_version/os/arch/uptime_seconds in type,
+    // but the function only reads preview_listener_enabled — partial is safe here.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(isPreviewListenerEnabled({ preview_listener_enabled: undefined } as any)).toBe(true)
+  })
+
+  it('returns true when preview_listener_enabled is explicitly true', async () => {
+    // Traces to: chat-served-iframe-preview-spec.md — F-34: true → true
+    const { isPreviewListenerEnabled } = await import('./api')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(isPreviewListenerEnabled({ preview_listener_enabled: true } as any)).toBe(true)
+  })
+
+  it('returns false when preview_listener_enabled is explicitly false', async () => {
+    // Traces to: chat-served-iframe-preview-spec.md — F-34: false → false
+    const { isPreviewListenerEnabled } = await import('./api')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(isPreviewListenerEnabled({ preview_listener_enabled: false } as any)).toBe(false)
+  })
+
+  it('differentiation: true and false inputs produce different outputs', async () => {
+    // Anti-shortcut: proves the function is not always returning true or false.
+    const { isPreviewListenerEnabled } = await import('./api')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const whenEnabled = isPreviewListenerEnabled({ preview_listener_enabled: true } as any)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const whenDisabled = isPreviewListenerEnabled({ preview_listener_enabled: false } as any)
+    expect(whenEnabled).toBe(true)
+    expect(whenDisabled).toBe(false)
+    expect(whenEnabled).not.toBe(whenDisabled)
+  })
+})

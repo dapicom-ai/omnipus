@@ -16,9 +16,6 @@ cmd/**/workspace
 .omnipus/
 sessions/
 
-# Runtime cost tracker writes here when OMNIPUS_HOME resolves to the repo root
-pkg/agent/system/
-
 # Coverage
 coverage.txt
 coverage.html
