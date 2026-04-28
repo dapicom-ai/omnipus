@@ -42,10 +42,10 @@ let capturedAddToast: ReturnType<typeof vi.fn>
 beforeEach(async () => {
   capturedAddToast = vi.fn()
   const { useUiStore } = await import('@/store/ui')
-  vi.mocked(useUiStore).mockImplementation((selector?: (s: unknown) => unknown) => {
+  vi.mocked(useUiStore).mockImplementation(((selector?: (s: unknown) => unknown) => {
     const state = { addToast: capturedAddToast, toasts: [], removeToast: vi.fn() }
     return selector ? selector(state) : state
-  })
+  }) as unknown as typeof useUiStore)
 
   // Reset store
   act(() => {

@@ -142,7 +142,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
   const [heartbeatEnabled, setHeartbeatEnabled] = useState(false)
   const [heartbeatInterval, setHeartbeatInterval] = useState(30)
   const [toolsCfg, setToolsCfg] = useState<AgentToolsCfg>({
-    builtin: { mode: 'inherit' },
+    builtin: { default_policy: 'allow' },
   })
 
   useEffect(() => {
@@ -719,9 +719,9 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
         <AccordionItem value="tools" className="border-0">
             <AccordionTrigger className="px-4 font-headline font-bold text-sm">
               <span>Tools &amp; Permissions</span>
-              {toolsCfg.builtin.mode === 'explicit' && (
+              {toolsCfg.builtin.policies && Object.keys(toolsCfg.builtin.policies).length > 0 && (
                 <span className="text-xs text-[var(--color-muted)] font-normal ml-2">
-                  {toolsCfg.builtin.visible?.length ?? 0} selected
+                  {Object.keys(toolsCfg.builtin.policies).length} overrides
                 </span>
               )}
             </AccordionTrigger>

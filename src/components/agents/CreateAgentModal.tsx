@@ -81,7 +81,7 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [nameError, setNameError] = useState('')
   const [toolsState, setToolsState] = useState<AgentToolsCfg>({
-    builtin: { mode: 'inherit' },
+    builtin: { default_policy: 'allow' },
   })
 
   const resetForm = () => {
@@ -93,7 +93,7 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
     setTemperature(1.0)
     setAdvancedOpen(false)
     setNameError('')
-    setToolsState({ builtin: { mode: 'inherit' } })
+    setToolsState({ builtin: { default_policy: 'allow' } })
   }
 
   // Reset form state whenever the modal opens so stale values are not shown
