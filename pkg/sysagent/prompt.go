@@ -4,9 +4,6 @@
 
 package sysagent
 
-// SystemAgentID is the canonical identifier for the built-in system agent.
-const SystemAgentID = "omnipus-system"
-
 // SystemAgentName is the display name for the system agent.
 const SystemAgentName = "Omnipus"
 

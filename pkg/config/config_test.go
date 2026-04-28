@@ -1286,17 +1286,17 @@ func TestResolveType_ExplicitType(t *testing.T) {
 	}
 }
 
-// TestResolveType_SystemAgentID verifies that the canonical system agent ID
-// "omnipus-system" resolves to AgentTypeSystem even when Type is not set.
+// TestResolveType_ExplicitSystemType verifies that an AgentConfig with
+// Type=AgentTypeSystem set explicitly resolves to AgentTypeSystem.
 //
-// BDD: Given an AgentConfig with ID="omnipus-system" and no explicit Type
+// BDD: Given an AgentConfig with Type=AgentTypeSystem
 //
 //	When ResolveType is called
 //	Then AgentTypeSystem is returned
 //
-// Traces to: config.go AgentConfig.ResolveType — system ID guard
-func TestResolveType_SystemAgentID(t *testing.T) {
-	a := AgentConfig{ID: "omnipus-system"}
+// Traces to: config.go AgentConfig.ResolveType — explicit type takes priority (FR-045)
+func TestResolveType_ExplicitSystemType(t *testing.T) {
+	a := AgentConfig{ID: "any-id", Type: AgentTypeSystem}
 
 	got := a.ResolveType(func(_ string) bool { return false })
 

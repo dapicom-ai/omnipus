@@ -9,7 +9,7 @@ const (
 	// ScopeCore tools are available to core agents by default, and to custom
 	// agents only when per-agent policy explicitly grants them.
 	// Examples: exec, browser.*, write_file, edit_file, spawn, subagent,
-	// and all system.* tools (which were formerly ScopeSystem).
+	// and all system.* tools (which return this scope via Scope()).
 	ScopeCore ToolScope = "core"
 	// ScopeGeneral tools are available to all agent types by default.
 	// Examples: read_file, list_dir, web_search, web_fetch, message, task_*.

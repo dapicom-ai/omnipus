@@ -725,11 +725,13 @@ func TestGetAgentTools_CustomAgent(t *testing.T) {
 	assert.Equal(t, "allow", policies["web_search"])
 }
 
-// TestUpdateAgentTools_SystemAgentNotFound verifies PUT /api/v1/agents/omnipus-system/tools returns 404.
-// BDD: Given omnipus-system no longer exists (removed in #45),
+// TestUpdateAgentTools_LockedAgentForbidden verifies PUT /api/v1/agents/omnipus-system/tools
+// returns 403 Forbidden because the agent is Locked (core/system agents cannot have their
+// tool policy overwritten via the API).
+// BDD: Given agent "omnipus-system" is a locked agent,
 // When PUT /api/v1/agents/omnipus-system/tools is called,
-// Then the response is 404 Not Found.
-func TestUpdateAgentTools_SystemAgentNotFound(t *testing.T) {
+// Then the response is 403 Forbidden.
+func TestUpdateAgentTools_LockedAgentForbidden(t *testing.T) {
 	api, cleanup := newTestRestAPI(t)
 	defer cleanup()
 
@@ -738,7 +740,7 @@ func TestUpdateAgentTools_SystemAgentNotFound(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPut, "/api/v1/agents/omnipus-system/tools", strings.NewReader(body))
 	api.HandleAgents(w, r)
 
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 // TestUpdateAgent_LockedRejectsIdentityChange verifies that locked (core) agents

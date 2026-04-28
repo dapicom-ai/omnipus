@@ -117,36 +117,36 @@ func TestRateLimiter_GlobalCostCap(t *testing.T) {
 	})
 }
 
-// TestRateLimiter_SystemAgentExempt validates the system agent (omnipus-system) is exempt
-// from all rate limits per FR-025.
+// TestRateLimiter_PrivilegedAgentExempt validates that privileged agent types (core/system)
+// are exempt from all rate limits per FR-045 (privileges by type, not by hardcoded ID).
 // Traces to: wave2-security-layer-spec.md line 800 (TestRateLimiter_SystemAgentExempt)
-// BDD: Scenario: System agent exempt from rate limits (spec line 709)
-func TestRateLimiter_SystemAgentExempt(t *testing.T) {
+// BDD: Scenario: Privileged agent exempt from rate limits (spec line 709)
+func TestRateLimiter_PrivilegedAgentExempt(t *testing.T) {
 	// Traces to: wave2-security-layer-spec.md line 709 (Scenario: System agent exempt)
-	t.Run("system agent bypasses global cost cap", func(t *testing.T) {
+	t.Run("core agent bypasses global cost cap", func(t *testing.T) {
 		registry := security.NewRateLimiterRegistry()
 		registry.SetDailyCostCap(0.001) // tiny cap that would block normal agents
 
-		// First accumulate cost as normal agent to exhaust cap
-		registry.CheckGlobalCostCap(0.001, "researcher")
+		// First accumulate cost as custom agent to exhaust cap
+		registry.CheckGlobalCostCap(0.001, "custom")
 
-		// System agent must bypass cost cap entirely
-		result := registry.CheckGlobalCostCap(999.99, "omnipus-system")
+		// Core agent must bypass cost cap entirely (FR-045)
+		result := registry.CheckGlobalCostCap(999.99, "core")
 		assert.True(t, result.Allowed,
-			"omnipus-system must bypass cost cap: always returns Allowed=true")
+			"core agent must bypass cost cap: always returns Allowed=true")
 	})
 
 	t.Run("system agent always passes CheckGlobalCostCap regardless of cap", func(t *testing.T) {
 		registry := security.NewRateLimiterRegistry()
 		registry.SetDailyCostCap(50.0)
 
-		// Load $49.99 from a regular agent
-		registry.CheckGlobalCostCap(49.99, "researcher")
+		// Load $49.99 from a custom agent
+		registry.CheckGlobalCostCap(49.99, "custom")
 
-		// System agent still passes
-		result := registry.CheckGlobalCostCap(100.0, "omnipus-system")
+		// System-type agent still passes
+		result := registry.CheckGlobalCostCap(100.0, "system")
 		assert.True(t, result.Allowed,
-			"omnipus-system is exempt from global cost cap")
+			"system-type agent is exempt from global cost cap")
 	})
 }
 

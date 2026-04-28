@@ -23,11 +23,11 @@ import (
 // The SlidingWindow infrastructure is shared — the system tool handler will
 // create one SlidingWindow per category using the exact thresholds below.
 
-// TestSystemAgentExemptFromCostCapRateLimit verifies that omnipus-system is
-// always allowed through the global cost cap regardless of accumulated spend.
+// TestSystemAgentExemptFromCostCapRateLimit verifies that privileged agents (core/system
+// type) are always allowed through the global cost cap regardless of accumulated spend.
 //
 // Traces to: wave5b-system-agent-spec.md — System tool rate limiting (US-11)
-// BDD: "System agent exempt from rate limits"
+// BDD: "Privileged agent exempt from rate limits" (FR-045: privileges by type, not ID)
 func TestSystemAgentExemptFromCostCapRateLimit(t *testing.T) {
 	// Traces to: wave5b-system-agent-spec.md line 196 (User Story 11)
 
@@ -35,18 +35,18 @@ func TestSystemAgentExemptFromCostCapRateLimit(t *testing.T) {
 	r.SetDailyCostCap(1.00) // $1.00 cap
 
 	// Exhaust the cap for a normal agent.
-	result := r.CheckGlobalCostCap(0.99, "general-assistant")
-	require.True(t, result.Allowed, "normal agent: first call within cap should be allowed")
+	result := r.CheckGlobalCostCap(0.99, "custom")
+	require.True(t, result.Allowed, "custom agent: first call within cap should be allowed")
 
 	// Now the remaining budget is ~$0.01.
-	result = r.CheckGlobalCostCap(0.05, "general-assistant")
-	assert.False(t, result.Allowed, "normal agent: call that exceeds cap should be denied")
+	result = r.CheckGlobalCostCap(0.05, "custom")
+	assert.False(t, result.Allowed, "custom agent: call that exceeds cap should be denied")
 
-	// System agent must still be allowed even though cap is exceeded.
-	result = r.CheckGlobalCostCap(1000.00, "omnipus-system")
+	// Privileged (core) agents must still be allowed even though cap is exceeded.
+	result = r.CheckGlobalCostCap(1000.00, "core")
 	assert.True(t, result.Allowed,
-		"omnipus-system must be exempt from the global cost cap (wave5b spec FR-026)")
-	assert.Equal(t, "system agent exempt from cost cap", result.PolicyRule,
+		"core agent must be exempt from the global cost cap (FR-045)")
+	assert.Equal(t, "privileged agent exempt from cost cap", result.PolicyRule,
 		"exempt policy rule must identify reason")
 }
 

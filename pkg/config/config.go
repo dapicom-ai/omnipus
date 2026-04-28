@@ -537,16 +537,12 @@ const (
 )
 
 // ResolveType returns the effective agent type. If the Type field is set, it is
-// returned directly. Otherwise the type is inferred: "omnipus-system" →
-// AgentTypeSystem; known core agent IDs → AgentTypeCore; everything else →
-// AgentTypeCustom. The caller must provide isCoreAgent to avoid an import cycle
-// with the coreagent package.
+// returned directly. Otherwise the type is inferred: known core agent IDs →
+// AgentTypeCore; everything else → AgentTypeCustom. The caller must provide
+// isCoreAgent to avoid an import cycle with the coreagent package.
 func (a AgentConfig) ResolveType(isCoreAgent func(string) bool) AgentType {
 	if a.Type != "" {
 		return a.Type
-	}
-	if a.ID == "omnipus-system" {
-		return AgentTypeSystem
 	}
 	if isCoreAgent != nil && isCoreAgent(a.ID) {
 		return AgentTypeCore

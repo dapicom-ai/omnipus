@@ -302,10 +302,11 @@ func validateConfig(cfg *SecurityConfig) error {
 	return nil
 }
 
-// IsSystemAgent returns true if agentID is the system agent, which is exempt
-// from rate limits and certain policy restrictions.
-func IsSystemAgent(agentID string) bool {
-	return agentID == "omnipus-system"
+// IsSystemAgent returns true if the agent type is a privileged (core or system)
+// agent, which is exempt from rate limits and certain policy restrictions.
+// Privileges flow from agent type, not from a hardcoded agent ID (FR-045).
+func IsSystemAgent(agentType string) bool {
+	return agentType == "core" || agentType == "system"
 }
 
 // ChannelConfig describes a channel configuration for DM safety checks.

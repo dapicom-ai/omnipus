@@ -188,8 +188,8 @@ func (tc *ToolCompositor) ComposeAndRegister(agentID string) int {
 //
 //   - ScopeCore: core agents pass by default; custom agents require an explicit
 //     policy entry granting the tool. The system.* naming convention indicates
-//     privileged tools but ScopeSystem no longer exists — ScopeCore is the sole
-//     gating scope for privileged tools (FR-045, "Retiring the System Agent Fiction").
+//     privileged tools; ScopeCore is the sole
+//     gating scope for privileged tools (FR-045).
 //   - ScopeGeneral: any agent type passes.
 //   - Unknown/zero-value scopes: denied (fail-closed, per CLAUDE.md hard constraint 6).
 func passesScopeGate(scope ToolScope, agentType string) bool {
@@ -206,7 +206,7 @@ func passesScopeGate(scope ToolScope, agentType string) bool {
 // FilterToolsByVisibility returns the subset of tools that the given agent type
 // and tools config allow. It implements a 2-layer scope + visibility filter:
 //
-//  1. Scope gate (FR-045: ScopeSystem is retired; only ScopeCore and ScopeGeneral exist):
+//  1. Scope gate (FR-045): only ScopeCore and ScopeGeneral exist:
 //     ScopeCore → core agents pass by default; custom agents only if explicitly listed.
 //     ScopeGeneral → all agent types pass.
 //  2. Explicit mode: if cfg.Mode == "explicit", only tools named in

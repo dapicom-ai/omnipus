@@ -19,11 +19,6 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 )
 
-// SystemAgentID is the canonical identifier for the built-in system agent.
-// It is duplicated here (from pkg/sysagent) to avoid an import cycle; both
-// declarations must be kept in sync.
-const systemAgentID = "omnipus-system"
-
 // slugRegexp matches characters that should be replaced in agent name → ID conversion.
 var slugRegexp = regexp.MustCompile(`[^a-z0-9]+`)
 
@@ -72,19 +67,18 @@ func validateAgentIcon(s string) error {
 }
 
 // setAgentEnabled is the shared implementation for activate and deactivate.
-// id must not be empty or equal to the system agent ID.
+// id must not be empty. Locked (core) agents cannot be toggled.
 func setAgentEnabled(deps *Deps, id string, enabled bool) *tools.ToolResult {
 	if id == "" {
 		return tools.ErrorResult(errorJSON("INVALID_INPUT", "id is required", ""))
-	}
-	if id == systemAgentID {
-		return tools.ErrorResult(errorJSON("INVALID_OPERATION",
-			"cannot change the enabled state of the system agent", ""))
 	}
 	var found bool
 	err := deps.WithConfig(func(cfg *config.Config) error {
 		for i, a := range cfg.Agents.List {
 			if a.ID == id {
+				if a.Locked {
+					return fmt.Errorf("agent %q is a locked core agent and cannot be enabled/disabled", id)
+				}
 				found = true
 				cfg.Agents.List[i].Enabled = &enabled
 				return nil
@@ -571,10 +565,6 @@ func (t *AgentDeleteTool) Execute(_ context.Context, args map[string]any) *tools
 	confirm, _ := args["confirm"].(bool)
 	if id == "" {
 		return tools.ErrorResult(errorJSON("INVALID_INPUT", "id is required", ""))
-	}
-	if id == systemAgentID {
-		return tools.ErrorResult(errorJSON("INVALID_OPERATION",
-			"cannot delete the system agent", ""))
 	}
 	if !confirm {
 		return tools.ErrorResult(errorJSON("CONFIRMATION_REQUIRED",

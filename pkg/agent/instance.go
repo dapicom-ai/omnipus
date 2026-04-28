@@ -235,9 +235,9 @@ func NewAgentInstance(
 	}
 
 	// Derive agent type and policy snapshot for LLM-call-time tool filtering (FR-003, FR-041).
-	// agentType uses the config-stored Type when present; falls back to "core" for the
-	// omnipus-system id and "custom" for everything else.
-	// The registry may upgrade this to "core" via SetAgentType() for runtime-seeded agents.
+	// agentType uses the config-stored Type when present; falls back to "custom" for
+	// unrecognised types. The registry may upgrade this to "core" via SetAgentType()
+	// for runtime-seeded agents (FR-045).
 	resolvedAgentType := "custom"
 	if agentCfg != nil {
 		switch agentCfg.Type {
@@ -245,10 +245,6 @@ func NewAgentInstance(
 			resolvedAgentType = string(agentCfg.Type)
 		case config.AgentTypeCustom:
 			resolvedAgentType = "custom"
-		default:
-			if agentCfg.ID == "omnipus-system" {
-				resolvedAgentType = "system"
-			}
 		}
 	}
 	inst := &AgentInstance{

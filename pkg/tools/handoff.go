@@ -119,12 +119,7 @@ func (t *HandoffTool) Execute(ctx context.Context, args map[string]any) *ToolRes
 	}
 	contextMsg, _ := args["context"].(string)
 
-	// Step 1: Block handoff to the system agent (FR-013).
-	if agentID == "omnipus-system" {
-		return ErrorResult("cannot hand off to the system agent")
-	}
-
-	// Step 2: Validate target agent exists (FR-012).
+	// Step 1: Validate target agent exists (FR-012).
 	agentName, exists := t.getRegistry().GetAgentName(agentID)
 	if !exists {
 		return ErrorResult(fmt.Sprintf("agent %q not found — check the agent ID", agentID))

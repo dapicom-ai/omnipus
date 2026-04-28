@@ -544,15 +544,16 @@ func TestConfirmationRequired(t *testing.T) {
 }
 
 // =====================================================================
-// Supplementary: SystemAgentID constant
+// Supplementary: SystemAgentName constant
 // =====================================================================
 
-// TestSystemAgentIDConstant verifies the system agent ID is the canonical value.
+// TestSystemAgentNameConstant verifies the system agent display name is set.
 //
-// Traces to: wave5b-system-agent-spec.md line 7 (FR-001)
-func TestSystemAgentIDConstant(t *testing.T) {
-	assert.Equal(t, "omnipus-system", sysagent.SystemAgentID,
-		"system agent ID must be 'omnipus-system' (canonical identifier)")
+// Traces to: wave5b-system-agent-spec.md line 7 (FR-001).
+// SystemAgentID was retired per FR-045; privileges now flow from agent type.
+func TestSystemAgentNameConstant(t *testing.T) {
+	assert.Equal(t, "Omnipus", sysagent.SystemAgentName,
+		"system agent display name must be 'Omnipus'")
 }
 
 // =====================================================================

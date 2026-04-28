@@ -59,6 +59,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/state"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
+	systools "github.com/dapicom-ai/omnipus/pkg/sysagent/tools"
 	"github.com/dapicom-ai/omnipus/pkg/voice"
 )
 
@@ -502,6 +503,24 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 	}
 	runningServices.HealthServer.SetReloadFunc(reloadTrigger)
 	agentLoop.SetReloadFunc(reloadTrigger)
+
+	// Wire system.* tool dependencies into the agent loop (FR-001, FR-002).
+	// Called after SetReloadFunc so the reload trigger is available to system
+	// tools that trigger hot-reload (e.g., system.agent.create).
+	// WireSysagentDeps immediately registers all 35 system.* tools on every agent
+	// in the current registry and stashes deps for re-application on hot-reload.
+	sysAgentDeps := &systools.Deps{
+		Home:       homePath,
+		ConfigPath: configPath,
+		GetCfg:     agentLoop.GetConfig,
+		MutateConfig: agentLoop.MutateConfig,
+		SaveConfigLocked: func(c *config.Config) error {
+			return config.SaveConfig(configPath, c)
+		},
+		CredStore:  credStore,
+		ReloadFunc: reloadTrigger,
+	}
+	agentLoop.WireSysagentDeps(sysAgentDeps)
 
 	fmt.Printf("✓ Gateway started on %s:%d\n", cfg.Gateway.Host, cfg.Gateway.Port)
 	fmt.Println("Press Ctrl+C to stop")

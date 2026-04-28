@@ -772,7 +772,7 @@ func agentWorkspacePath(cfg interface {
 	}
 	// Per-agent isolated workspace (FUNC-11). Use OMNIPUS_HOME/agents/{id}
 	// to match where system.agent.create writes SOUL.md.
-	if agentID != "" && agentID != "omnipus-system" {
+	if agentID != "" {
 		base := omnipusHome
 		if base == "" {
 			// Fallback to ~/.omnipus if homePath not provided.
@@ -2576,7 +2576,7 @@ func (a *restAPI) HandleActivity(w http.ResponseWriter, r *http.Request) {
 
 	// Build agent name lookup
 	cfg := a.agentLoop.GetConfig()
-	agentNames := map[string]string{"omnipus-system": "Omnipus"}
+	agentNames := map[string]string{}
 	for _, ac := range cfg.Agents.List {
 		agentNames[ac.ID] = ac.Name
 	}
@@ -3137,22 +3137,18 @@ func (a *restAPI) getAgentTools(w http.ResponseWriter, agentID string) {
 	// Determine agent type and tool config.
 	agentType := "custom"
 	var toolsCfg *config.AgentToolsCfg
-	if agentID == "omnipus-system" {
-		agentType = "system"
-	} else {
-		for _, ac := range cfg.Agents.List {
-			if ac.ID == agentID {
-				at := ac.ResolveType(coreagent.IsCoreAgent)
-				agentType = string(at)
-				toolsCfg = ac.Tools
-				break
-			}
+	for _, ac := range cfg.Agents.List {
+		if ac.ID == agentID {
+			at := ac.ResolveType(coreagent.IsCoreAgent)
+			agentType = string(at)
+			toolsCfg = ac.Tools
+			break
 		}
-		// Core agents may not be in cfg.Agents.List (runtime-only). Detect them
-		// so FilterToolsByVisibility applies the correct scope gate.
-		if agentType == "custom" && coreagent.IsCoreAgent(agentID) {
-			agentType = "core"
-		}
+	}
+	// Core agents may not be in cfg.Agents.List (runtime-only). Detect them
+	// so FilterToolsByVisibility applies the correct scope gate.
+	if agentType == "custom" && coreagent.IsCoreAgent(agentID) {
+		agentType = "core"
 	}
 
 	// Build the effective tool list using scope filtering.
@@ -3211,23 +3207,24 @@ func (a *restAPI) getAgentTools(w http.ResponseWriter, agentID string) {
 // updateAgentTools handles PUT /api/v1/agents/{id}/tools — replaces the
 // agent's tool visibility config.
 func (a *restAPI) updateAgentTools(w http.ResponseWriter, r *http.Request, agentID string) {
-	// Legacy system agent ID returns 404 since it no longer exists.
-	// Core agents are protected by the Locked check below.
-	if agentID == "omnipus-system" {
-		jsonErr(w, http.StatusNotFound, fmt.Sprintf("agent %q not found", agentID))
-		return
-	}
-
 	cfg := a.agentLoop.GetConfig()
 	found := false
+	var foundAgent config.AgentConfig
 	for _, ac := range cfg.Agents.List {
 		if ac.ID == agentID {
 			found = true
+			foundAgent = ac
 			break
 		}
 	}
 	if !found {
 		jsonErr(w, http.StatusNotFound, fmt.Sprintf("agent %q not found", agentID))
+		return
+	}
+	// Locked (core/system) agents cannot have their tool policy overwritten via the API.
+	// Use coreagent.IsCoreAgent or check the Locked flag.
+	if foundAgent.Locked {
+		jsonErr(w, http.StatusForbidden, fmt.Sprintf("agent %q is locked and cannot be modified", agentID))
 		return
 	}
 

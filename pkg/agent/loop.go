@@ -23,6 +23,7 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
+	systools "github.com/dapicom-ai/omnipus/pkg/sysagent/tools"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/commands"
 	"github.com/dapicom-ai/omnipus/pkg/config"
@@ -125,6 +126,11 @@ type AgentLoop struct {
 	// Without this, hot-reload would drop serve_workspace and run_in_workspace
 	// from every agent because ReloadProviderAndConfig builds a fresh registry.
 	tier13Deps *Tier13Deps
+
+	// sysagentDeps holds the dependencies for system.* tool registration (FR-001, FR-002).
+	// Wired by the gateway after boot via SetSysagentDeps. Nil until wired; if nil,
+	// system tools are not registered (graceful degradation in tests without a store).
+	sysagentDeps *systools.Deps
 
 	// Wave 4: Per-agent rate limiting and global daily cost cap (SEC-26).
 	// rateLimiter manages sliding-window counters; costTracker persists the
@@ -997,6 +1003,7 @@ func registerSharedTools(
 			}
 		}
 	}
+
 }
 
 // findAgentConfig returns the AgentConfig for the given agent ID, or nil if not found.
@@ -1795,6 +1802,11 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 		al.wireTier13DepsLocked(registry, *al.tier13Deps)
 	}
 
+	// Re-wire system.* tools on the new registry (FR-001, FR-002).
+	if al.sysagentDeps != nil {
+		al.wireSysagentDepsLocked(registry, al.sysagentDeps)
+	}
+
 	// Atomically swap the config and registry under write lock
 	// This ensures readers see a consistent pair
 	al.mu.Lock()
@@ -2107,6 +2119,46 @@ func (al *AgentLoop) SetTranscriber(t voice.Transcriber) {
 // SetReloadFunc sets the callback function for triggering config reload.
 func (al *AgentLoop) SetReloadFunc(fn func() error) {
 	al.reloadFunc = fn
+}
+
+// SetSysagentDeps stores the system.* tool dependencies for use by hot-reload.
+// Call WireSysagentDeps after this to immediately register the tools.
+func (al *AgentLoop) SetSysagentDeps(deps *systools.Deps) {
+	al.sysagentDeps = deps
+}
+
+// WireSysagentDeps registers all 35 system.* tools on every agent in the
+// current registry (FR-001, FR-002). Mirrors the WireTier13Deps pattern:
+// called once at boot after NewAgentLoop, and again on hot-reload. The deps
+// pointer is stashed so hot-reload can re-apply the wiring on the rebuilt registry.
+//
+// Per-agent policy (seeded via coreagent.SeedConfig) governs which agents may
+// actually invoke these tools at LLM-call time — this registration is the
+// supply side; policy is the demand filter.
+func (al *AgentLoop) WireSysagentDeps(deps *systools.Deps) {
+	depsCopy := *deps
+	al.sysagentDeps = &depsCopy
+	al.wireSysagentDepsLocked(al.registry, &depsCopy)
+}
+
+// wireSysagentDepsLocked registers system.* tools on all agents in registry.
+// Factored out so hot-reload can re-apply against a freshly-built registry.
+func (al *AgentLoop) wireSysagentDepsLocked(registry *AgentRegistry, deps *systools.Deps) {
+	if registry == nil || deps == nil {
+		return
+	}
+	sysToolList := systools.AllTools(deps, nil)
+	for _, agentID := range registry.ListAgentIDs() {
+		ag, ok := registry.GetAgent(agentID)
+		if !ok || ag == nil || ag.Tools == nil {
+			continue
+		}
+		for _, t := range sysToolList {
+			ag.Tools.Register(t)
+		}
+	}
+	logger.InfoCF("agent", "system.* tools wired into agent registry",
+		map[string]any{"tool_count": len(sysToolList)})
 }
 
 // TriggerReload triggers a config reload so the in-memory config picks up
@@ -2917,7 +2969,7 @@ turnLoop:
 		// SEC-26: Per-agent LLM call rate limit check. Runs once per turn
 		// iteration, before the actual LLM call. The system agent is exempt.
 		if al.rateLimiter != nil && cfg.Sandbox.RateLimits.MaxAgentLLMCallsPerHour > 0 &&
-			!security.IsSystemAgent(ts.agent.ID) {
+			!security.IsPrivilegedAgent(ts.agent.AgentType) {
 			window := al.rateLimiter.GetOrCreate(
 				"agent:"+ts.agent.ID+":llm_call",
 				cfg.Sandbox.RateLimits.MaxAgentLLMCallsPerHour,
@@ -2949,7 +3001,7 @@ turnLoop:
 		// SEC-26: Global daily cost cap pre-check. Deny if the accumulated cost
 		// for today already meets or exceeds the cap. The system agent is exempt.
 		if al.rateLimiter != nil && cfg.Sandbox.RateLimits.DailyCostCapUSD > 0 &&
-			!security.IsSystemAgent(ts.agent.ID) {
+			!security.IsPrivilegedAgent(ts.agent.AgentType) {
 			if currentCost := al.rateLimiter.GetDailyCost(); currentCost >= cfg.Sandbox.RateLimits.DailyCostCapUSD {
 				capRule := fmt.Sprintf("global daily cost cap exceeded ($%.2f)", cfg.Sandbox.RateLimits.DailyCostCapUSD)
 				al.recordRateLimitDenial(
@@ -3584,7 +3636,7 @@ turnLoop:
 		// every subsequent call sneak through.
 		if al.rateLimiter != nil && response != nil && response.Usage != nil {
 			callCost := estimateLLMCallCost(llmModel, response.Usage)
-			al.rateLimiter.RecordSpend(callCost, ts.agent.ID)
+			al.rateLimiter.RecordSpend(callCost, ts.agent.AgentType)
 			// Accumulate turn-level stats so the "done" WS frame can surface
 			// real token counts and cost to the chat UI (issue #12).
 			ts.AddTurnStats(int64(response.Usage.TotalTokens), callCost)
@@ -3950,7 +4002,7 @@ turnLoop:
 
 			// SEC-26: Per-agent tool call rate limit check. The system agent is exempt.
 			if al.rateLimiter != nil && cfg.Sandbox.RateLimits.MaxAgentToolCallsPerMinute > 0 &&
-				!security.IsSystemAgent(ts.agent.ID) {
+				!security.IsPrivilegedAgent(ts.agent.AgentType) {
 				toolWindow := al.rateLimiter.GetOrCreate(
 					"agent:"+ts.agent.ID+":tool_call",
 					cfg.Sandbox.RateLimits.MaxAgentToolCallsPerMinute,

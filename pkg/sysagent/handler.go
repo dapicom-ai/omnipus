@@ -172,7 +172,7 @@ func (h *SystemToolHandler) logAuditWithSource(
 	entry := &audit.Entry{
 		Timestamp:  start,
 		Event:      audit.EventToolCall,
-		AgentID:    SystemAgentID,
+		AgentID:    SystemAgentName,
 		Tool:       toolName,
 		Decision:   decision,
 		Parameters: args,

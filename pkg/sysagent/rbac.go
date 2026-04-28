@@ -2,10 +2,11 @@
 // License: MIT
 // Copyright (c) 2026 Omnipus contributors
 
-// Package sysagent implements the Omnipus system agent (omnipus-system) per
-// BRD Appendix D. It is always-on, uses the user's configured LLM provider,
-// and exposes 35 exclusive system.* tools for managing agents, channels,
-// providers, skills, config, diagnostics, and more.
+// Package sysagent implements the Omnipus built-in system agent per BRD
+// Appendix D. It uses the user's configured LLM provider and exposes the
+// 35 system.* tools for managing agents, channels, providers, skills,
+// config, diagnostics, and more. These tools are now ordinary builtins
+// on the central registry, governed by per-agent policy (FR-045).
 //
 // RBAC (SEC-19): tool access is gated by the caller's role.
 // Rate limiting: per-category sliding windows guard against runaway ops.
