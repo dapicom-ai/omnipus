@@ -1401,40 +1401,77 @@ export function fetchExecProxyStatus(): Promise<ExecProxyStatus> {
 
 // ── Agent Tools ───────────────────────────────────────────────────────────────
 
-export interface BuiltinTool {
+/**
+ * Central registry tool entry (FR-027, FR-029).
+ * Replaces the narrower BuiltinTool shape — includes a source discriminator
+ * so the UI can badge MCP tools differently from builtin ones.
+ */
+export interface RegistryTool {
   name: string
   scope: 'system' | 'core' | 'general'
   category: string
   description: string
+  /** Origin of the tool. 'builtin' = compiled-in Go tool; 'mcp' = MCP server tool. */
+  source: 'builtin' | 'mcp'
 }
+
+/** Backward-compat alias — existing callers that reference BuiltinTool still work. */
+export type BuiltinTool = RegistryTool
 
 export interface AgentToolsCfg {
   builtin: {
     default_policy?: 'allow' | 'ask' | 'deny'
     policies?: Record<string, 'allow' | 'ask' | 'deny'>
-    // Legacy fields (backward compat)
-    mode?: 'explicit' | 'inherit'
-    visible?: string[]
   }
   mcp?: { servers: { id: string; tools?: string[] }[] }
 }
 
-export function fetchBuiltinTools(): Promise<BuiltinTool[]> {
-  return request<BuiltinTool[]>('/tools/builtin')
+/**
+ * Per-tool entry returned by GET /agents/{id}/tools (FR-086, MAJ-008).
+ * Exposes both the configured policy and the effective (post-fence) policy
+ * so the UI can display policy downgrades.
+ */
+export interface AgentToolEntry {
+  name: string
+  configured_policy: 'allow' | 'ask' | 'deny'
+  effective_policy: 'allow' | 'ask' | 'deny'
+  /** True when the tool is admin-required and the agent type is 'custom' — policy was downgraded to 'ask'. */
+  fence_applied: boolean
+  /** True when the tool requires admin approval regardless of configured policy. */
+  requires_admin_ask: boolean
 }
+
+/** Fetch all tools from the central registry (FR-027). Includes both builtin and MCP tools. */
+export function fetchRegistryTools(): Promise<RegistryTool[]> {
+  return request<RegistryTool[]>('/tools')
+}
+
+/** Backward-compat alias — callers that used fetchBuiltinTools() still work. */
+export const fetchBuiltinTools = fetchRegistryTools
 
 export function fetchMcpServersForAgent(): Promise<McpServer[]> {
   return request<McpServer[]>('/mcp-servers')
 }
 
-export function fetchAgentTools(agentId: string): Promise<{ config: AgentToolsCfg; effective_tools: BuiltinTool[] }> {
-  return request<{ config: AgentToolsCfg; effective_tools: BuiltinTool[] }>(`/agents/${encodeURIComponent(agentId)}/tools`)
+export function fetchAgentTools(agentId: string): Promise<{ config: AgentToolsCfg; tools: AgentToolEntry[] }> {
+  return request<{ config: AgentToolsCfg; tools: AgentToolEntry[] }>(`/agents/${encodeURIComponent(agentId)}/tools`)
 }
 
-export function updateAgentTools(agentId: string, cfg: AgentToolsCfg): Promise<{ config: AgentToolsCfg; effective_tools: BuiltinTool[] }> {
-  return request<{ config: AgentToolsCfg; effective_tools: BuiltinTool[] }>(`/agents/${encodeURIComponent(agentId)}/tools`, {
+export function updateAgentTools(agentId: string, cfg: AgentToolsCfg): Promise<{ config: AgentToolsCfg; tools: AgentToolEntry[] }> {
+  return request<{ config: AgentToolsCfg; tools: AgentToolEntry[] }>(`/agents/${encodeURIComponent(agentId)}/tools`, {
     method: 'PUT',
     body: JSON.stringify(cfg),
+  })
+}
+
+/**
+ * POST /api/v1/tool-approvals/{approvalId} — resolve a pending tool approval.
+ * FR-011, FR-082. Throws with status code prefix on non-2xx (e.g. "403: ...").
+ */
+export function postToolApproval(approvalId: string, action: 'approve' | 'deny' | 'cancel'): Promise<void> {
+  return request<void>(`/tool-approvals/${encodeURIComponent(approvalId)}`, {
+    method: 'POST',
+    body: JSON.stringify({ action }),
   })
 }
 

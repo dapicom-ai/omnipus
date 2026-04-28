@@ -5,6 +5,7 @@ import { Sidebar } from './Sidebar'
 import { useSidebarStore } from '@/store/sidebar'
 import { SessionBar } from '@/components/chat/SessionBar'
 import { ToastContainer } from '@/components/ui/toast-container'
+import { ToolApprovalModal } from '@/components/agents/ToolApprovalModal'
 import { OmnipusRuntimeProvider } from '@/components/chat/OmnipusRuntimeProvider'
 import { ErrorBoundary } from '@/components/ui/error-boundary'
 import { queryClient } from '@/lib/queryClient'
@@ -98,6 +99,9 @@ export function AppShell() {
 
       {/* Global toast notifications */}
       <ToastContainer />
+
+      {/* Tool approval modal — FR-011, FR-082 */}
+      <ToolApprovalModal />
     </div>
   )
 }

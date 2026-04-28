@@ -952,6 +952,28 @@ func setupAndStartServices(
 	onboardingMgr := onboarding.NewManager(homePath)
 	tStore := agent.GetTaskStore(agentLoop)
 	tExecutor := agent.GetTaskExecutor(agentLoop)
+	// Build the approval registry using gateway config (FR-016, SC-006).
+	// Negative max_pending is rejected here; 0 allows unlimited (with WARN).
+	approvalMaxPending := cfg.Gateway.ToolApprovalMaxPending
+	if approvalMaxPending < 0 {
+		slog.Error("gateway: tool_approval_max_pending must be >= 0; got negative value — refusing to start",
+			"value", approvalMaxPending)
+		return nil, fmt.Errorf("gateway.tool_approval_max_pending must not be negative (got %d)", approvalMaxPending)
+	}
+	if approvalMaxPending == 0 {
+		slog.Warn("gateway: tool_approval_max_pending=0 — approval saturation guard DISABLED (DoS risk)")
+	}
+	approvalTimeout := cfg.Gateway.ToolApprovalTimeout
+	var approvalTimeoutDur time.Duration
+	if approvalTimeout > 0 {
+		approvalTimeoutDur = time.Duration(approvalTimeout) * time.Second
+	} else {
+		approvalTimeoutDur = 300 * time.Second // SC-006 default
+	}
+	approvalReg := newApprovalRegistryV2(approvalMaxPending, approvalTimeoutDur)
+	// Share the approval registry with the WS handler for session_state emission (FR-052).
+	wsHandler.approvalRegV2 = approvalReg
+
 	api := &restAPI{
 		agentLoop:     agentLoop,
 		allowedOrigin: allowedOrigin,
@@ -966,6 +988,7 @@ func setupAndStartServices(
 		appliedConfig: mustDeepCopyConfig(cfg),         // boot-time snapshot for pending-restart diff
 		servedSubdirs: runningServices.servedSubdirs,   // serve_workspace token registry
 		devServers:    runningServices.devServers,       // run_in_workspace process registry
+		approvalReg:   approvalReg,                     // FR-016: in-process tool approval registry
 	}
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions", api.withAuth(api.HandleSessions))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions/", api.withAuth(api.HandleSessions))

@@ -1101,6 +1101,19 @@ type GatewayConfig struct {
 	// with no proxy, any client can spoof their audit IP by sending this header.
 	// See docs/operations/reverse-proxy.md for setup instructions.
 	TrustXFF bool `json:"trust_xff,omitempty" env:"OMNIPUS_GATEWAY_TRUST_XFF"`
+
+	// Tool approval configuration (FR-016, SC-006).
+	// ToolApprovalTimeout is the per-request approval deadline in seconds.
+	// Default: 300 s (5 minutes).  Negative values are rejected at boot.
+	ToolApprovalTimeout int `json:"tool_approval_timeout,omitempty" env:"OMNIPUS_TOOL_APPROVAL_TIMEOUT"`
+	// ToolApprovalMaxPending is the saturation cap for concurrent pending approvals.
+	// Default: 64.  0 = unlimited (emits WARN at boot + audit event).
+	// Negative values are rejected at boot with HIGH audit + non-zero exit.
+	ToolApprovalMaxPending int `json:"tool_approval_max_pending,omitempty" env:"OMNIPUS_TOOL_APPROVAL_MAX_PENDING"`
+	// TurnSyntheticErrorFloor is the number of consecutive synthetic-deny tool
+	// results within a single turn before the loop aborts the turn (FR-084).
+	// Default: 8.  0 means use the default.
+	TurnSyntheticErrorFloor int `json:"turn_synthetic_error_floor,omitempty" env:"OMNIPUS_TURN_SYNTHETIC_ERROR_FLOOR"`
 }
 
 type ToolDiscoveryConfig struct {

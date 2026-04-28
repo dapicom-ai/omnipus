@@ -6,6 +6,7 @@ import { useSessionStore, registerChatResetSession, registerChatSetReplaying } f
 import { queryClient } from '@/lib/queryClient'
 import type { Message, ToolCall } from '@/lib/api'
 import type { WsReceiveFrame, WsExecApprovalRequestFrame, WsReplayMessageFrame, WsRateLimitFrame, WsSubagentStartFrame, WsSubagentEndFrame } from '@/lib/ws'
+import { useToolApprovalStore } from '@/store/toolApproval'
 
 export interface MediaAttachment {
   type: 'image' | 'audio' | 'video' | 'file'
@@ -942,6 +943,24 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         })
         break
       }
+
+      case 'tool_approval_required':
+        // FR-011, FR-082: enqueue tool-policy approval; modal renders from useToolApprovalStore
+        useToolApprovalStore.getState().enqueue(frame)
+        break
+
+      case 'session_state':
+        // FR-052, FR-073, FR-081: reconcile pending approvals on reconnect
+        useToolApprovalStore.getState().reconcileWithSessionState(frame)
+        break
+
+      case 'system_overload':
+        // FR-016, MAJ-009: surface overload warning toast
+        useUiStore.getState().addToast({
+          message: frame.message ?? 'System at capacity — agent action blocked. Retry shortly.',
+          variant: 'warning',
+        })
+        break
 
       default:
         // W3-7b: log the actual type string, not [object Object] from the whole frame.

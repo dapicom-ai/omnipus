@@ -178,6 +178,42 @@ export interface WsAgentSwitchedFrame {
   agent_name?: string  // included by backend for display without an extra lookup
 }
 
+// FR-011, FR-082: tool-policy approval request
+export interface WsToolApprovalRequiredFrame {
+  type: 'tool_approval_required'
+  approval_id: string
+  tool_call_id: string
+  tool_name: string
+  args: Record<string, unknown>
+  agent_id: string
+  session_id: string
+  turn_id: string
+  /** Relative expiry in milliseconds from receipt. Client computes expiresAt = Date.now() + expires_in_ms. */
+  expires_in_ms: number
+}
+
+// FR-052, FR-073, FR-081: session state reset on WS reconnect
+export interface WsSessionStatePendingApproval {
+  approval_id: string
+  session_id: string
+  tool_name: string
+  agent_id: string
+  expires_in_ms: number
+}
+
+export interface WsSessionStateFrame {
+  type: 'session_state'
+  user_id: string
+  pending_approvals: WsSessionStatePendingApproval[]
+  emitted_at: string
+}
+
+// FR-016, MAJ-009: system overload notification
+export interface WsSystemOverloadFrame {
+  type: 'system_overload'
+  session_id: string
+  message?: string
+}
 
 export type WsReceiveFrame =
   | WsTokenFrame
@@ -193,6 +229,9 @@ export type WsReceiveFrame =
   | WsAgentSwitchedFrame
   | WsSubagentStartFrame
   | WsSubagentEndFrame
+  | WsToolApprovalRequiredFrame
+  | WsSessionStateFrame
+  | WsSystemOverloadFrame
 
 /** Allowed status values for subagent_end frames. */
 const SUBAGENT_END_STATUSES = new Set<string>(['success', 'error', 'cancelled', 'interrupted', 'timeout'])

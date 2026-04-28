@@ -123,6 +123,11 @@ type WSHandler struct {
 	// connection that sent it — only that connection's browser tab can respond.
 	approvalRegistry *wsApprovalRegistry
 
+	// approvalRegV2 is the central in-process approval registry for the redesigned
+	// tool-approval flow (FR-011, FR-016, FR-052, FR-073).  Set by the gateway at
+	// construction time; nil in pre-registry test harnesses.
+	approvalRegV2 *approvalRegistryV2
+
 	// devicePairingRegistry tracks in-flight device pairing requests awaiting admin approval.
 	devicePairingRegistry *devicePairingRegistry
 
@@ -140,6 +145,7 @@ type wsConn struct {
 	droppedTokens atomic.Int32
 	droppedFrames atomic.Int32    // non-critical frames dropped due to backpressure
 	role          config.UserRole // RBAC role resolved at auth time
+	userID        string          // authenticated user ID (or "" for legacy token / dev mode)
 
 	// Replay-mode divert (W1-1): during replay, live events arriving via
 	// sendConnFrame are redirected into replayDivertCh instead of sendCh so
@@ -387,6 +393,10 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	go h.writePump(wc)
 	go h.pingPump(wc)
 
+	// Emit session_state one-shot on every new WS connection (FR-052, FR-073, FR-081).
+	// This lets the SPA reconcile stale approval modals after a gateway restart.
+	h.emitSessionState(wc)
+
 	var sessionID string
 	h.readLoop(r.Context(), conn, wc, chatID, &sessionID)
 }
@@ -420,6 +430,7 @@ func (h *WSHandler) authenticateWS(conn *websocket.Conn, wc *wsConn) bool {
 		for _, user := range cfg.Gateway.Users {
 			if user.TokenHash.Verify(rawToken) == nil {
 				wc.role = user.Role
+				wc.userID = user.Username
 				conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 				return true
 			}
