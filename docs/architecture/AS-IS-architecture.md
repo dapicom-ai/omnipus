@@ -1,0 +1,305 @@
+# Omnipus — As-Is Architecture (Evidence-Based)
+
+**Date:** 2026-04-27
+**Method:** Source-only walkthrough of `pkg/` and `cmd/`. Docs, BRDs, and `CLAUDE.md` were intentionally excluded. Every claim cites `file:line`. Anything not present in the code is flagged as a gap, not assumed.
+**Scope:** Agent loop, memory & sessions, tools system (incl. MCP and skills), channels & bus.
+
+---
+
+## 1. Agent Loop
+
+### 1.1 Entry points and turn engine
+
+- `AgentLoop.Run(ctx)` is the top-level dispatcher: an infinite `select` over the message bus that hands each inbound message to `processMessage` — `pkg/agent/loop.go:1037`, `pkg/agent/loop.go:1051`, `pkg/agent/loop.go:1114`.
+- A *turn* is the unit of work the loop performs for one inbound message. The turn engine is `AgentLoop.runTurn(ctx, ts *turnState)` — `pkg/agent/loop.go:2701`.
+- Turn state (phase, iteration counter, parent/child correlation, cancellation handles) is defined in `pkg/agent/turn.go:49`.
+
+### 1.2 Per-turn control flow
+
+The loop is a classic ReAct-style tool-using loop, implemented inline rather than as a state machine:
+
+1. **Context build** — Load history + summary from `Sessions.GetHistory` / `GetSummary`, then `ContextBuilder.BuildMessages` produces the LLM-ready message list. If the budget is exceeded, compression runs first. `pkg/agent/loop.go:2772-2820`.
+2. **User-message persist** — `pkg/agent/loop.go:2823-2835`.
+3. **Iterate up to `2 * MaxIterations`** — `pkg/agent/loop.go:2865-2875`. Soft limit is `agent.MaxIterations` (default 20, `pkg/agent/instance.go:140`); hard ceiling is the doubled value.
+4. **Model selection** — `selectCandidates` picks primary + fallbacks, optionally routing to a light model via `routing.Router` (`pkg/agent/loop.go:2838`, `pkg/agent/instance.go:183-213`).
+5. **LLM call** — `provider.Chat` or `ChatStream`, with a `FallbackChain` retrying across candidates on timeout / context overflow / auth / rate-limit errors. `pkg/agent/loop.go:3134-3191`, `pkg/agent/loop.go:3216-3242`.
+6. **Tool dispatch** — for each `response.ToolCalls`:
+   - normalize name (`.` → `_`), `pkg/agent/loop.go:3714`
+   - run before/approval hooks, `pkg/agent/loop.go:3718-3794`
+   - rate-limit check (per-agent-per-minute), `pkg/agent/loop.go:3906-3959`
+   - registry execute via `Tools.ExecuteWithContext(...)`, `pkg/agent/loop.go:3966`
+   - sanitize untrusted results with `PromptGuard.Sanitize` (web_search, web_fetch, browser_*, read_file), `pkg/agent/loop.go:4079-4128`
+   - append result message with `ToolCallID` correlation, `pkg/agent/loop.go:4130-4164`
+7. **Termination** — exit when no tool calls remain, when iteration ceiling is hit, when graceful interrupt has been requested, or on hard abort. Final response persisted, summarization optionally fired. `pkg/agent/loop.go:4337-4393`.
+
+### 1.3 Agent construction
+
+- `AgentInstance` (`pkg/agent/instance.go:25-64`) is the runtime agent. Fields: `ID`, `Name`, `Model`, `Fallbacks`, `Workspace`, `MaxIterations`, `MaxTokens`, `Temperature`, `ThinkingLevel`, `ContextWindow`, plus injected dependencies `Provider`, `Sessions`, `ContextBuilder`, `Tools`, optional `Router`/`LightProvider`. Constructed by `NewAgentInstance` at `pkg/agent/instance.go:67`.
+- `AgentRegistry` (`pkg/agent/registry.go:35`) holds all agents in a normalized-ID map. `GetAgent` (`:88`) and `ResolveRoute` (`:98`) are the lookup paths.
+- **System / Core / Custom differentiation is runtime-thin:** the same `AgentInstance` struct is used for all three. The differences are:
+  - System agent → `security.IsSystemAgent(id)` toggles rate-limit exemption (`pkg/agent/loop.go:2882, 2914`) and unlocks `ScopeSystem` tools.
+  - Core agents (Jim, Ava, Mia, Ray, Max) are seeded with `Locked=true` and have their prompts compiled into the binary via the `prompts` map (`pkg/coreagent/core.go:24-150`, prompts at `:86`, seed at `:109-128`).
+  - Custom agents come from `config.Agents.List` and use the same pipeline with no identity locks.
+
+### 1.4 Provider abstraction
+
+- `LLMProvider` (`pkg/providers/types.go:24-52`): `Chat(ctx, messages, tools, model, options) (*LLMResponse, error)` + `GetDefaultModel()`.
+- Optional capabilities expressed as separate interfaces: `StreamingProvider.ChatStream(...)`, `ThinkingCapable.SupportsThinking()`. Detected via type assertion at call sites (`pkg/agent/loop.go:3062`, `:3172`).
+- Concrete providers: `claude_provider.go`, `factory_provider.go` (OpenAI-compatible incl. OpenRouter), `legacy_provider.go`.
+
+### 1.5 Streaming
+
+- When `StreamingProvider` is implemented and the bus has a streamer, `ChatStream` is invoked with an `onChunk(accumulated)` callback that pushes deltas to `streamer.Update(...)` — `pkg/agent/loop.go:3167-3187`.
+- The streamer is finalized once at turn end (`finalizeStreamer`, `pkg/agent/turn.go:305-321`) so a single "done" frame is emitted per turn even when intermediate tool loops continue.
+
+### 1.6 Termination, cancellation, error handling
+
+- **Iteration**: hard ceiling `2 × MaxIterations` (`pkg/agent/loop.go:2865`).
+- **Per-turn timeout**: `context.WithTimeout` from `agent.TimeoutSeconds` (`pkg/agent/instance.go:218-221`, `pkg/agent/loop.go:2709-2714`).
+- **Graceful interrupt**: `ts.requestGracefulInterrupt()` (`pkg/agent/turn.go:329`) suppresses tool execution; the next assistant text is treated as final (`pkg/agent/loop.go:3017`, `:3046`).
+- **Hard abort**: `ts.requestHardAbort()` (`pkg/agent/turn.go:352`) cancels both `turnCancel` and `providerCancel`, then cascades to all `childTurnIDs` (`pkg/agent/turn.go:505-514`); session is rolled back to a restore point (`pkg/agent/loop.go:4380`).
+- **Context overflow**: triggers compression (`pkg/agent/loop.go:2795-2819`); other recoverable errors fall through `FallbackChain`.
+
+### 1.7 Audit and rate limiting
+
+- `audit.Logger` is wired into the tool registry and the loop (`pkg/agent/loop.go:259-289`); policy decisions, prompt-guard mutations, and rate-limit denials are logged. `cfg.Sandbox.AuditLog=false` disables logging but **not** policy enforcement.
+- Per-agent token budgets and per-minute LLM/tool call counts are tracked via `rateLimiter.GetOrCreate` (`pkg/agent/loop.go:2883-2890`); a daily cost cap is enforced at `:2913-2935`.
+
+---
+
+## 2. Memory & Session
+
+### 2.1 What "memory" actually is in code
+
+Memory in this codebase is **conversation history + a rolling summary**. There is **no** RAG, vector index, semantic retrieval, or per-fact memory layer. Retrieval is linear playback of stored messages.
+
+- `pkg/memory/store.go:9-42` defines the `Store` interface: `AddMessage`, `AddFullMessage`, `GetHistory`, `SetHistory`, `GetSummary`, `SetSummary`, `Truncate`, `Compact`.
+- `JSONLStore` (`pkg/memory/jsonl.go`) is the canonical implementation: append-only JSONL with a sidecar `meta.json` containing summary, skip offset, and counts.
+- `pkg/session/manager.go` (`SessionManager`, RWMutex over an in-memory map, JSON snapshots on `Save`) is the legacy path; new sessions use `UnifiedStore` (`pkg/session/unified.go:51-100`) which delegates message storage to a `JSONLStore` under `.context/`.
+
+### 2.2 On-disk layout
+
+- Per-agent root: `~/.omnipus/agents/{agentID}/sessions/`.
+- Per session:
+  - `meta.json` — `SessionMeta`: ID, status (`StatusActive` | `StatusArchived` | `StatusInterrupted`, `pkg/session/daypartition.go:40-50`), timestamps, per-agent compaction summaries.
+  - `.context/{sanitized_key}.jsonl` — one message per line.
+  - `.context/{sanitized_key}.meta.json` — `sessionMeta` (`pkg/memory/jsonl.go:35-43`) with summary, skip offset, message count.
+  - `transcript.jsonl` — day-partitioned record with `EntryType` ∈ {`Message`, `Compaction`, `System`, `ToolCall`} (`pkg/session/daypartition.go:26-38`).
+- Path sanitization replaces `:`, `/`, `\` with `_` for cross-platform safety (`pkg/memory/jsonl.go:92-97`).
+- `~/.omnipus/agents/{agentID}/memory/daily/` is **created** by `pkg/datamodel/init.go:140-172` but **not written to** by any code in `pkg/memory` or `pkg/session` — gap.
+
+### 2.3 Token counting and compression
+
+- Token counting is a single chars-per-token heuristic regardless of model: `tokens = chars × 2 / 5` plus 256/media item and 12/message overhead (`pkg/agent/context_budget.go:89-131`). No provider-specific tokenizer.
+- `isOverContextBudget` is checked before each LLM call (`pkg/agent/context_budget.go:161-176`).
+- `forceCompression` (`pkg/agent/loop.go:4473-4550`) drops ~50% of oldest *turns* (boundaries detected by `parseTurnBoundaries`, `pkg/agent/context_budget.go:22-30`) and writes a summary note via `SetHistory` + `Save`. The original lines remain on disk; only the meta `Skip` offset advances.
+- `Compact` (`pkg/memory/jsonl.go:405-442`) physically rewrites the JSONL to discard skipped lines.
+
+### 2.4 Persistence and concurrency
+
+- Atomic writes everywhere (`fileutil.WriteFileAtomic`, `os.Rename`) — `pkg/memory/jsonl.go:119-125`, `:444-459`; `pkg/session/manager.go:219-254`.
+- JSONLStore uses a **64-shard mutex pool** keyed by FNV hash of session key (`pkg/memory/jsonl.go:21-77`), giving O(1) memory regardless of session count.
+- `UnifiedStore` has a coarse `sync.Mutex` for directory ops (`pkg/session/unified.go:56-60`).
+- Crash safety: meta is written *before* JSONL rewrite, so a crash mid-Compact leaves `Skip=0` and the old JSONL intact — readers may see "extra" messages but never lose data (`pkg/memory/jsonl.go:383-396, 427-441`).
+
+### 2.5 Retention
+
+- `RetentionSweep` (`pkg/session/retention_sweep.go:18-89`) deletes JSONL files older than `storage.retention.session_days` (default in `pkg/datamodel/init.go:56-60`). Default 90 days. No per-message TTL.
+
+### 2.6 Heartbeat
+
+- `pkg/heartbeat/service.go` is unrelated to memory: it polls a `TaskQueueChecker` and emits via the `MessageBus`. No memory/session interaction.
+
+### 2.7 Memory gaps (in-code reality vs. apparent intent)
+
+1. No RAG / embeddings / semantic recall.
+2. No per-provider tokenizer.
+3. The `memory/daily/` directory is provisioned but never used.
+4. No per-message TTL; only session-level retention.
+5. No memory export/backup API surfaced through the gateway.
+
+---
+
+## 3. Tools System
+
+### 3.1 The `Tool` interface and registry
+
+```go
+// pkg/tools/types.go:22-30
+type Tool interface {
+    Name() string
+    Description() string
+    Parameters() map[string]any
+    Execute(ctx context.Context, args map[string]any) *ToolResult
+    Scope() ToolScope
+}
+```
+
+- **Registry**: `ToolRegistry` (`pkg/tools/registry.go:25-31`) is a `map[string]*ToolEntry` with a `sync.RWMutex` and a version atomic for cache invalidation.
+- **Registration is explicit** — there are no `init()`-based tool registrations. `Register` / `RegisterHidden` are called from:
+  - `registerSharedTools` in the agent loop (`pkg/agent/loop.go:720-752`),
+  - `ToolCompositor.ComposeAndRegister` (`pkg/tools/compositor.go:30-75`),
+  - `sysagent/tools.BuildRegistry()` for the system agent (`pkg/sysagent/tools/registry.go:13-74`).
+- **Hidden tools have a TTL**; core tools persist (`pkg/tools/registry.go:141-149`). MCP tools are registered hidden until a skill promotes them.
+- **Async tools**: `AsyncExecutor` interface (`pkg/tools/types.go:133-139`); `ExecuteWithContext` detects and dispatches async tools with a callback.
+
+### 3.2 Scope model
+
+`ScopeSystem` (system agent only) > `ScopeCore` (system + core agents) > `ScopeGeneral` (all). Defined in `pkg/tools/base.go:5-19`. Filtering is done by `FilterToolsByVisibility` per agent (`pkg/tools/compositor.go:219-277`).
+
+### 3.3 Tool catalog and JSON schema
+
+- Canonical catalog of 35 builtin tools is enumerated in `pkg/tools/catalog.go:45-147` (file/code/web/browser/communication/task/automation/search/skills/hardware/system).
+- File implementations include: `shell.go`, `filesystem.go`, `web.go`, `browser/`, `send_file.go`, `edit.go`, `handoff.go`, `message.go`, `mcp_tool.go`, `build_static.go`, `cron.go`, `spawn.go`, `subagent.go`, `task.go`, `skills_install.go`, `skills_search.go`, `skills_remove.go`, `i2c.go`/`i2c_linux.go`, `spi.go`/`spi_linux.go`.
+- Schema export: `ToolToSchema` (`pkg/tools/types.go:141-150`) emits OpenAI/Anthropic function format `{type:"function", function:{name, description, parameters}}`.
+
+### 3.4 System tools (`pkg/sysagent/tools`)
+
+All 35 `system.*` tools are present and implemented in `pkg/sysagent/tools/`:
+- `agent.go` (6), `project.go` (4), `task.go` (4), `channel.go` (5), `skill.go` (4), `mcp.go` (3), `provider.go` (4), `pin.go` (3), `config.go` (2), `diag.go` (4).
+- `BuildRegistry()` (`pkg/sysagent/tools/registry.go:13-74`) constructs a dedicated `ToolRegistry` populated by `AllTools()`. They share the standard `Tool` interface but live behind `ScopeSystem`.
+
+### 3.5 Permissions / sandboxing wiring
+
+- Per-agent gating runs in `ToolCompositor.ComposeAndRegister(agentID)` via `policy.Evaluator.EvaluateTool` / `auditor.EvaluateTool` (`pkg/tools/compositor.go:134-174`).
+- Sandbox enforcement (Landlock/seccomp) is set up later in the boot path at `pkg/agent/loop.go:672+`, not inside `pkg/tools`.
+
+### 3.6 Plugin loading — what's actually there
+
+- **No `plugin.Open`** for `.so`/`.dll`.
+- **No subprocess execution** of tools (the only `exec.Command` in channel/tool code is Weixin's SILK voice transcoder, a media codec — `pkg/channels/weixin/media.go`).
+- **No RPC tool transport.**
+- The only out-of-process extension is **MCP** (see §3.7).
+
+---
+
+## 4. MCP
+
+- `pkg/mcp/manager.go:100-114` — `Manager` holds `servers map[string]*ServerConnection`; each `ServerConnection` wraps an `*mcp.Client`, a `*mcp.ClientSession`, and a discovered `[]*mcp.Tool` list.
+- **Configuration**: `MCPServerConfig` with `Name`, `URL`, `Command`, `Args`, `Headers`, `EnvFile`, `Enabled` (`pkg/mcp/manager.go:124-237`). Transport is auto-detected: `Command` → stdio, `URL` → HTTP/SSE.
+- **Lifecycle**: `LoadFromConfig` connects all enabled servers concurrently → `ConnectServer` initializes a session → `GetAllTools` returns `map[serverName][]*mcp.Tool` → `CallTool(server, tool, args)` invokes (`pkg/mcp/manager.go:239-330+`).
+- **Unification with the native registry**: `MCPTool` wrapper (`pkg/tools/mcp_tool.go`) implements `Tool` with name `serverName:toolName` (sanitized, `:57-101`). At compose time, native tools and MCP tools merge under one registry (`pkg/tools/compositor.go:30-75`); on name collision, MCP wins. MCP tools enter as **hidden** until a skill's `allowed-tools` promotes them via TTL.
+
+---
+
+## 5. Skills
+
+- **Format**: `SKILL.md` with YAML/JSON frontmatter + Markdown body. Frontmatter fields: `name`, `description`, `argument-hint`, `context`, `allowed-tools`, `model-hint`, `extra:*` (`pkg/skills/loader.go:28-39`).
+- **Discovery**: `SkillsLoader` (`pkg/skills/loader.go:99-187`) scans, in priority order: workspace `{workspace}/skills/`, global `~/.omnipus/skills/`, then compiled-in builtins. `ListSkills` walks directories for `SKILL.md`.
+- **Skills are not tools.** They are prompt-fragments + a declared tool allow-list. `DiscoverAllTools` (`pkg/skills/discovery.go:16-44`) extracts the `allowed-tools` field across loaded skills; the compositor then registers (or unhides) those tools subject to policy.
+- **Registry**: `SkillRegistry` interface with `Search`, `GetSkillMeta`, `DownloadAndInstall` (`pkg/skills/registry.go:49-117`). `RegistryManager` aggregates registry sources; ClawHub is the only implementation (REST + hash verification, surfaces `IsMalwareBlocked` / `IsSuspicious` / `Verified` flags).
+- **Promotion to runtime**: hidden tools declared by a skill are promoted via `PromoteTools` (TTL=1) so they become visible to the LLM only when the skill is active.
+
+---
+
+## 6. Channels & Bus
+
+### 6.1 The `Channel` interface
+
+```go
+// pkg/channels/base.go:47-56
+type Channel interface {
+    Name() string
+    Start(ctx context.Context) error
+    Stop(ctx context.Context) error
+    Send(ctx context.Context, msg bus.OutboundMessage) error
+    IsRunning() bool
+    IsAllowed(senderID string) bool
+    IsAllowedSender(sender bus.SenderInfo) bool
+    ReasoningChannelID() string
+}
+```
+
+Capability extensions are opt-in interfaces: `TypingCapable`, `MessageEditor`, `MessageDeleter`, `ReactionCapable`, `PlaceholderCapable`, `StreamingCapable`, `CommandRegistrarCapable` (`pkg/channels/interfaces.go:13-70`). Detected via type assertion.
+
+### 6.2 Implementations present
+
+- **In-process Go channels**: telegram, discord, feishu, matrix, line, qq, dingtalk, slack, irc, wecom, weixin, googlechat, onebot, maixcam, whatsapp_native.
+- **External bridge**: whatsapp (WebSocket to a separate process, configured via `BridgeURL` — `pkg/channels/whatsapp/whatsapp.go:31-46`).
+- All are compiled into the binary; the WhatsApp bridge is a config-driven WebSocket client, not a generalized `BridgeAdapter` type. **No separate `BridgeAdapter` interface exists in the code.**
+
+### 6.3 Registration pattern
+
+```go
+// pkg/channels/registry.go (paraphrased)
+type ChannelFactory func(*config.Config, credentials.SecretBundle, *bus.MessageBus) (Channel, error)
+func RegisterFactory(name string, f ChannelFactory) // sync.Mutex-guarded map
+```
+
+Each subpackage calls `RegisterFactory` from its `init.go`:
+
+```go
+// pkg/channels/telegram/init.go:10-16
+func init() {
+    channels.RegisterFactory("telegram", func(...) (channels.Channel, error) {
+        return NewTelegramChannel(cfg, secrets, b)
+    })
+}
+```
+
+This is **compile-time open** (anyone implementing the interface and importing the package gets registered), but **runtime closed** (no plugin load, no `.so`, no subprocess discovery).
+
+### 6.4 Activation is hardcoded
+
+`Manager.initChannels()` (`pkg/channels/manager.go:433-530`) is a **fixed if-ladder over typed config fields**:
+
+```go
+if channels.Telegram.Enabled && channels.Telegram.TokenRef != "" {
+    m.initChannel("telegram", "Telegram")
+}
+// ... 16 more branches, including the WhatsApp Native vs Bridge fork
+```
+
+Each branch references a hand-written field in `ChannelsConfig` (`pkg/config/config.go:673-690`). Adding a new channel requires editing both `ChannelsConfig` and `initChannels()` — even though the factory map itself would accept a new name without changes.
+
+### 6.5 Bus model
+
+- `MessageBus` (`pkg/bus/bus.go:33-44`) carries three buffered Go channels: `inbound`, `outbound`, `outboundMedia` (default buffer 64, `:15`).
+- Methods: `PublishInbound` / `PublishOutbound` / `PublishOutboundMedia` and matching read-only chan accessors (`pkg/bus/bus.go:79-99`).
+- Topic model: each message has a `Channel` field (`pkg/bus/types.go:31, 45, 62`); routing by name happens in `Manager.dispatchOutbound` (`pkg/channels/manager.go:1050-1070`), which forwards to per-channel worker queues (`runWorker` at `:900+`).
+
+### 6.6 End-to-end flow
+
+```
+Channel.HandleMessage  →  bus.PublishInbound
+            ↓
+AgentLoop.Run reads bus.InboundChan()
+            ↓
+runTurn → provider.Chat / tools / runTurn iterates
+            ↓
+agent publishes via bus.PublishOutbound
+            ↓
+Manager.dispatchOutbound → worker queue → Channel.Send
+```
+
+Channels publish *into* and the manager consumes *from* the bus — channels themselves do not subscribe directly (`pkg/channels/base.go:232-315`, `pkg/channels/manager.go:1050-1070`, `pkg/agent/loop.go:1058`).
+
+### 6.7 Routing
+
+`pkg/routing/router.go:27-82` is **model-tier routing**, not agent routing. `SelectModel(msg, history, primaryModel)` returns either the primary or a light model based on a complexity classifier. Agent selection lives in `AgentLoop.processMessage` (which agent owns this session/inbound).
+
+---
+
+## 7. Cross-cutting summary table
+
+| Subsystem | Interface | Registry | Registration site | Runtime extension? |
+|---|---|---|---|---|
+| Tools (native) | `tools.Tool` | `tools.ToolRegistry` (mutex map) | Explicit calls in `registerSharedTools`, `ToolCompositor`, `sysagent.BuildRegistry` | No (compile-in only) |
+| Tools (MCP) | `tools.Tool` via `MCPTool` wrapper | Same registry, hidden + promoted | `mcp.Manager.LoadFromConfig` + compositor | **Yes — config-driven, stdio or HTTP/SSE subprocess** |
+| Skills | `skills.SkillRegistry` (for sources) | `RegistryManager` + filesystem scan | `SkillsLoader` scans 3 dirs | **Yes — filesystem drop-in + ClawHub install** |
+| Channels | `channels.Channel` (+ capability ifaces) | Factory map (`RegisterFactory`) | `func init()` per subpackage | No (also requires editing `ChannelsConfig` + `initChannels()` switch) |
+| Memory | `memory.Store` | n/a (per-agent JSONL) | n/a | No |
+| Providers | `providers.LLMProvider` (+ optional capability ifaces) | n/a (selected by name in agent config) | Hardcoded in factory | No |
+
+---
+
+## 8. Confirmed gaps (in-code, vs. apparent design)
+
+1. No vector / semantic memory — only linear JSONL playback (`pkg/memory/jsonl.go`).
+2. No provider-specific tokenization — single chars/token heuristic (`pkg/agent/context_budget.go:89-131`).
+3. `memory/daily/` directory is provisioned but unused (`pkg/datamodel/init.go:140-172` vs. no writers).
+4. No generalized `BridgeAdapter` type for external channels — WhatsApp encodes the bridge directly (`pkg/channels/whatsapp/whatsapp.go:31-46`).
+5. No runtime plugin loading anywhere (no `plugin.Open`, no subprocess channels, no subprocess tools other than MCP servers).
+6. Channel activation requires editing two files (`pkg/config/config.go` + `pkg/channels/manager.go:initChannels`) on top of `RegisterFactory`.
+7. Streaming is opt-in per provider; non-streaming providers degrade silently to single-shot responses.
+8. Per-turn iteration ceiling is hardcoded as `2 × MaxIterations` (`pkg/agent/loop.go:2865`); the soft limit is the only config knob.

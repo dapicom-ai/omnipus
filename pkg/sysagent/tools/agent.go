@@ -157,16 +157,6 @@ func (t *AgentCreateTool) Parameters() map[string]any {
 				"items":       map[string]any{"type": "string"},
 				"description": "Agent IDs this agent can delegate tasks to. Use ['*'] for all.",
 			},
-			"tools_mode": map[string]any{
-				"type":        "string",
-				"enum":        []string{"inherit", "explicit"},
-				"description": "Tool visibility: 'inherit' = all scope-appropriate tools, 'explicit' = only named tools",
-			},
-			"tools_visible": map[string]any{
-				"type":        "array",
-				"items":       map[string]any{"type": "string"},
-				"description": "Tool names to enable when tools_mode='explicit'",
-			},
 			"max_tool_iterations": map[string]any{
 				"type":        "integer",
 				"description": "Max tool calls per turn (0 = system default)",
@@ -256,24 +246,6 @@ func (t *AgentCreateTool) Execute(_ context.Context, args map[string]any) *tools
 					newAgent.CanDelegateTo = append(newAgent.CanDelegateTo, s)
 				}
 			}
-		}
-		// Optional: tool visibility (legacy mode/visible args converted to policy format).
-		if mode, ok := args["tools_mode"].(string); ok && (mode == "inherit" || mode == "explicit") {
-			toolsCfg := &config.AgentToolsCfg{}
-			if mode == "explicit" {
-				toolsCfg.Builtin.DefaultPolicy = config.ToolPolicyDeny
-				if vis, ok := args["tools_visible"].([]any); ok {
-					toolsCfg.Builtin.Policies = make(map[string]config.ToolPolicy, len(vis))
-					for _, v := range vis {
-						if s, ok := v.(string); ok && s != "" {
-							toolsCfg.Builtin.Policies[s] = config.ToolPolicyAllow
-						}
-					}
-				}
-			} else {
-				toolsCfg.Builtin.DefaultPolicy = config.ToolPolicyAllow
-			}
-			newAgent.Tools = toolsCfg
 		}
 		cfg.Agents.List = append(cfg.Agents.List, newAgent)
 		finalID = id
@@ -371,8 +343,6 @@ func (t *AgentUpdateTool) Parameters() map[string]any {
 			"icon":                  map[string]any{"type": "string"},
 			"heartbeat":             map[string]any{"type": "string", "description": "New HEARTBEAT.md content"},
 			"can_delegate_to":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-			"tools_mode":            map[string]any{"type": "string", "enum": []string{"inherit", "explicit"}},
-			"tools_visible":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			"max_tool_iterations":   map[string]any{"type": "integer"},
 			"timeout_seconds":       map[string]any{"type": "integer"},
 			"restrict_to_workspace": map[string]any{"type": "boolean"},
@@ -462,32 +432,6 @@ func (t *AgentUpdateTool) Execute(_ context.Context, args map[string]any) *tools
 					}
 				}
 				updated = append(updated, "can_delegate_to")
-			}
-			// Tool visibility (legacy mode/visible args converted to policy format).
-			if mode, ok := args["tools_mode"].(string); ok && (mode == "inherit" || mode == "explicit") {
-				if a.Tools == nil {
-					a.Tools = &config.AgentToolsCfg{}
-				}
-				if mode == "explicit" {
-					a.Tools.Builtin.DefaultPolicy = config.ToolPolicyDeny
-				} else {
-					a.Tools.Builtin.DefaultPolicy = config.ToolPolicyAllow
-				}
-				updated = append(updated, "tools_mode")
-			}
-			if vis, ok := args["tools_visible"].([]any); ok {
-				if a.Tools == nil {
-					a.Tools = &config.AgentToolsCfg{}
-				}
-				if a.Tools.Builtin.DefaultPolicy == config.ToolPolicyDeny {
-					a.Tools.Builtin.Policies = make(map[string]config.ToolPolicy, len(vis))
-					for _, v := range vis {
-						if s, ok := v.(string); ok && s != "" {
-							a.Tools.Builtin.Policies[s] = config.ToolPolicyAllow
-						}
-					}
-					updated = append(updated, "tools_visible")
-				}
 			}
 			return nil
 		}

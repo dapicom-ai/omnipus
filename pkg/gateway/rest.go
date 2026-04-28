@@ -3145,8 +3145,7 @@ func (a *restAPI) getAgentTools(w http.ResponseWriter, agentID string) {
 			break
 		}
 	}
-	// Core agents may not be in cfg.Agents.List (runtime-only). Detect them
-	// so FilterToolsByVisibility applies the correct scope gate.
+	// Core agents may not be in cfg.Agents.List (runtime-only). Detect them.
 	if agentType == "custom" && coreagent.IsCoreAgent(agentID) {
 		agentType = "core"
 	}

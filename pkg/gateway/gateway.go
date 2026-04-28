@@ -958,6 +958,10 @@ func setupAndStartServices(
 	approvalReg := newApprovalRegistryV2(approvalMaxPending, approvalTimeoutDur)
 	wsHandler.approvalRegV2 = approvalReg
 
+	// Wire the filter-metrics recorder into pkg/tools so FilterToolsByPolicy
+	// can emit FR-039 omnipus_tool_filter_total counters. (C4)
+	tools.SetToolMetricsRecorder(globalToolMetrics)
+
 	// REST API endpoints for frontend data.
 	onboardingMgr := onboarding.NewManager(homePath)
 	tStore := agent.GetTaskStore(agentLoop)

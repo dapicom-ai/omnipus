@@ -528,13 +528,6 @@ type AgentMCPServerBinding struct {
 	Tools []string `json:"tools,omitempty"` // empty or ["*"] = all tools from that server
 }
 
-// VisibilityMode is kept for backward compatibility during config migration.
-type VisibilityMode string
-
-const (
-	VisibilityInherit  VisibilityMode = "inherit"
-	VisibilityExplicit VisibilityMode = "explicit"
-)
 
 // ResolveType returns the effective agent type. If the Type field is set, it is
 // returned directly. Otherwise the type is inferred: known core agent IDs →
