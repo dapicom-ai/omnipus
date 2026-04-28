@@ -16,9 +16,11 @@
 //     BuiltinRegistry.ValidateMCPName check is applied before admission.
 //   - When a server disconnects, ALL entries for that server are evicted atomically
 //     under a single lock acquisition (no torn state).
-//   - On server rename (detected by caller via FR-083), the caller must evict the
-//     old server then add the new one — the MCPRegistry is rename-agnostic; it
-//     stores by serverID and tool name only.
+//   - Rename detection (FR-083): RegisterServerTools tracks each server by
+//     (transportType, endpoint) fingerprint. When a known fingerprint reappears
+//     under a new serverID, the old server is atomically evicted and the new
+//     server is registered (rename). A "mcp.server.renamed" audit event is
+//     emitted and per-agent policies referencing the old name are updated.
 //   - The registry is safe for concurrent reads and writes (RWMutex). Per-LLM-call
 //     filter snapshots via All() observe a consistent state.
 
@@ -47,41 +49,134 @@ type mcpToolRecord struct {
 	tool     Tool
 }
 
+// mcpServerFingerprint uniquely identifies an MCP server by transport endpoint.
+// Used for rename detection (FR-083).
+type mcpServerFingerprint struct {
+	TransportType string // "stdio", "sse", "http"
+	Endpoint      string // URL (sse/http) or command path (stdio)
+}
+
+// mcpServerMeta holds metadata about a registered server.
+type mcpServerMeta struct {
+	fingerprint mcpServerFingerprint
+}
+
+// MCPPolicyUpdater is called after a server rename to update per-agent policies
+// that referenced the old serverID. Implementations should replace occurrences
+// of oldServerID with newServerID in agent tool policy maps.
+// Passing nil is safe — policy update is skipped.
+type MCPPolicyUpdater func(oldServerID, newServerID string)
+
 // MCPRegistry is the dynamic central registry for MCP server tools.
 // There is one per process. Entries are added and removed at runtime
 // as servers connect and disconnect.
 type MCPRegistry struct {
-	mu      sync.RWMutex
-	byName  map[string]*mcpToolRecord // name → record (first-server-wins)
-	byServer map[string][]string      // serverID → []tool names (for fast eviction)
+	mu           sync.RWMutex
+	byName       map[string]*mcpToolRecord    // name → record (first-server-wins)
+	byServer     map[string][]string          // serverID → []tool names (for fast eviction)
+	serverMeta   map[string]*mcpServerMeta    // serverID → metadata
+	byFingerprint map[mcpServerFingerprint]string // fingerprint → serverID
 }
 
 // NewMCPRegistry creates an empty MCPRegistry.
 func NewMCPRegistry() *MCPRegistry {
 	return &MCPRegistry{
-		byName:   make(map[string]*mcpToolRecord),
-		byServer: make(map[string][]string),
+		byName:        make(map[string]*mcpToolRecord),
+		byServer:      make(map[string][]string),
+		serverMeta:    make(map[string]*mcpServerMeta),
+		byFingerprint: make(map[mcpServerFingerprint]string),
 	}
 }
 
+// MCPServerOpts carries optional metadata for a server registration.
+// Pass zero value (MCPServerOpts{}) when no metadata is available.
+type MCPServerOpts struct {
+	// TransportType is "stdio", "sse", or "http". Used for rename detection fingerprint.
+	TransportType string
+	// Endpoint is the URL (sse/http) or command path (stdio). Used for rename detection fingerprint.
+	Endpoint string
+	// RequiresAdminAsk lists tool names within this server that must have
+	// RequiresAdminAsk() return true (FR-064). Names not in this list return false.
+	RequiresAdminAsk []string
+	// PolicyUpdater is called when a rename is detected to propagate the new
+	// serverID into per-agent policy maps. Nil = skip policy update.
+	PolicyUpdater MCPPolicyUpdater
+}
+
+// mcpAdminAskTool wraps a Tool and overrides RequiresAdminAsk() (FR-064).
+type mcpAdminAskTool struct {
+	Tool
+	requiresAdminAsk bool
+}
+
+func (a *mcpAdminAskTool) RequiresAdminAsk() bool { return a.requiresAdminAsk }
+
 // RegisterServerTools registers all tools from a single MCP server.
-// Rules (FR-034, FR-060):
+// Rules (FR-034, FR-060, FR-083):
 //   - Tools whose name begins with "system." are rejected unconditionally.
 //   - If a tool name is already registered by a different server, the new
 //     entry is rejected (first-server-wins) and a warning is emitted.
 //   - If the tool name is already registered by the SAME server, it is
 //     replaced (reconnect case, idempotent).
+//   - If opts.TransportType and opts.Endpoint identify a known fingerprint
+//     under a different serverID, the old server is atomically evicted and
+//     the new serverID takes over (rename detection, FR-083).
+//   - opts.RequiresAdminAsk lists tool names that return true from
+//     RequiresAdminAsk() (FR-064).
 //
 // Returns a slice of (name, reason) pairs for each rejected registration.
 // The caller should emit audit events for each rejected entry.
 func (r *MCPRegistry) RegisterServerTools(serverID string, tools []Tool, builtins *BuiltinRegistry) []MCPCollision {
+	return r.RegisterServerToolsWithOpts(serverID, tools, builtins, MCPServerOpts{})
+}
+
+// RegisterServerToolsWithOpts is the extended form of RegisterServerTools.
+// Use this when transport metadata (for rename detection) or per-tool
+// RequiresAdminAsk overrides (FR-064) are available.
+func (r *MCPRegistry) RegisterServerToolsWithOpts(serverID string, toolList []Tool, builtins *BuiltinRegistry, opts MCPServerOpts) []MCPCollision {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	// --- FR-083: rename detection ---
+	// Build fingerprint only when both fields are populated.
+	fp := mcpServerFingerprint{
+		TransportType: opts.TransportType,
+		Endpoint:      opts.Endpoint,
+	}
+	if fp.TransportType != "" && fp.Endpoint != "" {
+		if existingID, found := r.byFingerprint[fp]; found && existingID != serverID {
+			// Same transport endpoint appeared under a new serverID → rename.
+			slog.Info("tools.MCPRegistry: server rename detected — evicting old server",
+				"old_server", existingID, "new_server", serverID,
+				"transport", fp.TransportType, "endpoint", fp.Endpoint)
+
+			// Atomically evict the old server's tools.
+			r.evictServerLocked(existingID)
+
+			// Emit audit (best-effort slog; callers may also emit via audit.Logger).
+			slog.Info("tools.MCPRegistry: mcp.server.renamed",
+				"event", "mcp.server.renamed",
+				"old_server_id", existingID, "new_server_id", serverID)
+
+			// Update per-agent policies that referenced the old name.
+			if opts.PolicyUpdater != nil {
+				opts.PolicyUpdater(existingID, serverID)
+			}
+		}
+		// Record fingerprint → new serverID mapping.
+		r.byFingerprint[fp] = serverID
+	}
+
+	// --- FR-064: build admin-ask lookup set ---
+	adminAskSet := make(map[string]struct{}, len(opts.RequiresAdminAsk))
+	for _, name := range opts.RequiresAdminAsk {
+		adminAskSet[name] = struct{}{}
+	}
 
 	var collisions []MCPCollision
 	var accepted []string
 
-	for _, t := range tools {
+	for _, t := range toolList {
 		name := t.Name()
 
 		// FR-060: reject system.* prefix unconditionally.
@@ -113,8 +208,14 @@ func (r *MCPRegistry) RegisterServerTools(serverID string, tools []Tool, builtin
 			continue
 		}
 
+		// FR-064: wrap tool with admin-ask override if listed.
+		registered := t
+		if _, needsAsk := adminAskSet[name]; needsAsk {
+			registered = &mcpAdminAskTool{Tool: t, requiresAdminAsk: true}
+		}
+
 		// Accept: overwrite if same server (reconnect), add if new.
-		r.byName[name] = &mcpToolRecord{serverID: serverID, tool: t}
+		r.byName[name] = &mcpToolRecord{serverID: serverID, tool: registered}
 		accepted = append(accepted, name)
 	}
 
@@ -135,15 +236,17 @@ func (r *MCPRegistry) RegisterServerTools(serverID string, tools []Tool, builtin
 	}
 	r.byServer[serverID] = accepted
 
+	// Store server metadata.
+	r.serverMeta[serverID] = &mcpServerMeta{fingerprint: fp}
+
 	slog.Info("tools.MCPRegistry: server tools registered",
 		"server", serverID, "accepted", len(accepted), "rejected", len(collisions))
 	return collisions
 }
 
-// EvictServer removes all tools from the named server atomically.
-func (r *MCPRegistry) EvictServer(serverID string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+// evictServerLocked removes all tools from serverID.
+// Caller must hold r.mu write lock.
+func (r *MCPRegistry) evictServerLocked(serverID string) {
 	names := r.byServer[serverID]
 	for _, name := range names {
 		if rec, ok := r.byName[name]; ok && rec.serverID == serverID {
@@ -151,6 +254,25 @@ func (r *MCPRegistry) EvictServer(serverID string) {
 		}
 	}
 	delete(r.byServer, serverID)
+	// Remove fingerprint mapping for this server.
+	if meta, ok := r.serverMeta[serverID]; ok {
+		fp := meta.fingerprint
+		if fp.TransportType != "" && fp.Endpoint != "" {
+			if r.byFingerprint[fp] == serverID {
+				delete(r.byFingerprint, fp)
+			}
+		}
+		delete(r.serverMeta, serverID)
+	}
+	slog.Info("tools.MCPRegistry: server evicted (locked)", "server", serverID, "tools_removed", len(names))
+}
+
+// EvictServer removes all tools from the named server atomically.
+func (r *MCPRegistry) EvictServer(serverID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	names := r.byServer[serverID]
+	r.evictServerLocked(serverID)
 	slog.Info("tools.MCPRegistry: server evicted", "server", serverID, "tools_removed", len(names))
 }
 

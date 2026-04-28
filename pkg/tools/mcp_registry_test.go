@@ -140,3 +140,204 @@ func TestMCPRegistry_SystemPrefixRejected(t *testing.T) {
 	require.Len(t, all, 1, "only the safe tool should be registered")
 	assert.Equal(t, "safe.tool", all[0].Name())
 }
+
+// --- M3: Rename detection tests (FR-083) ---
+
+// TestMCPRegistry_ServerRename verifies that registering a known transport
+// fingerprint under a new serverID triggers rename detection: the old server
+// is evicted, the new server's tools are registered, and per-agent policies
+// are notified (FR-083).
+//
+// BDD: Given server "old-server" registered at sse://example.com,
+//
+//	When "new-server" registers at the same sse://example.com endpoint,
+//	Then old-server's tools are evicted;
+//	And new-server's tools are present;
+//	And the PolicyUpdater is called with (old, new) serverIDs.
+//
+// Traces to: pkg/tools/mcp_registry.go — RegisterServerToolsWithOpts rename detection (FR-083).
+func TestMCPRegistry_ServerRename(t *testing.T) {
+	builtins := NewBuiltinRegistry()
+	reg := NewMCPRegistry()
+
+	// Register old server with a fingerprint.
+	oldCollisions := reg.RegisterServerToolsWithOpts("old-server", []Tool{
+		&mcpTestTool{name: "data.read"},
+		&mcpTestTool{name: "data.write"},
+	}, builtins, MCPServerOpts{
+		TransportType: "sse",
+		Endpoint:      "https://example.com/mcp",
+	})
+	require.Empty(t, oldCollisions, "initial registration must not produce collisions")
+	require.Len(t, reg.All(), 2, "old-server tools registered")
+
+	// Register new server at the same fingerprint → rename.
+	var policyOldID, policyNewID string
+	newCollisions := reg.RegisterServerToolsWithOpts("new-server", []Tool{
+		&mcpTestTool{name: "data.read"},
+		&mcpTestTool{name: "data.write"},
+		&mcpTestTool{name: "data.delete"},
+	}, builtins, MCPServerOpts{
+		TransportType: "sse",
+		Endpoint:      "https://example.com/mcp",
+		PolicyUpdater: func(oldID, newID string) {
+			policyOldID = oldID
+			policyNewID = newID
+		},
+	})
+
+	require.Empty(t, newCollisions, "rename registration must not produce collisions (old server evicted first)")
+	assert.Equal(t, "old-server", policyOldID, "PolicyUpdater must receive old serverID")
+	assert.Equal(t, "new-server", policyNewID, "PolicyUpdater must receive new serverID")
+
+	all := reg.All()
+	require.Len(t, all, 3, "new-server tools must be registered (old evicted)")
+	// old-server must be gone
+	_, stillHasOld := reg.byServer["old-server"]
+	assert.False(t, stillHasOld, "old-server must be fully evicted")
+}
+
+// TestMCPRegistry_RenameDetection covers four sub-cases:
+//  1. fresh add — no rename
+//  2. reconnect-same-name — idempotent (no rename, tools updated)
+//  3. reconnect-renamed — eviction+addition under one lock
+//  4. conflict — rename collides with existing different server (different fingerprint)
+//
+// BDD: see sub-tests.
+// Traces to: pkg/tools/mcp_registry.go — RegisterServerToolsWithOpts (FR-083).
+func TestMCPRegistry_RenameDetection(t *testing.T) {
+	t.Run("fresh_add_no_rename", func(t *testing.T) {
+		builtins := NewBuiltinRegistry()
+		reg := NewMCPRegistry()
+
+		called := false
+		collisions := reg.RegisterServerToolsWithOpts("server-a", []Tool{
+			&mcpTestTool{name: "a.tool"},
+		}, builtins, MCPServerOpts{
+			TransportType: "stdio",
+			Endpoint:      "/usr/bin/mcpserver",
+			PolicyUpdater: func(_, _ string) { called = true },
+		})
+		require.Empty(t, collisions)
+		assert.False(t, called, "PolicyUpdater must NOT be called on fresh add")
+		require.Len(t, reg.All(), 1)
+	})
+
+	t.Run("reconnect_same_name_idempotent", func(t *testing.T) {
+		builtins := NewBuiltinRegistry()
+		reg := NewMCPRegistry()
+
+		opts := MCPServerOpts{TransportType: "sse", Endpoint: "https://same.example/mcp"}
+
+		// First registration.
+		reg.RegisterServerToolsWithOpts("server-b", []Tool{&mcpTestTool{name: "b.tool"}}, builtins, opts)
+		// Second registration — same fingerprint, same serverID.
+		called := false
+		collisions := reg.RegisterServerToolsWithOpts("server-b", []Tool{
+			&mcpTestTool{name: "b.tool"},
+			&mcpTestTool{name: "b.extra"},
+		}, builtins, MCPServerOpts{
+			TransportType: opts.TransportType,
+			Endpoint:      opts.Endpoint,
+			PolicyUpdater: func(_, _ string) { called = true },
+		})
+		require.Empty(t, collisions)
+		assert.False(t, called, "PolicyUpdater must NOT be called on same-name reconnect")
+		require.Len(t, reg.All(), 2, "tool list must be updated to 2 tools")
+	})
+
+	t.Run("reconnect_renamed_eviction_and_addition", func(t *testing.T) {
+		builtins := NewBuiltinRegistry()
+		reg := NewMCPRegistry()
+
+		// Register "alpha" at a fingerprint.
+		reg.RegisterServerToolsWithOpts("alpha", []Tool{&mcpTestTool{name: "c.tool"}}, builtins, MCPServerOpts{
+			TransportType: "http",
+			Endpoint:      "https://renamed.example/mcp",
+		})
+
+		// Register "beta" at the same fingerprint → rename alpha→beta.
+		renameCalled := false
+		collisions := reg.RegisterServerToolsWithOpts("beta", []Tool{&mcpTestTool{name: "c.tool"}}, builtins, MCPServerOpts{
+			TransportType: "http",
+			Endpoint:      "https://renamed.example/mcp",
+			PolicyUpdater: func(oldID, newID string) {
+				renameCalled = true
+				assert.Equal(t, "alpha", oldID)
+				assert.Equal(t, "beta", newID)
+			},
+		})
+		require.Empty(t, collisions, "after eviction of old, tool name is free")
+		assert.True(t, renameCalled, "PolicyUpdater must be called on rename")
+
+		// alpha must be gone, beta must be present.
+		_, alphaPresent := reg.byServer["alpha"]
+		_, betaPresent := reg.byServer["beta"]
+		assert.False(t, alphaPresent, "alpha must be evicted")
+		assert.True(t, betaPresent, "beta must be registered")
+	})
+
+	t.Run("conflict_different_fingerprint_first_wins", func(t *testing.T) {
+		builtins := NewBuiltinRegistry()
+		reg := NewMCPRegistry()
+
+		// Register "server-1" at fingerprint A with "shared.tool".
+		reg.RegisterServerToolsWithOpts("server-1", []Tool{&mcpTestTool{name: "shared.tool"}}, builtins, MCPServerOpts{
+			TransportType: "sse",
+			Endpoint:      "https://endpoint-a.example/mcp",
+		})
+		// Register "server-2" at a DIFFERENT fingerprint, same tool name → first-wins collision.
+		collisions := reg.RegisterServerToolsWithOpts("server-2", []Tool{&mcpTestTool{name: "shared.tool"}}, builtins, MCPServerOpts{
+			TransportType: "sse",
+			Endpoint:      "https://endpoint-b.example/mcp",
+		})
+		require.Len(t, collisions, 1, "different-fingerprint collision must be recorded")
+		assert.Equal(t, "server-1", collisions[0].ConflictWith, "first server must win")
+
+		// server-1's tool still accessible.
+		got, ok := reg.Get("shared.tool")
+		require.True(t, ok)
+		_ = got
+	})
+}
+
+// --- M4: requires_admin_ask opt-in tests (FR-064) ---
+
+// TestMCPRegistry_RequiresAdminAsk verifies that an MCP server registered with
+// requires_admin_ask: ["dangerous_tool"] produces a tool whose RequiresAdminAsk()
+// returns true, while sibling tools return false (FR-064).
+//
+// BDD: Given a server config with requires_admin_ask: ["dangerous_tool"],
+//
+//	When its tools are registered via RegisterServerToolsWithOpts,
+//	Then dangerous_tool.RequiresAdminAsk() == true;
+//	And safe_tool.RequiresAdminAsk() == false.
+//
+// Traces to: pkg/tools/mcp_registry.go — mcpAdminAskTool wrapper (FR-064).
+func TestMCPRegistry_RequiresAdminAsk(t *testing.T) {
+	builtins := NewBuiltinRegistry()
+	reg := NewMCPRegistry()
+
+	collisions := reg.RegisterServerToolsWithOpts("my-server", []Tool{
+		&mcpTestTool{name: "dangerous_tool"},
+		&mcpTestTool{name: "safe_tool"},
+		&mcpTestTool{name: "another_safe"},
+	}, builtins, MCPServerOpts{
+		RequiresAdminAsk: []string{"dangerous_tool"},
+	})
+	require.Empty(t, collisions)
+
+	dangerousTool, ok := reg.Get("dangerous_tool")
+	require.True(t, ok)
+	safeTool, ok2 := reg.Get("safe_tool")
+	require.True(t, ok2)
+	anotherSafe, ok3 := reg.Get("another_safe")
+	require.True(t, ok3)
+
+	assert.True(t, dangerousTool.RequiresAdminAsk(),
+		"dangerous_tool must have RequiresAdminAsk()==true (FR-064 opt-in)")
+	assert.False(t, safeTool.RequiresAdminAsk(),
+		"safe_tool must have RequiresAdminAsk()==false (not in requires_admin_ask list)")
+	assert.False(t, anotherSafe.RequiresAdminAsk(),
+		"another_safe must have RequiresAdminAsk()==false")
+}

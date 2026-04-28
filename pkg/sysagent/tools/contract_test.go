@@ -105,3 +105,53 @@ func TestRegistry_NoDuplicateSysagentToolNames(t *testing.T) {
 		seen[name] = true
 	}
 }
+
+// TestRegistry_AllSysagentToolsRequireAdminAsk_CentralRegistry is the M4-spec
+// variant of TestRegistry_AllSysagentToolsRequireAdminAsk: it populates the
+// central BuiltinRegistry the same way production does (BuildRegistry) and
+// asserts every registered builtin satisfies RequiresAdminAsk() and Category().
+//
+// This test walks the central registry rather than the package-local AllTools
+// slice, ensuring that any future tool added via BuiltinRegistry.RegisterBuiltin
+// (not AllTools) is also covered.
+//
+// BDD: Given a BuiltinRegistry populated via BuildRegistry,
+//
+//	When each tool is retrieved via All(),
+//	Then every system.* tool has RequiresAdminAsk() == true (FR-061)
+//	And every system.* tool has Category() == CategorySystem (FR-059).
+//
+// Traces to: pkg/tools/builtin_registry.go (central registry, FR-001).
+// Traces to: pkg/sysagent/tools/registry.go — BuildRegistry.
+func TestRegistry_AllSysagentToolsRequireAdminAsk_CentralRegistry(t *testing.T) {
+	// Instantiate the registry exactly as production does at boot.
+	reg := BuildRegistry(nil, nil)
+	allTools := reg.GetAll()
+
+	if len(allTools) < 35 {
+		t.Errorf("central BuiltinRegistry has %d tools; want ≥35 (FR-001)", len(allTools))
+	}
+
+	for _, tool := range allTools {
+		name := tool.Name()
+
+		// All tools in this registry are system.* builtins — they must all
+		// require admin-ask (FR-061).
+		if adm, ok := tool.(interface{ RequiresAdminAsk() bool }); ok {
+			if !adm.RequiresAdminAsk() {
+				t.Errorf("central registry tool %q: RequiresAdminAsk() must be true (FR-061)", name)
+			}
+		} else {
+			t.Errorf("central registry tool %q: does not implement RequiresAdminAsk()", name)
+		}
+
+		// Category must be CategorySystem (FR-059).
+		if cat, ok := tool.(interface{ Category() tools.ToolCategory }); ok {
+			if cat.Category() != tools.CategorySystem {
+				t.Errorf("central registry tool %q: Category() must be CategorySystem, got %q (FR-059)", name, cat.Category())
+			}
+		} else {
+			t.Errorf("central registry tool %q: does not implement Category()", name)
+		}
+	}
+}
