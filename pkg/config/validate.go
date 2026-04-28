@@ -253,10 +253,9 @@ func validatePolicyValues(
 		}
 	}
 
+	// FR-062: check always runs so an empty DefaultPolicy is caught and audited.
 	builtin := onDisk.Tools.Builtin
-	if builtin.DefaultPolicy != "" {
-		check("tools.builtin.default_policy", builtin.DefaultPolicy)
-	}
+	check("tools.builtin.default_policy", builtin.DefaultPolicy)
 	for toolName, policy := range builtin.Policies {
 		check(fmt.Sprintf("tools.builtin.policies[%q]", toolName), policy)
 	}

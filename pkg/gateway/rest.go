@@ -1062,18 +1062,25 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 	if req.Model != "" {
 		ac.Model = &config.AgentModelConfig{Primary: req.Model}
 	}
+	// Seed the privilege rail (FR-008/FR-022): custom agents always get
+	// system.*: deny unless the caller explicitly overrides it.
+	baseCfg := coreagent.NewCustomAgentToolsCfg()
 	if req.ToolsCfg != nil {
-		builtin := config.AgentBuiltinToolsCfg{}
+		builtin := config.AgentBuiltinToolsCfg{
+			// Start with the base default_policy=allow.
+			DefaultPolicy: baseCfg.Builtin.DefaultPolicy,
+			// Inherit the system.*: deny seed.
+			Policies: make(map[string]config.ToolPolicy, len(baseCfg.Builtin.Policies)),
+		}
+		for k, v := range baseCfg.Builtin.Policies {
+			builtin.Policies[k] = v
+		}
 		if req.ToolsCfg.Builtin.DefaultPolicy != "" {
 			builtin.DefaultPolicy = config.ToolPolicy(req.ToolsCfg.Builtin.DefaultPolicy)
-		} else {
-			builtin.DefaultPolicy = config.ToolPolicyAllow
 		}
-		if len(req.ToolsCfg.Builtin.Policies) > 0 {
-			builtin.Policies = make(map[string]config.ToolPolicy, len(req.ToolsCfg.Builtin.Policies))
-			for k, v := range req.ToolsCfg.Builtin.Policies {
-				builtin.Policies[k] = config.ToolPolicy(v)
-			}
+		// Merge caller-supplied policies; caller's system.* entry overrides seed.
+		for k, v := range req.ToolsCfg.Builtin.Policies {
+			builtin.Policies[k] = config.ToolPolicy(v)
 		}
 		ac.Tools = &config.AgentToolsCfg{Builtin: builtin}
 		if len(req.ToolsCfg.MCP.Servers) > 0 {
@@ -1083,6 +1090,9 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 			}
 			ac.Tools.MCP = config.AgentMCPToolsCfg{Servers: servers}
 		}
+	} else {
+		// No caller-supplied tools config: use the full base config.
+		ac.Tools = baseCfg
 	}
 	// Persist the new agent to config.json BEFORE mutating the live config.
 	// If persistence fails, the in-memory config stays consistent with disk.

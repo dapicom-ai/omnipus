@@ -171,12 +171,13 @@ func (a *restAPI) HandleAgentToolsRegistry(w http.ResponseWriter, r *http.Reques
 		agentType = "core"
 	}
 
-	// Retrieve the effective tool set via FilterToolsByPolicy (existing logic).
+	// Retrieve the effective tool set via FilterToolsByPolicy.
 	registry := a.agentLoop.GetRegistry()
 	agentInstance, ok := registry.GetAgent(agentID)
 	if !ok {
 		slog.Warn("rest: agent not found in registry for tool view", "agent_id", agentID)
-		agentInstance = registry.GetDefaultAgent()
+		jsonErr(w, http.StatusNotFound, fmt.Sprintf("agent %q not found", agentID))
+		return
 	}
 
 	policyCfg := toolsCfgToPolicy(toolsCfg)

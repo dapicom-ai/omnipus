@@ -57,6 +57,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/media"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
+	"github.com/dapicom-ai/omnipus/pkg/policy"
 	"github.com/dapicom-ai/omnipus/pkg/state"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 	systools "github.com/dapicom-ai/omnipus/pkg/sysagent/tools"
@@ -421,6 +422,27 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 
 	msgBus := bus.NewMessageBus()
 	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider)
+
+	// Boot Order step 4 (FR-062 / M7): validate per-agent tool policies before
+	// the sandbox applies. Ava-equivalent core agents abort boot on violation;
+	// custom agents log and continue.
+	{
+		agentsDir := filepath.Join(homePath, "agents")
+		valResults, abortBoot := config.ValidateAgentConfigs(
+			agentsDir,
+			coreagent.HasSystemAllowsInConstructorSeed,
+			nil, // knownTools: central registry not yet fully populated at this stage
+			nil, // auditLog: audit subsystem not yet available; falls back to stderr
+		)
+		for _, r := range valResults {
+			for _, e := range r.PolicyErrors {
+				slog.Warn("gateway: agent policy validation error", "agent_id", r.AgentID, "error", e)
+			}
+		}
+		if abortBoot {
+			return fmt.Errorf("gateway: agent config validation failed — aborting boot (FR-062)")
+		}
+	}
 
 	// Apply the kernel sandbox to the gateway process BEFORE any HTTP listener
 	// binds. Strict ordering:
@@ -939,14 +961,15 @@ func setupAndStartServices(
 	wsHandler.webchatCh = wch
 	runningServices.ChannelManager.RegisterChannel("webchat", wch)
 
-	// Build the in-process tool-approval registry (FR-016, FR-070).
-	// maxPending <= 0 uses the spec default (64); timeout <= 0 uses the default (300 s).
+	// Build the in-process tool-approval registry (FR-016, FR-070, M10).
+	// policy.ValidateSaturationCap enforces FR-016 semantics:
+	//   cap < 0 → fatal (emit HIGH audit + abort)
+	//   cap == 0 → unlimited (emit WARN audit, ShouldSaturate always false)
+	//   cap > 0 → use as-is
 	approvalMaxPending := cfg.Gateway.ToolApprovalMaxPending
-	if approvalMaxPending < 0 {
-		return nil, fmt.Errorf("gateway: tool_approval_max_pending must not be negative (got %d)", approvalMaxPending)
-	}
-	if approvalMaxPending == 0 {
-		slog.Warn("gateway: tool_approval_max_pending=0 — spec default (64) will be used")
+	effectiveCap, capOK := policy.ValidateSaturationCap(context.Background(), nil, approvalMaxPending)
+	if !capOK {
+		return nil, fmt.Errorf("gateway: invalid tool_approval_max_pending=%d — boot aborted (FR-016)", approvalMaxPending)
 	}
 	approvalTimeout := cfg.Gateway.ToolApprovalTimeout
 	var approvalTimeoutDur time.Duration
@@ -955,7 +978,7 @@ func setupAndStartServices(
 	} else {
 		approvalTimeoutDur = 300 * time.Second
 	}
-	approvalReg := newApprovalRegistryV2(approvalMaxPending, approvalTimeoutDur)
+	approvalReg := newApprovalRegistryV2(effectiveCap, approvalTimeoutDur)
 	wsHandler.approvalRegV2 = approvalReg
 
 	// Wire the filter-metrics recorder into pkg/tools so FilterToolsByPolicy

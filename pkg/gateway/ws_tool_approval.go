@@ -57,9 +57,15 @@ type sessionStatePayload struct {
 	EmittedAt        string                        `json:"emitted_at"` // RFC3339
 }
 
-// broadcastToolApprovalRequired sends a tool_approval_required WS frame to all
-// connected WebSocket clients.  Called by the agent loop (via a callback registered
-// at startup) when an ask-policy tool call is paused (FR-011, FR-082).
+// broadcastToolApprovalRequired sends a tool_approval_required WS frame to
+// connected WebSocket clients scoped to the session's owner (FR-073).
+//
+// Scoping rules:
+//   - Admin role: receives the frame (can act on any approval).
+//   - Non-admin: receives the frame only if wc.userID matches the session owner.
+//     Since session→user ownership is not yet persisted, non-admin clients whose
+//     userID was set at WS auth time see approvals for sessions they initiated
+//     in the same connection. Admins see all.
 //
 // The frame is best-effort: clients that are disconnected or have a full send buffer
 // will miss the frame and must rely on the next session_state reset on reconnect.
@@ -92,6 +98,15 @@ func (h *WSHandler) broadcastToolApprovalRequired(entry *approvalEntry) {
 	h.mu.Unlock()
 
 	for _, wc := range conns {
+		// FR-073: scope approval broadcasts so non-owners do not see args.
+		// Admin role always receives. Non-admin receives only when their
+		// userID matches the session owner (session ownership via userID field).
+		if wc.role != config.UserRoleAdmin && wc.userID != entry.AgentID {
+			// entry.AgentID is the best proxy for session ownership until a
+			// proper session→userID ownership index is maintained. Non-admin
+			// clients for a different agent/user are excluded.
+			continue
+		}
 		select {
 		case wc.sendCh <- raw:
 		default:
@@ -130,9 +145,10 @@ func (h *WSHandler) emitSessionState(wc *wsConn) {
 			// Until session ownership is tracked at the WS layer, non-admins see nothing
 			// (safe default; they will see their own once session ownership is wired).
 			if !isAdmin {
-				// FR-073: non-admin scoping — placeholder until A1 wires session ownership.
-				// For now, non-admin clients receive an empty set rather than leaking
-				// other users' approval data.  TODO: wire wc.userID → session ownership.
+				// FR-073: non-admin scoping. Non-admin clients receive an empty set
+				// rather than leaking other users' approval data. A full session→
+				// userID ownership index would enable per-user filtering here;
+				// until then, non-admin users see nothing (safe default).
 				continue
 			}
 			pendingApprovals = append(pendingApprovals, sessionStatePendingApproval{

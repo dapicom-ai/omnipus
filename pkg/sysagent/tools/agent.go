@@ -247,6 +247,24 @@ func (t *AgentCreateTool) Execute(_ context.Context, args map[string]any) *tools
 				}
 			}
 		}
+		// Seed the privilege rail (FR-008/FR-022): custom agents default to
+		// system.*: deny so no system tool is reachable without an explicit
+		// per-agent allow. The caller's tools config (if any) overrides only
+		// the entries it explicitly names — the system.* seed is preserved
+		// unless the caller explicitly sets system.* to something else.
+		if newAgent.Tools == nil {
+			newAgent.Tools = &config.AgentToolsCfg{}
+		}
+		if newAgent.Tools.Builtin.DefaultPolicy == "" {
+			newAgent.Tools.Builtin.DefaultPolicy = config.ToolPolicyAllow
+		}
+		if newAgent.Tools.Builtin.Policies == nil {
+			newAgent.Tools.Builtin.Policies = make(map[string]config.ToolPolicy)
+		}
+		// Only seed system.*: deny if the caller did not provide an explicit entry.
+		if _, hasSystemWildcard := newAgent.Tools.Builtin.Policies["system.*"]; !hasSystemWildcard {
+			newAgent.Tools.Builtin.Policies["system.*"] = config.ToolPolicyDeny
+		}
 		cfg.Agents.List = append(cfg.Agents.List, newAgent)
 		finalID = id
 		return nil

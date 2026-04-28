@@ -127,11 +127,11 @@ type approvalRegistryV2 struct {
 }
 
 // newApprovalRegistryV2 creates a registry with the given saturation cap and timeout.
-// cap <= 0 selects the spec default (64).  timeout <= 0 selects the spec default (300 s).
+// cap == 0 means unlimited (ShouldSaturate always returns false per FR-016).
+// cap > 0 is the saturation limit. Negative cap must not reach here (caller
+// must validate via policy.ValidateSaturationCap before constructing).
+// timeout <= 0 selects the spec default (300 s).
 func newApprovalRegistryV2(cap int, timeout time.Duration) *approvalRegistryV2 {
-	if cap <= 0 {
-		cap = 64
-	}
 	if timeout <= 0 {
 		timeout = 300 * time.Second
 	}
