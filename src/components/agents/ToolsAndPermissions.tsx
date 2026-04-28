@@ -1,19 +1,30 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Info } from '@phosphor-icons/react'
 
 import { MCPServerPicker } from './MCPServerPicker'
 import { PolicyBadge, type ToolPolicy } from '@/components/shared/PolicyBadge'
 import { CATEGORY_LABELS, groupByCategory, resolvePolicy } from '@/lib/toolCategories'
 import {
-  fetchBuiltinTools,
+  fetchRegistryTools,
   fetchAgentTools,
   fetchMcpServersForAgent,
   updateAgentTools,
   fetchGlobalToolPolicies,
   type AgentToolsCfg,
+  type AgentToolEntry,
 } from '@/lib/api'
 import { useAutoSave } from '@/hooks/useAutoSave'
 import { AutoSaveIndicator } from '@/components/ui/AutoSaveIndicator'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
 
 interface ToolsAndPermissionsProps {
   agentId: string | null
@@ -22,7 +33,8 @@ interface ToolsAndPermissionsProps {
   onChange: (tools: AgentToolsCfg) => void
 }
 
-// Presets for quick policy configuration
+// Presets for quick policy configuration (FR-044).
+// Apply is replace semantics — a confirmation dialog is shown before applying (FR-043).
 const POLICY_PRESETS: Record<string, { label: string; description: string; defaultPolicy: ToolPolicy; overrides?: Record<string, ToolPolicy> }> = {
   unrestricted: {
     label: 'Unrestricted',
@@ -61,8 +73,18 @@ const POLICY_PRESETS: Record<string, { label: string; description: string; defau
   },
 }
 
+// Build an index from tool name → AgentToolEntry for fence-badge lookups.
+function buildAgentToolIndex(tools: AgentToolEntry[]): Map<string, AgentToolEntry> {
+  const m = new Map<string, AgentToolEntry>()
+  for (const t of tools) m.set(t.name, t)
+  return m
+}
+
 export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onChange }: ToolsAndPermissionsProps) {
   const queryClient = useQueryClient()
+
+  // FR-043: preset confirmation dialog state
+  const [pendingPresetKey, setPendingPresetKey] = useState<string | null>(null)
 
   const { status: saveStatus, error: saveError } = useAutoSave(
     tools,
@@ -73,9 +95,10 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
     { disabled: !agentId },
   )
 
-  const { data: builtinTools = [], isLoading: toolsLoading, isError: toolsError } = useQuery({
-    queryKey: ['tools-builtin'],
-    queryFn: fetchBuiltinTools,
+  // FR-027: GET /api/v1/tools — central registry snapshot with source discriminator.
+  const { data: registryTools = [], isLoading: toolsLoading, isError: toolsError } = useQuery({
+    queryKey: ['registry-tools'],
+    queryFn: fetchRegistryTools,
   })
 
   const { data: globalPolicies, isError: globalPoliciesError } = useQuery({
@@ -88,11 +111,18 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
     queryFn: fetchMcpServersForAgent,
   })
 
+  // FR-028, FR-086: GET /api/v1/agents/{id}/tools — per-agent effective policy view.
   const { data: agentToolsData } = useQuery({
     queryKey: ['agent-tools', agentId],
     queryFn: () => fetchAgentTools(agentId!),
     enabled: !!agentId,
   })
+
+  // Index agent-tools entries for efficient fence-badge lookup (FR-086).
+  const agentToolIndex = useMemo(
+    () => buildAgentToolIndex(agentToolsData?.tools ?? []),
+    [agentToolsData],
+  )
 
   useEffect(() => {
     if (agentToolsData && agentId) {
@@ -130,8 +160,15 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
     })
   }
 
-  function applyPreset(key: string) {
-    const preset = POLICY_PRESETS[key]
+  // FR-043: show confirmation dialog before applying a preset (replace semantics).
+  function requestPreset(key: string) {
+    if (!POLICY_PRESETS[key]) return
+    setPendingPresetKey(key)
+  }
+
+  function confirmPreset() {
+    if (!pendingPresetKey) return
+    const preset = POLICY_PRESETS[pendingPresetKey]
     if (!preset) return
     onChange({
       ...tools,
@@ -140,6 +177,11 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
         policies: preset.overrides ? { ...preset.overrides } : {},
       },
     })
+    setPendingPresetKey(null)
+  }
+
+  function cancelPreset() {
+    setPendingPresetKey(null)
   }
 
   // Detect which preset matches current config
@@ -158,8 +200,8 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
   }, [defaultPolicy, policies])
 
   // Filter out system-scope tools — never shown in agent tool configuration
-  const displayTools = builtinTools.filter((t) => {
-    if (t.scope === 'system') return false // system tools not shown in agent config
+  const displayTools = registryTools.filter((t) => {
+    if (t.scope === 'system') return false
     return true
   })
 
@@ -183,8 +225,36 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
     )
   }
 
+  const pendingPreset = pendingPresetKey ? POLICY_PRESETS[pendingPresetKey] : null
+
   return (
     <div className="space-y-5">
+      {/* FR-043: Preset confirmation dialog */}
+      <Dialog open={pendingPresetKey !== null} onOpenChange={(open) => { if (!open) cancelPreset() }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Apply preset: {pendingPreset?.label}?</DialogTitle>
+            <DialogDescription>
+              This will replace your existing per-tool policies with the {pendingPreset?.label} preset.
+              This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="text-xs bg-[var(--color-surface-2)] rounded px-3 py-2 border border-[var(--color-border)] text-[var(--color-muted)]">
+            Note: admin-required tools on custom agents will run with{' '}
+            <span className="font-mono text-[var(--color-accent)]">ask</span> regardless of the
+            preset setting.
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={cancelPreset} size="sm">
+              Cancel
+            </Button>
+            <Button variant="default" onClick={confirmPreset} size="sm">
+              Apply preset
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Auto-save status — top of section for visibility */}
       <div className="flex items-center gap-3">
         <AutoSaveIndicator status={saveStatus} error={saveError} />
@@ -201,7 +271,7 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
             <button
               key={key}
               type="button"
-              onClick={() => applyPreset(key)}
+              onClick={() => requestPreset(key)}
               className={`px-3 py-1.5 rounded-md text-[11px] font-medium border transition-colors ${
                 activePreset === key
                   ? 'bg-[var(--color-accent)]/20 text-[var(--color-accent)] border-[var(--color-accent)]/40'
@@ -253,6 +323,10 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
                 const currentPolicy = resolvePolicy(tool.name, policies, defaultPolicy)
                 const isOverridden = tool.name in policies
 
+                // FR-086: look up the per-agent effective-policy entry for fence display.
+                const agentEntry = agentToolIndex.get(tool.name)
+                const fenceApplied = agentEntry?.fence_applied ?? false
+
                 // Determine effective global policy for this tool.
                 // When the fetch failed, default to 'deny' (deny-by-default security posture).
                 const globalDefaultPolicy = globalPoliciesError ? 'deny' : (globalPolicies?.default_policy ?? 'allow')
@@ -272,20 +346,47 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
                     }`}
                   >
                     <div className="flex-1 min-w-0">
-                      <span className={`text-xs font-mono ${isOverridden && !isGloballyDenied ? 'text-[var(--color-secondary)]' : 'text-[var(--color-muted)]'}`}>
-                        {tool.name}
-                      </span>
-                      {isGloballyDenied ? (
-                        <span className="text-[10px] text-red-400 ml-2">Blocked by security policy</span>
-                      ) : isGloballyAsked ? (
-                        <span className="text-[10px] text-amber-400 ml-2" title="Global policy: Ask — agent cannot override to Allow">
-                          Global: Ask
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className={`text-xs font-mono ${isOverridden && !isGloballyDenied ? 'text-[var(--color-secondary)]' : 'text-[var(--color-muted)]'}`}>
+                          {tool.name}
                         </span>
-                      ) : (
-                        <span className="text-[10px] text-[var(--color-muted)] ml-2 hidden sm:inline">
-                          {tool.description?.slice(0, 50)}{(tool.description?.length ?? 0) > 50 ? '...' : ''}
-                        </span>
-                      )}
+
+                        {/* FR-027: source badge — distinguishes MCP tools from builtins */}
+                        {tool.source === 'mcp' && (
+                          <span className="text-[9px] font-medium uppercase tracking-wide bg-[var(--color-surface-2)] text-[var(--color-muted)] border border-[var(--color-border)] px-1.5 py-0.5 rounded">
+                            MCP
+                          </span>
+                        )}
+
+                        {/* FR-086: fence badge — when configured allow was downgraded to ask */}
+                        {fenceApplied && (
+                          <span
+                            className="text-[9px] font-medium uppercase tracking-wide bg-amber-500/10 text-amber-400 border border-amber-500/30 px-1.5 py-0.5 rounded flex items-center gap-0.5"
+                            title="downgraded to ask: admin-required tool on custom agent"
+                          >
+                            <Info size={9} weight="bold" />
+                            downgraded to ask
+                          </span>
+                        )}
+                      </div>
+
+                      <div>
+                        {isGloballyDenied ? (
+                          <span className="text-[10px] text-red-400 ml-0">Blocked by security policy</span>
+                        ) : isGloballyAsked ? (
+                          <span className="text-[10px] text-amber-400 ml-0" title="Global policy: Ask — agent cannot override to Allow">
+                            Global: Ask
+                          </span>
+                        ) : fenceApplied ? (
+                          <span className="text-[10px] text-amber-400 ml-0">
+                            Configured: {agentEntry?.configured_policy} → Effective: {agentEntry?.effective_policy}
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-[var(--color-muted)] hidden sm:inline">
+                            {tool.description?.slice(0, 50)}{(tool.description?.length ?? 0) > 50 ? '...' : ''}
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <div className="flex gap-0.5 shrink-0">
                       {(['allow', 'ask', 'deny'] as ToolPolicy[]).map((p) => (

@@ -1102,10 +1102,18 @@ type GatewayConfig struct {
 	// See docs/operations/reverse-proxy.md for setup instructions.
 	TrustXFF bool `json:"trust_xff,omitempty" env:"OMNIPUS_GATEWAY_TRUST_XFF"`
 
+	// Tool approval configuration (FR-016, SC-006).
+	// ToolApprovalTimeout is the seconds to wait for a user to approve/deny a
+	// tool call before auto-denying. 0 or negative uses the default (300 s).
+	ToolApprovalTimeout int `json:"tool_approval_timeout,omitempty" env:"OMNIPUS_TOOL_APPROVAL_TIMEOUT"`
+	// ToolApprovalMaxPending is the maximum number of concurrently-pending tool
+	// approvals before new requests are auto-denied (FR-016, MAJ-009).
+	// 0 uses the spec default (64). Negative values are rejected at startup.
+	ToolApprovalMaxPending int `json:"tool_approval_max_pending,omitempty" env:"OMNIPUS_TOOL_APPROVAL_MAX_PENDING"`
 	// TurnSyntheticErrorFloor is the number of consecutive synthetic-deny tool
 	// results in a single turn that triggers a turn abort (FR-084). Default: 8.
 	// Set to 0 to disable. Negative values are treated as the default (8).
-	TurnSyntheticErrorFloor int `json:"turn_synthetic_error_floor,omitempty" env:"OMNIPUS_GATEWAY_TURN_SYNTHETIC_ERROR_FLOOR"`
+	TurnSyntheticErrorFloor int `json:"turn_synthetic_error_floor,omitempty" env:"OMNIPUS_TURN_SYNTHETIC_ERROR_FLOOR"`
 }
 
 type ToolDiscoveryConfig struct {

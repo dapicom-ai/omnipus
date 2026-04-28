@@ -123,6 +123,10 @@ type WSHandler struct {
 	// connection that sent it — only that connection's browser tab can respond.
 	approvalRegistry *wsApprovalRegistry
 
+	// approvalRegV2 is the Central Tool Registry approval registry (FR-016, FR-070).
+	// Injected at boot by the gateway after construction.  Nil until then.
+	approvalRegV2 *approvalRegistryV2
+
 	// devicePairingRegistry tracks in-flight device pairing requests awaiting admin approval.
 	devicePairingRegistry *devicePairingRegistry
 
@@ -140,6 +144,7 @@ type wsConn struct {
 	droppedTokens atomic.Int32
 	droppedFrames atomic.Int32    // non-critical frames dropped due to backpressure
 	role          config.UserRole // RBAC role resolved at auth time
+	userID        string          // username resolved at auth time; used for session_state scoping (FR-073)
 
 	// Replay-mode divert (W1-1): during replay, live events arriving via
 	// sendConnFrame are redirected into replayDivertCh instead of sendCh so
@@ -420,6 +425,7 @@ func (h *WSHandler) authenticateWS(conn *websocket.Conn, wc *wsConn) bool {
 		for _, user := range cfg.Gateway.Users {
 			if user.TokenHash.Verify(rawToken) == nil {
 				wc.role = user.Role
+				wc.userID = user.Username // FR-073: needed for session_state user scoping
 				conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 				return true
 			}
@@ -474,6 +480,10 @@ func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsCo
 	// oversized frames. gorilla/websocket will return an error on the next
 	// ReadMessage call if the incoming frame exceeds this limit.
 	conn.SetReadLimit(wsMaxMessageBytes)
+
+	// Emit session_state one-shot so the SPA can hydrate pending approvals (FR-052, FR-073, FR-081).
+	// Called in a goroutine so it does not block the read loop while the frame is queued.
+	go h.emitSessionState(wc)
 
 	for {
 		_, data, err := conn.ReadMessage()

@@ -948,6 +948,25 @@ func setupAndStartServices(
 	wsHandler.webchatCh = wch
 	runningServices.ChannelManager.RegisterChannel("webchat", wch)
 
+	// Build the in-process tool-approval registry (FR-016, FR-070).
+	// maxPending <= 0 uses the spec default (64); timeout <= 0 uses the default (300 s).
+	approvalMaxPending := cfg.Gateway.ToolApprovalMaxPending
+	if approvalMaxPending < 0 {
+		return nil, fmt.Errorf("gateway: tool_approval_max_pending must not be negative (got %d)", approvalMaxPending)
+	}
+	if approvalMaxPending == 0 {
+		slog.Warn("gateway: tool_approval_max_pending=0 — spec default (64) will be used")
+	}
+	approvalTimeout := cfg.Gateway.ToolApprovalTimeout
+	var approvalTimeoutDur time.Duration
+	if approvalTimeout > 0 {
+		approvalTimeoutDur = time.Duration(approvalTimeout) * time.Second
+	} else {
+		approvalTimeoutDur = 300 * time.Second
+	}
+	approvalReg := newApprovalRegistryV2(approvalMaxPending, approvalTimeoutDur)
+	wsHandler.approvalRegV2 = approvalReg
+
 	// REST API endpoints for frontend data.
 	onboardingMgr := onboarding.NewManager(homePath)
 	tStore := agent.GetTaskStore(agentLoop)
@@ -966,6 +985,7 @@ func setupAndStartServices(
 		appliedConfig: mustDeepCopyConfig(cfg),         // boot-time snapshot for pending-restart diff
 		servedSubdirs: runningServices.servedSubdirs,   // serve_workspace token registry
 		devServers:    runningServices.devServers,       // run_in_workspace process registry
+		approvalReg:   approvalReg,                     // in-process tool-approval registry (FR-016)
 	}
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions", api.withAuth(api.HandleSessions))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions/", api.withAuth(api.HandleSessions))
