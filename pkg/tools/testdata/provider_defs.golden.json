@@ -1,0 +1,275 @@
+[
+  {
+    "name": "system.agent.activate",
+    "description": "Activate a core or custom agent, persisting the enabled state.\nParameters: id (required).",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.agent.create",
+    "description": "Create a new custom agent with personality, model, tools, and configuration.",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.agent.deactivate",
+    "description": "Deactivate an agent (makes it unavailable for new sessions), persisting the disabled state.\nParameters: id (required).",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.agent.delete",
+    "description": "Delete an agent and all its data (sessions, memory, workspace).\nParameters: id (required), confirm (bool, must be true).",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.agent.list",
+    "description": "List all agents with their status, model, and task count.\nParameters: status (optional: active/inactive/all, default all).",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.agent.update",
+    "description": "Update an existing agent's configuration. Only provided fields are changed; omitted fields are left as-is.",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.backup.create",
+    "description": "Create a backup of the Omnipus data directory. Parameters: encrypt (bool, default false).",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.channel.configure",
+    "description": "Configure an enabled channel with its credentials (token, phone_number, etc).\nParameters: id (required), plus channel-specific credentials.",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.channel.disable",
+    "description": "Disable a channel. Parameters: id (required).",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.channel.enable",
+    "description": "Enable a channel so it can be configured and connected.\nParameters: id (required).",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.channel.list",
+    "description": "List all channels with status and implementation tier. No parameters required.",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.channel.test",
+    "description": "Test a channel connection. Parameters: id (required).",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.config.get",
+    "description": "Read a configuration value by dot-notation key.\nParameters: key (required, e.g. 'gateway.port').",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.config.set",
+    "description": "Update a configuration value.\nParameters: key (required), value (required).",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.cost.query",
+    "description": "Query LLM cost data by period. Parameters: period (today/week/month/custom), start_date, end_date, agent_id, group_by.",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.doctor.run",
+    "description": "Run security diagnostics and return a risk score (0-100) with actionable recommendations. No parameters required.",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.mcp.add",
+    "description": "Add an MCP server.\nParameters: name (required), transport (stdio/sse/http), command, args, url, env, agent_ids.",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.mcp.list",
+    "description": "List all MCP servers with status and assigned agents. No parameters required.",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.mcp.remove",
+    "description": "Remove an MCP server. Parameters: name (required), confirm (bool, must be true).",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.models.list",
+    "description": "List available models from configured providers. Optional: filter by provider name. Returns model slugs, provider, and whether it's the system default.",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.navigate",
+    "description": "Navigate the UI to a specific screen.\nParameters: screen (chat/command-center/agents/skills/settings), agent_id (optional), section (optional).",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.pin.create",
+    "description": "Pin a chat response.\nParameters: session_id (required), message_id (required), title, tags, project_id.",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.pin.delete",
+    "description": "Delete a pin. Parameters: id (required), confirm (bool, must be true).",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.pin.list",
+    "description": "List pinned artifacts with optional filters.\nParameters: agent_id, project_id, tags, search (all optional).",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.project.create",
+    "description": "Create a new project.\nParameters: name (required), description, color, agent_ids.",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.project.delete",
+    "description": "Delete a project. Parameters: id (required), confirm (bool, must be true).",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.project.list",
+    "description": "List all projects with task counts. No parameters required.",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.project.update",
+    "description": "Update an existing project.\nParameters: id (required), name, description, color, agent_ids.",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.provider.configure",
+    "description": "Add or update an LLM provider with its API key.\nParameters: name (required), api_key (for cloud), api_base (optional).",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.provider.list",
+    "description": "List configured providers with connection status. API keys are never returned. No parameters required.",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.provider.test",
+    "description": "Test a provider connection. Parameters: name (required).",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.skill.install",
+    "description": "Install a skill from ClawHub.\nParameters: name (required), agent_ids (optional), credentials (optional).",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.skill.list",
+    "description": "List all installed skills. No parameters required.",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.skill.remove",
+    "description": "Remove an installed skill. Parameters: name (required), confirm (bool, must be true).",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.skill.search",
+    "description": "Search ClawHub for skills.\nParameters: query (required), sort (trending/new/popular), limit.",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.task.create",
+    "description": "Create a task on the GTD board.\nParameters: name (required), description, project_id, agent_id, status (inbox/next/active/waiting/done).",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.task.delete",
+    "description": "Delete a task. Parameters: id (required), confirm (bool, must be true).",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.task.list",
+    "description": "List tasks with optional filters.\nParameters: project_id, agent_id, status (all optional).",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  },
+  {
+    "name": "system.task.update",
+    "description": "Update a task's status, assignment, or details.\nParameters: id (required), name, description, status, agent_id, project_id.",
+    "scope": "core",
+    "category": "system",
+    "source": "builtin"
+  }
+]
