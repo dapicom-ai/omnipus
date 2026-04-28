@@ -1,6 +1,14 @@
 # Central Tool Registry — Working Notes
 
-**Status**: pre-spec scratch document. Captures the state of the planning conversation as of 2026-04-27 so the repo and context can be cleaned up before the proper `/plan-spec` pass starts. Not a spec; not implementation-ready.
+> **SUPERSEDED — Pre-spec scratch pad only.**
+> This document was a working-notes capture used to seed the `/plan-spec` pass. The proper specification was produced and is the binding contract:
+>
+> - Spec: `docs/specs/tool-registry-redesign-spec.md` (revision 6, fully implemented 2026-04-28)
+> - Current as-is: `docs/architecture/AS-IS-architecture.md` (§§3, 9)
+>
+> **Do not use this document for implementation guidance.**
+
+**Original status note**: pre-spec scratch document. Captures the state of the planning conversation as of 2026-04-27 so the repo and context can be cleaned up before the proper `/plan-spec` pass starts. Not a spec; not implementation-ready.
 
 ---
 

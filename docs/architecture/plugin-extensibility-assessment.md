@@ -57,11 +57,7 @@ P4 (true runtime loading) is **not** delivered by that refactor and would be a s
 ### Evidence
 
 - **Interface is uniform** — `tools.Tool` (`pkg/tools/types.go:22-30`). ✅ P5-shaped.
-- **Registration is explicit and centralised** — `Register` / `RegisterHidden` are called from a small number of well-known sites:
-  - `registerSharedTools` (`pkg/agent/loop.go:720-752`),
-  - `ToolCompositor.ComposeAndRegister` (`pkg/tools/compositor.go:30-75`),
-  - `sysagent/tools.BuildRegistry` (`pkg/sysagent/tools/registry.go:13-74`).
-  Each site is a hand-written list of `New*Tool()` constructors. ❌ P1, ❌ P2.
+- **Registration is explicit and centralised** — all native tools are registered once at boot via `registerSharedTools` (`pkg/agent/loop.go:677`) into the shared `BuiltinRegistry` (`pkg/tools/builtin_registry.go:42`). The old per-agent `ToolCompositor.ComposeAndRegister` and `sysagent/tools.BuildRegistry` paths were deleted by the central tool registry redesign (completed 2026-04-28; see `docs/specs/tool-registry-redesign-spec.md`). Each registration is still a hand-written `New*Tool()` constructor call. ❌ P1, ❌ P2.
 - **No `init()`-based tool registration** — unlike channels, tools have no per-package self-registration. Adding a tool requires editing one of the registration sites.
 - **No dynamic loading** — no `plugin.Open`, no subprocess tools. ❌ P4.
 - **There is one well-defined out-of-process tool source: MCP** (covered in §4).

@@ -36,10 +36,10 @@ The loop is a classic ReAct-style tool-using loop, implemented inline rather tha
 
 - `AgentInstance` (`pkg/agent/instance.go:25-64`) is the runtime agent. Fields: `ID`, `Name`, `Model`, `Fallbacks`, `Workspace`, `MaxIterations`, `MaxTokens`, `Temperature`, `ThinkingLevel`, `ContextWindow`, plus injected dependencies `Provider`, `Sessions`, `ContextBuilder`, `Tools`, optional `Router`/`LightProvider`. Constructed by `NewAgentInstance` at `pkg/agent/instance.go:67`.
 - `AgentRegistry` (`pkg/agent/registry.go:35`) holds all agents in a normalized-ID map. `GetAgent` (`:88`) and `ResolveRoute` (`:98`) are the lookup paths.
-- **System / Core / Custom differentiation is runtime-thin:** the same `AgentInstance` struct is used for all three. The differences are:
-  - System agent → `security.IsSystemAgent(id)` toggles rate-limit exemption (`pkg/agent/loop.go:2882, 2914`) and unlocks `ScopeSystem` tools.
-  - Core agents (Jim, Ava, Mia, Ray, Max) are seeded with `Locked=true` and have their prompts compiled into the binary via the `prompts` map (`pkg/coreagent/core.go:24-150`, prompts at `:86`, seed at `:109-128`).
-  - Custom agents come from `config.Agents.List` and use the same pipeline with no identity locks.
+- **Core / Custom differentiation is runtime-thin:** the same `AgentInstance` struct is used for both. The differences are:
+  - Core agents (Jim, Ava, Mia, Ray, Max) are seeded with `Locked=true` and have their prompts compiled into the binary via the `prompts` map (`pkg/coreagent/core.go:24-150`, prompts at `:86`, seed at `:109-128`). They receive a seeded `system.*: allow` policy.
+  - Custom agents come from `config.Agents.List` and use the same pipeline with no identity locks. They receive a seeded `system.*: deny` default policy.
+  - There is no separate "system agent" type at runtime. The old `ScopeSystem` / `IsSystemAgent` distinction has been replaced by the per-agent `ToolPolicyCfg` filter (see §3.2).
 
 ### 1.4 Provider abstraction
 
@@ -125,31 +125,46 @@ Memory in this codebase is **conversation history + a rolling summary**. There i
 ### 3.1 The `Tool` interface and registry
 
 ```go
-// pkg/tools/types.go:22-30
+// pkg/tools/base.go:22-30
 type Tool interface {
     Name() string
     Description() string
     Parameters() map[string]any
     Execute(ctx context.Context, args map[string]any) *ToolResult
     Scope() ToolScope
+    RequiresAdminAsk() bool   // added by central tool registry redesign
+    Category() ToolCategory   // added by central tool registry redesign
 }
 ```
 
-- **Registry**: `ToolRegistry` (`pkg/tools/registry.go:25-31`) is a `map[string]*ToolEntry` with a `sync.RWMutex` and a version atomic for cache invalidation.
-- **Registration is explicit** — there are no `init()`-based tool registrations. `Register` / `RegisterHidden` are called from:
-  - `registerSharedTools` in the agent loop (`pkg/agent/loop.go:720-752`),
-  - `ToolCompositor.ComposeAndRegister` (`pkg/tools/compositor.go:30-75`),
-  - `sysagent/tools.BuildRegistry()` for the system agent (`pkg/sysagent/tools/registry.go:13-74`).
-- **Hidden tools have a TTL**; core tools persist (`pkg/tools/registry.go:141-149`). MCP tools are registered hidden until a skill promotes them.
+The central tool registry redesign (completed; see `docs/specs/tool-registry-redesign-spec.md`) replaced the old per-agent `ToolRegistry` instances with **two shared registries**:
+
+- **`BuiltinRegistry`** (`pkg/tools/builtin_registry.go:42`) — a single shared `map[string]Tool` (RWMutex-guarded) populated once at boot by `registerSharedTools` (`pkg/agent/loop.go:677`). All 35 native builtins live here, including the `system.*` group.
+- **`MCPRegistry`** (`pkg/tools/mcp_registry.go:73`) — a separate dynamic registry populated by `MCPRegistry.RegisterServerTools` / `RegisterServerToolsWithOpts` as MCP servers connect. Eviction runs on disconnect (`EvictServer`, `:271`). Name-collision detection against builtins happens at registration time.
+
+Registration is still explicit — `registerSharedTools` calls `New*Tool()` constructors — but each call is a one-time boot-time operation against the shared `BuiltinRegistry`, not per-agent.
+
+- **Hidden tools have a TTL**; core tools persist (`pkg/tools/registry.go:141-149`). MCP tools begin visible immediately on `MCPRegistry`; skills promote them via `PromoteTools` (TTL=1).
 - **Async tools**: `AsyncExecutor` interface (`pkg/tools/types.go:133-139`); `ExecuteWithContext` detects and dispatches async tools with a callback.
 
-### 3.2 Scope model
+### 3.2 Central registry: per-agent policy filter
 
-`ScopeSystem` (system agent only) > `ScopeCore` (system + core agents) > `ScopeGeneral` (all). Defined in `pkg/tools/base.go:5-19`. Filtering is done by `FilterToolsByVisibility` per agent (`pkg/tools/compositor.go:219-277`).
+The `FilterToolsByPolicy` function (`pkg/tools/compositor.go:143`) is the primary runtime filter applied **before each LLM call**. It resolves:
+
+```
+{BuiltinRegistry.All()} ∪ {MCPRegistry.All()}
+    → scope gate (ScopeCore blocks custom agents from core-only tools)
+    → policy filter (GlobalPolicies then per-agent Policies map; deny > ask > allow)
+    → tools[] sent to model
+```
+
+Per-agent policy lives in a `ToolPolicyCfg` struct (`pkg/tools/compositor.go:109`) with `Policies map[string]string`, `DefaultPolicy`, `GlobalPolicies`, `GlobalDefaultPolicy`. Each `AgentInstance` holds an `atomic.Pointer[tools.ToolPolicyCfg]` (`pkg/agent/instance.go:66`) updated hot by `ReloadProviderAndConfig` without rebuilding the registry.
+
+**Admin-ask fence** (`pkg/policy/admin_ask_fence.go:56` — `ApplyAdminAskFence`): tools whose `RequiresAdminAsk()` returns `true` (all `system.*` tools) route through an approval state machine in `pkg/gateway/approvals.go`. `ApprovalState` transitions: `pending → approved | denied_*` (`approvals.go:37-65`). The agent loop pauses at the fence, the gateway emits `tool_approval_required` over the WebSocket bus, and execution resumes or a `permission_denied` result is injected into the LLM context.
 
 ### 3.3 Tool catalog and JSON schema
 
-- Canonical catalog of 35 builtin tools is enumerated in `pkg/tools/catalog.go:45-147` (file/code/web/browser/communication/task/automation/search/skills/hardware/system).
+- Tool catalog is derived at runtime from `BuiltinRegistry.Describe()` (`pkg/tools/builtin_registry.go:112`), replacing the deleted static `builtinCatalog` slice (`pkg/tools/catalog.go`).
 - File implementations include: `shell.go`, `filesystem.go`, `web.go`, `browser/`, `send_file.go`, `edit.go`, `handoff.go`, `message.go`, `mcp_tool.go`, `build_static.go`, `cron.go`, `spawn.go`, `subagent.go`, `task.go`, `skills_install.go`, `skills_search.go`, `skills_remove.go`, `i2c.go`/`i2c_linux.go`, `spi.go`/`spi_linux.go`.
 - Schema export: `ToolToSchema` (`pkg/tools/types.go:141-150`) emits OpenAI/Anthropic function format `{type:"function", function:{name, description, parameters}}`.
 
@@ -157,12 +172,13 @@ type Tool interface {
 
 All 35 `system.*` tools are present and implemented in `pkg/sysagent/tools/`:
 - `agent.go` (6), `project.go` (4), `task.go` (4), `channel.go` (5), `skill.go` (4), `mcp.go` (3), `provider.go` (4), `pin.go` (3), `config.go` (2), `diag.go` (4).
-- `BuildRegistry()` (`pkg/sysagent/tools/registry.go:13-74`) constructs a dedicated `ToolRegistry` populated by `AllTools()`. They share the standard `Tool` interface but live behind `ScopeSystem`.
+- These are **ordinary builtins** registered on the central `BuiltinRegistry` at boot. There is no dedicated `BuildRegistry()` for a "system agent". Per-agent policy (default `system.*: deny` seeded on every new custom agent) governs exposure. Core agents receive `system.*: allow` via their seeded policy.
+- `RequiresAdminAsk()` returns `true` for all `system.*` tools, routing them through the admin-ask fence for custom-agent callers.
 
 ### 3.5 Permissions / sandboxing wiring
 
-- Per-agent gating runs in `ToolCompositor.ComposeAndRegister(agentID)` via `policy.Evaluator.EvaluateTool` / `auditor.EvaluateTool` (`pkg/tools/compositor.go:134-174`).
-- Sandbox enforcement (Landlock/seccomp) is set up later in the boot path at `pkg/agent/loop.go:672+`, not inside `pkg/tools`.
+- Per-agent filtering runs via `FilterToolsByPolicy` (`pkg/tools/compositor.go:143`) at LLM-call assembly time, not at registry build time.
+- Sandbox enforcement (Landlock/seccomp) is set up in the boot path at `pkg/agent/loop.go:672+`, independently of the tool filter.
 
 ### 3.6 Plugin loading — what's actually there
 
@@ -284,8 +300,8 @@ Channels publish *into* and the manager consumes *from* the bus — channels the
 
 | Subsystem | Interface | Registry | Registration site | Runtime extension? |
 |---|---|---|---|---|
-| Tools (native) | `tools.Tool` | `tools.ToolRegistry` (mutex map) | Explicit calls in `registerSharedTools`, `ToolCompositor`, `sysagent.BuildRegistry` | No (compile-in only) |
-| Tools (MCP) | `tools.Tool` via `MCPTool` wrapper | Same registry, hidden + promoted | `mcp.Manager.LoadFromConfig` + compositor | **Yes — config-driven, stdio or HTTP/SSE subprocess** |
+| Tools (native) | `tools.Tool` | `tools.BuiltinRegistry` (shared, mutex map) | One-time boot in `registerSharedTools`; per-agent filtered by `FilterToolsByPolicy` | No (compile-in only) |
+| Tools (MCP) | `tools.Tool` via `MCPTool` wrapper | `tools.MCPRegistry` (dynamic) | `MCPRegistry.RegisterServerTools` on connect; `EvictServer` on disconnect | **Yes — config-driven, stdio or HTTP/SSE subprocess** |
 | Skills | `skills.SkillRegistry` (for sources) | `RegistryManager` + filesystem scan | `SkillsLoader` scans 3 dirs | **Yes — filesystem drop-in + ClawHub install** |
 | Channels | `channels.Channel` (+ capability ifaces) | Factory map (`RegisterFactory`) | `func init()` per subpackage | No (also requires editing `ChannelsConfig` + `initChannels()` switch) |
 | Memory | `memory.Store` | n/a (per-agent JSONL) | n/a | No |
@@ -303,3 +319,20 @@ Channels publish *into* and the manager consumes *from* the bus — channels the
 6. Channel activation requires editing two files (`pkg/config/config.go` + `pkg/channels/manager.go:initChannels`) on top of `RegisterFactory`.
 7. Streaming is opt-in per provider; non-streaming providers degrade silently to single-shot responses.
 8. Per-turn iteration ceiling is hardcoded as `2 × MaxIterations` (`pkg/agent/loop.go:2865`); the soft limit is the only config knob.
+
+---
+
+## 9. Central tool registry redesign — implementation note
+
+The central tool registry redesign (spec: `docs/specs/tool-registry-redesign-spec.md`, revision 6) is **fully implemented** as of the `feature/iframe-preview-tier13` branch. Key seams:
+
+| File | Role |
+|------|------|
+| `pkg/tools/builtin_registry.go` | `BuiltinRegistry` — shared, immutable-after-boot catalog of all native tools |
+| `pkg/tools/mcp_registry.go` | `MCPRegistry` — dynamic MCP tool catalog; collision-checked against builtins |
+| `pkg/tools/compositor.go::FilterToolsByPolicy` | Per-agent filter applied before each LLM call; logic preserved from pre-redesign |
+| `pkg/agent/instance.go:66` | `atomic.Pointer[tools.ToolPolicyCfg]` — hot-swappable policy per agent |
+| `pkg/gateway/approvals.go` | Approval state machine (`ApprovalState` transitions) for `ask`-policy tools |
+| `pkg/policy/admin_ask_fence.go` | `ApplyAdminAskFence` — enforces admin confirmation for `RequiresAdminAsk()` tools |
+
+Pre-redesign symbols `WireSystemTools`, `WireAvaAgentTools`, `ScopeSystem`, `IsSystemAgent`, `ComposeAndRegister`, and the static `builtinCatalog` slice are all removed. The `omnipus-system` agent ID is fictional and has no runtime representation.
