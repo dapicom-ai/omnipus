@@ -27,7 +27,7 @@ func TestFilterToolsByPolicy_GlobalDenyOverridesAgentAllow(t *testing.T) {
 	t.Parallel()
 
 	tools := []Tool{
-		makeScopedTool("system.config.set", ScopeSystem),
+		makeScopedTool("system.config.set", ScopeCore),
 		makeScopedTool("exec", ScopeCore),
 		makeScopedTool("web_search", ScopeGeneral),
 	}

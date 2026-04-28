@@ -58,7 +58,6 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/state"
-	systools "github.com/dapicom-ai/omnipus/pkg/sysagent/tools"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 	"github.com/dapicom-ai/omnipus/pkg/voice"
 )
@@ -450,31 +449,6 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 	// binds so operators see the warning even during a fast crash-loop.
 	stopNag := StartNagBanner(sandboxResult.NagReason, nil)
 
-	// Wire agent CRUD tools (system.agent.create/update/delete) to Ava so she
-	// can create custom agents through her structured interview flow.
-	// reloadFuncRef is set after services start; the closure captures the pointer
-	// so avaDeps.ReloadFunc is safe to call even if invoked before assignment
-	// (returns "reload not yet available" instead of nil panic).
-	var reloadFuncRef func() error
-	avaDeps := &systools.Deps{
-		Home:         homePath,
-		ConfigPath:   configPath,
-		GetCfg:       agentLoop.GetConfig,
-		MutateConfig: agentLoop.MutateConfig,
-		SaveConfigLocked: func(cfg *config.Config) error {
-			return config.SaveConfig(configPath, cfg)
-		},
-		CredStore: credStore,
-		ReloadFunc: func() error {
-			if reloadFuncRef == nil {
-				return fmt.Errorf("reload not yet available — gateway still starting")
-			}
-			return reloadFuncRef()
-		},
-	}
-	if wireErr := agentLoop.WireAvaAgentTools(avaDeps); wireErr != nil {
-		slog.Error("gateway: failed to wire Ava agent tools — Ava cannot create agents", "error", wireErr)
-	}
 
 	fmt.Println("\n📦 Agent Status:")
 	startupInfo := agentLoop.GetStartupInfo()
@@ -528,8 +502,6 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 	}
 	runningServices.HealthServer.SetReloadFunc(reloadTrigger)
 	agentLoop.SetReloadFunc(reloadTrigger)
-	// Wire reload trigger into Ava's deps so agent create triggers hot-reload.
-	reloadFuncRef = reloadTrigger
 
 	fmt.Printf("✓ Gateway started on %s:%d\n", cfg.Gateway.Host, cfg.Gateway.Port)
 	fmt.Println("Press Ctrl+C to stop")
@@ -971,27 +943,6 @@ func setupAndStartServices(
 	onboardingMgr := onboarding.NewManager(homePath)
 	tStore := agent.GetTaskStore(agentLoop)
 	tExecutor := agent.GetTaskExecutor(agentLoop)
-	// Build the approval registry using gateway config (FR-016, SC-006).
-	// Negative max_pending is rejected here; 0 allows unlimited (with WARN).
-	approvalMaxPending := cfg.Gateway.ToolApprovalMaxPending
-	if approvalMaxPending < 0 {
-		slog.Error("gateway: tool_approval_max_pending must be >= 0; got negative value — refusing to start",
-			"value", approvalMaxPending)
-		return nil, fmt.Errorf("gateway.tool_approval_max_pending must not be negative (got %d)", approvalMaxPending)
-	}
-	if approvalMaxPending == 0 {
-		slog.Warn("gateway: tool_approval_max_pending=0 — approval saturation guard DISABLED (DoS risk)")
-	}
-	approvalTimeout := cfg.Gateway.ToolApprovalTimeout
-	var approvalTimeoutDur time.Duration
-	if approvalTimeout > 0 {
-		approvalTimeoutDur = time.Duration(approvalTimeout) * time.Second
-	} else {
-		approvalTimeoutDur = 300 * time.Second // SC-006 default
-	}
-	approvalReg := newApprovalRegistryV2(approvalMaxPending, approvalTimeoutDur)
-	// Share the approval registry with the WS handler for session_state emission (FR-052).
-	wsHandler.approvalRegV2 = approvalReg
 
 	api := &restAPI{
 		agentLoop:     agentLoop,

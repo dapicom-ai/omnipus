@@ -106,6 +106,7 @@ type RunInWorkspaceConfig struct {
 // gateway; the registry pointer is shared so /dev/<agent>/<token>/ can
 // look up registrations.
 type RunInWorkspaceTool struct {
+	BaseTool
 	cfg         RunInWorkspaceConfig
 	workspace   string
 	registry    *sandbox.DevServerRegistry

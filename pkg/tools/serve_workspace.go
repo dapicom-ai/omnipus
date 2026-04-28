@@ -41,6 +41,7 @@ type ServedSubdirsRegistry interface {
 
 // ServeWorkspaceTool implements the serve_workspace tool (..).
 type ServeWorkspaceTool struct {
+	BaseTool
 	// workspace is the agent's absolute workspace directory.
 	workspace string
 	// registry is the process-wide registration map.

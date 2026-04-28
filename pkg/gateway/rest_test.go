@@ -590,41 +590,35 @@ func TestAgentListStatus_CustomAgentActive(t *testing.T) {
 
 // --- Tool Visibility Endpoints (Issue #41) ---
 
-// TestHandleBuiltinTools_ReturnsJSON verifies GET /api/v1/tools/builtin returns a JSON array.
-// BDD: Given a running gateway,
-// When GET /api/v1/tools/builtin is called,
-// Then the response is 200 with a JSON array (possibly empty for test config).
-// Traces to: parsed-inventing-gem.md — PR 2 REST endpoints
-func TestHandleBuiltinTools_ReturnsJSON(t *testing.T) {
+// TestHandleBuiltinToolsDeprecated_Returns404 verifies GET /api/v1/tools/builtin
+// now returns 404 — the legacy catalog endpoint was removed in the central tool
+// registry redesign (FR-029). Callers must use GET /api/v1/tools instead.
+// Traces to: central tool registry redesign spec — FR-029.
+func TestHandleBuiltinToolsDeprecated_Returns404(t *testing.T) {
 	api, cleanup := newTestRestAPI(t)
 	defer cleanup()
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/tools/builtin", nil)
-	api.HandleBuiltinTools(w, r)
+	api.HandleBuiltinToolsDeprecated(w, r)
 
-	require.Equal(t, http.StatusOK, w.Code)
-	var result []map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
-	// May be empty in test config — the shape is what matters.
-	for _, tool := range result {
-		assert.Contains(t, tool, "name")
-		assert.Contains(t, tool, "scope")
-		assert.Contains(t, tool, "category")
-		assert.Contains(t, tool, "description")
-	}
+	require.Equal(t, http.StatusNotFound, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Contains(t, body, "error")
 }
 
-// TestHandleBuiltinTools_MethodNotAllowed verifies POST is rejected.
-func TestHandleBuiltinTools_MethodNotAllowed(t *testing.T) {
+// TestHandleBuiltinToolsDeprecated_AnyMethodReturns404 verifies all HTTP methods
+// return 404 on the deprecated endpoint.
+func TestHandleBuiltinToolsDeprecated_AnyMethodReturns404(t *testing.T) {
 	api, cleanup := newTestRestAPI(t)
 	defer cleanup()
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/tools/builtin", nil)
-	api.HandleBuiltinTools(w, r)
+	api.HandleBuiltinToolsDeprecated(w, r)
 
-	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // TestHandleMCPTools_ReturnsJSON verifies GET /api/v1/tools/mcp returns a JSON response.
@@ -695,8 +689,11 @@ func TestGetAgentTools_CustomAgent(t *testing.T) {
 					Name: "Tool Agent",
 					Tools: &config.AgentToolsCfg{
 						Builtin: config.AgentBuiltinToolsCfg{
-							Mode:    config.VisibilityExplicit,
-							Visible: []string{"read_file", "web_search"},
+							DefaultPolicy: config.ToolPolicyDeny,
+							Policies: map[string]config.ToolPolicy{
+								"read_file":  config.ToolPolicyAllow,
+								"web_search": config.ToolPolicyAllow,
+							},
 						},
 					},
 				},
@@ -878,8 +875,12 @@ func TestCreateAgent_WithToolsCfg(t *testing.T) {
 		"icon": "magnifying-glass",
 		"tools_cfg": {
 			"builtin": {
-				"mode": "explicit",
-				"visible": ["read_file", "web_search", "web_fetch"]
+				"default_policy": "deny",
+				"policies": {
+					"read_file": "allow",
+					"web_search": "allow",
+					"web_fetch": "allow"
+				}
 			},
 			"mcp": {
 				"servers": [{"id": "my-server"}]
@@ -902,7 +903,7 @@ func TestCreateAgent_WithToolsCfg(t *testing.T) {
 	assert.Equal(t, "custom", resp.Type)
 	assert.NotEmpty(t, resp.ID)
 
-	// Verify the config.json was updated with the tools config.
+	// Verify the config.json was updated with the tools config (new format: default_policy/policies).
 	savedCfg, err := os.ReadFile(cfgPath)
 	require.NoError(t, err)
 	var savedMap map[string]any
@@ -916,7 +917,10 @@ func TestCreateAgent_WithToolsCfg(t *testing.T) {
 	toolsMap, ok := agentMap["tools"].(map[string]any)
 	require.True(t, ok, "tools config must be persisted")
 	builtinMap, _ := toolsMap["builtin"].(map[string]any)
-	assert.Equal(t, "explicit", builtinMap["mode"])
+	assert.Equal(t, "deny", builtinMap["default_policy"])
+	policies, _ := builtinMap["policies"].(map[string]any)
+	assert.Equal(t, "allow", policies["read_file"])
+	assert.Equal(t, "allow", policies["web_search"])
 }
 
 // TestUpdateAgentTools_Success verifies PUT /api/v1/agents/{id}/tools returns 200,

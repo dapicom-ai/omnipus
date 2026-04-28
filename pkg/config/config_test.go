@@ -1389,8 +1389,12 @@ func TestResolveType_NilCallback(t *testing.T) {
 func TestAgentToolsCfg_JSONRoundTrip(t *testing.T) {
 	original := AgentToolsCfg{
 		Builtin: AgentBuiltinToolsCfg{
-			Mode:    VisibilityExplicit,
-			Visible: []string{"exec", "web_search", "read_file"},
+			DefaultPolicy: ToolPolicyDeny,
+			Policies: map[string]ToolPolicy{
+				"exec":       ToolPolicyAllow,
+				"web_search": ToolPolicyAllow,
+				"read_file":  ToolPolicyAllow,
+			},
 		},
 		MCP: AgentMCPToolsCfg{
 			Servers: []AgentMCPServerBinding{
@@ -1413,19 +1417,14 @@ func TestAgentToolsCfg_JSONRoundTrip(t *testing.T) {
 		t.Fatalf("json.Unmarshal(AgentToolsCfg): %v", unmarshalErr)
 	}
 
-	// Builtin.Mode
-	if decoded.Builtin.Mode != original.Builtin.Mode {
-		t.Errorf("Builtin.Mode = %q, want %q", decoded.Builtin.Mode, original.Builtin.Mode)
+	// Builtin.DefaultPolicy
+	if decoded.Builtin.DefaultPolicy != original.Builtin.DefaultPolicy {
+		t.Errorf("Builtin.DefaultPolicy = %q, want %q", decoded.Builtin.DefaultPolicy, original.Builtin.DefaultPolicy)
 	}
 
-	// Builtin.Visible — length and contents
-	if len(decoded.Builtin.Visible) != len(original.Builtin.Visible) {
-		t.Fatalf("Builtin.Visible len = %d, want %d", len(decoded.Builtin.Visible), len(original.Builtin.Visible))
-	}
-	for i, name := range original.Builtin.Visible {
-		if decoded.Builtin.Visible[i] != name {
-			t.Errorf("Builtin.Visible[%d] = %q, want %q", i, decoded.Builtin.Visible[i], name)
-		}
+	// Builtin.Policies — count
+	if len(decoded.Builtin.Policies) != len(original.Builtin.Policies) {
+		t.Fatalf("Builtin.Policies len = %d, want %d", len(decoded.Builtin.Policies), len(original.Builtin.Policies))
 	}
 
 	// MCP.Servers — count and contents

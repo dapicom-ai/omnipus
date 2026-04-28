@@ -37,8 +37,6 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/skills"
 	"github.com/dapicom-ai/omnipus/pkg/state"
-	"github.com/dapicom-ai/omnipus/pkg/sysagent"
-	systools "github.com/dapicom-ai/omnipus/pkg/sysagent/tools"
 	"github.com/dapicom-ai/omnipus/pkg/taskstore"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 	"github.com/dapicom-ai/omnipus/pkg/tools/browser"
@@ -122,9 +120,6 @@ type AgentLoop struct {
 	// Wave 4: Browser automation manager (US-4/US-6/US-7). Nil when browser
 	// tools are disabled. Shutdown() is called in AgentLoop.Close().
 	browserMgr *browser.BrowserManager
-
-	// Ava agent CRUD deps — stored so WireAvaAgentTools can re-run on hot reload.
-	avaDeps *systools.Deps
 
 	// Tier 1/3 deps — stored so WireTier13Deps can re-run on hot reload.
 	// Without this, hot-reload would drop serve_workspace and run_in_workspace
@@ -1792,17 +1787,6 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 	// Ensure shared tools are re-registered on the new registry
 	registerSharedTools(al, cfg, al.bus, registry, provider)
 
-	// Re-wire Ava's agent CRUD tools on the new registry.
-	if al.avaDeps != nil {
-		if err := al.WireAvaAgentTools(al.avaDeps, registry); err != nil {
-			logger.WarnCF(
-				"agent",
-				"hot-reload: failed to re-wire Ava agent tools",
-				map[string]any{"error": err.Error()},
-			)
-		}
-	}
-
 	// Re-wire Tier 1/3 tools (serve_workspace, run_in_workspace) on the new registry.
 	// Without this, hot-reload silently drops them because NewAgentRegistry creates
 	// fresh AgentInstances whose Tools registries don't know about the shared
@@ -3076,7 +3060,7 @@ turnLoop:
 		// Tools with effective policy "ask" are included — the mid-turn policy snapshot
 		// (FR-041) handles human-in-the-loop confirmation; see recordSyntheticDeny.
 		allAgentTools := ts.agent.Tools.GetAll()
-		policyFilteredTools, _ := tools.FilterToolsByPolicy(allAgentTools, ts.agent.AgentType, ts.agent.ToolPolicyCfg)
+		policyFilteredTools, _ := tools.FilterToolsByPolicy(allAgentTools, ts.agent.AgentType, ts.agent.LoadToolPolicy())
 		providerToolDefs := tools.ToolsToProviderDefs(policyFilteredTools)
 
 		// Native web search support
@@ -5473,165 +5457,3 @@ func perplexityKeys(key string) []string {
 	return []string{key}
 }
 
-// WireSystemTools registers the 35 system.* tools from BuildRegistry into the
-// system agent's tool registry (the "main"/"omnipus-system" agent). This must be
-// called by the gateway after NewAgentLoop for production use; non-system agents
-// do NOT receive system tools.
-//
-// WireSystemTools is deliberately separate from NewAgentLoop so that configPath
-// and credStore (gateway-level concerns) do not leak into the core agent constructor.
-// Callers that construct an AgentLoop in tests or non-gateway contexts can skip
-// this wiring.
-//
-// navCb may be nil in headless or test environments — the navigate tool
-// tolerates a nil callback and no-ops the navigation side-effect.
-//
-// WireSystemTools is idempotent: calling it multiple times overwrites any
-// previously registered system.* tools with the same names (ToolRegistry.Register
-// silently replaces existing entries).
-//
-// Returns an error if the system agent is not found in the registry — callers
-// should treat this as a fatal boot failure.
-func (al *AgentLoop) WireSystemTools(deps *systools.Deps, navCb systools.NavigateCallback) error {
-	reg := al.GetRegistry()
-	// The system agent is "omnipus-system", which the registry stores as "main".
-	agentInst, ok := reg.GetAgent(DefaultAgentID)
-	if !ok || agentInst == nil {
-		return fmt.Errorf(
-			"WireSystemTools: system agent %q not found in registry — agent loop may not have been initialized correctly",
-			DefaultAgentID,
-		)
-	}
-	sysRegistry := systools.BuildRegistry(deps, navCb)
-
-	// Build the handler that enforces BRD-required guards on every system.* tool call:
-	//   1. RBAC check (CheckRBAC) — SEC-19
-	//   2. Rate limit check (SystemRateLimiter.Check)
-	//   3. Confirmation requirement (RequiresConfirmation) — UI button gate
-	//   4. Audit log entry (audit.Logger.Log) — SEC-15
-	//
-	// In open-source single-user mode we use RoleSingleUser (bypasses RBAC checks)
-	// and a nil confirm func (destructive ops return CONFIRMATION_REQUIRED to the LLM,
-	// which is the correct headless posture until the WebSocket layer wires a real confirm).
-	handler := sysagent.NewSystemToolHandler(sysagent.HandlerConfig{
-		Registry: sysRegistry,
-		Audit:    al.auditLogger,
-		Confirm:  nil, // wired by gateway WebSocket handler when UI is available
-	})
-
-	for _, toolName := range sysRegistry.List() {
-		t, exists := sysRegistry.Get(toolName)
-		if !exists {
-			continue
-		}
-		guarded := sysagent.NewGuardedTool(t, handler, sysagent.RoleSingleUser, "gateway")
-		agentInst.Tools.Register(guarded)
-	}
-	logger.InfoCF("agent", "System tools wired into system agent (guarded)",
-		map[string]any{"agent_id": DefaultAgentID, "tool_count": len(sysRegistry.List())})
-	return nil
-}
-
-// WireAvaAgentTools registers the 4 agent tools (system.agent.create,
-// system.agent.update, system.agent.delete, system.models.list) on the "ava"
-// core agent so she can create custom agents through her structured interview
-// flow. These are wrapped with GuardedTool for RBAC + rate limiting + audit.
-// If reg is nil, the current registry is used. Pass a specific registry
-// during hot-reload when the new registry hasn't been swapped yet.
-func (al *AgentLoop) WireAvaAgentTools(deps *systools.Deps, reg ...*AgentRegistry) error {
-	al.avaDeps = deps
-	var r *AgentRegistry
-	if len(reg) > 0 && reg[0] != nil {
-		r = reg[0]
-	} else {
-		r = al.GetRegistry()
-	}
-	avaInst, ok := r.GetAgent("ava")
-	if !ok || avaInst == nil {
-		return fmt.Errorf("WireAvaAgentTools: agent 'ava' not found in registry")
-	}
-
-	handler := sysagent.NewSystemToolHandler(sysagent.HandlerConfig{
-		Registry: systools.BuildRegistry(deps, nil),
-		Audit:    al.auditLogger,
-		Confirm:  nil,
-	})
-
-	// Wire agent CRUD tools + model lookup — Ava doesn't get the other system tools.
-	agentToolNames := []string{
-		"system.agent.create",
-		"system.agent.update",
-		"system.agent.delete",
-		"system.models.list",
-	}
-
-	wired := 0
-	var missing []string
-	fullRegistry := systools.BuildRegistry(deps, nil)
-	for _, name := range agentToolNames {
-		t, exists := fullRegistry.Get(name)
-		if !exists {
-			missing = append(missing, name)
-			continue
-		}
-		guarded := sysagent.NewGuardedTool(t, handler, sysagent.RoleSingleUser, "gateway").
-			WithScopeOverride(tools.ScopeCore)
-		avaInst.Tools.Register(guarded)
-		wired++
-	}
-	if len(missing) > 0 {
-		return fmt.Errorf("WireAvaAgentTools: %d/%d tools not found in registry: %v",
-			len(missing), len(agentToolNames), missing)
-	}
-
-	// Inject available resources (tools, providers, defaults) into Ava's context
-	// so she can recommend tools and models during the agent creation interview.
-	avaInst.ContextBuilder.WithResourcesInjector(func() string {
-		cfg := deps.GetCfg()
-		var sb strings.Builder
-		sb.WriteString("# Available Resources\n\n")
-
-		// System defaults.
-		sb.WriteString("## System Defaults\n")
-		sb.WriteString(fmt.Sprintf("- Default model: `%s`\n", cfg.Agents.Defaults.ModelName))
-		if len(cfg.Agents.Defaults.ModelFallbacks) > 0 {
-			sb.WriteString(
-				fmt.Sprintf("- Default fallbacks: %s\n", strings.Join(cfg.Agents.Defaults.ModelFallbacks, ", ")),
-			)
-		}
-		sb.WriteString("\n")
-
-		// Connected providers.
-		sb.WriteString("## Connected Providers\n")
-		providersSeen := map[string]bool{}
-		for _, p := range cfg.Providers {
-			if p == nil {
-				continue
-			}
-			name := p.Provider
-			if name == "" {
-				if idx := strings.IndexByte(p.Model, '/'); idx > 0 {
-					name = p.Model[:idx]
-				}
-			}
-			if name == "" || providersSeen[name] {
-				continue
-			}
-			providersSeen[name] = true
-			sb.WriteString(fmt.Sprintf("- %s\n", name))
-		}
-		if len(providersSeen) == 0 {
-			sb.WriteString("- (none configured)\n")
-		}
-		sb.WriteString("\nUse `system.models.list` to see all available models from these providers.\n\n")
-
-		// Builtin tools — from the centralized catalog (pkg/tools/catalog.go).
-		sb.WriteString(tools.CatalogMarkdown())
-
-		return sb.String()
-	})
-
-	logger.InfoCF("agent", "Agent CRUD tools wired into Ava (guarded)",
-		map[string]any{"agent_id": "ava", "tool_count": wired})
-	return nil
-}

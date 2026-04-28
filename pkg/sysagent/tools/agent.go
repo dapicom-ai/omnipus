@@ -263,19 +263,21 @@ func (t *AgentCreateTool) Execute(_ context.Context, args map[string]any) *tools
 				}
 			}
 		}
-		// Optional: tool visibility.
+		// Optional: tool visibility (legacy mode/visible args converted to policy format).
 		if mode, ok := args["tools_mode"].(string); ok && (mode == "inherit" || mode == "explicit") {
-			toolsCfg := &config.AgentToolsCfg{
-				Builtin: config.AgentBuiltinToolsCfg{
-					Mode: config.VisibilityMode(mode),
-				},
-			}
-			if vis, ok := args["tools_visible"].([]any); ok {
-				for _, v := range vis {
-					if s, ok := v.(string); ok && s != "" {
-						toolsCfg.Builtin.Visible = append(toolsCfg.Builtin.Visible, s)
+			toolsCfg := &config.AgentToolsCfg{}
+			if mode == "explicit" {
+				toolsCfg.Builtin.DefaultPolicy = config.ToolPolicyDeny
+				if vis, ok := args["tools_visible"].([]any); ok {
+					toolsCfg.Builtin.Policies = make(map[string]config.ToolPolicy, len(vis))
+					for _, v := range vis {
+						if s, ok := v.(string); ok && s != "" {
+							toolsCfg.Builtin.Policies[s] = config.ToolPolicyAllow
+						}
 					}
 				}
+			} else {
+				toolsCfg.Builtin.DefaultPolicy = config.ToolPolicyAllow
 			}
 			newAgent.Tools = toolsCfg
 		}
@@ -467,25 +469,31 @@ func (t *AgentUpdateTool) Execute(_ context.Context, args map[string]any) *tools
 				}
 				updated = append(updated, "can_delegate_to")
 			}
-			// Tool visibility.
+			// Tool visibility (legacy mode/visible args converted to policy format).
 			if mode, ok := args["tools_mode"].(string); ok && (mode == "inherit" || mode == "explicit") {
 				if a.Tools == nil {
 					a.Tools = &config.AgentToolsCfg{}
 				}
-				a.Tools.Builtin.Mode = config.VisibilityMode(mode)
+				if mode == "explicit" {
+					a.Tools.Builtin.DefaultPolicy = config.ToolPolicyDeny
+				} else {
+					a.Tools.Builtin.DefaultPolicy = config.ToolPolicyAllow
+				}
 				updated = append(updated, "tools_mode")
 			}
 			if vis, ok := args["tools_visible"].([]any); ok {
 				if a.Tools == nil {
 					a.Tools = &config.AgentToolsCfg{}
 				}
-				a.Tools.Builtin.Visible = nil
-				for _, v := range vis {
-					if s, ok := v.(string); ok && s != "" {
-						a.Tools.Builtin.Visible = append(a.Tools.Builtin.Visible, s)
+				if a.Tools.Builtin.DefaultPolicy == config.ToolPolicyDeny {
+					a.Tools.Builtin.Policies = make(map[string]config.ToolPolicy, len(vis))
+					for _, v := range vis {
+						if s, ok := v.(string); ok && s != "" {
+							a.Tools.Builtin.Policies[s] = config.ToolPolicyAllow
+						}
 					}
+					updated = append(updated, "tools_visible")
 				}
-				updated = append(updated, "tools_visible")
 			}
 			return nil
 		}

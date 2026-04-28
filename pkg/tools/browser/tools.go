@@ -374,6 +374,7 @@ func (t *WaitTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 // default builtin policy and the executeEnabled execution gate together enforce
 // SEC-04 / SEC-06 without hiding the tool from the model.
 type EvaluateTool struct {
+	tools.BaseTool
 	mgr            *BrowserManager
 	executeEnabled bool
 }

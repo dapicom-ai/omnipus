@@ -499,11 +499,6 @@ type AgentBuiltinToolsCfg struct {
 	DefaultPolicy ToolPolicy `json:"default_policy,omitempty"`
 	// Policies is a per-tool override map. Keys are tool names from the catalog.
 	Policies map[string]ToolPolicy `json:"policies,omitempty"`
-
-	// Legacy fields for backward compatibility during migration.
-	// These are read during config load and converted to Policies.
-	Mode    VisibilityMode `json:"mode,omitempty"`
-	Visible []string       `json:"visible,omitempty"`
 }
 
 // ResolvePolicy returns the effective policy for a tool name.

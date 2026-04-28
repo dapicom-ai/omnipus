@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 
@@ -56,10 +57,13 @@ type AgentInstance struct {
 	// construction; never mutated after creation.
 	AgentType string
 
-	// ToolPolicyCfg holds the per-agent tool policy snapshot used by
-	// FilterToolsByPolicy at LLM-call assembly time (FR-003, FR-041). Populated
-	// at construction from config.AgentConfig.Tools. May be nil (defaults to allow-all).
-	ToolPolicyCfg *tools.ToolPolicyCfg
+	// toolPolicy holds the per-agent tool policy snapshot used by
+	// FilterToolsByPolicy at LLM-call assembly time (FR-003, FR-020, FR-041).
+	// Populated at construction from config.AgentConfig.Tools.
+	// Config PUT swaps the pointer via StoreToolPolicy; the turn assembly Load()s
+	// it on each call to ensure stale policies are never seen mid-turn.
+	// The zero value (nil pointer) defaults to allow-all.
+	toolPolicy atomic.Pointer[tools.ToolPolicyCfg]
 
 	// Router is non-nil when model routing is configured and the light model
 	// was successfully resolved. It scores each incoming message and decides
@@ -247,12 +251,7 @@ func NewAgentInstance(
 			}
 		}
 	}
-	var toolPolicyCfg *tools.ToolPolicyCfg
-	if agentCfg != nil && agentCfg.Tools != nil {
-		toolPolicyCfg = agentToolsCfgToPolicy(agentCfg.Tools)
-	}
-
-	return &AgentInstance{
+	inst := &AgentInstance{
 		ID:                        agentID,
 		Name:                      agentName,
 		Model:                     model,
@@ -277,8 +276,26 @@ func NewAgentInstance(
 		LightProvider:             lightProvider,
 		TimeoutSeconds:            timeoutSeconds,
 		AgentType:                 resolvedAgentType,
-		ToolPolicyCfg:             toolPolicyCfg,
 	}
+	if agentCfg != nil && agentCfg.Tools != nil {
+		inst.toolPolicy.Store(agentToolsCfgToPolicy(agentCfg.Tools))
+	}
+	return inst
+}
+
+// LoadToolPolicy returns the current tool policy snapshot for this agent.
+// Returns nil when no policy has been stored (defaults to allow-all at call sites).
+// Safe for concurrent access (atomic load, FR-020).
+func (a *AgentInstance) LoadToolPolicy() *tools.ToolPolicyCfg {
+	return a.toolPolicy.Load()
+}
+
+// StoreToolPolicy atomically replaces the agent's tool policy (FR-020).
+// Called by ReloadProviderAndConfig on config PUT to propagate the new policy
+// without rebuilding the agent registry. Passing nil resets to allow-all.
+// Safe for concurrent access with ongoing turn assembly.
+func (a *AgentInstance) StoreToolPolicy(p *tools.ToolPolicyCfg) {
+	a.toolPolicy.Store(p)
 }
 
 // agentToolsCfgToPolicy converts config.AgentToolsCfg to tools.ToolPolicyCfg for
