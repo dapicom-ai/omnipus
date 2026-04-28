@@ -9,6 +9,7 @@ import (
 type SendCallback func(channel, chatID, content string) error
 
 type MessageTool struct {
+	BaseTool
 	sendCallback SendCallback
 	sentInRound  atomic.Bool // Tracks whether a message was sent in the current processing round
 }

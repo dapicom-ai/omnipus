@@ -55,6 +55,7 @@ type HandoffSessionStore interface {
 //  4. Appends a system entry to the transcript as an audit-trail record.
 //  5. Notifies the frontend so the UI can update its active-agent indicator.
 type HandoffTool struct {
+	BaseTool
 	getRegistry      func() AgentRegistryReader
 	sessionStore     HandoffSessionStore
 	getContextWindow func(agentID string) int
@@ -265,6 +266,7 @@ func formatRecentMessages(entries []session.TranscriptEntry) string {
 // ReturnToDefaultTool clears the session-level agent override by switching the
 // active agent back to the configured default.
 type ReturnToDefaultTool struct {
+	BaseTool
 	sessionStore    HandoffSessionStore
 	getDefaultAgent func() string
 	onHandoff       func(chatID, agentID, agentName string)

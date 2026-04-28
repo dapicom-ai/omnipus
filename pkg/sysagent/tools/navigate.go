@@ -27,7 +27,7 @@ func NewNavigateTool(d *Deps, cb NavigateCallback) *NavigateTool {
 	return &NavigateTool{deps: d, callback: cb}
 }
 func (t *NavigateTool) Name() string           { return "system.navigate" }
-func (t *NavigateTool) Scope() tools.ToolScope { return tools.ScopeSystem }
+func (t *NavigateTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *NavigateTool) Description() string {
 	return "Navigate the UI to a specific screen.\nParameters: screen (chat/command-center/agents/skills/settings), agent_id (optional), section (optional)."
 }

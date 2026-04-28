@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/coreagent"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/routing"
@@ -50,6 +51,8 @@ func NewAgentRegistry(
 		Default: true,
 	}
 	defaultInstance := NewAgentInstance(defaultAgent, &cfg.Agents.Defaults, cfg, provider)
+	// The default "main" agent is a core agent (it runs system.* tools seeded by the registry).
+	defaultInstance.SetAgentType("core")
 	registry.agents[DefaultAgentID] = defaultInstance
 	logger.InfoCF("agent", "Registered default agent (main)", map[string]any{
 		"workspace": defaultInstance.Workspace,
@@ -72,6 +75,11 @@ func NewAgentRegistry(
 			continue
 		}
 		instance := NewAgentInstance(ac, &cfg.Agents.Defaults, cfg, provider)
+		// Upgrade agent type for runtime-seeded core agents whose config may not
+		// have Type field set (e.g., agents seeded before the Type field was introduced).
+		if instance.AgentType == "custom" && coreagent.IsCoreAgent(id) {
+			instance.SetAgentType("core")
+		}
 		registry.agents[id] = instance
 		logger.InfoCF("agent", "Registered agent",
 			map[string]any{

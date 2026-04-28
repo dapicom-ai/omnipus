@@ -20,6 +20,7 @@ type JobExecutor interface {
 
 // CronTool provides scheduling capabilities for the agent
 type CronTool struct {
+	BaseTool
 	cronService  *cron.CronService
 	executor     JobExecutor
 	msgBus       *bus.MessageBus

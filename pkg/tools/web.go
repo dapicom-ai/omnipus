@@ -886,6 +886,7 @@ func (p *BaiduSearchProvider) Search(
 }
 
 type WebSearchTool struct {
+	BaseTool
 	provider   SearchProvider
 	maxResults int
 }
@@ -1125,6 +1126,7 @@ func (t *WebSearchTool) Execute(ctx context.Context, args map[string]any) *ToolR
 }
 
 type WebFetchTool struct {
+	BaseTool
 	maxChars        int
 	proxy           string
 	client          *http.Client

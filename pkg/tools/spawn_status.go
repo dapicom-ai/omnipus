@@ -12,6 +12,7 @@ import (
 // spawn tool. It can query a specific task by ID, or list every known task with
 // a summary count broken-down by status.
 type SpawnStatusTool struct {
+	BaseTool
 	manager *SubagentManager
 }
 

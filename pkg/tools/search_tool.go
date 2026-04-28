@@ -17,6 +17,7 @@ const (
 )
 
 type RegexSearchTool struct {
+	BaseTool
 	registry         *ToolRegistry
 	ttl              int
 	maxSearchResults int
@@ -75,6 +76,7 @@ func (t *RegexSearchTool) Execute(ctx context.Context, args map[string]any) *Too
 }
 
 type BM25SearchTool struct {
+	BaseTool
 	registry         *ToolRegistry
 	ttl              int
 	maxSearchResults int

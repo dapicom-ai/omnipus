@@ -13,23 +13,6 @@ import (
 	"strings"
 )
 
-// ToolCategory groups tools by function for the UI tool picker.
-type ToolCategory string
-
-const (
-	CategoryFile          ToolCategory = "file"
-	CategoryCode          ToolCategory = "code"
-	CategoryWeb           ToolCategory = "web"
-	CategoryBrowser       ToolCategory = "browser"
-	CategoryCommunication ToolCategory = "communication"
-	CategoryTask          ToolCategory = "task"
-	CategoryAutomation    ToolCategory = "automation"
-	CategorySearch        ToolCategory = "search"
-	CategorySkills        ToolCategory = "skills"
-	CategoryHardware      ToolCategory = "hardware"
-	CategorySystem        ToolCategory = "system"
-)
-
 // CatalogEntry describes a single tool's metadata for the UI and context injection.
 type CatalogEntry struct {
 	Name        string       `json:"name"`
@@ -99,51 +82,55 @@ var builtinCatalog = []CatalogEntry{
 	{"i2c", "Communicate with I2C devices (Linux only)", ScopeCore, CategoryHardware},
 	{"spi", "Communicate with SPI devices (Linux only)", ScopeCore, CategoryHardware},
 
-	// ── System Tools (used by core agents, not assignable to custom agents) ──
+	// ── System Tools (privileged; custom agents default-deny via system.* wildcard) ──
+	// These have ScopeCore so the policy filter governs access.
+	// Per-agent policy (default "system.*": deny on custom agents) prevents exposure
+	// unless explicitly allowed. Core agents (Ava) get explicit allowances via
+	// constructor-seeded policy in pkg/coreagent/.
 	{
 		"system.agent.create",
 		"Create a new custom agent with personality and configuration",
-		ScopeSystem,
+		ScopeCore,
 		CategorySystem,
 	},
-	{"system.agent.update", "Update an existing agent's configuration", ScopeSystem, CategorySystem},
-	{"system.agent.delete", "Delete an agent and all its data", ScopeSystem, CategorySystem},
-	{"system.agent.list", "List all agents with status and model", ScopeSystem, CategorySystem},
-	{"system.agent.activate", "Activate an agent", ScopeSystem, CategorySystem},
-	{"system.agent.deactivate", "Deactivate an agent", ScopeSystem, CategorySystem},
-	{"system.project.create", "Create a new project", ScopeSystem, CategorySystem},
-	{"system.project.update", "Update a project", ScopeSystem, CategorySystem},
-	{"system.project.delete", "Delete a project", ScopeSystem, CategorySystem},
-	{"system.project.list", "List all projects", ScopeSystem, CategorySystem},
-	{"system.task.create", "Create a task on the GTD board", ScopeSystem, CategorySystem},
-	{"system.task.update", "Update a task's status or assignment", ScopeSystem, CategorySystem},
-	{"system.task.delete", "Delete a task", ScopeSystem, CategorySystem},
-	{"system.task.list", "List tasks with optional filters", ScopeSystem, CategorySystem},
-	{"system.channel.enable", "Enable a channel", ScopeSystem, CategorySystem},
-	{"system.channel.configure", "Configure a channel with credentials", ScopeSystem, CategorySystem},
-	{"system.channel.disable", "Disable a channel", ScopeSystem, CategorySystem},
-	{"system.channel.list", "List all channels with status", ScopeSystem, CategorySystem},
-	{"system.channel.test", "Test a channel connection", ScopeSystem, CategorySystem},
-	{"system.skill.install", "Install a skill from ClawHub", ScopeSystem, CategorySystem},
-	{"system.skill.remove", "Remove an installed skill", ScopeSystem, CategorySystem},
-	{"system.skill.search", "Search ClawHub for skills", ScopeSystem, CategorySystem},
-	{"system.skill.list", "List all installed skills", ScopeSystem, CategorySystem},
-	{"system.mcp.add", "Add an MCP server", ScopeSystem, CategorySystem},
-	{"system.mcp.remove", "Remove an MCP server", ScopeSystem, CategorySystem},
-	{"system.mcp.list", "List all MCP servers", ScopeSystem, CategorySystem},
-	{"system.provider.configure", "Add or update an LLM provider", ScopeSystem, CategorySystem},
-	{"system.provider.list", "List configured providers with status", ScopeSystem, CategorySystem},
-	{"system.provider.test", "Test a provider connection", ScopeSystem, CategorySystem},
-	{"system.models.list", "List available models from configured providers", ScopeSystem, CategorySystem},
-	{"system.pin.list", "List pinned artifacts", ScopeSystem, CategorySystem},
-	{"system.pin.create", "Pin a chat response", ScopeSystem, CategorySystem},
-	{"system.pin.delete", "Delete a pin", ScopeSystem, CategorySystem},
-	{"system.config.get", "Read a configuration value", ScopeSystem, CategorySystem},
-	{"system.config.set", "Update a configuration value", ScopeSystem, CategorySystem},
-	{"system.doctor.run", "Run diagnostics and health checks", ScopeSystem, CategorySystem},
-	{"system.backup.create", "Create a backup of the data directory", ScopeSystem, CategorySystem},
-	{"system.cost.query", "Query LLM cost data by period", ScopeSystem, CategorySystem},
-	{"system.navigate", "Navigate the UI to a specific screen", ScopeSystem, CategorySystem},
+	{"system.agent.update", "Update an existing agent's configuration", ScopeCore, CategorySystem},
+	{"system.agent.delete", "Delete an agent and all its data", ScopeCore, CategorySystem},
+	{"system.agent.list", "List all agents with status and model", ScopeCore, CategorySystem},
+	{"system.agent.activate", "Activate an agent", ScopeCore, CategorySystem},
+	{"system.agent.deactivate", "Deactivate an agent", ScopeCore, CategorySystem},
+	{"system.project.create", "Create a new project", ScopeCore, CategorySystem},
+	{"system.project.update", "Update a project", ScopeCore, CategorySystem},
+	{"system.project.delete", "Delete a project", ScopeCore, CategorySystem},
+	{"system.project.list", "List all projects", ScopeCore, CategorySystem},
+	{"system.task.create", "Create a task on the GTD board", ScopeCore, CategorySystem},
+	{"system.task.update", "Update a task's status or assignment", ScopeCore, CategorySystem},
+	{"system.task.delete", "Delete a task", ScopeCore, CategorySystem},
+	{"system.task.list", "List tasks with optional filters", ScopeCore, CategorySystem},
+	{"system.channel.enable", "Enable a channel", ScopeCore, CategorySystem},
+	{"system.channel.configure", "Configure a channel with credentials", ScopeCore, CategorySystem},
+	{"system.channel.disable", "Disable a channel", ScopeCore, CategorySystem},
+	{"system.channel.list", "List all channels with status", ScopeCore, CategorySystem},
+	{"system.channel.test", "Test a channel connection", ScopeCore, CategorySystem},
+	{"system.skill.install", "Install a skill from ClawHub", ScopeCore, CategorySystem},
+	{"system.skill.remove", "Remove an installed skill", ScopeCore, CategorySystem},
+	{"system.skill.search", "Search ClawHub for skills", ScopeCore, CategorySystem},
+	{"system.skill.list", "List all installed skills", ScopeCore, CategorySystem},
+	{"system.mcp.add", "Add an MCP server", ScopeCore, CategorySystem},
+	{"system.mcp.remove", "Remove an MCP server", ScopeCore, CategorySystem},
+	{"system.mcp.list", "List all MCP servers", ScopeCore, CategorySystem},
+	{"system.provider.configure", "Add or update an LLM provider", ScopeCore, CategorySystem},
+	{"system.provider.list", "List configured providers with status", ScopeCore, CategorySystem},
+	{"system.provider.test", "Test a provider connection", ScopeCore, CategorySystem},
+	{"system.models.list", "List available models from configured providers", ScopeCore, CategorySystem},
+	{"system.pin.list", "List pinned artifacts", ScopeCore, CategorySystem},
+	{"system.pin.create", "Pin a chat response", ScopeCore, CategorySystem},
+	{"system.pin.delete", "Delete a pin", ScopeCore, CategorySystem},
+	{"system.config.get", "Read a configuration value", ScopeCore, CategorySystem},
+	{"system.config.set", "Update a configuration value", ScopeCore, CategorySystem},
+	{"system.doctor.run", "Run diagnostics and health checks", ScopeCore, CategorySystem},
+	{"system.backup.create", "Create a backup of the data directory", ScopeCore, CategorySystem},
+	{"system.cost.query", "Query LLM cost data by period", ScopeCore, CategorySystem},
+	{"system.navigate", "Navigate the UI to a specific screen", ScopeCore, CategorySystem},
 }
 
 // GetBuiltinCatalog returns a copy of the builtin catalog slice.
@@ -193,7 +180,9 @@ func CatalogMarkdown() string {
 	}
 	groups := make(map[ToolCategory][]CatalogEntry)
 	for _, e := range builtinCatalog {
-		if e.Scope == ScopeSystem {
+		// Exclude system.* tools from the non-privileged tool listing.
+		// These are governed by per-agent policy (custom agents default-deny via wildcard).
+		if e.Category == CategorySystem {
 			continue
 		}
 		groups[e.Category] = append(groups[e.Category], e)

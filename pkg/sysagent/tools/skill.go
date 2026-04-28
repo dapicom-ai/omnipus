@@ -18,7 +18,7 @@ type SkillInstallTool struct{ deps *Deps }
 
 func NewSkillInstallTool(d *Deps) *SkillInstallTool { return &SkillInstallTool{deps: d} }
 func (t *SkillInstallTool) Name() string            { return "system.skill.install" }
-func (t *SkillInstallTool) Scope() tools.ToolScope  { return tools.ScopeSystem }
+func (t *SkillInstallTool) Scope() tools.ToolScope  { return tools.ScopeCore }
 func (t *SkillInstallTool) Description() string {
 	return "Install a skill from ClawHub.\nParameters: name (required), agent_ids (optional), credentials (optional)."
 }
@@ -66,7 +66,7 @@ type SkillRemoveTool struct{ deps *Deps }
 
 func NewSkillRemoveTool(d *Deps) *SkillRemoveTool { return &SkillRemoveTool{deps: d} }
 func (t *SkillRemoveTool) Name() string           { return "system.skill.remove" }
-func (t *SkillRemoveTool) Scope() tools.ToolScope { return tools.ScopeSystem }
+func (t *SkillRemoveTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *SkillRemoveTool) Description() string {
 	return "Remove an installed skill. Parameters: name (required), confirm (bool, must be true)."
 }
@@ -107,7 +107,7 @@ type SkillSearchTool struct{ deps *Deps }
 
 func NewSkillSearchTool(d *Deps) *SkillSearchTool { return &SkillSearchTool{deps: d} }
 func (t *SkillSearchTool) Name() string           { return "system.skill.search" }
-func (t *SkillSearchTool) Scope() tools.ToolScope { return tools.ScopeSystem }
+func (t *SkillSearchTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *SkillSearchTool) Description() string {
 	return "Search ClawHub for skills.\nParameters: query (required), sort (trending/new/popular), limit."
 }
@@ -144,7 +144,7 @@ type SkillListTool struct{ deps *Deps }
 
 func NewSkillListTool(d *Deps) *SkillListTool   { return &SkillListTool{deps: d} }
 func (t *SkillListTool) Name() string           { return "system.skill.list" }
-func (t *SkillListTool) Scope() tools.ToolScope { return tools.ScopeSystem }
+func (t *SkillListTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *SkillListTool) Description() string {
 	return "List all installed skills. No parameters required."
 }

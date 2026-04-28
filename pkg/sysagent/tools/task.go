@@ -42,7 +42,7 @@ type TaskCreateTool struct{ deps *Deps }
 
 func NewTaskCreateTool(d *Deps) *TaskCreateTool  { return &TaskCreateTool{deps: d} }
 func (t *TaskCreateTool) Name() string           { return "system.task.create" }
-func (t *TaskCreateTool) Scope() tools.ToolScope { return tools.ScopeSystem }
+func (t *TaskCreateTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *TaskCreateTool) Description() string {
 	return "Create a task on the GTD board.\nParameters: name (required), description, project_id, agent_id, status (inbox/next/active/waiting/done)."
 }
@@ -102,7 +102,7 @@ type TaskUpdateTool struct{ deps *Deps }
 
 func NewTaskUpdateTool(d *Deps) *TaskUpdateTool  { return &TaskUpdateTool{deps: d} }
 func (t *TaskUpdateTool) Name() string           { return "system.task.update" }
-func (t *TaskUpdateTool) Scope() tools.ToolScope { return tools.ScopeSystem }
+func (t *TaskUpdateTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *TaskUpdateTool) Description() string {
 	return "Update a task's status, assignment, or details.\nParameters: id (required), name, description, status, agent_id, project_id."
 }
@@ -166,7 +166,7 @@ type TaskDeleteTool struct{ deps *Deps }
 
 func NewTaskDeleteTool(d *Deps) *TaskDeleteTool  { return &TaskDeleteTool{deps: d} }
 func (t *TaskDeleteTool) Name() string           { return "system.task.delete" }
-func (t *TaskDeleteTool) Scope() tools.ToolScope { return tools.ScopeSystem }
+func (t *TaskDeleteTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *TaskDeleteTool) Description() string {
 	return "Delete a task. Parameters: id (required), confirm (bool, must be true)."
 }
@@ -205,7 +205,7 @@ type TaskListTool struct{ deps *Deps }
 
 func NewTaskListTool(d *Deps) *TaskListTool    { return &TaskListTool{deps: d} }
 func (t *TaskListTool) Name() string           { return "system.task.list" }
-func (t *TaskListTool) Scope() tools.ToolScope { return tools.ScopeSystem }
+func (t *TaskListTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *TaskListTool) Description() string {
 	return "List tasks with optional filters.\nParameters: project_id, agent_id, status (all optional)."
 }

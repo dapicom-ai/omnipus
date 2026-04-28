@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -183,31 +184,31 @@ func (tc *ToolCompositor) ComposeAndRegister(agentID string) int {
 
 // passesScopeGate reports whether a tool with the given scope is structurally
 // accessible to agentType. This is the outer guard — it cannot be bypassed by
-// policy or visibility configuration.
+// visibility configuration (per-agent policy is the separate layer above this).
 //
-//   - ScopeSystem: only the system agent may use these tools.
-//   - ScopeCore: system and core agents pass by default; custom agents require an
-//     explicit override (callers check their own visibility/policy layer).
+//   - ScopeCore: core agents pass by default; custom agents require an explicit
+//     policy entry granting the tool. The system.* naming convention indicates
+//     privileged tools but ScopeSystem no longer exists — ScopeCore is the sole
+//     gating scope for privileged tools (FR-045, "Retiring the System Agent Fiction").
 //   - ScopeGeneral: any agent type passes.
 //   - Unknown/zero-value scopes: denied (fail-closed, per CLAUDE.md hard constraint 6).
 func passesScopeGate(scope ToolScope, agentType string) bool {
 	switch scope {
-	case ScopeSystem:
-		return agentType == "system"
 	case ScopeCore:
-		return agentType == "system" || agentType == "core"
+		return agentType == "core"
 	case ScopeGeneral:
 		return true
 	default:
-		return false // deny unknown scopes
+		return false // deny unknown scopes (fail-closed)
 	}
 }
 
 // FilterToolsByVisibility returns the subset of tools that the given agent type
 // and tools config allow. It implements a 2-layer scope + visibility filter:
 //
-//  1. Scope gate: ScopeSystem → only system agents; ScopeCore → system+core
-//     agents (custom agents only if explicitly listed); ScopeGeneral → all.
+//  1. Scope gate (FR-045: ScopeSystem is retired; only ScopeCore and ScopeGeneral exist):
+//     ScopeCore → core agents pass by default; custom agents only if explicitly listed.
+//     ScopeGeneral → all agent types pass.
 //  2. Explicit mode: if cfg.Mode == "explicit", only tools named in
 //     cfg.Visible pass (scope gate still applies as outer guard).
 //
@@ -283,26 +284,85 @@ type ToolVisibilityCfg struct {
 	Visible []string // tool names when Mode == "explicit"
 }
 
+// wildcardEntry is a parsed wildcard policy key (e.g., "system.*").
+// Only trailing ".*" wildcards are supported (FR-009).
+type wildcardEntry struct {
+	prefix string // the part before ".*"
+	policy string
+}
+
+// buildWildcardIndex parses a policy map and returns a sorted slice of wildcard
+// entries. Sort order: longest prefix first; ties broken lexicographically (FR-071).
+// Exact-name keys are NOT included here — they are resolved by direct map lookup.
+func buildWildcardIndex(policies map[string]string) []wildcardEntry {
+	var entries []wildcardEntry
+	for k, v := range policies {
+		if strings.HasSuffix(k, ".*") {
+			prefix := k[:len(k)-2] // strip trailing ".*"
+			entries = append(entries, wildcardEntry{prefix: prefix, policy: v})
+		}
+	}
+	// Longest prefix first; lexicographic tiebreak (ascending) per FR-071.
+	sort.Slice(entries, func(i, j int) bool {
+		if len(entries[i].prefix) != len(entries[j].prefix) {
+			return len(entries[i].prefix) > len(entries[j].prefix)
+		}
+		return entries[i].prefix < entries[j].prefix
+	})
+	return entries
+}
+
+// resolveFromMap resolves the policy for toolName from a flat policies map
+// (supports exact-name and trailing-wildcard ".*" keys).
+// Exact matches win over wildcards; among wildcards longest-prefix wins (FR-009, FR-071).
+// Returns "" if no entry matches (caller falls back to default policy).
+func resolveFromMap(toolName string, policies map[string]string, wildcards []wildcardEntry) string {
+	// 1. Exact match always wins.
+	if p, ok := policies[toolName]; ok {
+		return p
+	}
+	// 2. Longest-prefix wildcard match (wildcards already sorted longest-first).
+	for _, w := range wildcards {
+		if strings.HasPrefix(toolName, w.prefix+".") || toolName == w.prefix {
+			return w.policy
+		}
+	}
+	return ""
+}
+
 // ToolPolicyCfg is the per-agent tool policy configuration.
 // Used by FilterToolsByPolicy.
 type ToolPolicyCfg struct {
 	DefaultPolicy string            // "allow", "ask", or "deny"
-	Policies      map[string]string // per-tool overrides
+	Policies      map[string]string // per-tool overrides (supports trailing ".*" wildcards)
 
 	// GlobalPolicies holds the operator-level global tool policy overrides.
 	// Applied before agent-level policies; deny always wins (deny > ask > allow).
-	GlobalPolicies      map[string]string // per-tool global overrides
+	GlobalPolicies      map[string]string // per-tool global overrides (supports wildcards)
 	GlobalDefaultPolicy string            // fallback global policy when tool not in GlobalPolicies
+
+	// IsCoreAgent, when true, skips the RequiresAdminAsk fence (FR-061).
+	// Set to true for agents identified by coreagent.GetPrompt(id) != "".
+	IsCoreAgent bool
 }
 
 // FilterToolsByPolicy returns the subset of tools that pass the scope gate
 // and are not denied by policy. Also returns a map of tool name → resolved
-// policy ("allow" or "ask") for tools that passed the filter.
-// Tools with policy "deny" (globally or by agent config) are removed from the result.
+// effective policy ("allow" or "ask") for tools that passed the filter.
+// Tools with effective policy "deny" are removed from the result.
 //
 // Resolution order (strictest wins: deny > ask > allow):
 //  1. Global policy (GlobalPolicies / GlobalDefaultPolicy)
 //  2. Agent policy (Policies / DefaultPolicy)
+//
+// Wildcard support (FR-009): policy map keys ending in ".*" are treated as
+// prefix wildcards (e.g., "system.*" matches any tool whose name starts with
+// "system."). Exact-name matches always win over wildcards; among wildcards,
+// the longest matching prefix wins; ties are broken lexicographically (FR-071).
+//
+// Admin-ask fence (FR-061): for custom agents (cfg.IsCoreAgent == false),
+// if the resolved effective policy is "allow" but the tool's RequiresAdminAsk()
+// returns true, the effective policy is downgraded to "ask".
 func FilterToolsByPolicy(allTools []Tool, agentType string, cfg *ToolPolicyCfg) ([]Tool, map[string]string) {
 	if cfg == nil {
 		cfg = &ToolPolicyCfg{DefaultPolicy: "allow"}
@@ -316,15 +376,21 @@ func FilterToolsByPolicy(allTools []Tool, agentType string, cfg *ToolPolicyCfg) 
 		defaultGlobalPolicy = "allow"
 	}
 
+	// Pre-build wildcard indexes for O(W) matching per tool rather than O(K).
+	agentWildcards := buildWildcardIndex(cfg.Policies)
+	globalWildcards := buildWildcardIndex(cfg.GlobalPolicies)
+
 	resolveGlobal := func(toolName string) string {
-		if p, ok := cfg.GlobalPolicies[toolName]; ok {
+		p := resolveFromMap(toolName, cfg.GlobalPolicies, globalWildcards)
+		if p != "" {
 			return p
 		}
 		return defaultGlobalPolicy
 	}
 
 	resolveAgent := func(toolName string) string {
-		if p, ok := cfg.Policies[toolName]; ok {
+		p := resolveFromMap(toolName, cfg.Policies, agentWildcards)
+		if p != "" {
 			return p
 		}
 		return defaultAgentPolicy
@@ -349,8 +415,9 @@ func FilterToolsByPolicy(allTools []Tool, agentType string, cfg *ToolPolicyCfg) 
 		scope := t.Scope()
 
 		// Layer 1: scope gate (structural constraint — cannot be bypassed by policy).
-		// For core-scoped tools, custom agents are allowed through only if their
-		// effective policy is allow or ask (not deny).
+		// For ScopeCore tools, core agents pass through; custom agents are let through
+		// only when their effective policy is not "deny" (the policy layer governs access).
+		// ScopeGeneral tools always pass.
 		if scope == ScopeCore && !passesScopeGate(scope, agentType) {
 			// Custom agent: allowed only if effective policy is not "deny".
 			p := resolveEffective(t.Name())
@@ -365,6 +432,16 @@ func FilterToolsByPolicy(allTools []Tool, agentType string, cfg *ToolPolicyCfg) 
 		effectivePolicy := resolveEffective(t.Name())
 		if effectivePolicy == "deny" {
 			continue
+		}
+
+		// Layer 3: admin-ask fence (FR-061).
+		// On custom agents, if the effective policy is "allow" but the tool declares
+		// RequiresAdminAsk() == true, downgrade to "ask" to enforce the human-in-the-loop
+		// approval gate. Core agents are exempt (they trust the constructor-seeded policy).
+		if !cfg.IsCoreAgent && effectivePolicy == "allow" {
+			if asker, ok := t.(interface{ RequiresAdminAsk() bool }); ok && asker.RequiresAdminAsk() {
+				effectivePolicy = "ask"
+			}
 		}
 
 		out = append(out, t)
@@ -402,6 +479,8 @@ func (a *mcpToolAdapter) Name() string               { return a.toolDef.Name }
 func (a *mcpToolAdapter) Description() string        { return a.toolDef.Description }
 func (a *mcpToolAdapter) Parameters() map[string]any { return a.params }
 func (a *mcpToolAdapter) Scope() ToolScope           { return ScopeGeneral }
+func (a *mcpToolAdapter) RequiresAdminAsk() bool     { return false }
+func (a *mcpToolAdapter) Category() ToolCategory     { return CategoryMCP }
 
 func (a *mcpToolAdapter) Execute(ctx context.Context, args map[string]any) *ToolResult {
 	result, err := a.caller.CallTool(ctx, a.serverName, a.toolDef.Name, args)

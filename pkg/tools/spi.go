@@ -10,7 +10,9 @@ import (
 )
 
 // SPITool provides SPI bus interaction for high-speed peripheral communication.
-type SPITool struct{}
+type SPITool struct {
+	BaseTool
+}
 
 func NewSPITool() *SPITool {
 	return &SPITool{}

@@ -87,9 +87,47 @@ func GetPrompt(id string) string {
 	return prompts[id]
 }
 
-// SeedConfig ensures all core agents exist in cfg.Agents.List with Locked=true.
-// Creates missing ones and re-enforces Locked=true on existing core agents
-// (prevents config tampering from downgrading protection).
+// coreAgentSeed returns the constructor-seeded policy map for the named core
+// agent (FR-010, FR-022). The map is keyed by tool name (or trailing-wildcard
+// prefix like "system.*") with values "allow", "ask", or "deny".
+//
+// All core agents share the rail: default_policy=allow plus system.*→deny.
+// Ava additionally has explicit system.* allows for her 4 agent-CRUD tools.
+//
+// The returned maps are independent allocations — callers may mutate them safely.
+func coreAgentSeed(id CoreAgentID) (defaultPolicy config.ToolPolicy, policies map[string]config.ToolPolicy) {
+	// Every core agent starts with the same rail: allow-by-default + deny system.*.
+	base := map[string]config.ToolPolicy{
+		"system.*": config.ToolPolicyDeny,
+	}
+	switch id {
+	case IDAva:
+		// Ava is the only core agent with explicit system.* allows (FR-010).
+		// Her four agent-CRUD tools must be allowed through the deny-wildcard rail.
+		base["system.agent.create"] = config.ToolPolicyAllow
+		base["system.agent.update"] = config.ToolPolicyAllow
+		base["system.agent.delete"] = config.ToolPolicyAllow
+		base["system.models.list"] = config.ToolPolicyAllow
+	}
+	return config.ToolPolicyAllow, base
+}
+
+// HasSystemAllowsInConstructorSeed returns true if the named core agent's
+// constructor seed contains explicit system.* allow entries (FR-062).
+// Today only Ava qualifies. This is the predicate for the boot-time
+// "critical abort on corrupt config" path.
+func HasSystemAllowsInConstructorSeed(agentID string) bool {
+	return CoreAgentID(agentID) == IDAva
+}
+
+// SeedConfig ensures all core agents exist in cfg.Agents.List with Locked=true
+// and with the correct constructor-seeded tool policy (FR-010, FR-022).
+//
+// Creates missing agents and re-enforces Locked=true + identity fields on
+// existing core agents (prevents config tampering from downgrading protection).
+// Policy seeds are applied to agents that have no existing Tools config — agents
+// that were manually configured via the SPA keep their existing policy entries.
+//
 // Returns true if config was modified (caller should save).
 func SeedConfig(cfg *config.Config) bool {
 	existing := make(map[string]bool, len(cfg.Agents.List))
@@ -133,6 +171,7 @@ func SeedConfig(cfg *config.Config) bool {
 			continue
 		}
 		enabled := true
+		dp, policies := coreAgentSeed(ca.ID)
 		cfg.Agents.List = append(cfg.Agents.List, config.AgentConfig{
 			ID:          string(ca.ID),
 			Name:        ca.Name,
@@ -142,10 +181,35 @@ func SeedConfig(cfg *config.Config) bool {
 			Type:        config.AgentTypeCore,
 			Locked:      true,
 			Enabled:     &enabled,
+			Tools: &config.AgentToolsCfg{
+				Builtin: config.AgentBuiltinToolsCfg{
+					DefaultPolicy: dp,
+					Policies:      policies,
+				},
+			},
 		})
 		modified = true
 	}
 	return modified
+}
+
+// NewCustomAgentToolsCfg returns the default AgentToolsCfg for a newly created
+// custom agent (FR-008, FR-022). Every custom agent starts with:
+//
+//   - default_policy: allow  (per FR-008: explicit allow-by-default)
+//   - policies: {"system.*": "deny"}  (privilege rail — no system.* by default)
+//
+// Callers should embed this into config.AgentConfig.Tools when constructing a
+// new custom agent via the REST API or system.agent.create tool.
+func NewCustomAgentToolsCfg() *config.AgentToolsCfg {
+	return &config.AgentToolsCfg{
+		Builtin: config.AgentBuiltinToolsCfg{
+			DefaultPolicy: config.ToolPolicyAllow,
+			Policies: map[string]config.ToolPolicy{
+				"system.*": config.ToolPolicyDeny,
+			},
+		},
+	}
 }
 
 // --- Agent definitions ---

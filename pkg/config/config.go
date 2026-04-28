@@ -1101,6 +1101,11 @@ type GatewayConfig struct {
 	// with no proxy, any client can spoof their audit IP by sending this header.
 	// See docs/operations/reverse-proxy.md for setup instructions.
 	TrustXFF bool `json:"trust_xff,omitempty" env:"OMNIPUS_GATEWAY_TRUST_XFF"`
+
+	// TurnSyntheticErrorFloor is the number of consecutive synthetic-deny tool
+	// results in a single turn that triggers a turn abort (FR-084). Default: 8.
+	// Set to 0 to disable. Negative values are treated as the default (8).
+	TurnSyntheticErrorFloor int `json:"turn_synthetic_error_floor,omitempty" env:"OMNIPUS_GATEWAY_TURN_SYNTHETIC_ERROR_FLOOR"`
 }
 
 type ToolDiscoveryConfig struct {
