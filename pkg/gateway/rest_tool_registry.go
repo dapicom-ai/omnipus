@@ -13,9 +13,9 @@
 //   - POST /api/v1/tool-approvals/{approval_id} (FR-011, FR-014, FR-015, FR-017, FR-018, FR-064)
 //
 // Coordination with A1/A2:
-//   - requirsAdminAsker is a local optional interface. Once A1 adds RequiresAdminAsk()
-//     to the Tool interface (via BaseTool mixin, default false, system tools override true),
-//     the type assertion in toolRequiresAdminAsk() will pick it up automatically.
+//   - RequiresAdminAsk() is part of the Tool interface via BaseTool (default false).
+//     System tools override it to return true. toolRequiresAdminAsk() uses a direct
+//     interface call rather than a local optional interface.
 //   - isAdminRole checks the role placed in context by withAuth — same as existing usage
 //     in rest_rate_limits.go. No new RBAC infrastructure required (FR-015, resolves H-09).
 
@@ -33,19 +33,11 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 )
 
-// requiresAdminAsker is the optional interface A1 will add to the Tool interface.
-// Until A1 lands, this type assertion returns false (the zero value of the interface).
-type requiresAdminAsker interface {
-	RequiresAdminAsk() bool
-}
-
-// toolRequiresAdminAsk returns true if the tool declares RequiresAdminAsk() == true.
-// Gracefully handles pre-A1 tool implementations that do not implement the interface.
+// toolRequiresAdminAsk returns true when the tool's RequiresAdminAsk() returns true.
+// RequiresAdminAsk() is part of the Tool interface (pkg/tools/base.go); BaseTool
+// provides a default-false implementation. System tools override to return true.
 func toolRequiresAdminAsk(t tools.Tool) bool {
-	if rak, ok := t.(requiresAdminAsker); ok {
-		return rak.RequiresAdminAsk()
-	}
-	return false
+	return t.RequiresAdminAsk()
 }
 
 // isAdminRole returns true when the authenticated caller has the admin role.

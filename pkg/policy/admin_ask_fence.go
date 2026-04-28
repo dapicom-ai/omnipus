@@ -25,9 +25,8 @@
 package policy
 
 // AdminAskPredicate reports whether the named tool requires admin approval.
-// The A1 lane will populate this from `Tool.RequiresAdminAsk()` once that
-// method lands. Until then, the fence is a no-op for tools whose predicate
-// returns false — which is the conservative default.
+// Callers in pkg/gateway inject `func(name string) bool { t, ok := agent.Tools.Get(name); return ok && t.RequiresAdminAsk() }`.
+// The indirection avoids importing `pkg/tools` from `pkg/policy`.
 type AdminAskPredicate func(toolName string) bool
 
 // IsCoreAgentPredicate reports whether the supplied agent ID belongs to a

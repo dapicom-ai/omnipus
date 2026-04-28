@@ -26,6 +26,7 @@ package agent
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
@@ -126,15 +127,15 @@ func recoverOrphanedToolCalls(
 
 // existingCancelledToolCallIDs builds a set of tool_call_id values for which a
 // turn_cancelled_restart system message already exists in history (idempotency
-// guard for recoverOrphanedToolCalls). Uses simple string contains rather than
-// JSON parse to avoid dependency on a JSON library in the hot path.
+// guard for recoverOrphanedToolCalls). Uses strings.Contains rather than a full
+// JSON parse to avoid allocations in the hot path.
 func existingCancelledToolCallIDs(history []providers.Message) map[string]bool {
 	result := make(map[string]bool)
 	for _, msg := range history {
 		if msg.Role == "system" &&
 			len(msg.Content) > 0 &&
-			contains(msg.Content, "turn_cancelled_restart") &&
-			contains(msg.Content, "tool_call_id") {
+			strings.Contains(msg.Content, "turn_cancelled_restart") &&
+			strings.Contains(msg.Content, "tool_call_id") {
 			// Extract tool_call_id from the content string via simple scan.
 			// Format: {"type":"turn_cancelled_restart","tool_call_id":"<id>",...}
 			if id := extractJSONStringField(msg.Content, "tool_call_id"); id != "" {
@@ -143,19 +144,6 @@ func existingCancelledToolCallIDs(history []providers.Message) map[string]bool {
 		}
 	}
 	return result
-}
-
-// contains is a cheap substring check used by existingCancelledToolCallIDs.
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr ||
-		func() bool {
-			for i := 0; i <= len(s)-len(substr); i++ {
-				if s[i:i+len(substr)] == substr {
-					return true
-				}
-			}
-			return false
-		}())
 }
 
 // extractJSONStringField extracts a string value for the given key from a
