@@ -83,20 +83,20 @@ func (a *restAPI) HandleBuiltinToolsDeprecated(w http.ResponseWriter, r *http.Re
 // HandleToolsRegistry handles GET /api/v1/tools.
 //
 // Returns the snapshot of registered tools with per-entry:
-//   {name, description, scope, category, source}
+//
+//	{name, description, scope, category, source}
 //
 // FR-027: source discriminator ("builtin" | "mcp").
-// Uses the default agent's tool set as a proxy for the central registry (A1 bridge).
-// Tools with Category()=="mcp" are tagged source="mcp"; all others source="builtin".
-// Deduplication is performed by name — first registration wins (builtin before mcp).
+// M16: when the central BuiltinRegistry is populated (wired at boot), it is
+// the authoritative supply-side source for builtin tools. MCPRegistry entries
+// are appended after builtins (deduplication by name, first-wins). When the
+// central registries are not wired (test setups), the handler falls back to
+// the default agent's tool set as a proxy.
 func (a *restAPI) HandleToolsRegistry(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-
-	registry := a.agentLoop.GetRegistry()
-	defaultAgent := registry.GetDefaultAgent()
 
 	type toolEntry struct {
 		Name        string `json:"name"`
@@ -109,27 +109,51 @@ func (a *restAPI) HandleToolsRegistry(w http.ResponseWriter, r *http.Request) {
 	var entries []toolEntry
 	seen := make(map[string]struct{})
 
-	if defaultAgent != nil {
-		for _, t := range defaultAgent.Tools.GetAll() {
-			name := t.Name()
-			if _, dup := seen[name]; dup {
-				continue // dedup: first registration wins
-			}
-			seen[name] = struct{}{}
+	addTool := func(t tools.Tool, source string) {
+		name := t.Name()
+		if _, dup := seen[name]; dup {
+			return // dedup: first registration wins
+		}
+		seen[name] = struct{}{}
+		entries = append(entries, toolEntry{
+			Name:        name,
+			Description: t.Description(),
+			Scope:       string(t.Scope()),
+			Category:    toolCategoryFromTool(t),
+			Source:      source,
+		})
+	}
 
-			// FR-027: source discriminator.
-			source := string(toolSourceBuiltin)
-			if t.Category() == tools.CategoryMCP {
-				source = "mcp"
-			}
+	// M16: central BuiltinRegistry is the authoritative supply-side source when wired.
+	// Comment: per-agent ToolRegistry remains the demand-side filter at LLM-call time.
+	// Full migration to central-registry-only at LLM call assembly is tracked separately.
+	if a.builtinRegistry != nil {
+		for _, t := range a.builtinRegistry.All() {
+			addTool(t, string(toolSourceBuiltin))
+		}
+	}
 
-			entries = append(entries, toolEntry{
-				Name:        name,
-				Description: t.Description(),
-				Scope:       string(t.Scope()),
-				Category:    toolCategoryFromTool(t),
-				Source:      source,
-			})
+	// M16: central MCPRegistry provides MCP tools when wired.
+	if a.mcpRegistry != nil {
+		for _, t := range a.mcpRegistry.All() {
+			addTool(t, "mcp")
+		}
+	}
+
+	// Fallback: when central registries are not wired (test setups or pre-boot),
+	// read from the default agent's tool set as before.
+	if a.builtinRegistry == nil {
+		registry := a.agentLoop.GetRegistry()
+		defaultAgent := registry.GetDefaultAgent()
+		if defaultAgent != nil {
+			for _, t := range defaultAgent.Tools.GetAll() {
+				// FR-027: source discriminator.
+				source := string(toolSourceBuiltin)
+				if t.Category() == tools.CategoryMCP {
+					source = "mcp"
+				}
+				addTool(t, source)
+			}
 		}
 	}
 

@@ -102,6 +102,19 @@ type restAPI struct {
 	// approvalReg is the in-process tool-approval registry (FR-016, FR-070).
 	// Injected at boot by the gateway; nil in test setups that do not exercise approvals.
 	approvalReg *approvalRegistryV2
+
+	// builtinRegistry is the central registry for builtin tools (M16, FR-001).
+	// Populated at boot via BuiltinRegistry.RegisterBuiltin for all sysagent tools.
+	// GET /api/v1/tools consults this as the authoritative supply-side source.
+	// Nil in test setups that do not populate it; HandleToolsRegistry falls back
+	// to the per-agent tool set when nil.
+	builtinRegistry *tools.BuiltinRegistry
+
+	// mcpRegistry is the central registry for MCP server tools (M16, FR-001).
+	// Populated at runtime as MCP servers connect.
+	// GET /api/v1/tools includes MCP entries from this registry.
+	// Nil in test setups that do not wire MCP.
+	mcpRegistry *tools.MCPRegistry
 }
 
 // --- CORS / JSON helpers ---

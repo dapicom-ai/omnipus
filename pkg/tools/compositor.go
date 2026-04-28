@@ -3,6 +3,10 @@
 // FilterToolsByPolicy is the primary runtime filter: it resolves effective
 // policy (global × agent, deny>ask>allow) and applies the admin-ask fence
 // (FR-061) before the agent loop assembles the LLM tool list.
+//
+// M8 — fence consolidation: the admin-ask fence is applied via a single call to
+// policy.ApplyAdminAskFence. The previous inline version (lines 215-219 in the
+// pre-M8 code) has been removed; policy.ApplyAdminAskFence is the sole path.
 package tools
 
 import (
@@ -13,6 +17,8 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/dapicom-ai/omnipus/pkg/policy"
 )
 
 // MCPCaller is the interface used by mcpToolAdapter for execution.
@@ -208,15 +214,26 @@ func FilterToolsByPolicy(allTools []Tool, agentType string, cfg *ToolPolicyCfg) 
 			continue
 		}
 
-		// Layer 3: admin-ask fence (FR-061).
-		// On custom agents, if the effective policy is "allow" but the tool declares
-		// RequiresAdminAsk() == true, downgrade to "ask" to enforce the human-in-the-loop
-		// approval gate. Core agents are exempt (they trust the constructor-seeded policy).
-		if !cfg.IsCoreAgent && effectivePolicy == "allow" {
-			if asker, ok := t.(interface{ RequiresAdminAsk() bool }); ok && asker.RequiresAdminAsk() {
-				effectivePolicy = "ask"
-			}
-		}
+		// Layer 3: admin-ask fence (FR-061) — single path via policy.ApplyAdminAskFence.
+		// M8: the former inline implementation is removed; all admin-ask fence logic
+		// lives exclusively in pkg/policy/admin_ask_fence.go. The predicate-injection
+		// seam avoids the pkg/tools ↔ pkg/policy import cycle.
+		//
+		// isCoreAgent predicate: the agentID param passed to ApplyAdminAskFence is
+		// unused here because cfg.IsCoreAgent already captured the determination at
+		// FilterToolsByPolicy call time. We capture it in the closure instead.
+		effectivePolicy, _ = policy.ApplyAdminAskFence(
+			effectivePolicy,
+			t.Name(),
+			agentType,
+			func(name string) bool {
+				if asker, ok := t.(interface{ RequiresAdminAsk() bool }); ok {
+					return asker.RequiresAdminAsk()
+				}
+				return false
+			},
+			func(_ string) bool { return cfg.IsCoreAgent },
+		)
 
 		activeToolMetricsRecorder.IncFilterTotal(agentType, effectivePolicy)
 		out = append(out, t)

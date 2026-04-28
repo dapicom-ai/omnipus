@@ -493,7 +493,20 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 			"skills_available": skillsInfo["available"],
 		})
 
-	runningServices, err := setupAndStartServices(cfg, bundle, agentLoop, msgBus, homePath, credStore, sandboxResult)
+	// M16 (FR-001/FR-002): pre-instantiate central registries.
+	// BuiltinRegistry is populated here with nil deps (for name/description metadata only).
+	// After sysAgentDeps is wired (below), the registry is re-populated with live deps.
+	// MCPRegistry starts empty; MCP servers populate it at connection time.
+	centralBuiltinReg := tools.NewBuiltinRegistry()
+	for _, t := range systools.AllTools(nil, nil) {
+		if err := centralBuiltinReg.RegisterBuiltin(t); err != nil {
+			slog.Warn("gateway: central builtin registry pre-population skipped duplicate",
+				"tool", t.Name(), "error", err)
+		}
+	}
+	centralMCPReg := tools.NewMCPRegistry()
+
+	runningServices, err := setupAndStartServices(cfg, bundle, agentLoop, msgBus, homePath, credStore, sandboxResult, centralBuiltinReg, centralMCPReg)
 	if err != nil {
 		stopNag() // don't leak the nag goroutine if service setup fails.
 		return err
@@ -543,6 +556,21 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 		ReloadFunc: reloadTrigger,
 	}
 	agentLoop.WireSysagentDeps(sysAgentDeps)
+
+	// M16: update the central BuiltinRegistry with fully-wired deps now that
+	// sysAgentDeps is available. Re-populate with real deps so Execute paths
+	// (if ever routed through the central registry) have valid deps.
+	// The registry created before setupAndStartServices used nil deps for
+	// the shape/name/description metadata only; swap to real deps here.
+	centralBuiltinReg = tools.NewBuiltinRegistry()
+	for _, t := range systools.AllTools(sysAgentDeps, nil) {
+		if err := centralBuiltinReg.RegisterBuiltin(t); err != nil {
+			slog.Warn("gateway: central builtin registry re-population skipped duplicate",
+				"tool", t.Name(), "error", err)
+		}
+	}
+	slog.Info("gateway: central BuiltinRegistry re-populated with live deps",
+		"count", centralBuiltinReg.Count())
 
 	fmt.Printf("✓ Gateway started on %s:%d\n", cfg.Gateway.Host, cfg.Gateway.Port)
 	fmt.Println("Press Ctrl+C to stop")
@@ -782,6 +810,8 @@ func setupAndStartServices(
 	homePath string,
 	credStore *credentials.Store,
 	sandboxResult *SandboxApplyResult,
+	builtinReg *tools.BuiltinRegistry, // M16: central builtin registry (FR-001)
+	mcpReg *tools.MCPRegistry,          // M16: central MCP registry (FR-001)
 ) (*services, error) {
 	runningServices := &services{credStore: credStore, bundle: bundle, sandboxResult: sandboxResult}
 
@@ -995,20 +1025,22 @@ func setupAndStartServices(
 	tExecutor := agent.GetTaskExecutor(agentLoop)
 
 	api := &restAPI{
-		agentLoop:     agentLoop,
-		allowedOrigin: allowedOrigin,
-		onboardingMgr: onboardingMgr,
-		homePath:      homePath,
-		taskStore:     tStore,
-		taskExecutor:  tExecutor,
-		credStore:     credStore,
-		mediaStore:    runningServices.MediaStore,
-		ssrfChecker:   agent.GetSSRFChecker(agentLoop), // SEC-24: nil when SSRF disabled
-		sandboxResult: sandboxResult,                   // immutable post-boot snapshot
-		appliedConfig: mustDeepCopyConfig(cfg),         // boot-time snapshot for pending-restart diff
-		servedSubdirs: runningServices.servedSubdirs,   // serve_workspace token registry
-		devServers:    runningServices.devServers,       // run_in_workspace process registry
-		approvalReg:   approvalReg,                     // in-process tool-approval registry (FR-016)
+		agentLoop:       agentLoop,
+		allowedOrigin:   allowedOrigin,
+		onboardingMgr:   onboardingMgr,
+		homePath:        homePath,
+		taskStore:       tStore,
+		taskExecutor:    tExecutor,
+		credStore:       credStore,
+		mediaStore:      runningServices.MediaStore,
+		ssrfChecker:     agent.GetSSRFChecker(agentLoop), // SEC-24: nil when SSRF disabled
+		sandboxResult:   sandboxResult,                   // immutable post-boot snapshot
+		appliedConfig:   mustDeepCopyConfig(cfg),         // boot-time snapshot for pending-restart diff
+		servedSubdirs:   runningServices.servedSubdirs,   // serve_workspace token registry
+		devServers:      runningServices.devServers,      // run_in_workspace process registry
+		approvalReg:     approvalReg,                     // in-process tool-approval registry (FR-016)
+		builtinRegistry: builtinReg,                      // M16: central builtin registry (FR-001)
+		mcpRegistry:     mcpReg,                          // M16: central MCP registry (FR-001)
 	}
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions", api.withAuth(api.HandleSessions))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions/", api.withAuth(api.HandleSessions))
