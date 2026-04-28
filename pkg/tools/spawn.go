@@ -8,6 +8,7 @@ import (
 )
 
 type SpawnTool struct {
+	BaseTool
 	spawner        SubTurnSpawner
 	defaultModel   string
 	maxTokens      int

@@ -39,7 +39,9 @@ type mockSystemTool struct {
 func (m *mockSystemTool) Name() string               { return m.name }
 func (m *mockSystemTool) Description() string        { return m.description }
 func (m *mockSystemTool) Parameters() map[string]any { return m.params }
-func (m *mockSystemTool) Scope() tools.ToolScope     { return tools.ScopeSystem }
+func (m *mockSystemTool) Scope() tools.ToolScope     { return tools.ScopeCore }
+func (m *mockSystemTool) RequiresAdminAsk() bool     { return true }
+func (m *mockSystemTool) Category() tools.ToolCategory { return tools.CategorySystem }
 func (m *mockSystemTool) Execute(_ context.Context, _ map[string]any) *tools.ToolResult {
 	m.executed.Store(true)
 	return tools.NewToolResult(`{"success":true}`)
@@ -903,14 +905,16 @@ func TestGuardedToolScope_DelegatesToInner(t *testing.T) {
 		expectedScope tools.ToolScope
 	}{
 		{
-			name:          "ScopeSystem_inner_returns_ScopeSystem",
-			innerScope:    tools.ScopeSystem,
-			expectedScope: tools.ScopeSystem,
-		},
-		{
-			name:          "ScopeCore_inner_returns_ScopeCore",
+			// ScopeSystem was removed (FR-045). Former system tools now use ScopeCore.
+			name:          "ScopeCore_inner_returns_ScopeCore_system_tools",
 			innerScope:    tools.ScopeCore,
 			expectedScope: tools.ScopeCore,
+		},
+		{
+			// ScopeGeneral inner scope is also delegated correctly.
+			name:          "ScopeGeneral_inner_returns_ScopeGeneral",
+			innerScope:    tools.ScopeGeneral,
+			expectedScope: tools.ScopeGeneral,
 		},
 	}
 

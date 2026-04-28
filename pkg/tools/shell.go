@@ -98,6 +98,7 @@ func getSessionManager() *SessionManager {
 }
 
 type ExecTool struct {
+	BaseTool
 	workingDir           string
 	timeout              time.Duration
 	maxBackgroundSeconds int // hard-kill timeout for background sessions; 0 = disabled

@@ -352,6 +352,8 @@ func (s *scopedMockTool) Name() string               { return s.name }
 func (s *scopedMockTool) Description() string        { return "scoped mock tool" }
 func (s *scopedMockTool) Parameters() map[string]any { return map[string]any{"type": "object"} }
 func (s *scopedMockTool) Scope() ToolScope           { return s.scope }
+func (s *scopedMockTool) RequiresAdminAsk() bool     { return false }
+func (s *scopedMockTool) Category() ToolCategory     { return CategoryCore }
 func (s *scopedMockTool) Execute(_ context.Context, _ map[string]any) *ToolResult {
 	return SilentResult("ok")
 }
@@ -361,10 +363,11 @@ func makeScopedTool(name string, scope ToolScope) Tool {
 	return &scopedMockTool{name: name, scope: scope}
 }
 
-// allScopeTools returns a representative tool set containing one tool per scope.
+// allScopeTools returns a representative tool set covering both scopes (FR-045:
+// ScopeSystem was retired; system.* tools now use ScopeCore).
 func allScopeTools() []Tool {
 	return []Tool{
-		makeScopedTool("system.manage_agents", ScopeSystem),
+		makeScopedTool("system.manage_agents", ScopeCore),
 		makeScopedTool("exec", ScopeCore),
 		makeScopedTool("web_search", ScopeGeneral),
 	}
@@ -372,68 +375,45 @@ func allScopeTools() []Tool {
 
 // --- FilterToolsByVisibility tests ---
 
-// TestFilterToolsByVisibility_InheritMode_SystemAgent verifies that a system
-// agent in inherit mode receives tools from every scope (system, core, general).
+// TestFilterToolsByVisibility_InheritMode_CoreAgent_SeesCoreAndGeneral verifies
+// that a core agent in inherit mode sees all ScopeCore tools (including system.*
+// named tools) and general tools. FR-045 retired ScopeSystem; system.* tools are
+// now ScopeCore and the scope gate passes for agentType=="core".
 //
-// BDD: Given a system agent with nil/inherit config
+// BDD: Given a core agent with nil/inherit config
 //
-//	When FilterToolsByVisibility is called with all three scope tools
+//	When FilterToolsByVisibility is called with all tools (two ScopeCore, one ScopeGeneral)
 //	Then all three tools are returned
 //
-// Traces to: compositor.go FilterToolsByVisibility — scope gate ScopeSystem passes for "system"
-func TestFilterToolsByVisibility_InheritMode_SystemAgent(t *testing.T) {
-	tools := allScopeTools()
-	cfg := &ToolVisibilityCfg{Mode: "inherit"}
-
-	got := FilterToolsByVisibility(tools, "system", cfg)
-
-	require.Len(t, got, 3, "system agent in inherit mode must see all three scope levels")
-
-	names := make(map[string]bool, len(got))
-	for _, t := range got {
-		names[t.Name()] = true
-	}
-	assert.True(t, names["system.manage_agents"], "system tool must pass for system agent")
-	assert.True(t, names["exec"], "core tool must pass for system agent")
-	assert.True(t, names["web_search"], "general tool must pass for system agent")
-}
-
-// TestFilterToolsByVisibility_InheritMode_CoreAgent verifies that a core agent
-// in inherit mode sees core and general tools but NOT system-scoped tools.
-//
-// BDD: Given a core agent with inherit config
-//
-//	When FilterToolsByVisibility is called with all three scope tools
-//	Then core and general tools pass; system tool does not
-//
-// Traces to: compositor.go FilterToolsByVisibility — ScopeSystem blocks "core" agentType
-func TestFilterToolsByVisibility_InheritMode_CoreAgent(t *testing.T) {
+// Traces to: compositor.go FilterToolsByVisibility — ScopeCore passes for "core" agentType (FR-045).
+func TestFilterToolsByVisibility_InheritMode_CoreAgent_SeesCoreAndGeneral(t *testing.T) {
 	tools := allScopeTools()
 	cfg := &ToolVisibilityCfg{Mode: "inherit"}
 
 	got := FilterToolsByVisibility(tools, "core", cfg)
 
-	require.Len(t, got, 2, "core agent must see core+general but not system tools")
+	require.Len(t, got, 3, "core agent in inherit mode must see both ScopeCore tools and the general tool")
 
 	names := make(map[string]bool, len(got))
 	for _, t := range got {
 		names[t.Name()] = true
 	}
-	assert.False(t, names["system.manage_agents"], "system tool must NOT pass for core agent")
+	assert.True(t, names["system.manage_agents"], "system.* tool (ScopeCore) must pass for core agent")
 	assert.True(t, names["exec"], "core tool must pass for core agent")
 	assert.True(t, names["web_search"], "general tool must pass for core agent")
 }
 
-// TestFilterToolsByVisibility_InheritMode_CustomAgent verifies that a custom
-// agent in inherit mode sees only general-scoped tools.
+// TestFilterToolsByVisibility_InheritMode_CustomAgent_SeesOnlyGeneral verifies
+// that a custom agent in inherit mode sees only ScopeGeneral tools. ScopeCore
+// tools (including system.* named tools) require an explicit policy entry.
 //
 // BDD: Given a custom agent with inherit config
 //
-//	When FilterToolsByVisibility is called with all three scope tools
-//	Then only general tool passes
+//	When FilterToolsByVisibility is called with two ScopeCore tools and one ScopeGeneral
+//	Then only the general tool passes
 //
 // Traces to: compositor.go FilterToolsByVisibility — ScopeCore blocks "custom" without visibleSet
-func TestFilterToolsByVisibility_InheritMode_CustomAgent(t *testing.T) {
+func TestFilterToolsByVisibility_InheritMode_CustomAgent_SeesOnlyGeneral(t *testing.T) {
 	tools := allScopeTools()
 	cfg := &ToolVisibilityCfg{Mode: "inherit"}
 
@@ -474,30 +454,30 @@ func TestFilterToolsByVisibility_ExplicitMode_CustomAgent(t *testing.T) {
 	assert.True(t, names["web_search"], "general tool must pass when explicitly listed")
 }
 
-// TestFilterToolsByVisibility_ExplicitMode_CannotEscapeScope verifies that a
-// custom agent cannot gain access to system-scoped tools by listing them in the
-// explicit Visible set — the scope gate is an outer guard that cannot be bypassed.
+// TestFilterToolsByVisibility_ExplicitMode_CoreToolUnlistedBlocked verifies that
+// a custom agent with explicit mode cannot see a ScopeCore tool that is not listed
+// in its Visible set, even when Visible contains a different tool.
 //
-// BDD: Given a custom agent with explicit mode listing a system-scoped tool
+// BDD: Given a custom agent with explicit mode listing only "web_search"
 //
-//	When FilterToolsByVisibility is called
-//	Then the system tool is still blocked (scope gate fires first)
+//	When FilterToolsByVisibility is called with a ScopeCore tool "exec" not in Visible
+//	Then "exec" is blocked; "web_search" passes
 //
-// Traces to: compositor.go FilterToolsByVisibility — scope gate runs before explicit layer
-func TestFilterToolsByVisibility_ExplicitMode_CannotEscapeScope(t *testing.T) {
-	tools := []Tool{
-		makeScopedTool("system.manage_agents", ScopeSystem),
+// Traces to: compositor.go FilterToolsByVisibility — ScopeCore custom agent gate (FR-045).
+func TestFilterToolsByVisibility_ExplicitMode_CoreToolUnlistedBlocked(t *testing.T) {
+	toolSet := []Tool{
+		makeScopedTool("exec", ScopeCore),
 		makeScopedTool("web_search", ScopeGeneral),
 	}
 	cfg := &ToolVisibilityCfg{
 		Mode:    "explicit",
-		Visible: []string{"system.manage_agents", "web_search"},
+		Visible: []string{"web_search"},
 	}
 
-	got := FilterToolsByVisibility(tools, "custom", cfg)
+	got := FilterToolsByVisibility(toolSet, "custom", cfg)
 
-	// Only the general tool may pass; system is blocked by the scope gate.
-	require.Len(t, got, 1, "system-scoped tool must be blocked even when listed in explicit Visible")
+	// Only the general tool may pass; core-scoped tool not in Visible is blocked.
+	require.Len(t, got, 1, "ScopeCore tool not in explicit Visible must be blocked for custom agent")
 	assert.Equal(t, "web_search", got[0].Name())
 }
 
@@ -561,7 +541,7 @@ func TestFilterToolsByVisibility_EmptyVisibleList(t *testing.T) {
 func TestFilterToolsByVisibility_ExplicitMode_CoreAgent(t *testing.T) {
 	// Given: one tool per scope (system, core, general)
 	input := allScopeTools()
-	// system.manage_agents (ScopeSystem), exec (ScopeCore), web_search (ScopeGeneral)
+	// system.manage_agents (ScopeCore), exec (ScopeCore), web_search (ScopeGeneral) — FR-045
 
 	cfg := &ToolVisibilityCfg{
 		Mode:    "explicit",
@@ -576,23 +556,24 @@ func TestFilterToolsByVisibility_ExplicitMode_CoreAgent(t *testing.T) {
 	assert.Equal(t, "web_search", got[0].Name(),
 		"explicit visible list must be the only tool returned")
 
-	// Then: system tool is never returned for a core agent regardless of mode
+	// Then: ScopeCore tools not in explicit Visible are filtered out (layer 2 of filter)
 	names := make(map[string]bool, len(got))
 	for _, t := range got {
 		names[t.Name()] = true
 	}
 	assert.False(t, names["system.manage_agents"],
-		"system-scoped tool must NEVER be returned for a core agent (scope gate blocks it)")
+		"system.* tool (ScopeCore) not in explicit Visible must be filtered out")
 	assert.False(t, names["exec"],
 		"core-scoped tool not in explicit Visible must be filtered out")
 }
 
 // --- FilterToolsByPolicy tests ---
 
-// allPolicyTools returns a representative set covering all three scopes.
+// allPolicyTools returns a representative set covering both scopes (FR-045:
+// ScopeSystem was retired; system.* tools now use ScopeCore).
 func allPolicyTools() []Tool {
 	return []Tool{
-		makeScopedTool("system.agent.list", ScopeSystem),
+		makeScopedTool("system.agent.list", ScopeCore),
 		makeScopedTool("exec", ScopeCore),
 		makeScopedTool("web_search", ScopeGeneral),
 	}
@@ -602,7 +583,7 @@ func allPolicyTools() []Tool {
 // on a specific tool removes it from the output regardless of agent policy.
 //
 // BDD: Given global policy denies "web_search",
-// When FilterToolsByPolicy is called for a system agent,
+// When FilterToolsByPolicy is called for a core agent,
 // Then "web_search" is absent from the result.
 //
 // Traces to: compositor.go FilterToolsByPolicy — resolveEffective deny wins.
@@ -613,7 +594,7 @@ func TestFilterToolsByPolicy_GlobalDeny_RemovesTool(t *testing.T) {
 		GlobalDefaultPolicy: "allow",
 	}
 
-	got, policyMap := FilterToolsByPolicy(allPolicyTools(), "system", cfg)
+	got, policyMap := FilterToolsByPolicy(allPolicyTools(), "core", cfg)
 
 	for _, t := range got {
 		if t.Name() == "web_search" {
@@ -642,7 +623,7 @@ func TestFilterToolsByPolicy_GlobalAsk_AgentAllow_EffectiveAsk(t *testing.T) {
 		GlobalDefaultPolicy: "allow",
 	}
 
-	_, policyMap := FilterToolsByPolicy(allPolicyTools(), "system", cfg)
+	_, policyMap := FilterToolsByPolicy(allPolicyTools(), "core", cfg)
 
 	if p, ok := policyMap["web_search"]; !ok || p != "ask" {
 		t.Errorf("expected effective policy 'ask' for web_search, got %q (ok=%v)", p, ok)
@@ -665,7 +646,7 @@ func TestFilterToolsByPolicy_GlobalAllow_AgentDeny_EffectiveDeny(t *testing.T) {
 		GlobalDefaultPolicy: "allow",
 	}
 
-	got, _ := FilterToolsByPolicy(allPolicyTools(), "system", cfg)
+	got, _ := FilterToolsByPolicy(allPolicyTools(), "core", cfg)
 
 	for _, tool := range got {
 		if tool.Name() == "web_search" {
@@ -690,7 +671,7 @@ func TestFilterToolsByPolicy_GlobalAllow_AgentAsk_EffectiveAsk(t *testing.T) {
 		GlobalDefaultPolicy: "allow",
 	}
 
-	_, policyMap := FilterToolsByPolicy(allPolicyTools(), "system", cfg)
+	_, policyMap := FilterToolsByPolicy(allPolicyTools(), "core", cfg)
 
 	if p, ok := policyMap["web_search"]; !ok || p != "ask" {
 		t.Errorf("expected effective policy 'ask' for web_search, got %q (ok=%v)", p, ok)
@@ -713,25 +694,26 @@ func TestFilterToolsByPolicy_AllAllow(t *testing.T) {
 		GlobalDefaultPolicy: "allow",
 	}
 
-	_, policyMap := FilterToolsByPolicy(allPolicyTools(), "system", cfg)
+	_, policyMap := FilterToolsByPolicy(allPolicyTools(), "core", cfg)
 
 	if p, ok := policyMap["web_search"]; !ok || p != "allow" {
 		t.Errorf("expected effective policy 'allow' for web_search, got %q (ok=%v)", p, ok)
 	}
 }
 
-// TestFilterToolsByPolicy_ScopeSystem_BlockedForNonSystem verifies that a
-// ScopeSystem tool is never returned for a non-system agent type, regardless of
-// policy settings.
+// TestFilterToolsByPolicy_SystemWildcardDeny_BlocksSystemTools verifies that a
+// per-agent "system.*: deny" wildcard policy blocks system.* tools even though
+// they are ScopeCore (FR-045: ScopeSystem retired; per-agent policy is the sole gate).
 //
-// BDD: Given a system-scoped tool "system.agent.list" and a "core" agent,
-// When FilterToolsByPolicy is called with global+agent allow policies,
-// Then "system.agent.list" is absent from the result.
+// BDD: Given a core agent with Policies={"system.*": "deny"} and defaultPolicy "allow",
+// When FilterToolsByPolicy is called,
+// Then "system.agent.list" is absent from the result (wildcard deny wins).
 //
-// Traces to: compositor.go FilterToolsByPolicy — scope gate blocks ScopeSystem for non-system.
-func TestFilterToolsByPolicy_ScopeSystem_BlockedForNonSystem(t *testing.T) {
+// Traces to: compositor.go FilterToolsByPolicy — resolveEffective deny wins; wildcard index (FR-045).
+func TestFilterToolsByPolicy_SystemWildcardDeny_BlocksSystemTools(t *testing.T) {
 	cfg := &ToolPolicyCfg{
 		DefaultPolicy:       "allow",
+		Policies:            map[string]string{"system.*": "deny"},
 		GlobalDefaultPolicy: "allow",
 	}
 
@@ -739,7 +721,7 @@ func TestFilterToolsByPolicy_ScopeSystem_BlockedForNonSystem(t *testing.T) {
 
 	for _, tool := range got {
 		if tool.Name() == "system.agent.list" {
-			t.Error("system-scoped tool must not appear for a core agent")
+			t.Error("system.* tool must be blocked when Policies[\"system.*\"]=deny")
 		}
 	}
 }
@@ -783,16 +765,16 @@ func TestFilterToolsByPolicy_ScopeCore_CustomAgent(t *testing.T) {
 // defaults to allow-all (the safe default for non-security-critical agents).
 //
 // BDD: Given a nil ToolPolicyCfg,
-// When FilterToolsByPolicy is called for a system agent,
-// Then all system + core + general tools pass with "allow" policy.
+// When FilterToolsByPolicy is called for a core agent,
+// Then all ScopeCore + ScopeGeneral tools pass with "allow" policy (FR-045).
 //
 // Traces to: compositor.go FilterToolsByPolicy — nil cfg defaults to allow.
 func TestFilterToolsByPolicy_EmptyConfig_DefaultsToAllow(t *testing.T) {
-	got, policyMap := FilterToolsByPolicy(allPolicyTools(), "system", nil)
+	got, policyMap := FilterToolsByPolicy(allPolicyTools(), "core", nil)
 
-	// All three scope tools must be present for system agent.
+	// All tools must be present for core agent with nil config.
 	if len(got) != 3 {
-		t.Errorf("expected 3 tools for system agent with nil config, got %d", len(got))
+		t.Errorf("expected 3 tools for core agent with nil config, got %d", len(got))
 	}
 	for _, name := range []string{"system.agent.list", "exec", "web_search"} {
 		if p, ok := policyMap[name]; !ok || p != "allow" {
@@ -818,7 +800,7 @@ func TestFilterToolsByPolicy_UnknownScope_Denied(t *testing.T) {
 		GlobalDefaultPolicy: "allow",
 	}
 
-	got, _ := FilterToolsByPolicy(tools, "system", cfg)
+	got, _ := FilterToolsByPolicy(tools, "core", cfg)
 
 	for _, tool := range got {
 		if tool.Name() == "mystery_tool" {

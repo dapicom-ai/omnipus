@@ -6,28 +6,90 @@ import "context"
 type ToolScope string
 
 const (
-	// ScopeSystem tools are exclusive to the system agent (omnipus-system).
-	// They manage agents, channels, providers, MCP servers, and other infrastructure.
-	ScopeSystem ToolScope = "system"
-	// ScopeCore tools are available to system and core agents, and to custom
-	// agents only when explicitly listed in their tools.builtin.visible config.
-	// Examples: exec, browser.*, write_file, edit_file, spawn, subagent.
+	// ScopeCore tools are available to core agents by default, and to custom
+	// agents only when per-agent policy explicitly grants them.
+	// Examples: exec, browser.*, write_file, edit_file, spawn, subagent,
+	// and all system.* tools (which were formerly ScopeSystem).
 	ScopeCore ToolScope = "core"
 	// ScopeGeneral tools are available to all agent types by default.
 	// Examples: read_file, list_dir, web_search, web_fetch, message, task_*.
 	ScopeGeneral ToolScope = "general"
 )
 
+// ToolCategory groups tools by function for the UI tool picker and for the
+// Category() method on the Tool interface.
+// These values align with the existing CatalogEntry categories.
+type ToolCategory string
+
+const (
+	CategoryCore          ToolCategory = "core"     // default for BaseTool
+	CategorySystem        ToolCategory = "system"   // sysagent tools
+	CategoryFile          ToolCategory = "file"
+	CategoryCode          ToolCategory = "code"
+	CategoryWeb           ToolCategory = "web"
+	CategoryBrowser       ToolCategory = "browser"
+	CategoryCommunication ToolCategory = "communication"
+	CategoryTask          ToolCategory = "task"
+	CategoryAutomation    ToolCategory = "automation"
+	CategorySearch        ToolCategory = "search"
+	CategorySkills        ToolCategory = "skills"
+	CategoryHardware      ToolCategory = "hardware"
+	CategoryWorkspace     ToolCategory = "workspace"
+	CategoryMCP           ToolCategory = "mcp"
+)
+
 // Tool is the interface that all tools must implement.
+//
+// RequiresAdminAsk and Category have default implementations via BaseTool.
+// Embed BaseTool in your tool struct to inherit the defaults without needing to
+// implement these methods explicitly:
+//
+//	type MyTool struct {
+//	    tools.BaseTool
+//	    ...
+//	}
 type Tool interface {
 	Name() string
 	Description() string
 	Parameters() map[string]any
 	Execute(ctx context.Context, args map[string]any) *ToolResult
-	// Scope returns the privilege level of this tool, used by the ToolCompositor
-	// to apply scope-based visibility filtering per agent type.
+	// Scope returns the privilege level of this tool.
 	Scope() ToolScope
+	// RequiresAdminAsk returns true when the tool must be approved by an admin
+	// user before execution on a custom agent, regardless of the configured
+	// policy. All tools in pkg/sysagent/tools/ return true.
+	// Default (via BaseTool): false.
+	RequiresAdminAsk() bool
+	// Category returns the functional category for the tool picker UI.
+	// Default (via BaseTool): CategoryCore.
+	Category() ToolCategory
 }
+
+// BaseTool provides zero-value default implementations of RequiresAdminAsk and
+// Category so that existing tool structs only need to embed BaseTool to satisfy
+// the full Tool interface without mass-modifying every file.
+//
+// Usage:
+//
+//	type MyTool struct {
+//	    tools.BaseTool
+//	    // ... other fields
+//	}
+//
+// MyTool then inherits:
+//   - RequiresAdminAsk() bool  → false
+//   - Category() ToolCategory  → CategoryCore
+//
+// Override either method on the embedding struct as needed.
+type BaseTool struct{}
+
+// RequiresAdminAsk returns false for generic tools. Override to return true on
+// privileged tools (e.g., every tool in pkg/sysagent/tools/).
+func (BaseTool) RequiresAdminAsk() bool { return false }
+
+// Category returns CategoryCore as the default. Override for more specific
+// categorisation (file, web, browser, etc.).
+func (BaseTool) Category() ToolCategory { return CategoryCore }
 
 // --- Request-scoped tool context (channel / chatID) ---
 //

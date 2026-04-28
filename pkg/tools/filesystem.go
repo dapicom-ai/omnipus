@@ -286,8 +286,9 @@ func isWithinWorkspace(candidate, workspace string) bool {
 }
 
 type ReadFileTool struct {
-	fs           fileSystem
-	maxSize      int64
+	BaseTool
+	fs            fileSystem
+	maxSize       int64
 	allowPathsLen int
 	// auditLogger receives path.access_denied events on workspace-guard
 	// rejections. Nil means audit logging is disabled (best-effort).
@@ -551,6 +552,7 @@ func getInt64Arg(args map[string]any, key string, defaultVal int64) (int64, erro
 }
 
 type WriteFileTool struct {
+	BaseTool
 	fs fileSystem
 }
 
@@ -622,6 +624,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, args map[string]any) *ToolR
 }
 
 type ListDirTool struct {
+	BaseTool
 	fs fileSystem
 }
 

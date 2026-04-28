@@ -34,7 +34,9 @@ func TestCatalog_AllFieldsNonEmpty(t *testing.T) {
 }
 
 func TestCatalog_ValidScopes(t *testing.T) {
-	valid := map[ToolScope]bool{ScopeSystem: true, ScopeCore: true, ScopeGeneral: true}
+	// ScopeSystem was removed (FR-045: system-agent fiction retired).
+	// All former ScopeSystem tools now use ScopeCore.
+	valid := map[ToolScope]bool{ScopeCore: true, ScopeGeneral: true}
 	for _, e := range GetBuiltinCatalog() {
 		if !valid[e.Scope] {
 			t.Errorf("catalog entry %q has invalid scope %q", e.Name, e.Scope)
@@ -74,7 +76,9 @@ func TestCatalogAsMapSlice(t *testing.T) {
 func TestCatalogMarkdown_ContainsAllNonSystemTools(t *testing.T) {
 	md := CatalogMarkdown()
 	for _, e := range GetBuiltinCatalog() {
-		if e.Scope == ScopeSystem {
+		// System-category tools (formerly ScopeSystem) are excluded from the
+		// markdown catalog — they are privileged tools shown elsewhere in the UI.
+		if e.Category == CategorySystem {
 			continue
 		}
 		if !strings.Contains(md, e.Name) {
@@ -86,7 +90,8 @@ func TestCatalogMarkdown_ContainsAllNonSystemTools(t *testing.T) {
 func TestCatalogMarkdown_ExcludesSystemTools(t *testing.T) {
 	md := CatalogMarkdown()
 	for _, e := range GetBuiltinCatalog() {
-		if e.Scope == ScopeSystem {
+		// Tools with CategorySystem are excluded from the markdown catalog.
+		if e.Category == CategorySystem {
 			if strings.Contains(md, "`"+e.Name+"`") {
 				t.Errorf("CatalogMarkdown should not contain system tool %q", e.Name)
 			}

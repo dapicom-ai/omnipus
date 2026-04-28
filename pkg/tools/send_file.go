@@ -18,6 +18,7 @@ import (
 // SendFileTool allows the LLM to send a local file (image, document, etc.)
 // to the user on the current chat channel via the MediaStore pipeline.
 type SendFileTool struct {
+	BaseTool
 	workspace   string
 	restrict    bool
 	maxFileSize int

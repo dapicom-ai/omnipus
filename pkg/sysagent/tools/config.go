@@ -20,7 +20,7 @@ type ConfigGetTool struct{ deps *Deps }
 
 func NewConfigGetTool(d *Deps) *ConfigGetTool   { return &ConfigGetTool{deps: d} }
 func (t *ConfigGetTool) Name() string           { return "system.config.get" }
-func (t *ConfigGetTool) Scope() tools.ToolScope { return tools.ScopeSystem }
+func (t *ConfigGetTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *ConfigGetTool) Description() string {
 	return "Read a configuration value by dot-notation key.\nParameters: key (required, e.g. 'gateway.port')."
 }
@@ -67,7 +67,7 @@ type ConfigSetTool struct{ deps *Deps }
 
 func NewConfigSetTool(d *Deps) *ConfigSetTool   { return &ConfigSetTool{deps: d} }
 func (t *ConfigSetTool) Name() string           { return "system.config.set" }
-func (t *ConfigSetTool) Scope() tools.ToolScope { return tools.ScopeSystem }
+func (t *ConfigSetTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *ConfigSetTool) Description() string {
 	return "Update a configuration value.\nParameters: key (required), value (required)."
 }

@@ -51,6 +51,16 @@ type AgentInstance struct {
 	// Populated from AgentDefaults.TimeoutSeconds; per-agent override if available.
 	TimeoutSeconds int
 
+	// AgentType is the resolved type string ("core", "custom", "system") used by
+	// FilterToolsByPolicy at LLM-call assembly time (FR-003, FR-041). Set once at
+	// construction; never mutated after creation.
+	AgentType string
+
+	// ToolPolicyCfg holds the per-agent tool policy snapshot used by
+	// FilterToolsByPolicy at LLM-call assembly time (FR-003, FR-041). Populated
+	// at construction from config.AgentConfig.Tools. May be nil (defaults to allow-all).
+	ToolPolicyCfg *tools.ToolPolicyCfg
+
 	// Router is non-nil when model routing is configured and the light model
 	// was successfully resolved. It scores each incoming message and decides
 	// whether to route to LightCandidates or stay with Candidates.
@@ -220,6 +230,28 @@ func NewAgentInstance(
 		timeoutSeconds = 0
 	}
 
+	// Derive agent type and policy snapshot for LLM-call-time tool filtering (FR-003, FR-041).
+	// agentType uses the config-stored Type when present; falls back to "core" for the
+	// omnipus-system id and "custom" for everything else.
+	// The registry may upgrade this to "core" via SetAgentType() for runtime-seeded agents.
+	resolvedAgentType := "custom"
+	if agentCfg != nil {
+		switch agentCfg.Type {
+		case config.AgentTypeCore, config.AgentTypeSystem:
+			resolvedAgentType = string(agentCfg.Type)
+		case config.AgentTypeCustom:
+			resolvedAgentType = "custom"
+		default:
+			if agentCfg.ID == "omnipus-system" {
+				resolvedAgentType = "system"
+			}
+		}
+	}
+	var toolPolicyCfg *tools.ToolPolicyCfg
+	if agentCfg != nil && agentCfg.Tools != nil {
+		toolPolicyCfg = agentToolsCfgToPolicy(agentCfg.Tools)
+	}
+
 	return &AgentInstance{
 		ID:                        agentID,
 		Name:                      agentName,
@@ -244,7 +276,36 @@ func NewAgentInstance(
 		LightCandidates:           lightCandidates,
 		LightProvider:             lightProvider,
 		TimeoutSeconds:            timeoutSeconds,
+		AgentType:                 resolvedAgentType,
+		ToolPolicyCfg:             toolPolicyCfg,
 	}
+}
+
+// agentToolsCfgToPolicy converts config.AgentToolsCfg to tools.ToolPolicyCfg for
+// use at LLM-call assembly time (FR-003, FR-041). Reads from cfg.Builtin which
+// holds the per-tool DefaultPolicy and Policies map.
+func agentToolsCfgToPolicy(cfg *config.AgentToolsCfg) *tools.ToolPolicyCfg {
+	if cfg == nil {
+		return &tools.ToolPolicyCfg{DefaultPolicy: "allow"}
+	}
+	dp := string(cfg.Builtin.DefaultPolicy)
+	if dp == "" {
+		dp = "allow"
+	}
+	policies := make(map[string]string, len(cfg.Builtin.Policies))
+	for k, v := range cfg.Builtin.Policies {
+		policies[k] = string(v)
+	}
+	return &tools.ToolPolicyCfg{
+		DefaultPolicy: dp,
+		Policies:      policies,
+	}
+}
+
+// SetAgentType updates the resolved agent type. Called by the registry to upgrade
+// runtime-seeded core agents (e.g., Ava, Main) that may not have Type set in config.
+func (a *AgentInstance) SetAgentType(agentType string) {
+	a.AgentType = agentType
 }
 
 // resolveAgentWorkspace determines the workspace directory for an agent.

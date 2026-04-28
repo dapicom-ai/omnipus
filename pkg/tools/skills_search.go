@@ -11,6 +11,7 @@ import (
 
 // FindSkillsTool allows the LLM agent to search for installable skills from registries.
 type FindSkillsTool struct {
+	BaseTool
 	registryMgr *skills.RegistryManager
 	cache       *skills.SearchCache
 }

@@ -1428,6 +1428,12 @@ func (al *AgentLoop) Close() {
 		}
 	}
 
+	// FR-048: On graceful shutdown, write turn_cancelled_restart synthetic entries
+	// to any sessions that have active turns paused awaiting approval. This makes
+	// the restart visible to the session on next load, preventing the user from
+	// seeing a dangling tool_call with no result.
+	al.writeTurnCancelledRestartForActiveTurns()
+
 	// SEC-15: Log shutdown event and close audit logger.
 	if al.auditLogger != nil {
 		if err := al.auditLogger.Log(&audit.Entry{
@@ -1442,6 +1448,54 @@ func (al *AgentLoop) Close() {
 				map[string]any{"error": err.Error()})
 		}
 	}
+}
+
+// writeTurnCancelledRestartForActiveTurns writes a synthetic turn_cancelled_restart
+// system message to every session that has an active (in-progress) turn at the time
+// of graceful shutdown (FR-048). This ensures the session transcript is clean on
+// next load: the SIGKILL recovery path (FR-069) will detect the synthetic entry
+// and not attempt to resume the cancelled turn.
+func (al *AgentLoop) writeTurnCancelledRestartForActiveTurns() {
+	al.activeTurnStates.Range(func(key, value any) bool {
+		sessionKey, _ := key.(string)
+		ts, _ := value.(*turnState)
+		if ts == nil || ts.agent == nil || ts.agent.Sessions == nil {
+			return true
+		}
+
+		// Append a synthetic system message documenting the shutdown.
+		syntheticContent := fmt.Sprintf(
+			`{"type":"turn_cancelled_restart","session_key":%q,"reason":"graceful_shutdown"}`,
+			sessionKey,
+		)
+		ts.agent.Sessions.AddMessage(sessionKey, "system", syntheticContent)
+		if err := ts.agent.Sessions.Save(sessionKey); err != nil {
+			logger.WarnCF("agent", "FR-048: failed to persist turn_cancelled_restart on shutdown",
+				map[string]any{"session_key": sessionKey, "error": err.Error()})
+		} else {
+			logger.InfoCF("agent", "FR-048: turn_cancelled_restart written on graceful shutdown",
+				map[string]any{"session_key": sessionKey})
+		}
+
+		// Emit audit event (FR-048).
+		if al.auditLogger != nil {
+			if err := al.auditLogger.Log(&audit.Entry{
+				Event:    "tool.policy.ask.denied",
+				Decision: "deny",
+				SessionID: sessionKey,
+				Details: map[string]any{
+					"reason":      "restart",
+					"turn_id":     ts.turnID,
+					"agent_id":    ts.agentID,
+					"shutdown":    "graceful",
+				},
+			}); err != nil {
+				logger.WarnCF("agent", "FR-048: audit emit failed on shutdown",
+					map[string]any{"session_key": sessionKey, "error": err.Error()})
+			}
+		}
+		return true
+	})
 }
 
 // MountHook registers an in-process hook on the agent loop.
@@ -3015,7 +3069,15 @@ turnLoop:
 			})
 
 		gracefulTerminal, _ := ts.gracefulInterruptRequested()
-		providerToolDefs := ts.agent.Tools.ToProviderDefs()
+
+		// FR-003, FR-041: Apply per-agent tool policy at LLM-call assembly time.
+		// FilterToolsByPolicy enforces global × agent deny>ask>allow resolution and
+		// the ScopeCore-on-custom-agent gate before the tool list reaches the LLM.
+		// Tools with effective policy "ask" are included — the mid-turn policy snapshot
+		// (FR-041) handles human-in-the-loop confirmation; see recordSyntheticDeny.
+		allAgentTools := ts.agent.Tools.GetAll()
+		policyFilteredTools, _ := tools.FilterToolsByPolicy(allAgentTools, ts.agent.AgentType, ts.agent.ToolPolicyCfg)
+		providerToolDefs := tools.ToolsToProviderDefs(policyFilteredTools)
 
 		// Native web search support
 		_, hasWebSearch := ts.agent.Tools.Get("web_search")
@@ -4390,6 +4452,68 @@ func (al *AgentLoop) abortTurn(ts *turnState) (turnResult, error) {
 		}
 	}
 	return turnResult{status: TurnEndStatusAborted}, nil
+}
+
+// defaultSyntheticErrorFloor is the default value of
+// gateway.turn_synthetic_error_floor (FR-084). After this many consecutive
+// synthetic-deny tool results in a single turn, the turn is aborted.
+const defaultSyntheticErrorFloor = 8
+
+// syntheticErrorFloor returns the configured synthetic-error floor for the
+// current loop config. Negative values return the default. 0 means disabled.
+func (al *AgentLoop) syntheticErrorFloor() int {
+	cfg := al.GetConfig()
+	n := cfg.Gateway.TurnSyntheticErrorFloor
+	if n < 0 {
+		return defaultSyntheticErrorFloor
+	}
+	return n
+}
+
+// recordSyntheticDeny increments the turn's consecutive-synthetic-deny counter
+// and returns true when the turn should be aborted (FR-084). It also appends a
+// system message to the session documenting the abort reason so the LLM can
+// observe it on the next prompt.
+//
+// Returns (shouldAbort bool, abortMsg string). The caller is responsible for
+// appending abortMsg to messages and calling abortTurn if shouldAbort is true.
+func (al *AgentLoop) recordSyntheticDeny(ts *turnState) (shouldAbort bool, abortMsg string) {
+	ts.syntheticErrorCount++
+	floor := al.syntheticErrorFloor()
+	if floor <= 0 || ts.syntheticErrorCount < floor {
+		return false, ""
+	}
+	msg := fmt.Sprintf(
+		`{"role":"system","type":"turn_aborted","reason":"synthetic_error_loop","count":%d}`,
+		ts.syntheticErrorCount,
+	)
+	if !ts.opts.NoHistory {
+		ts.agent.Sessions.AddMessage(ts.sessionKey, "system", msg)
+	}
+	if al.auditLogger != nil {
+		if err := al.auditLogger.Log(&audit.Entry{
+			Event:    "turn.aborted_synthetic_loop",
+			Decision: "deny",
+			AgentID:  ts.agentID,
+			SessionID: ts.sessionKey,
+			Details: map[string]any{
+				"turn_id":              ts.turnID,
+				"synthetic_error_count": ts.syntheticErrorCount,
+				"floor":                floor,
+			},
+		}); err != nil {
+			logger.WarnCF("agent", "FR-084: audit emit failed for turn.aborted_synthetic_loop",
+				map[string]any{"session_key": ts.sessionKey, "error": err.Error()})
+		}
+	}
+	logger.WarnCF("agent", "FR-084: synthetic-error floor reached — aborting turn",
+		map[string]any{
+			"agent_id":    ts.agentID,
+			"session_key": ts.sessionKey,
+			"count":       ts.syntheticErrorCount,
+			"floor":       floor,
+		})
+	return true, msg
 }
 
 func sleepWithContext(ctx context.Context, d time.Duration) error {

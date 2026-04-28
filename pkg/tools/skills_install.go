@@ -19,6 +19,7 @@ import (
 // It shares the same RegistryManager that FindSkillsTool uses,
 // so all registries configured in config are available for installation.
 type InstallSkillTool struct {
+	BaseTool
 	registryMgr *skills.RegistryManager
 	workspace   string
 	mu          sync.Mutex

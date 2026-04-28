@@ -423,6 +423,34 @@ func (r *ToolRegistry) ToProviderDefs() []providers.ToolDefinition {
 	return definitions
 }
 
+// ToolsToProviderDefs converts a slice of Tool to providers.ToolDefinition without
+// requiring a ToolRegistry. Used by the LLM-call assembly path (FR-003, FR-041) to
+// convert the policy-filtered tool list to the format expected by LLM providers.
+func ToolsToProviderDefs(toolSlice []Tool) []providers.ToolDefinition {
+	definitions := make([]providers.ToolDefinition, 0, len(toolSlice))
+	for _, t := range toolSlice {
+		schema := ToolToSchema(t)
+		fn, ok := schema["function"].(map[string]any)
+		if !ok {
+			logger.WarnCF("tools", "skipping malformed tool schema in ToolsToProviderDefs",
+				map[string]any{"tool": t.Name()})
+			continue
+		}
+		name, _ := fn["name"].(string)
+		desc, _ := fn["description"].(string)
+		params, _ := fn["parameters"].(map[string]any)
+		definitions = append(definitions, providers.ToolDefinition{
+			Type: "function",
+			Function: providers.ToolFunctionDefinition{
+				Name:        SanitizeToolName(name),
+				Description: desc,
+				Parameters:  params,
+			},
+		})
+	}
+	return definitions
+}
+
 // SanitizeToolName replaces characters invalid for LLM APIs (dots, colons)
 // with underscores. Anthropic/Azure require ^[a-zA-Z0-9_-]{1,128}$.
 func SanitizeToolName(name string) string {

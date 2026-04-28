@@ -10,6 +10,7 @@ import (
 
 // RemoveSkillTool allows the LLM agent to remove an installed skill.
 type RemoveSkillTool struct {
+	BaseTool
 	installer *skills.SkillInstaller
 }
 
