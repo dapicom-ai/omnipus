@@ -1401,40 +1401,78 @@ export function fetchExecProxyStatus(): Promise<ExecProxyStatus> {
 
 // ── Agent Tools ───────────────────────────────────────────────────────────────
 
-export interface BuiltinTool {
+// RegistryTool is the shape returned by GET /api/v1/tools (FR-027).
+// source discriminates builtins from MCP-sourced tools.
+export interface RegistryTool {
   name: string
   scope: 'system' | 'core' | 'general'
   category: string
   description: string
+  source: 'builtin' | 'mcp'
+}
+
+// BuiltinTool is kept as an alias so existing callers that still reference it
+// continue to compile. New code should use RegistryTool.
+export type BuiltinTool = RegistryTool
+
+// AgentToolEntry is one entry in GET /api/v1/agents/{id}/tools (FR-086).
+// fence_applied is true when the operator set "allow" but the effective policy
+// was downgraded to "ask" because the tool requires admin approval on a custom agent.
+export interface AgentToolEntry {
+  name: string
+  configured_policy: 'allow' | 'ask' | 'deny'
+  effective_policy: 'allow' | 'ask' | 'deny'
+  fence_applied: boolean
+  requires_admin_ask: boolean
 }
 
 export interface AgentToolsCfg {
   builtin: {
     default_policy?: 'allow' | 'ask' | 'deny'
     policies?: Record<string, 'allow' | 'ask' | 'deny'>
-    // Legacy fields (backward compat)
-    mode?: 'explicit' | 'inherit'
-    visible?: string[]
   }
   mcp?: { servers: { id: string; tools?: string[] }[] }
 }
 
-export function fetchBuiltinTools(): Promise<BuiltinTool[]> {
-  return request<BuiltinTool[]>('/tools/builtin')
+// fetchRegistryTools calls GET /api/v1/tools — the central registry snapshot
+// (builtins ∪ MCP) per FR-027. Returns tools with a source discriminator.
+export function fetchRegistryTools(): Promise<RegistryTool[]> {
+  return request<RegistryTool[]>('/tools')
+}
+
+// fetchBuiltinTools is a backward-compat alias for fetchRegistryTools.
+// New code should call fetchRegistryTools directly.
+export function fetchBuiltinTools(): Promise<RegistryTool[]> {
+  return fetchRegistryTools()
 }
 
 export function fetchMcpServersForAgent(): Promise<McpServer[]> {
   return request<McpServer[]>('/mcp-servers')
 }
 
-export function fetchAgentTools(agentId: string): Promise<{ config: AgentToolsCfg; effective_tools: BuiltinTool[] }> {
-  return request<{ config: AgentToolsCfg; effective_tools: BuiltinTool[] }>(`/agents/${encodeURIComponent(agentId)}/tools`)
+export function fetchAgentTools(agentId: string): Promise<{ config: AgentToolsCfg; tools: AgentToolEntry[] }> {
+  return request<{ config: AgentToolsCfg; tools: AgentToolEntry[] }>(`/agents/${encodeURIComponent(agentId)}/tools`)
 }
 
-export function updateAgentTools(agentId: string, cfg: AgentToolsCfg): Promise<{ config: AgentToolsCfg; effective_tools: BuiltinTool[] }> {
-  return request<{ config: AgentToolsCfg; effective_tools: BuiltinTool[] }>(`/agents/${encodeURIComponent(agentId)}/tools`, {
+export function updateAgentTools(agentId: string, cfg: AgentToolsCfg): Promise<{ config: AgentToolsCfg; tools: AgentToolEntry[] }> {
+  return request<{ config: AgentToolsCfg; tools: AgentToolEntry[] }>(`/agents/${encodeURIComponent(agentId)}/tools`, {
     method: 'PUT',
     body: JSON.stringify(cfg),
+  })
+}
+
+// ── Tool Approvals ────────────────────────────────────────────────────────────
+
+// postToolApproval submits an approve/deny/cancel decision for a pending tool
+// approval. Endpoint: POST /api/v1/tool-approvals/{approval_id} (FR-011).
+// Returns 200 on success, 401 on unauth, 403 on non-admin system tool, 410 Gone
+// when the approval has already been resolved. The caller is responsible for
+// handling these status codes via the thrown Error whose message starts with
+// the HTTP status code (e.g. "401: Unauthorized").
+export function postToolApproval(approvalId: string, action: 'approve' | 'deny' | 'cancel'): Promise<void> {
+  return request<void>(`/tool-approvals/${encodeURIComponent(approvalId)}`, {
+    method: 'POST',
+    body: JSON.stringify({ action }),
   })
 }
 

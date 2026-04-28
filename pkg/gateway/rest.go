@@ -98,6 +98,10 @@ type restAPI struct {
 	// HandleServeProxy reads this to validate tokens and resolve the served
 	// directory. Nil when serve_workspace is not configured.
 	servedSubdirs *agent.ServedSubdirs
+
+	// approvalReg is the in-process tool-approval registry (FR-016, FR-070).
+	// Injected at boot by the gateway; nil in test setups that do not exercise approvals.
+	approvalReg *approvalRegistryV2
 }
 
 // --- CORS / JSON helpers ---
@@ -540,11 +544,11 @@ func (a *restAPI) HandleAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// GET/PUT /api/v1/agents/{id}/tools — per-agent tool visibility config
+	// GET/PUT /api/v1/agents/{id}/tools — per-agent tool registry view (FR-028, FR-086)
 	if agentID != "" && subPath == "tools" {
 		switch r.Method {
 		case http.MethodGet:
-			a.getAgentTools(w, agentID)
+			a.HandleAgentToolsRegistry(w, r, agentID)
 		case http.MethodPut:
 			a.updateAgentTools(w, r, agentID)
 		default:
@@ -2010,9 +2014,10 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	cm.RegisterHTTPHandler("/api/v1/mcp-servers", a.withAuth(a.HandleMCPServers))
 	cm.RegisterHTTPHandler("/api/v1/mcp-servers/", a.withAuth(a.HandleMCPServers))
 	cm.RegisterHTTPHandler("/api/v1/storage/stats", a.withAuth(a.HandleStorageStats))
-	cm.RegisterHTTPHandler("/api/v1/tools", a.withAuth(a.HandleTools))
-	cm.RegisterHTTPHandler("/api/v1/tools/builtin", a.withAuth(a.HandleBuiltinTools))
+	cm.RegisterHTTPHandler("/api/v1/tools", a.withAuth(a.HandleToolsRegistry))
+	cm.RegisterHTTPHandler("/api/v1/tools/builtin", a.withAuth(a.HandleBuiltinToolsDeprecated))
 	cm.RegisterHTTPHandler("/api/v1/tools/mcp", a.withAuth(a.HandleMCPTools))
+	cm.RegisterHTTPHandler("/api/v1/tool-approvals/", a.withAuth(a.HandleToolApprovals))
 	cm.RegisterHTTPHandler("/api/v1/channels", a.withAuth(a.HandleChannels))
 	cm.RegisterHTTPHandler("/api/v1/channels/", a.withAuth(a.HandleChannels))
 	cm.RegisterHTTPHandler("/api/v1/agents/", a.withAuth(a.HandleAgents))
@@ -2096,6 +2101,10 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	// File upload endpoints (Milestone 3).
 	cm.RegisterHTTPHandler("/api/v1/upload", a.withUploadAuth(a.HandleUpload))
 	cm.RegisterHTTPHandler("/api/v1/uploads/", a.withOptionalAuth(a.HandleServeUpload))
+
+	// Prometheus-compatible metrics endpoint (FR-039).
+	// Unauthenticated for Prometheus scrape compatibility; does not expose secrets.
+	cm.RegisterHTTPHandler("/metrics", http.HandlerFunc(a.HandleMetrics))
 }
 
 // registerPreviewEndpoints registers /serve/ and /dev/ on the preview mux ONLY

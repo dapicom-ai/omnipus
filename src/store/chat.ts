@@ -5,7 +5,8 @@ import { useConnectionStore } from '@/store/connection'
 import { useSessionStore, registerChatResetSession, registerChatSetReplaying } from '@/store/session'
 import { queryClient } from '@/lib/queryClient'
 import type { Message, ToolCall } from '@/lib/api'
-import type { WsReceiveFrame, WsExecApprovalRequestFrame, WsReplayMessageFrame, WsRateLimitFrame, WsSubagentStartFrame, WsSubagentEndFrame } from '@/lib/ws'
+import type { WsReceiveFrame, WsExecApprovalRequestFrame, WsReplayMessageFrame, WsRateLimitFrame, WsSubagentStartFrame, WsSubagentEndFrame, WsToolApprovalRequiredFrame, WsSessionStateFrame } from '@/lib/ws'
+import { useToolApprovalStore } from '@/store/toolApproval'
 
 export interface MediaAttachment {
   type: 'image' | 'audio' | 'video' | 'file'
@@ -939,6 +940,27 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           retryAfterSeconds: rlFrame.retry_after_seconds,
           agentId: rlFrame.agent_id,
           tool: rlFrame.tool,
+        })
+        break
+      }
+
+      // FR-082: tool_approval_required — forward to the tool approval store.
+      case 'tool_approval_required': {
+        useToolApprovalStore.getState().enqueue(frame as WsToolApprovalRequiredFrame)
+        break
+      }
+
+      // FR-052, FR-081: session_state — reconcile stale approval modals on reconnect.
+      case 'session_state': {
+        useToolApprovalStore.getState().reconcileWithSessionState(frame as WsSessionStateFrame)
+        break
+      }
+
+      // FR-016 (MAJ-009): system_overload — show a non-modal warning toast.
+      case 'system_overload': {
+        useUiStore.getState().addToast({
+          message: 'System at capacity — agent action blocked. Retry shortly.',
+          variant: 'warning',
         })
         break
       }

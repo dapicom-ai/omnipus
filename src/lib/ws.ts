@@ -178,6 +178,43 @@ export interface WsAgentSwitchedFrame {
   agent_name?: string  // included by backend for display without an extra lookup
 }
 
+// FR-082: tool_approval_required — emitted when an ask-policy tool call pauses
+// the loop. expires_in_ms is relative to receipt time (not a clock timestamp) to
+// avoid clock-skew issues. Compute local expiry as: Date.now() + expires_in_ms.
+export interface WsToolApprovalRequiredFrame {
+  type: 'tool_approval_required'
+  approval_id: string
+  tool_call_id: string
+  tool_name: string
+  args: Record<string, unknown>
+  agent_id: string
+  session_id: string
+  turn_id: string
+  expires_in_ms: number
+}
+
+// FR-081: session_state — one-shot per WS connection; received on every connect.
+// SPA uses this to clear stale approvals (those not in pending_approvals).
+export interface WsSessionStateFrame {
+  type: 'session_state'
+  user_id: string
+  pending_approvals: Array<{
+    approval_id: string
+    session_id: string
+    tool_name: string
+    agent_id: string
+    expires_in_ms: number
+  }>
+  emitted_at: string
+}
+
+// FR-016 (MAJ-009): system_overload — emitted when the approval queue is
+// saturated and the agent action is blocked. The SPA shows a non-modal toast.
+export interface WsSystemOverloadFrame {
+  type: 'system_overload'
+  session_id: string
+  message?: string
+}
 
 export type WsReceiveFrame =
   | WsTokenFrame
@@ -193,6 +230,9 @@ export type WsReceiveFrame =
   | WsAgentSwitchedFrame
   | WsSubagentStartFrame
   | WsSubagentEndFrame
+  | WsToolApprovalRequiredFrame
+  | WsSessionStateFrame
+  | WsSystemOverloadFrame
 
 /** Allowed status values for subagent_end frames. */
 const SUBAGENT_END_STATUSES = new Set<string>(['success', 'error', 'cancelled', 'interrupted', 'timeout'])
