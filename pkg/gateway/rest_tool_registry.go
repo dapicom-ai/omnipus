@@ -90,28 +90,19 @@ func (a *restAPI) HandleBuiltinToolsDeprecated(w http.ResponseWriter, r *http.Re
 
 // HandleToolsRegistry handles GET /api/v1/tools.
 //
-// Returns the snapshot of (BuiltinRegistry ∪ MCPRegistry_accepted) with per-entry:
+// Returns the snapshot of registered tools with per-entry:
 //   {name, description, scope, category, source}
 //
 // FR-027: source discriminator ("builtin" | "mcp").
-// When A1 is not yet merged, falls back to the tool set from the default agent's
-// registry (existing behaviour), tagging everything as "builtin".
+// Uses the default agent's tool set as a proxy for the central registry (A1 bridge).
+// Tools with Category()=="mcp" are tagged source="mcp"; all others source="builtin".
+// Deduplication is performed by name — first registration wins (builtin before mcp).
 func (a *restAPI) HandleToolsRegistry(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
 
-	// Attempt to use the central BuiltinRegistry exposed by A1 via GetBuiltinRegistry().
-	// Until A1 lands, fall back to the default agent's tool set.
-	type builtinRegistrar interface {
-		GetBuiltinRegistry() interface {
-			Describe() []tools.Tool
-		}
-	}
-
-	// Primary path (post-A1): call central registry Describe().
-	// Since A1 is not yet merged, we use the default-agent path as a bridge.
 	registry := a.agentLoop.GetRegistry()
 	defaultAgent := registry.GetDefaultAgent()
 
@@ -124,20 +115,33 @@ func (a *restAPI) HandleToolsRegistry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var entries []toolEntry
+	seen := make(map[string]struct{})
 
 	if defaultAgent != nil {
 		for _, t := range defaultAgent.Tools.GetAll() {
+			name := t.Name()
+			if _, dup := seen[name]; dup {
+				continue // dedup: first registration wins
+			}
+			seen[name] = struct{}{}
+
+			// FR-027: source discriminator.
+			source := string(toolSourceBuiltin)
+			if t.Category() == tools.CategoryMCP {
+				source = "mcp"
+			}
+
 			entries = append(entries, toolEntry{
-				Name:        t.Name(),
+				Name:        name,
 				Description: t.Description(),
 				Scope:       string(t.Scope()),
 				Category:    toolCategoryFromTool(t),
-				Source:      string(toolSourceBuiltin),
+				Source:      source,
 			})
 		}
 	}
 
-	// If the entries slice is nil, return an empty array — never null.
+	// Return an empty array — never null.
 	if entries == nil {
 		entries = []toolEntry{}
 	}

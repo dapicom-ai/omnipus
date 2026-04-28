@@ -461,6 +461,151 @@ func TestApprovalRegistry_BatchShortCircuit_MixedPolicy(t *testing.T) {
 		"cancelBatchShortCircuit on terminal entry must return false")
 }
 
+// --- Approval state machine: all-transitions test (FR-070, M6) ---
+
+// TestApprovalRegistry_AllTransitions exercises every valid state transition in
+// the 8-state approval state machine:
+//
+//  1. pending → approved           (approve action)
+//  2. pending → denied_user        (deny action)
+//  3. pending → denied_cancel      (cancel action)
+//  4. pending → denied_timeout     (timer fires)
+//  5. pending → denied_restart     (cancelAllPendingForRestart)
+//  6. pending → denied_saturated   (cap exceeded; skip-pending path)
+//  7. pending → denied_batch_short_circuit (cancelBatchShortCircuit)
+//  8. terminal → HTTP 410 Gone     (any action on a terminal entry)
+//
+// Traces to: tool-registry-redesign-spec.md FR-070, FR-016, FR-017, FR-018, FR-065
+func TestApprovalRegistry_AllTransitions(t *testing.T) {
+	t.Run("pending→approved", func(t *testing.T) {
+		reg := newApprovalRegistryV2(64, 300*time.Second)
+		e, accepted := reg.requestApproval("tc-ap", "read_file", map[string]any{}, "a", "s", "t", false)
+		require.True(t, accepted)
+		go func() { <-e.resultCh }()
+		ok, gone := reg.resolve(e.ApprovalID, ApprovalActionApprove)
+		require.True(t, ok)
+		require.False(t, gone)
+		require.Equal(t, ApprovalStateApproved, reg.get(e.ApprovalID).state)
+	})
+
+	t.Run("pending→denied_user", func(t *testing.T) {
+		reg := newApprovalRegistryV2(64, 300*time.Second)
+		e, accepted := reg.requestApproval("tc-du", "read_file", map[string]any{}, "a", "s", "t", false)
+		require.True(t, accepted)
+		go func() { <-e.resultCh }()
+		ok, gone := reg.resolve(e.ApprovalID, ApprovalActionDeny)
+		require.True(t, ok)
+		require.False(t, gone)
+		require.Equal(t, ApprovalStateDeniedUser, reg.get(e.ApprovalID).state)
+	})
+
+	t.Run("pending→denied_cancel", func(t *testing.T) {
+		reg := newApprovalRegistryV2(64, 300*time.Second)
+		e, accepted := reg.requestApproval("tc-dc", "exec", map[string]any{}, "a", "s", "t", false)
+		require.True(t, accepted)
+		go func() { <-e.resultCh }()
+		ok, gone := reg.resolve(e.ApprovalID, ApprovalActionCancel)
+		require.True(t, ok)
+		require.False(t, gone)
+		require.Equal(t, ApprovalStateDeniedCancel, reg.get(e.ApprovalID).state)
+	})
+
+	t.Run("pending→denied_timeout", func(t *testing.T) {
+		// Very short timeout so the test completes quickly.
+		reg := newApprovalRegistryV2(64, 50*time.Millisecond)
+		e, accepted := reg.requestApproval("tc-dt", "web_search", map[string]any{}, "a", "s", "t", false)
+		require.True(t, accepted)
+
+		// Wait for the outcome: must be denied_timeout.
+		select {
+		case outcome := <-e.resultCh:
+			assert.False(t, outcome.Approved)
+			assert.Equal(t, "timeout", outcome.Reason)
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout transition did not fire within 2 s")
+		}
+		// State must be terminal after outcome is delivered.
+		e2 := reg.get(e.ApprovalID)
+		if e2 != nil {
+			assert.Equal(t, ApprovalStateDeniedTimeout, e2.state)
+		}
+	})
+
+	t.Run("pending→denied_restart", func(t *testing.T) {
+		reg := newApprovalRegistryV2(64, 300*time.Second)
+		e1, _ := reg.requestApproval("tc-dr-1", "exec", map[string]any{}, "a", "s", "t", false)
+		e2, _ := reg.requestApproval("tc-dr-2", "read_file", map[string]any{}, "a", "s", "t", false)
+
+		cancelled := reg.cancelAllPendingForRestart()
+		require.Len(t, cancelled, 2)
+
+		// Both entries must have pre-delivered denied_restart outcomes.
+		for _, e := range []*approvalEntry{e1, e2} {
+			select {
+			case outcome := <-e.resultCh:
+				assert.False(t, outcome.Approved)
+				assert.Equal(t, "restart", outcome.Reason)
+			default:
+				t.Fatalf("cancelAllPendingForRestart: entry %s has no pre-delivered outcome", e.ApprovalID)
+			}
+		}
+	})
+
+	t.Run("pending→denied_saturated", func(t *testing.T) {
+		reg := newApprovalRegistryV2(1, 300*time.Second)
+		e1, accepted1 := reg.requestApproval("tc-sat-1", "exec", map[string]any{}, "a", "s", "t", false)
+		require.True(t, accepted1, "first entry must be accepted with cap=1")
+
+		// Second request exceeds cap → saturated.
+		e2, accepted2 := reg.requestApproval("tc-sat-2", "exec", map[string]any{}, "a", "s", "t", false)
+		require.False(t, accepted2, "second entry must be rejected (saturated)")
+		require.Equal(t, ApprovalStateDeniedSaturated, e2.state)
+
+		select {
+		case outcome := <-e2.resultCh:
+			assert.False(t, outcome.Approved)
+			assert.Equal(t, "saturated", outcome.Reason)
+		default:
+			t.Fatal("saturated entry must have pre-delivered outcome")
+		}
+		// Cleanup.
+		go func() { reg.resolve(e1.ApprovalID, ApprovalActionCancel); <-e1.resultCh }()
+	})
+
+	t.Run("pending→denied_batch_short_circuit", func(t *testing.T) {
+		reg := newApprovalRegistryV2(64, 300*time.Second)
+		e, accepted := reg.requestApproval("tc-bsc", "exec", map[string]any{}, "a", "s", "t", false)
+		require.True(t, accepted)
+
+		ok := reg.cancelBatchShortCircuit(e.ApprovalID)
+		require.True(t, ok)
+		require.Equal(t, ApprovalStateDeniedBatchShortCircuit, reg.get(e.ApprovalID).state)
+
+		select {
+		case outcome := <-e.resultCh:
+			assert.False(t, outcome.Approved)
+			assert.Equal(t, "batch_short_circuit", outcome.Reason)
+		default:
+			t.Fatal("batch_short_circuit entry must have pre-delivered outcome")
+		}
+	})
+
+	t.Run("terminal→410_Gone", func(t *testing.T) {
+		reg := newApprovalRegistryV2(64, 300*time.Second)
+		e, accepted := reg.requestApproval("tc-term", "read_file", map[string]any{}, "a", "s", "t", false)
+		require.True(t, accepted)
+
+		// Approve it to put it in a terminal state.
+		go func() { <-e.resultCh }()
+		ok, _ := reg.resolve(e.ApprovalID, ApprovalActionApprove)
+		require.True(t, ok)
+
+		// Any subsequent resolve must return gone=true (HTTP 410 semantics).
+		_, gone := reg.resolve(e.ApprovalID, ApprovalActionDeny)
+		assert.True(t, gone, "resolve on terminal entry must return gone=true (HTTP 410 semantics)")
+	})
+}
+
 // --- WS: session_state payload schema ---
 
 // TestWS_SessionStatePayloadSchema verifies that the session_state frame emitted on
