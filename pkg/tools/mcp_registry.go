@@ -93,6 +93,7 @@ func (r *MCPRegistry) RegisterServerTools(serverID string, tools []Tool, builtin
 					ConflictWith: "reserved_prefix",
 					Reason:       err.Error(),
 				})
+				activeToolMetricsRecorder.IncCollisionTotal("reserved_prefix") // FR-039
 				slog.Warn("tools.MCPRegistry: MCP tool rejected (reserved prefix)", "tool", name, "server", serverID)
 				continue
 			}
@@ -106,6 +107,7 @@ func (r *MCPRegistry) RegisterServerTools(serverID string, tools []Tool, builtin
 				ConflictWith: existing.serverID,
 				Reason:       fmt.Sprintf("already registered by server %q", existing.serverID),
 			})
+			activeToolMetricsRecorder.IncCollisionTotal(existing.serverID) // FR-039
 			slog.Warn("tools.MCPRegistry: MCP tool rejected (first-server-wins)",
 				"tool", name, "new_server", serverID, "existing_server", existing.serverID)
 			continue

@@ -133,8 +133,8 @@ func TestREST_GetTools_MethodNotAllowed(t *testing.T) {
 func TestREST_GetAgentTools_FilteredView(t *testing.T) {
 	api := newTestRestAPIWithHome(t)
 
-	// Use the system agent ID — always registered.
-	agentID := "omnipus-system"
+	// Use the default agent ID — always registered by NewAgentLoop.
+	agentID := "main"
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/agents/"+agentID+"/tools", nil)
 	r = withAdminRole(r)
 	w := httptest.NewRecorder()
@@ -333,17 +333,19 @@ func TestREST_LateApprove_Returns410(t *testing.T) {
 
 // --- Approval registry: saturation default 64 ---
 
-// TestApprovalRegistry_SaturationDefault64 verifies that the default saturation cap is
-// exactly 64: the 64th request is accepted, the 65th returns a pre-delivered
+// TestApprovalRegistry_SaturationDefault64 verifies that a registry with cap=64
+// accepts exactly 64 requests and saturates on the 65th with a pre-delivered
 // denied_saturated synthetic entry.
-// BDD: Given a registry with the default cap (0 → resolved to 64),
+// Note: cap=0 means UNLIMITED per FR-016 (WARN emitted by ValidateSaturationCap);
+// the gateway default is 32 (not 64). This test uses an explicit cap of 64.
+// BDD: Given a registry with cap=64,
 // When 65 approvals are requested,
 // Then the first 64 succeed (accepted=true) and the 65th has accepted=false with
 // denied_saturated state.
 // Traces to: tool-registry-redesign-spec.md FR-016, MAJ-009
 func TestApprovalRegistry_SaturationDefault64(t *testing.T) {
-	// 0 cap → spec default 64.
-	reg := newApprovalRegistryV2(0, 300*time.Second)
+	// Explicit cap=64 (cap=0 means unlimited since FR-016 redesign).
+	reg := newApprovalRegistryV2(64, 300*time.Second)
 
 	const wantCap = 64
 	entries := make([]*approvalEntry, 0, wantCap+1)

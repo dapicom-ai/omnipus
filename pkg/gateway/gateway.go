@@ -981,6 +981,10 @@ func setupAndStartServices(
 	approvalReg := newApprovalRegistryV2(effectiveCap, approvalTimeoutDur)
 	wsHandler.approvalRegV2 = approvalReg
 
+	// Wire the policy approver into the agent loop (FR-011, C3).
+	// The adapter bridges agent.PolicyApprover → approvalRegistryV2 + WSHandler.
+	agentLoop.SetToolApprover(newPolicyApproverAdapter(approvalReg, wsHandler))
+
 	// Wire the filter-metrics recorder into pkg/tools so FilterToolsByPolicy
 	// can emit FR-039 omnipus_tool_filter_total counters. (C4)
 	tools.SetToolMetricsRecorder(globalToolMetrics)

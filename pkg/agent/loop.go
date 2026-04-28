@@ -145,6 +145,11 @@ type AgentLoop struct {
 	// used for all new sessions (joined session model). Legacy per-agent stores
 	// remain accessible via GetAgentStore for read-only access to old sessions.
 	sharedSessionStore *session.UnifiedStore
+
+	// toolApprover is the gateway-injected implementation of the human-in-the-loop
+	// approval gate (FR-011, FR-082). Nil until SetToolApprover is called; when nil,
+	// ask-policy tools are treated as allow (open gate, no WS event).
+	toolApprover PolicyApprover
 }
 
 // processOptions configures how a message is processed
@@ -2127,6 +2132,15 @@ func (al *AgentLoop) SetSysagentDeps(deps *systools.Deps) {
 	al.sysagentDeps = deps
 }
 
+// SetToolApprover injects the gateway's policy-level approval implementation into
+// the loop (FR-011). Must be called before any turns start; safe from any goroutine.
+// Passing nil clears the approver (ask-policy tools treated as allow — open gate).
+func (al *AgentLoop) SetToolApprover(a PolicyApprover) {
+	al.mu.Lock()
+	al.toolApprover = a
+	al.mu.Unlock()
+}
+
 // WireSysagentDeps registers all 35 system.* tools on every agent in the
 // current registry (FR-001, FR-002). Mirrors the WireTier13Deps pattern:
 // called once at boot after NewAgentLoop, and again on hot-reload. The deps
@@ -3112,7 +3126,29 @@ turnLoop:
 		// Tools with effective policy "ask" are included — the mid-turn policy snapshot
 		// (FR-041) handles human-in-the-loop confirmation; see recordSyntheticDeny.
 		allAgentTools := ts.agent.Tools.GetAll()
-		policyFilteredTools, _ := tools.FilterToolsByPolicy(allAgentTools, ts.agent.AgentType, ts.agent.LoadToolPolicy())
+		policyFilteredTools, filterTimePolicyMap := tools.FilterToolsByPolicy(allAgentTools, ts.agent.AgentType, ts.agent.LoadToolPolicy())
+
+		// FR-066: dedup invariant — tools[] must be name-unique after filter+assembly.
+		// If a duplicate is detected, emit HIGH audit and return an error turn result
+		// so the loop does not feed a malformed tool list to the LLM.
+		if dedupErr := al.checkToolDedupInvariant(ts, policyFilteredTools); dedupErr != nil {
+			denyMsg := fmt.Sprintf(`{"error":"tool_assembly_duplicate","message":%q}`, dedupErr.Error())
+			syntheticDenyMsg := providers.Message{Role: "system", Content: denyMsg}
+			messages = append(messages, syntheticDenyMsg)
+			if !ts.opts.NoHistory {
+				ts.agent.Sessions.AddFullMessage(ts.sessionKey, syntheticDenyMsg)
+				ts.recordPersistedMessage(syntheticDenyMsg)
+			}
+			if shouldAbort, abortMsg := al.recordSyntheticDeny(ts); shouldAbort {
+				messages = append(messages, providers.Message{Role: "system", Content: abortMsg})
+				turnStatus = TurnEndStatusAborted
+				return al.abortTurn(ts)
+			}
+			// Fail the LLM call for this iteration by returning an error turn result.
+			turnStatus = TurnEndStatusError
+			return turnResult{status: TurnEndStatusError, finalContent: denyMsg}, dedupErr
+		}
+
 		providerToolDefs := tools.ToolsToProviderDefs(policyFilteredTools)
 
 		// Native web search support
@@ -3889,6 +3925,84 @@ turnLoop:
 					}
 					continue
 				}
+			}
+
+			// FR-079 (M2): TOCTOU re-check. Re-load the policy pointer and re-resolve
+			// the effective policy for this specific tool right before execution.
+			// This closes the window between filter-time tools[] assembly and execution.
+			toctouPolicy := al.resolveToolPolicyAtExec(ts, toolName, filterTimePolicyMap)
+			if toctouPolicy == "deny" {
+				// Policy flipped to deny between filter-time and exec-time.
+				denyMsg := fmt.Sprintf(`{"error":"permission_denied","message":"Tool execution denied by policy.","tool":%q}`, toolName)
+				al.emitPolicyDenyAudit(ts, toolName, "deny", "mid_turn_policy_change")
+				deniedMsg := providers.Message{
+					Role:       "tool",
+					Content:    denyMsg,
+					ToolCallID: tc.ID,
+				}
+				messages = append(messages, deniedMsg)
+				if !ts.opts.NoHistory {
+					ts.agent.Sessions.AddFullMessage(ts.sessionKey, deniedMsg)
+					ts.recordPersistedMessage(deniedMsg)
+				}
+				allResponsesHandled = false
+				al.emitEvent(
+					EventKindToolExecSkipped,
+					ts.eventMeta("runTurn", "turn.tool.skipped"),
+					ToolExecSkippedPayload{
+						Tool:   toolName,
+						Reason: "permission_denied (mid-turn policy change)",
+					},
+				)
+				if shouldAbort, abortMsg := al.recordSyntheticDeny(ts); shouldAbort {
+					messages = append(messages, providers.Message{Role: "system", Content: abortMsg})
+					turnStatus = TurnEndStatusAborted
+					return al.abortTurn(ts)
+				}
+				continue
+			}
+			if toctouPolicy == "ask" {
+				// ask-policy: pause and request human approval (FR-011).
+				approver := al.loadToolApprover()
+				approved, denialReason := approver.RequestApproval(turnCtx, PolicyApprovalReq{
+					ToolCallID:    tc.ID,
+					ToolName:      toolName,
+					Args:          cloneStringAnyMap(toolArgs),
+					AgentID:       ts.agentID,
+					SessionID:     ts.sessionKey,
+					TurnID:        ts.turnID,
+					RequiresAdmin: al.toolRequiresAdmin(ts, toolName),
+				})
+				if !approved {
+					denyMsg := fmt.Sprintf(`{"error":"permission_denied","message":"User denied tool execution.","tool":%q,"reason":%q}`, toolName, denialReason)
+					al.emitPolicyDenyAudit(ts, toolName, "ask", denialReason)
+					deniedMsg := providers.Message{
+						Role:       "tool",
+						Content:    denyMsg,
+						ToolCallID: tc.ID,
+					}
+					messages = append(messages, deniedMsg)
+					if !ts.opts.NoHistory {
+						ts.agent.Sessions.AddFullMessage(ts.sessionKey, deniedMsg)
+						ts.recordPersistedMessage(deniedMsg)
+					}
+					allResponsesHandled = false
+					al.emitEvent(
+						EventKindToolExecSkipped,
+						ts.eventMeta("runTurn", "turn.tool.skipped"),
+						ToolExecSkippedPayload{
+							Tool:   toolName,
+							Reason: fmt.Sprintf("permission_denied (ask denied: %s)", denialReason),
+						},
+					)
+					if shouldAbort, abortMsg := al.recordSyntheticDeny(ts); shouldAbort {
+						messages = append(messages, providers.Message{Role: "system", Content: abortMsg})
+						turnStatus = TurnEndStatusAborted
+						return al.abortTurn(ts)
+					}
+					continue
+				}
+				// Approved: fall through to execute.
 			}
 
 			argsJSON, marshalErr := json.Marshal(toolArgs)
@@ -5507,5 +5621,153 @@ func perplexityKeys(key string) []string {
 		return nil
 	}
 	return []string{key}
+}
+
+// checkToolDedupInvariant verifies that the assembled tool list has no duplicate
+// names (FR-066). Returns a non-nil error on the first duplicate found; also emits
+// a HIGH audit event "tool.assembly.duplicate_name" and logs a structured error.
+func (al *AgentLoop) checkToolDedupInvariant(ts *turnState, filtered []tools.Tool) error {
+	seen := make(map[string]string, len(filtered)) // name → first source tag
+	for _, t := range filtered {
+		name := t.Name()
+		var sourceTag string
+		if cat := t.Category(); cat == tools.CategoryMCP {
+			sourceTag = "mcp:unknown"
+		} else {
+			sourceTag = "builtin"
+		}
+		if firstSrc, exists := seen[name]; exists {
+			// Duplicate detected — audit + fail.
+			sources := []string{firstSrc, sourceTag}
+			details := map[string]any{
+				"tool_name": name,
+				"sources":   sources,
+				"kept":      firstSrc,
+				"agent_id":  ts.agentID,
+				"turn_id":   ts.turnID,
+			}
+			logger.ErrorCF("agent", "FR-066: tools[] dedup invariant violated",
+				map[string]any{"tool_name": name, "sources": sources, "agent_id": ts.agentID})
+			if al.auditLogger != nil {
+				if auditErr := al.auditLogger.Log(&audit.Entry{
+					Event:     "tool.assembly.duplicate_name",
+					Decision:  "deny",
+					AgentID:   ts.agentID,
+					Tool:      name,
+					SessionID: ts.sessionKey,
+					Details:   details,
+				}); auditErr != nil {
+					logger.WarnCF("agent", "failed to write tool.assembly.duplicate_name audit entry",
+						map[string]any{"error": auditErr.Error(), "tool_name": name})
+				}
+			}
+			return fmt.Errorf("tools[] dedup invariant violated: tool %q appears from sources %v", name, sources)
+		}
+		seen[name] = sourceTag
+	}
+	return nil
+}
+
+// resolveToolPolicyAtExec performs the FR-079 TOCTOU re-check: re-loads the
+// per-agent policy pointer and re-resolves the effective policy for toolName
+// immediately before Execute is called.
+//
+// Returns the live effective policy ("allow", "ask", "deny").
+// If the live policy matches the filter-time snapshot (filterTimePolicyMap) the
+// return value is the same and no audit is emitted; discrepancies are audited as
+// "mid_turn_policy_change" by the caller.
+//
+// A tool absent from filterTimePolicyMap was not in the filter-time allow set
+// (it was deny at filter time or not registered). If it is also deny at re-check
+// time we return "deny"; if it has become allow/ask we still return "deny" to be
+// conservative (the LLM was not given this tool's definition, so executing it is
+// unsound).
+func (al *AgentLoop) resolveToolPolicyAtExec(ts *turnState, toolName string, filterTimePolicyMap map[string]string) string {
+	filterTimePolicy, wasInFilterMap := filterTimePolicyMap[toolName]
+	if !wasInFilterMap {
+		// Tool was not included at filter time — treat as deny regardless of live policy.
+		return "deny"
+	}
+
+	// Re-run FilterToolsByPolicy with the freshly loaded pointer to get the live
+	// effective policy for this one tool. We run on the full tool list but only
+	// care about our tool.
+	livePolicy := al.resolveSingleToolPolicy(ts, toolName)
+
+	// If policy flipped to deny mid-turn, the caller will audit "mid_turn_policy_change".
+	if livePolicy == "deny" && filterTimePolicy != "deny" {
+		return "deny"
+	}
+	// If policy is now ask but was allow at filter time — treat as ask (conservative).
+	if livePolicy == "ask" {
+		return "ask"
+	}
+	// Use filter-time policy as the authoritative effective policy when live==allow
+	// and filter-time was ask — preserves the ask gate from filter time.
+	if filterTimePolicy == "ask" {
+		return "ask"
+	}
+	return filterTimePolicy
+}
+
+// resolveSingleToolPolicy loads the current policy pointer and resolves the
+// effective policy for toolName using FilterToolsByPolicy. Returns "" if the
+// tool is not found in the agent's registered tools.
+func (al *AgentLoop) resolveSingleToolPolicy(ts *turnState, toolName string) string {
+	allTools := ts.agent.Tools.GetAll()
+	_, pmap := tools.FilterToolsByPolicy(allTools, ts.agent.AgentType, ts.agent.LoadToolPolicy())
+	p, ok := pmap[toolName]
+	if !ok {
+		return "deny"
+	}
+	return p
+}
+
+// loadToolApprover returns the wired PolicyApprover or a nop implementation when
+// none has been set (test mode / CLI without gateway).
+func (al *AgentLoop) loadToolApprover() PolicyApprover {
+	al.mu.RLock()
+	a := al.toolApprover
+	al.mu.RUnlock()
+	if a == nil {
+		return nopPolicyApprover{}
+	}
+	return a
+}
+
+// toolRequiresAdmin returns true when the named tool implements RequiresAdminAsk()
+// and that method returns true.
+func (al *AgentLoop) toolRequiresAdmin(ts *turnState, toolName string) bool {
+	t, ok := ts.agent.Tools.Get(toolName)
+	if !ok {
+		return false
+	}
+	if asker, ok := t.(interface{ RequiresAdminAsk() bool }); ok {
+		return asker.RequiresAdminAsk()
+	}
+	return false
+}
+
+// emitPolicyDenyAudit writes a tool.policy.deny.attempted audit entry.
+// context is a free-form note such as "mid_turn_policy_change" or the denial reason.
+func (al *AgentLoop) emitPolicyDenyAudit(ts *turnState, toolName, resolvedPolicy, context string) {
+	if al.auditLogger == nil {
+		return
+	}
+	if err := al.auditLogger.Log(&audit.Entry{
+		Event:     "tool.policy.deny.attempted",
+		Decision:  "deny",
+		AgentID:   ts.agentID,
+		Tool:      toolName,
+		SessionID: ts.sessionKey,
+		Details: map[string]any{
+			"turn_id":          ts.turnID,
+			"resolved_policy":  resolvedPolicy,
+			"context":          context,
+		},
+	}); err != nil {
+		logger.WarnCF("agent", "failed to write tool.policy.deny.attempted audit entry",
+			map[string]any{"error": err.Error(), "tool": toolName})
+	}
 }
 

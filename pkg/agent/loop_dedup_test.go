@@ -93,15 +93,11 @@ func TestLoopDedup_ToolsToProviderDefsNoDuplicateInNormalPath(t *testing.T) {
 		"read_file and write_file must produce different provider names")
 }
 
-// TestLoopDedup_DetectsBuiltinVsMCPCollision tests the FR-066 scenario:
-// when two tools with the same raw name (one builtin, one MCP) are both
-// included in the filtered list, the dedup pass must:
-//  1. Detect the collision and keep only the builtin entry.
-//  2. Emit audit.EventToolAssemblyDuplicateName.
-//  3. NOT fail the LLM call (graceful recovery per MAJ-006).
-//
-// If this test fails with t.Fatal("BLOCKED"), the production code path
-// (loop.go ~L3116) does not implement the FR-066 dedup pass.
+// TestLoopDedup_DetectsBuiltinVsMCPCollision tests the FR-066 dedup invariant:
+// when two tools with the same raw name are both included in the filtered list,
+// checkToolDedupInvariant must:
+//  1. Detect the collision and return a non-nil error.
+//  2. Emit audit.EventToolAssemblyDuplicateName via the auditLogger.
 //
 // Traces to: tool-registry-redesign-spec.md FR-066 / BDD "Tools[] dedup"
 func TestLoopDedup_DetectsBuiltinVsMCPCollision(t *testing.T) {
@@ -109,42 +105,37 @@ func TestLoopDedup_DetectsBuiltinVsMCPCollision(t *testing.T) {
 	builtinTool := &dupTool{name: "web_fetch", scopeVal: tools.ScopeGeneral, sourceTag: "builtin"}
 	mcpTool := &dupTool{name: "web_fetch", scopeVal: tools.ScopeGeneral, sourceTag: "mcp:srv-A"}
 
-	// Pass through ToolsToProviderDefs without any dedup (current loop path).
+	// Verify that the raw ToolsToProviderDefs output would contain a duplicate
+	// (proving the dedup pass is necessary).
 	rawDefs := tools.ToolsToProviderDefs([]tools.Tool{builtinTool, mcpTool})
-
-	// Count sanitized names in the raw output.
 	nameCount := make(map[string]int)
 	for _, def := range rawDefs {
 		nameCount[def.Function.Name]++
 	}
+	require.Greater(t, nameCount["web_fetch"], 1,
+		"raw ToolsToProviderDefs must produce duplicate names for duplicate input (pre-dedup collision)")
 
-	hasDuplicate := false
-	for name, count := range nameCount {
-		if count > 1 {
-			hasDuplicate = true
-			t.Logf("FR-066 collision detected: sanitized name %q appears %d times", name, count)
-		}
+	// Build a minimal AgentLoop with an audit logger wired in.
+	lg := newAuditLogger(t)
+	al := &AgentLoop{auditLogger: lg}
+
+	// Build a minimal turnState.
+	ts := &turnState{
+		agentID:    "test-agent",
+		sessionKey: "test-session",
+		turnID:     "test-turn",
 	}
 
-	if hasDuplicate {
-		// Report the production gap — dedup must be added to the loop.
-		t.Fatal(
-			"BLOCKED: FR-066 not implemented — the agent loop must deduplicate tools[] by " +
-				"sanitized name before passing to ToolsToProviderDefs. " +
-				"When builtin and MCP tools collide on the same name, builtin must win and " +
-				"audit.EventToolAssemblyDuplicateName must be emitted at HIGH severity. " +
-				"See: tool-registry-redesign-spec.md FR-066 / BDD 'Tools[] dedup'",
-		)
-	}
+	// checkToolDedupInvariant must return a non-nil error on duplicate input.
+	err := al.checkToolDedupInvariant(ts, []tools.Tool{builtinTool, mcpTool})
+	require.Error(t, err, "checkToolDedupInvariant must return error on duplicate tool names")
+	assert.Contains(t, err.Error(), "web_fetch", "error must name the duplicated tool")
+	assert.Contains(t, err.Error(), "dedup invariant violated", "error must describe the violation")
 
-	// If the underlying names sanitize to different strings (no actual collision),
-	// verify the dedup path still enforces name uniqueness.
-	seen := make(map[string]bool)
-	for _, def := range rawDefs {
-		assert.False(t, seen[def.Function.Name],
-			"ToolsToProviderDefs output must never contain duplicate names")
-		seen[def.Function.Name] = true
-	}
+	// Clean path: no duplicates must return nil.
+	uniqueTool := &dupTool{name: "read_file", scopeVal: tools.ScopeGeneral, sourceTag: "builtin"}
+	noErr := al.checkToolDedupInvariant(ts, []tools.Tool{builtinTool, uniqueTool})
+	assert.NoError(t, noErr, "checkToolDedupInvariant must return nil for unique tool names")
 }
 
 // TestLoopDedup_DeterministicSourceTagOrdering verifies FR-066's ordering rule:

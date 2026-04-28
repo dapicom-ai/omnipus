@@ -279,16 +279,20 @@ func mcpContentText(content []mcp.Content) string {
 	return sb.String()
 }
 
-// toolMetricsRecorder is the minimal interface needed by FilterToolsByPolicy
-// for FR-039 filter metrics.
+// toolMetricsRecorder is the minimal interface needed by the tool registry
+// packages for FR-039 metrics (IncFilterTotal, IncCollisionTotal).
+// pkg/gateway implements this with its toolMetrics type; pkg/tools uses the
+// unexported interface so there is no import cycle.
 type toolMetricsRecorder interface {
 	IncFilterTotal(agentType, effectivePolicy string)
+	IncCollisionTotal(conflictWith string)
 }
 
 // nopToolMetrics satisfies toolMetricsRecorder when no gateway is wired.
 type nopToolMetrics struct{}
 
-func (nopToolMetrics) IncFilterTotal(_, _ string) {}
+func (nopToolMetrics) IncFilterTotal(_, _ string)  {}
+func (nopToolMetrics) IncCollisionTotal(_ string)  {}
 
 // activeToolMetricsRecorder is swapped at gateway boot.
 var activeToolMetricsRecorder toolMetricsRecorder = nopToolMetrics{}
