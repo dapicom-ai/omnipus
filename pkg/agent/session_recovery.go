@@ -69,11 +69,21 @@ func recoverOrphanedToolCalls(
 		return history
 	}
 
+	// Build a set of tool_call_ids that already have a synthetic
+	// turn_cancelled_restart entry in the history (idempotency guard).
+	alreadyCancelled := existingCancelledToolCallIDs(history)
+
 	// Append a synthetic system message to the transcript for audit/replay.
 	// We do NOT remove the orphaned entry from the on-disk transcript — the
 	// transcript is an immutable audit record. We only strip it from the
 	// reconstructed history we pass to the LLM (FR-088).
 	for _, o := range orphans {
+		// Idempotency: skip if a synthetic entry already exists for this tool_call_id.
+		if alreadyCancelled[o.ToolCallID] {
+			slog.Debug("agent: SIGKILL recovery — synthetic entry already present, skipping",
+				"session_key", sessionKey, "tool_call_id", o.ToolCallID)
+			continue
+		}
 		syntheticContent := fmt.Sprintf(
 			`{"type":"turn_cancelled_restart","tool_call_id":%q,"reason":"ungraceful_shutdown_recovery"}`,
 			o.ToolCallID,
@@ -112,6 +122,70 @@ func recoverOrphanedToolCalls(
 	// LLM does not see a dangling unanswered tool call.
 	cleanedHistory := stripOrphanedAssistantTurn(history)
 	return cleanedHistory
+}
+
+// existingCancelledToolCallIDs builds a set of tool_call_id values for which a
+// turn_cancelled_restart system message already exists in history (idempotency
+// guard for recoverOrphanedToolCalls). Uses simple string contains rather than
+// JSON parse to avoid dependency on a JSON library in the hot path.
+func existingCancelledToolCallIDs(history []providers.Message) map[string]bool {
+	result := make(map[string]bool)
+	for _, msg := range history {
+		if msg.Role == "system" &&
+			len(msg.Content) > 0 &&
+			contains(msg.Content, "turn_cancelled_restart") &&
+			contains(msg.Content, "tool_call_id") {
+			// Extract tool_call_id from the content string via simple scan.
+			// Format: {"type":"turn_cancelled_restart","tool_call_id":"<id>",...}
+			if id := extractJSONStringField(msg.Content, "tool_call_id"); id != "" {
+				result[id] = true
+			}
+		}
+	}
+	return result
+}
+
+// contains is a cheap substring check used by existingCancelledToolCallIDs.
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr ||
+		func() bool {
+			for i := 0; i <= len(s)-len(substr); i++ {
+				if s[i:i+len(substr)] == substr {
+					return true
+				}
+			}
+			return false
+		}())
+}
+
+// extractJSONStringField extracts a string value for the given key from a
+// simple JSON object string using string scanning (no full JSON parse).
+// Returns "" if the key is not found. Handles only simple string values (no
+// escaped quotes in the value).
+func extractJSONStringField(s, key string) string {
+	// Look for `"<key>":"` pattern.
+	needle := `"` + key + `":"`
+	idx := -1
+	for i := 0; i <= len(s)-len(needle); i++ {
+		if s[i:i+len(needle)] == needle {
+			idx = i + len(needle)
+			break
+		}
+	}
+	if idx < 0 {
+		return ""
+	}
+	end := -1
+	for i := idx; i < len(s); i++ {
+		if s[i] == '"' {
+			end = i
+			break
+		}
+	}
+	if end < 0 {
+		return ""
+	}
+	return s[idx:end]
 }
 
 // findOrphanedToolCalls scans the message history from the end and returns any

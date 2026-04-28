@@ -4639,6 +4639,10 @@ func (al *AgentLoop) recordSyntheticDeny(ts *turnState) (shouldAbort bool, abort
 	)
 	if !ts.opts.NoHistory {
 		ts.agent.Sessions.AddMessage(ts.sessionKey, "system", msg)
+		if err := ts.agent.Sessions.Save(ts.sessionKey); err != nil {
+			logger.WarnCF("agent", "FR-084: failed to persist turn_aborted message",
+				map[string]any{"session_key": ts.sessionKey, "error": err.Error()})
+		}
 	}
 	if al.auditLogger != nil {
 		if err := al.auditLogger.Log(&audit.Entry{
