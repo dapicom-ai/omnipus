@@ -392,6 +392,10 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	go h.writePump(wc)
 	go h.pingPump(wc)
 
+	// Emit session_state one-shot on every new WS connection (FR-052, FR-073, FR-081).
+	// This lets the SPA reconcile stale approval modals after a gateway restart.
+	h.emitSessionState(wc)
+
 	var sessionID string
 	h.readLoop(r.Context(), conn, wc, chatID, &sessionID)
 }

@@ -178,9 +178,7 @@ export interface WsAgentSwitchedFrame {
   agent_name?: string  // included by backend for display without an extra lookup
 }
 
-// FR-082: tool_approval_required — emitted when an ask-policy tool call pauses
-// the loop. expires_in_ms is relative to receipt time (not a clock timestamp) to
-// avoid clock-skew issues. Compute local expiry as: Date.now() + expires_in_ms.
+// FR-011, FR-082: tool-policy approval request
 export interface WsToolApprovalRequiredFrame {
   type: 'tool_approval_required'
   approval_id: string
@@ -190,26 +188,27 @@ export interface WsToolApprovalRequiredFrame {
   agent_id: string
   session_id: string
   turn_id: string
+  /** Relative expiry in milliseconds from receipt. Client computes expiresAt = Date.now() + expires_in_ms. */
   expires_in_ms: number
 }
 
-// FR-081: session_state — one-shot per WS connection; received on every connect.
-// SPA uses this to clear stale approvals (those not in pending_approvals).
+// FR-052, FR-073, FR-081: session state reset on WS reconnect
+export interface WsSessionStatePendingApproval {
+  approval_id: string
+  session_id: string
+  tool_name: string
+  agent_id: string
+  expires_in_ms: number
+}
+
 export interface WsSessionStateFrame {
   type: 'session_state'
   user_id: string
-  pending_approvals: Array<{
-    approval_id: string
-    session_id: string
-    tool_name: string
-    agent_id: string
-    expires_in_ms: number
-  }>
+  pending_approvals: WsSessionStatePendingApproval[]
   emitted_at: string
 }
 
-// FR-016 (MAJ-009): system_overload — emitted when the approval queue is
-// saturated and the agent action is blocked. The SPA shows a non-modal toast.
+// FR-016, MAJ-009: system overload notification
 export interface WsSystemOverloadFrame {
   type: 'system_overload'
   session_id: string

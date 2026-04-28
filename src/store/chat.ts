@@ -5,7 +5,7 @@ import { useConnectionStore } from '@/store/connection'
 import { useSessionStore, registerChatResetSession, registerChatSetReplaying } from '@/store/session'
 import { queryClient } from '@/lib/queryClient'
 import type { Message, ToolCall } from '@/lib/api'
-import type { WsReceiveFrame, WsExecApprovalRequestFrame, WsReplayMessageFrame, WsRateLimitFrame, WsSubagentStartFrame, WsSubagentEndFrame, WsToolApprovalRequiredFrame, WsSessionStateFrame } from '@/lib/ws'
+import type { WsReceiveFrame, WsExecApprovalRequestFrame, WsReplayMessageFrame, WsRateLimitFrame, WsSubagentStartFrame, WsSubagentEndFrame } from '@/lib/ws'
 import { useToolApprovalStore } from '@/store/toolApproval'
 
 export interface MediaAttachment {
@@ -944,26 +944,23 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         break
       }
 
-      // FR-082: tool_approval_required — forward to the tool approval store.
-      case 'tool_approval_required': {
-        useToolApprovalStore.getState().enqueue(frame as WsToolApprovalRequiredFrame)
+      case 'tool_approval_required':
+        // FR-011, FR-082: enqueue tool-policy approval; modal renders from useToolApprovalStore
+        useToolApprovalStore.getState().enqueue(frame)
         break
-      }
 
-      // FR-052, FR-081: session_state — reconcile stale approval modals on reconnect.
-      case 'session_state': {
-        useToolApprovalStore.getState().reconcileWithSessionState(frame as WsSessionStateFrame)
+      case 'session_state':
+        // FR-052, FR-073, FR-081: reconcile pending approvals on reconnect
+        useToolApprovalStore.getState().reconcileWithSessionState(frame)
         break
-      }
 
-      // FR-016 (MAJ-009): system_overload — show a non-modal warning toast.
-      case 'system_overload': {
+      case 'system_overload':
+        // FR-016, MAJ-009: surface overload warning toast
         useUiStore.getState().addToast({
-          message: 'System at capacity — agent action blocked. Retry shortly.',
+          message: frame.message ?? 'System at capacity — agent action blocked. Retry shortly.',
           variant: 'warning',
         })
         break
-      }
 
       default:
         // W3-7b: log the actual type string, not [object Object] from the whole frame.

@@ -1401,30 +1401,22 @@ export function fetchExecProxyStatus(): Promise<ExecProxyStatus> {
 
 // ── Agent Tools ───────────────────────────────────────────────────────────────
 
-// RegistryTool is the shape returned by GET /api/v1/tools (FR-027).
-// source discriminates builtins from MCP-sourced tools.
+/**
+ * Central registry tool entry (FR-027, FR-029).
+ * Replaces the narrower BuiltinTool shape — includes a source discriminator
+ * so the UI can badge MCP tools differently from builtin ones.
+ */
 export interface RegistryTool {
   name: string
   scope: 'system' | 'core' | 'general'
   category: string
   description: string
+  /** Origin of the tool. 'builtin' = compiled-in Go tool; 'mcp' = MCP server tool. */
   source: 'builtin' | 'mcp'
 }
 
-// BuiltinTool is kept as an alias so existing callers that still reference it
-// continue to compile. New code should use RegistryTool.
+/** Backward-compat alias — existing callers that reference BuiltinTool still work. */
 export type BuiltinTool = RegistryTool
-
-// AgentToolEntry is one entry in GET /api/v1/agents/{id}/tools (FR-086).
-// fence_applied is true when the operator set "allow" but the effective policy
-// was downgraded to "ask" because the tool requires admin approval on a custom agent.
-export interface AgentToolEntry {
-  name: string
-  configured_policy: 'allow' | 'ask' | 'deny'
-  effective_policy: 'allow' | 'ask' | 'deny'
-  fence_applied: boolean
-  requires_admin_ask: boolean
-}
 
 export interface AgentToolsCfg {
   builtin: {
@@ -1434,17 +1426,28 @@ export interface AgentToolsCfg {
   mcp?: { servers: { id: string; tools?: string[] }[] }
 }
 
-// fetchRegistryTools calls GET /api/v1/tools — the central registry snapshot
-// (builtins ∪ MCP) per FR-027. Returns tools with a source discriminator.
+/**
+ * Per-tool entry returned by GET /agents/{id}/tools (FR-086, MAJ-008).
+ * Exposes both the configured policy and the effective (post-fence) policy
+ * so the UI can display policy downgrades.
+ */
+export interface AgentToolEntry {
+  name: string
+  configured_policy: 'allow' | 'ask' | 'deny'
+  effective_policy: 'allow' | 'ask' | 'deny'
+  /** True when the tool is admin-required and the agent type is 'custom' — policy was downgraded to 'ask'. */
+  fence_applied: boolean
+  /** True when the tool requires admin approval regardless of configured policy. */
+  requires_admin_ask: boolean
+}
+
+/** Fetch all tools from the central registry (FR-027). Includes both builtin and MCP tools. */
 export function fetchRegistryTools(): Promise<RegistryTool[]> {
   return request<RegistryTool[]>('/tools')
 }
 
-// fetchBuiltinTools is a backward-compat alias for fetchRegistryTools.
-// New code should call fetchRegistryTools directly.
-export function fetchBuiltinTools(): Promise<RegistryTool[]> {
-  return fetchRegistryTools()
-}
+/** Backward-compat alias — callers that used fetchBuiltinTools() still work. */
+export const fetchBuiltinTools = fetchRegistryTools
 
 export function fetchMcpServersForAgent(): Promise<McpServer[]> {
   return request<McpServer[]>('/mcp-servers')
@@ -1461,14 +1464,10 @@ export function updateAgentTools(agentId: string, cfg: AgentToolsCfg): Promise<{
   })
 }
 
-// ── Tool Approvals ────────────────────────────────────────────────────────────
-
-// postToolApproval submits an approve/deny/cancel decision for a pending tool
-// approval. Endpoint: POST /api/v1/tool-approvals/{approval_id} (FR-011).
-// Returns 200 on success, 401 on unauth, 403 on non-admin system tool, 410 Gone
-// when the approval has already been resolved. The caller is responsible for
-// handling these status codes via the thrown Error whose message starts with
-// the HTTP status code (e.g. "401: Unauthorized").
+/**
+ * POST /api/v1/tool-approvals/{approvalId} — resolve a pending tool approval.
+ * FR-011, FR-082. Throws with status code prefix on non-2xx (e.g. "403: ...").
+ */
 export function postToolApproval(approvalId: string, action: 'approve' | 'deny' | 'cancel'): Promise<void> {
   return request<void>(`/tool-approvals/${encodeURIComponent(approvalId)}`, {
     method: 'POST',

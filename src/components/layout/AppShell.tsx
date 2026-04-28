@@ -5,9 +5,9 @@ import { Sidebar } from './Sidebar'
 import { useSidebarStore } from '@/store/sidebar'
 import { SessionBar } from '@/components/chat/SessionBar'
 import { ToastContainer } from '@/components/ui/toast-container'
+import { ToolApprovalModal } from '@/components/agents/ToolApprovalModal'
 import { OmnipusRuntimeProvider } from '@/components/chat/OmnipusRuntimeProvider'
 import { ErrorBoundary } from '@/components/ui/error-boundary'
-import { ToolApprovalModal } from '@/components/agents/ToolApprovalModal'
 import { queryClient } from '@/lib/queryClient'
 import { fetchTasks, fetchAgents } from '@/lib/api'
 import { useConnectionStore } from '@/store/connection'
@@ -100,8 +100,7 @@ export function AppShell() {
       {/* Global toast notifications */}
       <ToastContainer />
 
-      {/* Tool approval modal — rendered outside OmnipusRuntimeProvider so it
-          appears on every screen regardless of current route (FR-011, FR-082) */}
+      {/* Tool approval modal — FR-011, FR-082 */}
       <ToolApprovalModal />
     </div>
   )
