@@ -330,12 +330,19 @@ func addLandlockPathRule(rulesetFd int, path string, rights uint64) error {
 	}
 	defer unix.Close(fd)
 
-	// READ_DIR is a directory-only access right. The kernel validates that
+	// Many access rights are directory-only. The kernel validates that
 	// allowed_access only contains rights valid for the FD type (file vs
-	// directory). Strip READ_DIR for non-directory paths to avoid EINVAL.
+	// directory). Strip directory-only rights for regular/character files to
+	// avoid EINVAL when whitelisting paths like /dev/null or /etc/hosts.
 	var stat unix.Stat_t
 	if err := unix.Fstat(fd, &stat); err == nil && stat.Mode&unix.S_IFDIR == 0 {
-		rights &^= landlockAccessFSReadDir
+		dirOnly := landlockAccessFSReadDir |
+			landlockAccessFSRemoveDir | landlockAccessFSRemoveFile |
+			landlockAccessFSMakeChar | landlockAccessFSMakeDir |
+			landlockAccessFSMakeReg | landlockAccessFSMakeSock |
+			landlockAccessFSMakeFifo | landlockAccessFSMakeBlock |
+			landlockAccessFSMakeSym | landlockAccessFSRefer
+		rights &^= dirOnly
 	}
 
 	pathAttr := landlockPathBeneathAttr{

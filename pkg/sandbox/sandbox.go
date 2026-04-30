@@ -167,6 +167,8 @@ func DefaultPolicy(homePath string, allowedPaths []string, warnFn func(msg strin
 		"/etc/hosts",
 		"/etc/nsswitch.conf",
 		"/sys/devices/system/cpu",
+		"/dev/urandom", // RNG source used by libc, OpenSSL, Chromium, etc.
+		"/dev/random",
 	}
 	for _, p := range readOnlySystem {
 		rules = append(rules, PathRule{
@@ -174,6 +176,16 @@ func DefaultPolicy(homePath string, allowedPaths []string, warnFn func(msg strin
 			Access: AccessRead | AccessExecute, // exec bit lets dynamic loader mmap .so files
 		})
 	}
+
+	// Universally writable device files required by Chromium/headless tools
+	// and any process that redirects stdio. /dev/null and /dev/shm are safe
+	// to expose RW because they are well-known sinks/scratch areas, not real
+	// hardware. Without these, browser.* tools fail with
+	// "open /dev/null: permission denied" under the workspace+net profile.
+	rules = append(rules,
+		PathRule{Path: "/dev/null", Access: AccessRead | AccessWrite},
+		PathRule{Path: "/dev/shm", Access: AccessRead | AccessWrite},
+	)
 
 	// User-declared additional paths (FR-J-013).
 	for _, raw := range allowedPaths {

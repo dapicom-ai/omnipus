@@ -49,7 +49,10 @@ func TestDefaultPolicy_SystemRestrictedReadOnly(t *testing.T) {
 		{"proc_child", "/proc/cpuinfo"},
 		{"sys_child", "/sys/class/net"},
 		{"root_ssh", "/root/.ssh"},
-		{"dev_child", "/dev/null"},
+		// /dev/null is universally RW in the baseline policy (browser/Chromium
+		// needs it). Pick a device that is NOT in the baseline allowlist so the
+		// strip-write contract for user-declared /dev paths is still verified.
+		{"dev_child", "/dev/sda1"},
 		{"boot_child", "/boot/grub"},
 	}
 	for _, tc := range cases {
