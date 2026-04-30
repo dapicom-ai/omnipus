@@ -136,18 +136,13 @@ function BrowserNavigateBlock({
             <span className="text-[10px] text-[var(--color-muted)] font-mono break-all">{url}</span>
           </div>
 
-          {/* Screenshot thumbnail */}
+          {/* Screenshot indicator (image itself renders in the assistant reply bubble via the media frame). */}
           {screenshotData && (
             <div className="px-3 py-2 bg-[var(--color-surface-1)] border-b border-[var(--color-border)]">
-              <div className="flex items-center gap-1.5 mb-1.5">
+              <div className="flex items-center gap-1.5">
                 <Camera size={11} className="text-[var(--color-muted)]" />
-                <span className="text-[10px] text-[var(--color-muted)]">Screenshot</span>
+                <span className="text-[10px] text-[var(--color-muted)]">Screenshot captured</span>
               </div>
-              <img
-                src={`data:image/png;base64,${screenshotData}`}
-                alt={`Screenshot of ${url}`}
-                className="max-w-full rounded border border-[var(--color-border)] max-h-48 object-contain"
-              />
             </div>
           )}
 
