@@ -204,12 +204,14 @@ function AssistantMessageRetryButton() {
   )
 }
 
-// Renders inline media attachments (images, files) for the last assistant
-// message that carries media. Media arrives via WebSocket "media" frames and
-// is appended to the most recent assistant message in the chat store.
+// Renders inline media attachments (images, files) attached to the assistant
+// message this component is mounted inside. Keyed by message id so each
+// message bubble only shows its own media — not the most recent assistant's,
+// which would double-render the screenshot on every follow-up turn.
 function InlineMedia() {
+  const message = useMessage()
   const messages = useChatStore((s) => s.messages)
-  const storeMsg = [...messages].reverse().find((m) => m.role === 'assistant' && m.media?.length)
+  const storeMsg = messages.find((m) => m.id === message.id)
 
   if (!storeMsg?.media?.length) return null
 
