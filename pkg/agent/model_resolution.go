@@ -44,8 +44,38 @@ func buildModelListResolver(cfg *config.Config) func(raw string) (string, bool) 
 			}
 		}
 
+		// Fallback: the requested slug isn't registered as its own provider
+		// entry (e.g. user picked "z-ai/glm-5v-turbo" from the live model list),
+		// but a kindred provider (e.g. openrouter) is configured and accepts
+		// arbitrary slugs. Reuse that provider's credentials and pass the slug
+		// through verbatim. Without this, ParseModelRef would mis-split the slug
+		// (treating "z-ai" as a provider) and the runtime would silently fall
+		// back to the default model.
+		for i := range cfg.Providers {
+			provName := strings.TrimSpace(cfg.Providers[i].Provider)
+			if provName == "" {
+				continue
+			}
+			// Pass-through providers route by model slug (their API accepts any
+			// slug their backend exposes).
+			if isPassthroughProvider(provName, cfg.Providers[i].APIBase) {
+				return provName + "/" + raw, true
+			}
+		}
+
 		return "", false
 	}
+}
+
+// isPassthroughProvider reports whether the given provider type forwards model
+// slugs to its backend without per-slug registration. OpenRouter is the
+// canonical example.
+func isPassthroughProvider(provider, apiBase string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openrouter", "vivgrid":
+		return true
+	}
+	return strings.Contains(strings.ToLower(apiBase), "openrouter.ai")
 }
 
 func resolveModelCandidates(
