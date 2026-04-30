@@ -277,7 +277,7 @@ func TestAgentLoop_SteeringMode_ConfiguredFromConfig(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &mockProvider{}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	if al.SteeringMode() != SteeringAll {
 		t.Fatalf("expected 'all' mode from config, got %v", al.SteeringMode())
@@ -327,7 +327,7 @@ func TestAgentLoop_Continue_WithMessages(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &simpleMockProvider{response: "continued response"}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	al.Steer(providers.Message{Role: "user", Content: "new direction"})
 
@@ -362,7 +362,7 @@ func TestDrainBusToSteering_RequeuesDifferentScopeMessage(t *testing.T) {
 	}
 
 	msgBus := bus.NewMessageBus()
-	al := NewAgentLoop(cfg, msgBus, &mockProvider{})
+	al := mustNewAgentLoop(t, cfg, msgBus, &mockProvider{})
 
 	activeMsg := bus.InboundMessage{
 		Channel:  "telegram",
@@ -698,7 +698,7 @@ func TestAgentLoop_Steering_SkipsRemainingTools(t *testing.T) {
 	}
 
 	msgBus := bus.NewMessageBus()
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 	al.RegisterTool(tool1)
 	al.RegisterTool(tool2)
 
@@ -786,7 +786,7 @@ func TestAgentLoop_Steering_InitialPoll(t *testing.T) {
 	}
 
 	msgBus := bus.NewMessageBus()
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	// Enqueue a steering message before processing starts
 	al.Steer(providers.Message{Role: "user", Content: "pre-enqueued steering"})
@@ -844,7 +844,7 @@ func TestAgentLoop_Run_AutoContinuesLateSteeringMessage(t *testing.T) {
 		firstCallStarted: make(chan struct{}),
 		releaseFirstCall: make(chan struct{}),
 	}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	runCtx, cancelRun := context.WithCancel(context.Background())
 	defer cancelRun()
@@ -972,7 +972,7 @@ func TestAgentLoop_Steering_DirectResponseContinuesWithQueuedMessage(t *testing.
 	}
 
 	msgBus := bus.NewMessageBus()
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	resultCh := make(chan struct {
 		resp string
@@ -1076,7 +1076,7 @@ func TestAgentLoop_Continue_PreservesSteeringMedia(t *testing.T) {
 
 	sessionKey := routing.BuildAgentMainSessionKey(routing.DefaultAgentID)
 	msgBus := bus.NewMessageBus()
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 	al.SetMediaStore(store)
 
 	if err = al.Steer(providers.Message{
@@ -1179,7 +1179,7 @@ func TestAgentLoop_InterruptGraceful_UsesTerminalNoToolCall(t *testing.T) {
 	}
 
 	msgBus := bus.NewMessageBus()
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 	al.RegisterTool(tool1)
 	al.RegisterTool(tool2)
 	sessionKey := routing.BuildAgentMainSessionKey(routing.DefaultAgentID)
@@ -1333,7 +1333,7 @@ func TestAgentLoop_InterruptHard_RestoresSession(t *testing.T) {
 		finalResp: "should not happen",
 	}
 
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 	started := make(chan struct{})
 	al.RegisterTool(&interruptibleTool{name: "cancel_tool", started: started})
 	sessionKey := routing.BuildAgentMainSessionKey(routing.DefaultAgentID)
@@ -1525,7 +1525,7 @@ func TestAgentLoop_Steering_SkippedToolsHaveErrorResults(t *testing.T) {
 	}
 
 	msgBus := bus.NewMessageBus()
-	al := NewAgentLoop(cfg, msgBus, wrappedProvider)
+	al := mustNewAgentLoop(t, cfg, msgBus, wrappedProvider)
 	al.RegisterTool(tool1)
 	al.RegisterTool(tool2)
 

@@ -58,6 +58,7 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/sandbox"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
+	"github.com/dapicom-ai/omnipus/pkg/validation"
 )
 
 // devProxyPathPrefix is the URL prefix served by HandleDevProxy.
@@ -112,7 +113,7 @@ func (a *restAPI) HandleDevProxy(w http.ResponseWriter, r *http.Request) {
 	// to the registry lookup (which uses token only) and silently match;
 	// the resulting audit entries would carry a malformed agent_id that
 	// pollutes operator queries. Mirror the /serve/ pattern (rest_serve.go).
-	if err := validateEntityID(agentID); err != nil {
+	if err := validation.EntityID(agentID); err != nil {
 		a.auditDevFailure(r, "dev.path_invalid", "error", agentID, "", http.StatusBadRequest, startedAt)
 		writeDevProxyError(w, http.StatusBadRequest, "invalid agent identifier")
 		return

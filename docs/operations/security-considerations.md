@@ -56,3 +56,9 @@ Key provisioning priority, rotation procedure, and the auto-generate first-boot 
 The gateway executes tool calls on behalf of the active agent and the user directing it. A user with chat access can instruct agents to read files, run shell commands (subject to tool policy), and make outbound HTTP requests. This is by design — the product is an agentic runtime.
 
 Operators should extend chat access only to users they trust with shell-level capabilities on the host. T-06 in the [Threat Model](../specs/chat-served-iframe-preview-spec.md#threat-model) covers the trusted-prompt boundary and what happens when an agent receives instructions from untrusted content (for example, an HTML file fetched from the web).
+
+---
+
+## `tools.exec.allow_remote` removed
+
+The `allow_remote` field on `ExecConfig` was a legacy GHSA-pv8c-p6jf-3fpp channel block that prevented the exec tool from running when a message arrived via a remote channel (Telegram, Discord, Slack, etc.). This field has been removed. Exec access is now governed entirely by per-agent `ToolPolicyCfg` (allow/ask/deny) and `sandbox_profile`. Agents that must not use exec on remote channels must have `exec: deny` in their tool policy. A boot-time WARN is emitted listing any agents with remote channels enabled and a non-deny exec policy.

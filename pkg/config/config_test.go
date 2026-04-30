@@ -496,9 +496,6 @@ func TestConfig_Complete(t *testing.T) {
 	if !cfg.Heartbeat.Enabled {
 		t.Error("Heartbeat should be enabled by default")
 	}
-	if !cfg.Tools.Exec.AllowRemote {
-		t.Error("Exec.AllowRemote should be true by default")
-	}
 }
 
 func TestDefaultConfig_WebPreferNativeEnabled(t *testing.T) {
@@ -567,13 +564,6 @@ func TestLoadConfig_WebPreferNativeCanBeDisabled(t *testing.T) {
 	}
 }
 
-func TestDefaultConfig_ExecAllowRemoteEnabled(t *testing.T) {
-	cfg := DefaultConfig()
-	if !cfg.Tools.Exec.AllowRemote {
-		t.Fatal("DefaultConfig().Tools.Exec.AllowRemote should be true")
-	}
-}
-
 func TestDefaultConfig_FilterSensitiveDataEnabled(t *testing.T) {
 	cfg := DefaultConfig()
 	if !cfg.Tools.FilterSensitiveData {
@@ -635,23 +625,6 @@ func TestDefaultConfig_LogLevel(t *testing.T) {
 	cfg := DefaultConfig()
 	if cfg.Gateway.LogLevel != "warn" {
 		t.Errorf("LogLevel = %q, want \"fatal\"", cfg.Gateway.LogLevel)
-	}
-}
-
-func TestLoadConfig_ExecAllowRemoteDefaultsTrueWhenUnset(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(configPath, []byte(`{"version":1,"tools":{"exec":{"enable_deny_patterns":true}}}`),
-		0o600); err != nil {
-		t.Fatalf("WriteFile() error: %v", err)
-	}
-
-	cfg, err := LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig() error: %v", err)
-	}
-	if !cfg.Tools.Exec.AllowRemote {
-		t.Fatal("tools.exec.allow_remote should remain true when unset in config file")
 	}
 }
 
@@ -1539,5 +1512,71 @@ func TestOmnipusRetentionConfig_Mode_DisabledTakesPrecedence(t *testing.T) {
 	}
 	if got := r.Mode().String(); got != "forever" {
 		t.Errorf("Mode().String() = %q; want \"forever\"", got)
+	}
+}
+
+// TestAgentConfig_SandboxProfile_RoundTrip verifies that AgentConfig with
+// sandbox_profile and shell_policy fields marshals and unmarshals without data
+// loss. This is a change-guard: if the fields are accidentally removed or
+// renamed, this test will fail.
+func TestAgentConfig_SandboxProfile_RoundTrip(t *testing.T) {
+	trueBool := true
+	original := AgentConfig{
+		ID:             "test-agent",
+		Name:           "Test Agent",
+		SandboxProfile: SandboxProfileWorkspaceNet,
+		ShellPolicy: &AgentShellPolicy{
+			EnableDenyPatterns: trueBool,
+			CustomDenyPatterns: []string{`^\s*rm\s+-rf`, `curl.*\|.*sh`},
+		},
+	}
+
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("json.Marshal(AgentConfig) error: %v", err)
+	}
+
+	var decoded AgentConfig
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal(AgentConfig) error: %v", err)
+	}
+
+	if decoded.SandboxProfile != original.SandboxProfile {
+		t.Errorf("SandboxProfile: got %q, want %q", decoded.SandboxProfile, original.SandboxProfile)
+	}
+	if decoded.ShellPolicy == nil {
+		t.Fatal("ShellPolicy: got nil, want non-nil")
+	}
+	if decoded.ShellPolicy.EnableDenyPatterns != original.ShellPolicy.EnableDenyPatterns {
+		t.Errorf("ShellPolicy.EnableDenyPatterns: got %v, want %v",
+			decoded.ShellPolicy.EnableDenyPatterns, original.ShellPolicy.EnableDenyPatterns)
+	}
+	if len(decoded.ShellPolicy.CustomDenyPatterns) != len(original.ShellPolicy.CustomDenyPatterns) {
+		t.Fatalf("ShellPolicy.CustomDenyPatterns: len %d, want %d",
+			len(decoded.ShellPolicy.CustomDenyPatterns), len(original.ShellPolicy.CustomDenyPatterns))
+	}
+	for i, p := range original.ShellPolicy.CustomDenyPatterns {
+		if decoded.ShellPolicy.CustomDenyPatterns[i] != p {
+			t.Errorf("CustomDenyPatterns[%d]: got %q, want %q",
+				i, decoded.ShellPolicy.CustomDenyPatterns[i], p)
+		}
+	}
+}
+
+// TestAgentConfig_SandboxProfile_OmittedWhenEmpty confirms that omitempty
+// suppresses sandbox_profile and shell_policy when they hold zero values,
+// so existing configs without these fields are unaffected.
+func TestAgentConfig_SandboxProfile_OmittedWhenEmpty(t *testing.T) {
+	cfg := AgentConfig{ID: "minimal"}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("json.Marshal error: %v", err)
+	}
+	s := string(data)
+	if strings.Contains(s, "sandbox_profile") {
+		t.Errorf("sandbox_profile must be omitted when empty; got: %s", s)
+	}
+	if strings.Contains(s, "shell_policy") {
+		t.Errorf("shell_policy must be omitted when nil; got: %s", s)
 	}
 }

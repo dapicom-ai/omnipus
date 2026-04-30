@@ -23,7 +23,8 @@ import (
 //	Then defaultPolicy is "allow" for all core agents;
 //	And the "system.*: deny" wildcard is present;
 //	And Ava additionally has explicit allows for 4 system.* tools;
-//	And non-Ava core agents do NOT have explicit system.* allows.
+//	And Jim has workspace.shell + workspace.shell_bg allowed and run_in_workspace denied;
+//	And Jim's seeded sandbox_profile is workspace+net.
 //
 // Traces to: pkg/coreagent/core.go — coreAgentSeed (FR-008, FR-010, FR-022).
 func TestBoot_ConstructorSeedDispositionMap(t *testing.T) {
@@ -35,10 +36,11 @@ func TestBoot_ConstructorSeedDispositionMap(t *testing.T) {
 	}
 
 	tests := []struct {
-		id                  CoreAgentID
-		expectSystemDeny    bool
-		expectExtraAllows   []string
-		expectNoExtraAllow  bool
+		id                     CoreAgentID
+		expectSystemDeny       bool
+		expectExtraAllows      []string
+		expectExplicitDenies   []string
+		expectSandboxProfile   config.SandboxProfile
 	}{
 		{
 			id:               IDAva,
@@ -48,13 +50,16 @@ func TestBoot_ConstructorSeedDispositionMap(t *testing.T) {
 		{
 			id:               IDJim,
 			expectSystemDeny: true,
-			expectNoExtraAllow: true,
+			// PR 5: Jim is migrated to workspace.shell; run_in_workspace is denied.
+			expectExtraAllows:    []string{"workspace.shell", "workspace.shell_bg"},
+			expectExplicitDenies: []string{"run_in_workspace"},
+			expectSandboxProfile: config.SandboxProfileWorkspaceNet,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(string(tc.id), func(t *testing.T) {
-			dp, policies := coreAgentSeed(tc.id)
+			dp, policies, sandboxProfile := coreAgentSeed(tc.id)
 
 			assert.Equal(t, config.ToolPolicyAllow, dp,
 				"defaultPolicy must be 'allow' for all core agents (FR-022)")
@@ -67,21 +72,26 @@ func TestBoot_ConstructorSeedDispositionMap(t *testing.T) {
 					"'system.*' must be set to deny (FR-022)")
 			}
 
-			// Ava gets 4 extra allows.
+			// Ava gets 4 extra allows; Jim gets workspace.shell + workspace.shell_bg.
 			for _, toolName := range tc.expectExtraAllows {
 				p, ok := policies[toolName]
-				require.True(t, ok, "Ava must have explicit allow for %q (FR-010)", toolName)
+				require.True(t, ok, "agent %q must have explicit allow for %q", tc.id, toolName)
 				assert.Equal(t, config.ToolPolicyAllow, p,
-					"Ava's explicit allow for %q must be 'allow' (FR-010)", toolName)
+					"agent %q explicit allow for %q must be 'allow'", tc.id, toolName)
 			}
 
-			// Non-Ava agents must NOT have extra system.* allows.
-			if tc.expectNoExtraAllow {
-				for key := range policies {
-					if key != "system.*" {
-						t.Errorf("agent %q must not have extra policy entries beyond 'system.*', found %q", tc.id, key)
-					}
-				}
+			// Jim denies run_in_workspace explicitly.
+			for _, toolName := range tc.expectExplicitDenies {
+				p, ok := policies[toolName]
+				require.True(t, ok, "agent %q must have explicit deny for %q", tc.id, toolName)
+				assert.Equal(t, config.ToolPolicyDeny, p,
+					"agent %q explicit deny for %q must be 'deny'", tc.id, toolName)
+			}
+
+			// Sandbox profile check.
+			if tc.expectSandboxProfile != "" {
+				assert.Equal(t, tc.expectSandboxProfile, sandboxProfile,
+					"agent %q seeded sandbox_profile must be %q", tc.id, tc.expectSandboxProfile)
 			}
 		})
 	}
@@ -166,4 +176,146 @@ func TestAgentConstructor_CoreAgent_SeedsRailPlusAllowances(t *testing.T) {
 		require.True(t, aok, "Ava must have explicit allow for %q", allow)
 		assert.Equal(t, config.ToolPolicyAllow, ap)
 	}
+}
+
+// TestJimSeed_SandboxProfileIsWorkspacePlusNet verifies that Jim's constructor
+// seed produces sandbox_profile=workspace+net (PR 5 acceptance criterion).
+//
+// BDD: Given coreAgentSeed(IDJim) is called,
+//
+//	When the returned sandboxProfile is inspected,
+//	Then it equals SandboxProfileWorkspaceNet.
+//
+// Traces to: quizzical-marinating-frog.md PR 5 — "Jim's seeded sandbox_profile is workspace+net".
+func TestJimSeed_SandboxProfileIsWorkspacePlusNet(t *testing.T) {
+	_, _, profile := coreAgentSeed(IDJim)
+	assert.Equal(t, config.SandboxProfileWorkspaceNet, profile,
+		"Jim's seeded sandbox_profile must be workspace+net (PR 5 migration)")
+}
+
+// TestJimSeed_WorkspaceShellAllowedAndRunInWorkspaceDenied verifies that Jim's
+// constructor seed allows workspace.shell + workspace.shell_bg and denies
+// run_in_workspace (PR 5 acceptance criterion).
+//
+// BDD: Given coreAgentSeed(IDJim) is called,
+//
+//	When the policies map is inspected,
+//	Then workspace.shell and workspace.shell_bg are "allow";
+//	And run_in_workspace is "deny".
+//
+// Traces to: quizzical-marinating-frog.md PR 5 — "Jim's seed allows workspace.shell and workspace.shell_bg".
+func TestJimSeed_WorkspaceShellAllowedAndRunInWorkspaceDenied(t *testing.T) {
+	_, policies, _ := coreAgentSeed(IDJim)
+
+	for _, toolName := range []string{"workspace.shell", "workspace.shell_bg"} {
+		p, ok := policies[toolName]
+		require.True(t, ok, "Jim must have explicit policy for %q", toolName)
+		assert.Equal(t, config.ToolPolicyAllow, p,
+			"Jim's policy for %q must be 'allow'", toolName)
+	}
+
+	p, ok := policies["run_in_workspace"]
+	require.True(t, ok, "Jim must have explicit policy for 'run_in_workspace'")
+	assert.Equal(t, config.ToolPolicyDeny, p,
+		"Jim's policy for 'run_in_workspace' must be 'deny' (deprecated tool)")
+}
+
+// TestSeedConfig_JimProfileApplied verifies that SeedConfig seeds Jim with
+// sandbox_profile=workspace+net when creating a fresh entry.
+//
+// BDD: Given an empty config, When SeedConfig is called,
+//
+//	Then Jim's entry has SandboxProfile=workspace+net.
+//
+// Traces to: quizzical-marinating-frog.md PR 5 acceptance criteria.
+func TestSeedConfig_JimProfileApplied(t *testing.T) {
+	cfg := &config.Config{}
+	SeedConfig(cfg)
+
+	var jimAgent *config.AgentConfig
+	for i := range cfg.Agents.List {
+		if cfg.Agents.List[i].ID == string(IDJim) {
+			jimAgent = &cfg.Agents.List[i]
+			break
+		}
+	}
+	require.NotNil(t, jimAgent, "SeedConfig must add Jim to cfg.Agents.List")
+	assert.Equal(t, config.SandboxProfileWorkspaceNet, jimAgent.SandboxProfile,
+		"Jim must be seeded with sandbox_profile=workspace+net")
+}
+
+// TestSeedConfig_JimProfileMigration verifies the idempotent profile migration:
+// if Jim already exists in config with an empty SandboxProfile, SeedConfig fills
+// it with the seed value. Operator-set profiles are left unchanged.
+//
+// BDD: Given Jim exists with SandboxProfile="" (pre-PR5 config),
+//
+//	When SeedConfig is called,
+//	Then Jim's SandboxProfile is set to workspace+net and modified=true.
+//
+// BDD: Given Jim exists with SandboxProfile="host" (operator override),
+//
+//	When SeedConfig is called,
+//	Then Jim's SandboxProfile remains "host" and the operator choice is preserved.
+//
+// Traces to: quizzical-marinating-frog.md PR 5 — idempotent migration.
+func TestSeedConfig_JimProfileMigration(t *testing.T) {
+	t.Run("empty profile is filled with seed", func(t *testing.T) {
+		enabled := true
+		cfg := &config.Config{
+			Agents: config.AgentsConfig{
+				List: []config.AgentConfig{
+					{
+						ID:      string(IDJim),
+						Name:    "Jim — General Purpose",
+						Locked:  true,
+						Enabled: &enabled,
+						// SandboxProfile intentionally empty (pre-PR5 config)
+					},
+				},
+			},
+		}
+		modified := SeedConfig(cfg)
+		assert.True(t, modified, "SeedConfig must return true when migration applies profile")
+
+		var jim *config.AgentConfig
+		for i := range cfg.Agents.List {
+			if cfg.Agents.List[i].ID == string(IDJim) {
+				jim = &cfg.Agents.List[i]
+				break
+			}
+		}
+		require.NotNil(t, jim)
+		assert.Equal(t, config.SandboxProfileWorkspaceNet, jim.SandboxProfile,
+			"migration must fill empty SandboxProfile with workspace+net")
+	})
+
+	t.Run("operator-set profile is preserved", func(t *testing.T) {
+		enabled := true
+		cfg := &config.Config{
+			Agents: config.AgentsConfig{
+				List: []config.AgentConfig{
+					{
+						ID:             string(IDJim),
+						Name:           "Jim — General Purpose",
+						Locked:         true,
+						Enabled:        &enabled,
+						SandboxProfile: config.SandboxProfileHost, // operator override
+					},
+				},
+			},
+		}
+		SeedConfig(cfg)
+
+		var jim *config.AgentConfig
+		for i := range cfg.Agents.List {
+			if cfg.Agents.List[i].ID == string(IDJim) {
+				jim = &cfg.Agents.List[i]
+				break
+			}
+		}
+		require.NotNil(t, jim)
+		assert.Equal(t, config.SandboxProfileHost, jim.SandboxProfile,
+			"operator-set SandboxProfile must not be overwritten by SeedConfig migration")
+	})
 }

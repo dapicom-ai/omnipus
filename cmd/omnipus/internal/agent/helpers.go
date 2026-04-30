@@ -51,7 +51,11 @@ func agentCmd(message, sessionKey, model string, debug bool) error {
 
 	msgBus := bus.NewMessageBus()
 	defer msgBus.Close()
-	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider)
+	var agentLoop *agent.AgentLoop
+	agentLoop, err = agent.NewAgentLoop(cfg, msgBus, provider)
+	if err != nil {
+		return fmt.Errorf("agent: boot failed: %w", err)
+	}
 	defer agentLoop.Close()
 
 	// Print agent startup info (only for interactive mode)

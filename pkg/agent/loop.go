@@ -132,6 +132,12 @@ type AgentLoop struct {
 	// system tools are not registered (graceful degradation in tests without a store).
 	sysagentDeps *systools.Deps
 
+	// contextBuilderRegistry is a broadcast channel for config-change
+	// invalidation (FR-061). REST config-write handlers call
+	// InvalidateAllContextBuilders so every agent's next turn rebuilds the
+	// env preamble with the new values.
+	contextBuilderRegistry *ContextBuilderRegistry
+
 	// Wave 4: Per-agent rate limiting and global daily cost cap (SEC-26).
 	// rateLimiter manages sliding-window counters; costTracker persists the
 	// daily cost accumulator across restarts. Both are always non-nil after
@@ -150,6 +156,30 @@ type AgentLoop struct {
 	// approval gate (FR-011, FR-082). Nil until SetToolApprover is called; when nil,
 	// ask-policy tools are treated as allow (open gate, no WS event).
 	toolApprover PolicyApprover
+
+	// allowGodMode is set when the gateway was started with --allow-god-mode.
+	// When false, sandbox_profile=off is coerced to workspace at tool-wiring time.
+	// Latch (2) — runtime coercion.
+	allowGodMode bool
+
+	// coercionLogged tracks which agent IDs have already emitted a coercion WARN
+	// so the log fires at most once per process lifetime per agent (not on every
+	// hot reload).
+	coercionLogged sync.Map
+
+	// Lane S: session-end recap pipeline (FR-023..FR-030).
+
+	// idleTickers maps sessionID → context.CancelFunc for the idle timeout ticker.
+	// Populated by RegisterIdleTicker; cancelled by cancelIdleTicker.
+	idleTickers sync.Map // sessionID (string) → context.CancelFunc
+
+	// agentCurrentSession maps agentID → sessionID (atomic CAS).
+	// Used by the lazy-CAS logic to detect session switches and trigger recap.
+	agentCurrentSession sync.Map // agentID (string) → sessionID (string)
+
+	// claimedCloseSessions is the idempotency gate for CloseSession (FR-027).
+	// LoadOrStore ensures only one goroutine triggers recap per session.
+	claimedCloseSessions sync.Map // sessionID (string) → true
 }
 
 // processOptions configures how a message is processed
@@ -199,11 +229,31 @@ const (
 // unexpected and log accordingly.
 var ErrReloadNotConfigured = errors.New("reload not configured")
 
+// RecapModelBootError is returned by NewAgentLoop when AutoRecapEnabled is true
+// and the resolved recap model is not in the cheap-model allow-list (FR-029a).
+// Callers should map this to a non-zero exit code and log the message.
+type RecapModelBootError struct {
+	Model     string
+	AllowList []string
+}
+
+func (e *RecapModelBootError) Error() string {
+	return fmt.Sprintf(
+		"config error: recap_model %q is not in the cheap-model allow-list %v; "+
+			"set cfg.Routing.LightModel to a supported model or set AutoRecapEnabled=false",
+		e.Model, e.AllowList,
+	)
+}
+
+// NewAgentLoop constructs an AgentLoop from the given config, message bus, and LLM provider.
+// Returns (*AgentLoop, nil) on success. Returns (nil, *RecapModelBootError) when
+// AutoRecapEnabled is true and the recap model fails the allow-list gate (FR-029a) —
+// callers should treat this as a fatal configuration error and abort boot.
 func NewAgentLoop(
 	cfg *config.Config,
 	msgBus *bus.MessageBus,
 	provider providers.LLMProvider,
-) *AgentLoop {
+) (*AgentLoop, error) {
 	registry := NewAgentRegistry(cfg, provider)
 
 	// Apply configurable default agent override.
@@ -224,15 +274,16 @@ func NewAgentLoop(
 
 	eventBus := NewEventBus()
 	al := &AgentLoop{
-		bus:         msgBus,
-		cfg:         cfg,
-		registry:    registry,
-		state:       stateManager,
-		eventBus:    eventBus,
-		summarizing: sync.Map{},
-		fallback:    fallbackChain,
-		cmdRegistry: commands.NewRegistry(commands.BuiltinDefinitions()),
-		steering:    newSteeringQueue(parseSteeringMode(cfg.Agents.Defaults.SteeringMode)),
+		bus:                    msgBus,
+		cfg:                    cfg,
+		registry:               registry,
+		state:                  stateManager,
+		eventBus:               eventBus,
+		summarizing:            sync.Map{},
+		fallback:               fallbackChain,
+		cmdRegistry:            commands.NewRegistry(commands.BuiltinDefinitions()),
+		steering:               newSteeringQueue(parseSteeringMode(cfg.Agents.Defaults.SteeringMode)),
+		contextBuilderRegistry: NewContextBuilderRegistry(),
 	}
 	al.hooks = NewHookManager(eventBus)
 	configureHookManagerFromConfig(al.hooks, cfg)
@@ -290,6 +341,36 @@ func NewAgentLoop(
 			for _, agentID := range registry.ListAgentIDs() {
 				if agent, ok := registry.GetAgent(agentID); ok {
 					agent.Tools.SetAuditLogger(auditLogger)
+					// Memory tools carry their own audit-logger reference for
+					// structured per-entry events (content_sha256 etc.).
+					// SetAuditLogger on the registry propagates via auditLoggerAware,
+					// but the explicit cast below documents the dependency clearly.
+					if t, ok := agent.Tools.Get("remember"); ok {
+						if rt, ok := t.(*tools.RememberTool); ok {
+							rt.SetAuditLogger(auditLogger)
+						} else {
+							// SF4: wrong type registered for "remember" — surface the
+							// registration-order bug so it doesn't silently skip audit wiring.
+							logger.WarnCF("agent",
+								"'remember' tool is not a *tools.RememberTool; audit wiring skipped",
+								map[string]any{
+									"agent_id":  agentID,
+									"tool_type": fmt.Sprintf("%T", t),
+								})
+						}
+					}
+					if t, ok := agent.Tools.Get("retrospective"); ok {
+						if rt, ok := t.(*tools.RetrospectiveTool); ok {
+							rt.SetAuditLogger(auditLogger)
+						} else {
+							logger.WarnCF("agent",
+								"'retrospective' tool is not a *tools.RetrospectiveTool; audit wiring skipped",
+								map[string]any{
+									"agent_id":  agentID,
+									"tool_type": fmt.Sprintf("%T", t),
+								})
+						}
+					}
 				}
 			}
 		}
@@ -416,7 +497,117 @@ func NewAgentLoop(
 	// the same tool name overwrites the previous entry (see ToolRegistry.Register).
 	al.wireExecToolDeps()
 
-	return al
+	// FR-029a: Validate the recap model allow-list at boot.
+	// If AutoRecapEnabled is true and the resolved recap model doesn't match any
+	// pattern in the allow-list, log an error and exit — misconfigured recap model
+	// must not allow silent fallback to an expensive model at runtime.
+	if cfg.Agents.Defaults.AutoRecapEnabled {
+		var recapModel string
+		if cfg.Agents.Defaults.Routing != nil {
+			recapModel = cfg.Agents.Defaults.Routing.LightModel
+		}
+		if recapModel == "" {
+			// Use the default agent's primary model.
+			if defaultAgent := registry.GetDefaultAgent(); defaultAgent != nil {
+				recapModel = defaultAgent.Model
+			}
+		}
+		if recapModel != "" {
+			allowList := cfg.Agents.Defaults.ResolveRecapModelAllowList()
+			matched := false
+			for _, pattern := range allowList {
+				if strings.HasPrefix(recapModel, pattern) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return nil, &RecapModelBootError{
+					Model:     recapModel,
+					AllowList: allowList,
+				}
+			}
+		}
+	}
+
+	// Fix A (FR-057): wire the environment provider into every agent's
+	// ContextBuilder now that the sandbox backend is known. Also register each
+	// ContextBuilder into the registry so config-change invalidation (FR-061)
+	// can broadcast across all agents.
+	al.wireEnvProviders(cfg, registry)
+
+	return al, nil
+}
+
+// ContextBuilderRegistry returns the registry used to broadcast system-prompt
+// cache invalidation when operator config changes (FR-061). Always non-nil
+// after NewAgentLoop.
+func (al *AgentLoop) ContextBuilderRegistry() *ContextBuilderRegistry {
+	if al == nil {
+		return nil
+	}
+	return al.contextBuilderRegistry
+}
+
+// GetCurrentSession returns the active session ID for the given agent, and whether
+// one was found. Used by the WebSocket lazy-CAS logic (FR-024).
+func (al *AgentLoop) GetCurrentSession(agentID string) (string, bool) {
+	if v, ok := al.agentCurrentSession.Load(agentID); ok {
+		return v.(string), true
+	}
+	return "", false
+}
+
+// SetCurrentSession records the active session ID for the given agent.
+// Used by the WebSocket lazy-CAS logic (FR-024).
+func (al *AgentLoop) SetCurrentSession(agentID, sessionID string) {
+	al.agentCurrentSession.Store(agentID, sessionID)
+}
+
+// RegisterIdleTicker stores a cancel function for the idle ticker of a session.
+// Calling it again for the same session replaces the previous cancel without
+// cancelling it — use resetIdleTicker for the reset path.
+func (al *AgentLoop) RegisterIdleTicker(sessionID string, cancel context.CancelFunc) {
+	al.idleTickers.Store(sessionID, cancel)
+}
+
+// cancelIdleTicker cancels and removes the idle ticker for a session.
+// No-op if no ticker is registered.
+func (al *AgentLoop) cancelIdleTicker(sessionID string) {
+	if v, ok := al.idleTickers.LoadAndDelete(sessionID); ok {
+		v.(context.CancelFunc)()
+	}
+}
+
+// resetIdleTicker cancels any existing idle ticker for sessionID and starts a
+// new one. On timeout, CloseSession is called with trigger="idle". The timer
+// is driven by cfg.Agents.Defaults.GetIdleTimeoutMinutes(). If AutoRecapEnabled
+// is false the ticker is still started but CloseSession will return immediately.
+func (al *AgentLoop) resetIdleTicker(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	// Cancel the previous ticker (if any).
+	al.cancelIdleTicker(sessionID)
+
+	timeoutMinutes := al.cfg.Agents.Defaults.GetIdleTimeoutMinutes()
+	ctx, cancel := context.WithCancel(context.Background())
+	al.RegisterIdleTicker(sessionID, cancel)
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.ErrorCF("agent", "Idle ticker goroutine panic recovered",
+					map[string]any{"session_id": sessionID, "panic": fmt.Sprintf("%v", r)})
+			}
+		}()
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Duration(timeoutMinutes) * time.Minute):
+			al.CloseSession(sessionID, "idle")
+		}
+	}()
 }
 
 // AuditLogger returns the audit logger, or nil if audit logging is disabled.
@@ -654,13 +845,99 @@ func (al *AgentLoop) wireTier13DepsLocked(registry *AgentRegistry, deps Tier13De
 			)
 			ag.Tools.Register(runInTool)
 		}
+
+		// workspace.shell (experimental foreground shell).
+		// Only registered when experimental.workspace_shell_enabled=true.
+		// The tool is per-agent because it needs the agent's workspace path,
+		// sandbox profile, and shell policy — the same reason run_in_workspace
+		// is wired here rather than in the process-level BuiltinRegistry.
+		if resolveBoolWithDefault(cfg.Sandbox.Experimental.WorkspaceShellEnabled, true) {
+			// Resolve SandboxProfile for this agent from the global config.
+			// We scan cfg.Agents.List for a matching entry; if not found we
+			// use the global DefaultProfile (which itself defaults to workspace).
+			agentProfile := cfg.Sandbox.DefaultProfile
+			var agentShellPolicy *config.AgentShellPolicy
+			for i := range cfg.Agents.List {
+				entry := &cfg.Agents.List[i]
+				if entry.ID == ag.ID {
+					if entry.SandboxProfile != "" {
+						agentProfile = entry.SandboxProfile
+					}
+					agentShellPolicy = entry.ShellPolicy
+					break
+				}
+			}
+			// Coerce off → workspace when god mode is unavailable or not opted in.
+			// This is the runtime-side enforcement of latches (1) and (2). The REST
+			// handler enforces the same at write time so persisted config never has
+			// off without the latches; this is defense-in-depth.
+			if agentProfile == config.SandboxProfileOff {
+				al.mu.RLock()
+				godModeOptedIn := al.allowGodMode
+				al.mu.RUnlock()
+				if !sandbox.GodModeAvailable || !godModeOptedIn {
+					// Log at most once per process lifetime per agent to prevent
+					// the WARN from flooding on hot reloads.
+					if _, alreadyLogged := al.coercionLogged.LoadOrStore(ag.ID, true); !alreadyLogged {
+						logger.WarnCF("agent", "sandbox_profile=off coerced to workspace; --allow-god-mode not set",
+							map[string]any{"agent_id": ag.ID})
+						if al.auditLogger != nil {
+							_ = al.auditLogger.Log(&audit.Entry{
+								Event:    audit.EventPolicyEval,
+								Decision: audit.DecisionDeny,
+								AgentID:  ag.ID,
+								Tool:     "sandbox_profile",
+								Details: map[string]any{
+									"reason":       "god_mode_unavailable",
+									"coerced_from": "off",
+									"coerced_to":   "workspace",
+								},
+							})
+						}
+					}
+					agentProfile = config.SandboxProfileWorkspace
+				}
+			}
+			shellTool := tools.NewWorkspaceShellTool(tools.WorkspaceShellDeps{
+				WorkspaceDir:            ag.Workspace,
+				Profile:                 agentProfile,
+				Proxy:                   deps.EgressProxy,
+				AuditLogger:             al.auditLogger,
+				AuditFailClosed:         resolveBoolWithDefault(cfg.Sandbox.PathGuardAuditFailClosed, true),
+				GlobalShellDenyPatterns: cfg.Sandbox.ShellDenyPatterns,
+				AgentShellPolicy:        agentShellPolicy,
+			})
+			ag.Tools.Register(shellTool)
+
+			// workspace.shell_bg (experimental background tool).
+			// Registered under the same workspace_shell_enabled flag as
+			// workspace.shell — same trust level, same governance.
+			if deps.DevServerRegistry != nil {
+				portRange := cfg.Sandbox.DevServerPortRange
+				shellBgTool := tools.NewWorkspaceShellBgTool(tools.WorkspaceShellBgDeps{
+					WorkspaceDir:            ag.Workspace,
+					Profile:                 agentProfile,
+					Proxy:                   deps.EgressProxy,
+					AuditLogger:             al.auditLogger,
+					AuditFailClosed:         resolveBoolWithDefault(cfg.Sandbox.PathGuardAuditFailClosed, true),
+					Registry:                deps.DevServerRegistry,
+					MaxConcurrent:           cfg.Sandbox.MaxConcurrentDevServers,
+					PortRange:               [2]int32{portRange[0], portRange[1]},
+					GatewayHost:             deps.GatewayPreviewBaseURL,
+					GlobalShellDenyPatterns: cfg.Sandbox.ShellDenyPatterns,
+					AgentShellPolicy:        agentShellPolicy,
+				})
+				ag.Tools.Register(shellBgTool)
+			}
+		}
 	}
 
 	logger.InfoCF("agent", "Tier 1/2/3 tools wired into agent registry", map[string]any{
-		"preview_base_url":          deps.GatewayPreviewBaseURL,
-		"served_subdirs_ready":      deps.ServedSubdirs != nil,
-		"dev_server_registry_ready": deps.DevServerRegistry != nil,
-		"egress_proxy_ready":        deps.EgressProxy != nil,
+		"preview_base_url":            deps.GatewayPreviewBaseURL,
+		"served_subdirs_ready":        deps.ServedSubdirs != nil,
+		"dev_server_registry_ready":   deps.DevServerRegistry != nil,
+		"egress_proxy_ready":          deps.EgressProxy != nil,
+		"workspace_shell_enabled":     resolveBoolWithDefault(cfg.Sandbox.Experimental.WorkspaceShellEnabled, true),
 	})
 }
 
@@ -1417,6 +1694,13 @@ func (al *AgentLoop) Close() {
 		al.execProxy.Stop()
 	}
 
+	// Lane S (FR-025): cancel all outstanding idle tickers on shutdown.
+	al.idleTickers.Range(func(k, v any) bool {
+		v.(context.CancelFunc)()
+		al.idleTickers.Delete(k)
+		return true
+	})
+
 	// SEC-26: Persist the accumulated daily cost so the next startup can
 	// restore it via LoadIntoRegistry, preventing double-counting on restarts.
 	// A save failure here means the cap will under-count after the next
@@ -2141,6 +2425,15 @@ func (al *AgentLoop) SetToolApprover(a PolicyApprover) {
 	al.mu.Unlock()
 }
 
+// SetAllowGodMode sets the god-mode opt-in flag (latch 2). Must be called
+// before WireTier13Deps so the coercion logic picks up the correct value. If
+// called after WireTier13Deps, the change takes effect on the next hot-reload.
+func (al *AgentLoop) SetAllowGodMode(allow bool) {
+	al.mu.Lock()
+	al.allowGodMode = allow
+	al.mu.Unlock()
+}
+
 // WireSysagentDeps registers all 35 system.* tools on every agent in the
 // current registry (FR-001, FR-002). Mirrors the WireTier13Deps pattern:
 // called once at boot after NewAgentLoop, and again on hot-reload. The deps
@@ -2483,6 +2776,32 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		SendResponse:        false,
 		TranscriptSessionID: transcriptSessionID,
 		TranscriptStore:     transcriptStore,
+	}
+
+	// FR-025: reset idle ticker on every user turn, using transcript session ID
+	// when available (web-chat sessions). This starts the ticker on the first
+	// turn and resets it on every subsequent turn.
+	if transcriptSessionID != "" {
+		al.resetIdleTicker(transcriptSessionID)
+		// FR-024: track current session per agent for lazy CAS on switch.
+		al.agentCurrentSession.Store(agent.ID, transcriptSessionID)
+
+		// Self-heal: if this agent has no in-memory history for the current
+		// session key but the shared transcript has prior turns (handoff,
+		// browser reconnect without explicit attach_session, etc.), rebuild
+		// the agent's turn buffer from the transcript so the LLM sees the
+		// prior conversation. Cheap when history is already populated —
+		// GetHistory just reads the on-disk meta file.
+		if agent.Sessions != nil && len(agent.Sessions.GetHistory(sessionKey)) == 0 {
+			if err := al.HydrateAgentHistoryFromTranscript(msg.ChatID, transcriptSessionID); err != nil {
+				logger.WarnCF("agent", "self-heal hydrate failed", map[string]any{
+					"agent_id":              agent.ID,
+					"chat_id":               msg.ChatID,
+					"transcript_session_id": transcriptSessionID,
+					"error":                 err.Error(),
+				})
+			}
+		}
 	}
 
 	// context-dependent commands check their own Runtime fields and report
@@ -3174,9 +3493,20 @@ turnLoop:
 			providerToolDefs = filtered
 		}
 
-		callMessages := messages
+		// Transparent repair of orphan tool_use / tool_result pairs in the
+		// outbound history. OpenRouter's mid-stream provider rotation can leave
+		// the context jsonl desynced with its own transcript; we reconcile from
+		// the transcript before every LLM call so Anthropic never sees a broken
+		// pair. No-op fast path when there are no orphans (the common case).
+		repairedHistory := messages
+		if ts.opts.TranscriptStore != nil && ts.opts.TranscriptSessionID != "" && ts.agent != nil && ts.agent.Tools != nil {
+			repaired, _ := repairHistory(turnCtx, messages, ts.opts.TranscriptStore, ts.opts.TranscriptSessionID, ts.agent.Tools, ts.agent.ID, ts.agent.LoadToolPolicy())
+			repairedHistory = repaired
+		}
+
+		callMessages := repairedHistory
 		if gracefulTerminal {
-			callMessages = append(append([]providers.Message(nil), messages...), ts.interruptHintMessage())
+			callMessages = append(append([]providers.Message(nil), repairedHistory...), ts.interruptHintMessage())
 			providerToolDefs = nil
 			ts.markGracefulTerminalUsed()
 		}

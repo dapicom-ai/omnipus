@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/config"
@@ -53,7 +52,7 @@ func TestExecuteReload_MarksDegradedOnCredInjectionFailure(t *testing.T) {
 	}
 
 	p := providers.LLMProvider(&restMockProvider{})
-	al := agent.NewAgentLoop(cfg, msgBus, p)
+	al := mustAgentLoop(t, cfg, msgBus, p)
 
 	// Build a locked credStore — InjectFromConfig will fail because the store
 	// is not unlocked, triggering markDegraded.

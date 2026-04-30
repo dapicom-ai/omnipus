@@ -52,7 +52,6 @@ func newExecTool(t *testing.T, workspace string) *tools.ExecTool {
 		Tools: config.ToolsConfig{
 			Exec: config.ExecConfig{
 				EnableDenyPatterns: true,
-				AllowRemote:        true, // bypass channel check: this test is not about channels
 				TimeoutSeconds:     10,
 			},
 		},
@@ -245,7 +244,6 @@ func TestExecCommandInjection_WorkspaceRestriction(t *testing.T) {
 		Tools: config.ToolsConfig{
 			Exec: config.ExecConfig{
 				EnableDenyPatterns: true,
-				AllowRemote:        true,
 				TimeoutSeconds:     5,
 			},
 		},

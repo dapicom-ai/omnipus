@@ -23,7 +23,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
@@ -84,7 +83,7 @@ func TestHandleLogin_IssuesSessionCookie(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := &restAPI{
 		agentLoop:     al,
 		homePath:      tmpDir,
@@ -166,7 +165,7 @@ func TestHandleLogin_BothCookiesEmitted(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := &restAPI{
 		agentLoop:     al,
 		homePath:      tmpDir,
@@ -225,7 +224,7 @@ func TestHandleRegisterAdmin_IssuesSessionCookie(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := &restAPI{
 		agentLoop:     al,
 		homePath:      tmpDir,

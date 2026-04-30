@@ -22,7 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/gateway/ctxkey"
@@ -89,7 +88,7 @@ func newUserMgmtAPI(t *testing.T, users []any) (*restAPI, string) {
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0o600))
 
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := &restAPI{
 		agentLoop:     al,
 		allowedOrigin: "http://localhost:3000",

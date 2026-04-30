@@ -587,11 +587,64 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       streamCursor: true,
     }
 
-    // Optimistic: add both messages + set isStreaming in ONE update to avoid race
-    set((state) => ({
-      messages: [...state.messages, userMsg, assistantMsg],
-      isStreaming: true,
-    }))
+    // Optimistic: add both messages + set isStreaming in ONE update to avoid race.
+    //
+    // Before we append the new turn, bake the previous turn's live tool calls
+    // into the previous assistant message's own `tool_calls` field. Otherwise
+    // `buildContentParts` (omnipus-runtime) would re-pull every live tool call
+    // into the *new* (now-last) assistant message via the `liveIds` path,
+    // visibly relocating turn-1's tool calls to the bottom of turn-2.
+    set((state) => {
+      const msgs = [...state.messages]
+      const prevAssistantIdx = msgs.map((m) => m.role).lastIndexOf('assistant')
+      let toolCallsAfterReset: typeof state.toolCalls = state.toolCalls
+      let toolCallOrderAfterReset: string[] = state.toolCallOrder
+
+      if (prevAssistantIdx !== -1) {
+        const prev = msgs[prevAssistantIdx]
+        const alreadySeen = new Set((prev.tool_calls ?? []).map((tc) => tc.id))
+        const liveIds = state.toolCallOrder.filter(
+          (id) => !alreadySeen.has(id) && state.toolCalls[id],
+        )
+        if (liveIds.length > 0) {
+          const baked = liveIds.map((id) => {
+            const tc = state.toolCalls[id]
+            return {
+              id,
+              tool: tc.tool,
+              params: tc.params,
+              result: tc.result,
+              status: tc.status,
+              duration_ms: tc.duration_ms,
+              error: tc.error,
+            }
+          })
+          msgs[prevAssistantIdx] = {
+            ...prev,
+            tool_calls: [...(prev.tool_calls ?? []), ...baked],
+          }
+          // Drop the now-baked entries from the live maps so the next turn
+          // computes `liveIds` against a clean slate. We deliberately keep
+          // `textAtToolCallStart` populated for baked IDs — the runtime's
+          // `pushHistoryParts` uses those snapshots to interleave the baked
+          // tool calls with text segments in their original streamed order.
+          const liveSet = new Set(liveIds)
+          const remainingCalls: typeof state.toolCalls = {}
+          for (const [k, v] of Object.entries(state.toolCalls)) {
+            if (!liveSet.has(k)) remainingCalls[k] = v
+          }
+          toolCallsAfterReset = remainingCalls
+          toolCallOrderAfterReset = state.toolCallOrder.filter((id) => !liveSet.has(id))
+        }
+      }
+
+      return {
+        messages: [...msgs, userMsg, assistantMsg],
+        toolCalls: toolCallsAfterReset,
+        toolCallOrder: toolCallOrderAfterReset,
+        isStreaming: true,
+      }
+    })
 
     const sent = connection.send({
       type: 'message',

@@ -263,9 +263,22 @@ func validateBootConfig(cfg *Config) error {
 	if len(cfg.Sandbox.EgressAllowList) == 0 {
 		cfg.Sandbox.EgressAllowList = []string{
 			"registry.npmjs.org",
+			"*.npmjs.org",
+			"*.npmjs.com",
 			"github.com",
 			"raw.githubusercontent.com",
+			"objects.githubusercontent.com",
+			"nodejs.org",
 		}
+	}
+
+	// Default workspace_shell_enabled to false (deny-by-default per hard constraint #6).
+	// Absent key → false. Operators who want the tool must explicitly opt in:
+	// {"sandbox": {"experimental": {"workspace_shell_enabled": true}}}.
+	// Jim (core agent) also flips this to true in coreagent.SeedConfig.
+	if cfg.Sandbox.Experimental.WorkspaceShellEnabled == nil {
+		f := false
+		cfg.Sandbox.Experimental.WorkspaceShellEnabled = &f
 	}
 
 	// --- : AuthMismatchLogLevel ---

@@ -126,9 +126,15 @@ func (lb *LinuxBackend) computeRights() {
 	// Note: landlockAccessFSIoctlDev is commented out because
 	// LANDLOCK_ACCESS_FS_IOCTL does not exist in kernel headers
 	// on this system (6.8.0-107). Setting unknown bits causes EINVAL.
-	if lb.abiVersion >= 4 {
-		lb.allRights |= landlockAccessNetBindTcp | landlockAccessNetConnectTcp
-	}
+	//
+	// Landlock ABI v4+ supports TCP bind/connect handling, but enabling
+	// handledAccessNet without any allow rules denies ALL outbound TCP
+	// connect from the gateway — including the loopback connect needed
+	// to reverse-proxy /dev/<agent>/<token>/ requests to dev servers.
+	// Until per-agent network rules are wired, leave net access unhandled
+	// (kernel default = unrestricted) so the gateway can connect to its
+	// own dev-server ports. Egress from sandboxed children is already
+	// gated by the EgressProxy allow-list.
 }
 
 func (lb *LinuxBackend) Name() string {
@@ -213,11 +219,10 @@ func (lb *LinuxBackend) ApplyWithMode(policy SandboxPolicy, mode Mode) error {
 		return fmt.Errorf("landlock: unknown mode %q", mode)
 	}
 
-	// Create ruleset.
+	// Create ruleset. handledAccessNet is intentionally left at zero —
+	// see computeRights for the rationale (no per-agent net rules yet,
+	// gateway needs unrestricted loopback connect for dev proxy).
 	attr := landlockRulesetAttr{handledAccessFS: lb.allRights}
-	if lb.abiVersion >= 4 {
-		attr.handledAccessNet = landlockAccessNetBindTcp | landlockAccessNetConnectTcp
-	}
 	rulesetFd, _, errno := unix.Syscall(
 		sysLandlockCreateRuleset,
 		uintptr(unsafe.Pointer(&attr)),

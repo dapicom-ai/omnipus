@@ -6,6 +6,7 @@ import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { useOmnipusRuntime } from "@/lib/omnipus-runtime";
 import { useChatStore } from "@/store/chat";
 import { useConnectionStore } from "@/store/connection";
+import { useSessionStore } from "@/store/session";
 import { WsConnection } from "@/lib/ws";
 import { TerminalOutputUI } from "./tools/TerminalOutput";
 import { FileReadPreviewUI, FileReadAliasDotUI } from "./tools/FileReadPreview";
@@ -16,6 +17,7 @@ import { WebFetchPreviewUI } from "./tools/WebFetchPreview";
 import { BrowserNavigateUI, BrowserNavigateUnderscoreUI } from "./tools/BrowserNavigate";
 import { ServeWorkspaceUI } from "./tools/ServeWorkspaceUI";
 import { RunInWorkspaceUI } from "./tools/RunInWorkspaceUI";
+import { WorkspaceShellUI, WorkspaceShellBgUI } from "./tools/WorkspaceShellUI";
 import {
   BrowserClickUI, BrowserClickUnderscoreUI,
   BrowserTypeUI, BrowserTypeUnderscoreUI,
@@ -39,6 +41,16 @@ function WsLifecycle() {
       onConnected: async () => {
         setConnected(true);
         setConnectionError(null);
+        // Re-bind any in-flight session to the freshly-opened WS so the
+        // gateway's per-connection sessionID is restored. Without this, a
+        // browser-suspended WS that auto-reconnects on focus would cause the
+        // next user message to spawn a new session and the agent loses
+        // transcript context. The send is fire-and-forget; the chat store
+        // already holds the local message history.
+        const activeSessionId = useSessionStore.getState().activeSessionId;
+        if (activeSessionId) {
+          conn.send({ type: "attach_session", session_id: activeSessionId });
+        }
       },
       onDisconnected: () => setConnected(false),
       onError: setConnectionError,
@@ -82,6 +94,8 @@ export function OmnipusRuntimeProvider({ children }: { children: React.ReactNode
        *   web_fetch         → WebFetchPreviewUI         (fetch a URL)
        *   serve_workspace   → ServeWorkspaceUI          (serve static workspace dir)
        *   run_in_workspace  → RunInWorkspaceUI          (run dev server in workspace)
+       *   workspace.shell   → WorkspaceShellUI          (foreground shell, captured output)
+       *   workspace.shell_bg → WorkspaceShellBgUI       (background shell, captured output)
        *   browser.navigate  → BrowserNavigateUI         (browser navigation + screenshot)
        *   browser_navigate  → BrowserNavigateUnderscoreUI (underscore variant)
        *   browser.click     → BrowserClickUI             (click element by selector)
@@ -110,6 +124,8 @@ export function OmnipusRuntimeProvider({ children }: { children: React.ReactNode
       <WebFetchPreviewUI />
       <ServeWorkspaceUI />
       <RunInWorkspaceUI />
+      <WorkspaceShellUI />
+      <WorkspaceShellBgUI />
       <BrowserNavigateUI />
       <BrowserNavigateUnderscoreUI />
       <BrowserClickUI />

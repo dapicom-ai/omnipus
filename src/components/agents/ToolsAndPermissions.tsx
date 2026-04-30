@@ -204,6 +204,14 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
     return 'custom'
   }, [defaultPolicy, policies])
 
+  // Detect shell/filesystem policy conflict: workspace.shell allowed but filesystem ops denied
+  const shellFsConflict = useMemo(() => {
+    const shellPolicy = resolvePolicy('workspace.shell', policies, defaultPolicy)
+    if (shellPolicy === 'deny') return false
+    const fsTools = ['write_file', 'read_file', 'list_dir'] as const
+    return fsTools.some((t) => resolvePolicy(t, policies, defaultPolicy) === 'deny')
+  }, [policies, defaultPolicy])
+
   // Filter out system-scope tools — never shown in agent tool configuration
   const displayTools = registryTools.filter((t) => {
     if (t.scope === 'system') return false
@@ -235,6 +243,27 @@ export function ToolsAndPermissions({ agentId, agentType: _agentType, tools, onC
   return (
     <>
       <div className="space-y-5">
+        {/* Shell/filesystem conflict banner */}
+        {shellFsConflict && (
+          <div
+            role="status"
+            data-testid="shell-fs-conflict-banner"
+            className="flex items-start gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2"
+          >
+            <Info size={13} className="text-[var(--color-secondary)] shrink-0 mt-0.5" />
+            <p className="text-[11px] text-[var(--color-muted)] leading-relaxed">
+              <code className="font-mono text-[var(--color-secondary)]">workspace.shell</code>{' '}
+              can perform filesystem operations directly. Denying{' '}
+              <code className="font-mono text-[var(--color-secondary)]">write_file</code>/
+              <code className="font-mono text-[var(--color-secondary)]">read_file</code>/
+              <code className="font-mono text-[var(--color-secondary)]">list_dir</code>{' '}
+              won&apos;t stop the shell — to block filesystem access, deny{' '}
+              <code className="font-mono text-[var(--color-secondary)]">workspace.shell</code>{' '}
+              instead.
+            </p>
+          </div>
+        )}
+
         {/* Auto-save status — top of section for visibility */}
         <div className="flex items-center gap-3">
           <AutoSaveIndicator status={saveStatus} error={saveError} />

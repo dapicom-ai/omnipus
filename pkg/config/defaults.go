@@ -442,7 +442,6 @@ func DefaultConfig() *Config {
 					Enabled: true,
 				},
 				EnableDenyPatterns:   true,
-				AllowRemote:          true,
 				TimeoutSeconds:       60,
 				MaxBackgroundSeconds: 300, // 5 minutes; 0 = disabled
 			},

@@ -522,8 +522,9 @@ func TestBootConfigRoundTrip_DefaultsApplied(t *testing.T) {
 	if loaded.Gateway.AuthMismatchLogLevel != "warn" {
 		t.Errorf("expected default AuthMismatchLogLevel=warn, got %q", loaded.Gateway.AuthMismatchLogLevel)
 	}
-	if len(loaded.Sandbox.EgressAllowList) != 3 {
-		t.Errorf("expected default EgressAllowList len=3, got %d: %v", len(loaded.Sandbox.EgressAllowList), loaded.Sandbox.EgressAllowList)
+	// PR 5: default egress allow-list expanded to 7 entries for npm + GitHub.
+	if len(loaded.Sandbox.EgressAllowList) != 7 {
+		t.Errorf("expected default EgressAllowList len=7, got %d: %v", len(loaded.Sandbox.EgressAllowList), loaded.Sandbox.EgressAllowList)
 	}
 	// PathGuardAuditFailClosed nil → true via ResolveBool.
 	if ResolveBool(loaded.Sandbox.PathGuardAuditFailClosed, true) != true {

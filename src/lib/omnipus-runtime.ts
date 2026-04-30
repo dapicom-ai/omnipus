@@ -12,14 +12,63 @@ type StoreToolCall = ToolCall & { call_id: string };
 
 // ── Message conversion ────────────────────────────────────────────────────────
 
-/** Push text + resolved history tool calls onto parts (text first, then tool calls). */
+/**
+ * Push text + history tool calls onto parts.
+ *
+ * When `textAtToolCallStart` carries a snapshot for any tool ID, interleave
+ * the tool-call parts with text segments so the rendered order matches the
+ * sequence in which the assistant streamed them. Without snapshots, fall
+ * back to "text first, then tool calls" — the historical behavior used for
+ * REST-loaded transcripts where snapshots are unavailable.
+ *
+ * This is what allows non-last (older) assistant turns to keep their tool
+ * calls interleaved with the text after a new turn starts; the first-fix
+ * baker preserves snapshots for previously-baked IDs precisely so this
+ * function can use them.
+ */
 function pushHistoryParts(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   parts: any[],
   text: string,
   historyToolCalls: NonNullable<ChatMessage["tool_calls"]>,
   toolCalls: Record<string, StoreToolCall>,
+  textAtToolCallStart?: Record<string, string>,
 ): void {
+  if (historyToolCalls.length === 0) {
+    parts.push({ type: "text", text });
+    return;
+  }
+
+  if (textAtToolCallStart) {
+    const ordered = [...historyToolCalls].sort((a, b) => {
+      const sa = textAtToolCallStart[a.id]?.length ?? Number.POSITIVE_INFINITY;
+      const sb = textAtToolCallStart[b.id]?.length ?? Number.POSITIVE_INFINITY;
+      return sa - sb;
+    });
+    let prevTextEnd = 0;
+    for (const tc of ordered) {
+      const segmentEnd = textAtToolCallStart[tc.id]?.length;
+      if (segmentEnd !== undefined && segmentEnd > prevTextEnd && segmentEnd <= text.length) {
+        parts.push({ type: "text", text: text.slice(prevTextEnd, segmentEnd) });
+        prevTextEnd = segmentEnd;
+      }
+      const resolved: ToolCall = toolCalls[tc.id] ?? tc;
+      parts.push({
+        type: "tool-call",
+        toolCallId: tc.id,
+        toolName: tc.tool,
+        args: tc.params,
+        result: resolved.result,
+      });
+    }
+    if (prevTextEnd < text.length) {
+      parts.push({ type: "text", text: text.slice(prevTextEnd) });
+    } else if (prevTextEnd === 0 && text.length === 0) {
+      parts.push({ type: "text", text: "" });
+    }
+    return;
+  }
+
   parts.push({ type: "text", text });
   for (const tc of historyToolCalls) {
     const resolved: ToolCall = toolCalls[tc.id] ?? tc;
@@ -45,9 +94,11 @@ function buildContentParts(
     const parts = [] as any;
     const historyTCs = msg.tool_calls ?? [];
 
-    // Non-last or non-assistant messages: text first, then tool calls (no interleaving).
+    // Non-last or non-assistant messages: interleave history tool calls with text
+    // segments using the global `textAtToolCallStart` snapshots so previously-baked
+    // turns keep their original streamed order across new turns.
     if (!isLastAssistant || msg.role !== "assistant") {
-      pushHistoryParts(parts, msg.content, historyTCs, toolCalls);
+      pushHistoryParts(parts, msg.content, historyTCs, toolCalls, textAtToolCallStart);
       return parts;
     }
 
@@ -56,7 +107,7 @@ function buildContentParts(
     const liveIds = toolCallOrder.filter((id) => !seenIds.has(id) && toolCalls[id]);
 
     if (liveIds.length === 0) {
-      pushHistoryParts(parts, msg.content, historyTCs, toolCalls);
+      pushHistoryParts(parts, msg.content, historyTCs, toolCalls, textAtToolCallStart);
       return parts;
     }
 
@@ -65,9 +116,9 @@ function buildContentParts(
     let prevTextEnd = 0;
     const fullText = msg.content ?? "";
 
-    // Emit history tool calls (if any) after the initial text
+    // Emit history tool calls (if any) interleaved with the text using snapshots.
     if (historyTCs.length > 0) {
-      pushHistoryParts(parts, fullText, historyTCs, toolCalls);
+      pushHistoryParts(parts, fullText, historyTCs, toolCalls, textAtToolCallStart);
       prevTextEnd = fullText.length;
     }
 

@@ -163,9 +163,13 @@ func (t *HandoffTool) Execute(ctx context.Context, args map[string]any) *ToolRes
 	currentAgentID := ToolAgentID(ctx)
 	handoffContent := fmt.Sprintf("Handoff: %s → %s. Context: %s", currentAgentID, agentName, contextMsg)
 	appendErr := t.sessionStore.AppendTranscript(sessionID, session.TranscriptEntry{
-		ID:        fmt.Sprintf("handoff-%d", time.Now().UnixNano()),
-		Type:      session.EntryTypeSystem,
-		Role:      "system",
+		ID:   fmt.Sprintf("handoff-%d", time.Now().UnixNano()),
+		Type: session.EntryTypeSystem,
+		Role: "system",
+		// AgentID = target so transcript hydration on a fresh turn picks
+		// up this entry under the new agent's history (e.g. Ray sees the
+		// brief on his first turn after Mia hands off to him).
+		AgentID:   agentID,
 		Content:   handoffContent,
 		Timestamp: time.Now().UTC(),
 	})

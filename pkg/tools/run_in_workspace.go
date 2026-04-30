@@ -56,14 +56,9 @@ import (
 // Spec v4 US-6 acceptance scenario 5 /.
 const Tier3UnsupportedMessage = "Tier 3 dev servers are Linux only"
 
-// baselineTier3Commands enumerates the leading-binary+subcommand pairs
-// allowed by default. Operators may extend with cfg.Sandbox.Tier3Commands.
-var baselineTier3Commands = []string{
-	"next dev",
-	"vite dev",
-	"astro dev",
-	"sveltekit dev",
-}
+// deprecationOnce ensures the run_in_workspace deprecation log fires at most once
+// per gateway lifetime. Using sync.Once prevents log spam on every tool invocation.
+var deprecationOnce sync.Once
 
 // devServerStartupGrace is how long we wait between spawning the child
 // and registering it. Long enough for the child to bind its port (the
@@ -202,7 +197,16 @@ func (t *RunInWorkspaceTool) Parameters() map[string]any {
 }
 
 // Execute validates and spawns the dev server.
+//
+// Deprecated: run_in_workspace is superseded by workspace.shell_bg. New agents
+// should use workspace.shell (foreground) + workspace.shell_bg (background dev
+// server). run_in_workspace will be removed in a future release.
 func (t *RunInWorkspaceTool) Execute(ctx context.Context, args map[string]any) *ToolResult {
+	deprecationOnce.Do(func() {
+		slog.Info("run_in_workspace is deprecated; use workspace.shell_bg instead",
+			"agent_id", ToolAgentID(ctx))
+	})
+
 	// Linux gate. Tier 3 is Linux-only in v4.
 	if runtime.GOOS != "linux" {
 		return ErrorResult(Tier3UnsupportedMessage)
@@ -234,14 +238,6 @@ func (t *RunInWorkspaceTool) Execute(ctx context.Context, args map[string]any) *
 		return ErrorResult(fmt.Sprintf(
 			"port out of allowed range [%d, %d]",
 			t.cfg.PortRange[0], t.cfg.PortRange[1],
-		))
-	}
-
-	// Command allow-list.
-	if !t.commandAllowed(command) {
-		return ErrorResult(fmt.Sprintf(
-			"command %q is not in the Tier 3 baseline (next dev | vite dev | astro dev | sveltekit dev) or operator-extended Tier3Commands",
-			command,
 		))
 	}
 
@@ -413,6 +409,11 @@ func (t *RunInWorkspaceTool) Execute(ctx context.Context, args map[string]any) *
 // hardened SysProcAttr as sandbox.Run — Setpgid + Pdeathsig — but does
 // not wait for completion. The parent gets back a started *exec.Cmd; the
 // caller MUST eventually Wait on it (we do this in a goroutine above).
+//
+// Delegates to sandbox.SpawnBackgroundChild for the shared spawn+harden
+// primitive. The Node-specific ensureNodeModules call remains here because
+// it is specific to run_in_workspace's Tier-3 contract and will be removed
+// in PR 5 when Jim migrates to workspace.shell_bg.
 func (t *RunInWorkspaceTool) startBackgroundChild(
 	ctx context.Context,
 	command string,
@@ -432,66 +433,14 @@ func (t *RunInWorkspaceTool) startBackgroundChild(
 		EgressProxyAddr:  t.proxyAddr(),
 	}
 
-	// Build cmd.Env from the supplied env plus proxy + npm-cache vars.
-	// We re-use sandbox.mergeEnv via a small shim so the same merge
-	// semantics apply as for build_static. We can't call mergeEnv
-	// directly (unexported); emulate it.
-	merged := append([]string{}, env...)
-	if t.proxy != nil {
-		proxyURL := "http://" + t.proxy.Addr()
-		merged = append(merged,
-			"HTTP_PROXY="+proxyURL,
-			"HTTPS_PROXY="+proxyURL,
-			"http_proxy="+proxyURL,
-			"https_proxy="+proxyURL,
-			"NO_PROXY=127.0.0.1,localhost,::1",
-			"no_proxy=127.0.0.1,localhost,::1",
-		)
-	}
-	if t.workspace != "" {
-		merged = append(merged, "npm_config_cache="+t.workspace+"/.npm-cache")
-	}
-	// Force PORT to win over operator-supplied env.
-	merged = append(merged, fmt.Sprintf("PORT=%d", port))
-
-	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
-	cmd.Dir = t.workspace
-	cmd.Env = merged
-
-	// Apply Setpgid + Pdeathsig via the same path sandbox.Run uses.
-	if err := sandbox.ApplyChildHardening(cmd, limits); err != nil {
-		return nil, fmt.Errorf("apply hardening: %w", err)
-	}
-
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-	if err := sandbox.ApplyChildPostStartHardening(cmd, limits); err != nil {
-		_ = cmd.Process.Kill()
-		return nil, fmt.Errorf("post-start hardening: %w", err)
-	}
-	return cmd, nil
-}
-
-// commandAllowed returns true when command's leading binary+subcommand
-// matches an entry in the baseline OR cfg.Tier3Commands.
-//
-// Comparison is exact-prefix on the trimmed command. e.g. baseline entry
-// "next dev" matches the command "next dev --port 18000" but NOT
-// "next-mock dev".
-func (t *RunInWorkspaceTool) commandAllowed(command string) bool {
-	allow := append([]string{}, baselineTier3Commands...)
-	allow = append(allow, t.cfg.Tier3Commands...)
-	for _, entry := range allow {
-		entry = strings.TrimSpace(entry)
-		if entry == "" {
-			continue
-		}
-		if command == entry || strings.HasPrefix(command, entry+" ") {
-			return true
-		}
-	}
-	return false
+	// Delegate the actual spawn+harden sequence to the shared helper.
+	// SpawnBackgroundChild handles mergeEnv, PORT injection, Setpgid,
+	// Pdeathsig, prlimit, and post-start hardening uniformly.
+	//
+	// Note: SpawnBackgroundChild uses exec.Command (not exec.CommandContext)
+	// so context cancellation does not kill the long-lived dev server early.
+	// The DevServerRegistry manages the server lifetime via SIGTERM on expiry.
+	return sandbox.SpawnBackgroundChild(parts, t.workspace, env, port, limits)
 }
 
 // proxyAddr returns the egress proxy addr, or "" when proxy is nil.
@@ -505,16 +454,11 @@ func (t *RunInWorkspaceTool) proxyAddr() string {
 // buildDevURL returns the /dev/<agent>/<token>/ URL the agent surfaces to
 // the user. When gatewayHost is empty (test wiring) we return only the
 // path so callers can prepend their own host.
+//
+// Delegates to sandbox.BuildDevURL for the shared URL construction logic
+// (scheme coercion, trailing slash normalisation).
 func (t *RunInWorkspaceTool) buildDevURL(agentID, token string) string {
-	path := fmt.Sprintf("/dev/%s/%s/", agentID, token)
-	if t.gatewayHost == "" {
-		return path
-	}
-	host := strings.TrimSuffix(t.gatewayHost, "/")
-	if !strings.Contains(host, "://") {
-		host = "https://" + host
-	}
-	return host + path
+	return sandbox.BuildDevURL(agentID, token, t.gatewayHost)
 }
 
 // auditStart emits an audit entry for the dev-server start so operators

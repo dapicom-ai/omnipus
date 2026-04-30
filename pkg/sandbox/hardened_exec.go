@@ -29,10 +29,38 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
 )
+
+// sensitiveEnvKeys are stripped from any inherited gateway environment before
+// it reaches a child process. Includes the master key, the bearer auth token,
+// and the path to the master key file so children cannot read them.
+var sensitiveEnvKeys = map[string]struct{}{
+	"OMNIPUS_MASTER_KEY":   {},
+	"OMNIPUS_KEY_FILE":     {},
+	"OMNIPUS_BEARER_TOKEN": {},
+}
+
+// scrubGatewayEnv returns a copy of os.Environ() with sensitive keys removed.
+// Used by mergeEnv so children inherit PATH/HOME/LANG without seeing secrets.
+func scrubGatewayEnv() []string {
+	parent := os.Environ()
+	out := make([]string, 0, len(parent))
+	for _, kv := range parent {
+		eq := strings.IndexByte(kv, '=')
+		if eq <= 0 {
+			continue
+		}
+		if _, blocked := sensitiveEnvKeys[kv[:eq]]; blocked {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
 
 // Limits describes resource caps and environment hints for a hardened child.
 //
@@ -152,6 +180,11 @@ func Run(ctx context.Context, argv []string, env []string, lim Limits) (Result, 
 	stderrBuf.cap = outputCap
 	cmd.Stdout = &stdoutBuf
 	cmd.Stderr = &stderrBuf
+	// Stdin: bind to an empty in-memory reader so os/exec does not open
+	// /dev/null on our behalf. Landlock at the gateway level does not grant
+	// access to /dev, and an empty reader yields the same EOF semantics as
+	// /dev/null without traversing the device tree.
+	cmd.Stdin = bytes.NewReader(nil)
 
 	// Apply platform-specific hardening (Setpgid+Pdeathsig+prlimit on
 	// Linux, rlimit on darwin, Job Object on windows). Failure to apply
@@ -214,16 +247,22 @@ func Run(ctx context.Context, argv []string, env []string, lim Limits) (Result, 
 	}, nil
 }
 
-// mergeEnv merges the caller's env with platform-injected vars. Caller env
-// is ordered first; injected vars are appended last. POSIX exec(3) gives
-// later entries precedence on duplicate keys, so injected proxy/cache vars
-// win — this is intentional, the caller cannot accidentally bypass them.
+// mergeEnv merges the gateway's (scrubbed) environment, the caller's env,
+// and platform-injected vars. Order: gateway env, caller env, injected
+// proxy/cache vars. POSIX exec(3) gives later entries precedence on
+// duplicate keys, so caller env can override gateway env, and injected
+// proxy/cache vars override both — this is intentional.
 //
-// When env is nil, the child inherits the parent's environment (the
-// stdlib's exec.Cmd.Env=nil convention) plus the injected vars. When env
-// is non-nil but empty, the child gets ONLY the injected vars.
+// Gateway env is always inherited (with sensitive keys stripped) so children
+// have working PATH/HOME/LANG without leaking secrets. Setting cmd.Env to a
+// non-nil empty slice in os/exec means "no inheritance"; the previous
+// implementation forced operators to plumb PATH through the tool's `env`
+// arg, which silently broke commands like `npm run dev` that depend on
+// node_modules/.bin being on PATH.
 func mergeEnv(env []string, lim Limits) []string {
-	merged := make([]string, 0, len(env)+4)
+	gateway := scrubGatewayEnv()
+	merged := make([]string, 0, len(gateway)+len(env)+6)
+	merged = append(merged, gateway...)
 	merged = append(merged, env...)
 
 	// Inject proxy variables. Both upper- and lower-case forms are widely

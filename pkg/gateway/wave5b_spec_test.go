@@ -29,7 +29,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
@@ -61,7 +60,7 @@ func newWave5bTestAPI(t *testing.T) *restAPI {
 	// seedTestAgents is declared in rest_test.go (same package — gateway_test binary).
 	seedTestAgents(cfg)
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	return &restAPI{
 		agentLoop:     al,
 		allowedOrigin: "http://localhost:3000",

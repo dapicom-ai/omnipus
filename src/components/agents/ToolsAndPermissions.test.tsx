@@ -250,6 +250,103 @@ describe('ToolsAndPermissions — fence badge (FR-086)', () => {
   })
 })
 
+describe('ToolsAndPermissions — shell/fs conflict banner', () => {
+  const SHELL_TOOL: RegistryTool = {
+    name: 'workspace.shell',
+    scope: 'general',
+    category: 'shell',
+    description: 'Run a shell command in the workspace',
+    source: 'builtin',
+  }
+  const FS_TOOLS: RegistryTool[] = [
+    { name: 'write_file', scope: 'general', category: 'filesystem', description: 'Write file', source: 'builtin' },
+    { name: 'read_file', scope: 'general', category: 'filesystem', description: 'Read file', source: 'builtin' },
+    { name: 'list_dir', scope: 'general', category: 'filesystem', description: 'List dir', source: 'builtin' },
+  ]
+
+  beforeEach(() => {
+    vi.mocked(api.fetchRegistryTools).mockResolvedValue([SHELL_TOOL, ...FS_TOOLS])
+    vi.mocked(api.fetchAgentTools).mockResolvedValue({ config: DEFAULT_TOOLS_CFG, tools: [] })
+    vi.mocked(api.fetchGlobalToolPolicies).mockResolvedValue({ default_policy: 'allow', policies: {} })
+  })
+
+  it('banner renders when workspace.shell is allow and a filesystem tool is deny', async () => {
+    const conflictTools: AgentToolsCfg = {
+      builtin: {
+        default_policy: 'allow',
+        policies: { write_file: 'deny' },
+      },
+    }
+    renderWithQuery(
+      <ToolsAndPermissions
+        agentId="agent-1"
+        agentType="custom"
+        tools={conflictTools}
+        onChange={NOOP_CHANGE}
+      />,
+    )
+    await waitFor(() => {
+      expect(screen.getByTestId('shell-fs-conflict-banner')).toBeInTheDocument()
+    })
+  })
+
+  it('banner hidden when workspace.shell is deny', async () => {
+    const noConflictTools: AgentToolsCfg = {
+      builtin: {
+        default_policy: 'allow',
+        policies: { 'workspace.shell': 'deny', write_file: 'deny' },
+      },
+    }
+    renderWithQuery(
+      <ToolsAndPermissions
+        agentId="agent-1"
+        agentType="custom"
+        tools={noConflictTools}
+        onChange={NOOP_CHANGE}
+      />,
+    )
+    await waitFor(() => {
+      expect(screen.queryByTestId('shell-fs-conflict-banner')).not.toBeInTheDocument()
+    })
+  })
+
+  it('banner hidden when no filesystem tool is denied', async () => {
+    renderWithQuery(
+      <ToolsAndPermissions
+        agentId="agent-1"
+        agentType="custom"
+        tools={DEFAULT_TOOLS_CFG}
+        onChange={NOOP_CHANGE}
+      />,
+    )
+    await waitFor(() => {
+      expect(screen.queryByTestId('shell-fs-conflict-banner')).not.toBeInTheDocument()
+    })
+  })
+
+  it('banner text is visible when conflict exists', async () => {
+    const conflictTools: AgentToolsCfg = {
+      builtin: {
+        default_policy: 'allow',
+        policies: { read_file: 'deny' },
+      },
+    }
+    renderWithQuery(
+      <ToolsAndPermissions
+        agentId="agent-1"
+        agentType="custom"
+        tools={conflictTools}
+        onChange={NOOP_CHANGE}
+      />,
+    )
+    await waitFor(() => {
+      const banner = screen.getByTestId('shell-fs-conflict-banner')
+      expect(banner.textContent).toMatch(/workspace\.shell/i)
+      expect(banner.textContent).toMatch(/won.t stop the shell/i)
+    })
+  })
+})
+
 describe('ToolsAndPermissions — preset confirmation dialog (FR-043, FR-044)', () => {
   it('opens confirmation dialog when preset button is clicked', async () => {
     renderWithQuery(

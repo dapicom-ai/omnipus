@@ -29,7 +29,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/credentials"
@@ -60,7 +59,7 @@ func newTestAPIWithHome(t *testing.T) (*restAPI, string) {
 	minimalCfg := []byte(`{"version":1,"agents":{"defaults":{},"list":[]},"providers":[]}`)
 	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := &restAPI{
 		agentLoop:     al,
 		allowedOrigin: "http://localhost:3000",
@@ -100,7 +99,7 @@ func newTestAPIWithMasterKey(t *testing.T) (*restAPI, string, string) {
 	minimalCfg := []byte(`{"version":1,"agents":{"defaults":{},"list":[]},"providers":[]}`)
 	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := &restAPI{
 		agentLoop:     al,
 		allowedOrigin: "http://localhost:3000",
@@ -376,7 +375,7 @@ func TestProviders_BackwardCompatPlaintextAPIKey(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := &restAPI{
 		agentLoop:     al,
 		allowedOrigin: "http://localhost:3000",
@@ -680,7 +679,7 @@ func TestProviderGET_ResolvesAPIKeyRefFromCredStore(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfgObj, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfgObj, msgBus, &restMockProvider{})
 	apiWithRef := &restAPI{
 		agentLoop:     al,
 		allowedOrigin: "http://localhost:3000",

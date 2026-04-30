@@ -20,7 +20,6 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/config"
-	"github.com/dapicom-ai/omnipus/pkg/constants"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/policy"
 	"github.com/dapicom-ai/omnipus/pkg/sandbox"
@@ -107,7 +106,6 @@ type ExecTool struct {
 	customAllowPatterns  []*regexp.Regexp
 	allowedPathPatterns  []*regexp.Regexp
 	restrictToWorkspace  bool
-	allowRemote          bool
 	sessionManager       *SessionManager
 
 	// Wave 2: Security wiring (SEC-01/02/03/05).
@@ -265,7 +263,6 @@ func NewExecToolWithConfig(
 	denyPatterns := make([]*regexp.Regexp, 0)
 	customAllowPatterns := make([]*regexp.Regexp, 0)
 	var allowedPathPatterns []*regexp.Regexp
-	allowRemote := false
 	if len(allowPaths) > 0 {
 		allowedPathPatterns = allowPaths[0]
 	}
@@ -273,7 +270,6 @@ func NewExecToolWithConfig(
 	if config != nil {
 		execConfig := config.Tools.Exec
 		enableDenyPatterns := execConfig.EnableDenyPatterns
-		allowRemote = execConfig.AllowRemote
 		if enableDenyPatterns {
 			denyPatterns = append(denyPatterns, defaultDenyPatterns...)
 			if len(execConfig.CustomDenyPatterns) > 0 {
@@ -324,7 +320,6 @@ func NewExecToolWithConfig(
 		customAllowPatterns:  customAllowPatterns,
 		allowedPathPatterns:  allowedPathPatterns,
 		restrictToWorkspace:  restrict,
-		allowRemote:          allowRemote,
 		sessionManager:       getSessionManager(),
 	}, nil
 }
@@ -417,18 +412,9 @@ func (t *ExecTool) executeRun(ctx context.Context, args map[string]any) *ToolRes
 		return ErrorResult("command is required")
 	}
 
-	// GHSA-pv8c-p6jf-3fpp: block exec from remote channels (e.g. Telegram webhooks)
-	// unless explicitly opted-in via config. Fail-closed: empty channel = blocked.
-	if !t.allowRemote {
-		channel := ToolChannel(ctx)
-		if channel == "" {
-			channel, _ = args["__channel"].(string)
-		}
-		channel = strings.TrimSpace(channel)
-		if channel == "" || !constants.IsInternalChannel(channel) {
-			return ErrorResult("exec is restricted to internal channels")
-		}
-	}
+	// GHSA-pv8c-p6jf-3fpp channel block removed. exec is now governed
+	// purely by per-agent ToolPolicyCfg. Agents that should not use exec on
+	// remote channels must have exec: deny in their tool policy.
 
 	getBoolArg := func(key string) bool {
 		switch v := args[key].(type) {

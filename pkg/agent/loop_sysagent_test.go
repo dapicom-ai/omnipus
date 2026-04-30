@@ -37,7 +37,7 @@ func TestCustomAgent_HasNoSystemToolsRegistered(t *testing.T) {
 	}
 
 	msgBus := bus.NewMessageBus()
-	al := NewAgentLoop(cfg, msgBus, &mockProvider{})
+	al := mustNewAgentLoop(t, cfg, msgBus, &mockProvider{})
 
 	// The custom agent must NOT have any system.* tools in its registry.
 	customAgent, ok := al.GetRegistry().GetAgent("custom-bot")

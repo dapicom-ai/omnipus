@@ -34,7 +34,7 @@ func TestAllImplementedToolsRegistered_DefaultConfig(t *testing.T) {
 	cfg.Agents.Defaults.Workspace = t.TempDir()
 
 	msgBus := bus.NewMessageBus()
-	al := NewAgentLoop(cfg, msgBus, &mockProvider{})
+	al := mustNewAgentLoop(t, cfg, msgBus, &mockProvider{})
 	require.NotNil(t, al)
 	defer al.Close()
 
@@ -132,7 +132,7 @@ func TestDeprecatedEnableFlagScanDoesNotPanic(t *testing.T) {
 	assert.NotPanics(t, func() {
 		// Build a loop with this cfg so we exercise the downstream paths
 		// that previously consulted IsToolEnabled.
-		al := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{})
+		al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{})
 		_ = al
 	})
 }

@@ -77,6 +77,68 @@ func (m *SandboxMode) UnmarshalJSON(data []byte) error {
 	}
 }
 
+// SandboxProfile is the per-agent kernel sandbox profile.
+// It controls which sandbox limits are applied when an agent spawns child
+// processes. Empty means "use the global default (DefaultProfile)".
+type SandboxProfile string
+
+const (
+	// SandboxProfileWorkspace confines the agent to its workspace directory
+	// (Landlock) with outbound network blocked (seccomp/egress-proxy deny-all).
+	SandboxProfileWorkspace SandboxProfile = "workspace"
+	// SandboxProfileWorkspaceNet confines the agent to its workspace directory
+	// but permits outbound HTTP/HTTPS through the egress allow-list proxy.
+	SandboxProfileWorkspaceNet SandboxProfile = "workspace+net"
+	// SandboxProfileHost allows access to the full host filesystem and network
+	// with only the most dangerous syscalls (mount, kexec, ptrace, …) blocked.
+	SandboxProfileHost SandboxProfile = "host"
+	// SandboxProfileOff disables all kernel-level sandboxing for this agent.
+	// This is the "god mode" profile gated by three independent latches.
+	SandboxProfileOff SandboxProfile = "off"
+)
+
+// IsValid reports whether p is one of the defined SandboxProfile constants.
+// An empty string is considered valid (means "use global default").
+func (p SandboxProfile) IsValid() bool {
+	switch p {
+	case SandboxProfileWorkspace, SandboxProfileWorkspaceNet,
+		SandboxProfileHost, SandboxProfileOff, "":
+		return true
+	default:
+		return false
+	}
+}
+
+// String implements fmt.Stringer.
+func (p SandboxProfile) String() string { return string(p) }
+
+// MarshalJSON serialises the profile as a JSON string.
+func (p SandboxProfile) MarshalJSON() ([]byte, error) {
+	return json.Marshal(string(p))
+}
+
+// UnmarshalJSON validates and deserialises a SandboxProfile from JSON.
+// Empty string is accepted (field omitted in config.json; callers default-fill).
+// Unknown non-empty values are rejected so typos fail at load time rather than
+// silently behaving as the zero value.
+func (p *SandboxProfile) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	switch SandboxProfile(s) {
+	case SandboxProfileWorkspace, SandboxProfileWorkspaceNet,
+		SandboxProfileHost, SandboxProfileOff:
+		*p = SandboxProfile(s)
+		return nil
+	case "":
+		*p = ""
+		return nil
+	default:
+		return fmt.Errorf("invalid sandbox_profile: %q (must be one of: workspace, workspace+net, host, off)", s)
+	}
+}
+
 // PromptInjectionLevel controls prompt guard aggressiveness (SEC-25).
 type PromptInjectionLevel string
 
@@ -269,6 +331,34 @@ type OmnipusSandboxConfig struct {
 	// blocking (e.g. ["localhost", "10.0.0.0/8"] to allow an internal search
 	// service while still blocking all other private ranges).
 	SSRF OmnipusSSRFConfig `json:"ssrf,omitempty"`
+
+	// DefaultProfile is the global fallback sandbox profile applied to agents
+	// that do not specify their own SandboxProfile. When empty, defaults to
+	// SandboxProfileWorkspace at enforcement time.
+	DefaultProfile SandboxProfile `json:"default_profile,omitempty"`
+
+	// ShellDenyPatterns is the global operator-controlled list of shell command
+	// deny patterns (regular expressions). Per-agent AgentShellPolicy.CustomDenyPatterns
+	// are merged with this list at enforcement time. Patterns that fail to compile
+	// are logged at Warn and skipped.
+	ShellDenyPatterns []string `json:"shell_deny_patterns,omitempty"`
+
+	// Experimental holds feature flags for dark-launched capabilities.
+	// All flags default to false (deny-by-default per SEC design).
+	Experimental ExperimentalConfig `json:"experimental,omitempty"`
+}
+
+// ExperimentalConfig holds feature flags for dark-launched tools and capabilities.
+// All flags default to false (deny-by-default per SEC hard constraint #6).
+type ExperimentalConfig struct {
+	// WorkspaceShellEnabled gates the workspace.shell and workspace.shell_bg
+	// builtin tools. Defaults to false (deny-by-default). Operators must
+	// explicitly opt in by writing:
+	//   {"experimental": {"workspace_shell_enabled": true}}
+	//
+	// The validator fills a nil pointer with false. Jim (the general-purpose
+	// core agent) has this flag flipped to true during SeedConfig.
+	WorkspaceShellEnabled *bool `json:"workspace_shell_enabled,omitempty"`
 }
 
 // OmnipusSSRFConfig holds SSRF protection settings for outbound HTTP clients (SEC-24).

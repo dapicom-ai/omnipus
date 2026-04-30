@@ -18,7 +18,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
@@ -48,7 +47,7 @@ func newTestRestAPIWithHome(t *testing.T) *restAPI {
 	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
 
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	return &restAPI{
 		agentLoop:     al,
 		allowedOrigin: "http://localhost:3000",

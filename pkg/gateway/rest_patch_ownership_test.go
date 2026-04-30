@@ -22,7 +22,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
@@ -142,7 +141,7 @@ func newPatchOwnershipAPI(
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0o600))
 
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 
 	api := &restAPI{
 		agentLoop:     al,
@@ -413,7 +412,7 @@ func TestPatchOwnership_DifferentAgents_ProduceDifferentResults(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "config.json"), data, 0o600))
 
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := &restAPI{
 		agentLoop:     al,
 		homePath:      tmpDir,

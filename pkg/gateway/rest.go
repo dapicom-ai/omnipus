@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"sort"
@@ -115,6 +116,12 @@ type restAPI struct {
 	// GET /api/v1/tools includes MCP entries from this registry.
 	// Nil in test setups that do not wire MCP.
 	mcpRegistry *tools.MCPRegistry
+
+	// allowGodMode is set when the gateway was started with --allow-god-mode.
+	// When false, the agent update handler rejects sandbox_profile=off with 403.
+	// Mirrors the same field on AgentLoop for runtime tool coercion.
+	// Latch (2) — REST enforcement.
+	allowGodMode bool
 }
 
 // --- CORS / JSON helpers ---
@@ -1211,22 +1218,49 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 	var req struct {
-		Name              *string `json:"name"`
-		Description       *string `json:"description"`
-		Model             *string `json:"model"`
-		Soul              *string `json:"soul"`
-		Heartbeat         *string `json:"heartbeat"`
-		Instructions      *string `json:"instructions"`
-		TimeoutSeconds    *int    `json:"timeout_seconds"`
-		MaxToolIterations *int    `json:"max_tool_iterations"`
-		SteeringMode      *string `json:"steering_mode"`
-		ToolFeedback      *bool   `json:"tool_feedback"`
-		HeartbeatEnabled  *bool   `json:"heartbeat_enabled"`
-		HeartbeatInterval *int    `json:"heartbeat_interval"`
+		Name              *string                  `json:"name"`
+		Description       *string                  `json:"description"`
+		Model             *string                  `json:"model"`
+		Soul              *string                  `json:"soul"`
+		Heartbeat         *string                  `json:"heartbeat"`
+		Instructions      *string                  `json:"instructions"`
+		TimeoutSeconds    *int                     `json:"timeout_seconds"`
+		MaxToolIterations *int                     `json:"max_tool_iterations"`
+		SteeringMode      *string                  `json:"steering_mode"`
+		ToolFeedback      *bool                    `json:"tool_feedback"`
+		HeartbeatEnabled  *bool                    `json:"heartbeat_enabled"`
+		HeartbeatInterval *int                     `json:"heartbeat_interval"`
+		SandboxProfile    *config.SandboxProfile   `json:"sandbox_profile"`
+		ShellPolicy       *config.AgentShellPolicy `json:"shell_policy"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
 		return
+	}
+	// Enforce god-mode latches (1) and (2) at the REST write gate.
+	// Reject sandbox_profile=off unless both sandbox.GodModeAvailable (build
+	// tag) and a.allowGodMode (--allow-god-mode boot flag) are true.
+	if req.SandboxProfile != nil && *req.SandboxProfile == config.SandboxProfileOff {
+		if !sandbox.GodModeAvailable {
+			jsonErr(w, http.StatusForbidden,
+				"sandbox_profile=off is not available in this build")
+			return
+		}
+		if !a.allowGodMode {
+			jsonErr(w, http.StatusForbidden,
+				"sandbox_profile=off requires --allow-god-mode at gateway boot")
+			return
+		}
+	}
+	// Validate any custom deny patterns in shell_policy — each must be a valid Go regexp.
+	if req.ShellPolicy != nil && len(req.ShellPolicy.CustomDenyPatterns) > 0 {
+		for _, pat := range req.ShellPolicy.CustomDenyPatterns {
+			if _, compileErr := regexp.Compile(pat); compileErr != nil {
+				jsonErr(w, http.StatusBadRequest,
+					fmt.Sprintf("shell_policy.custom_deny_patterns: invalid regexp %q: %v", pat, compileErr))
+				return
+			}
+		}
 	}
 	// Locked core agents: reject identity and prompt mutations.
 	// Allowed: model selection, heartbeat schedule (enabled/interval), tools (via updateAgentTools).
@@ -1303,6 +1337,22 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 						agentMap["tool_feedback"] = tfMap
 					}
 					tfMap["enabled"] = *req.ToolFeedback
+				}
+				if req.SandboxProfile != nil {
+					if *req.SandboxProfile == "" {
+						delete(agentMap, "sandbox_profile")
+					} else {
+						agentMap["sandbox_profile"] = string(*req.SandboxProfile)
+					}
+				}
+				if req.ShellPolicy != nil {
+					spMap := map[string]any{
+						"enable_deny_patterns": req.ShellPolicy.EnableDenyPatterns,
+					}
+					if len(req.ShellPolicy.CustomDenyPatterns) > 0 {
+						spMap["custom_deny_patterns"] = req.ShellPolicy.CustomDenyPatterns
+					}
+					agentMap["shell_policy"] = spMap
 				}
 				break
 			}
@@ -1617,6 +1667,15 @@ func (a *restAPI) safeUpdateConfigJSON(mutate func(m map[string]any) error) erro
 	if refreshErr := a.refreshConfigAndRewireServices(a.configPath()); refreshErr != nil {
 		return fmt.Errorf("config written but in-memory refresh failed: %w", refreshErr)
 	}
+	// FR-061 single chokepoint: every config mutation invalidates all cached
+	// system-prompt preambles so the next agent turn rebuilds from the updated
+	// config. Doing this inside safeUpdateConfigJSON removes the need for
+	// individual call sites to remember the invalidation step.
+	if a.agentLoop != nil {
+		if reg := a.agentLoop.ContextBuilderRegistry(); reg != nil {
+			reg.InvalidateAllContextBuilders()
+		}
+	}
 	return nil
 }
 
@@ -1770,6 +1829,7 @@ func (a *restAPI) updateConfig(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
 		return
 	}
+
 	a.getConfig(w)
 }
 
@@ -3363,6 +3423,7 @@ func (a *restAPI) updateAgentTools(w http.ResponseWriter, r *http.Request, agent
 
 	// Tool policy changes are config-only — no reload needed. The policy is
 	// resolved at request time from the live config, not baked into agent instances.
+	// FR-061 invalidation fires inside safeUpdateConfigJSON above.
 	a.getAgentTools(w, agentID)
 }
 

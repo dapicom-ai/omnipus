@@ -171,6 +171,10 @@ type OmnipusRetentionConfig struct {
 	// KeepCompactionSummary preserves last_compaction_summary in meta.json
 	// even when all partitions are purged by the retention policy.
 	KeepCompactionSummary bool `json:"keep_compaction_summary,omitempty"`
+	// MemoryRetrosDays is how many days of retrospective files to keep per
+	// agent. 0 = use default (30 days). Used by MemoryStore.SweepRetros.
+	// Spec v7 FR-034.
+	MemoryRetrosDays int `json:"memory_retros_days,omitempty"`
 }
 
 // RetentionSessionDays returns the configured session retention days, defaulting to 90.
@@ -183,6 +187,16 @@ func (r OmnipusRetentionConfig) RetentionSessionDays() int {
 
 // IsDisabled reports whether retention enforcement is entirely suppressed (keep forever).
 func (r OmnipusRetentionConfig) IsDisabled() bool { return r.Disabled }
+
+// RetentionMemoryRetrosDays returns the configured retro retention, defaulting
+// to 30. Spec v7 FR-034 — used by MemoryStore.SweepRetros and the recall search
+// window for retrospectives.
+func (r OmnipusRetentionConfig) RetentionMemoryRetrosDays() int {
+	if r.MemoryRetrosDays <= 0 {
+		return 30
+	}
+	return r.MemoryRetrosDays
+}
 
 // RetentionMode summarizes the (session_days, disabled) pair into one of
 // three operator-facing states. Use Mode() on OmnipusRetentionConfig to
@@ -457,6 +471,14 @@ type AgentConfig struct {
 	// Set at creation time; only the owner or an admin may access the agent's
 	// resources. Empty string for system/core agents.
 	OwnerUsername string `json:"owner_username,omitempty"`
+	// SandboxProfile selects the kernel sandbox profile for this agent.
+	// Empty means "use the global default" (OmnipusSandboxConfig.DefaultProfile,
+	// which itself falls back to SandboxProfileWorkspace when also empty).
+	SandboxProfile SandboxProfile `json:"sandbox_profile,omitempty"`
+	// ShellPolicy configures per-agent shell command deny patterns.
+	// When non-nil, its settings are merged with the global ShellDenyPatterns
+	// at enforcement time.
+	ShellPolicy *AgentShellPolicy `json:"shell_policy,omitempty"`
 }
 
 // IsActive returns the effective active state of this agent.
@@ -475,6 +497,22 @@ const (
 	AgentTypeCore   AgentType = "core"
 	AgentTypeCustom AgentType = "custom"
 )
+
+// AgentShellPolicy configures per-agent shell command deny patterns for the
+// workspace.shell tool. It is stored on AgentConfig so
+// that the enforcement layer can merge per-agent patterns with the global
+// OmnipusSandboxConfig.ShellDenyPatterns list.
+type AgentShellPolicy struct {
+	// EnableDenyPatterns activates shell command deny-pattern checking for this
+	// agent. When false (default), neither custom nor global deny patterns are
+	// applied. Operators must explicitly opt in per agent or globally.
+	EnableDenyPatterns bool `json:"enable_deny_patterns,omitempty"`
+	// CustomDenyPatterns lists agent-specific shell command deny patterns
+	// (regular expressions). Merged with the global ShellDenyPatterns list when
+	// EnableDenyPatterns is true. Patterns that fail to compile are logged at
+	// Warn and skipped.
+	CustomDenyPatterns []string `json:"custom_deny_patterns,omitempty"`
+}
 
 // AgentToolsCfg holds per-agent overrides for builtin tool visibility and MCP server bindings.
 type AgentToolsCfg struct {
@@ -624,6 +662,85 @@ type AgentDefaults struct {
 	TimeoutSeconds            int                `json:"timeout_seconds"                 env:"OMNIPUS_AGENTS_DEFAULTS_TIMEOUT_SECONDS"` // per-turn timeout in seconds; 0 = disabled
 	CanDelegateTo             []string           `json:"can_delegate_to,omitempty"`
 	DefaultAgentID            string             `json:"default_agent_id,omitempty"      env:"OMNIPUS_DEFAULT_AGENT_ID"`
+
+	// AutoRecapEnabled gates the session-end recap pipeline (FR-033).
+	// When false, CloseSession is a no-op and no background LLM calls are made.
+	// Opt-in by design: recaps cost money.
+	AutoRecapEnabled bool `json:"auto_recap_enabled" env:"OMNIPUS_AGENTS_DEFAULTS_AUTO_RECAP_ENABLED"`
+
+	// IdleTimeoutMinutes drives the per-session idle ticker that triggers a
+	// recap when the user disappears without explicitly closing. 0 → 30.
+	// Spec v7 FR-035.
+	IdleTimeoutMinutes int `json:"idle_timeout_minutes" env:"OMNIPUS_AGENTS_DEFAULTS_IDLE_TIMEOUT_MINUTES"`
+
+	// BootstrapRecapEnabled is a SECOND opt-in specifically for the boot-time
+	// pass that sweeps orphaned sessions and generates a recap for each. Split
+	// from AutoRecapEnabled because a boot burst has a different risk profile
+	// (unbounded cost amplification). FR-032a / MAJ-007. Default false.
+	BootstrapRecapEnabled bool `json:"bootstrap_recap_enabled" env:"OMNIPUS_AGENTS_DEFAULTS_BOOTSTRAP_RECAP_ENABLED"`
+
+	// BootstrapRecapMaxPerMinute rate-limits the bootstrap pass. Default 5.
+	BootstrapRecapMaxPerMinute int `json:"bootstrap_recap_max_per_minute" env:"OMNIPUS_AGENTS_DEFAULTS_BOOTSTRAP_RECAP_MAX_PER_MINUTE"`
+
+	// BootstrapRecapDailyBudgetUSD caps total estimated spend across a single
+	// bootstrap pass. Units: USD. Default 1.00. Per-process-boot, not calendar-day.
+	BootstrapRecapDailyBudgetUSD float64 `json:"bootstrap_recap_daily_budget_usd" env:"OMNIPUS_AGENTS_DEFAULTS_BOOTSTRAP_RECAP_DAILY_BUDGET_USD"`
+
+	// RecapModelAllowList overrides the compiled-in cheap-model allow-list used
+	// by FR-029a to fail-closed at boot if recap_model is too expensive. Empty
+	// slice → use the package-level default.
+	//
+	// Entries are PREFIX-matched against the resolved recap model name
+	// (strings.HasPrefix). An operator adding "claude-sonnet-" matches every
+	// claude-sonnet release; writing "claude-sonnet-*" literally will not
+	// match anything because the asterisk is treated as part of the prefix.
+	RecapModelAllowList []string `json:"recap_model_allow_list,omitempty"`
+}
+
+// DefaultRecapModelAllowList is the compiled-in set of models considered cheap
+// enough for session-end recaps under SC-010b. Spec v7 FR-029a. If you add a
+// model family here, confirm its input pricing is ≤ $1/Mtok and it does not
+// charge for thinking/reasoning tokens by default.
+var DefaultRecapModelAllowList = []string{
+	"claude-sonnet-",
+	"claude-haiku-",
+	"gpt-4o-mini",
+	"gpt-4.1-mini",
+	"z-ai/glm-",
+	"gemini-flash-",
+}
+
+// ResolveRecapModelAllowList returns the configured allow-list if non-empty,
+// else the compiled default.
+func (d *AgentDefaults) ResolveRecapModelAllowList() []string {
+	if len(d.RecapModelAllowList) > 0 {
+		return d.RecapModelAllowList
+	}
+	return DefaultRecapModelAllowList
+}
+
+// GetIdleTimeoutMinutes returns the idle timeout, defaulting to 30.
+func (d *AgentDefaults) GetIdleTimeoutMinutes() int {
+	if d.IdleTimeoutMinutes <= 0 {
+		return 30
+	}
+	return d.IdleTimeoutMinutes
+}
+
+// GetBootstrapRecapMaxPerMinute returns the rate limit, defaulting to 5.
+func (d *AgentDefaults) GetBootstrapRecapMaxPerMinute() int {
+	if d.BootstrapRecapMaxPerMinute <= 0 {
+		return 5
+	}
+	return d.BootstrapRecapMaxPerMinute
+}
+
+// GetBootstrapRecapDailyBudgetUSD returns the cost cap, defaulting to $1.00.
+func (d *AgentDefaults) GetBootstrapRecapDailyBudgetUSD() float64 {
+	if d.BootstrapRecapDailyBudgetUSD <= 0 {
+		return 1.00
+	}
+	return d.BootstrapRecapDailyBudgetUSD
 }
 
 const DefaultMaxMediaSize = 20 * 1024 * 1024 // 20 MB
@@ -1246,7 +1363,6 @@ type CronToolsConfig struct {
 type ExecConfig struct {
 	ToolConfig          `         envPrefix:"OMNIPUS_TOOLS_EXEC_"`
 	EnableDenyPatterns  bool     `                                json:"enable_deny_patterns"  env:"OMNIPUS_TOOLS_EXEC_ENABLE_DENY_PATTERNS"`
-	AllowRemote         bool     `                                json:"allow_remote"          env:"OMNIPUS_TOOLS_EXEC_ALLOW_REMOTE"`
 	CustomDenyPatterns  []string `                                json:"custom_deny_patterns"  env:"OMNIPUS_TOOLS_EXEC_CUSTOM_DENY_PATTERNS"`
 	CustomAllowPatterns []string `                                json:"custom_allow_patterns" env:"OMNIPUS_TOOLS_EXEC_CUSTOM_ALLOW_PATTERNS"`
 	TimeoutSeconds      int      `                                json:"timeout_seconds"       env:"OMNIPUS_TOOLS_EXEC_TIMEOUT_SECONDS"` // 0 means use default (60s)

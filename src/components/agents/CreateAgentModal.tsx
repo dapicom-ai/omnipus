@@ -64,11 +64,12 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
   const isOpen = openProp !== undefined ? openProp : createAgentModalOpen
   const handleClose = onCloseProp ?? closeCreateAgentModal
 
-  const { data: providers = [], isError: providersError } = useQuery({
+  const { data: providersData, isError: providersError } = useQuery({
     queryKey: ['providers'],
     queryFn: fetchProviders,
     enabled: isOpen,
   })
+  const providers = Array.isArray(providersData) ? providersData : []
   const connectedModels = providers.filter((p) => p.status === 'connected').flatMap((p) => p.models ?? [])
   const availableModels = connectedModels
 

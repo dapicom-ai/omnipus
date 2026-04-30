@@ -18,6 +18,7 @@ import {
   Scroll,
   NotePencil,
   UploadSimple,
+  Info,
 } from '@phosphor-icons/react'
 import { useAutoSave } from '@/hooks/useAutoSave'
 import { AutoSaveIndicator } from '@/components/ui/AutoSaveIndicator'
@@ -32,8 +33,11 @@ import { Switch } from '@/components/ui/switch'
 import { Separator } from '@/components/ui/separator'
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from '@/components/ui/accordion'
 import { ToolsAndPermissions } from './ToolsAndPermissions'
+import { SandboxProfileSelector } from './SandboxProfileSelector'
+import { ShellDenyPatternsEditor } from './ShellDenyPatternsEditor'
 import {
   fetchAgent,
+  fetchAppState,
   updateAgent,
   fetchProviders,
   fetchAgentSessions,
@@ -41,6 +45,7 @@ import {
   type AgentSession,
   type ActivityEvent,
   type AgentToolsCfg,
+  type SandboxProfile,
 } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { AVATAR_COLORS } from '@/lib/constants'
@@ -98,6 +103,12 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     staleTime: 30_000,
   })
 
+  const { data: appState } = useQuery({
+    queryKey: ['app-state'],
+    queryFn: fetchAppState,
+    staleTime: 60_000,
+  })
+
   const recentActivity = allActivity
     .filter((e) => e.agent_id === agentId)
     .slice(0, 5)
@@ -144,6 +155,9 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
   const [toolsCfg, setToolsCfg] = useState<AgentToolsCfg>({
     builtin: { default_policy: 'allow' },
   })
+  const [sandboxProfile, setSandboxProfile] = useState<SandboxProfile | undefined>(undefined)
+  const [shellDenyPatterns, setShellDenyPatterns] = useState<string[]>([])
+  const [shellAdvancedOpen, setShellAdvancedOpen] = useState(false)
 
   useEffect(() => {
     if (!agent) return
@@ -173,6 +187,8 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     setToolFeedback(agent.tool_feedback ?? false)
     setHeartbeatEnabled(agent.heartbeat_enabled ?? false)
     setHeartbeatInterval(agent.heartbeat_interval ?? 30)
+    setSandboxProfile(agent.sandbox_profile)
+    setShellDenyPatterns(agent.shell_policy?.custom_deny_patterns ?? [])
     hasHydrated.current = true
   }, [agentId, agent])
 
@@ -199,12 +215,16 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     tool_feedback: toolFeedback,
     heartbeat_enabled: heartbeatEnabled,
     heartbeat_interval: heartbeatInterval,
+    sandbox_profile: sandboxProfile,
+    shell_policy: {
+      custom_deny_patterns: shellDenyPatterns.filter((p) => p.trim() !== ''),
+    },
   }), [
     name, description, model, selectedColor, selectedIcon, fallbackModels,
     temperature, maxTokens, topP, useGlobalRateLimits, maxLlmCallsPerHour,
     maxToolCallsPerMinute, maxCostPerDay, soul, instructions, heartbeat,
     timeoutSeconds, maxToolIterations, steeringMode, toolFeedback,
-    heartbeatEnabled, heartbeatInterval,
+    heartbeatEnabled, heartbeatInterval, sandboxProfile, shellDenyPatterns,
   ])
 
   const { status: saveStatus, error: saveError } = useAutoSave(
@@ -398,6 +418,50 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
                     triggerClassName="w-48"
                     items={ICON_OPTIONS.map(({ name: iconName }) => ({ value: iconName, label: iconName }))}
                   />
+                </div>
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        )}
+
+        {/* Sandbox — default CLOSED, only for custom agents */}
+        {!isLocked && (
+          <AccordionItem value="sandbox" className="border-0">
+            <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+              <div className="flex items-center gap-2">
+                <span>Sandbox</span>
+                <SandboxInfoTooltip />
+              </div>
+            </AccordionTrigger>
+            <AccordionContent>
+              <div className="px-4 space-y-4">
+                <SandboxProfileSelector
+                  value={sandboxProfile}
+                  agentName={name || agent.name}
+                  godModeAvailable={appState?.god_mode_available ?? false}
+                  godModeOptedIn={appState?.god_mode_opted_in ?? false}
+                  onChange={(p) => { markDirty(); setSandboxProfile(p) }}
+                />
+
+                {/* Advanced: shell deny patterns */}
+                <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setShellAdvancedOpen((o) => !o)}
+                    className="flex items-center justify-between w-full px-3 py-2.5 text-sm font-medium text-[var(--color-secondary)] hover:text-[var(--color-accent)] transition-colors"
+                    aria-expanded={shellAdvancedOpen}
+                  >
+                    <span className="text-xs">Shell deny patterns</span>
+                    {shellAdvancedOpen ? <CaretUp size={13} /> : <CaretDown size={13} />}
+                  </button>
+                  {shellAdvancedOpen && (
+                    <div className="px-3 pb-3 border-t border-[var(--color-border)]">
+                      <ShellDenyPatternsEditor
+                        value={shellDenyPatterns}
+                        onChange={(patterns) => { markDirty(); setShellDenyPatterns(patterns) }}
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
             </AccordionContent>
@@ -805,6 +869,40 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
       </Accordion>
     </div>
     </div>
+  )
+}
+
+function SandboxInfoTooltip() {
+  const [visible, setVisible] = useState(false)
+  return (
+    <span className="relative inline-block">
+      <button
+        type="button"
+        className="text-[var(--color-muted)] hover:text-[var(--color-secondary)] transition-colors focus:outline-none"
+        onMouseEnter={() => setVisible(true)}
+        onMouseLeave={() => setVisible(false)}
+        onFocus={() => setVisible(true)}
+        onBlur={() => setVisible(false)}
+        tabIndex={0}
+        aria-label="Sandbox profile information"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <Info size={13} />
+      </button>
+      {visible && (
+        <span
+          role="tooltip"
+          className="absolute left-0 top-full mt-1 z-50 w-80 rounded border border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-[10px] text-[var(--color-muted)] shadow-lg pointer-events-none whitespace-normal font-normal"
+        >
+          <strong className="text-[var(--color-secondary)] block mb-1">Sandbox profiles</strong>
+          Profiles set the kernel-level security boundary for this agent.{' '}
+          <strong>none</strong> inherits the global default.{' '}
+          <strong>workspace</strong> and <strong>workspace+net</strong> restrict file access to the agent&apos;s working directory.{' '}
+          <strong>host</strong> applies full Landlock enforcement on the host filesystem.{' '}
+          <strong>off</strong> removes all kernel isolation — only available when the gateway is started with --allow-god-mode.
+        </span>
+      )}
+    </span>
   )
 }
 

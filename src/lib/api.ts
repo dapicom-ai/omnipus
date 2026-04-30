@@ -126,6 +126,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 // ── Agents ────────────────────────────────────────────────────────────────────
 
+export type SandboxProfile = 'none' | 'workspace' | 'workspace+net' | 'host' | 'off'
+
+export interface AgentShellPolicy {
+  enable_deny_patterns?: boolean
+  custom_deny_patterns?: string[]
+}
+
 export interface Agent {
   id: string
   name: string
@@ -159,6 +166,8 @@ export interface Agent {
     max_tool_calls_per_minute?: number
     max_cost_per_day?: number
   }
+  sandbox_profile?: SandboxProfile
+  shell_policy?: AgentShellPolicy
   stats?: {
     total_sessions: number
     total_tokens: number
@@ -683,6 +692,8 @@ export interface AppState {
   onboarding_complete: boolean
   last_doctor_run?: string
   last_doctor_score?: number
+  god_mode_available?: boolean
+  god_mode_opted_in?: boolean
 }
 
 export function fetchAppState(): Promise<AppState> {

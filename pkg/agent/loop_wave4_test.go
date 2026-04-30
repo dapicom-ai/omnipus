@@ -49,7 +49,7 @@ func makeRateLimitCfg(t *testing.T) (*config.Config, *bus.MessageBus) {
 // a non-nil RateLimiterRegistry and applies the configured daily cost cap.
 func TestRateLimiter_InitializedFromConfig(t *testing.T) {
 	cfg, msgBus := makeRateLimitCfg(t)
-	al := NewAgentLoop(cfg, msgBus, &mockProvider{})
+	al := mustNewAgentLoop(t, cfg, msgBus, &mockProvider{})
 	defer al.Close()
 
 	registry := al.RateLimiter()
@@ -89,7 +89,7 @@ func TestRateLimiter_ZeroCapMeansNoCap(t *testing.T) {
 		// Sandbox.RateLimits left at zero — no limits.
 	}
 	msgBus := bus.NewMessageBus()
-	al := NewAgentLoop(cfg, msgBus, &mockProvider{})
+	al := mustNewAgentLoop(t, cfg, msgBus, &mockProvider{})
 	defer al.Close()
 
 	registry := al.RateLimiter()

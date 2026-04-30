@@ -68,7 +68,7 @@ func TestHandleCompleteOnboarding_Success(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := newOnboardingTestAPI(t, tmpDir, al)
 
 	// Verify onboarding is not complete yet
@@ -110,7 +110,7 @@ func TestHandleCompleteOnboarding_AlreadyComplete(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	onboardingMgr := onboarding.NewManager(tmpDir)
 	api := &restAPI{
 		agentLoop:     al,
@@ -282,7 +282,7 @@ func TestHandleCompleteOnboarding_ThenLogin(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := newOnboardingTestAPI(t, tmpDir, al)
 
 	// Step 1: Complete onboarding
@@ -359,7 +359,7 @@ func TestHandleCompleteOnboarding_PersistsAdmin(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := newOnboardingTestAPI(t, tmpDir, al)
 
 	// Complete onboarding
@@ -421,7 +421,7 @@ func TestHandleCompleteOnboarding_WritesActualModelAsAlias(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := newOnboardingTestAPI(t, tmpDir, al)
 
 	body := `{"provider":{"id":"openrouter","api_key":"sk-or-v1-test","model":"z-ai/glm-5-turbo"},` +
@@ -494,7 +494,7 @@ func TestHandleCompleteOnboarding_SecondModelSameProviderCreatesNewEntry(t *test
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := newOnboardingTestAPI(t, tmpDir, al)
 
 	body := `{"provider":{"id":"openrouter","api_key":"sk-or-v1-test","model":"anthropic/claude-sonnet-4.6"},` +
@@ -558,7 +558,7 @@ func TestHandleCompleteOnboarding_Concurrent(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	onboardingMgr := onboarding.NewManager(tmpDir)
 	api := &restAPI{
 		agentLoop:     al,
@@ -632,7 +632,7 @@ func TestHandleCompleteOnboarding_ConcurrentDifferentUsers(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := &restAPI{
 		agentLoop:     al,
 		homePath:      tmpDir,

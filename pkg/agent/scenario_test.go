@@ -116,7 +116,7 @@ func TestScenario2AvaCreatesAgentPenny(t *testing.T) {
 
 	// Workspace directory must be creatable (NewAgentLoop creates it via NewAgentInstance).
 	msgBus := bus.NewMessageBus()
-	al := NewAgentLoop(cfg, msgBus, testutil.NewScenario().WithText("done"))
+	al := mustNewAgentLoop(t, cfg, msgBus, testutil.NewScenario().WithText("done"))
 	defer al.Close()
 
 	pennyWorkspace := filepath.Join(tmpDir, "penny")
@@ -225,7 +225,7 @@ func TestScenario5RateLimitFiresOnThirdCall(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := NewAgentLoop(cfg, msgBus, testutil.NewScenario().WithText("ok"))
+	al := mustNewAgentLoop(t, cfg, msgBus, testutil.NewScenario().WithText("ok"))
 	defer al.Close()
 
 	rl := al.RateLimiter()
@@ -380,7 +380,7 @@ func TestScenario10SpawnSubagentReturnsResult(t *testing.T) {
 	// (part of the Plan 2 contract: no pre-registration gate).
 	cfg, _ := newScenarioCfg(t)
 	msgBus := bus.NewMessageBus()
-	al := NewAgentLoop(cfg, msgBus, testutil.NewScenario().WithText("task complete"))
+	al := mustNewAgentLoop(t, cfg, msgBus, testutil.NewScenario().WithText("task complete"))
 	defer al.Close()
 
 	reg := al.GetRegistry()

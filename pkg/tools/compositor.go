@@ -104,6 +104,43 @@ func resolveFromMap(toolName string, policies map[string]string, wildcards []wil
 	return ""
 }
 
+// ResolveEffectivePolicy returns the combined global+agent effective policy
+// ("allow", "ask", or "deny") for a single tool name. It applies the same
+// resolution order as FilterToolsByPolicy without iterating all tools.
+// Callers that need to make one-off policy decisions (e.g. repair.go H3) use
+// this rather than spinning up a full filter pass.
+func ResolveEffectivePolicy(cfg *ToolPolicyCfg, toolName string) string {
+	if cfg == nil {
+		return "allow"
+	}
+	defaultAgentPolicy := cfg.DefaultPolicy
+	if defaultAgentPolicy == "" {
+		defaultAgentPolicy = "allow"
+	}
+	defaultGlobalPolicy := cfg.GlobalDefaultPolicy
+	if defaultGlobalPolicy == "" {
+		defaultGlobalPolicy = "allow"
+	}
+	agentWildcards := buildWildcardIndex(cfg.Policies)
+	globalWildcards := buildWildcardIndex(cfg.GlobalPolicies)
+
+	g := resolveFromMap(toolName, cfg.GlobalPolicies, globalWildcards)
+	if g == "" {
+		g = defaultGlobalPolicy
+	}
+	a := resolveFromMap(toolName, cfg.Policies, agentWildcards)
+	if a == "" {
+		a = defaultAgentPolicy
+	}
+	if g == "deny" || a == "deny" {
+		return "deny"
+	}
+	if g == "ask" || a == "ask" {
+		return "ask"
+	}
+	return "allow"
+}
+
 // ToolPolicyCfg is the per-agent tool policy configuration.
 // Used by FilterToolsByPolicy.
 type ToolPolicyCfg struct {

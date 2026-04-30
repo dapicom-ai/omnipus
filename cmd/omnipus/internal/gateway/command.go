@@ -21,6 +21,7 @@ func NewGatewayCommand() *cobra.Command {
 	var noTruncate bool
 	var allowEmpty bool
 	var sandboxMode string
+	var allowGodMode bool
 
 	cmd := &cobra.Command{
 		Use:     "gateway",
@@ -57,12 +58,21 @@ func NewGatewayCommand() *cobra.Command {
 			return nil
 		},
 		RunE: func(_ *cobra.Command, _ []string) error {
+			// Validate --allow-god-mode against the build tag before boot.
+			// GodModeAvailable is false when compiled with -tags=nogodmode.
+			if allowGodMode && !sandbox.GodModeAvailable {
+				fmt.Fprintln(os.Stderr,
+					"Error: god mode unavailable in this build (compiled with nogodmode); "+
+						"remove --allow-god-mode and restart")
+				os.Exit(2)
+			}
 			runErr := gateway.RunWithOptions(gateway.RunOptions{
 				Debug:             debug,
 				HomePath:          internal.GetOmnipusHome(),
 				ConfigPath:        internal.GetConfigPath(),
 				AllowEmptyStartup: allowEmpty,
 				SandboxMode:       sandboxMode,
+				AllowGodMode:      allowGodMode,
 			})
 			if runErr == nil {
 				return nil
@@ -95,6 +105,10 @@ func NewGatewayCommand() *cobra.Command {
 		"Sandbox mode: enforce (default on Linux 5.13+), permissive (audit-only), off (disabled). "+
 			"Overrides the gateway.sandbox.mode config value.",
 	)
+	cmd.Flags().BoolVar(&allowGodMode, "allow-god-mode", false,
+		"Allow agents to set sandbox_profile=off (disables the kernel sandbox). "+
+			"Without this flag, off is silently coerced to workspace with a stderr WARN. "+
+			"Disabled in builds with the nogodmode tag.")
 
 	return cmd
 }

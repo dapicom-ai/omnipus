@@ -19,7 +19,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/coreagent"
@@ -93,7 +92,7 @@ func newTestRestAPI(t *testing.T) (*restAPI, func()) {
 	seedTestAgents(cfg)
 
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 
 	api := &restAPI{
 		agentLoop:     al,
@@ -161,7 +160,7 @@ func TestHandleAgentsListIncludesConfiguredAgents(t *testing.T) {
 	// Seed omnipus-system and core agents to mirror gateway startup.
 	seedTestAgents(cfg)
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := &restAPI{agentLoop: al}
 
 	w := httptest.NewRecorder()
@@ -485,7 +484,7 @@ func TestAgentListStatus_CoreAgentNeverDraft(t *testing.T) {
 		},
 	}
 	coreagent.SeedConfig(cfg)
-	al := agent.NewAgentLoop(cfg, bus.NewMessageBus(), &restMockProvider{})
+	al := mustAgentLoop(t, cfg, bus.NewMessageBus(), &restMockProvider{})
 	api := &restAPI{agentLoop: al}
 
 	w := httptest.NewRecorder()
@@ -533,7 +532,7 @@ func TestAgentListStatus_CustomAgentIdle(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := &restAPI{agentLoop: al}
 
 	w := httptest.NewRecorder()
@@ -701,7 +700,7 @@ func TestGetAgentTools_CustomAgent(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := &restAPI{agentLoop: al}
 
 	w := httptest.NewRecorder()
@@ -769,7 +768,7 @@ func TestUpdateAgent_LockedRejectsIdentityChange(t *testing.T) {
 	require.NoError(t, os.WriteFile(cfgPath, cfgJSON, 0o600))
 
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := &restAPI{agentLoop: al, homePath: tmpDir}
 
 	// Attempt to change name — should be rejected
@@ -831,7 +830,7 @@ func TestUpdateAgentTools_InvalidMode(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := &restAPI{agentLoop: al, homePath: tmpDir}
 
 	// Invalid default_policy should be rejected.
@@ -867,7 +866,7 @@ func TestCreateAgent_WithToolsCfg(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := &restAPI{agentLoop: al, homePath: tmpDir}
 
 	body := `{
@@ -959,7 +958,7 @@ func TestUpdateAgentTools_Success(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := &restAPI{agentLoop: al, homePath: tmpDir}
 
 	body := `{"builtin":{"mode":"explicit","visible":["read_file","web_search"]}}`

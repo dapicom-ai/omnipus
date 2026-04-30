@@ -17,8 +17,10 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	runtimedebug "runtime/debug"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -264,6 +266,12 @@ type RunOptions struct {
 	// "permissive", "off"). Empty means "no flag set, use config". See
 	// FR-J-006 for CLI > config > default precedence.
 	SandboxMode string
+	// AllowGodMode is set by the --allow-god-mode CLI flag. When true,
+	// agents may set sandbox_profile=off (god mode). Without this flag,
+	// off is silently coerced to workspace at runtime and rejected with 403
+	// at the REST layer. Has no effect when sandbox.GodModeAvailable is false
+	// (nogodmode build tag).
+	AllowGodMode bool
 }
 
 // SandboxBootError wraps a sandbox Apply/Install failure so the CLI entry
@@ -356,6 +364,7 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 	homePath := opts.HomePath
 	configPath := opts.ConfigPath
 	allowEmptyStartup := opts.AllowEmptyStartup
+	allowGodMode := opts.AllowGodMode
 	// Bootstrap ~/.omnipus/ directory tree on every start (idempotent, US-1).
 	if err := datamodel.Init(homePath); err != nil {
 		return fmt.Errorf("directory initialization failed: %w", err)
@@ -386,6 +395,20 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 	if debug {
 		logger.SetLevel(logger.DEBUG)
 		fmt.Println("🔍 Debug mode enabled")
+	}
+
+	// Enforce god-mode latches: abort boot if --allow-god-mode was passed but
+	// the build does not support it (nogodmode tag compiles GodModeAvailable=false).
+	if allowGodMode && !sandbox.GodModeAvailable {
+		return fmt.Errorf(
+			"gateway: god mode unavailable in this build (compiled with nogodmode); " +
+				"remove --allow-god-mode and restart")
+	}
+	// Emit a persistent WARN so operators cannot claim they were not warned.
+	if allowGodMode {
+		fmt.Fprintln(os.Stderr,
+			"WARN: gateway started with --allow-god-mode — agents may have sandbox disabled")
+		slog.Warn("gateway started with --allow-god-mode — agents may have sandbox disabled")
 	}
 
 	// Check for a test provider override BEFORE calling createStartupProvider.
@@ -421,7 +444,11 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 	}
 
 	msgBus := bus.NewMessageBus()
-	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider)
+	var agentLoop *agent.AgentLoop
+	agentLoop, err = agent.NewAgentLoop(cfg, msgBus, provider)
+	if err != nil {
+		return fmt.Errorf("gateway: agent loop boot failed: %w", err)
+	}
 
 	// Boot Order step 4 (FR-062 / M7): validate per-agent tool policies before
 	// the sandbox applies. Ava-equivalent core agents abort boot on violation;
@@ -506,7 +533,7 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 	}
 	centralMCPReg := tools.NewMCPRegistry()
 
-	runningServices, err := setupAndStartServices(cfg, bundle, agentLoop, msgBus, homePath, credStore, sandboxResult, centralBuiltinReg, centralMCPReg)
+	runningServices, err := setupAndStartServices(cfg, bundle, agentLoop, msgBus, homePath, credStore, sandboxResult, centralBuiltinReg, centralMCPReg, allowGodMode)
 	if err != nil {
 		stopNag() // don't leak the nag goroutine if service setup fails.
 		return err
@@ -611,6 +638,14 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 	if sharedStore := agentLoop.GetSessionStore(); sharedStore != nil {
 		startRetentionSweepLoop(ctx, sharedStore, agentLoop.GetConfig, 24*time.Hour)
 	}
+
+	// FR-031: Launch the nightly retro sweep goroutine alongside the session sweep.
+	// Iterates all agents and calls SweepRetros per MemoryStore.
+	startRetentionRetroSweepLoop(ctx, agentLoop, agentLoop.GetConfig, 24*time.Hour)
+
+	// FR-032/FR-032a: Bootstrap recap pass — on gateway start, re-cap sessions
+	// that lack LAST_SESSION.md. Runs once in a goroutine.
+	go agentLoop.BootstrapRecapPass(ctx)
 
 	// Wire a second degraded check: report 503 when the agent loop has died.
 	runningServices.HealthServer.SetDegradedFunc(func() (bool, string) {
@@ -812,6 +847,7 @@ func setupAndStartServices(
 	sandboxResult *SandboxApplyResult,
 	builtinReg *tools.BuiltinRegistry, // M16: central builtin registry (FR-001)
 	mcpReg *tools.MCPRegistry,          // M16: central MCP registry (FR-001)
+	allowGodMode bool,
 ) (*services, error) {
 	runningServices := &services{credStore: credStore, bundle: bundle, sandboxResult: sandboxResult}
 
@@ -922,6 +958,16 @@ func setupAndStartServices(
 		previewPort := int(cfg.Gateway.PreviewPort)
 		previewAddr := fmt.Sprintf("%s:%d", previewHost, previewPort)
 		runningServices.ChannelManager.SetupPreviewServer(previewAddr)
+		// Warn when the preview listener is bound on a wildcard address but
+		// gateway.preview_origin is not configured. In that case the computed
+		// preview URL will contain "0.0.0.0" or "::" which is unreachable from
+		// a browser (R3 in the per-agent sandbox plan).
+		if shouldWarnPreviewOrigin(previewHost, cfg.Gateway.PreviewOrigin) {
+			slog.Warn("gateway listening on wildcard with empty gateway.preview_origin — " +
+				"preview URLs will use 0.0.0.0 and be unreachable from a browser. " +
+				"Set gateway.preview_origin to your public hostname or IP " +
+				"(e.g. https://your.host:6061).")
+		}
 		// Compute the preview base URL for tool result generation.
 		if cfg.Gateway.PreviewOrigin != "" {
 			gatewayPreviewBaseURL = cfg.Gateway.PreviewOrigin
@@ -939,6 +985,29 @@ func setupAndStartServices(
 			)
 		}
 	}
+	// Fix-5: warn when workspace.shell is enabled on a non-Linux host where the
+	// kernel sandbox (Landlock + seccomp) is unavailable. Single-shot at boot.
+	if runtime.GOOS != "linux" {
+		wsEnabled := cfg.Sandbox.Experimental.WorkspaceShellEnabled != nil &&
+			*cfg.Sandbox.Experimental.WorkspaceShellEnabled
+		if !wsEnabled {
+			// Also check per-agent overrides — future-proofing when per-agent flags land.
+			for _, ag := range cfg.Agents.List {
+				_ = ag // per-agent workspace_shell_enabled not yet per-config; global only
+			}
+		}
+		if wsEnabled {
+			fmt.Fprintf(os.Stderr,
+				"WARN: kernel sandbox unavailable on %s; workspace.shell runs with application-level path checks only — do not enable on multi-tenant systems\n",
+				runtime.GOOS)
+		}
+	}
+
+	// Fix-6: warn when any agent with remote channels has a non-deny exec policy.
+	// The GHSA-pv8c-p6jf-3fpp channel block was removed; operators must now
+	// configure per-agent ToolPolicyCfg or sandbox_profile to restrict exec.
+	emitGHSARemovalWarn(cfg)
+
 	// Construct the Tier 1 (serve_workspace) and Tier 3 (run_in_workspace)
 	// shared registries. These are created regardless of previewListenerEnabled so
 	// that operators who run on the single-port fallback still get serve_workspace.
@@ -1024,6 +1093,9 @@ func setupAndStartServices(
 	tStore := agent.GetTaskStore(agentLoop)
 	tExecutor := agent.GetTaskExecutor(agentLoop)
 
+	// Wire god-mode opt-in into the agent loop for runtime coercion.
+	agentLoop.SetAllowGodMode(allowGodMode)
+
 	api := &restAPI{
 		agentLoop:       agentLoop,
 		allowedOrigin:   allowedOrigin,
@@ -1041,6 +1113,7 @@ func setupAndStartServices(
 		approvalReg:     approvalReg,                     // in-process tool-approval registry (FR-016)
 		builtinRegistry: builtinReg,                      // M16: central builtin registry (FR-001)
 		mcpRegistry:     mcpReg,                          // M16: central MCP registry (FR-001)
+		allowGodMode:    allowGodMode,                    // god-mode latch (2)
 	}
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions", api.withAuth(api.HandleSessions))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions/", api.withAuth(api.HandleSessions))
@@ -1498,6 +1571,18 @@ func setupCronTool(
 	return cronService, nil
 }
 
+// shouldWarnPreviewOrigin returns true when the preview listener is bound on a
+// wildcard address (0.0.0.0 or "::") and gateway.preview_origin is empty.
+// In that situation the computed preview URL will contain the literal string
+// "0.0.0.0" which browsers cannot reach. Extracted as a pure function so it
+// can be unit-tested without starting a full gateway.
+func shouldWarnPreviewOrigin(previewHost, previewOrigin string) bool {
+	if previewOrigin != "" {
+		return false
+	}
+	return previewHost == "0.0.0.0" || previewHost == "::"
+}
+
 func createHeartbeatHandler(agentLoop *agent.AgentLoop) func(prompt, channel, chatID string) *tools.ToolResult {
 	return func(prompt, channel, chatID string) *tools.ToolResult {
 		if channel == "" || chatID == "" {
@@ -1513,4 +1598,78 @@ func createHeartbeatHandler(agentLoop *agent.AgentLoop) func(prompt, channel, ch
 		}
 		return tools.SilentResult(response)
 	}
+}
+
+// remoteChannelNames is the set of channel identifiers that route messages from
+// external networks. Used by emitGHSARemovalWarn to detect agents that face
+// remote traffic.
+var remoteChannelNames = []string{
+	"telegram", "discord", "slack", "matrix", "irc", "teams", "google-chat",
+	"whatsapp", "signal",
+}
+
+// emitGHSARemovalWarn logs a WARN when any agent that has a remote channel
+// mapping does NOT explicitly deny the exec tool. The GHSA-pv8c-p6jf-3fpp
+// per-channel exec block was removed; exec access is now governed entirely by
+// per-agent ToolPolicyCfg. This single-shot boot warning prompts operators to
+// review agent policies.
+func emitGHSARemovalWarn(cfg *config.Config) {
+	// Gather enabled remote channel IDs from config.
+	enabledRemoteChannels := make(map[string]bool)
+	if cfg.Channels.Telegram.Enabled {
+		enabledRemoteChannels["telegram"] = true
+	}
+	if cfg.Channels.Discord.Enabled {
+		enabledRemoteChannels["discord"] = true
+	}
+	if cfg.Channels.Slack.Enabled {
+		enabledRemoteChannels["slack"] = true
+	}
+	if cfg.Channels.Matrix.Enabled {
+		enabledRemoteChannels["matrix"] = true
+	}
+	if cfg.Channels.IRC.Enabled {
+		enabledRemoteChannels["irc"] = true
+	}
+	if cfg.Channels.Teams.Enabled {
+		enabledRemoteChannels["teams"] = true
+	}
+	if cfg.Channels.GoogleChat.Enabled {
+		enabledRemoteChannels["google-chat"] = true
+	}
+	if cfg.Channels.WhatsApp.Enabled {
+		enabledRemoteChannels["whatsapp"] = true
+	}
+	if len(enabledRemoteChannels) == 0 {
+		return
+	}
+
+	// Scan agents: flag any that do not explicitly deny exec.
+	var flagged []string
+	for _, ag := range cfg.Agents.List {
+		if ag.Tools == nil {
+			// No tools config → inherits default_policy (allow). Flagged.
+			flagged = append(flagged, ag.ID)
+			continue
+		}
+		policy := ag.Tools.Builtin.ResolvePolicy("exec")
+		if policy != config.ToolPolicyDeny {
+			flagged = append(flagged, ag.ID)
+		}
+	}
+
+	if len(flagged) == 0 {
+		return
+	}
+
+	channels := make([]string, 0, len(enabledRemoteChannels))
+	for ch := range enabledRemoteChannels {
+		channels = append(channels, ch)
+	}
+	slog.Warn("exec tool no longer blocked at the channel layer (was GHSA-pv8c-p6jf-3fpp). "+
+		"Agents with remote channels and non-deny exec policy: ["+strings.Join(flagged, ", ")+
+		"]. Review per-agent ToolPolicyCfg or set sandbox_profile.",
+		"remote_channels", channels,
+		"flagged_agents", flagged,
+	)
 }

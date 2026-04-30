@@ -233,6 +233,7 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// FR-053 invalidation fires inside safeUpdateConfigJSON above.
 	// Audit each changed field. Errors are logged, never surface to the
 	// caller — the mutation has already been persisted atomically.
 	if a.agentLoop != nil {
