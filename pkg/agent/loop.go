@@ -8,6 +8,7 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -3691,6 +3692,27 @@ turnLoop:
 			if err == nil {
 				break
 			}
+			// If the provider rejected image input on a tool result, strip
+			// inline image data URLs from tool messages and retry once. This
+			// keeps text-only models working while still giving vision-capable
+			// models the picture.
+			if err != nil && strings.Contains(err.Error(), "image input") {
+				stripped := false
+				for i := range callMessages {
+					if callMessages[i].Role == "tool" && len(callMessages[i].Media) > 0 {
+						callMessages[i].Media = nil
+						stripped = true
+					}
+				}
+				if stripped {
+					logger.WarnCF("agent", "provider rejected image input — retrying without media",
+						map[string]any{"agent_id": ts.agent.ID, "model": llmModel})
+					response, err = callLLM(callMessages, providerToolDefs)
+					if err == nil {
+						break
+					}
+				}
+			}
 			if ts.hardAbortRequested() && errors.Is(err, context.Canceled) {
 				turnStatus = TurnEndStatusAborted
 				return al.abortTurn(ts)
@@ -4703,6 +4725,23 @@ turnLoop:
 				Role:       "tool",
 				Content:    contentForLLM,
 				ToolCallID: toolCallID,
+			}
+			// Attach inline image data URLs so vision-capable models can SEE the
+			// screenshot/image returned by the tool. Without this the LLM only
+			// gets the placeholder text and cannot reason about the picture.
+			if len(toolResult.Media) > 0 && al.mediaStore != nil {
+				for _, ref := range toolResult.Media {
+					localPath, meta, err := al.mediaStore.ResolveWithMeta(ref)
+					if err != nil || !strings.HasPrefix(meta.ContentType, "image/") {
+						continue
+					}
+					data, err := os.ReadFile(localPath)
+					if err != nil {
+						continue
+					}
+					dataURL := "data:" + meta.ContentType + ";base64," + base64.StdEncoding.EncodeToString(data)
+					toolResultMsg.Media = append(toolResultMsg.Media, dataURL)
+				}
 			}
 			al.emitEvent(
 				EventKindToolExecEnd,
