@@ -2826,11 +2826,45 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.ResolvedRoute, *AgentInstance, error) {
 	registry := al.GetRegistry()
 
-	// Check session-level agent override set by the handoff tool.
+	// Explicit agent_id in message metadata takes top priority. The user
+	// switching the SPA dropdown to a different agent is an authoritative
+	// re-targeting that must win over any prior handoff routing override —
+	// otherwise a Mia → Ray handoff persists silently after the user
+	// explicitly switches back to Jim, and Jim's UI receives Ray's replies.
+	// The override is still consulted below for messages without an
+	// explicit agent_id (e.g. channel inputs that don't track agent state).
+	if explicitID := inboundMetadata(msg, "agent_id"); explicitID != "" {
+		if agent, ok := registry.GetAgent(explicitID); ok {
+			// Clear any stale handoff override on this chat so future
+			// no-agent-id messages don't snap back to the prior target.
+			if msg.ChatID != "" {
+				al.sessionActiveAgent.Delete("chat:" + msg.ChatID)
+			}
+			if msg.SessionKey != "" {
+				al.sessionActiveAgent.Delete(msg.SessionKey)
+			}
+			logger.InfoCF("agent", "Routed to explicit agent (dropdown)", map[string]any{
+				"agent_id":  explicitID,
+				"workspace": agent.Workspace,
+			})
+			sk := fmt.Sprintf("agent:%s:webchat:%s", explicitID, msg.ChatID)
+			return routing.ResolvedRoute{AgentID: explicitID, SessionKey: sk}, agent, nil
+		}
+		// Explicit agent_id was provided but no matching agent — same
+		// hard-error semantics the second explicit-id branch below uses.
+		logger.ErrorCF("agent", "explicit agent_id not found in registry", map[string]any{
+			"agent_id":       explicitID,
+			"registered_ids": registry.ListAgentIDs(),
+		})
+		return routing.ResolvedRoute{}, nil, fmt.Errorf("the requested agent is not available")
+	}
+
+	// Check session-level agent override set by the handoff tool. Only
+	// reached when the inbound message has no explicit agent_id (e.g.
+	// non-webchat channels, or webchat messages sent before the SPA
+	// receives the agent_switched frame and updates its dropdown state).
 	// Check by both sessionKey and chatID ("chat:"+chatID) since webchat
 	// messages don't carry a SessionKey, but handoff stores by chatID.
-	// This takes PRIORITY over the explicit agent_id from the webchat dropdown
-	// because the handoff already updated the dropdown via the agent_switched frame.
 	for _, lookupKey := range []string{msg.SessionKey, "chat:" + msg.ChatID} {
 		if lookupKey == "" || lookupKey == "chat:" {
 			continue
@@ -2865,31 +2899,8 @@ func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.Resolv
 		}
 	}
 
-	// If the message carries an explicit agent_id (e.g., webchat agent selector),
-	// use it directly instead of going through routing rules.
-	if explicitID := inboundMetadata(msg, "agent_id"); explicitID != "" {
-		agent, ok := registry.GetAgent(explicitID)
-		if ok {
-			logger.InfoCF("agent", "Routed to explicit agent", map[string]any{
-				"agent_id":  explicitID,
-				"workspace": agent.Workspace,
-			})
-			// Build a session key from the agent + channel + chatID so the
-			// handoff tool can address this session.
-			sk := fmt.Sprintf("agent:%s:webchat:%s", explicitID, msg.ChatID)
-			return routing.ResolvedRoute{AgentID: explicitID, SessionKey: sk}, agent, nil
-		}
-		// H12: An explicit agent_id was provided but no matching agent is registered.
-		// Return a hard error rather than silently falling through to default routing,
-		// which would confuse the caller about which agent is actually handling the message.
-		// Log internal details (including registered IDs) at Error level for operators,
-		// but return a sanitized error to the caller to avoid leaking registry state.
-		logger.ErrorCF("agent", "explicit agent_id not found in registry", map[string]any{
-			"agent_id":       explicitID,
-			"registered_ids": registry.ListAgentIDs(),
-		})
-		return routing.ResolvedRoute{}, nil, fmt.Errorf("the requested agent is not available")
-	}
+	// (The explicit agent_id branch is handled at the top of this function
+	// so it can pre-empt the handoff override.)
 
 	route := registry.ResolveRoute(routing.RouteInput{
 		Channel:    msg.Channel,
