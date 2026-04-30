@@ -123,6 +123,6 @@ func (c *webchatChannel) SendMedia(_ context.Context, msg bus.OutboundMediaMessa
 	}
 
 	slog.Debug("webchat: sending media frame", "chat_id", msg.ChatID, "parts", len(parts))
-	sendConnFrame(conn, wsServerFrame{Type: "media", Parts: parts})
+	sendConnFrame(conn, wsServerFrame{Type: "media", SessionID: msg.SessionID, Parts: parts})
 	return nil
 }

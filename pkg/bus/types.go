@@ -66,7 +66,8 @@ type MediaPart struct {
 
 // OutboundMediaMessage carries media attachments from Agent to channels via the bus.
 type OutboundMediaMessage struct {
-	Channel string      `json:"channel"`
-	ChatID  string      `json:"chat_id"`
-	Parts   []MediaPart `json:"parts"`
+	Channel   string      `json:"channel"`
+	ChatID    string      `json:"chat_id"`
+	SessionID string      `json:"session_id,omitempty"`
+	Parts     []MediaPart `json:"parts"`
 }
