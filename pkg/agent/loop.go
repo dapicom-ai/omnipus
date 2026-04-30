@@ -2845,7 +2845,18 @@ func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.Resolv
 					})
 					sk := msg.SessionKey
 					if sk == "" {
-						sk = lookupKey
+						// Use the same agent-scoped key the explicit
+						// agent_id path produces below, so per-agent
+						// history lives under one key per (agent, chat)
+						// pair regardless of how routing got there.
+						// Without this, post-handoff turns wrote to
+						// "chat:<chatID>" while the dropdown path wrote
+						// to "agent:<id>:webchat:<chatID>" — and the
+						// transcript→history hydration also targets the
+						// agent-scoped key, leaving the LLM's history
+						// pointing at a different on-disk file from the
+						// hydrated one.
+						sk = fmt.Sprintf("agent:%s:webchat:%s", agentID, msg.ChatID)
 					}
 					return routing.ResolvedRoute{AgentID: agentID, SessionKey: sk}, agent, nil
 				}
