@@ -318,14 +318,14 @@ func (m *Manager) SetStreamFallback(d bus.StreamDelegate) {
 // GetStreamer implements bus.StreamDelegate.
 // It checks if the named channel supports streaming and returns a Streamer.
 // Falls back to streamFallback for channels not in the Manager (e.g., webchat).
-func (m *Manager) GetStreamer(ctx context.Context, channelName, chatID string) (bus.Streamer, bool) {
+func (m *Manager) GetStreamer(ctx context.Context, channelName, chatID, sessionID string) (bus.Streamer, bool) {
 	m.mu.RLock()
 	ch, exists := m.channels[channelName]
 	m.mu.RUnlock()
 
 	if !exists {
 		if m.streamFallback != nil {
-			return m.streamFallback.GetStreamer(ctx, channelName, chatID)
+			return m.streamFallback.GetStreamer(ctx, channelName, chatID, sessionID)
 		}
 		return nil, false
 	}
@@ -335,7 +335,7 @@ func (m *Manager) GetStreamer(ctx context.Context, channelName, chatID string) (
 		// Channel exists but doesn't implement StreamingCapable —
 		// try the fallback (e.g., webchat channel delegates streaming to WSHandler)
 		if m.streamFallback != nil {
-			return m.streamFallback.GetStreamer(ctx, channelName, chatID)
+			return m.streamFallback.GetStreamer(ctx, channelName, chatID, sessionID)
 		}
 		return nil, false
 	}

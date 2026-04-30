@@ -73,7 +73,7 @@ type AgentLoop struct {
 	// Concurrent turn management
 	activeTurnStates   sync.Map     // key: sessionKey (string), value: *turnState
 	subTurnCounter     atomic.Int64 // Counter for generating unique SubTurn IDs
-	sessionActiveAgent sync.Map     // key: sessionKey (string), value: agentID (string); "" clears override
+	sessionActiveAgent sync.Map     // key: "session:"+sessionID (string), value: agentID (string); set by handoff, cleared on agent deletion
 
 	// Turn tracking
 	turnSeq        atomic.Uint64
@@ -1038,14 +1038,16 @@ func registerSharedTools(
 		getRegistryReader := func() tools.AgentRegistryReader {
 			return al.GetRegistry()
 		}
-		onHandoffFrontend := func(chatID, newAgentID, agentName string) {
-			// Store both chatID and agentID keys so GetSessionActiveAgent can look up
-			// by either key. Also clear when newAgentID is empty.
-			if newAgentID == "" {
-				al.sessionActiveAgent.Delete("chat:" + chatID)
+		onHandoffFrontend := func(evt tools.HandoffEvent) {
+			// Override is keyed by session_id so each session carries its own
+			// handoff state. Switching to another session never inherits this.
+			if evt.SessionID == "" {
+				return
+			}
+			if evt.AgentID == "" {
+				al.sessionActiveAgent.Delete("session:" + evt.SessionID)
 			} else {
-				al.sessionActiveAgent.Store("chat:"+newAgentID, newAgentID)
-				al.sessionActiveAgent.Store("chat:"+chatID, newAgentID)
+				al.sessionActiveAgent.Store("session:"+evt.SessionID, evt.AgentID)
 			}
 		}
 		getContextWindow := func(targetAgentID string) int {
@@ -2159,23 +2161,17 @@ func (al *AgentLoop) GetConfig() *config.Config {
 	return al.cfg
 }
 
-// GetSessionActiveAgent returns the active agent ID for a chat session (set by handoff tool).
-// Returns ("", false) if no handoff override is active.
-func (al *AgentLoop) GetSessionActiveAgent(chatID string) (string, bool) {
-	if v, ok := al.sessionActiveAgent.Load("chat:" + chatID); ok {
+// GetSessionActiveAgent returns the agent that the handoff tool last switched
+// the given session to. Returns ("", false) if no handoff override is active
+// for this session_id.
+func (al *AgentLoop) GetSessionActiveAgent(sessionID string) (string, bool) {
+	if sessionID == "" {
+		return "", false
+	}
+	if v, ok := al.sessionActiveAgent.Load("session:" + sessionID); ok {
 		return v.(string), true
 	}
 	return "", false
-}
-
-// ClearSessionActiveAgent removes any handoff routing override for a chat.
-// Used when the SPA explicitly starts a new session/chat so the next message
-// is not silently routed to the agent that the prior session handed off to.
-func (al *AgentLoop) ClearSessionActiveAgent(chatID string) {
-	if chatID == "" {
-		return
-	}
-	al.sessionActiveAgent.Delete("chat:" + chatID)
 }
 
 // SwapConfig atomically replaces the in-memory config with the supplied,
@@ -2758,17 +2754,18 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 			"route_channel": route.Channel,
 		})
 
-	// Resolve transcript store for tool call recording (forwarded via message metadata).
+	// Resolve transcript store for tool call recording. SessionID is now
+	// authoritative — populated directly by the gateway from frame.SessionID.
 	var transcriptSessionID string
 	var transcriptStore *session.UnifiedStore
-	if tsid := inboundMetadata(msg, "transcript_session_id"); tsid != "" {
-		transcriptSessionID = tsid
-		transcriptStore = al.ResolveSessionStore(tsid)
+	if msg.SessionID != "" {
+		transcriptSessionID = msg.SessionID
+		transcriptStore = al.ResolveSessionStore(msg.SessionID)
 		if transcriptStore == nil {
 			logger.WarnCF(
 				"agent",
-				"transcript_session_id present but store not found — tool calls will not be recorded",
-				map[string]any{"transcript_session_id": tsid},
+				"session_id present but store not found — tool calls will not be recorded",
+				map[string]any{"session_id": msg.SessionID},
 			)
 		}
 	}
@@ -2803,12 +2800,11 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		// prior conversation. Cheap when history is already populated —
 		// GetHistory just reads the on-disk meta file.
 		if agent.Sessions != nil && len(agent.Sessions.GetHistory(sessionKey)) == 0 {
-			if err := al.HydrateAgentHistoryFromTranscript(msg.ChatID, transcriptSessionID); err != nil {
+			if err := al.HydrateAgentHistoryFromTranscript(transcriptSessionID); err != nil {
 				logger.WarnCF("agent", "self-heal hydrate failed", map[string]any{
-					"agent_id":              agent.ID,
-					"chat_id":               msg.ChatID,
-					"transcript_session_id": transcriptSessionID,
-					"error":                 err.Error(),
+					"agent_id":   agent.ID,
+					"session_id": transcriptSessionID,
+					"error":      err.Error(),
 				})
 			}
 		}
@@ -2845,23 +2841,20 @@ func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.Resolv
 	// explicit agent_id (e.g. channel inputs that don't track agent state).
 	if explicitID := inboundMetadata(msg, "agent_id"); explicitID != "" {
 		if agent, ok := registry.GetAgent(explicitID); ok {
-			// Clear any stale handoff override on this chat so future
-			// no-agent-id messages don't snap back to the prior target.
-			if msg.ChatID != "" {
-				al.sessionActiveAgent.Delete("chat:" + msg.ChatID)
-			}
-			if msg.SessionKey != "" {
-				al.sessionActiveAgent.Delete(msg.SessionKey)
+			// Clear stale handoff override only when the explicit target differs from
+			// the current override. If the user selects the same agent that the handoff
+			// already set, clearing the override would incorrectly reset routing state.
+			if cur, ok := al.sessionActiveAgent.Load(sessionScopeKey(msg)); !ok || cur.(string) != explicitID {
+				al.sessionActiveAgent.Delete(sessionScopeKey(msg))
 			}
 			logger.InfoCF("agent", "Routed to explicit agent (dropdown)", map[string]any{
-				"agent_id":  explicitID,
-				"workspace": agent.Workspace,
+				"agent_id":   explicitID,
+				"session_id": msg.SessionID,
+				"workspace":  agent.Workspace,
 			})
-			sk := fmt.Sprintf("agent:%s:webchat:%s", explicitID, msg.ChatID)
+			sk := agentSessionKey(explicitID, msg)
 			return routing.ResolvedRoute{AgentID: explicitID, SessionKey: sk}, agent, nil
 		}
-		// Explicit agent_id was provided but no matching agent — same
-		// hard-error semantics the second explicit-id branch below uses.
 		logger.ErrorCF("agent", "explicit agent_id not found in registry", map[string]any{
 			"agent_id":       explicitID,
 			"registered_ids": registry.ListAgentIDs(),
@@ -2869,48 +2862,27 @@ func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.Resolv
 		return routing.ResolvedRoute{}, nil, fmt.Errorf("the requested agent is not available")
 	}
 
-	// Check session-level agent override set by the handoff tool. Only
-	// reached when the inbound message has no explicit agent_id (e.g.
-	// non-webchat channels, or webchat messages sent before the SPA
-	// receives the agent_switched frame and updates its dropdown state).
-	// Check by both sessionKey and chatID ("chat:"+chatID) since webchat
-	// messages don't carry a SessionKey, but handoff stores by chatID.
-	for _, lookupKey := range []string{msg.SessionKey, "chat:" + msg.ChatID} {
-		if lookupKey == "" || lookupKey == "chat:" {
-			continue
-		}
-		if activeAgent, ok := al.sessionActiveAgent.Load(lookupKey); ok {
+	// Check session/chat-scope handoff override. Only reached when the message
+	// carries no explicit agent_id. sessionScopeKey prevents non-webchat
+	// channels without a SessionID from collapsing into a single global bucket.
+	{
+		scopeKey := sessionScopeKey(msg)
+		if activeAgent, ok := al.sessionActiveAgent.Load(scopeKey); ok {
 			agentID := activeAgent.(string)
 			if agentID != "" {
 				if agent, ok := registry.GetAgent(agentID); ok {
 					logger.InfoCF("agent", "Session handoff override active", map[string]any{
-						"lookup_key": lookupKey,
+						"session_id": msg.SessionID,
 						"agent_id":   agentID,
 					})
-					sk := msg.SessionKey
-					if sk == "" {
-						// Use the same agent-scoped key the explicit
-						// agent_id path produces below, so per-agent
-						// history lives under one key per (agent, chat)
-						// pair regardless of how routing got there.
-						// Without this, post-handoff turns wrote to
-						// "chat:<chatID>" while the dropdown path wrote
-						// to "agent:<id>:webchat:<chatID>" — and the
-						// transcript→history hydration also targets the
-						// agent-scoped key, leaving the LLM's history
-						// pointing at a different on-disk file from the
-						// hydrated one.
-						sk = fmt.Sprintf("agent:%s:webchat:%s", agentID, msg.ChatID)
-					}
+					sk := agentSessionKey(agentID, msg)
 					return routing.ResolvedRoute{AgentID: agentID, SessionKey: sk}, agent, nil
 				}
-				al.sessionActiveAgent.Delete(lookupKey)
+				// Agent was deleted after the override was set — clean up and fall through.
+				al.sessionActiveAgent.Delete(scopeKey)
 			}
 		}
 	}
-
-	// (The explicit agent_id branch is handled at the top of this function
-	// so it can pre-empt the handoff override.)
 
 	route := registry.ResolveRoute(routing.RouteInput{
 		Channel:    msg.Channel,
@@ -2945,6 +2917,28 @@ func resolveScopeKey(route routing.ResolvedRoute, msgSessionKey string) string {
 		return msgSessionKey
 	}
 	return route.SessionKey
+}
+
+// sessionScopeKey returns a stable bucket key for a message.
+// When SessionID is set, returns "session:<sessionID>".
+// When SessionID is empty, returns "chat:<channel>:<chatID>" so that
+// messages from non-webchat channels that haven't been assigned a session yet
+// do not all collapse into a single "session:" bucket.
+func sessionScopeKey(msg bus.InboundMessage) string {
+	if msg.SessionID != "" {
+		return "session:" + msg.SessionID
+	}
+	return "chat:" + msg.Channel + ":" + msg.ChatID
+}
+
+// agentSessionKey builds the per-agent session key combining agentID with the
+// message's scope bucket. Uses session-scoped format when SessionID is known;
+// falls back to chat-scoped format for channels that haven't minted a session.
+func agentSessionKey(agentID string, msg bus.InboundMessage) string {
+	if msg.SessionID != "" {
+		return fmt.Sprintf("agent:%s:session:%s", agentID, msg.SessionID)
+	}
+	return fmt.Sprintf("agent:%s:chat:%s:%s", agentID, msg.Channel, msg.ChatID)
 }
 
 func (al *AgentLoop) resolveSteeringTarget(msg bus.InboundMessage) (string, string, bool) {
@@ -3205,6 +3199,7 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 				Duration:        time.Since(ts.startedAt),
 				FinalContentLen: ts.finalContentLen(),
 				ChatID:          ts.chatID,
+				SessionID:       ts.transcriptSessionID,
 				IsRoot:          ts.parentTurnID == "",
 			},
 		)
@@ -3662,7 +3657,7 @@ turnLoop:
 			// Use streaming if the provider supports it and we have a streamer for this channel.
 			if sp, ok := activeProvider.(providers.StreamingProvider); ok && al.bus != nil {
 				logger.DebugCF("agent", "Provider supports streaming, checking for streamer", map[string]any{"channel": ts.channel, "chat_id": ts.chatID})
-				if streamer, hasStreamer := al.bus.GetStreamer(providerCtx, ts.channel, ts.chatID); hasStreamer {
+				if streamer, hasStreamer := al.bus.GetStreamer(providerCtx, ts.channel, ts.chatID, ts.transcriptSessionID); hasStreamer {
 					logger.InfoCF("agent", "Using streaming for response", map[string]any{"channel": ts.channel, "chat_id": ts.chatID})
 					var lastChunk string
 					resp, streamErr := sp.ChatStream(providerCtx, messagesForCall, toolDefsForCall, llmModel, llmOpts, func(accumulated string) {
@@ -4263,6 +4258,7 @@ turnLoop:
 					Arguments: toolArgs,
 					Channel:   ts.channel,
 					ChatID:    ts.chatID,
+					SessionID: ts.transcriptSessionID,
 				})
 				if !approval.IsApproved() {
 					allResponsesHandled = false
@@ -4385,6 +4381,7 @@ turnLoop:
 				ToolExecStartPayload{
 					ToolCallID:        session.ToolCallID(tc.ID),
 					ChatID:            ts.chatID,
+					SessionID:         ts.transcriptSessionID,
 					Tool:              toolName,
 					Arguments:         cloneEventArguments(toolArgs),
 					ParentSpawnCallID: session.ToolCallID(ts.parentSpawnCallID),
@@ -4712,6 +4709,7 @@ turnLoop:
 				ToolExecEndPayload{
 					ToolCallID:        session.ToolCallID(toolCallID),
 					ChatID:            ts.chatID,
+					SessionID:         ts.transcriptSessionID,
 					Tool:              toolName,
 					Duration:          toolDuration,
 					ForLLMLen:         len(contentForLLM),

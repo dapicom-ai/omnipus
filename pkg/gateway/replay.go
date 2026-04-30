@@ -108,10 +108,11 @@ func streamReplay(
 	// construction in the spawn-parent branch and the flat-emission branch.
 	buildStart := func(tc session.ToolCall, agentID, parentCallID string) wsServerFrame {
 		f := wsServerFrame{
-			Type:   "tool_call_start",
-			CallID: string(tc.ID),
-			Tool:   tc.Tool,
-			Params: tc.Parameters,
+			Type:      "tool_call_start",
+			SessionID: sessionID,
+			CallID:    string(tc.ID),
+			Tool:      tc.Tool,
+			Params:    tc.Parameters,
 		}
 		if agentID != "" {
 			f.AgentID = agentID
@@ -128,6 +129,7 @@ func streamReplay(
 		resultPayload := truncateResult(sessionID, tc)
 		f := wsServerFrame{
 			Type:       "tool_call_result",
+			SessionID:  sessionID,
 			CallID:     string(tc.ID),
 			Tool:       tc.Tool,
 			Result:     resultPayload,
@@ -161,9 +163,10 @@ func streamReplay(
 		// FR-I-002: emit replay_message for non-empty content.
 		if entry.Content != "" {
 			f := wsServerFrame{
-				Type:    "replay_message",
-				Role:    entry.Role,
-				Content: entry.Content,
+				Type:      "replay_message",
+				SessionID: sessionID,
+				Role:      entry.Role,
+				Content:   entry.Content,
 			}
 			if entry.AgentID != "" {
 				f.AgentID = entry.AgentID
@@ -233,6 +236,7 @@ func streamReplay(
 				taskLabel := resolveTaskLabel(tc)
 				subStart := wsServerFrame{
 					Type:         "subagent_start",
+					SessionID:    sessionID,
 					SpanID:       spanID,
 					ParentCallID: tcID,
 					TaskLabel:    taskLabel,
@@ -255,6 +259,7 @@ func streamReplay(
 				// Emit subagent_end.
 				subEnd := wsServerFrame{
 					Type:       "subagent_end",
+					SessionID:  sessionID,
 					SpanID:     spanID,
 					DurationMs: nestedDurationMS,
 					Status:     nestedStatus,
@@ -303,7 +308,7 @@ func streamReplay(
 	if ctx.Err() != nil {
 		return framesEmitted, ctx.Err()
 	}
-	if err2 := emit(wsServerFrame{Type: "done", Stats: doneStats}); err2 != nil {
+	if err2 := emit(wsServerFrame{Type: "done", SessionID: sessionID, Stats: doneStats}); err2 != nil {
 		return framesEmitted, err2
 	}
 	return framesEmitted, nil
@@ -378,6 +383,7 @@ func emitNestedToolCalls(
 
 			startFrame := wsServerFrame{
 				Type:         "tool_call_start",
+				SessionID:    sessionID,
 				CallID:       tcID,
 				Tool:         tc.Tool,
 				Params:       tc.Parameters,
@@ -398,6 +404,7 @@ func emitNestedToolCalls(
 			status := resolveStatus(tc.Status)
 			resultFrame := wsServerFrame{
 				Type:         "tool_call_result",
+				SessionID:    sessionID,
 				CallID:       tcID,
 				Tool:         tc.Tool,
 				Result:       resultPayload,

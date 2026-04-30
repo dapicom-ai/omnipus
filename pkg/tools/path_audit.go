@@ -21,6 +21,7 @@ package tools
 
 import (
 	"context"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -162,8 +163,7 @@ func emitPathAccessDenied(
 			"reason": classifyPathDenialReason(validatorErr, allowPathsLen),
 		},
 	}
-	// Logger.Log returns an error on degraded mode; it has already been
-	// surfaced via slog inside the audit package. We deliberately discard
-	// it here so a degraded audit subsystem cannot affect the tool result.
-	_ = auditLog.Log(entry)
+	if err := auditLog.Log(entry); err != nil {
+		slog.Error("path_audit: log write failed", "error", err, "session_id", entry.SessionID)
+	}
 }

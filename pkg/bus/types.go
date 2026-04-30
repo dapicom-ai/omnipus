@@ -39,7 +39,13 @@ type InboundMessage struct {
 	MessageID  string            `json:"message_id,omitempty"`  // platform message ID
 	MediaScope string            `json:"media_scope,omitempty"` // media lifecycle scope
 	SessionKey string            `json:"session_key"`
-	Metadata   map[string]string `json:"metadata,omitempty"`
+	// SessionID is the transcript-store session ID this message belongs to.
+	// Populated by the gateway from the WS frame.SessionID on every message
+	// (the gateway mints a new id when the SPA sends one without it). Used
+	// by routing, handoff override, and per-agent history keying so two
+	// concurrent sessions in the same browser remain isolated.
+	SessionID string            `json:"session_id,omitempty"`
+	Metadata  map[string]string `json:"metadata,omitempty"`
 }
 
 type OutboundMessage struct {

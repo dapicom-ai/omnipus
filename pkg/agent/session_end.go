@@ -216,10 +216,9 @@ func (al *AgentLoop) runRecap(sessionID, trigger string) {
 	}
 
 	al.auditRecap(sessionID, agentInst.ID, trigger, "success")
-	// Bound sync.Map: delete the claim so the session can be re-recapped if
-	// needed (e.g. bootstrap pass). agentSessionHasRetro provides file-level
-	// idempotency, so deleting here is safe.
-	al.claimedCloseSessions.Delete(sessionID)
+	// Claim stays for the process lifetime: idempotency is provided by
+	// agentSessionHasRetro at the file level. Re-recap on a subsequent
+	// bootstrap pass will be blocked by the file check, not this map.
 
 	slog.Info("session_end: recap complete",
 		"session_id", sessionID,
@@ -300,10 +299,8 @@ func (al *AgentLoop) writeHeuristicFallbackRetroWithCount(
 	}
 
 	al.auditRecap(sessionID, agentInst.ID, trigger, "fallback:"+fallbackReason)
-	// Bound sync.Map: remove the claim so a future bootstrap pass can
-	// re-attempt a proper LLM recap. File-level idempotency via
+	// Claim stays for the process lifetime: file-level idempotency via
 	// agentSessionHasRetro prevents duplicate fallback writes.
-	al.claimedCloseSessions.Delete(sessionID)
 }
 
 // auditRecap logs a memory.auto_recap audit event if audit logging is enabled.

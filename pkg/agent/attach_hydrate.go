@@ -7,7 +7,7 @@
 //
 // Without this bridge, "open past session" only repopulates the SPA chat UI:
 // the agent's in-memory history (keyed by routing scope, e.g.
-// "agent:<id>:webchat:<chatID>") stays empty for the new WS connection, so
+// "agent:<id>:session:<sessionID>") stays empty for the new WS connection, so
 // the next LLM call sees no prior context and the agent answers as if the
 // conversation just started.
 
@@ -23,23 +23,23 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/session"
 )
 
-// HydrateAgentHistoryFromTranscript reads the transcript for transcriptSessionID
-// and rebuilds each owning agent's session.SessionStore history under the
-// session key the next webchat turn will use ("agent:<agentID>:webchat:<chatID>").
+// HydrateAgentHistoryFromTranscript reads the transcript for sessionID and
+// rebuilds each owning agent's session.SessionStore history under the key
+// "agent:<agentID>:session:<sessionID>".
 //
 // The mapping is best-effort: messages with unknown roles or unresolvable
 // agent IDs are skipped. SubTurn entries (orchestrator hand-offs) are ignored
 // at this layer — they are reconstructed by the agent loop's own subturn
 // machinery on demand.
-func (al *AgentLoop) HydrateAgentHistoryFromTranscript(chatID, transcriptSessionID string) error {
-	if chatID == "" || transcriptSessionID == "" {
-		return fmt.Errorf("agent: HydrateAgentHistoryFromTranscript: chatID and transcriptSessionID required")
+func (al *AgentLoop) HydrateAgentHistoryFromTranscript(sessionID string) error {
+	if sessionID == "" {
+		return fmt.Errorf("agent: HydrateAgentHistoryFromTranscript: sessionID required")
 	}
-	store := al.ResolveSessionStore(transcriptSessionID)
+	store := al.ResolveSessionStore(sessionID)
 	if store == nil {
-		return fmt.Errorf("agent: HydrateAgentHistoryFromTranscript: no session store for %s", transcriptSessionID)
+		return fmt.Errorf("agent: HydrateAgentHistoryFromTranscript: no session store for %s", sessionID)
 	}
-	entries, err := store.ReadTranscript(transcriptSessionID)
+	entries, err := store.ReadTranscript(sessionID)
 	if err != nil {
 		return fmt.Errorf("agent: HydrateAgentHistoryFromTranscript: read transcript: %w", err)
 	}
@@ -49,7 +49,7 @@ func (al *AgentLoop) HydrateAgentHistoryFromTranscript(chatID, transcriptSession
 
 	registry := al.GetRegistry()
 	if registry == nil {
-		return fmt.Errorf("agent: HydrateAgentHistoryFromTranscript: agent registry not available")
+		return fmt.Errorf("agent: HydrateAgentHistoryFromTranscript: registry not available")
 	}
 
 	// Group provider messages per owning agent.
@@ -157,7 +157,7 @@ func (al *AgentLoop) HydrateAgentHistoryFromTranscript(chatID, transcriptSession
 				map[string]any{"agent_id": agentID, "msg_count": len(msgs)})
 			continue
 		}
-		key := fmt.Sprintf("agent:%s:webchat:%s", agentID, chatID)
+		key := fmt.Sprintf("agent:%s:session:%s", agentID, sessionID)
 		ag.Sessions.SetHistory(key, msgs)
 		if err := ag.Sessions.Save(key); err != nil {
 			logger.WarnCF("agent.attach", "save hydrated history failed",
@@ -165,10 +165,10 @@ func (al *AgentLoop) HydrateAgentHistoryFromTranscript(chatID, transcriptSession
 		} else {
 			logger.InfoCF("agent.attach", "hydrated agent history from transcript",
 				map[string]any{
-					"agent_id":              agentID,
-					"session_key":           key,
-					"transcript_session_id": transcriptSessionID,
-					"message_count":         len(msgs),
+					"agent_id":      agentID,
+					"session_key":   key,
+					"session_id":    sessionID,
+					"message_count": len(msgs),
 				})
 		}
 	}

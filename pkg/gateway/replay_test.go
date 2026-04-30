@@ -687,10 +687,9 @@ func TestAttach_RegistersLiveEventsBeforeReplay(t *testing.T) {
 	}
 
 	chatID := "test-chat-live-before-replay"
-	var sessionID string
 
 	ctx := context.Background()
-	handler.handleAttachSession(ctx, chatID, &sessionID, meta.ID, wc)
+	handler.handleAttachSession(ctx, chatID, meta.ID, wc)
 
 	// Must have received at least: replay_message{user,"hello"} + done.
 	close(wc.sendCh)
@@ -742,8 +741,7 @@ func TestAttach_StartLogged(t *testing.T) {
 		sendCh: make(chan []byte, 512),
 		doneCh: make(chan struct{}),
 	}
-	var sessionID string
-	handler.handleAttachSession(context.Background(), "chat-log-test", &sessionID, meta.ID, wc)
+	handler.handleAttachSession(context.Background(), "chat-log-test", meta.ID, wc)
 
 	logOutput := logBuf.String()
 	assert.Contains(t, logOutput, "replay_start", "slog.Info must include event:replay_start")
@@ -774,8 +772,7 @@ func TestAttach_EndLogged(t *testing.T) {
 		sendCh: make(chan []byte, 512),
 		doneCh: make(chan struct{}),
 	}
-	var sessionID string
-	handler.handleAttachSession(context.Background(), "chat-end-log-test", &sessionID, meta.ID, wc)
+	handler.handleAttachSession(context.Background(), "chat-end-log-test", meta.ID, wc)
 
 	logOutput := logBuf.String()
 	assert.Contains(t, logOutput, "replay_end", "slog.Info must include event:replay_end")

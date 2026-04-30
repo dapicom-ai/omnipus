@@ -62,14 +62,12 @@ func TestHydrateAgentHistoryFromTranscript_RestoresPriorTurns(t *testing.T) {
 		}
 	}
 
-	// New WS connection picks a new chatID; this is the key the next LLM
-	// turn will use after the SPA sends attach_session.
-	const chatID = "chat-attach-1"
-	if err := al.HydrateAgentHistoryFromTranscript(chatID, transcriptID); err != nil {
+	// Hydrate using only sessionID — the per-agent key is now "agent:<id>:session:<sessionID>".
+	if err := al.HydrateAgentHistoryFromTranscript(transcriptID); err != nil {
 		t.Fatalf("HydrateAgentHistoryFromTranscript: %v", err)
 	}
 
-	wantKey := fmt.Sprintf("agent:%s:webchat:%s", agentID, chatID)
+	wantKey := fmt.Sprintf("agent:%s:session:%s", agentID, transcriptID)
 	got := ag.Sessions.GetHistory(wantKey)
 	if len(got) != 4 {
 		t.Fatalf("hydrated history len = %d, want 4; messages=%+v", len(got), got)
@@ -139,12 +137,11 @@ func TestHydrateAgentHistoryFromTranscript_HandoffBriefReachesTarget(t *testing.
 		}
 	}
 
-	const chatID = "chat-handoff-1"
-	if err := al.HydrateAgentHistoryFromTranscript(chatID, meta.ID); err != nil {
+	if err := al.HydrateAgentHistoryFromTranscript(meta.ID); err != nil {
 		t.Fatalf("HydrateAgentHistoryFromTranscript: %v", err)
 	}
 
-	rayKey := fmt.Sprintf("agent:ray:webchat:%s", chatID)
+	rayKey := fmt.Sprintf("agent:ray:session:%s", meta.ID)
 	ray, ok := al.GetRegistry().GetAgent("ray")
 	if !ok {
 		t.Fatal("ray not in registry after setup")
@@ -188,7 +185,7 @@ func TestHydrateAgentHistoryFromTranscript_EmptyTranscriptIsNoOp(t *testing.T) {
 		t.Fatalf("NewSession: %v", err)
 	}
 
-	if err := al.HydrateAgentHistoryFromTranscript("chat-empty", meta.ID); err != nil {
+	if err := al.HydrateAgentHistoryFromTranscript(meta.ID); err != nil {
 		t.Fatalf("HydrateAgentHistoryFromTranscript on empty transcript should not error: %v", err)
 	}
 }

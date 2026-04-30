@@ -467,14 +467,11 @@ func TestBootstrapRecapPass_OneIterationPerSession(t *testing.T) {
 			sessionID, retroCount)
 	}
 
-	// After the recap goroutine completes, the claim must be removed from the map
-	// (Architect #6 / session_end.go Delete call). The file-level idempotency via
-	// agentSessionHasRetro prevents double-writes; the sync.Map is bounded by cleanup.
-	if _, ok := al.claimedCloseSessions.Load(sessionID); ok {
-		t.Error("claim map must be cleared after recap completes (sync.Map bound)")
-	}
-	if count := syncMapLenLocal(&al.claimedCloseSessions); count != 0 {
-		t.Errorf("bootstrap pass left %d claims after recap; expected 0 (all cleaned up)", count)
+	// After the recap goroutine completes, the claim must still be present —
+	// claims are intentionally never deleted (F22: idempotency for lifetime of process).
+	// File-level idempotency via agentSessionHasRetro prevents duplicate writes.
+	if _, ok := al.claimedCloseSessions.Load(sessionID); !ok {
+		t.Error("claim map entry must persist after recap completes (process-lifetime idempotency gate)")
 	}
 
 	// And Chat should have been invoked exactly once — not 3 times (once per agent).

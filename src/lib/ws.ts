@@ -16,12 +16,12 @@ export interface WsAuthFrame {
   token: string
 }
 
-export interface WsMessageFrame {
-  type: 'message'
-  content: string
-  session_id?: string
-  agent_id?: string
-}
+// F-S6: discriminated union separates "mint new session" (no session_id) from
+// "continue existing session" (session_id present). Callers narrow via
+// `'session_id' in frame` to determine which path applies.
+export type WsMessageFrame =
+  | { type: 'message'; content: string; agent_id?: string }
+  | { type: 'message'; content: string; session_id: string; agent_id?: string }
 
 export interface WsCancelFrame {
   type: 'cancel'
@@ -43,43 +43,61 @@ export interface WsAttachSessionFrame {
   session_id: string
 }
 
-export interface WsNewSessionFrame {
-  type: 'new_session'
-}
-
 export interface WsDevicePairingResponseFrame {
   type: 'device_pairing_response'
   device_id: string
   decision: 'approve' | 'reject'
 }
 
-export type WsSendFrame = WsAuthFrame | WsMessageFrame | WsCancelFrame | WsExecApprovalResponseFrame | WsPingFrame | WsAttachSessionFrame | WsNewSessionFrame | WsDevicePairingResponseFrame
+// F-S9: append session_close to the WsClientFrame.SessionID usage list (it mirrors cancel)
+
+export type WsSendFrame = WsAuthFrame | WsMessageFrame | WsCancelFrame | WsExecApprovalResponseFrame | WsPingFrame | WsAttachSessionFrame | WsDevicePairingResponseFrame
+
+// Emitted by the server immediately after it mints a new session_id
+// (i.e. when the SPA sent a message frame without a session_id).
+// The SPA stores this id as the new activeSessionId.
+export interface WsSessionStartedFrame {
+  type: 'session_started'
+  session_id: string
+  agent_id?: string
+}
+
+// F-S5: session-scoped frames require session_id (non-optional).
+// The compile-time requirement prevents future frames from accidentally omitting it.
+// Global frames (error, pong, session_state, device_pairing_*) keep session_id optional.
 
 export interface WsTokenFrame {
   type: 'token'
+  session_id: string
   content: string
 }
 
 export interface WsDoneFrame {
   type: 'done'
+  session_id: string
   stats?: { tokens: number; cost: number; duration_ms: number; tokens_dropped?: number }
 }
 
 export interface WsErrorFrame {
   type: 'error'
+  // Global error frames need not be session-scoped; session_id optional.
+  session_id?: string
   message: string
 }
 
 export interface WsToolCallStartFrame {
   type: 'tool_call_start'
+  session_id: string
   tool: string
   call_id: string
   params: Record<string, unknown>
   parent_call_id?: string
+  agent_id?: string
 }
 
 export interface WsToolCallResultFrame {
   type: 'tool_call_result'
+  session_id: string
   tool: string
   call_id: string
   result: unknown
@@ -87,11 +105,13 @@ export interface WsToolCallResultFrame {
   duration_ms?: number
   error?: string
   parent_call_id?: string
+  agent_id?: string
 }
 
 // FR-H-004: subagent span bracket frames
 export interface WsSubagentStartFrame {
   type: 'subagent_start'
+  session_id: string
   span_id: string
   parent_call_id: string
   task_label: string
@@ -100,6 +120,7 @@ export interface WsSubagentStartFrame {
 
 export interface WsSubagentEndFrame {
   type: 'subagent_end'
+  session_id: string
   span_id: string
   status: 'success' | 'error' | 'cancelled' | 'interrupted' | 'timeout'
   duration_ms?: number
@@ -134,6 +155,7 @@ export interface MarshalErrorResult {
 
 export interface WsExecApprovalRequestFrame {
   type: 'exec_approval_request'
+  session_id: string
   id: string
   command: string
   working_dir?: string
@@ -142,6 +164,7 @@ export interface WsExecApprovalRequestFrame {
 
 export interface WsTaskStatusChangedFrame {
   type: 'task_status_changed'
+  session_id: string
   task_id: string
   status: string
   agent_id?: string
@@ -149,12 +172,14 @@ export interface WsTaskStatusChangedFrame {
 
 export interface WsReplayMessageFrame {
   type: 'replay_message'
+  session_id: string
   content: string
   role: string
 }
 
 export interface WsRateLimitFrame {
   type: 'rate_limit'
+  session_id: string
   scope: 'agent' | 'channel' | 'global'
   resource: string
   policy_rule: string
@@ -173,11 +198,13 @@ export interface WsMediaPart {
 
 export interface WsMediaFrame {
   type: 'media'
+  session_id: string
   parts: WsMediaPart[]
 }
 
 export interface WsAgentSwitchedFrame {
   type: 'agent_switched'
+  session_id: string
   agent_id: string
   agent_name?: string  // included by backend for display without an extra lookup
 }
@@ -219,7 +246,11 @@ export interface WsSystemOverloadFrame {
   message?: string
 }
 
+// F-S5: session_id contract — session-scoped frames have session_id: string (required);
+// global frames (error, session_state, device_pairing_*) may omit it.
+// WsSessionStartedFrame carries session_id as the minted id, not as routing context.
 export type WsReceiveFrame =
+  | WsSessionStartedFrame
   | WsTokenFrame
   | WsDoneFrame
   | WsErrorFrame

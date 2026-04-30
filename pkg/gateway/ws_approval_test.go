@@ -76,7 +76,7 @@ func writeWSClientFrameNoFail(conn *websocket.Conn, frame wsClientFrame) error {
 func TestApprovalRegistry_RegisterResolve(t *testing.T) {
 	reg := newWSApprovalRegistry()
 
-	ch := reg.register("req-1")
+	ch := reg.register("req-1", "")
 	require.NotNil(t, ch, "register must return a non-nil channel")
 
 	decision := agent.ApprovalDecision{Verdict: agent.VerdictAllow}
@@ -113,7 +113,7 @@ func TestApprovalRegistry_ResolveUnknown(t *testing.T) {
 func TestApprovalRegistry_UnregisterBeforeResolve(t *testing.T) {
 	reg := newWSApprovalRegistry()
 
-	reg.register("req-unregister")
+	reg.register("req-unregister", "")
 	reg.unregister("req-unregister")
 
 	resolved := reg.resolve("req-unregister", agent.ApprovalDecision{Verdict: agent.VerdictAllow})
@@ -129,8 +129,8 @@ func TestApprovalRegistry_UnregisterBeforeResolve(t *testing.T) {
 func TestApprovalRegistry_DuplicateRegister(t *testing.T) {
 	reg := newWSApprovalRegistry()
 
-	ch1 := reg.register("req-dup")
-	ch2 := reg.register("req-dup")
+	ch1 := reg.register("req-dup", "")
+	ch2 := reg.register("req-dup", "")
 
 	// The implementation returns the existing channel on duplicate.
 	assert.Equal(t, ch1, ch2, "duplicate register must return the existing channel")
@@ -164,7 +164,7 @@ func TestApprovalRegistry_ConcurrentAccess(t *testing.T) {
 			defer wg.Done()
 			// Use a unique ID per goroutine.
 			id := "concurrent-req-" + string(rune('A'+n%26)) + "-" + time.Now().String() + "-" + string(rune('0'+n%10))
-			ch := reg.register(id)
+			ch := reg.register(id, "")
 			defer reg.unregister(id)
 
 			// Resolve in another goroutine to simulate real async use.
@@ -377,7 +377,7 @@ func TestHandleApprovalResponse_Allow(t *testing.T) {
 	sendWSAuthFrameDevMode(t, conn)
 
 	pendingID := "test-allow-request-id"
-	ch := handler.approvalRegistry.register(pendingID)
+	ch := handler.approvalRegistry.register(pendingID, "")
 	defer handler.approvalRegistry.unregister(pendingID)
 
 	writeWSClientFrame(t, conn, wsClientFrame{
@@ -412,7 +412,7 @@ func TestHandleApprovalResponse_Deny(t *testing.T) {
 	sendWSAuthFrameDevMode(t, conn)
 
 	pendingID := "test-deny-request-id"
-	ch := handler.approvalRegistry.register(pendingID)
+	ch := handler.approvalRegistry.register(pendingID, "")
 	defer handler.approvalRegistry.unregister(pendingID)
 
 	writeWSClientFrame(t, conn, wsClientFrame{
@@ -447,7 +447,7 @@ func TestHandleApprovalResponse_Always(t *testing.T) {
 	sendWSAuthFrameDevMode(t, conn)
 
 	pendingID := "test-always-request-id"
-	ch := handler.approvalRegistry.register(pendingID)
+	ch := handler.approvalRegistry.register(pendingID, "")
 	defer handler.approvalRegistry.unregister(pendingID)
 
 	writeWSClientFrame(t, conn, wsClientFrame{
@@ -588,4 +588,59 @@ func TestHandleApprovalResponse_EmptyID(t *testing.T) {
 	// Connection must remain open — a subsequent write must succeed.
 	err := writeWSClientFrameNoFail(conn, wsClientFrame{Type: "message", Content: "still alive"})
 	assert.NoError(t, err, "connection must remain open after empty-ID approval response")
+}
+
+// ---------------------------------------------------------------------------
+// TestWS_ApprovalResponse_RejectsMismatchedSessionID (F11)
+// ---------------------------------------------------------------------------
+
+// TestWS_ApprovalResponse_RejectsMismatchedSessionID verifies that an
+// exec_approval_response frame carrying a session_id that does not match
+// the registry entry's session_id is rejected with an error frame, and the
+// approval request is NOT resolved (remains pending).
+func TestWS_ApprovalResponse_RejectsMismatchedSessionID(t *testing.T) {
+	registry := newWSApprovalRegistry()
+
+	// Register a request for session A.
+	const approvalID = "approval-test-001"
+	const sessionA = "session-aaa"
+	ch := registry.register(approvalID, sessionA)
+
+	// Build a minimal wsConn to capture outbound frames.
+	// The sendCh is buffered (16 slots) so sendConnFrame will not block.
+	wc := makeTestConn()
+
+	// Build a WSHandler to call handleApprovalResponse with a mismatched session.
+	h := &WSHandler{
+		approvalRegistry: registry,
+	}
+	const mismatchedSession = "session-bbb"
+	h.handleApprovalResponse(approvalID, "allow", mismatchedSession, wc)
+
+	// The approval should NOT have been resolved — ch must still be empty.
+	select {
+	case <-ch:
+		t.Error("approval must NOT be resolved when session_id mismatches")
+	default:
+		// expected: channel empty = not resolved
+	}
+
+	// An error frame must have been sent.
+	select {
+	case raw := <-wc.sendCh:
+		var frame wsServerFrame
+		if err := json.Unmarshal(raw, &frame); err != nil {
+			t.Fatalf("could not unmarshal frame: %v", err)
+		}
+		if frame.Type != "error" {
+			t.Errorf("expected error frame, got %q", frame.Type)
+		}
+		if frame.Message != "approval session_id mismatch" {
+			t.Errorf("unexpected error message: %q", frame.Message)
+		}
+	default:
+		t.Error("expected an error frame to be sent on session_id mismatch")
+	}
+
+	close(wc.sendCh)
 }

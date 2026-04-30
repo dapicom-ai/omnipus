@@ -142,7 +142,7 @@ func TestHandoffTool_SuccessPath(t *testing.T) {
 		func() AgentRegistryReader { return reg },
 		store,
 		func(string) int { return 8192 },
-		func(chatID, agentID, agentName string) { notifiedAgentID = agentID },
+		func(evt HandoffEvent) { notifiedAgentID = evt.AgentID },
 	)
 	ctx := makeCtx("session_abc", "chat_1", "mia")
 	result := tool.Execute(ctx, map[string]any{
@@ -281,7 +281,7 @@ func TestReturnToDefaultTool_Success(t *testing.T) {
 	tool := NewReturnToDefaultTool(
 		store,
 		func() string { return "mia" },
-		func(chatID, agentID, agentName string) { notifiedAgentID = agentID },
+		func(evt HandoffEvent) { notifiedAgentID = evt.AgentID },
 	)
 	ctx := makeCtx("session_abc", "chat_1", "ray")
 	result := tool.Execute(ctx, map[string]any{

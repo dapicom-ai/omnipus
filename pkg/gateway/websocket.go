@@ -40,7 +40,7 @@ const replayLiveBufferCap = 1000
 
 // wsClientFrame is a message sent from the browser to the server over WebSocket.
 type wsClientFrame struct {
-	Type      string `json:"type"`                 // "auth" | "message" | "cancel" | "exec_approval_response" | "attach_session" | "session_close" | "new_session" | "device_pairing_response"
+	Type      string `json:"type"`                 // "auth" | "message" | "cancel" | "exec_approval_response" | "attach_session" | "session_close" | "device_pairing_response"
 	Token     string `json:"token,omitempty"`      // for "auth"
 	Content   string `json:"content,omitempty"`    // for "message"
 	SessionID string `json:"session_id,omitempty"` // for "message" / "cancel" / "attach_session"
@@ -52,7 +52,9 @@ type wsClientFrame struct {
 
 // wsServerFrame is a message sent from the server to the browser over WebSocket.
 type wsServerFrame struct {
-	Type       string         `json:"type"`
+	Type      string `json:"type"`
+	SessionID string `json:"session_id,omitempty"` // present on all session-scoped frames
+
 	Content    string         `json:"content,omitempty"`
 	Role       string         `json:"role,omitempty"`
 	Tool       string         `json:"tool,omitempty"`
@@ -214,42 +216,42 @@ func newWSHandler(
 		},
 	}
 	// NOTE: Do NOT call msgBus.SetStreamDelegate(h) here.
-	// The channel Manager is already set as the stream delegate (via manager.go:254).
-	// atomic.Value panics if you store a different concrete type.
-	// Instead, the channel Manager's GetStreamer will be extended to check for
-	// webchat WebSocket connections. For now, webchat streaming goes through
-	// the Manager → Pico channel path, and we handle it via direct message publishing.
+	// The channel Manager is the registered delegate; the bus's atomic.Pointer
+	// panics on a type mismatch if you store a different concrete type after boot.
+	// Webchat streaming flows through Manager.GetStreamer → WSHandler.GetStreamer.
 	return h
 }
 
 // GetStreamer implements bus.StreamDelegate.
 // Returns a WebSocket streamer for webchat sessions that have an active connection.
-func (h *WSHandler) GetStreamer(_ context.Context, channel, chatID string) (bus.Streamer, bool) {
+// sessionID is provided by the caller (agent loop) so the streamer can record to
+// the correct transcript without a map reverse-lookup.
+func (h *WSHandler) GetStreamer(_ context.Context, channel, chatID, sessionID string) (bus.Streamer, bool) {
 	if channel != "webchat" {
 		return nil, false
 	}
-	// Hold the lock for both map lookups to avoid a TOCTOU race where the
-	// session could be removed between the two separate lock/unlock pairs.
 	h.mu.Lock()
 	conn, ok := h.sessions[chatID]
-	sid := h.sessionIDs[chatID]
+	// If caller didn't supply sessionID, fall back to the map for backward compat.
+	sid := sessionID
+	if sid == "" {
+		sid = h.sessionIDs[chatID]
+	}
 	h.mu.Unlock()
 	if !ok {
 		return nil, false
 	}
 
 	// Resolve the agent store for transcript recording.
-	// The session is associated with a specific agent; look up that agent's store.
 	var agentStore *session.UnifiedStore
 	if sid != "" {
-		// Try to find which agent owns this session by scanning agent stores.
 		agentStore = h.resolveSessionStore(sid)
 	}
 
-	// Resolve the active agent for this chat session so the transcript entry
-	// can be tagged with the correct agent ID (FR-002).
+	// Resolve the active agent for this session so the transcript entry
+	// can be tagged with the correct agent ID (FR-002). Key by sessionID.
 	activeAgentID := ""
-	if aid, ok := h.agentLoop.GetSessionActiveAgent(chatID); ok {
+	if aid, ok := h.agentLoop.GetSessionActiveAgent(sid); ok {
 		activeAgentID = aid
 	}
 
@@ -380,7 +382,7 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		<-eventDone // wait for forwarder goroutine to exit
 		h.mu.Lock()
 		if tid, ok := h.taskChatIDs[chatID]; ok {
-			delete(h.sessions, tid)
+			// sessions is never keyed by tid (only by chatID); clean up only sessionIDs.
 			delete(h.sessionIDs, tid)
 			delete(h.taskChatIDs, chatID)
 		}
@@ -397,8 +399,7 @@ func (h *WSHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// This lets the SPA reconcile stale approval modals after a gateway restart.
 	h.emitSessionState(wc)
 
-	var sessionID string
-	h.readLoop(r.Context(), conn, wc, chatID, &sessionID)
+	h.readLoop(r.Context(), conn, wc, chatID)
 }
 
 // authenticateWS reads the first frame and validates the token.
@@ -480,15 +481,11 @@ func (h *WSHandler) authenticateWS(conn *websocket.Conn, wc *wsConn) bool {
 const wsMaxMessageBytes = 5 * 1024 * 1024
 
 // readLoop processes client frames until the connection closes.
-func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsConn, chatID string, sessionID *string) {
+func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsConn, chatID string) {
 	// Enforce a hard read limit so clients cannot exhaust server memory with
 	// oversized frames. gorilla/websocket will return an error on the next
 	// ReadMessage call if the incoming frame exceeds this limit.
 	conn.SetReadLimit(wsMaxMessageBytes)
-
-	// Emit session_state one-shot so the SPA can hydrate pending approvals (FR-052, FR-073, FR-081).
-	// Called in a goroutine so it does not block the read loop while the frame is queued.
-	go h.emitSessionState(wc)
 
 	for {
 		_, data, err := conn.ReadMessage()
@@ -531,11 +528,11 @@ func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsCo
 			if frame.Content == "" {
 				continue
 			}
-			h.handleChatMessage(ctx, chatID, sessionID, frame.Content, frame.AgentID, wc)
+			h.handleChatMessage(ctx, chatID, frame.SessionID, frame.Content, frame.AgentID, wc)
 		case "cancel":
-			h.handleCancel(sessionID)
+			h.handleCancel(wc, frame.SessionID)
 		case "exec_approval_response":
-			h.handleApprovalResponse(frame.ID, frame.Decision)
+			h.handleApprovalResponse(frame.ID, frame.Decision, frame.SessionID, wc)
 		case "attach_session":
 			slog.Info("ws: attach_session frame received",
 				"chat_id", chatID,
@@ -561,7 +558,7 @@ func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsCo
 					}
 					h.agentLoop.SetCurrentSession(frame.AgentID, frame.SessionID)
 				}
-				h.handleAttachSession(ctx, chatID, sessionID, frame.SessionID, wc)
+				h.handleAttachSession(ctx, chatID, frame.SessionID, wc)
 			} else {
 				slog.Warn("ws: attach_session with empty session_id", "chat_id", chatID)
 			}
@@ -576,28 +573,7 @@ func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsCo
 				continue
 			}
 			h.agentLoop.CloseSession(frame.SessionID, "explicit")
-			sendConnFrame(wc, wsServerFrame{Type: "session_close_ack", ID: frame.SessionID})
-		case "new_session":
-			// SPA's "New Chat" button: reset the WS-bound session and clear any
-			// stale handoff routing override so the next message starts a fresh
-			// transcript routed to the explicit agent_id (or the default agent),
-			// not the agent the previous session handed off to.
-			prior := *sessionID
-			*sessionID = ""
-			h.agentLoop.ClearSessionActiveAgent(chatID)
-			if prior != "" {
-				priorSID := prior
-				go func() {
-					defer func() {
-						if r := recover(); r != nil {
-							slog.Error("ws: new_session CloseSession panic recovered",
-								"session_id", priorSID, "panic", r)
-						}
-					}()
-					h.agentLoop.CloseSession(priorSID, "new_chat")
-				}()
-			}
-			sendConnFrame(wc, wsServerFrame{Type: "new_session_ack", ID: prior})
+			sendConnFrame(wc, wsServerFrame{Type: "session_close_ack", ID: frame.SessionID, SessionID: frame.SessionID})
 		case "ping":
 			// Client heartbeat — no action needed, the WebSocket pong handler keeps the connection alive
 		case "device_pairing_response":
@@ -608,64 +584,83 @@ func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsCo
 	}
 }
 
-// handleChatMessage creates a session on the first message, records every user message,
-// and publishes the message to the bus. If session creation fails, the client is warned
-// that the conversation will not be persisted (fix for silent persistence failure).
+// handleChatMessage mints a new session when frame.SessionID is empty, records
+// every user message to the transcript, and publishes the message to the bus.
 func (h *WSHandler) handleChatMessage(
 	ctx context.Context,
 	chatID string,
-	sessionID *string,
+	frameSessionID string,
 	content string,
 	agentID string,
 	wc *wsConn,
 ) {
-	// Resolve the creating agent ID. If agentID is provided, use it;
-	// otherwise fall back to the main agent.
 	targetAgentID := agentID
 	if targetAgentID == "" {
 		targetAgentID = "main"
 	}
-	// Use the shared session store for new sessions (joined session model).
-	// Fall back to the per-agent store if the shared store is unavailable.
 	store := h.agentLoop.GetSessionStore()
 	if store == nil {
 		store = h.agentLoop.GetAgentStore(targetAgentID)
 	}
 
+	sessionID := frameSessionID
+
 	if store != nil {
-		// Create the session on the first message of this WebSocket connection.
-		if *sessionID == "" {
+		if sessionID == "" {
+			// No session_id in frame: mint a new session so all subsequent frames have one.
 			meta, err := store.NewSession(session.SessionTypeChat, "webchat", targetAgentID)
 			if err != nil {
-				slog.Warn("ws: could not create session — conversation will not be saved", "error", err)
+				slog.Error("ws: could not create session", "error", err)
 				sendConnFrame(wc, wsServerFrame{
 					Type:    "error",
-					Message: "warning: could not create session — conversation will not be saved",
+					Command: "session_create_failed",
+					Message: fmt.Sprintf("could not create session: %v", err),
 				})
-				// Continue without sessionID so the message is still delivered to the agent.
-			} else {
-				*sessionID = meta.ID
-				// Track sessionID for this chatID so the streamer can record responses.
-				h.mu.Lock()
-				h.sessionIDs[chatID] = meta.ID
-				h.mu.Unlock()
-				// Truncate using []rune so multi-byte UTF-8 characters aren't split.
-				titleRunes := []rune(content)
-				var title string
-				if len(titleRunes) > 60 {
-					title = string(titleRunes[:57]) + "..."
-				} else {
-					title = content
-				}
-				if err := store.SetMeta(meta.ID, session.MetaPatch{Title: &title}); err != nil {
-					slog.Warn("ws: could not set session title", "session_id", meta.ID, "error", err)
-				}
+				return
 			}
+			sessionID = meta.ID
+			h.mu.Lock()
+			h.sessionIDs[chatID] = meta.ID
+			h.mu.Unlock()
+			titleRunes := []rune(content)
+			var title string
+			if len(titleRunes) > 60 {
+				title = string(titleRunes[:57]) + "..."
+			} else {
+				title = content
+			}
+			if err := store.SetMeta(meta.ID, session.MetaPatch{Title: &title}); err != nil {
+				slog.Warn("ws: could not set session title", "session_id", meta.ID, "error", err)
+			}
+			// Ack the new session_id so the SPA can associate all subsequent frames.
+			sendConnFrame(wc, wsServerFrame{
+				Type:      "session_started",
+				ID:        meta.ID,
+				SessionID: meta.ID,
+				AgentID:   targetAgentID,
+			})
+		} else {
+			// Validate client-supplied session_id format.
+			if err := validation.EntityID(sessionID); err != nil {
+				slog.Warn("ws: invalid session_id in message frame", "session_id", sessionID, "error", err)
+				sendConnFrame(wc, wsServerFrame{Type: "error", Message: "invalid session_id format", SessionID: sessionID})
+				return
+			}
+			// Validate that the session actually exists in the store.
+			if _, err := store.GetMeta(sessionID); err != nil {
+				slog.Warn("ws: session not found", "session_id", sessionID, "error", err)
+				sendConnFrame(wc, wsServerFrame{Type: "error", Message: "session not found", SessionID: sessionID})
+				return
+			}
+			// Track for streamer.
+			h.mu.Lock()
+			if h.sessionIDs[chatID] == "" {
+				h.sessionIDs[chatID] = sessionID
+			}
+			h.mu.Unlock()
 		}
 
-		// Record every user message to the transcript, not just the first one.
-		// AgentID on user entries identifies the agent the message was directed to.
-		if *sessionID != "" {
+		if sessionID != "" {
 			entry := session.TranscriptEntry{
 				ID:        uuid.New().String(),
 				Role:      "user",
@@ -673,57 +668,51 @@ func (h *WSHandler) handleChatMessage(
 				Content:   content,
 				Timestamp: time.Now().UTC(),
 			}
-			if err := store.AppendTranscript(*sessionID, entry); err != nil {
-				slog.Warn("ws: could not record user message", "session_id", *sessionID, "error", err)
+			if err := store.AppendTranscript(sessionID, entry); err != nil {
+				slog.Warn("ws: could not record user message", "session_id", sessionID, "error", err)
 			}
 		}
 	}
 
 	msg := bus.InboundMessage{
-		Channel:  "webchat",
-		SenderID: "webchat_user",
-		ChatID:   chatID,
-		Content:  content,
+		Channel:   "webchat",
+		SenderID:  "webchat_user",
+		ChatID:    chatID,
+		Content:   content,
+		SessionID: sessionID,
 	}
-	// Validate agent_id before embedding in metadata. An invalid ID is rejected
-	// with an error frame — do NOT silently reroute to the default agent, which
-	// would confuse the client about which agent is actually handling the message.
 	if agentID != "" {
 		if err := validateEntityID(agentID); err != nil {
 			slog.Warn("ws: invalid agent_id in message frame; rejecting", "agent_id", agentID, "error", err)
-			sendConnFrame(wc, wsServerFrame{Type: "error", Message: "invalid agent_id"})
+			sendConnFrame(wc, wsServerFrame{Type: "error", Message: "invalid agent_id", SessionID: sessionID})
 			return
 		}
 		msg.Metadata = map[string]string{"agent_id": agentID}
-	}
-	// Embed the session ID in metadata so the agent loop can record tool calls
-	// to the transcript for later replay via attach_session.
-	if *sessionID != "" {
-		if msg.Metadata == nil {
-			msg.Metadata = make(map[string]string)
-		}
-		msg.Metadata["transcript_session_id"] = *sessionID
 	}
 	pubCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	if err := h.msgBus.PublishInbound(pubCtx, msg); err != nil {
 		slog.Warn("ws: failed to publish message", "error", err)
-		sendConnFrame(wc, wsServerFrame{Type: "error", Message: fmt.Sprintf("failed to deliver message: %v", err)})
+		sendConnFrame(wc, wsServerFrame{Type: "error", Message: fmt.Sprintf("failed to deliver message: %v", err), SessionID: sessionID})
 	}
 }
 
-// handleCancel gracefully interrupts the current agent turn and marks the session as interrupted.
-func (h *WSHandler) handleCancel(sessionID *string) {
-	if err := h.agentLoop.InterruptGraceful("user canceled via WebSocket"); err != nil {
-		slog.Debug("ws: cancel — no active turn", "error", err)
+// handleCancel gracefully interrupts the agent turn for the given session.
+// Only the turn belonging to sessionID is interrupted, preventing two parallel
+// sessions from being cancelled together.
+func (h *WSHandler) handleCancel(wc *wsConn, sessionID string) {
+	if sessionID == "" {
+		sendConnFrame(wc, wsServerFrame{Type: "error", Message: "cancel requires session_id"})
+		return
 	}
-	if sessionID != nil && *sessionID != "" {
-		store := h.resolveSessionStore(*sessionID)
-		if store != nil {
-			status := session.StatusInterrupted
-			if err := store.SetMeta(*sessionID, session.MetaPatch{Status: &status}); err != nil {
-				slog.Warn("ws: could not mark session interrupted", "session_id", *sessionID, "error", err)
-			}
+	if err := h.agentLoop.InterruptSession(sessionID, "user canceled via WebSocket"); err != nil {
+		slog.Debug("ws: cancel — no active turn for session", "session_id", sessionID, "error", err)
+	}
+	store := h.resolveSessionStore(sessionID)
+	if store != nil {
+		status := session.StatusInterrupted
+		if err := store.SetMeta(sessionID, session.MetaPatch{Status: &status}); err != nil {
+			slog.Warn("ws: could not mark session interrupted", "session_id", sessionID, "error", err)
 		}
 	}
 }
@@ -739,7 +728,6 @@ func (h *WSHandler) handleCancel(sessionID *string) {
 func (h *WSHandler) handleAttachSession(
 	ctx context.Context,
 	chatID string,
-	sessionID *string,
 	attachID string,
 	wc *wsConn,
 ) {
@@ -794,13 +782,14 @@ func (h *WSHandler) handleAttachSession(
 	}
 
 	// Register for live event forwarding now (before flipping the replay flag).
+	// h.sessions is keyed by chatID for the lifetime of the connection — do NOT
+	// add an attachID alias here. taskChatIDs maps chatID→attachID so the event
+	// forwarder can match events emitted under the attached session's ID.
 	h.mu.Lock()
 	if oldTID, ok := h.taskChatIDs[chatID]; ok {
-		delete(h.sessions, oldTID)
 		delete(h.sessionIDs, oldTID)
 	}
 	h.taskChatIDs[chatID] = attachID
-	h.sessions[attachID] = wc
 	h.sessionIDs[attachID] = attachID
 	h.mu.Unlock()
 
@@ -851,12 +840,14 @@ func (h *WSHandler) handleAttachSession(
 		// re-enables the composer.  Use sendConnFrame (canonical path) because the
 		// divert flag is already cleared above.
 		sendConnFrame(wc, wsServerFrame{
-			Type:    "error",
-			Message: "replay aborted: " + replayErr.Error(),
+			Type:      "error",
+			SessionID: attachID,
+			Message:   "replay aborted: " + replayErr.Error(),
 		})
 		sendConnFrame(wc, wsServerFrame{
-			Type:  "done",
-			Stats: map[string]any{"replay_error": true},
+			Type:      "done",
+			SessionID: attachID,
+			Stats:     map[string]any{"replay_error": true},
 		})
 		return
 	}
@@ -890,8 +881,6 @@ func (h *WSHandler) handleAttachSession(
 	}
 drainDone:
 
-	// Switch this connection's active session.
-	*sessionID = attachID
 	h.mu.Lock()
 	h.sessionIDs[chatID] = attachID
 	h.mu.Unlock()
@@ -900,9 +889,14 @@ drainDone:
 	// next LLM turn sees the prior conversation. Without this, the SPA
 	// shows replayed messages but the agent answers as if the session just
 	// started — see pkg/agent/attach_hydrate.go for the rationale.
-	if err := h.agentLoop.HydrateAgentHistoryFromTranscript(chatID, attachID); err != nil {
+	if err := h.agentLoop.HydrateAgentHistoryFromTranscript(attachID); err != nil {
 		slog.Warn("ws: attach_session: hydrate agent history failed",
-			"chat_id", chatID, "session_id", attachID, "error", err)
+			"session_id", attachID, "error", err)
+		sendConnFrame(wc, wsServerFrame{
+			Type:      "error",
+			SessionID: attachID,
+			Message:   "could not restore conversation context — agent may not remember earlier turns",
+		})
 	}
 
 	slog.Debug("ws: attached to session", "chat_id", chatID, "session_id", attachID)
@@ -911,10 +905,24 @@ drainDone:
 // handleApprovalResponse resolves a pending exec approval request.
 // Called from readLoop when the browser sends an "exec_approval_response" frame.
 // "allow" maps to VerdictAllow, "always" maps to VerdictAlways, everything else maps to VerdictDeny.
-func (h *WSHandler) handleApprovalResponse(id, decision string) {
+// If the frame carries a session_id that doesn't match the registry entry, the response is rejected.
+func (h *WSHandler) handleApprovalResponse(id, decision, sessionID string, wc *wsConn) {
 	if id == "" {
 		slog.Warn("ws: exec_approval_response missing id")
 		return
+	}
+	// Validate that the frame's session_id matches the request's recorded session_id.
+	// This prevents a tab from approving a request that belongs to a different session.
+	if registeredSID, ok := h.approvalRegistry.getSessionID(id); ok && sessionID != "" && registeredSID != "" {
+		if sessionID != registeredSID {
+			slog.Warn("ws: exec_approval_response session_id mismatch — rejecting",
+				"id", id, "frame_session", sessionID, "registered_session", registeredSID)
+			sendConnFrame(wc, wsServerFrame{
+				Type:    "error",
+				Message: "approval session_id mismatch",
+			})
+			return
+		}
 	}
 	var verdict agent.ApprovalVerdict
 	switch decision {
@@ -934,6 +942,11 @@ func (h *WSHandler) handleApprovalResponse(id, decision string) {
 		slog.Debug("ws: exec_approval_response for unknown or expired request", "id", id, "decision", decision)
 	} else {
 		slog.Info("ws: exec_approval resolved", "id", id, "decision", decision, "verdict", verdict)
+		sendConnFrame(wc, wsServerFrame{
+			Type:      "exec_approval_response_ack",
+			ID:        id,
+			SessionID: sessionID,
+		})
 	}
 }
 
@@ -1118,6 +1131,7 @@ type openSpanEntry struct {
 	spanID          string
 	parentCallID    string
 	agentID         string
+	sessionID       string        // session_id at spawn time; carried on synthesized frames
 	parentTurnEnded bool          // set to true when EventKindTurnEnd fires for the parent turn
 	closeCh         chan struct{} // closed when EventKindSubTurnEnd arrives (cancels watchdog)
 }
@@ -1145,6 +1159,21 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 		// Note: using exclusive lock for a read-only lookup. Acceptable for now;
 		// migrate h.mu to sync.RWMutex if contention becomes measurable.
 		return tid != "" && evtChatID == tid
+	}
+
+	// sessionIDForChat looks up the active session_id for a given chatID so every
+	// event frame can carry it, enabling per-session routing in the SPA.
+	sessionIDForChat := func(evtChatID string) string {
+		h.mu.Lock()
+		sid := h.sessionIDs[evtChatID]
+		if sid == "" {
+			// Also check the task alias.
+			if tid := h.taskChatIDs[evtChatID]; tid != "" {
+				sid = h.sessionIDs[tid]
+			}
+		}
+		h.mu.Unlock()
+		return sid
 	}
 
 	// openSpans tracks in-flight subagent spans keyed by parentCallID.
@@ -1194,6 +1223,7 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 				}
 				sendConnFrame(wc, wsServerFrame{
 					Type:         "subagent_end",
+					SessionID:    entry.sessionID,
 					SpanID:       entry.spanID,
 					ParentCallID: entry.parentCallID,
 					AgentID:      entry.agentID,
@@ -1217,8 +1247,14 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 				"parent_call_id", p.ParentSpawnCallID,
 				"agent_id", p.AgentID,
 			)
+			// Prefer SessionID from payload; fall back to map lookup for legacy events.
+			spawnSID := p.SessionID
+			if spawnSID == "" {
+				spawnSID = sessionIDForChat(p.ChatID)
+			}
 			sendConnFrame(wc, wsServerFrame{
 				Type:         "subagent_start",
+				SessionID:    spawnSID,
 				SpanID:       p.SpanID,
 				ParentCallID: string(p.ParentSpawnCallID),
 				AgentID:      p.AgentID,
@@ -1229,6 +1265,7 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 				spanID:       p.SpanID,
 				parentCallID: string(p.ParentSpawnCallID),
 				agentID:      p.AgentID,
+				sessionID:    spawnSID,
 				closeCh:      make(chan struct{}),
 			}
 			openSpans[string(p.ParentSpawnCallID)] = entry
@@ -1244,8 +1281,14 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 				"parent_call_id", p.ParentSpawnCallID,
 				"agent_id", p.AgentID,
 			)
+			// Prefer SessionID from payload; fall back to map lookup for legacy events.
+			endSID := p.SessionID
+			if endSID == "" {
+				endSID = sessionIDForChat(p.ChatID)
+			}
 			sendConnFrame(wc, wsServerFrame{
 				Type:         "subagent_end",
+				SessionID:    endSID,
 				SpanID:       p.SpanID,
 				ParentCallID: string(p.ParentSpawnCallID),
 				AgentID:      p.AgentID,
@@ -1288,10 +1331,16 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 			if !ok || !matchesChatID(p.ChatID) {
 				continue
 			}
+			// Prefer SessionID from payload; fall back to map lookup for legacy events.
+			startSID := p.SessionID
+			if startSID == "" {
+				startSID = sessionIDForChat(p.ChatID)
+			}
 			// FR-H-005: propagate parent_call_id when the tool fires inside a sub-turn.
 			// FR-I-008: propagate agent_id so live frames match replay frame parity.
 			sendConnFrame(wc, wsServerFrame{
 				Type:         "tool_call_start",
+				SessionID:    startSID,
 				CallID:       string(p.ToolCallID),
 				Tool:         p.Tool,
 				Params:       p.Arguments,
@@ -1307,10 +1356,16 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 			if p.IsError {
 				status = "error"
 			}
+			// Prefer SessionID from payload; fall back to map lookup for legacy events.
+			evtSID := p.SessionID
+			if evtSID == "" {
+				evtSID = sessionIDForChat(p.ChatID)
+			}
 			// FR-H-005: propagate parent_call_id when the tool fires inside a sub-turn.
 			// FR-I-008: propagate agent_id so live frames match replay frame parity.
 			sendConnFrame(wc, wsServerFrame{
 				Type:         "tool_call_result",
+				SessionID:    evtSID,
 				CallID:       string(p.ToolCallID),
 				Tool:         p.Tool,
 				Result:       p.Result,
@@ -1320,13 +1375,15 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 				AgentID:      p.AgentID,
 			})
 			// When the handoff tool succeeds, notify the frontend to switch agents.
+			// Use evtSID (the session ID from the payload) to key the lookup, not chatID.
 			if p.Tool == "handoff" && status == "success" {
-				if activeAgent, ok := h.agentLoop.GetSessionActiveAgent(chatID); ok {
+				if activeAgent, ok := h.agentLoop.GetSessionActiveAgent(evtSID); ok {
 					agentName, _ := h.agentLoop.GetRegistry().GetAgentName(activeAgent)
 					sendConnFrame(wc, wsServerFrame{
-						Type:    "agent_switched",
-						AgentID: activeAgent,
-						Message: agentName,
+						Type:      "agent_switched",
+						SessionID: evtSID,
+						AgentID:   activeAgent,
+						Message:   agentName,
 					})
 				}
 			}
@@ -1337,9 +1394,10 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 					defaultName = defaultAgent.Name
 				}
 				sendConnFrame(wc, wsServerFrame{
-					Type:    "agent_switched",
-					AgentID: "", // empty = return to default
-					Message: defaultName,
+					Type:      "agent_switched",
+					SessionID: evtSID,
+					AgentID:   "", // empty = return to default
+					Message:   defaultName,
 				})
 			}
 		case agent.EventKindRateLimit:
@@ -1356,6 +1414,7 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 			}
 			sendConnFrame(wc, wsServerFrame{
 				Type:              "rate_limit",
+				SessionID:         sessionIDForChat(p.ChatID),
 				Scope:             p.Scope,
 				Resource:          p.Resource,
 				PolicyRule:        p.PolicyRule,
@@ -1399,7 +1458,7 @@ func (s *wsStreamer) SetTurnStats(tokens int64, costUSD float64, duration time.D
 }
 
 func (s *wsStreamer) Update(_ context.Context, content string) error {
-	data, err := json.Marshal(wsServerFrame{Type: "token", Content: content})
+	data, err := json.Marshal(wsServerFrame{Type: "token", Content: content, SessionID: s.sessionID})
 	if err != nil {
 		return fmt.Errorf("ws: marshal token frame: %w", err)
 	}
@@ -1408,7 +1467,8 @@ func (s *wsStreamer) Update(_ context.Context, content string) error {
 		s.accumulated.WriteString(content)
 		return nil
 	default:
-		slog.Warn("ws: token dropped — client send buffer full")
+		s.conn.droppedTokens.Add(1)
+		slog.Warn("ws: token dropped", "session_id", s.sessionID, "chat_id", s.chatID, "agent_id", s.agentID)
 		return fmt.Errorf("ws: token channel full, token dropped")
 	}
 }
@@ -1426,7 +1486,7 @@ func (s *wsStreamer) Finalize(_ context.Context, _ string) error {
 	stats["cost"] = s.statsCostUSD
 	stats["duration_ms"] = s.statsDuration.Milliseconds()
 	s.statsMu.Unlock()
-	sendConnFrame(s.conn, wsServerFrame{Type: "done", Stats: stats})
+	sendConnFrame(s.conn, wsServerFrame{Type: "done", Stats: stats, SessionID: s.sessionID})
 	// Only mark as streamed if we actually sent content. If the LLM failed
 	// before producing any tokens, let the outbound Send path deliver the
 	// error message — otherwise the user sees a stuck "thinking" spinner.

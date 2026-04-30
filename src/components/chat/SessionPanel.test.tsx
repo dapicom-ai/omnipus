@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SessionPanel } from './SessionPanel'
 import { useSessionStore } from '@/store/session'
 import { useUiStore } from '@/store/ui'
+import { useChatStore } from '@/store/chat'
 
 // W2-1: SessionPanel chat-session routing regression test.
 //
@@ -216,5 +217,80 @@ describe('SessionPanel — handleSelectSession routing guard (W2-1)', () => {
     expect(calls[0]).toBe('sess-chat-1')
     expect(calls[1]).toBe('sess-task-1')
     expect(calls[0]).not.toBe(calls[1])
+  })
+})
+
+// F-S11: per-session streaming dot for non-foreground sessions
+describe('SessionPanel — per-session isStreaming dot (F-S11)', () => {
+  it('shows a pulse dot for a background session that is streaming', async () => {
+    // BDD: Given sess-chat-1 is NOT the active session (background)
+    // BDD: And sess-chat-1 has isStreaming=true in its bucket
+    // BDD: Then the SessionItem for sess-chat-1 shows an aria-label="Generating" element
+    act(() => {
+      useSessionStore.setState({ activeSessionId: 'sess-task-1' })
+      // Seed sessionsById so the background session appears streaming
+      useChatStore.setState((s) => ({
+        ...s,
+        sessionsById: {
+          ...s.sessionsById,
+          'sess-chat-1': {
+            messages: [],
+            toolCalls: {},
+            toolCallOrder: [],
+            textAtToolCallStart: {},
+            pendingApprovals: [],
+            isStreaming: true,
+            isReplaying: false,
+            replayCompletedForSession: null,
+            sessionTokens: 0,
+            sessionCost: 0,
+            rateLimitEvent: null,
+          },
+        },
+      }))
+    })
+
+    renderPanel()
+
+    await screen.findByText('Chat Session One')
+
+    // The pulse dot has aria-label="Generating" and is rendered for non-active streaming sessions
+    const dot = await screen.findByLabelText('Generating')
+    expect(dot).toBeTruthy()
+  })
+
+  it('does NOT show the pulse dot for the active session even when it is streaming', async () => {
+    // BDD: Given sess-chat-1 IS the active session
+    // BDD: And it is streaming — the active session shows the green "active" dot, not the pulse dot
+    act(() => {
+      useSessionStore.setState({ activeSessionId: 'sess-chat-1' })
+      useChatStore.setState((s) => ({
+        ...s,
+        sessionsById: {
+          ...s.sessionsById,
+          'sess-chat-1': {
+            messages: [],
+            toolCalls: {},
+            toolCallOrder: [],
+            textAtToolCallStart: {},
+            pendingApprovals: [],
+            isStreaming: true,
+            isReplaying: false,
+            replayCompletedForSession: null,
+            sessionTokens: 0,
+            sessionCost: 0,
+            rateLimitEvent: null,
+          },
+        },
+      }))
+    })
+
+    renderPanel()
+
+    await screen.findByText('Chat Session One')
+
+    // Pulse dot must NOT be present for the active session
+    const dots = screen.queryAllByLabelText('Generating')
+    expect(dots).toHaveLength(0)
   })
 })

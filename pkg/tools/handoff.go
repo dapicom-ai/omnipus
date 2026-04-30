@@ -26,6 +26,18 @@ type AgentRegistryReader interface {
 	GetAgentName(agentID string) (string, bool)
 }
 
+// HandoffEvent carries all context fields for a handoff or return-to-default event.
+// Using a struct avoids brittle positional arguments and makes call sites self-documenting.
+type HandoffEvent struct {
+	ChatID    string
+	SessionID string
+	AgentID   string
+	AgentName string
+}
+
+// HandoffFunc is the callback signature for handoff notifications.
+type HandoffFunc func(HandoffEvent)
+
 // HandoffSessionStore is the subset of *session.UnifiedStore that HandoffTool
 // and ReturnToDefaultTool require. Defining it as an interface decouples the
 // tools package from the concrete store type, which is being refactored by the
@@ -59,7 +71,7 @@ type HandoffTool struct {
 	getRegistry      func() AgentRegistryReader
 	sessionStore     HandoffSessionStore
 	getContextWindow func(agentID string) int
-	onHandoff        func(chatID, agentID, agentName string)
+	onHandoff        HandoffFunc
 }
 
 // NewHandoffTool creates a HandoffTool.
@@ -74,7 +86,7 @@ func NewHandoffTool(
 	getRegistry func() AgentRegistryReader,
 	sessionStore HandoffSessionStore,
 	getContextWindow func(agentID string) int,
-	onHandoff func(chatID, agentID, agentName string),
+	onHandoff HandoffFunc,
 ) *HandoffTool {
 	return &HandoffTool{
 		getRegistry:      getRegistry,
@@ -180,7 +192,16 @@ func (t *HandoffTool) Execute(ctx context.Context, args map[string]any) *ToolRes
 	// Step 8: Notify frontend (so the UI can update its active-agent indicator).
 	if t.onHandoff != nil {
 		chatID := ToolChatID(ctx)
-		t.onHandoff(chatID, agentID, agentName)
+		if chatID == "" {
+			slog.Warn("handoff: empty chatID; UI agent_switched will not target a specific connection",
+				"session_id", sessionID)
+		}
+		t.onHandoff(HandoffEvent{
+			ChatID:    chatID,
+			SessionID: sessionID,
+			AgentID:   agentID,
+			AgentName: agentName,
+		})
 	}
 
 	// Step 9: Return context for the target agent.
@@ -268,7 +289,7 @@ type ReturnToDefaultTool struct {
 	BaseTool
 	sessionStore    HandoffSessionStore
 	getDefaultAgent func() string
-	onHandoff       func(chatID, agentID, agentName string)
+	onHandoff       HandoffFunc
 }
 
 // NewReturnToDefaultTool creates a ReturnToDefaultTool.
@@ -279,7 +300,7 @@ type ReturnToDefaultTool struct {
 func NewReturnToDefaultTool(
 	sessionStore HandoffSessionStore,
 	getDefaultAgent func() string,
-	onHandoff func(chatID, agentID, agentName string),
+	onHandoff HandoffFunc,
 ) *ReturnToDefaultTool {
 	return &ReturnToDefaultTool{
 		sessionStore:    sessionStore,
@@ -347,7 +368,16 @@ func (t *ReturnToDefaultTool) Execute(ctx context.Context, args map[string]any) 
 	// Notify the frontend.
 	if t.onHandoff != nil {
 		chatID := ToolChatID(ctx)
-		t.onHandoff(chatID, defaultAgentID, defaultAgentID)
+		if chatID == "" {
+			slog.Warn("return_to_default: empty chatID; UI agent_switched will not target a specific connection",
+				"session_id", sessionID)
+		}
+		t.onHandoff(HandoffEvent{
+			ChatID:    chatID,
+			SessionID: sessionID,
+			AgentID:   defaultAgentID,
+			AgentName: defaultAgentID,
+		})
 	}
 
 	return &ToolResult{

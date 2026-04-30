@@ -45,7 +45,7 @@ describe('chat store — multi-turn tool-call ordering (regression)', () => {
 
     // Simulate the assistant streaming two tool calls.
     act(() => {
-      useChatStore.getState().handleFrame({ type: 'token', content: 'doing things ' })
+      useChatStore.getState().handleFrame({ type: 'token', content: 'doing things ', session_id: 'sess-test' })
     })
     act(() => {
       useChatStore.getState().handleFrame({
@@ -53,6 +53,7 @@ describe('chat store — multi-turn tool-call ordering (regression)', () => {
         call_id: 'tc_t1_a',
         tool: 'write_file',
         params: { path: '/x' },
+        session_id: 'sess-test',
       })
     })
     act(() => {
@@ -62,6 +63,7 @@ describe('chat store — multi-turn tool-call ordering (regression)', () => {
         tool: 'write_file',
         result: { ok: true },
         status: 'success',
+        session_id: 'sess-test',
       })
     })
     act(() => {
@@ -70,6 +72,7 @@ describe('chat store — multi-turn tool-call ordering (regression)', () => {
         call_id: 'tc_t1_b',
         tool: 'serve_workspace',
         params: { path: '/x' },
+        session_id: 'sess-test',
       })
     })
     act(() => {
@@ -79,12 +82,13 @@ describe('chat store — multi-turn tool-call ordering (regression)', () => {
         tool: 'serve_workspace',
         result: { url: 'http://example' },
         status: 'success',
+        session_id: 'sess-test',
       })
     })
     act(() => {
-      useChatStore.getState().handleFrame({ type: 'token', content: 'done.' })
+      useChatStore.getState().handleFrame({ type: 'token', content: 'done.', session_id: 'sess-test' })
     })
-    act(() => { useChatStore.getState().handleFrame({ type: 'done' }) })
+    act(() => { useChatStore.getState().handleFrame({ type: 'done', session_id: 'sess-test' }) })
 
     // Sanity: after turn 1, the live state has both tool calls under the
     // single assistant message; toolCallOrder reflects insertion order.
@@ -139,6 +143,7 @@ describe('chat store — multi-turn tool-call ordering (regression)', () => {
         call_id: 'tc_t1',
         tool: 'a',
         params: {},
+        session_id: 'sess-test',
       })
     })
     act(() => {
@@ -148,9 +153,10 @@ describe('chat store — multi-turn tool-call ordering (regression)', () => {
         tool: 'a',
         result: 1,
         status: 'success',
+        session_id: 'sess-test',
       })
     })
-    act(() => { useChatStore.getState().handleFrame({ type: 'done' }) })
+    act(() => { useChatStore.getState().handleFrame({ type: 'done', session_id: 'sess-test' }) })
 
     // Turn 2 with one tool call.
     act(() => { useChatStore.getState().sendMessage('m2') })
@@ -160,6 +166,7 @@ describe('chat store — multi-turn tool-call ordering (regression)', () => {
         call_id: 'tc_t2',
         tool: 'b',
         params: {},
+        session_id: 'sess-test',
       })
     })
     act(() => {
@@ -169,6 +176,7 @@ describe('chat store — multi-turn tool-call ordering (regression)', () => {
         tool: 'b',
         result: 2,
         status: 'success',
+        session_id: 'sess-test',
       })
     })
 
