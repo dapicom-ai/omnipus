@@ -2168,6 +2168,16 @@ func (al *AgentLoop) GetSessionActiveAgent(chatID string) (string, bool) {
 	return "", false
 }
 
+// ClearSessionActiveAgent removes any handoff routing override for a chat.
+// Used when the SPA explicitly starts a new session/chat so the next message
+// is not silently routed to the agent that the prior session handed off to.
+func (al *AgentLoop) ClearSessionActiveAgent(chatID string) {
+	if chatID == "" {
+		return
+	}
+	al.sessionActiveAgent.Delete("chat:" + chatID)
+}
+
 // SwapConfig atomically replaces the in-memory config with the supplied,
 // fully-initialized *config.Config (credentials resolved, sensitive values
 // registered). Callers are responsible for calling credentials.ResolveBundle

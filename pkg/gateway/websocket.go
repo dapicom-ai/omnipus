@@ -40,7 +40,7 @@ const replayLiveBufferCap = 1000
 
 // wsClientFrame is a message sent from the browser to the server over WebSocket.
 type wsClientFrame struct {
-	Type      string `json:"type"`                 // "auth" | "message" | "cancel" | "exec_approval_response" | "attach_session" | "session_close" | "device_pairing_response"
+	Type      string `json:"type"`                 // "auth" | "message" | "cancel" | "exec_approval_response" | "attach_session" | "session_close" | "new_session" | "device_pairing_response"
 	Token     string `json:"token,omitempty"`      // for "auth"
 	Content   string `json:"content,omitempty"`    // for "message"
 	SessionID string `json:"session_id,omitempty"` // for "message" / "cancel" / "attach_session"
@@ -577,6 +577,27 @@ func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsCo
 			}
 			h.agentLoop.CloseSession(frame.SessionID, "explicit")
 			sendConnFrame(wc, wsServerFrame{Type: "session_close_ack", ID: frame.SessionID})
+		case "new_session":
+			// SPA's "New Chat" button: reset the WS-bound session and clear any
+			// stale handoff routing override so the next message starts a fresh
+			// transcript routed to the explicit agent_id (or the default agent),
+			// not the agent the previous session handed off to.
+			prior := *sessionID
+			*sessionID = ""
+			h.agentLoop.ClearSessionActiveAgent(chatID)
+			if prior != "" {
+				priorSID := prior
+				go func() {
+					defer func() {
+						if r := recover(); r != nil {
+							slog.Error("ws: new_session CloseSession panic recovered",
+								"session_id", priorSID, "panic", r)
+						}
+					}()
+					h.agentLoop.CloseSession(priorSID, "new_chat")
+				}()
+			}
+			sendConnFrame(wc, wsServerFrame{Type: "new_session_ack", ID: prior})
 		case "ping":
 			// Client heartbeat — no action needed, the WebSocket pong handler keeps the connection alive
 		case "device_pairing_response":

@@ -43,13 +43,17 @@ export interface WsAttachSessionFrame {
   session_id: string
 }
 
+export interface WsNewSessionFrame {
+  type: 'new_session'
+}
+
 export interface WsDevicePairingResponseFrame {
   type: 'device_pairing_response'
   device_id: string
   decision: 'approve' | 'reject'
 }
 
-export type WsSendFrame = WsAuthFrame | WsMessageFrame | WsCancelFrame | WsExecApprovalResponseFrame | WsPingFrame | WsAttachSessionFrame | WsDevicePairingResponseFrame
+export type WsSendFrame = WsAuthFrame | WsMessageFrame | WsCancelFrame | WsExecApprovalResponseFrame | WsPingFrame | WsAttachSessionFrame | WsNewSessionFrame | WsDevicePairingResponseFrame
 
 export interface WsTokenFrame {
   type: 'token'

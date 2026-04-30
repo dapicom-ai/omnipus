@@ -27,6 +27,11 @@ interface SessionStore {
     title?: string,
     agentId?: string
   ) => void
+
+  /** Starts a fresh server-side session: signals the gateway to reset the
+   *  WS-bound sessionID and clear any stale handoff routing override, then
+   *  clears local activeSessionId so the next message creates a new transcript. */
+  startNewSession: (agentId?: string | null, agentType?: 'core' | 'custom' | null) => void
 }
 
 // Breaks the chat.ts ↔ session.ts circular import: chat.ts imports this module,
@@ -123,5 +128,20 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         activeAgentId: agentId ?? get().activeAgentId,
       })
     }
+  },
+
+  startNewSession: (agentId, agentType) => {
+    const { connection } = useConnectionStore.getState()
+    if (connection) {
+      connection.send({ type: 'new_session' })
+    }
+    resetChatSession()
+    set({
+      activeSessionId: null,
+      activeAgentId: agentId ?? get().activeAgentId,
+      activeAgentType: agentType ?? get().activeAgentType,
+      attachedSessionType: null,
+      attachedTaskTitle: null,
+    })
   },
 }))
