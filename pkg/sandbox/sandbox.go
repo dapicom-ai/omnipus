@@ -155,12 +155,15 @@ func DefaultPolicy(homePath string, allowedPaths []string, warnFn func(msg strin
 	// Missing paths (e.g. /lib64 on ARM64) are silently skipped by
 	// Apply() with a warning log; the remaining rules still succeed.
 	readOnlySystem := []string{
+		"/proc", // Chromium needs /proc/sys/fs/inotify/* and /proc/<pid>/* across processes.
 		"/proc/self",
 		"/lib",
 		"/lib64",
 		"/usr/lib",
 		"/usr/lib64",
 		"/usr/bin",
+		"/opt", // Chromium and other vendor binaries (e.g. /opt/google/chrome) live here.
+		"/etc/alternatives", // /usr/bin/google-chrome resolves through /etc/alternatives.
 		"/etc/ssl",
 		"/etc/ca-certificates",
 		"/etc/resolv.conf",

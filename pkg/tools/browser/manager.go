@@ -33,18 +33,25 @@ type BrowserConfig struct {
 }
 
 // DefaultConfig returns a BrowserConfig with spec-defined defaults.
-// Returns an error if the user home directory cannot be determined.
+// Returns an error if no home directory (OMNIPUS_HOME or user home) can
+// be determined. Prefers $OMNIPUS_HOME so the profile lands inside the
+// gateway's Landlock-allowed workspace; falls back to the user's home
+// directory only when OMNIPUS_HOME is unset.
 func DefaultConfig() (BrowserConfig, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return BrowserConfig{}, fmt.Errorf("browser: cannot determine home directory: %w", err)
+	base := os.Getenv("OMNIPUS_HOME")
+	if base == "" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return BrowserConfig{}, fmt.Errorf("browser: cannot determine home directory: %w", err)
+		}
+		base = filepath.Join(homeDir, ".omnipus")
 	}
 	return BrowserConfig{
 		Enabled:     false,
 		Headless:    true,
 		PageTimeout: 30 * time.Second,
 		MaxTabs:     5,
-		ProfileDir:  filepath.Join(homeDir, ".omnipus", "browser", "profiles", "default"),
+		ProfileDir:  filepath.Join(base, "browser", "profiles", "default"),
 	}, nil
 }
 
@@ -146,11 +153,29 @@ func (m *BrowserManager) ensureStarted() error {
 		return fmt.Errorf("browser: cannot create profile directory %s: %w", m.cfg.ProfileDir, err)
 	}
 
+	// Point Chrome's HOME and XDG dirs at the profile directory so any stray
+	// writes (Crash Reports, GPUCache, Singleton locks, etc.) land inside
+	// the Landlock-allowed workspace instead of $HOME/.config/google-chrome.
+	// Use the profile directory itself as a self-contained jail so this
+	// stays correct regardless of the configured layout (test tempdirs,
+	// custom paths, $OMNIPUS_HOME, etc.).
+	chromeHome := m.cfg.ProfileDir
+
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.UserDataDir(m.cfg.ProfileDir),
 		chromedp.DisableGPU,
 		chromedp.Flag("no-first-run", true),
 		chromedp.Flag("no-default-browser-check", true),
+		// Crash reporting writes to ~/.config/google-chrome/Crash Reports
+		// which is outside the Landlock-allowed paths. Disable it to avoid
+		// "Permission denied" spam during browser startup.
+		chromedp.Flag("disable-crash-reporter", true),
+		chromedp.Flag("disable-breakpad", true),
+		chromedp.Env(
+			"HOME="+chromeHome,
+			"XDG_CONFIG_HOME="+filepath.Join(chromeHome, "config"),
+			"XDG_CACHE_HOME="+filepath.Join(chromeHome, "cache"),
+		),
 		chromedp.WindowSize(1280, 720),
 	)
 
@@ -158,11 +183,13 @@ func (m *BrowserManager) ensureStarted() error {
 		opts = append(opts, chromedp.Headless)
 	}
 
-	// GitHub Actions runners restrict unprivileged user namespaces via AppArmor,
-	// which breaks Chromium's zygote sandbox. Opt into --no-sandbox when CI=true
-	// or OMNIPUS_BROWSER_NO_SANDBOX=1 is set explicitly. Not enabled by default
-	// because --no-sandbox reduces isolation for code the browser loads.
-	if os.Getenv("CI") == "true" || os.Getenv("OMNIPUS_BROWSER_NO_SANDBOX") == "1" {
+	// Chromium's zygote sandbox depends on creating new user namespaces, which
+	// the gateway's Landlock+PR_SET_NO_NEW_PRIVS policy blocks. The gateway
+	// already enforces an outer filesystem and network sandbox, so Chrome's
+	// inner sandbox is redundant — disable it by default to avoid the
+	// permission-denied init failures. Operators can opt out by setting
+	// OMNIPUS_BROWSER_NO_SANDBOX=0 if they run the gateway without Landlock.
+	if os.Getenv("OMNIPUS_BROWSER_NO_SANDBOX") != "0" {
 		opts = append(opts, chromedp.NoSandbox)
 	}
 
