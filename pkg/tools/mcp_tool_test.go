@@ -521,9 +521,6 @@ func TestMCPTool_Execute_ImageContentStoredAsMedia(t *testing.T) {
 	if len(result.Media) != 1 {
 		t.Fatalf("expected 1 media ref, got %d", len(result.Media))
 	}
-	if result.ResponseHandled {
-		t.Fatal("expected MCP image artifact not to mark response as handled")
-	}
 	if !strings.Contains(result.ForLLM, "stored as a local media artifact") {
 		t.Fatalf("expected local media artifact note, got %q", result.ForLLM)
 	}

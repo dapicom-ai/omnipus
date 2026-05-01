@@ -212,10 +212,9 @@ type continuationTarget struct {
 }
 
 const (
-	defaultResponse            = "The model returned an empty response. This may indicate a provider error or token limit."
-	toolLimitResponse          = "I've reached `max_tool_iterations` without a final response. Increase `max_tool_iterations` in config.json if this task needs more tool steps."
-	handledToolResponseSummary = "Requested output delivered via tool attachment."
-	sessionKeyAgentPrefix      = "agent:"
+	defaultResponse       = "The model returned an empty response. This may indicate a provider error or token limit."
+	toolLimitResponse     = "I've reached `max_tool_iterations` without a final response. Increase `max_tool_iterations` in config.json if this task needs more tool steps."
+	sessionKeyAgentPrefix = "agent:"
 	metadataKeyAccountID       = "account_id"
 	metadataKeyGuildID         = "guild_id"
 	metadataKeyTeamID          = "team_id"
@@ -4179,7 +4178,6 @@ turnLoop:
 				"iteration": iteration,
 			})
 
-		allResponsesHandled := len(normalizedToolCalls) > 0
 		assistantMsg := providers.Message{
 			Role:             "assistant",
 			Content:          response.Content,
@@ -4242,7 +4240,6 @@ turnLoop:
 						toolArgs = toolReq.Arguments
 					}
 				case HookActionDenyTool:
-					allResponsesHandled = false
 					denyContent := hookDeniedToolContent("Tool execution denied by hook", decision.Reason)
 					al.emitEvent(
 						EventKindToolExecSkipped,
@@ -4283,7 +4280,6 @@ turnLoop:
 					SessionID: ts.transcriptSessionID,
 				})
 				if !approval.IsApproved() {
-					allResponsesHandled = false
 					denyContent := hookDeniedToolContent("Tool execution denied by approval hook", approval.Reason)
 					al.emitEvent(
 						EventKindToolExecSkipped,
@@ -4325,7 +4321,6 @@ turnLoop:
 					ts.agent.Sessions.AddFullMessage(ts.sessionKey, deniedMsg)
 					ts.recordPersistedMessage(deniedMsg)
 				}
-				allResponsesHandled = false
 				al.emitEvent(
 					EventKindToolExecSkipped,
 					ts.eventMeta("runTurn", "turn.tool.skipped"),
@@ -4366,7 +4361,6 @@ turnLoop:
 						ts.agent.Sessions.AddFullMessage(ts.sessionKey, deniedMsg)
 						ts.recordPersistedMessage(deniedMsg)
 					}
-					allResponsesHandled = false
 					al.emitEvent(
 						EventKindToolExecSkipped,
 						ts.eventMeta("runTurn", "turn.tool.skipped"),
@@ -4538,7 +4532,6 @@ turnLoop:
 						ts.agent.Sessions.AddFullMessage(ts.sessionKey, deniedMsg)
 						ts.recordPersistedMessage(deniedMsg)
 					}
-					allResponsesHandled = false
 					al.emitEvent(
 						EventKindToolExecSkipped,
 						ts.eventMeta("runTurn", "turn.tool.skipped"),
@@ -4604,7 +4597,12 @@ turnLoop:
 			if toolResult == nil {
 				toolResult = tools.ErrorResult("hook returned nil tool result")
 			}
-			if len(toolResult.Media) > 0 && toolResult.ResponseHandled {
+			// Always deliver any media the tool produced AND tag the result with
+			// artifact references so the LLM can reason about them in the
+			// follow-up call. The follow-up call itself is now unconditional —
+			// the model decides whether to add a caption, emit empty content,
+			// or run more tools.
+			if len(toolResult.Media) > 0 {
 				parts := make([]bus.MediaPart, 0, len(toolResult.Media))
 				for _, ref := range toolResult.Media {
 					part := bus.MediaPart{Ref: ref}
@@ -4625,7 +4623,7 @@ turnLoop:
 				}
 				if al.channelManager != nil && ts.channel != "" && !constants.IsInternalChannel(ts.channel) {
 					if err := al.channelManager.SendMedia(ctx, outboundMedia); err != nil {
-						logger.WarnCF("agent", "Failed to deliver handled tool media",
+						logger.WarnCF("agent", "Failed to deliver tool media",
 							map[string]any{
 								"agent_id": ts.agent.ID,
 								"tool":     toolName,
@@ -4637,17 +4635,8 @@ turnLoop:
 					}
 				} else if al.bus != nil {
 					al.bus.PublishOutboundMedia(ctx, outboundMedia)
-					// Queuing media is only best-effort; it has not been delivered yet.
-					toolResult.ResponseHandled = false
 				}
-			}
-
-			if len(toolResult.Media) > 0 && !toolResult.ResponseHandled {
 				toolResult.ArtifactTags = buildArtifactTags(al.mediaStore, toolResult.Media)
-			}
-
-			if !toolResult.ResponseHandled {
-				allResponsesHandled = false
 			}
 
 			if !toolResult.Silent && toolResult.ForUser != "" && ts.opts.SendResponse {
@@ -4844,78 +4833,6 @@ turnLoop:
 					// No results available
 				}
 			}
-		}
-
-		if allResponsesHandled {
-			if len(pendingMessages) > 0 {
-				logger.InfoCF("agent", "Pending steering exists after handled tool delivery; continuing turn before finalizing",
-					map[string]any{
-						"agent_id":       ts.agent.ID,
-						"steering_count": len(pendingMessages),
-						"session_key":    ts.sessionKey,
-					})
-				finalContent = ""
-				// I2: guard against bypassing the hard iteration ceiling via goto.
-				if ts.currentIteration() >= 2*ts.agent.MaxIterations {
-					break
-				}
-				goto turnLoop
-			}
-
-			if steerMsgs := al.dequeueSteeringMessagesForScope(ts.sessionKey); len(steerMsgs) > 0 {
-				logger.InfoCF("agent", "Steering arrived after handled tool delivery; continuing turn before finalizing",
-					map[string]any{
-						"agent_id":       ts.agent.ID,
-						"steering_count": len(steerMsgs),
-						"session_key":    ts.sessionKey,
-					})
-				pendingMessages = append(pendingMessages, steerMsgs...)
-				finalContent = ""
-				// I2: guard against bypassing the hard iteration ceiling via goto.
-				if ts.currentIteration() >= 2*ts.agent.MaxIterations {
-					break
-				}
-				goto turnLoop
-			}
-
-			summaryMsg := providers.Message{
-				Role:    "assistant",
-				Content: handledToolResponseSummary,
-			}
-
-			if !ts.opts.NoHistory {
-				ts.agent.Sessions.AddMessage(ts.sessionKey, summaryMsg.Role, summaryMsg.Content)
-				ts.recordPersistedMessage(summaryMsg)
-				if err := ts.agent.Sessions.Save(ts.sessionKey); err != nil {
-					turnStatus = TurnEndStatusError
-					al.emitEvent(
-						EventKindError,
-						ts.eventMeta("runTurn", "turn.error"),
-						ErrorPayload{
-							Stage:   "session_save",
-							Message: err.Error(),
-						},
-					)
-					return turnResult{}, err
-				}
-			}
-			if ts.opts.EnableSummary {
-				al.maybeSummarize(ts.agent, ts.sessionKey, ts.scope)
-			}
-
-			ts.setPhase(TurnPhaseCompleted)
-			ts.setFinalContent("")
-			logger.InfoCF("agent", "Tool output satisfied delivery; ending turn without follow-up LLM",
-				map[string]any{
-					"agent_id":   ts.agent.ID,
-					"iteration":  iteration,
-					"tool_count": len(normalizedToolCalls),
-				})
-			return turnResult{
-				finalContent: "",
-				status:       turnStatus,
-				followUps:    append([]bus.InboundMessage(nil), ts.followUps...),
-			}, nil
 		}
 
 		ts.agent.Tools.TickTTL()

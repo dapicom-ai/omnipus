@@ -572,7 +572,7 @@ func TestToolRegistry_GetDefinitions(t *testing.T) {
 	}
 }
 
-func TestProcessMessage_MediaToolHandledSkipsFollowUpLLMAndFinalText(t *testing.T) {
+func TestProcessMessage_MediaToolDeliveryEmitsMediaAndCallsFollowUp(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
@@ -613,14 +613,14 @@ func TestProcessMessage_MediaToolHandledSkipsFollowUpLLMAndFinalText(t *testing.
 	if err != nil {
 		t.Fatalf("processMessage() error = %v", err)
 	}
-	if response != "" {
-		t.Fatalf("expected no final response when media tool already handled delivery, got %q", response)
+	if response != "Here is the screenshot." {
+		t.Fatalf("expected follow-up caption from second LLM call, got %q", response)
 	}
-	if provider.calls != 1 {
-		t.Fatalf("expected exactly 1 LLM call, got %d", provider.calls)
+	if provider.calls != 2 {
+		t.Fatalf("expected exactly 2 LLM calls (tool + follow-up), got %d", provider.calls)
 	}
-	if len(provider.toolCounts) != 1 {
-		t.Fatalf("expected tool counts for 1 provider call, got %d", len(provider.toolCounts))
+	if len(provider.toolCounts) != 2 {
+		t.Fatalf("expected tool counts for 2 provider calls, got %d", len(provider.toolCounts))
 	}
 	if provider.toolCounts[0] == 0 {
 		t.Fatal("expected tools to be available on the first LLM call")
@@ -661,8 +661,8 @@ func TestProcessMessage_MediaToolHandledSkipsFollowUpLLMAndFinalText(t *testing.
 		t.Fatal("expected session history to be saved")
 	}
 	last := history[len(history)-1]
-	if last.Role != "assistant" || last.Content != "Requested output delivered via tool attachment." {
-		t.Fatalf("expected handled assistant summary in history, got %+v", last)
+	if last.Role != "assistant" || last.Content != "Here is the screenshot." {
+		t.Fatalf("expected follow-up caption in history, got %+v", last)
 	}
 }
 
@@ -759,19 +759,15 @@ func TestProcessMessage_MediaArtifactCanBeForwardedBySendFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("processMessage() error = %v", err)
 	}
-	if response != "" {
-		t.Fatalf("expected no final response after send_file handled delivery, got %q", response)
+	if response != "Sent." {
+		t.Fatalf("expected final caption after send_file follow-up, got %q", response)
 	}
-	// The media artifact tool returns both ForLLM content AND media refs.
-	// Normalization only auto-handles (ResponseHandled=true) when ForLLM is
-	// fully consumed by the placeholder. Since this tool has meaningful ForLLM,
-	// the agent continues to a second LLM call where it calls send_file.
-	if provider.calls != 2 {
-		t.Fatalf("expected 2 LLM calls (artifact + send_file), got %d", provider.calls)
+	if provider.calls != 3 {
+		t.Fatalf("expected 3 LLM calls (artifact + send_file + caption), got %d", provider.calls)
 	}
 
-	if len(telegramChannel.sentMedia) != 1 {
-		t.Fatalf("expected exactly 1 synchronously sent media message, got %d", len(telegramChannel.sentMedia))
+	if len(telegramChannel.sentMedia) != 2 {
+		t.Fatalf("expected 2 synchronously sent media messages (artifact tool + send_file), got %d", len(telegramChannel.sentMedia))
 	}
 	if telegramChannel.sentMedia[0].Channel != "telegram" || telegramChannel.sentMedia[0].ChatID != "chat1" {
 		t.Fatalf("unexpected sent media target: %+v", telegramChannel.sentMedia[0])
@@ -957,7 +953,7 @@ func (m *handledMediaProvider) Chat(
 			}},
 		}, nil
 	}
-	return &providers.LLMResponse{}, nil
+	return &providers.LLMResponse{Content: "Here is the screenshot."}, nil
 }
 
 func (m *handledMediaProvider) GetDefaultModel() string {
@@ -986,6 +982,9 @@ func (m *artifactThenSendProvider) Chat(
 				Arguments: map[string]any{},
 			}},
 		}, nil
+	}
+	if m.calls > 2 {
+		return &providers.LLMResponse{Content: "Sent."}, nil
 	}
 
 	var artifactPath string
@@ -1137,7 +1136,7 @@ func (m *handledMediaTool) Execute(ctx context.Context, args map[string]any) *to
 	if err != nil {
 		return tools.ErrorResult(err.Error()).WithError(err)
 	}
-	return tools.MediaResult("Attachment delivered by tool.", []string{ref}).WithResponseHandled()
+	return tools.MediaResult("Attachment delivered by tool.", []string{ref})
 }
 
 type handledMediaWithSteeringProvider struct {
@@ -1211,7 +1210,7 @@ func (m *handledMediaWithSteeringTool) Execute(ctx context.Context, args map[str
 	if err != nil {
 		return tools.ErrorResult(err.Error()).WithError(err)
 	}
-	return tools.MediaResult("Attachment delivered by tool.", []string{ref}).WithResponseHandled()
+	return tools.MediaResult("Attachment delivered by tool.", []string{ref})
 }
 
 type mediaArtifactTool struct {

@@ -229,26 +229,6 @@ func TestToolResultJSONStructure(t *testing.T) {
 	}
 }
 
-func TestToolResultContentForLLM_AppendsHandledDeliveryNote(t *testing.T) {
-	result := MediaResult("Screenshot attached.", []string{"media://example"}).WithResponseHandled()
-
-	content := result.ContentForLLM()
-	if !strings.Contains(content, "Screenshot attached.") {
-		t.Fatalf("expected original content in ContentForLLM, got %q", content)
-	}
-	if !strings.Contains(content, handledToolLLMNote) {
-		t.Fatalf("expected handled delivery note in ContentForLLM, got %q", content)
-	}
-}
-
-func TestToolResultContentForLLM_UsesHandledDeliveryNoteWhenEmpty(t *testing.T) {
-	result := (&ToolResult{}).WithResponseHandled()
-
-	if got := result.ContentForLLM(); got != handledToolLLMNote {
-		t.Fatalf("ContentForLLM() = %q, want %q", got, handledToolLLMNote)
-	}
-}
-
 func TestToolResultContentForLLM_AppendsArtifactPaths(t *testing.T) {
 	result := &ToolResult{
 		ForLLM:       "Artifact created.",
