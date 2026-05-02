@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -30,6 +31,10 @@ type BrowserConfig struct {
 	MaxTabs        int           `json:"max_tabs"`        // Max concurrent tabs (US-7, default 5)
 	PersistSession bool          `json:"persist_session"` // Persist cookies/localStorage across restarts
 	ProfileDir     string        `json:"profile_dir"`     // User data dir (default ~/.omnipus/browser/profiles/default/)
+	// ExecPath overrides Chromium discovery. When empty the manager prefers
+	// a system chromium/google-chrome on PATH and falls back to a managed
+	// install under <ProfileDir>/../chromium/ (downloaded on first use).
+	ExecPath string `json:"exec_path,omitempty"`
 }
 
 // DefaultConfig returns a BrowserConfig with spec-defined defaults.
@@ -153,6 +158,11 @@ func (m *BrowserManager) ensureStarted() error {
 		return fmt.Errorf("browser: cannot create profile directory %s: %w", m.cfg.ProfileDir, err)
 	}
 
+	execPath, err := m.resolveExecPath(context.Background())
+	if err != nil {
+		return fmt.Errorf("browser: cannot locate chromium: %w", err)
+	}
+
 	// Point Chrome's HOME and XDG dirs at the profile directory so any stray
 	// writes (Crash Reports, GPUCache, Singleton locks, etc.) land inside
 	// the Landlock-allowed workspace instead of $HOME/.config/google-chrome.
@@ -162,6 +172,7 @@ func (m *BrowserManager) ensureStarted() error {
 	chromeHome := m.cfg.ProfileDir
 
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.ExecPath(execPath),
 		chromedp.UserDataDir(m.cfg.ProfileDir),
 		chromedp.DisableGPU,
 		chromedp.Flag("no-first-run", true),
@@ -201,8 +212,34 @@ func (m *BrowserManager) ensureStarted() error {
 	logger.InfoCF("browser", "Browser allocator ready (managed mode)", map[string]any{
 		"headless":    m.cfg.Headless,
 		"profile_dir": m.cfg.ProfileDir,
+		"exec_path":   execPath,
 	})
 	return nil
+}
+
+// resolveExecPath returns the path to the Chromium binary chromedp should
+// launch. Resolution order:
+//
+//  1. cfg.ExecPath (operator override) — used as-is.
+//  2. System chromium/google-chrome on $PATH — preferred when present.
+//  3. Managed install under <ProfileDir>/../chromium/ — downloaded from
+//     Chrome for Testing on first call. Cached across restarts so the
+//     download cost is amortized once per host.
+func (m *BrowserManager) resolveExecPath(ctx context.Context) (string, error) {
+	if m.cfg.ExecPath != "" {
+		if _, err := os.Stat(m.cfg.ExecPath); err != nil {
+			return "", fmt.Errorf("configured exec_path %s: %w", m.cfg.ExecPath, err)
+		}
+		return m.cfg.ExecPath, nil
+	}
+	for _, name := range []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser"} {
+		if path, err := exec.LookPath(name); err == nil {
+			return path, nil
+		}
+	}
+	installRoot := filepath.Join(filepath.Dir(filepath.Clean(m.cfg.ProfileDir)), "..", "chromium")
+	installRoot = filepath.Clean(installRoot)
+	return EnsureChromium(ctx, installRoot)
 }
 
 // Session returns a persistent tab context for the given session ID.
