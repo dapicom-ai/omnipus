@@ -232,9 +232,17 @@ func (m *BrowserManager) resolveExecPath(ctx context.Context) (string, error) {
 		}
 		return m.cfg.ExecPath, nil
 	}
-	for _, name := range []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser"} {
-		if path, err := exec.LookPath(name); err == nil {
-			return path, nil
+	// Operators can force the managed install path (skipping the $PATH
+	// lookup) by setting OMNIPUS_BROWSER_FORCE_MANAGED=1. Useful for
+	// pinning a deterministic Chromium version even when a system
+	// google-chrome is present, and for exercising the install flow in
+	// CI / staging hosts that already have Chrome installed.
+	forceManaged := os.Getenv("OMNIPUS_BROWSER_FORCE_MANAGED") == "1"
+	if !forceManaged {
+		for _, name := range []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser"} {
+			if path, err := exec.LookPath(name); err == nil {
+				return path, nil
+			}
 		}
 	}
 	installRoot := filepath.Join(filepath.Dir(filepath.Clean(m.cfg.ProfileDir)), "..", "chromium")
