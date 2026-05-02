@@ -144,6 +144,7 @@ func (s *FileMediaStore) Store(localPath string, meta MediaMeta, scope string) (
 	pathState.refCount++
 	s.pathStates[localPath] = pathState
 
+	go s.SaveRegistry()
 	return ref, nil
 }
 
@@ -208,6 +209,7 @@ func (s *FileMediaStore) ReleaseAll(scope string) error {
 		}
 	}
 
+	go s.SaveRegistry()
 	return nil
 }
 

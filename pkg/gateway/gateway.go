@@ -890,6 +890,12 @@ func setupAndStartServices(
 		Interval: time.Duration(cfg.Tools.MediaCleanup.Interval) * time.Minute,
 	})
 	if fms, ok := runningServices.MediaStore.(*media.FileMediaStore); ok {
+		// Reload refs persisted by a previous gateway instance so
+		// /api/v1/media/<ref> URLs in old session transcripts still resolve.
+		// Best-effort — a load failure should not block boot.
+		if err := fms.LoadRegistry(); err != nil {
+			slog.Warn("media: failed to load persisted registry", "error", err)
+		}
 		fms.Start()
 	}
 
@@ -1400,6 +1406,12 @@ func restartServices(
 		Interval: time.Duration(cfg.Tools.MediaCleanup.Interval) * time.Minute,
 	})
 	if fms, ok := runningServices.MediaStore.(*media.FileMediaStore); ok {
+		// Reload refs persisted by a previous gateway instance so
+		// /api/v1/media/<ref> URLs in old session transcripts still resolve.
+		// Best-effort — a load failure should not block boot.
+		if err := fms.LoadRegistry(); err != nil {
+			slog.Warn("media: failed to load persisted registry", "error", err)
+		}
 		fms.Start()
 	}
 	al.SetMediaStore(runningServices.MediaStore)
