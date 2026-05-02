@@ -709,9 +709,15 @@ export const useChatStore = create<ChatStore>((set, get) => {
                   error: tc.error,
                 }
               })
+              // Dedupe the merged tool_calls list by id so a re-bake (after
+              // an attach + replay, or any other path that revisits live
+              // ids) cannot leave duplicate ids on the message.
+              const mergedById = new Map<string, NonNullable<typeof prev.tool_calls>[number]>()
+              for (const tc of (prev.tool_calls ?? [])) mergedById.set(tc.id, tc)
+              for (const tc of baked) mergedById.set(tc.id, tc)
               msgs[prevAssistantIdx] = {
                 ...prev,
-                tool_calls: [...(prev.tool_calls ?? []), ...baked],
+                tool_calls: Array.from(mergedById.values()),
               }
               const liveSet = new Set(liveIds)
               const remainingCalls: typeof b.toolCalls = {}
@@ -1064,13 +1070,19 @@ export const useChatStore = create<ChatStore>((set, get) => {
                 const ph: ChatMessage = { id: generateId(), role: 'assistant', content: '', timestamp: new Date().toISOString(), status: 'streaming', isStreaming: true, streamCursor: true }
                 msgs.push(ph)
               }
+              // Append to toolCallOrder only if we haven't already recorded
+              // this call_id. Replay can re-emit a tool_call_start that the
+              // live stream had already pushed, and a duplicate id would
+              // surface later as "Duplicate key toolCallId-…" when the
+              // assistant-ui runtime keys its tool-call parts.
+              const orderHasCall = b.toolCallOrder.includes(frame.call_id)
               return {
                 messages: msgs,
                 toolCalls: {
                   ...b.toolCalls,
                   [frame.call_id]: { id: frame.call_id, call_id: frame.call_id, tool: frame.tool, params: frame.params, status: 'running' },
                 },
-                toolCallOrder: [...b.toolCallOrder, frame.call_id],
+                toolCallOrder: orderHasCall ? b.toolCallOrder : [...b.toolCallOrder, frame.call_id],
                 textAtToolCallStart: { ...b.textAtToolCallStart, [frame.call_id]: textSnapshot },
               }
             })

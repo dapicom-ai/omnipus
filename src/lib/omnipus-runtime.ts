@@ -39,6 +39,20 @@ function pushHistoryParts(
     return;
   }
 
+  // Dedupe by tool-call id: @assistant-ui/react keys tool-call parts by
+  // toolCallId, and a duplicate id triggers a hard React error
+  // ("Duplicate key toolCallId-…"). Edge cases that produce duplicates
+  // (e.g. replay re-emitting an id already baked into the message, or
+  // a turn rebake during reconnect) shouldn't crash the page.
+  {
+    const seen = new Set<string>();
+    historyToolCalls = historyToolCalls.filter((tc) => {
+      if (seen.has(tc.id)) return false;
+      seen.add(tc.id);
+      return true;
+    });
+  }
+
   if (textAtToolCallStart) {
     const ordered = [...historyToolCalls].sort((a, b) => {
       const sa = textAtToolCallStart[a.id]?.length ?? Number.POSITIVE_INFINITY;
