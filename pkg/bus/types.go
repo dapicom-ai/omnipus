@@ -49,8 +49,12 @@ type InboundMessage struct {
 }
 
 type OutboundMessage struct {
-	Channel          string `json:"channel"`
-	ChatID           string `json:"chat_id"`
+	Channel string `json:"channel"`
+	ChatID  string `json:"chat_id"`
+	// SessionID is the transcript-store session this message belongs to.
+	// Populated by the agent loop from the originating turn so channels
+	// (and the SPA) can route the frame to the right session bucket.
+	SessionID        string `json:"session_id,omitempty"`
 	Content          string `json:"content"`
 	ReplyToMessageID string `json:"reply_to_message_id,omitempty"`
 }

@@ -878,6 +878,15 @@ export const useChatStore = create<ChatStore>((set, get) => {
             withBucket(targetSid, (b) => {
               const msgs = [...b.messages]
               let lastIdx = msgs.map((m) => m.role).lastIndexOf('assistant')
+              // Only reuse the last assistant bubble if it is still
+              // streaming. A closed bubble (status=done) means the prior
+              // LLM call has finalized and any new tokens are part of a
+              // *new* turn-segment — typically a follow-up call after a
+              // tool returned. Stuffing them back into the closed bubble
+              // is what produced the "text-then-image-at-bottom" ordering.
+              if (lastIdx !== -1 && !msgs[lastIdx].isStreaming) {
+                lastIdx = -1
+              }
               if (lastIdx === -1) {
                 const placeholder: ChatMessage = {
                   id: generateId(),
@@ -1289,7 +1298,17 @@ export const useChatStore = create<ChatStore>((set, get) => {
           withBucket(targetSid, (b) => {
             const msgs = [...b.messages]
             const lastIdx = msgs.map((m) => m.role).lastIndexOf('assistant')
-            if (lastIdx !== -1) {
+            // Attach to the last assistant bubble only if it is still
+            // streaming or has no content yet. A closed bubble means the
+            // prior LLM call has ended; the media should appear AFTER that
+            // bubble (between turn-segments) rather than be folded back
+            // into completed text — otherwise the screenshot visually
+            // jumps to the bottom of the prior bubble while a new
+            // follow-up bubble streams above it.
+            const canAttach =
+              lastIdx !== -1 &&
+              (msgs[lastIdx].isStreaming || (msgs[lastIdx].content ?? '') === '')
+            if (canAttach) {
               msgs[lastIdx] = {
                 ...msgs[lastIdx],
                 media: [...(msgs[lastIdx].media ?? []), ...attachments],

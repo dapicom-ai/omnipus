@@ -4754,14 +4754,39 @@ turnLoop:
 			if toolResult.IsError {
 				tcStatus = "error"
 			}
-			ts.appendToolCallTranscript(session.ToolCall{
+			tcRecord := session.ToolCall{
 				ID:               session.ToolCallID(toolCallID),
 				Tool:             toolName,
 				Status:           tcStatus,
 				DurationMS:       toolDuration.Milliseconds(),
 				Parameters:       cloneEventArguments(toolArgs),
 				ParentToolCallID: session.ToolCallID(ts.parentSpawnCallID),
-			})
+			}
+			// Persist media descriptors so replay can re-emit the `media`
+			// frame and reopened sessions show the attachments the user
+			// originally saw. We store enough metadata (ref + filename +
+			// content_type + type) for replay to reconstruct the wire frame
+			// without re-resolving against the MediaStore at replay time.
+			if len(toolResult.Media) > 0 {
+				descs := make([]map[string]any, 0, len(toolResult.Media))
+				for _, ref := range toolResult.Media {
+					d := map[string]any{"ref": ref}
+					if al.mediaStore != nil {
+						if _, meta, err := al.mediaStore.ResolveWithMeta(ref); err == nil {
+							if meta.Filename != "" {
+								d["filename"] = meta.Filename
+							}
+							if meta.ContentType != "" {
+								d["content_type"] = meta.ContentType
+							}
+							d["type"] = inferMediaType(meta.Filename, meta.ContentType)
+						}
+					}
+					descs = append(descs, d)
+				}
+				tcRecord.Result = map[string]any{"media": descs}
+			}
+			ts.appendToolCallTranscript(tcRecord)
 			messages = append(messages, toolResultMsg)
 			if !ts.opts.NoHistory {
 				ts.agent.Sessions.AddFullMessage(ts.sessionKey, toolResultMsg)

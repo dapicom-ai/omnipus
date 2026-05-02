@@ -275,6 +275,11 @@ func streamReplay(
 				if err2 := emitFrame(buildResult(tc, effectiveAgentID, "")); err2 != nil {
 					return framesEmitted, err2
 				}
+				if mf, ok := buildMediaFrame(sessionID, tc); ok {
+					if err2 := emitFrame(mf); err2 != nil {
+						return framesEmitted, err2
+					}
+				}
 				continue
 			}
 
@@ -290,6 +295,11 @@ func streamReplay(
 			}
 			if err2 := emitFrame(buildResult(tc, effectiveAgentID, parentForFlat)); err2 != nil {
 				return framesEmitted, err2
+			}
+			if mf, ok := buildMediaFrame(sessionID, tc); ok {
+				if err2 := emitFrame(mf); err2 != nil {
+					return framesEmitted, err2
+				}
 			}
 		}
 	}
@@ -312,6 +322,51 @@ func streamReplay(
 		return framesEmitted, err2
 	}
 	return framesEmitted, nil
+}
+
+// buildMediaFrame returns a `media` wsServerFrame reconstructed from a
+// transcript ToolCall, or ok=false when the call has no persisted media
+// descriptors. The agent loop persists media as
+// tc.Result["media"] = []map[string]any{{"ref","filename","content_type","type"}}
+// so replay can re-emit attachments without re-resolving the MediaStore.
+func buildMediaFrame(sessionID string, tc session.ToolCall) (wsServerFrame, bool) {
+	raw, ok := tc.Result["media"]
+	if !ok {
+		return wsServerFrame{}, false
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return wsServerFrame{}, false
+	}
+	parts := make([]wsMediaPart, 0, len(list))
+	for _, item := range list {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		refStr, _ := m["ref"].(string)
+		if refStr == "" {
+			continue
+		}
+		filename, _ := m["filename"].(string)
+		contentType, _ := m["content_type"].(string)
+		mediaType, _ := m["type"].(string)
+		// The wire URL form mirrors webchat_channel.SendMedia.
+		const refPrefix = "media://"
+		if len(refStr) <= len(refPrefix) || refStr[:len(refPrefix)] != refPrefix {
+			continue
+		}
+		parts = append(parts, wsMediaPart{
+			Type:        mediaType,
+			URL:         "/api/v1/media/" + refStr[len(refPrefix):],
+			Filename:    filename,
+			ContentType: contentType,
+		})
+	}
+	if len(parts) == 0 {
+		return wsServerFrame{}, false
+	}
+	return wsServerFrame{Type: "media", SessionID: sessionID, Parts: parts}, true
 }
 
 // buildSpawnIDsWithChildren scans all entries and returns the set of spawn
