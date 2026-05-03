@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { generateId } from '@/lib/constants'
 import { useUiStore } from '@/store/ui'
 import { useConnectionStore } from '@/store/connection'
-import { useSessionStore, registerChatSetReplaying } from '@/store/session'
+import { useSessionStore, registerChatSetReplaying, registerChatResetForReplay } from '@/store/session'
 import { queryClient } from '@/lib/queryClient'
 import type { Message, ToolCall } from '@/lib/api'
 import type { WsReceiveFrame, WsExecApprovalRequestFrame, WsReplayMessageFrame, WsRateLimitFrame, WsSubagentStartFrame, WsSubagentEndFrame } from '@/lib/ws'
@@ -59,7 +59,6 @@ interface BufferedFrame {
 
 export interface ChatMessage extends Message {
   isStreaming?: boolean
-  streamCursor?: boolean
   media?: MediaAttachment[]
   spans?: SubagentSpan[]
 }
@@ -157,6 +156,11 @@ interface ChatStore {
 
   // Resets only the foreground session bucket. Does NOT affect other sessions.
   resetSession: () => void
+
+  // Wipes a specific session bucket and marks it as replaying so the next
+  // replay frames rebuild from scratch. Used on WS reconnect to prevent
+  // duplicate bubbles when the gateway re-replays the transcript.
+  resetSessionForReplay: (sessionId: string) => void
 
   // ── Actions ───────────────────────────────────────────────────────────────────
   sendMessage: (content: string) => void
@@ -326,7 +330,6 @@ export const useChatStore = create<ChatStore>((set, get) => {
             timestamp: new Date().toISOString(),
             status: 'streaming',
             isStreaming: true,
-            streamCursor: true,
           }
           msgs.push(placeholder)
           lastIdx = msgs.length - 1
@@ -335,7 +338,6 @@ export const useChatStore = create<ChatStore>((set, get) => {
           ...msgs[lastIdx],
           content: msgs[lastIdx].content + content,
           isStreaming: !done,
-          streamCursor: !done,
           status: done ? 'done' : 'streaming',
         }
         return { messages: msgs, isStreaming: !done }
@@ -351,7 +353,6 @@ export const useChatStore = create<ChatStore>((set, get) => {
         msgs[lastIdx] = {
           ...msgs[lastIdx],
           isStreaming: false,
-          streamCursor: false,
           status: 'interrupted',
         }
         return { messages: msgs, isStreaming: false }
@@ -375,7 +376,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
               const msgs = [...b.messages]
               const idx = msgs.map((m) => m.role).lastIndexOf('assistant')
               if (idx === -1) return {}
-              msgs[idx] = { ...msgs[idx], isStreaming: false, streamCursor: false, status: 'interrupted' }
+              msgs[idx] = { ...msgs[idx], isStreaming: false, status: 'interrupted' }
               const updated = { ...b, messages: msgs, isStreaming: false }
               return {
                 sessionsById: { ...s.sessionsById, [bucketSid]: updated },
@@ -646,6 +647,30 @@ export const useChatStore = create<ChatStore>((set, get) => {
       withBucket(sid, () => emptySessionState())
     },
 
+    resetSessionForReplay: (sessionId) => {
+      // Clear all transient state so the upcoming replay rebuilds from
+      // scratch. This is the targeted reset for WS reconnect: without it,
+      // replay frames append duplicate bubbles to the existing bucket.
+      const prefix = `${sessionId}:`
+      for (const key of Object.keys(orphanTimers)) {
+        if (key.startsWith(prefix)) {
+          clearTimeout(orphanTimers[key])
+          delete orphanTimers[key]
+        }
+      }
+      for (const key of Object.keys(pendingByParentCallId)) {
+        if (key.startsWith(prefix)) {
+          delete pendingByParentCallId[key]
+        }
+      }
+      sawReplayMessageThisTurn[sessionId] = false
+      replayingStartedAt[sessionId] = Date.now()
+      withBucket(sessionId, () => ({
+        ...emptySessionState(),
+        isReplaying: true,
+      }))
+    },
+
     sendMessage: (content) => {
       const { connection, isConnected } = useConnectionStore.getState()
       const { activeSessionId, activeAgentId } = useSessionStore.getState()
@@ -681,7 +706,6 @@ export const useChatStore = create<ChatStore>((set, get) => {
           timestamp: new Date().toISOString(),
           status: 'streaming',
           isStreaming: true,
-          streamCursor: true,
         }
 
         withBucket(activeSessionId, (b) => {
@@ -901,7 +925,6 @@ export const useChatStore = create<ChatStore>((set, get) => {
                   timestamp: new Date().toISOString(),
                   status: 'streaming',
                   isStreaming: true,
-                  streamCursor: true,
                 }
                 msgs.push(placeholder)
                 lastIdx = msgs.length - 1
@@ -910,7 +933,6 @@ export const useChatStore = create<ChatStore>((set, get) => {
                 ...msgs[lastIdx],
                 content: msgs[lastIdx].content + frame.content,
                 isStreaming: true,
-                streamCursor: true,
                 status: 'streaming',
               }
               return { messages: msgs, isStreaming: true }
@@ -920,41 +942,45 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
         case 'done':
           if (targetSid) {
-            withBucket(targetSid, (b) => {
+            // Decide whether isReplaying must clear now vs. defer to a setTimeout.
+            // The clear happens INSIDE the same withBucket return below — never via
+            // a nested withBucket call, because the outer set() commits the bucket
+            // last and clobbers any nested writes that ran during the updater.
+            const sid = targetSid
+            const wasReplaying = (get().sessionsById[sid] ?? EMPTY_BUCKET).isReplaying
+            const elapsed = wasReplaying ? Date.now() - (replayingStartedAt[sid] ?? 0) : 0
+            const MIN_REPLAY_DISPLAY_MS = 250
+            const clearReplayingNow = wasReplaying && elapsed >= MIN_REPLAY_DISPLAY_MS
+            if (wasReplaying) {
+              sawReplayMessageThisTurn[sid] = false
+              if (!clearReplayingNow) {
+                setTimeout(() => withBucket(sid, () => ({ isReplaying: false })), MIN_REPLAY_DISPLAY_MS - elapsed)
+              }
+            }
+            withBucket(sid, (b) => {
               const msgs = [...b.messages]
               const lastIdx = msgs.map((m) => m.role).lastIndexOf('assistant')
               if (lastIdx !== -1) {
                 msgs[lastIdx] = {
                   ...msgs[lastIdx],
                   isStreaming: false,
-                  streamCursor: false,
                   status: 'done',
                 }
               }
               const tokenDelta = frame.stats?.tokens ?? 0
               const costDelta = frame.stats?.cost ?? 0
-              const replayCompleted = b.isReplaying ? targetSid : b.replayCompletedForSession
-
-              // Schedule isReplaying clear with minimum display window.
-              if (b.isReplaying) {
-                sawReplayMessageThisTurn[targetSid] = false
-                const elapsed = Date.now() - (replayingStartedAt[targetSid] ?? 0)
-                const MIN_REPLAY_DISPLAY_MS = 250
-                const applyFalse = () => withBucket(targetSid, () => ({ isReplaying: false }))
-                if (elapsed >= MIN_REPLAY_DISPLAY_MS) {
-                  applyFalse()
-                } else {
-                  setTimeout(applyFalse, MIN_REPLAY_DISPLAY_MS - elapsed)
-                }
-              }
-
-              return {
+              const replayCompleted = b.isReplaying ? sid : b.replayCompletedForSession
+              const patch: Partial<SessionChatState> = {
                 messages: msgs,
                 isStreaming: false,
                 sessionTokens: b.sessionTokens + tokenDelta,
                 sessionCost: b.sessionCost + costDelta,
                 replayCompletedForSession: replayCompleted,
               }
+              if (clearReplayingNow) {
+                patch.isReplaying = false
+              }
+              return patch
             })
           }
           break
@@ -969,7 +995,6 @@ export const useChatStore = create<ChatStore>((set, get) => {
                   ...msgs[lastIdx],
                   content: msgs[lastIdx].content || frame.message,
                   isStreaming: false,
-                  streamCursor: false,
                   status: 'error',
                 }
                 return { messages: msgs, isStreaming: false }
@@ -981,7 +1006,6 @@ export const useChatStore = create<ChatStore>((set, get) => {
                 timestamp: new Date().toISOString(),
                 status: 'error',
                 isStreaming: false,
-                streamCursor: false,
               })
               useConnectionStore.getState().setConnectionError(frame.message)
               return { messages: msgs, isStreaming: false }
@@ -1045,7 +1069,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
                       const lastMsg = patchMsgs[patchMsgs.length - 1]
                       const textSnapshot = (lastMsg?.role === 'assistant' ? lastMsg.content : '') ?? ''
                       if (!lastMsg || lastMsg.role !== 'assistant') {
-                        const ph: ChatMessage = { id: generateId(), role: 'assistant', content: '', timestamp: new Date().toISOString(), status: 'streaming', isStreaming: true, streamCursor: true }
+                        const ph: ChatMessage = { id: generateId(), role: 'assistant', content: '', timestamp: new Date().toISOString(), status: 'streaming', isStreaming: true }
                         patchMsgs = [...patchMsgs, ph]
                       }
                       patchToolCalls[bf.call_id] = { id: bf.call_id, call_id: bf.call_id, tool: bf.tool, params: bf.params, status: 'running' }
@@ -1067,23 +1091,34 @@ export const useChatStore = create<ChatStore>((set, get) => {
               const lastMsg = msgs[msgs.length - 1]
               const textSnapshot = (lastMsg?.role === 'assistant' ? lastMsg.content : '') ?? ''
               if (!lastMsg || lastMsg.role !== 'assistant') {
-                const ph: ChatMessage = { id: generateId(), role: 'assistant', content: '', timestamp: new Date().toISOString(), status: 'streaming', isStreaming: true, streamCursor: true }
+                const ph: ChatMessage = { id: generateId(), role: 'assistant', content: '', timestamp: new Date().toISOString(), status: 'streaming', isStreaming: true }
                 msgs.push(ph)
               }
-              // Append to toolCallOrder only if we haven't already recorded
-              // this call_id. Replay can re-emit a tool_call_start that the
-              // live stream had already pushed, and a duplicate id would
-              // surface later as "Duplicate key toolCallId-…" when the
-              // assistant-ui runtime keys its tool-call parts.
+              // Reconnect/replay safety: if this call_id is already recorded
+              // (we have a textAtToolCallStart snapshot for it), keep the
+              // ORIGINAL snapshot. A reattach replays from the start of the
+              // transcript while the bucket already holds the completed
+              // assistant text — without this guard every snapshot gets
+              // overwritten with "end of full text", which makes the
+              // runtime adapter render every tool call AFTER the text
+              // (the "tool calls grouped at the bottom" reconnect bug).
+              // Likewise, don't downgrade a tool call's status from
+              // success/error back to running.
               const orderHasCall = b.toolCallOrder.includes(frame.call_id)
+              const existingSnapshot = b.textAtToolCallStart[frame.call_id]
+              const existingTC = b.toolCalls[frame.call_id]
               return {
                 messages: msgs,
-                toolCalls: {
-                  ...b.toolCalls,
-                  [frame.call_id]: { id: frame.call_id, call_id: frame.call_id, tool: frame.tool, params: frame.params, status: 'running' },
-                },
+                toolCalls: existingTC && existingTC.status !== 'running'
+                  ? b.toolCalls
+                  : {
+                      ...b.toolCalls,
+                      [frame.call_id]: { id: frame.call_id, call_id: frame.call_id, tool: frame.tool, params: frame.params, status: 'running' },
+                    },
                 toolCallOrder: orderHasCall ? b.toolCallOrder : [...b.toolCallOrder, frame.call_id],
-                textAtToolCallStart: { ...b.textAtToolCallStart, [frame.call_id]: textSnapshot },
+                textAtToolCallStart: existingSnapshot !== undefined
+                  ? b.textAtToolCallStart
+                  : { ...b.textAtToolCallStart, [frame.call_id]: textSnapshot },
               }
             })
           }
@@ -1276,18 +1311,43 @@ export const useChatStore = create<ChatStore>((set, get) => {
           sawReplayMessageThisTurn[targetSid] = true
           const replayFrame = frame as WsReplayMessageFrame
           const role = (replayFrame.role || 'assistant') as 'user' | 'assistant'
-          withBucket(targetSid, (b) => ({
-            messages: [
-              ...b.messages,
-              {
-                id: generateId(),
-                role,
-                content: replayFrame.content ?? '',
-                timestamp: new Date().toISOString(),
-                status: 'done' as const,
-              },
-            ],
-          }))
+          const text = replayFrame.content ?? ''
+          withBucket(targetSid, (b) => {
+            const msgs = [...b.messages]
+            // Reconnection dedup: if a message with the same role and same
+            // content is already at the tail of the bucket, the gateway is
+            // re-replaying a transcript we already have in memory — skip
+            // the push so we don't get a duplicate bubble.
+            const tail = msgs[msgs.length - 1]
+            if (tail && tail.role === role && (tail.content ?? '') === text) {
+              return {}
+            }
+            // Coalesce assistant text into the trailing empty assistant bubble
+            // that tool_call_start frames already created. Without this, replay
+            // splits one agent turn into two bubbles: the first with media/tool
+            // calls and an empty body (still showing "Thinking…"), the second
+            // with the final text — visually out of chronological order.
+            if (role === 'assistant') {
+              const lastIdx = msgs.map((m) => m.role).lastIndexOf('assistant')
+              if (lastIdx !== -1 && (msgs[lastIdx].content ?? '') === '') {
+                msgs[lastIdx] = {
+                  ...msgs[lastIdx],
+                  content: text,
+                  status: 'done',
+                  isStreaming: false,
+                }
+                return { messages: msgs }
+              }
+            }
+            msgs.push({
+              id: generateId(),
+              role,
+              content: text,
+              timestamp: new Date().toISOString(),
+              status: 'done' as const,
+            })
+            return { messages: msgs }
+          })
           break
         }
 
@@ -1310,20 +1370,18 @@ export const useChatStore = create<ChatStore>((set, get) => {
           withBucket(targetSid, (b) => {
             const msgs = [...b.messages]
             const lastIdx = msgs.map((m) => m.role).lastIndexOf('assistant')
-            // Attach to the last assistant bubble only if it is still
-            // streaming or has no content yet. A closed bubble means the
-            // prior LLM call has ended; the media should appear AFTER that
-            // bubble (between turn-segments) rather than be folded back
-            // into completed text — otherwise the screenshot visually
-            // jumps to the bottom of the prior bubble while a new
-            // follow-up bubble streams above it.
             const canAttach =
               lastIdx !== -1 &&
               (msgs[lastIdx].isStreaming || (msgs[lastIdx].content ?? '') === '')
+            const dedupe = (existing: MediaAttachment[] | undefined, incoming: MediaAttachment[]) => {
+              const seen = new Set((existing ?? []).map((a) => a.url))
+              const fresh = incoming.filter((a) => !seen.has(a.url))
+              return [...(existing ?? []), ...fresh]
+            }
             if (canAttach) {
               msgs[lastIdx] = {
                 ...msgs[lastIdx],
-                media: [...(msgs[lastIdx].media ?? []), ...attachments],
+                media: dedupe(msgs[lastIdx].media, attachments),
               }
               return { messages: msgs }
             }
@@ -1412,7 +1470,9 @@ export function syncChatForeground(): void {
 
 // Register callbacks with the session store to break circular imports.
 registerChatSetReplaying((value) => useChatStore.getState().setReplaying(value))
+registerChatResetForReplay((sessionId) => useChatStore.getState().resetSessionForReplay(sessionId))
 registerSyncChatForeground(syncChatForeground)
+
 
 // F-S8: removed flat→bucket bidirectional sync subscriber.
 // Tests now seed sessionsById directly (see resetStores() in test files).

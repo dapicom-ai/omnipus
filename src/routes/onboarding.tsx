@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   ArrowRight,
@@ -18,7 +18,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ModelSelector } from '@/components/ui/model-selector'
-import { probeProvider, completeOnboardingTransaction, completeOnboarding } from '@/lib/api'
+import { probeProvider, completeOnboardingTransaction, completeOnboarding, fetchAppState } from '@/lib/api'
 import OmnipusAvatar from '@/assets/logo/omnipus-avatar.svg?url'
 import { PROVIDER_HINTS } from '@/lib/constants'
 import { useUiStore } from '@/store/ui'
@@ -904,5 +904,17 @@ function DoneStep({
 }
 
 export const Route = createFileRoute('/onboarding')({
+  beforeLoad: async () => {
+    try {
+      const state = await fetchAppState()
+      if (state?.onboarding_complete) {
+        throw redirect({ to: '/' })
+      }
+    } catch (err) {
+      // Re-throw redirect; swallow network errors so a broken state endpoint
+      // doesn't lock the user out of onboarding on a fresh install.
+      if (err && typeof err === 'object' && 'to' in err) throw err
+    }
+  },
   component: OnboardingWizard,
 })

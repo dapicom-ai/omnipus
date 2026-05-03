@@ -1194,7 +1194,8 @@ export function updateRateLimits(body: RateLimitsUpdateBody): Promise<RateLimits
   })
 }
 
-// Sandbox config — mode, allowed paths, and SSRF controls.
+// Sandbox config — mode, allowed paths, SSRF controls, and the global
+// agent defaults (default_profile, shell_deny_patterns).
 // allow_internal is []string matching OmnipusSSRFConfig.AllowInternal in pkg/config/sandbox.go.
 // Entries may be hostname, exact IP, or CIDR range. Empty slice means "block all".
 export interface SandboxConfigResponse {
@@ -1202,21 +1203,35 @@ export interface SandboxConfigResponse {
   // applied_mode is the value the gateway is currently enforcing. It differs
   // from `mode` when the operator saved a change but hasn't restarted.
   applied_mode?: string
+  allow_network_outbound?: boolean
   allowed_paths?: string[]
+  ssrf_enabled?: boolean
+  ssrf_allow_internal?: string[]
   ssrf?: {
     enabled?: boolean
     allow_internal?: string[]
   }
+  // default_profile is the global fallback applied to NEW custom agents
+  // that do not pick their own SandboxProfile. Empty = inherit hardcoded.
+  default_profile?: SandboxProfile | ''
+  // shell_deny_patterns is the global fallback shell-deny regex list
+  // applied on top of any per-agent custom patterns.
+  shell_deny_patterns?: string[]
   requires_restart?: boolean
 }
 
 export interface SandboxConfigUpdateBody {
   mode?: string
+  allow_network_outbound?: boolean
   allowed_paths?: string[]
+  ssrf_enabled?: boolean
+  ssrf_allow_internal?: string[]
   ssrf?: {
     enabled?: boolean
     allow_internal?: string[]
   }
+  default_profile?: SandboxProfile | ''
+  shell_deny_patterns?: string[]
 }
 
 export function fetchSandboxConfig(): Promise<SandboxConfigResponse> {

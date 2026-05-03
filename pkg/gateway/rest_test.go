@@ -25,10 +25,15 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 )
 
-// seedTestAgents adds the omnipus-system entry and all 5 core agents to a test
-// config's Agents.List, mirroring what gateway.go does on startup via SeedConfig.
-// This is required because listAgents/getAgent now read only from cfg.Agents.List
-// — there is no longer any hardcoded system agent injection in those handlers.
+// seedTestAgents seeds Agents.List for handler tests with an `omnipus-system`
+// entry and the 5 core agents. The system entry exercises the API contract for
+// AgentType=system (locked, Type="system" surfaced in GET responses); production
+// SeedConfig only seeds the 5 core agents — it does NOT inject omnipus-system —
+// so this seeding is a handler-shape fixture, not a mirror of production
+// startup. The synthetic system entry is here because the API contract still
+// honors AgentType=system if a config supplies one (operator-supplied or legacy).
+// listAgents / getAgent read only from cfg.Agents.List with no hardcoded system
+// injection.
 func seedTestAgents(cfg *config.Config) {
 	// Prepend omnipus-system so it appears first in the list (matches production order).
 	sysPresent := false
@@ -88,7 +93,8 @@ func newTestRestAPI(t *testing.T) (*restAPI, func()) {
 			},
 		},
 	}
-	// Seed omnipus-system and core agents so listAgents/getAgent can find them.
+	// Seed config-shape with omnipus-system + core agents (see seedTestAgents godoc;
+	// production SeedConfig does NOT add omnipus-system).
 	seedTestAgents(cfg)
 
 	msgBus := bus.NewMessageBus()

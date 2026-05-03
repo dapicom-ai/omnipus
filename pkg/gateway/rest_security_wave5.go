@@ -44,9 +44,27 @@ func (a *restAPI) HandleSandboxStatus(w http.ResponseWriter, r *http.Request) {
 	// applySandbox), fall back to the bare backend description — the
 	// response will have the same shape but with Mode empty.
 	var state sandbox.ApplyState
+	var bindCount, connectCount int
 	if a.sandboxResult != nil {
 		state = a.sandboxResult.ApplyState
+		bindCount = len(a.sandboxResult.Policy.BindPortRules)
+		connectCount = len(a.sandboxResult.Policy.ConnectPortRules)
 	}
 	status := sandbox.DescribeBackendWithState(backend, state)
-	jsonOK(w, status)
+	// Wrap the status with the network-rule counts so operators can curl
+	// /api/v1/security/sandbox-status and verify the bind/connect allow-list
+	// is the size they expect (per cfg.Sandbox.DevServerPortRange + gateway
+	// port + preview port). Counts are zero on FallbackBackend, on Mode=Off,
+	// and on Landlock ABI < 4 — exactly the cases where no kernel net rules
+	// were installed.
+	resp := struct {
+		sandbox.Status
+		BindPortsCount    int `json:"bind_ports_count"`
+		ConnectPortsCount int `json:"connect_ports_count"`
+	}{
+		Status:            status,
+		BindPortsCount:    bindCount,
+		ConnectPortsCount: connectCount,
+	}
+	jsonOK(w, resp)
 }

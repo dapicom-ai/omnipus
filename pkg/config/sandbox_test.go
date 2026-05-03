@@ -12,9 +12,10 @@ import (
 	"testing"
 )
 
-// TestOmnipusSandboxConfig_ResolvedMode_Precedence verifies the Sprint-J
-// legacy mapping between the new Mode field and the deprecated Enabled
-// bool. Mode (when set) always wins; Enabled is a fallback.
+// TestOmnipusSandboxConfig_ResolvedMode_Precedence verifies that the Mode
+// field is the sole source of truth for sandbox state. An empty Mode
+// resolves to "off" — the gateway boot path applies the
+// "enforce on capable kernels" fresh-install default at a higher layer.
 func TestOmnipusSandboxConfig_ResolvedMode_Precedence(t *testing.T) {
 	cases := []struct {
 		name string
@@ -24,11 +25,7 @@ func TestOmnipusSandboxConfig_ResolvedMode_Precedence(t *testing.T) {
 		{"explicit enforce", OmnipusSandboxConfig{Mode: "enforce"}, "enforce"},
 		{"explicit permissive", OmnipusSandboxConfig{Mode: "permissive"}, "permissive"},
 		{"explicit off", OmnipusSandboxConfig{Mode: "off"}, "off"},
-		{"mode wins over enabled=true", OmnipusSandboxConfig{Mode: "off", Enabled: true}, "off"},
-		{"mode wins over enabled=false", OmnipusSandboxConfig{Mode: "enforce", Enabled: false}, "enforce"},
-		{"legacy enabled=true", OmnipusSandboxConfig{Enabled: true}, "enforce"},
-		{"legacy enabled=false", OmnipusSandboxConfig{Enabled: false}, "off"},
-		{"zero value", OmnipusSandboxConfig{}, "off"},
+		{"zero value resolves off", OmnipusSandboxConfig{}, "off"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

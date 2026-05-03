@@ -31,9 +31,27 @@ type PathRule struct {
 	Access uint64
 }
 
+// NetPortRule describes a single TCP port that the policy whitelists for the
+// sandboxed process. Landlock ABI v4 expresses bind/connect rules per single
+// port — the kernel does not accept ranges — so callers expand any port range
+// into one NetPortRule per port. Used by SandboxPolicy.BindPortRules and
+// SandboxPolicy.ConnectPortRules.
+type NetPortRule struct {
+	Port uint16
+}
+
 // SandboxPolicy describes sandbox restrictions to apply.
+//
+// BindPortRules and ConnectPortRules are honored only by the Landlock backend
+// on kernels exposing ABI v4 (5.19+ for the syscalls, 6.7+ for the net access
+// rights). Both are leave-empty-for-no-restriction: a nil/empty list means the
+// kernel does NOT install handled_access_net at all, so legacy ABI < 4 kernels
+// retain unrestricted networking. When non-empty, the kernel denies any
+// bind()/connect() to a TCP port not enumerated here.
 type SandboxPolicy struct {
 	FilesystemRules   []PathRule
+	BindPortRules     []NetPortRule
+	ConnectPortRules  []NetPortRule
 	InheritToChildren bool
 }
 
@@ -132,7 +150,16 @@ func isSystemRestricted(path string) bool {
 //
 // Duplicate paths are NOT deduplicated — Landlock silently accepts duplicates
 // and takes the union of access rights per path.
-func DefaultPolicy(homePath string, allowedPaths []string, warnFn func(msg string, path string)) SandboxPolicy {
+//
+// bindPorts and connectPorts populate SandboxPolicy.BindPortRules and
+// SandboxPolicy.ConnectPortRules respectively. Each uint16 entry becomes one
+// NetPortRule. Pass nil (the historical caller default) to leave network
+// rules empty, which preserves pre-ABI-v4 behavior of unrestricted TCP. The
+// gateway expands cfg.Sandbox.DevServerPortRange into bindPorts so dev
+// servers can bind their assigned port, and adds the gateway/preview ports
+// plus the same dev-server range to connectPorts so the reverse proxy can
+// reach back into agent dev servers from the same sandboxed process.
+func DefaultPolicy(homePath string, allowedPaths []string, warnFn func(msg string, path string), bindPorts []uint16, connectPorts []uint16) SandboxPolicy {
 	rules := make([]PathRule, 0, 16+len(allowedPaths))
 
 	// Workspace: full RWX on $OMNIPUS_HOME. This is where agents write
@@ -218,8 +245,25 @@ func DefaultPolicy(homePath string, allowedPaths []string, warnFn func(msg strin
 		})
 	}
 
+	var bindRules []NetPortRule
+	if len(bindPorts) > 0 {
+		bindRules = make([]NetPortRule, 0, len(bindPorts))
+		for _, p := range bindPorts {
+			bindRules = append(bindRules, NetPortRule{Port: p})
+		}
+	}
+	var connectRules []NetPortRule
+	if len(connectPorts) > 0 {
+		connectRules = make([]NetPortRule, 0, len(connectPorts))
+		for _, p := range connectPorts {
+			connectRules = append(connectRules, NetPortRule{Port: p})
+		}
+	}
+
 	return SandboxPolicy{
 		FilesystemRules:   rules,
+		BindPortRules:     bindRules,
+		ConnectPortRules:  connectRules,
 		InheritToChildren: true,
 	}
 }

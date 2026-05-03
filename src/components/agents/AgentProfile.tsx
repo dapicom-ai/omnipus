@@ -189,6 +189,7 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     setHeartbeatInterval(agent.heartbeat_interval ?? 30)
     setSandboxProfile(agent.sandbox_profile)
     setShellDenyPatterns(agent.shell_policy?.custom_deny_patterns ?? [])
+    if (agent.tools_cfg) setToolsCfg(agent.tools_cfg)
     hasHydrated.current = true
   }, [agentId, agent])
 
@@ -219,12 +220,14 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
     shell_policy: {
       custom_deny_patterns: shellDenyPatterns.filter((p) => p.trim() !== ''),
     },
+    tools_cfg: toolsCfg,
   }), [
     name, description, model, selectedColor, selectedIcon, fallbackModels,
     temperature, maxTokens, topP, useGlobalRateLimits, maxLlmCallsPerHour,
     maxToolCallsPerMinute, maxCostPerDay, soul, instructions, heartbeat,
     timeoutSeconds, maxToolIterations, steeringMode, toolFeedback,
     heartbeatEnabled, heartbeatInterval, sandboxProfile, shellDenyPatterns,
+    toolsCfg,
   ])
 
   const { status: saveStatus, error: saveError } = useAutoSave(
@@ -233,9 +236,18 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
       // Guard: do not save before the server data has been hydrated into state.
       // Saving before hydration would overwrite real data with empty defaults.
       if (!hasHydrated.current) return
-      // Read-only agents: strip identity fields the backend rejects on locked agents.
+      // Locked agents: strip every field the backend treats as immutable for
+      // the locked roster (Mia/Jim/Ava/Ray/Max). Identity fields plus the
+      // sandbox profile, shell policy, and tools_cfg are all built-in for
+      // these agents — sending them yields either a 400 from the locked-field
+      // validator or silently no-ops, and either way the autosave indicator
+      // would surface a spurious error.
       const payload = agent?.locked
-        ? (({ name: _n, description: _d, soul: _s, color: _c, icon: _i, heartbeat: _h, instructions: _ins, ...rest }) => rest)(data)
+        ? (({
+            name: _n, description: _d, soul: _s, color: _c, icon: _i,
+            heartbeat: _h, instructions: _ins, sandbox_profile: _sp,
+            shell_policy: _shp, tools_cfg: _tc, ...rest
+          }) => rest)(data)
         : data
       await updateAgent(agentId, payload)
       isDirtyRef.current = false
@@ -424,8 +436,8 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
           </AccordionItem>
         )}
 
-        {/* Sandbox — default CLOSED, only for custom agents */}
-        {!isLocked && (
+        {/* Sandbox — editable for custom agents, read-only for locked core agents */}
+        {!isLocked ? (
           <AccordionItem value="sandbox" className="border-0">
             <AccordionTrigger className="px-4 font-headline font-bold text-sm">
               <div className="flex items-center gap-2">
@@ -463,6 +475,50 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
                     </div>
                   )}
                 </div>
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        ) : (
+          <AccordionItem value="sandbox" className="border-0">
+            <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+              <div className="flex items-center gap-2">
+                <span>Sandbox</span>
+                <SandboxInfoTooltip />
+              </div>
+            </AccordionTrigger>
+            <AccordionContent>
+              <div className="px-4 space-y-3">
+                <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3">
+                  <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)] mb-1">
+                    Profile
+                  </p>
+                  <p className="text-sm font-medium text-[var(--color-secondary)]">
+                    {sandboxProfile
+                      ? sandboxProfile === 'workspace+net'
+                        ? 'Workspace + Net'
+                        : sandboxProfile.charAt(0).toUpperCase() + sandboxProfile.slice(1)
+                      : 'Built-in (locked)'}
+                  </p>
+                  <p className="text-xs text-[var(--color-muted)] mt-2">
+                    Locked core agents use a built-in sandbox profile that cannot be changed from
+                    the UI. To adjust the global default for new custom agents, see{' '}
+                    <strong>Settings → Security</strong>.
+                  </p>
+                </div>
+                {shellDenyPatterns.length > 0 && (
+                  <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3">
+                    <p className="text-[10px] uppercase tracking-wider text-[var(--color-muted)] mb-1.5">
+                      Shell deny patterns
+                    </p>
+                    <ul className="space-y-1">
+                      {shellDenyPatterns.map((p, i) => (
+                        <li key={i} className="font-mono text-xs text-[var(--color-secondary)]">
+                          {p}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             </AccordionContent>
           </AccordionItem>

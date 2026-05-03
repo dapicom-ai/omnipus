@@ -32,6 +32,25 @@ type sandboxConfigPutBody struct {
 	SSRFEnabled          *bool                     `json:"ssrf_enabled,omitempty"`
 	SSRFAllowInternal    *[]string                 `json:"ssrf_allow_internal,omitempty"`
 	SSRF                 *sandboxConfigPutBodySSRF `json:"ssrf,omitempty"`
+	// DefaultProfile is the global fallback sandbox profile applied to
+	// new custom agents that do not pick their own SandboxProfile. Maps
+	// to OmnipusSandboxConfig.DefaultProfile (json key: default_profile).
+	DefaultProfile *string `json:"default_profile,omitempty"`
+	// ShellDenyPatterns is the global fallback shell command deny list
+	// (regex per entry). Per-agent CustomDenyPatterns extend this list.
+	// Maps to OmnipusSandboxConfig.ShellDenyPatterns.
+	ShellDenyPatterns *[]string `json:"shell_deny_patterns,omitempty"`
+}
+
+// validSandboxProfiles is the canonical set accepted for default_profile.
+// Mirrors config.SandboxProfile* constants.
+var validSandboxProfiles = map[string]bool{
+	"":              true, // empty = inherit, not-set
+	"none":          true, // explicit "use global default"
+	"workspace":     true,
+	"workspace+net": true,
+	"host":          true,
+	"off":           true,
 }
 
 // sandboxConfigPutBodySSRF carries the nested ssrf sub-object for
@@ -87,6 +106,10 @@ func (a *restAPI) getSandboxConfig(w http.ResponseWriter, r *http.Request) {
 	if allowInternal == nil {
 		allowInternal = []string{}
 	}
+	shellDenyPatterns := cfg.Sandbox.ShellDenyPatterns
+	if shellDenyPatterns == nil {
+		shellDenyPatterns = []string{}
+	}
 
 	// applied_mode reflects what the gateway is ACTUALLY running with. It
 	// differs from mode when the operator saved a change but hasn't restarted.
@@ -106,6 +129,8 @@ func (a *restAPI) getSandboxConfig(w http.ResponseWriter, r *http.Request) {
 		"ssrf_enabled":           cfg.Sandbox.SSRF.Enabled,
 		"ssrf_allow_internal":    allowInternal,
 		"applied_mode":           applied,
+		"default_profile":        string(cfg.Sandbox.DefaultProfile),
+		"shell_deny_patterns":    shellDenyPatterns,
 		// Nested ssrf object for backward-compatible clients.
 		"ssrf": map[string]any{
 			"enabled":        cfg.Sandbox.SSRF.Enabled,
@@ -138,13 +163,16 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 		resolvedAllowInternal = body.SSRF.AllowInternal
 	}
 	changedAllowInternal := resolvedAllowInternal != nil
+	changedDefaultProfile := body.DefaultProfile != nil
+	changedShellDenyPatterns := body.ShellDenyPatterns != nil
 
 	if !changedMode && !changedAllowNetworkOutbound && !changedAllowedPaths &&
-		!changedSSRFEnabled && !changedAllowInternal {
+		!changedSSRFEnabled && !changedAllowInternal &&
+		!changedDefaultProfile && !changedShellDenyPatterns {
 		jsonErr(
 			w,
 			http.StatusBadRequest,
-			"at least one field required — expected mode, allowed_paths, or ssrf.allow_internal",
+			"at least one field required — expected mode, allowed_paths, ssrf.allow_internal, default_profile, or shell_deny_patterns",
 		)
 		return
 	}
@@ -153,6 +181,14 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 	if changedMode {
 		if !validSandboxModes[*body.Mode] {
 			jsonErr(w, http.StatusBadRequest, `invalid sandbox mode — must be one of "off", "permissive", "enforce"`)
+			return
+		}
+	}
+
+	// Validate default profile value before any disk writes.
+	if changedDefaultProfile {
+		if !validSandboxProfiles[*body.DefaultProfile] {
+			jsonErr(w, http.StatusBadRequest, `invalid default_profile — must be one of "", "none", "workspace", "workspace+net", "host", "off"`)
 			return
 		}
 	}
@@ -178,9 +214,11 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 	// so the snapshot is taken atomically with the write. Reading before the
 	// lock can yield a stale value when two writers race.
 	var (
-		oldMode          string
-		oldAllowedPaths  []string
-		oldAllowInternal []string
+		oldMode              string
+		oldAllowedPaths      []string
+		oldAllowInternal     []string
+		oldDefaultProfile    string
+		oldShellDenyPatterns []string
 	)
 
 	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
@@ -193,8 +231,8 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 				oldMode = s
 			}
 			sandbox["mode"] = *body.Mode
-			// Clear the legacy Enabled bool when an explicit mode is set, so
-			// ResolvedMode() and humans reading config.json agree.
+			// Strip any stale legacy "enabled" bool from older configs so
+			// the on-disk shape matches the current schema.
 			delete(sandbox, "enabled")
 		}
 		if changedAllowNetworkOutbound {
@@ -225,6 +263,26 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 				}
 				ssrf["allow_internal"] = toAnySlice(*resolvedAllowInternal)
 			}
+		}
+		if changedDefaultProfile {
+			if s, ok := sandbox["default_profile"].(string); ok {
+				oldDefaultProfile = s
+			}
+			if *body.DefaultProfile == "" {
+				delete(sandbox, "default_profile")
+			} else {
+				sandbox["default_profile"] = *body.DefaultProfile
+			}
+		}
+		if changedShellDenyPatterns {
+			if raw, ok := sandbox["shell_deny_patterns"].([]any); ok {
+				for _, v := range raw {
+					if s, ok := v.(string); ok {
+						oldShellDenyPatterns = append(oldShellDenyPatterns, s)
+					}
+				}
+			}
+			sandbox["shell_deny_patterns"] = toAnySlice(*body.ShellDenyPatterns)
 		}
 		return nil
 	}); err != nil {
@@ -265,6 +323,24 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 					slog.Error("rest: audit emit ssrf.allow_internal change", "error", err)
 				}
 			}
+			if changedDefaultProfile {
+				if err := audit.EmitSecuritySettingChange(
+					r.Context(), auditLogger,
+					"sandbox.default_profile",
+					oldDefaultProfile, *body.DefaultProfile,
+				); err != nil {
+					slog.Error("rest: audit emit default_profile change", "error", err)
+				}
+			}
+			if changedShellDenyPatterns {
+				if err := audit.EmitSecuritySettingChange(
+					r.Context(), auditLogger,
+					"sandbox.shell_deny_patterns",
+					oldShellDenyPatterns, *body.ShellDenyPatterns,
+				); err != nil {
+					slog.Error("rest: audit emit shell_deny_patterns change", "error", err)
+				}
+			}
 		}
 	}
 
@@ -281,9 +357,10 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// mode and allowed_paths are restart-gated (sandbox applied once at boot).
-	// ssrf.allow_internal is hot-reload via config poll.
-	partialRestartRequired := changedMode || changedAllowedPaths
+	// mode, allowed_paths, and default_profile are restart-gated (each is
+	// consumed at boot or agent-wiring time). ssrf.allow_internal and
+	// shell_deny_patterns are hot-reload via the config-poll loop.
+	partialRestartRequired := changedMode || changedAllowedPaths || changedDefaultProfile
 
 	// Return the updated config so the UI can cache-update without a follow-up GET.
 	// Include both flat fields and nested ssrf object for backward-compatible clients.
@@ -301,6 +378,10 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 		if a.sandboxResult != nil {
 			applied = string(a.sandboxResult.ApplyState.Mode)
 		}
+		shellDenyPatterns := cfg.Sandbox.ShellDenyPatterns
+		if shellDenyPatterns == nil {
+			shellDenyPatterns = []string{}
+		}
 		jsonOK(w, map[string]any{
 			"saved":                  true,
 			"mode":                   cfg.Sandbox.ResolvedMode(),
@@ -309,6 +390,8 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 			"ssrf_enabled":           cfg.Sandbox.SSRF.Enabled,
 			"ssrf_allow_internal":    allowInternal,
 			"applied_mode":           applied,
+			"default_profile":        string(cfg.Sandbox.DefaultProfile),
+			"shell_deny_patterns":    shellDenyPatterns,
 			"requires_restart":       partialRestartRequired,
 			"ssrf": map[string]any{
 				"enabled":        cfg.Sandbox.SSRF.Enabled,

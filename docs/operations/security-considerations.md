@@ -8,17 +8,29 @@ See [Threat Model in chat-served-iframe-preview-spec.md](../specs/chat-served-if
 
 ---
 
-## Bearer-token contract for `/serve/` and `/dev/`
+## Bearer-token contract for `/preview/`
 
-Preview URLs contain a time-limited bearer token embedded in the path. Anyone who has the URL can load the content until the token expires — the gateway does not require a logged-in session to serve preview responses.
+Preview URLs contain a time-limited bearer token embedded in the path. Anyone who has the URL can load the content until the token expires — the gateway does not require a logged-in session to serve preview responses. Both static-served directories (formerly `serve_workspace`) and dev-server processes (formerly `run_in_workspace`) are now reachable through the unified `/preview/<agent>/<token>/` route.
 
 Operators who want tighter access control have two levers:
 
-1. **Shorten the token lifetime** — lower `tools.serve_workspace.max_duration_seconds` from the default `86400` (24 hours) to a value appropriate for the deployment, for example `3600` (1 hour). Tokens issued after the change use the new duration; existing tokens are not revoked.
+1. **Shorten the token lifetime** — lower `tools.web_serve.max_duration_seconds` from the default `86400` (24 hours) to a value appropriate for the deployment, for example `3600` (1 hour). Tokens issued after the change use the new duration; existing tokens are not revoked.
 
 2. **Treat preview URLs as secrets** — avoid sharing a preview URL outside the trusted user who triggered the agent turn that generated it. The URL itself is the credential for that preview.
 
 There is no per-token revocation endpoint in the current release. To invalidate all outstanding tokens, restart the gateway (tokens are stored in memory and are not persisted).
+
+---
+
+## Kernel-enforced bind-port allow-list
+
+On Linux kernels with Landlock ABI v4+ (kernel 6.7 and later), the gateway and every child process it spawns are restricted to binding TCP ports inside `cfg.Sandbox.DevServerPortRange` (default `[18000, 18999]`) plus the gateway's own listener ports. Any `bind(2)` to a port outside that allow-list returns `EACCES` from the kernel — including `bind(0.0.0.0:5173)` from a shell-spawned dev server.
+
+This means an agent calling `exec npx vite --host 0.0.0.0 --port 5173` will fail at the bind syscall, regardless of the agent's tool policy. The only legal way for an agent to expose a website is through the `web_serve` tool, which auto-picks a port from the allow-listed range and routes traffic through `/preview/<agent>/<token>/` with the bearer-token contract above.
+
+**Graceful degradation:** on kernels with Landlock ABI < 4 (no `NET_BIND_TCP`), this enforcement is silently inactive. Operators on such kernels still get tool-layer port-range validation (the `web_serve` tool refuses out-of-range ports), but a shell-spawned process can technically bind anywhere. Plan to upgrade to kernel 6.7+ for the full enforcement story.
+
+Connect-side rules (`NET_CONNECT_TCP`) are similarly enforced for the same range plus the gateway's listener ports, so the reverse proxy can still reach back into agent dev servers without leaking unrestricted outbound TCP.
 
 ---
 

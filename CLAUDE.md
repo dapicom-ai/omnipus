@@ -37,6 +37,23 @@ Background specs in `docs/BRD/` describe original intent and remain useful for c
 - `Omnipus_BRD_AppendixE_DataModel.md` — Appendix E: file-based data model
 - `OpenClaw_vs_Omnipus_Comparison.md` — competitive analysis
 
+## Release Strategy (v0.1 → v0.2 → v0.3)
+
+Three-phase plan locked 2026-05-03 to resolve the dilemma of an unstable WIP branch + a pentest backlog + a large memory/projects redesign.
+
+**v0.1 — Stabilize current branch (`feature/iframe-preview-tier13`).** Ship the in-flight `web_serve` unification, kernel-enforced bind-port allow-list, sandbox-aware `exec`, and iframe preview as one focused PR. Plan: `/home/Daniel/.claude/plans/quizzical-marinating-frog.md`. No memory/projects scope creep — that is explicitly v0.3.
+
+**v0.2 — Security hardening (pentest quick wins).** GitHub issue [#155](https://github.com/dapicom-ai/omnipus/issues/155). Quick fixes only — no architectural changes. Items: env var allowlist switch (`pkg/sandbox/hardened_exec.go::sensitiveEnvKeys`), `master.key` 0600 verification, shell-guard hardening, internal-CIDR egress blocking, audit log integrity (HMAC chain), rate limiting on auth endpoints. Defers structural fixes (process isolation, capability-based RBAC) to v0.3.
+
+**v0.3 / 1.0 — "Rooms" redesign (memory + projects + tasks + sandbox topology).** GitHub issue [#156](https://github.com/dapicom-ai/omnipus/issues/156). Fresh-build, no backward compatibility. Five locked design docs:
+- `docs/design/sandbox-redesign-2026-05.md` — two-room workspace topology (private agent rooms + shared project rooms under `.omnipus/`).
+- `docs/design/memory-redesign-2026-05.md` — 4-tier memory (sessions / memories / learnings / last-session.md), three tools (`remember`/`recall`/`retrospective`), Dreamcatcher consolidation pass, bleve + JSONL + MinHash, MOCs, no embeddings.
+- `docs/design/tasks-redesign-2026-05.md` — tasks scoped per-room, cascade-delete with project, reassignment audit.
+- `docs/design/projects-ui-2026-05.md` — three SPA surfaces (session creation modal, Command Center pivoted to rooms, session history with grouping).
+- `docs/design/settings-notifications-2026-05.md` — Memory + Dreamcatcher settings tabs, tier-based retention notifications.
+
+**Routing rule:** when the user brings up new work, ask which release phase it belongs to before starting. Pentest findings → v0.2 unless they require structural changes (then → v0.3). Memory / projects / tasks / room-topology work → v0.3. Anything else that isn't completing v0.1 → flag the scope question explicitly.
+
 ## Hard Constraints
 
 These are non-negotiable and apply to every decision:
@@ -86,7 +103,7 @@ export OMNIPUS_KEY_FILE=/var/lib/omnipus/master.key
 
 **Channel model:** All channels implement the same `Channel` Go interface (`pkg/channels/base.go:47-56`) plus opt-in capability interfaces (`TypingCapable`, `MessageEditor`, `MessageDeleter`, `ReactionCapable`, `PlaceholderCapable`, `StreamingCapable`, `CommandRegistrarCapable` — see `pkg/channels/interfaces.go:13-70`). Each channel registers a factory at compile time via `channels.RegisterFactory(name, factory)` from a `func init()` in its subpackage (`pkg/channels/registry.go`); activation is then a hardcoded if-ladder over typed config fields in `Manager.initChannels()` (`pkg/channels/manager.go:433-530`). Channels communicate with the agent loop only through the in-process `MessageBus` (`pkg/bus/bus.go`). Channels that wrap an external dependency embed the bridge directly inside their own implementation: WhatsApp uses a WebSocket to a separate bridge process (`pkg/channels/whatsapp/whatsapp.go:31-46`); the in-flight Signal channel spawns `signal-cli-rest-api` as a sidecar and talks to it over HTTP on localhost. There is **no** `BridgeAdapter` type, **no** stdio bridge protocol, and **no** Channel SDK in the codebase today. A generalized plugin/installer is in scoping — see issue #151 and the proto-installer in the unpushed `omnipus-channel-signal` clone (`pkg/channelmanager/`).
 
-**Agent types:** Core (5 agents with prompts compiled into the binary via `pkg/coreagent/core.go:24-150`; identity locked, user can toggle/configure model and tools) and Custom (user-defined). There is **no separate "system" agent**. The 35 `system.*` tools defined in `pkg/sysagent/tools/` are ordinary builtins registered on the central tool registry; per-agent policy (allow/ask/deny, with `system.*: deny` seeded by default on custom agents) decides exposure. The post-redesign code retires the `omnipus-system` naming and removes `WireSystemTools` / `WireAvaAgentTools` as code paths — see `docs/specs/tool-registry-redesign-spec.md`.
+**Agent types:** Core (5 agents with prompts compiled into the binary via `pkg/coreagent/core.go:24-150`; identity locked, user can toggle/configure model and tools) and Custom (user-defined). There is **no separate "system" agent**. The 35 `system.*` tools defined in `pkg/sysagent/tools/` are ordinary builtins registered on the central tool registry; per-agent policy (allow/ask/deny, with `system.*: deny` seeded by default on custom agents) decides exposure. The post-redesign code retires the `omnipus-system` naming and removes `WireSystemTools` / `WireAvaAgentTools` as code paths — see `docs/specs/tool-registry-redesign-spec.md`. Note: `config.AgentTypeSystem` (`"system"`) survives in the config schema and the `/api/v1/agents` API contract for legacy/operator-supplied entries — production `SeedConfig` does NOT seed any such entry, but if a config.json contains one, the gateway will surface it. Handler tests in `pkg/gateway/rest_test.go` exercise this contract by injecting a synthetic `omnipus-system` config entry.
 
 The current custom-agent file format is structured: `AGENT.md` (singular) with frontmatter, plus `SOUL.md` for the prompt and `HEARTBEAT.md` for periodic instructions. The legacy `AGENTS.md` (plural) format is still loaded as a fallback (`pkg/agent/definition.go:21-22, 73, 104`) but should not be used for new agents.
 
@@ -227,8 +244,8 @@ After frontend+backend changes, verify these flows on the embedded SPA:
 
 ### Operator configuration: two-port preview
 
-The gateway opens two listeners by default. `gateway.port` (default `5000`) serves the SPA and the authenticated API. `gateway.preview_port` (default `5001`) serves agent-generated HTML previews on a separate origin, providing browser-level isolation between the SPA's admin token and content produced by agents. To run on a single firewall port — for example, through a systemd socket-activated deployment that allocates only one port — set `gateway.preview_listener_enabled = false`. This disables the second listener and falls back to serving preview content on the main port, which removes the cross-origin isolation guarantee.
+The gateway opens two listeners by default. `gateway.port` (default `5000`) serves the SPA and the authenticated API. `gateway.preview_port` (default `5001`) serves agent-generated HTML previews on a separate origin, providing browser-level isolation between the SPA's admin token and content produced by agents. Setting `gateway.preview_listener_enabled = false` **fully disables the iframe-preview feature**: the second listener is not started, and the `/preview/` path prefix is **not** registered on the main mux either, so requests to `<main-host>:<port>/preview/...` receive a 404 from the SPA catch-all. `web_serve` tool calls still mint tokens, but the URLs they hand back to the agent will not resolve. There is no fallback to single-port serving — disabling the preview listener is a full rollback of the iframe-preview feature. Re-enable and restart to restore functionality. See `docs/operations/reverse-proxy.md` for complete details.
 
 Reverse-proxy operators who terminate TLS at nginx or Caddy should set `gateway.public_url` and `gateway.preview_origin` to the fully-qualified HTTPS URLs that the browser reaches (e.g. `https://omnipus.example.com` and `https://preview.omnipus.example.com`). The gateway uses these values to build correct `Content-Security-Policy` and `frame-ancestors` headers. See `docs/operations/reverse-proxy.md` for complete nginx and Caddy configuration examples.
 
-On Android/Termux, `gateway.preview_listener_enabled` defaults to `false` because Termux processes typically cannot bind a second network port without additional permissions. The gateway detects the Termux environment at boot and applies this default automatically.
+On Android/Termux, `gateway.preview_listener_enabled` defaults to `false` because Termux processes typically cannot bind a second network port without additional permissions — iframe previews are unavailable in that environment. The gateway detects the Termux environment at boot and applies this default automatically.

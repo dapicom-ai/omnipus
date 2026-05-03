@@ -89,15 +89,16 @@ type restAPI struct {
 	adminPutPoliciesHandler  http.Handler
 
 	// devServers is the gateway-wide Tier 3 dev-server registry. Shared with
-	// the run_in_workspace tool via the agent instance. HandleDevProxy reads
-	// this to validate tokens and resolve the upstream loopback port.
-	// Nil when Tier 3 is not supported on the current platform (non-Linux).
+	// the web_serve tool (dev mode) and workspace.shell_bg tool via the agent
+	// instance. HandlePreview / HandleDevProxy read this to validate tokens
+	// and resolve the upstream loopback port. Nil when Tier 3 is not
+	// supported on the current platform (non-Linux).
 	devServers *sandbox.DevServerRegistry
 
-	// servedSubdirs is the gateway-wide serve_workspace registration map.
-	// Shared with the serve_workspace tool via the agent instance.
-	// HandleServeProxy reads this to validate tokens and resolve the served
-	// directory. Nil when serve_workspace is not configured.
+	// servedSubdirs is the gateway-wide static-preview registration map.
+	// Shared with the web_serve tool (static mode) via the agent instance.
+	// HandlePreview / HandleServeWorkspace read this to validate tokens and
+	// resolve the served directory. Nil when web_serve is not configured.
 	servedSubdirs *agent.ServedSubdirs
 
 	// approvalReg is the in-process tool-approval registry (FR-016, FR-070).
@@ -1998,8 +1999,11 @@ func (a *restAPI) HandleDoctor(w http.ResponseWriter, r *http.Request) {
 }
 
 // runDiagnosticChecks performs real diagnostic checks and returns issues found.
+// Returns a non-nil empty slice when there are no issues so the JSON shape is
+// always `"issues": []` rather than `"issues": null` — frontend consumers
+// (DiagnosticsSection.tsx) call .filter() directly on the field.
 func (a *restAPI) runDiagnosticChecks(cfg *config.Config) []map[string]any {
-	var issues []map[string]any
+	issues := []map[string]any{}
 
 	// Check if a default model is configured.
 	if len(cfg.Providers) == 0 {
@@ -2025,8 +2029,10 @@ func (a *restAPI) runDiagnosticChecks(cfg *config.Config) []map[string]any {
 		})
 	}
 
-	// Check sandbox configuration.
-	if !cfg.Sandbox.Enabled {
+	// Check sandbox configuration. ResolvedMode is the source of truth.
+	// Both "enforce" and "permissive" represent an active sandbox; only
+	// "off" (or an empty config that resolves to off) should warn.
+	if cfg.Sandbox.ResolvedMode() == string(config.SandboxModeOff) {
 		issues = append(issues, map[string]any{
 			"id":             "sandbox-disabled",
 			"severity":       "medium",
@@ -2194,15 +2200,21 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	cm.RegisterHTTPHandler("/metrics", http.HandlerFunc(a.HandleMetrics))
 }
 
-// registerPreviewEndpoints registers /serve/ and /dev/ on the preview mux ONLY
-// (FR-005, FR-006). These paths are not registered on the main mux.
+// registerPreviewEndpoints registers /preview/, /serve/, and /dev/ on the
+// preview mux ONLY (FR-005, FR-006). These paths are not registered on the
+// main mux.
 //
 // Auth model: token-only (FR-023). No RequireSessionCookieOrBearer, no
 // RequireMatchingOriginOnStateChanging (FR-023a).
 //
-// Handler implementations (HandleServeWorkspace, HandleDevProxy) are provided
-// by Track B (rest_serve.go, rest_dev.go).
+// /preview/ is the unified route for the web_serve tool (Step 3).
+// /serve/ and /dev/ are kept ONLY for replay of historical session transcripts
+// that still link to the old URL shapes. The serve_workspace and
+// run_in_workspace tools that originally produced those registrations are
+// removed; no in-flight registration can reach these handlers anymore. Schedule
+// for deletion in the release after this one ships.
 func (a *restAPI) registerPreviewEndpoints(cm previewHandlerRegistrar) {
+	cm.RegisterPreviewHandler("/preview/", http.HandlerFunc(a.HandlePreview))
 	cm.RegisterPreviewHandler("/serve/", http.HandlerFunc(a.HandleServeWorkspace))
 	cm.RegisterPreviewHandler("/dev/", http.HandlerFunc(a.HandleDevProxy))
 }

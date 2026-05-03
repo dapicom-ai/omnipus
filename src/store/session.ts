@@ -57,6 +57,17 @@ export function registerChatSetReplaying(fn: (value: boolean) => void): void {
   _chatSetReplaying = fn
 }
 
+let _chatResetForReplay: ((sessionId: string) => void) | null = null
+
+/** Called once by chat.ts after it creates useChatStore. */
+export function registerChatResetForReplay(fn: (sessionId: string) => void): void {
+  _chatResetForReplay = fn
+}
+
+export function resetChatBucketForReplay(sessionId: string): void {
+  _chatResetForReplay?.(sessionId)
+}
+
 function setChatReplaying(value: boolean): void {
   if (_chatSetReplaying) {
     _chatSetReplaying(value)
@@ -101,6 +112,11 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     // the previous session state intact so the UI doesn't show a phantom
     // attached session with no gateway replay in flight.
     if (connection) {
+      // Reset BEFORE sending attach so the upcoming replay rebuilds the
+      // bucket from scratch. Without this, reopening a session that
+      // already lived in the SPA store appends every replayed message
+      // again, doubling (or quadrupling) bubbles per click.
+      resetChatBucketForReplay(sessionId)
       const sent = connection.send({ type: 'attach_session', session_id: sessionId })
       if (!sent) {
         useConnectionStore.getState().setConnectionError(
@@ -108,8 +124,6 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
         )
         return
       }
-      // Send succeeded — switch active session. resetSession is NOT called;
-      // the bucket for this session_id may already hold replayed state.
       set({
         activeSessionId: sessionId,
         attachedSessionType: type,

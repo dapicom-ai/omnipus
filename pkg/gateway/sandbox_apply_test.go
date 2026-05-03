@@ -51,9 +51,9 @@ func TestResolveMode_ConfigDefault(t *testing.T) {
 }
 
 // TestResolveMode_FreshConfigDefaultsToEnforce verifies that a truly
-// empty config (neither Mode nor Enabled ever written) defaults to
-// enforce on capable kernels. cfgEnabledSet=false means neither field
-// was touched in the file.
+// empty config (Mode unset, no AllowedPaths) defaults to enforce on
+// capable kernels. configTouched=false means the operator has not
+// written anything to the sandbox section.
 func TestResolveMode_FreshConfigDefaultsToEnforce(t *testing.T) {
 	mode, src, err := resolveMode("", "", false)
 	if err != nil {

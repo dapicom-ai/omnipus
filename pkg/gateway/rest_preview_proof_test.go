@@ -146,29 +146,34 @@ func TestCanonicalRemoteIP_PrefersForwardedFor(t *testing.T) {
 	}
 }
 
-// TestServeWorkspaceTool_ResultIncludesPath verifies FR-008: the tool
-// result JSON gains a `path` field while preserving `url` for replay
-// safety. This calls the real Execute() on a live ServedSubdirs registry
-// (F-18: replaces the previous synthetic-string assertion).
-func TestServeWorkspaceTool_ResultIncludesPath(t *testing.T) {
-	// Create a real workspace directory.
+// TestWebServeTool_StaticResultIncludesPath verifies FR-008: the web_serve
+// tool (static mode) result JSON contains path, url, expires_at, and kind
+// fields. Rewritten from the deleted TestServeWorkspaceTool_ResultIncludesPath
+// to use the unified NewWebServeTool constructor.
+func TestWebServeTool_StaticResultIncludesPath(t *testing.T) {
 	dir := t.TempDir()
 	ss := agent.NewServedSubdirs()
 	t.Cleanup(ss.Stop)
 
-	tool := tools.NewServeWorkspaceTool(
+	tool := tools.NewWebServeTool(
 		dir,                     // workspace
 		"fr008-agent",           // agentID
-		"http://127.0.0.1:5001", // gatewayBaseURL
-		ss,
-		60,    // minDurationSec
-		86400, // maxDurationSec
+		"http://127.0.0.1:5001", // gatewayPreviewBaseURL
+		ss,                      // served
+		nil,                     // devReg — not needed for static mode
+		tools.WebServeDevConfig{
+			PortRange:     [2]int32{18000, 18999},
+			MaxConcurrent: 2,
+		},
+		nil, // egressProxy
+		nil, // auditLogger
+		60,
+		86400,
 	)
 
 	ctx := tools.WithAgentID(context.Background(), "fr008-agent")
 	result := tool.Execute(ctx, map[string]any{
-		"path":     ".",
-		"duration": float64(300),
+		"path": ".",
 	})
 
 	require.False(t, result.IsError, "Execute must succeed: %s", result.ForLLM)
@@ -177,13 +182,16 @@ func TestServeWorkspaceTool_ResultIncludesPath(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(result.ForLLM), &parsed),
 		"FR-008: tool result must be valid JSON")
 
+	assert.Contains(t, parsed, "kind", "FR-008: result must include kind field")
 	assert.Contains(t, parsed, "path", "FR-008: result must include path field")
 	assert.Contains(t, parsed, "url", "FR-008: result must preserve url field for replay")
 	assert.Contains(t, parsed, "expires_at", "FR-008: result must include expires_at")
 
+	assert.Equal(t, "static", parsed["kind"], "static mode must return kind=static")
+
 	pathVal, _ := parsed["path"].(string)
-	assert.True(t, strings.HasPrefix(pathVal, "/serve/"),
-		"FR-008: path must start with /serve/, got %q", pathVal)
+	assert.True(t, strings.HasPrefix(pathVal, "/preview/"),
+		"FR-008: path must start with /preview/, got %q", pathVal)
 
 	urlVal, _ := parsed["url"].(string)
 	assert.True(t, strings.HasSuffix(urlVal, pathVal),

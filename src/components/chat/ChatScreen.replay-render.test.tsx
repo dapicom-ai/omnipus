@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { act } from 'react'
 import { SubagentBlock } from './SubagentBlock'
 import { useChatStore } from '@/store/chat'
+import { useSessionStore } from '@/store/session'
 import type { SubagentSpan, SubagentSpanTerminal } from '@/store/chat'
 
 // W2-4: ChatScreen replay-render tests — TDD rows I-20 and I-21.
@@ -20,7 +21,14 @@ import type { SubagentSpan, SubagentSpanTerminal } from '@/store/chat'
 
 function resetStore() {
   act(() => {
+    // Clear sessionsById so per-session buckets don't leak across tests, and
+    // set activeSessionId to the same id the test frames carry. handleFrame
+    // routes by frame.session_id, while foreground store selectors
+    // (state.toolCalls, state.messages, ...) read from the bucket of the
+    // active session — those must match for assertions to land on the same
+    // bucket.
     useChatStore.setState({
+      sessionsById: {},
       messages: [],
       isStreaming: false,
       isReplaying: false,
@@ -31,6 +39,7 @@ function resetStore() {
       sessionTokens: 0,
       sessionCost: 0,
     })
+    useSessionStore.setState({ activeSessionId: 'sess_test', activeAgentId: null })
   })
 }
 

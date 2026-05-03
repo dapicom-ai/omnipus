@@ -52,6 +52,21 @@ func (al *AgentLoop) HydrateAgentHistoryFromTranscript(sessionID string) error {
 		return fmt.Errorf("agent: HydrateAgentHistoryFromTranscript: registry not available")
 	}
 
+	// Resolve the session's owning agent from metadata. Used as the fallback
+	// owner for entries whose AgentID is empty — most importantly assistant
+	// text entries written by the wsStreamer before the GetStreamer fallback
+	// landed, which left their AgentID blank for un-handed-off sessions.
+	// Without this fallback, the agent's LLM-fed history loses every line
+	// of assistant reasoning and the next turn looks like a fresh start.
+	sessionOwner := "main"
+	if meta, err := store.GetMeta(sessionID); err == nil && meta != nil {
+		if meta.ActiveAgentID != "" {
+			sessionOwner = meta.ActiveAgentID
+		} else if meta.AgentID != "" {
+			sessionOwner = meta.AgentID
+		}
+	}
+
 	// Group provider messages per owning agent.
 	perAgent := make(map[string][]providers.Message)
 
@@ -60,6 +75,7 @@ func (al *AgentLoop) HydrateAgentHistoryFromTranscript(sessionID string) error {
 	// agents that have not yet produced a turn (e.g. Ray after Mia
 	// handed off to him in the previous turn).
 	knownAgents := make(map[string]struct{})
+	knownAgents[sessionOwner] = struct{}{}
 	for i := range entries {
 		if id := entries[i].AgentID; id != "" {
 			knownAgents[id] = struct{}{}
@@ -70,9 +86,7 @@ func (al *AgentLoop) HydrateAgentHistoryFromTranscript(sessionID string) error {
 		e := &entries[i]
 		owner := e.AgentID
 		if owner == "" {
-			// User entries occasionally lack AgentID; default to "main"
-			// (the routing default) so the user message is still attributed.
-			owner = "main"
+			owner = sessionOwner
 		}
 		// Handoff audit entries are written by HandoffTool with Type=System
 		// and Content="Handoff: <from> → <to>. Context: <brief>". Broadcast

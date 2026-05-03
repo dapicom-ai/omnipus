@@ -140,7 +140,6 @@ describe('chat store — streaming via handleFrame', () => {
         timestamp: '2026-03-29T10:00:01Z',
         status: 'streaming',
         isStreaming: true,
-        streamCursor: true,
       })
       useChatStore.setState({ isStreaming: true })
       useChatStore.getState().handleFrame({ type: 'token', content: 'Hello', session_id: TEST_SESSION_ID })
@@ -163,7 +162,6 @@ describe('chat store — streaming via handleFrame', () => {
         timestamp: '2026-03-29T10:00:01Z',
         status: 'streaming',
         isStreaming: true,
-        streamCursor: true,
       })
       useChatStore.setState({ isStreaming: true })
       useChatStore.getState().handleFrame({ type: 'done', stats: { tokens: 150, cost: 0.02, duration_ms: 0 }, session_id: TEST_SESSION_ID })
@@ -173,7 +171,6 @@ describe('chat store — streaming via handleFrame', () => {
     const asst = state.messages.find((m) => m.id === 'asst_2')
     expect(asst?.status).toBe('done')
     expect(asst?.isStreaming).toBe(false)
-    expect(asst?.streamCursor).toBe(false)
     expect(state.sessionTokens).toBe(150)
     expect(state.sessionCost).toBeCloseTo(0.02)
   })
@@ -751,7 +748,6 @@ describe('ChatStore_ReplaySequence_MatchesLiveSequence', () => {
     expect(liveToolCall.status).toBe('success')
     // Live sequence: streaming flags settled
     expect(liveAssistant!.isStreaming).toBe(false)
-    expect(liveAssistant!.streamCursor).toBe(false)
 
     // ── Reset ─────────────────────────────────────────────────────────────────
     act(() => {
@@ -811,10 +807,8 @@ describe('ChatStore_ReplaySequence_MatchesLiveSequence', () => {
     // Cursor/streaming flags: replay_message arrives as a completed message (no cursor)
     // Live message: also settled after done. Both must be false.
     expect(replayAssistant!.isStreaming).toBe(false)
-    expect(replayAssistant!.streamCursor).toBe(false)
     // Live and replay both settle identically after done
     expect(replayAssistant!.isStreaming).toBe(liveAssistant!.isStreaming)
-    expect(replayAssistant!.streamCursor).toBe(liveAssistant!.streamCursor)
   })
 })
 

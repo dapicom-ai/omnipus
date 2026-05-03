@@ -4,7 +4,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   ThreadPrimitive,
   MessagePrimitive,
-  MessagePartPrimitive,
   ComposerPrimitive,
   ActionBarPrimitive,
   AuiIf,
@@ -132,23 +131,19 @@ function AssistantTextPart() {
     <TextPartErrorBoundary>
       <div>
         <MarkdownText />
-        <MessagePartPrimitive.InProgress>
-          <span className="inline-block w-1.5 h-4 bg-[var(--color-accent)] ml-0.5 animate-pulse align-text-bottom" />
-        </MessagePartPrimitive.InProgress>
       </div>
     </TextPartErrorBoundary>
   )
 }
 
-// Shows thinking dots inside the assistant message when running with no text content.
+// Shows thinking dots inside the assistant message while it is still running.
+// Stays visible the entire turn — including between tool-call steps after some
+// text has streamed — so the user always knows the agent is still working.
 // Uses useMessage() for reactive state (not getState() which is a snapshot).
 function InlineThinkingIndicator() {
   const message = useMessage()
   const isRunning = message.status?.type === 'running'
-  const hasText = message.content?.some(
-    (p: { type: string; text?: string }) => p.type === 'text' && p.text && p.text.trim().length > 0
-  )
-  if (!isRunning || hasText) return null
+  if (!isRunning) return null
   return <ThinkingIndicator />
 }
 
@@ -219,8 +214,13 @@ function InlineMedia() {
     <div className="flex flex-col gap-2 mt-2">
       {storeMsg.media.map((m, i) =>
         m.type === 'image' ? (
-          <div key={`${m.url}-${i}`} className="rounded-lg overflow-hidden border border-[var(--color-border)] max-w-md">
-            <img src={m.url} alt={m.caption || m.filename} className="w-full" loading="lazy" />
+          <div key={`${m.url}-${i}`} className="rounded-lg overflow-hidden border border-[var(--color-border)] max-w-2xl">
+            <img
+              src={m.url}
+              alt={m.caption || m.filename}
+              className="block w-full h-auto max-h-[60vh] object-contain"
+              loading="lazy"
+            />
             {m.caption && (
               <p className="text-xs text-[var(--color-muted)] px-2 py-1">{m.caption}</p>
             )}
@@ -292,7 +292,13 @@ function AssistantMessage() {
           <span className="text-[10px] text-[var(--color-muted)]">{agent.name}</span>
         )}
         <div className="text-sm leading-relaxed text-[var(--color-secondary)]">
-          <InlineThinkingIndicator />
+          {/* Media (screenshots, files) renders BEFORE the parts so the image
+              shows directly under the tool-call pill that produced it, with
+              streamed assistant text appearing below the image. Without this
+              order the image gets pinned to the bottom of the bubble while
+              new text streams above it — visually disconnecting the
+              screenshot from the "Here's your screenshot…" caption. */}
+          <InlineMedia />
           {/* Use components prop so AssistantUI can inject registered tool UIs
               (from makeAssistantToolUI) automatically by tool name. Unregistered
               tools fall through to FallbackToolUI (generic JSON badge). */}
@@ -306,7 +312,12 @@ function AssistantMessage() {
           />
           {/* Subagent spans — rendered per-message, keyed by span_id (FR-H-008) */}
           <SubagentSpansRenderer />
-          <InlineMedia />
+          {/* Trailing thinking indicator — sits at the bottom of the bubble
+              while the turn is running so the user always sees a "still
+              working" cue at the position where the next text/tool will
+              appear. Once a token streams in, the streamed text renders
+              above the indicator and pushes it further down. */}
+          <InlineThinkingIndicator />
         </div>
 
         {/* Action bar — Copy + Retry buttons, visible on hover */}

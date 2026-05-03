@@ -23,7 +23,7 @@ import (
 //	Then defaultPolicy is "allow" for all core agents;
 //	And the "system.*: deny" wildcard is present;
 //	And Ava additionally has explicit allows for 4 system.* tools;
-//	And Jim has workspace.shell + workspace.shell_bg allowed and run_in_workspace denied;
+//	And Jim has workspace.shell + workspace.shell_bg + web_serve allowed;
 //	And Jim's seeded sandbox_profile is workspace+net.
 //
 // Traces to: pkg/coreagent/core.go — coreAgentSeed (FR-008, FR-010, FR-022).
@@ -36,11 +36,11 @@ func TestBoot_ConstructorSeedDispositionMap(t *testing.T) {
 	}
 
 	tests := []struct {
-		id                     CoreAgentID
-		expectSystemDeny       bool
-		expectExtraAllows      []string
-		expectExplicitDenies   []string
-		expectSandboxProfile   config.SandboxProfile
+		id                   CoreAgentID
+		expectSystemDeny     bool
+		expectExtraAllows    []string
+		expectExplicitDenies []string
+		expectSandboxProfile config.SandboxProfile
 	}{
 		{
 			id:               IDAva,
@@ -50,9 +50,9 @@ func TestBoot_ConstructorSeedDispositionMap(t *testing.T) {
 		{
 			id:               IDJim,
 			expectSystemDeny: true,
-			// PR 5: Jim is migrated to workspace.shell; run_in_workspace is denied.
-			expectExtraAllows:    []string{"workspace.shell", "workspace.shell_bg"},
-			expectExplicitDenies: []string{"run_in_workspace"},
+			// Step 7: Jim uses web_serve (unified tool), workspace.shell, workspace.shell_bg.
+			expectExtraAllows:    []string{"workspace.shell", "workspace.shell_bg", "web_serve"},
+			expectExplicitDenies: nil, // run_in_workspace removed; no explicit denies needed
 			expectSandboxProfile: config.SandboxProfileWorkspaceNet,
 		},
 	}
@@ -193,31 +193,29 @@ func TestJimSeed_SandboxProfileIsWorkspacePlusNet(t *testing.T) {
 		"Jim's seeded sandbox_profile must be workspace+net (PR 5 migration)")
 }
 
-// TestJimSeed_WorkspaceShellAllowedAndRunInWorkspaceDenied verifies that Jim's
-// constructor seed allows workspace.shell + workspace.shell_bg and denies
-// run_in_workspace (PR 5 acceptance criterion).
+// TestJimSeed_WebServeAndWorkspaceShellAllowed verifies that Jim's constructor
+// seed allows workspace.shell, workspace.shell_bg, and web_serve (step 7
+// migration from run_in_workspace to unified web_serve).
 //
 // BDD: Given coreAgentSeed(IDJim) is called,
 //
 //	When the policies map is inspected,
-//	Then workspace.shell and workspace.shell_bg are "allow";
-//	And run_in_workspace is "deny".
+//	Then workspace.shell, workspace.shell_bg, and web_serve are "allow".
 //
-// Traces to: quizzical-marinating-frog.md PR 5 — "Jim's seed allows workspace.shell and workspace.shell_bg".
-func TestJimSeed_WorkspaceShellAllowedAndRunInWorkspaceDenied(t *testing.T) {
+// Traces to: quizzical-marinating-frog.md Step 7.
+func TestJimSeed_WebServeAndWorkspaceShellAllowed(t *testing.T) {
 	_, policies, _ := coreAgentSeed(IDJim)
 
-	for _, toolName := range []string{"workspace.shell", "workspace.shell_bg"} {
+	for _, toolName := range []string{"workspace.shell", "workspace.shell_bg", "web_serve"} {
 		p, ok := policies[toolName]
 		require.True(t, ok, "Jim must have explicit policy for %q", toolName)
 		assert.Equal(t, config.ToolPolicyAllow, p,
 			"Jim's policy for %q must be 'allow'", toolName)
 	}
 
-	p, ok := policies["run_in_workspace"]
-	require.True(t, ok, "Jim must have explicit policy for 'run_in_workspace'")
-	assert.Equal(t, config.ToolPolicyDeny, p,
-		"Jim's policy for 'run_in_workspace' must be 'deny' (deprecated tool)")
+	// run_in_workspace is deleted — no explicit deny entry should exist.
+	_, hasRunIn := policies["run_in_workspace"]
+	assert.False(t, hasRunIn, "run_in_workspace is removed; Jim must not have a policy entry for it")
 }
 
 // TestSeedConfig_JimProfileApplied verifies that SeedConfig seeds Jim with

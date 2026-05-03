@@ -124,9 +124,20 @@ type AgentLoop struct {
 	browserMgr *browser.BrowserManager
 
 	// Tier 1/3 deps — stored so WireTier13Deps can re-run on hot reload.
-	// Without this, hot-reload would drop serve_workspace and run_in_workspace
-	// from every agent because ReloadProviderAndConfig builds a fresh registry.
+	// Without this, hot-reload would drop web_serve, workspace.shell, and
+	// workspace.shell_bg from every agent because ReloadProviderAndConfig
+	// builds a fresh registry.
 	tier13Deps *Tier13Deps
+
+	// sandboxEgressProxy is the kernel-sandbox HTTP/HTTPS egress proxy that
+	// is created once at gateway boot and shared by web_serve, the workspace
+	// shell tools, and (when sandbox is on) the exec tool. Stashed here so
+	// wireExecToolDeps can plumb it into ExecToolDeps.EgressProxy after
+	// WireTier13Deps has handed us the singleton. Nil when sandbox.NewEgressProxy
+	// failed at boot or sandbox is off — in either case the exec tool falls
+	// back to running children without HTTP_PROXY env vars on the
+	// hardened-exec path.
+	sandboxEgressProxy *sandbox.EgressProxy
 
 	// sysagentDeps holds the dependencies for system.* tool registration (FR-001, FR-002).
 	// Wired by the gateway after boot via SetSysagentDeps. Nil until wired; if nil,
@@ -704,7 +715,13 @@ func (al *AgentLoop) recordRateLimitDenial(
 //
 // No-op when the agent has exec disabled or when the registry lookup fails.
 func (al *AgentLoop) wireExecToolDeps() {
-	if al.registry == nil {
+	al.wireExecToolDepsOn(al.registry)
+}
+
+// wireExecToolDepsOn is the registry-parameterized form of wireExecToolDeps,
+// used by hot-reload to wire the new registry before the atomic swap.
+func (al *AgentLoop) wireExecToolDepsOn(registry *AgentRegistry) {
+	if registry == nil {
 		return
 	}
 	cfg := al.cfg
@@ -713,8 +730,8 @@ func (al *AgentLoop) wireExecToolDeps() {
 	}
 	allowReadPaths := buildAllowReadPatterns(cfg)
 
-	for _, agentID := range al.registry.ListAgentIDs() {
-		agent, ok := al.registry.GetAgent(agentID)
+	for _, agentID := range registry.ListAgentIDs() {
+		agent, ok := registry.GetAgent(agentID)
 		if !ok || agent == nil || agent.Tools == nil {
 			continue
 		}
@@ -724,6 +741,40 @@ func (al *AgentLoop) wireExecToolDeps() {
 		// Linux 5.13+, so no per-child application is actually required
 		// there — the fallback backend still uses this to emit
 		// OMNIPUS_SANDBOX_PATHS for cooperative scripts.
+		//
+		// Network port rules: kernel-level enforcement is installed once at
+		// gateway boot (see pkg/gateway/sandbox_apply.go) and inherited by
+		// all child processes via Landlock's restrict_self ratchet — there
+		// is no need to re-add the rules on each exec child. We still
+		// populate BindPortRules / ConnectPortRules here for two reasons:
+		// (a) cooperative children that read OMNIPUS_SANDBOX_* env vars get
+		// the full picture of what they may bind/connect; (b) the rules
+		// are visible in any tooling that introspects ExecToolDeps.
+		var bindPorts, connectPorts []sandbox.NetPortRule
+		if al.sandboxBackend != nil {
+			abi := 0
+			if rep, ok := al.sandboxBackend.(interface{ ABIVersion() int }); ok {
+				abi = rep.ABIVersion()
+			}
+			if abi >= 4 {
+				pr := cfg.Sandbox.DevServerPortRange
+				if !pr.IsZero() {
+					for p := pr.Min(); p <= pr.Max(); p++ {
+						if p < 1 || p > 65535 {
+							continue
+						}
+						bindPorts = append(bindPorts, sandbox.NetPortRule{Port: uint16(p)})
+						connectPorts = append(connectPorts, sandbox.NetPortRule{Port: uint16(p)})
+					}
+				}
+				if cfg.Gateway.Port > 0 && cfg.Gateway.Port <= 65535 {
+					connectPorts = append(connectPorts, sandbox.NetPortRule{Port: uint16(cfg.Gateway.Port)})
+				}
+				if cfg.Gateway.PreviewPort > 0 && cfg.Gateway.PreviewPort <= 65535 {
+					connectPorts = append(connectPorts, sandbox.NetPortRule{Port: uint16(cfg.Gateway.PreviewPort)})
+				}
+			}
+		}
 		policy := sandbox.SandboxPolicy{
 			FilesystemRules: []sandbox.PathRule{
 				{
@@ -731,11 +782,24 @@ func (al *AgentLoop) wireExecToolDeps() {
 					Access: sandbox.AccessRead | sandbox.AccessWrite | sandbox.AccessExecute,
 				},
 			},
+			BindPortRules:     bindPorts,
+			ConnectPortRules:  connectPorts,
 			InheritToChildren: true,
 		}
 
 		deps := tools.ExecToolDeps{
-			SandboxPolicy: policy,
+			SandboxPolicy:      policy,
+			SandboxMode:        cfg.Sandbox.ResolvedMode(),
+			ExecTimeoutSeconds: int32(cfg.Tools.Exec.TimeoutSeconds),
+		}
+		// Plumb the kernel-sandbox egress proxy into the exec tool so the
+		// hardened-exec path (sandbox=enforce / permissive) injects
+		// HTTP_PROXY pointing at the allow-listed proxy. Nil-guarded to
+		// avoid the typed-nil-in-interface trap and so the exec tool
+		// gracefully degrades to no-proxy when the boot-time
+		// NewEgressProxy call failed.
+		if al.sandboxEgressProxy != nil {
+			deps.EgressProxy = al.sandboxEgressProxy
 		}
 		// Both dependency fields use interfaces, so we must nil-guard at
 		// assignment time to avoid typed-nil traps: storing a nil
@@ -770,10 +834,15 @@ func (al *AgentLoop) wireExecToolDeps() {
 	}
 }
 
-// WireTier13Deps registers the serve_workspace and run_in_workspace tools
-// into every non-system agent's tool registry using the shared infrastructure
-// instances created once at gateway boot. This is called from gateway.go
-// after NewAgentLoop and after the Tier13Deps registries are constructed.
+// WireTier13Deps registers the web_serve, workspace.shell, and
+// workspace.shell_bg tools into every non-system agent's tool registry using
+// the shared infrastructure instances created once at gateway boot. Called
+// from gateway.go after NewAgentLoop and after the Tier13Deps registries
+// (DevServerRegistry, ServedSubdirs, EgressProxy) are constructed. The
+// "Tier13" name is historical — Tier 1 (static serve) and Tier 3 (dev-server
+// proxy) used to live in two separate tools (serve_workspace and
+// run_in_workspace); both are now subsumed by web_serve, but the deps struct
+// keeps the legacy name for cross-package callers.
 //
 // Mirrors the wireExecToolDeps pattern: post-creation injection so the heavy
 // singleton objects (EgressProxy, DevServerRegistry) are not re-created per
@@ -784,7 +853,19 @@ func (al *AgentLoop) WireTier13Deps(deps Tier13Deps) {
 	depsCopy := deps
 	al.tier13Deps = &depsCopy
 
+	// Stash the sandbox egress proxy for the exec tool. wireExecToolDeps
+	// (which originally ran during NewAgentLoop, before the gateway had
+	// constructed the proxy) is re-run below so each agent's exec tool now
+	// picks up the proxy address on the sandbox-on path.
+	if deps.EgressProxy != nil {
+		al.sandboxEgressProxy = deps.EgressProxy
+	}
+
 	al.wireTier13DepsLocked(al.registry, deps)
+
+	// Re-wire exec deps now that we have the egress proxy. Without this,
+	// the exec tool's hardened path runs without HTTP_PROXY env vars.
+	al.wireExecToolDeps()
 }
 
 // wireTier13DepsLocked is the actual wiring logic, factored out so hot-reload
@@ -807,50 +888,42 @@ func (al *AgentLoop) wireTier13DepsLocked(registry *AgentRegistry, deps Tier13De
 			continue
 		}
 
-		// serve_workspace (Tier 1) — registered whenever ServedSubdirs is available.
-		// Not restricted to Linux; static file serving is cross-platform.
+		// web_serve — unified Tier 1 (static) + Tier 3 (dev server) tool.
+		// Registered whenever ServedSubdirs is available; dev mode is gated to
+		// Linux at runtime inside the tool itself (Tier3UnsupportedMessage).
 		if deps.ServedSubdirs != nil {
-			serveToolPreviewURL := deps.GatewayPreviewBaseURL
-			if serveToolPreviewURL == "" {
-				serveToolPreviewURL = deps.GatewayBaseURL
+			previewURL := deps.GatewayPreviewBaseURL
+			if previewURL == "" {
+				previewURL = deps.GatewayBaseURL
 			}
-			ag.Tools.Register(tools.NewServeWorkspaceTool(
-				ag.Workspace,
-				ag.ID,
-				serveToolPreviewURL,
-				deps.ServedSubdirs,
-				minDurSec,
-				maxDurSec,
-			))
-		}
-
-		// run_in_workspace (Tier 3) — registered only when the DevServerRegistry
-		// is wired; the tool itself gates execution to Linux at runtime.
-		if deps.DevServerRegistry != nil {
 			portRange := cfg.Sandbox.DevServerPortRange
-			tier3Cfg := tools.RunInWorkspaceConfig{
+			webServeCfg := tools.WebServeDevConfig{
 				Tier3Commands:   cfg.Sandbox.Tier3Commands,
 				PortRange:       [2]int32{portRange[0], portRange[1]},
 				MaxConcurrent:   cfg.Sandbox.MaxConcurrentDevServers,
 				EgressAllowList: cfg.Sandbox.EgressAllowList,
 				AuditFailClosed: resolveBoolWithDefault(cfg.Sandbox.PathGuardAuditFailClosed, true),
 			}
-			runInTool := tools.NewRunInWorkspaceTool(
-				tier3Cfg,
+			webServeTool := tools.NewWebServeTool(
 				ag.Workspace,
-				deps.DevServerRegistry,
+				ag.ID,
+				previewURL,
+				deps.ServedSubdirs,
+				deps.DevServerRegistry, // nil on non-Linux; tool guards internally
+				webServeCfg,
 				deps.EgressProxy,
 				al.auditLogger,
-				deps.GatewayPreviewBaseURL,
+				minDurSec,
+				maxDurSec,
 			)
-			ag.Tools.Register(runInTool)
+			ag.Tools.Register(webServeTool)
 		}
 
 		// workspace.shell (experimental foreground shell).
 		// Only registered when experimental.workspace_shell_enabled=true.
 		// The tool is per-agent because it needs the agent's workspace path,
-		// sandbox profile, and shell policy — the same reason run_in_workspace
-		// is wired here rather than in the process-level BuiltinRegistry.
+		// sandbox profile, and shell policy — the same reason web_serve dev
+		// mode is wired here rather than in the process-level BuiltinRegistry.
 		if resolveBoolWithDefault(cfg.Sandbox.Experimental.WorkspaceShellEnabled, true) {
 			// Resolve SandboxProfile for this agent from the global config.
 			// We scan cfg.Agents.List for a matching entry; if not found we
@@ -2085,13 +2158,18 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 	// Ensure shared tools are re-registered on the new registry
 	registerSharedTools(al, cfg, al.bus, registry, provider)
 
-	// Re-wire Tier 1/3 tools (serve_workspace, run_in_workspace) on the new registry.
+	// Re-wire Tier 1/3 tools (web_serve + workspace.shell*) on the new registry.
 	// Without this, hot-reload silently drops them because NewAgentRegistry creates
 	// fresh AgentInstances whose Tools registries don't know about the shared
 	// ServedSubdirs / DevServerRegistry / EgressProxy singletons.
 	if al.tier13Deps != nil {
 		al.wireTier13DepsLocked(registry, *al.tier13Deps)
 	}
+
+	// Re-wire exec tool deps (sandbox mode + egress proxy) on the new
+	// registry. Without this, the rebuilt exec tool would lose the kernel
+	// sandbox routing and revert to the legacy `sh -c` path on a hot reload.
+	al.wireExecToolDepsOn(registry)
 
 	// Re-wire system.* tools on the new registry (FR-001, FR-002).
 	if al.sysagentDeps != nil {
@@ -2793,19 +2871,48 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		// FR-024: track current session per agent for lazy CAS on switch.
 		al.agentCurrentSession.Store(agent.ID, transcriptSessionID)
 
-		// Self-heal: if this agent has no in-memory history for the current
-		// session key but the shared transcript has prior turns (handoff,
-		// browser reconnect without explicit attach_session, etc.), rebuild
-		// the agent's turn buffer from the transcript so the LLM sees the
-		// prior conversation. Cheap when history is already populated —
-		// GetHistory just reads the on-disk meta file.
-		if agent.Sessions != nil && len(agent.Sessions.GetHistory(sessionKey)) == 0 {
-			if err := al.HydrateAgentHistoryFromTranscript(transcriptSessionID); err != nil {
-				logger.WarnCF("agent", "self-heal hydrate failed", map[string]any{
-					"agent_id":   agent.ID,
-					"session_id": transcriptSessionID,
-					"error":      err.Error(),
-				})
+		// Self-heal: rebuild the agent's per-session history from the shared
+		// transcript when the in-memory copy is missing or stale. We rehydrate
+		// not only when the bucket is empty (handoff, fresh process, etc.) but
+		// also when the bucket has *no* assistant/tool entries while the
+		// transcript carries tool_calls owned by this agent — the symptom of
+		// the prior wsStreamer bug that wrote assistant text with empty AgentID
+		// and left the per-agent bucket stuck on user messages only. Without
+		// this stronger trigger, an old session keeps starting from scratch
+		// every turn because GetHistory returns the broken cached state and
+		// the empty-only check above is satisfied.
+		if agent.Sessions != nil {
+			cur := agent.Sessions.GetHistory(sessionKey)
+			needsHydrate := len(cur) == 0
+			if !needsHydrate && transcriptStore != nil {
+				hasAssistantOrTool := false
+				for _, m := range cur {
+					if m.Role == "assistant" || m.Role == "tool" {
+						hasAssistantOrTool = true
+						break
+					}
+				}
+				if !hasAssistantOrTool {
+					if entries, err := transcriptStore.ReadTranscript(transcriptSessionID); err == nil {
+						for i := range entries {
+							e := &entries[i]
+							if (e.AgentID == agent.ID || e.AgentID == "") &&
+								(e.Type == session.EntryTypeToolCall || e.Role == "assistant") {
+								needsHydrate = true
+								break
+							}
+						}
+					}
+				}
+			}
+			if needsHydrate {
+				if err := al.HydrateAgentHistoryFromTranscript(transcriptSessionID); err != nil {
+					logger.WarnCF("agent", "self-heal hydrate failed", map[string]any{
+						"agent_id":   agent.ID,
+						"session_id": transcriptSessionID,
+						"error":      err.Error(),
+					})
+				}
 			}
 		}
 	}

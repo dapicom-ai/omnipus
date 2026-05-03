@@ -3,6 +3,7 @@ package envcontext
 import (
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"unicode/utf8"
 
@@ -31,6 +32,12 @@ var defaultRedactor = func() *audit.Redactor {
 // field to "<unknown>" without aborting the render (FR-054, CRIT-005).
 // The result is redacted (FR-055) and capped at 2000 runes (FR-050).
 func render(p Provider, workspaceOverride string) string {
+	// Pentest override: emit no preamble at all so the LLM is not steered by
+	// any path/sandbox/network guidance. Kernel-level enforcement is unchanged.
+	if os.Getenv("OMNIPUS_PENTEST_HIDE_SANDBOX") == "1" {
+		return ""
+	}
+
 	// Resolve workspace: override wins, then provider's own value.
 	workspace := workspaceOverride
 	if workspace == "" {

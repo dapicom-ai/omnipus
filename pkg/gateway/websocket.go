@@ -26,6 +26,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/media"
 	"github.com/dapicom-ai/omnipus/pkg/pairing"
 	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/validation"
@@ -250,9 +251,25 @@ func (h *WSHandler) GetStreamer(_ context.Context, channel, chatID, sessionID st
 
 	// Resolve the active agent for this session so the transcript entry
 	// can be tagged with the correct agent ID (FR-002). Key by sessionID.
+	//
+	// Prefer the handoff override, then fall back to the session's
+	// ActiveAgentID from metadata. Without the fallback, assistant entries
+	// for un-handed-off sessions get written with AgentID="", which means
+	// HydrateAgentHistoryFromTranscript attributes them to "main" instead
+	// of the real owning agent — so the next turn's LLM call has only
+	// tool_calls/tool_results in its history, no connecting reasoning text,
+	// and the agent re-starts the task from scratch.
 	activeAgentID := ""
-	if aid, ok := h.agentLoop.GetSessionActiveAgent(sid); ok {
+	if aid, ok := h.agentLoop.GetSessionActiveAgent(sid); ok && aid != "" {
 		activeAgentID = aid
+	} else if agentStore != nil && sid != "" {
+		if meta, err := agentStore.GetMeta(sid); err == nil && meta != nil {
+			if meta.ActiveAgentID != "" {
+				activeAgentID = meta.ActiveAgentID
+			} else if meta.AgentID != "" {
+				activeAgentID = meta.AgentID
+			}
+		}
 	}
 
 	return &wsStreamer{
@@ -820,7 +837,11 @@ func (h *WSHandler) handleAttachSession(
 
 	// W3-3: pass pre-computed rs into streamReplay so it doesn't rebuild
 	// spawnIDsWithChildren for a second time.
-	framesEmitted, replayErr := streamReplay(ctx, attachID, entries, rs, emitFn)
+	var mediaStore media.MediaStore
+	if h.agentLoop != nil {
+		mediaStore = h.agentLoop.GetMediaStore()
+	}
+	framesEmitted, replayErr := streamReplay(ctx, attachID, entries, rs, emitFn, mediaStore)
 
 	// Disarm the divert FIRST so that subsequent sendConnFrame calls go directly
 	// to sendCh once we drain the buffer below.

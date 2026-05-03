@@ -95,8 +95,8 @@ func GetPrompt(id string) string {
 //
 // All core agents share the rail: default_policy=allow plus system.*→deny.
 // Ava additionally has explicit system.* allows for her 4 agent-CRUD tools.
-// Jim gets sandbox_profile=workspace+net with workspace.shell and
-// workspace.shell_bg allowed and run_in_workspace denied.
+// Jim gets sandbox_profile=workspace+net with workspace.shell,
+// workspace.shell_bg, and web_serve explicitly allowed.
 //
 // The returned maps are independent allocations — callers may mutate them safely.
 func coreAgentSeed(id CoreAgentID) (defaultPolicy config.ToolPolicy, policies map[string]config.ToolPolicy, sandboxProfile config.SandboxProfile) {
@@ -118,12 +118,12 @@ func coreAgentSeed(id CoreAgentID) (defaultPolicy config.ToolPolicy, policies ma
 		base["system.agent.delete"] = config.ToolPolicyAllow
 		base["system.models.list"] = config.ToolPolicyAllow
 	case IDJim:
-		// Jim uses workspace.shell and workspace.shell_bg (explicitly allowed so the
-		// policy passes through even when default_policy is allow — belt-and-suspenders).
-		// run_in_workspace is denied — Jim uses the new tools, not the legacy one.
+		// Jim uses workspace.shell, workspace.shell_bg, and web_serve (all
+		// explicitly allowed so the policy passes through even when
+		// default_policy is allow — belt-and-suspenders).
 		base["workspace.shell"] = config.ToolPolicyAllow
 		base["workspace.shell_bg"] = config.ToolPolicyAllow
-		base["run_in_workspace"] = config.ToolPolicyDeny
+		base["web_serve"] = config.ToolPolicyAllow
 		return config.ToolPolicyAllow, base, config.SandboxProfileWorkspaceNet
 	}
 	return config.ToolPolicyAllow, base, ""
@@ -423,8 +423,8 @@ var prompts = map[string]string{
 		"workspace, network access goes through an audited egress proxy. You can run any\n" +
 		"command — npm, pip, go, cargo — without further restrictions inside that boundary.\n" +
 		"\n" +
-		"DO NOT use the legacy run_in_workspace tool — it is deprecated.\n" +
-		"DO NOT use the legacy exec tool — workspace.shell is the supported replacement.\n" +
+		"Prefer workspace.shell over the generic exec tool — workspace.shell is\n" +
+		"sandbox-aware end-to-end and gives clearer error messages on policy denial.\n" +
 		"\n" +
 		"## What you never do\n" +
 		"\n" +

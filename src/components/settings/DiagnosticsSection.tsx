@@ -78,11 +78,12 @@ export function DiagnosticsSection() {
 
   const result = lastResult as DoctorResult | null
 
+  const issues = result?.issues ?? []
   const issuesByGroup = result
     ? ({
-        high: result.issues.filter((i) => i.severity === 'high'),
-        medium: result.issues.filter((i) => i.severity === 'medium'),
-        low: result.issues.filter((i) => i.severity === 'low'),
+        high: issues.filter((i) => i.severity === 'high'),
+        medium: issues.filter((i) => i.severity === 'medium'),
+        low: issues.filter((i) => i.severity === 'low'),
       } as const)
     : null
 

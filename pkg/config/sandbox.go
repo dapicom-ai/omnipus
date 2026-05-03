@@ -42,9 +42,9 @@ func (l *SkillTrustLevel) UnmarshalJSON(data []byte) error {
 	}
 }
 
-// SandboxMode controls how kernel-level sandboxing enforces policy at boot
-// (Sprint J). Typed enum so a typo in config.json fails decoding rather than
-// silently falling back to the legacy Enabled flag.
+// SandboxMode controls how kernel-level sandboxing enforces policy at boot.
+// Typed enum so a typo in config.json fails decoding rather than silently
+// resolving to a permissive default.
 type SandboxMode string
 
 const (
@@ -57,9 +57,9 @@ const (
 )
 
 // UnmarshalJSON validates and deserializes a SandboxMode from JSON. Empty is
-// accepted (config may omit it; boot validator falls back to legacy Enabled).
-// Unknown non-empty values are rejected so typos like "enfroce" fail at
-// load time rather than silently behaving as Mode="" → legacy fallback.
+// accepted (the gateway boot path applies the "enforce on capable kernels"
+// fresh-install default in that case). Unknown non-empty values are rejected
+// so typos like "enfroce" fail at load time.
 func (m *SandboxMode) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
@@ -227,7 +227,7 @@ func (r PortRange) Contains(p int32) bool {
 // All fields default to the most restrictive safe value when omitted.
 // Populated from config.json under the "sandbox" key.
 type OmnipusSandboxConfig struct {
-	// MaxConcurrentDevServers caps the number of run_in_workspace dev servers
+	// MaxConcurrentDevServers caps the number of web_serve dev-mode servers
 	// (Tier 3) that can be running concurrently across all agents. Default 4
 	// (applied by the boot validator).
 	MaxConcurrentDevServers int32 `json:"max_concurrent_dev_servers,omitempty"`
@@ -237,15 +237,16 @@ type OmnipusSandboxConfig struct {
 	MaxConcurrentBuilds int32 `json:"max_concurrent_builds,omitempty"`
 
 	// DevServerPortRange is the [min, max] inclusive port range for Tier 3
-	// (run_in_workspace) dev servers. Default [18000, 18999] applied by the
-	// boot validator when the field is zero.
+	// (web_serve dev mode and workspace.shell_bg). Default [18000, 18999]
+	// applied by the boot validator when the field is zero.
 	DevServerPortRange PortRange `json:"dev_server_port_range,omitempty"`
 
 	// EgressAllowList is the operator-controlled host allow-list for the
-	// egress proxy used by Tier 2 (build_static) and Tier 3
-	// (run_in_workspace) child processes. Entries may be exact hostnames or
-	// "*.x" wildcard patterns. Default: ["registry.npmjs.org", "github.com",
-	// "raw.githubusercontent.com"] applied by the boot validator when empty.
+	// egress proxy used by Tier 2 (build_static) and Tier 3 (web_serve dev
+	// mode and workspace.shell_bg) child processes. Entries may be exact
+	// hostnames or "*.x" wildcard patterns. Default: ["registry.npmjs.org",
+	// "github.com", "raw.githubusercontent.com"] applied by the boot
+	// validator when empty.
 	EgressAllowList []string `json:"egress_allow_list,omitempty"`
 
 	// Tier3Commands extends the baseline Tier 3 dev-server command allow-list
@@ -254,11 +255,11 @@ type OmnipusSandboxConfig struct {
 	Tier3Commands []string `json:"tier3_commands,omitempty"`
 
 	// PathGuardAuditFailClosed controls behaviour when the audit logger
-	// fails during a Tier 2 (build_static) or Tier 3 (run_in_workspace)
-	// invocation. When nil or true (default via ResolveBool), the tool
-	// refuses to run without a guaranteed compliance trail. When explicitly
-	// set to false, the audit failure is logged at Error and execution
-	// proceeds (operator opt-out).
+	// fails during a Tier 2 (build_static) or Tier 3 (web_serve / workspace
+	// shell) invocation. When nil or true (default via ResolveBool), the
+	// tool refuses to run without a guaranteed compliance trail. When
+	// explicitly set to false, the audit failure is logged at Error and
+	// execution proceeds (operator opt-out).
 	PathGuardAuditFailClosed *bool `json:"path_guard_audit_fail_closed,omitempty"`
 
 	// BrowserEvaluateEnabled gates browser.evaluate (arbitrary JS execution).
@@ -268,27 +269,18 @@ type OmnipusSandboxConfig struct {
 	// without touching the Tools subtree.
 	BrowserEvaluateEnabled bool `json:"browser_evaluate_enabled,omitempty"`
 
-	// Mode selects how the sandbox enforces policy at boot (Sprint J).
+	// Mode selects how the sandbox enforces policy at boot.
 	// Valid values: SandboxModeEnforce (default on capable kernels),
 	// SandboxModePermissive (audit-only), SandboxModeOff (development only).
 	// Unknown values are rejected at config-load time by SandboxMode's
-	// UnmarshalJSON.
-	//
-	// When Mode is empty, the legacy Enabled field controls behavior
-	// (Enabled=true → enforce, Enabled=false → off) for backwards
-	// compatibility with configs written before Sprint J.
+	// UnmarshalJSON. An empty Mode on a fresh config is treated as
+	// "enforce on capable kernels" by the gateway boot path.
 	Mode SandboxMode `json:"mode,omitempty"`
-
-	// Enabled activates kernel-level sandboxing. Deprecated: use Mode
-	// instead. Kept for backwards compatibility — Enabled=true maps to
-	// Mode=enforce and Enabled=false maps to Mode=off when Mode is empty.
-	//
-	// Deprecated: use Mode ("enforce", "permissive", "off").
-	Enabled bool `json:"enabled,omitempty"`
 
 	// AllowNetworkOutbound permits sandboxed processes to make outbound TCP
 	// connections. When false (default), outbound connections are blocked
-	// at the Landlock/seccomp layer. Requires Enabled: true.
+	// at the Landlock/seccomp layer. Has effect only when Mode is enforce
+	// or permissive.
 	AllowNetworkOutbound bool `json:"allow_network_outbound,omitempty"`
 
 	// AllowedPaths lists additional filesystem paths the sandbox may read.
@@ -386,24 +378,13 @@ type OmnipusRateLimitsConfig struct {
 	MaxAgentToolCallsPerMinute int `json:"max_agent_tool_calls_per_minute,omitempty"`
 }
 
-// ResolvedMode returns the effective sandbox mode string, applying the
-// legacy Enabled→Mode mapping when Mode is empty:
-//
-//	Mode set            → Mode (normalized via strings.ToLower-trim)
-//	Mode empty, Enabled → "enforce" (backwards compat)
-//	Mode empty, !Enabled → "off"    (backwards compat — explicit disable)
-//
-// Note: on a fresh config where neither field is set, Enabled defaults to
-// false, so this returns "off". Callers that want the "enforce on capable
-// kernels" default behavior should apply it at a higher layer (e.g. the
-// gateway boot path) rather than here — this helper only reports what the
-// config file says.
+// ResolvedMode returns the effective sandbox mode string. An empty Mode
+// resolves to "off" — callers that want the "enforce on capable kernels"
+// default for fresh installs apply it at a higher layer (e.g. the gateway
+// boot path), so this helper only reports what the config file says.
 func (s OmnipusSandboxConfig) ResolvedMode() string {
 	if s.Mode != "" {
 		return string(s.Mode)
-	}
-	if s.Enabled {
-		return string(SandboxModeEnforce)
 	}
 	return string(SandboxModeOff)
 }

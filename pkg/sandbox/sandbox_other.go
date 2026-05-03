@@ -14,3 +14,5 @@ func selectBackendPlatform() (SandboxBackend, string) {
 func probeLandlockABIPlatform() int {
 	return 0
 }
+
+func restrictCurrentThreadIfNeeded() error { return nil }

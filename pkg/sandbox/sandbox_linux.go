@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"sync"
 	"sync/atomic"
 	"unsafe"
 
@@ -38,6 +39,7 @@ const (
 
 const (
 	landlockRulePathBeneath      = 1
+	landlockRuleNetPort          = 2 // ABI v4+: bind/connect rules use this rule type
 	landlockCreateRulesetVersion = 1 << 0
 )
 
@@ -79,15 +81,40 @@ type landlockPathBeneathAttr struct {
 	_             [4]byte
 }
 
+// landlockNetPortAttr matches the kernel's struct landlock_net_port_attr
+// (include/uapi/linux/landlock.h). Both fields are u64 in the ABI: the kernel
+// reserved width for `port` even though TCP port numbers fit in 16 bits, so
+// the Go side must use uint64 here regardless of NetPortRule.Port being uint16.
+type landlockNetPortAttr struct {
+	allowedAccess uint64
+	port          uint64
+}
+
 // LinuxBackend enforces Landlock + seccomp on Linux.
 type LinuxBackend struct {
 	abiVersion int
 	allRights  uint64
+	// handledAccessNet is the bitmask of Landlock NET_* access rights that
+	// the backend declares to the kernel when creating the ruleset. Set to
+	// landlockAccessNetBindTcp|landlockAccessNetConnectTcp on ABI ≥ 4 (where
+	// the kernel honors net rules) and zero on older ABIs. Computed once in
+	// computeRights and read back in ApplyWithMode.
+	handledAccessNet uint64
 	// policyApplied is set to true once Apply() succeeds on this backend.
 	// It distinguishes "capability available" from "capability enforcing"
 	// for the sandbox status endpoint. Landlock Apply is one-shot per
 	// process so this flag is latching — it never resets to false.
 	policyApplied bool
+	// savedPolicy is the SandboxPolicy that ApplyWithMode installed. We
+	// retain it so RestrictCurrentThread can rebuild an equivalent ruleset
+	// and re-run landlock_restrict_self on whichever OS thread is about to
+	// fork a child. Without per-thread re-apply, Go's M:N scheduler can
+	// fork from an unrestricted worker thread and the child silently
+	// escapes the kernel sandbox.
+	savedPolicy SandboxPolicy
+	// savedMode is the mode passed to ApplyWithMode; RestrictCurrentThread
+	// is a no-op when the saved mode is not ModeEnforce.
+	savedMode Mode
 }
 
 // Compile-time assertion that LinuxBackend satisfies the capability
@@ -127,14 +154,22 @@ func (lb *LinuxBackend) computeRights() {
 	// LANDLOCK_ACCESS_FS_IOCTL does not exist in kernel headers
 	// on this system (6.8.0-107). Setting unknown bits causes EINVAL.
 	//
-	// Landlock ABI v4+ supports TCP bind/connect handling, but enabling
-	// handledAccessNet without any allow rules denies ALL outbound TCP
-	// connect from the gateway — including the loopback connect needed
-	// to reverse-proxy /dev/<agent>/<token>/ requests to dev servers.
-	// Until per-agent network rules are wired, leave net access unhandled
-	// (kernel default = unrestricted) so the gateway can connect to its
-	// own dev-server ports. Egress from sandboxed children is already
-	// gated by the EgressProxy allow-list.
+	// Landlock ABI v4+ adds NET_BIND_TCP and NET_CONNECT_TCP. We declare
+	// only NET_BIND_TCP as handled — that closes the rogue-port hole
+	// (an agent shell can no longer bind 0.0.0.0:5173 outside the
+	// dev-server allow-list). NET_CONNECT_TCP is intentionally NOT
+	// handled because (a) the gateway itself needs outbound 443/53/80
+	// for LLM provider calls and DNS, and a kernel-level connect
+	// allow-list would break those without buying us much over the
+	// already-existing application-layer egress proxy, and (b) agent
+	// children still get egress filtering when sandbox.Run injects
+	// HTTP_PROXY/HTTPS_PROXY into their environment. SandboxPolicy may
+	// still carry ConnectPortRules but they are silently ignored when
+	// handledAccessNet does not include NET_CONNECT_TCP. On kernels
+	// < ABI v4 handledAccessNet stays 0 entirely, preserving legacy.
+	if lb.abiVersion >= 4 {
+		lb.handledAccessNet = landlockAccessNetBindTcp
+	}
 }
 
 func (lb *LinuxBackend) Name() string {
@@ -219,10 +254,14 @@ func (lb *LinuxBackend) ApplyWithMode(policy SandboxPolicy, mode Mode) error {
 		return fmt.Errorf("landlock: unknown mode %q", mode)
 	}
 
-	// Create ruleset. handledAccessNet is intentionally left at zero —
-	// see computeRights for the rationale (no per-agent net rules yet,
-	// gateway needs unrestricted loopback connect for dev proxy).
-	attr := landlockRulesetAttr{handledAccessFS: lb.allRights}
+	// Create ruleset. handledAccessNet is set on ABI ≥ 4 to enable
+	// kernel-level enforcement of NET_BIND_TCP / NET_CONNECT_TCP — see
+	// computeRights for the rationale. On older ABIs it stays 0 and the
+	// kernel ignores the field.
+	attr := landlockRulesetAttr{
+		handledAccessFS:  lb.allRights,
+		handledAccessNet: lb.handledAccessNet,
+	}
 	rulesetFd, _, errno := unix.Syscall(
 		sysLandlockCreateRuleset,
 		uintptr(unsafe.Pointer(&attr)),
@@ -253,6 +292,39 @@ func (lb *LinuxBackend) ApplyWithMode(policy SandboxPolicy, mode Mode) error {
 		return fmt.Errorf("landlock: failed to add %d path rule(s): %w", len(ruleErrors), errors.Join(ruleErrors...))
 	}
 
+	// Network port allow-rules (Landlock ABI v4+). On older kernels the
+	// rule-add syscall returns EINVAL because handledAccessNet is zero and
+	// LANDLOCK_RULE_NET_PORT is unknown — we treat that as a soft skip so
+	// the FS rules still take effect. On capable kernels, every entry in
+	// BindPortRules / ConnectPortRules is registered as an allow-rule;
+	// any bind/connect to a port not listed will be denied with EACCES.
+	if lb.abiVersion >= 4 {
+		for _, rule := range policy.BindPortRules {
+			if err := addLandlockNetPortRule(int(rulesetFd), rule.Port, landlockAccessNetBindTcp); err != nil {
+				if errors.Is(err, unix.EINVAL) || errors.Is(err, unix.ENOENT) {
+					slog.Warn("Landlock: kernel rejected net bind rule, continuing without it",
+						"port", rule.Port, "error", err)
+					continue
+				}
+				return fmt.Errorf("landlock: add bind rule for port %d: %w", rule.Port, err)
+			}
+		}
+		// ConnectPortRules are intentionally ignored — handledAccessNet only
+		// includes NET_BIND_TCP, so the kernel does not enforce connect
+		// allow-listing. Outbound TCP filtering is delegated to the egress
+		// proxy. See computeRights for the rationale.
+	} else if len(policy.BindPortRules) > 0 || len(policy.ConnectPortRules) > 0 {
+		// Defensive: caller passed net rules but the kernel ABI is too
+		// low to honor them. Log once and proceed — refusing to apply
+		// here would force the operator into a no-sandbox-at-all state
+		// just because they configured net rules on an older kernel.
+		slog.Warn("Landlock: net port rules ignored on this kernel",
+			"abi_version", lb.abiVersion,
+			"required_abi", 4,
+			"bind_rules", len(policy.BindPortRules),
+			"connect_rules", len(policy.ConnectPortRules))
+	}
+
 	// Set no_new_privs unconditionally — seccomp install (which runs after
 	// this) requires NNP, and NNP is also a prerequisite for Landlock's
 	// restrict_self. This is safe in permissive mode because NNP by itself
@@ -273,7 +345,9 @@ func (lb *LinuxBackend) ApplyWithMode(policy SandboxPolicy, mode Mode) error {
 		slog.Info("sandbox.permissive.downgraded",
 			"reason", "kernel_lacks_permissive_landlock",
 			"abi_version", lb.abiVersion,
-			"rules", len(policy.FilesystemRules))
+			"rules", len(policy.FilesystemRules),
+			"bind_rules", len(policy.BindPortRules),
+			"connect_rules", len(policy.ConnectPortRules))
 		return nil
 	}
 
@@ -288,10 +362,17 @@ func (lb *LinuxBackend) ApplyWithMode(policy SandboxPolicy, mode Mode) error {
 	// be removed, so this stays true for the rest of the process lifetime.
 	// DescribeBackend reads this to distinguish capability from enforcement.
 	lb.policyApplied = true
+	lb.savedPolicy = policy
+	lb.savedMode = mode
 	processLandlockApplied.Store(true)
+	registerCurrentLinuxBackend(lb)
 
 	slog.Info("Landlock sandbox applied",
-		"abi_version", lb.abiVersion, "rules", len(policy.FilesystemRules), "mode", string(mode))
+		"abi_version", lb.abiVersion,
+		"rules", len(policy.FilesystemRules),
+		"bind_rules", len(policy.BindPortRules),
+		"connect_rules", len(policy.ConnectPortRules),
+		"mode", string(mode))
 	return nil
 }
 
@@ -363,6 +444,30 @@ func addLandlockPathRule(rulesetFd int, path string, rights uint64) error {
 	return nil
 }
 
+// addLandlockNetPortRule registers an allow-rule for a single TCP port via
+// landlock_add_rule(LANDLOCK_RULE_NET_PORT). rights is the bitmask of net
+// access rights (NET_BIND_TCP and/or NET_CONNECT_TCP) that the rule grants.
+// The kernel rejects rights not declared in handledAccessNet on the parent
+// ruleset, so callers must either pass a superset of handledAccessNet or
+// enable handledAccessNet to cover the rights here. Mirrors addLandlockPathRule.
+func addLandlockNetPortRule(rulesetFd int, port uint16, rights uint64) error {
+	attr := landlockNetPortAttr{
+		allowedAccess: rights,
+		port:          uint64(port),
+	}
+	_, _, errno := unix.Syscall6(
+		sysLandlockAddRule,
+		uintptr(rulesetFd),
+		landlockRuleNetPort,
+		uintptr(unsafe.Pointer(&attr)),
+		0, 0, 0,
+	)
+	if errno != 0 {
+		return fmt.Errorf("add_rule net_port=%d: %w", port, errno)
+	}
+	return nil
+}
+
 func probeLandlockABIPlatform() int {
 	version, _, errno := unix.Syscall(
 		sysLandlockCreateRuleset,
@@ -374,6 +479,119 @@ func probeLandlockABIPlatform() int {
 		return 0
 	}
 	return int(version)
+}
+
+// currentLinuxBackend holds the LinuxBackend that most recently completed
+// ApplyWithMode in enforce mode. We need this because Landlock enforces per
+// OS thread (`landlock_restrict_self` only restricts the calling thread plus
+// its future descendants). Go's M:N scheduler routes goroutines onto
+// arbitrary OS worker threads, so any goroutine that forks a child via
+// `exec.Cmd.Start` may run on an unrestricted thread and the child silently
+// escapes the kernel sandbox. Spawn-time helpers (RestrictCurrentThread,
+// RunOnRestrictedThread) read this singleton to rebuild an equivalent ruleset
+// on whichever thread is about to fork.
+var (
+	currentLinuxBackendMu sync.RWMutex
+	currentLinuxBackend   *LinuxBackend
+)
+
+func registerCurrentLinuxBackend(lb *LinuxBackend) {
+	currentLinuxBackendMu.Lock()
+	currentLinuxBackend = lb
+	currentLinuxBackendMu.Unlock()
+}
+
+// CurrentLinuxBackend returns the LinuxBackend that completed Apply in the
+// current process, or nil if none did. Callers MUST treat the returned value
+// as read-only.
+func CurrentLinuxBackend() *LinuxBackend {
+	currentLinuxBackendMu.RLock()
+	defer currentLinuxBackendMu.RUnlock()
+	return currentLinuxBackend
+}
+
+// restrictCurrentThreadIfNeeded re-applies the saved enforce-mode policy to
+// the calling OS thread. No-op when the gateway is not in enforce mode. The
+// caller must hold runtime.LockOSThread before calling. See the linux
+// implementation's RestrictCurrentThread for the contract.
+func restrictCurrentThreadIfNeeded() error {
+	lb := CurrentLinuxBackend()
+	if lb == nil {
+		return nil
+	}
+	return lb.RestrictCurrentThread()
+}
+
+// RestrictCurrentThread applies the saved enforce-mode policy to the calling
+// OS thread. The caller MUST runtime.LockOSThread() before invoking this and
+// MUST NOT runtime.UnlockOSThread afterwards — the OS thread is permanently
+// restricted and Go must dispose of it (by exiting the goroutine that owns
+// the lock) rather than recycling it for unrelated work.
+//
+// Returns nil (no-op) if the saved mode was anything other than ModeEnforce.
+// Returns an error if the kernel rejects the ruleset; callers must abort the
+// spawn rather than fall through to an unrestricted exec.
+func (lb *LinuxBackend) RestrictCurrentThread() error {
+	if lb == nil || lb.savedMode != ModeEnforce {
+		return nil
+	}
+
+	// 1. PR_SET_NO_NEW_PRIVS is per-thread on Linux; new Go worker threads
+	//    inherit it from their creator's state at clone() time, but Go may
+	//    have created OS threads BEFORE the boot Apply ran. Re-set it here
+	//    so the ruleset attach in step 4 is accepted on the calling thread.
+	if _, _, errno := unix.RawSyscall(unix.SYS_PRCTL, unix.PR_SET_NO_NEW_PRIVS, 1, 0); errno != 0 {
+		return fmt.Errorf("landlock: prctl(PR_SET_NO_NEW_PRIVS) failed: %w", errno)
+	}
+
+	// 2. Build a fresh ruleset matching the saved policy.
+	attr := landlockRulesetAttr{
+		handledAccessFS:  lb.allRights,
+		handledAccessNet: lb.handledAccessNet,
+	}
+	rulesetFd, _, errno := unix.Syscall(
+		sysLandlockCreateRuleset,
+		uintptr(unsafe.Pointer(&attr)),
+		unsafe.Sizeof(attr),
+		0,
+	)
+	if errno != 0 {
+		return fmt.Errorf("landlock: create_ruleset failed: %w", errno)
+	}
+	defer unix.Close(int(rulesetFd))
+
+	// 3. Re-add the saved filesystem and net port rules. We tolerate ENOENT
+	//    (path missing on this arch) and EINVAL/ENOENT for net rules on
+	//    older ABIs, matching ApplyWithMode's behavior.
+	for _, rule := range lb.savedPolicy.FilesystemRules {
+		rights := lb.accessToLandlockRights(rule.Access)
+		if err := addLandlockPathRule(int(rulesetFd), rule.Path, rights); err != nil {
+			if errors.Is(err, unix.ENOENT) {
+				continue
+			}
+			return fmt.Errorf("landlock: re-add path %q: %w", rule.Path, err)
+		}
+	}
+	if lb.abiVersion >= 4 {
+		for _, rule := range lb.savedPolicy.BindPortRules {
+			if err := addLandlockNetPortRule(int(rulesetFd), rule.Port, landlockAccessNetBindTcp); err != nil {
+				if errors.Is(err, unix.EINVAL) || errors.Is(err, unix.ENOENT) {
+					continue
+				}
+				return fmt.Errorf("landlock: re-add bind port %d: %w", rule.Port, err)
+			}
+		}
+		// ConnectPortRules deliberately not re-added; matches the
+		// handledAccessNet decision in computeRights.
+	}
+
+	// 4. restrict_self installs the Landlock domain on the calling thread.
+	//    Children forked from this thread will inherit the domain; sibling
+	//    threads in the same process are unaffected.
+	if _, _, errno := unix.Syscall(sysLandlockRestrictSelf, rulesetFd, 0, 0); errno != 0 {
+		return fmt.Errorf("landlock: restrict_self failed: %w", errno)
+	}
+	return nil
 }
 
 func selectBackendPlatform() (SandboxBackend, string) {

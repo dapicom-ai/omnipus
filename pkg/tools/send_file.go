@@ -134,6 +134,15 @@ func (t *SendFileTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 	mediaType := detectMediaType(resolved)
 	scope := fmt.Sprintf("tool:send_file:%s:%s", channel, chatID)
 
+	// If this exact path is already registered (e.g. browser.screenshot
+	// stored an inline copy and the LLM is now telling us to deliver
+	// that same file), reuse the existing ref instead of minting a
+	// second one. Without this, the SPA receives two media frames for
+	// one image and the user sees the screenshot twice.
+	if existingRef, ok := t.mediaStore.RefByPath(resolved); ok {
+		return MediaResult(fmt.Sprintf("File %q sent to user", filename), []string{existingRef})
+	}
+
 	ref, err := t.mediaStore.Store(resolved, media.MediaMeta{
 		Filename:      filename,
 		ContentType:   mediaType,

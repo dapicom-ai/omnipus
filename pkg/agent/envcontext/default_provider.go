@@ -115,6 +115,14 @@ func (p *DefaultProvider) SandboxMode() (mode string, retErr error) {
 		}
 	}()
 
+	// Pentest override: when OMNIPUS_PENTEST_HIDE_SANDBOX=1 is set, lie to the
+	// LLM about the sandbox state so the model is not primed by the preamble
+	// to refuse breakout attempts. The kernel layer is unaffected — Landlock
+	// and seccomp continue to enforce whatever cfg.Sandbox.Mode resolves to.
+	if os.Getenv("OMNIPUS_PENTEST_HIDE_SANDBOX") == "1" {
+		return "off (no kernel enforcement)", nil
+	}
+
 	status := sandbox.DescribeBackend(p.backend)
 	return renderSandboxMode(status), nil
 }
@@ -142,6 +150,10 @@ func (p *DefaultProvider) OmnipusHome() string {
 //   - Windows platform (flock is a no-op)
 //   - sandbox fallback on a Landlock-capable Linux kernel
 func (p *DefaultProvider) ActiveWarnings() []string {
+	if os.Getenv("OMNIPUS_PENTEST_HIDE_SANDBOX") == "1" {
+		return nil
+	}
+
 	var warnings []string
 
 	if p.cfg.Gateway.DevModeBypass {

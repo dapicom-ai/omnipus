@@ -49,6 +49,12 @@ type MediaStore interface {
 	// ReleaseAll deletes all files registered under the given scope
 	// and removes the mapping entries. File-not-exist errors are ignored.
 	ReleaseAll(scope string) error
+
+	// RefByPath returns an existing ref for the given local path, if one is
+	// registered. Used to short-circuit duplicate registrations when the
+	// same on-disk file would otherwise get a second ref (e.g. send_file
+	// invoked on a path that browser.screenshot already stored inline).
+	RefByPath(localPath string) (ref string, ok bool)
 }
 
 // mediaEntry holds the path and metadata for a stored media file.
@@ -85,7 +91,21 @@ type FileMediaStore struct {
 	startOnce  sync.Once
 	stopOnce   sync.Once
 	nowFunc    func() time.Time // for testing
+
+	// saveMu guards the debounced-save state. saveTimer coalesces multiple
+	// Store/ReleaseAll calls into one disk write per saveDebounce window;
+	// see scheduleSave.
+	saveMu      sync.Mutex
+	saveTimer   *time.Timer
+	saveStopped bool
 }
+
+// saveDebounce is the coalescing window for SaveRegistry. Calls landing
+// within this interval collapse into one disk write — under burst load
+// (mass send_file or ReleaseAll on session end) this prevents N concurrent
+// goroutines from serializing the registry N times. Tests may override the
+// timer directly via the lock if they need synchronous behavior.
+const saveDebounce = 200 * time.Millisecond
 
 // NewFileMediaStore creates a new FileMediaStore without background cleanup.
 func NewFileMediaStore() *FileMediaStore {
@@ -144,8 +164,29 @@ func (s *FileMediaStore) Store(localPath string, meta MediaMeta, scope string) (
 	pathState.refCount++
 	s.pathStates[localPath] = pathState
 
-	go s.SaveRegistry()
+	s.scheduleSave()
 	return ref, nil
+}
+
+// RefByPath returns the most-recently-registered ref pointing at localPath,
+// or "", false if no live ref exists for that path.
+func (s *FileMediaStore) RefByPath(localPath string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var (
+		best     string
+		bestTime time.Time
+	)
+	for ref, entry := range s.refs {
+		if entry.path != localPath {
+			continue
+		}
+		if best == "" || entry.storedAt.After(bestTime) {
+			best = ref
+			bestTime = entry.storedAt
+		}
+	}
+	return best, best != ""
 }
 
 // Resolve returns the local path for the given ref.
@@ -209,7 +250,7 @@ func (s *FileMediaStore) ReleaseAll(scope string) error {
 		}
 	}
 
-	go s.SaveRegistry()
+	s.scheduleSave()
 	return nil
 }
 
@@ -346,13 +387,56 @@ func (s *FileMediaStore) Start() {
 	})
 }
 
-// Stop terminates the background cleanup goroutine.
+// Stop terminates the background cleanup goroutine and flushes any pending
+// registry save synchronously, ensuring writes scheduled just before exit
+// are not lost.
 // Safe to call multiple times; only the first call closes the channel.
 func (s *FileMediaStore) Stop() {
+	s.flushPendingSave()
 	if s.stop == nil {
 		return
 	}
 	s.stopOnce.Do(func() {
 		close(s.stop)
 	})
+}
+
+// scheduleSave coalesces registry persistence: callers within saveDebounce
+// of each other share one write. The timer fires in its own short-lived
+// goroutine so the caller never blocks. After Stop, scheduleSave is a
+// no-op — the final flush already happened in flushPendingSave.
+func (s *FileMediaStore) scheduleSave() {
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
+	if s.saveStopped {
+		return
+	}
+	if s.saveTimer != nil {
+		// A save is already pending; the in-flight timer will pick up the
+		// state at fire-time. SaveRegistry takes its own RLock snapshot so
+		// concurrent map mutations between schedule and fire are safe.
+		return
+	}
+	s.saveTimer = time.AfterFunc(saveDebounce, func() {
+		s.SaveRegistry()
+		s.saveMu.Lock()
+		s.saveTimer = nil
+		s.saveMu.Unlock()
+	})
+}
+
+// flushPendingSave runs any pending registry write synchronously and blocks
+// further scheduling. Called from Stop on graceful shutdown.
+func (s *FileMediaStore) flushPendingSave() {
+	s.saveMu.Lock()
+	hadPending := s.saveTimer != nil
+	if hadPending {
+		s.saveTimer.Stop()
+		s.saveTimer = nil
+	}
+	s.saveStopped = true
+	s.saveMu.Unlock()
+	if hadPending {
+		s.SaveRegistry()
+	}
 }

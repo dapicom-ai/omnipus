@@ -1,5 +1,5 @@
 // Package sandbox — hardened-exec child wrapper for Tier 2 (build_static)
-// and Tier 3 (run_in_workspace) tools per.
+// and Tier 3 (web_serve dev mode + workspace.shell_bg) tools.
 //
 // Cross-platform contract:
 //
@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -157,6 +158,80 @@ func Run(ctx context.Context, argv []string, env []string, lim Limits) (Result, 
 		return Result{}, ErrEmptyArgv
 	}
 
+	// Linux Landlock enforces per-OS-thread, but Go's M:N scheduler routes
+	// goroutines onto arbitrary worker threads. If we forked the child from
+	// whichever worker thread happened to run this goroutine, it would
+	// almost certainly be a thread that never had restrict_self called on
+	// it, and the child would silently escape the gateway's kernel sandbox.
+	// To close that gap we run the entire spawn-and-wait sequence inside a
+	// dedicated goroutine that locks itself to a fresh OS thread, re-applies
+	// the Landlock domain to that thread, and exits without unlocking — so
+	// Go's runtime disposes of the (now-restricted) thread instead of
+	// recycling it for unrelated work. On non-enforce modes and non-Linux
+	// platforms restrictCurrentThreadIfNeeded is a no-op and the wrapper
+	// only adds the overhead of one extra goroutine per spawn.
+	type runResult struct {
+		res Result
+		err error
+	}
+	ch := make(chan runResult, 1)
+	go func() {
+		runtime.LockOSThread()
+		// Intentionally NO UnlockOSThread — see comment above. The
+		// goroutine returns at the end of this function, which causes the
+		// runtime to terminate the locked thread.
+		if err := restrictCurrentThreadIfNeeded(); err != nil {
+			ch <- runResult{Result{}, fmt.Errorf("hardened_exec: per-thread restrict: %w", err)}
+			return
+		}
+		res, err := runOnCurrentThread(ctx, argv, env, lim)
+		ch <- runResult{res, err}
+	}()
+	r := <-ch
+	return r.res, r.err
+}
+
+// StartLocked invokes cmd.Start on an OS thread that has the gateway's
+// Landlock domain re-applied to it, so the forked child inherits the kernel
+// sandbox even when Go's M:N scheduler would otherwise have routed the
+// spawning goroutine onto an unrestricted worker thread. The launching
+// goroutine then exits without UnlockOSThread, which causes Go's runtime to
+// terminate the (permanently restricted) OS thread instead of recycling it
+// for unrelated work.
+//
+// After this returns, the caller can safely cmd.Wait, cmd.Process.Kill,
+// cmd.Process.Signal, etc. from any goroutine — those operations do not
+// require the launching thread.
+//
+// IMPORTANT: PR_SET_PDEATHSIG is cleared on cmd before Start, because the
+// launching OS thread dies as soon as the goroutine returns. If a caller
+// (e.g. ApplyChildHardening) has set Pdeathsig=SIGTERM, the kernel would
+// fire that signal at the child the moment Go retires the locked thread.
+// StartLocked therefore unconditionally clears Pdeathsig — children launched
+// through this helper survive the launching thread's death and are managed
+// by their own lifecycle owner (DevServerRegistry, session manager, etc.).
+//
+// On non-Linux platforms or when the sandbox is disabled,
+// restrictCurrentThreadIfNeeded is a no-op and this wrapper costs only one
+// goroutine + channel hop per spawn.
+func StartLocked(cmd *exec.Cmd) error {
+	clearPdeathsigForBackground(cmd)
+	ch := make(chan error, 1)
+	go func() {
+		runtime.LockOSThread()
+		// Intentionally NO UnlockOSThread.
+		if err := restrictCurrentThreadIfNeeded(); err != nil {
+			ch <- fmt.Errorf("hardened_exec: per-thread restrict: %w", err)
+			return
+		}
+		ch <- cmd.Start()
+	}()
+	return <-ch
+}
+
+// runOnCurrentThread is the original Run body, kept private so Run can wrap
+// it in a thread-locked goroutine without duplicating the spawn logic.
+func runOnCurrentThread(ctx context.Context, argv []string, env []string, lim Limits) (Result, error) {
 	// Set up the wall-clock timeout. We always derive a child context so
 	// the caller's ctx can still cancel earlier than TimeoutSeconds.
 	runCtx := ctx
@@ -354,8 +429,8 @@ func formatBytes(n int) string {
 
 // ApplyChildHardening exposes the platform-specific pre-start hardening
 // (Setpgid, Pdeathsig on Linux; Setpgid on darwin; no-op on windows) so
-// callers that need a non-blocking spawn (e.g. background dev servers in
-// run_in_workspace) can apply the same primitives without going through
+// callers that need a non-blocking spawn (e.g. web_serve dev-mode and
+// workspace.shell_bg) can apply the same primitives without going through
 // Run.
 //
 // Caller responsibility:

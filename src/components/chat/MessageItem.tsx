@@ -120,10 +120,6 @@ export function MessageItem({ message }: MessageItemProps) {
                     {message.content}
                   </ReactMarkdown>
 
-                  {/* Streaming cursor */}
-                  {message.streamCursor && (
-                    <span className="inline-block w-2 h-4 bg-[var(--color-secondary)] animate-pulse align-text-bottom ml-0.5" />
-                  )}
                 </div>
               )}
             </>

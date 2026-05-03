@@ -83,6 +83,28 @@ type ExecToolDeps struct {
 	// loopback SSRF proxy (SEC-28). Nil disables proxy injection — the child
 	// receives no HTTP_PROXY env vars and traffic flows directly to the network.
 	ExecProxy ExecChildProxy
+
+	// SandboxMode is the resolved sandbox mode from cfg.Sandbox.ResolvedMode().
+	// Empty string and "enforce" / "permissive" route the child process through
+	// sandbox.Run (foreground) or ApplyChildHardening (background) so it
+	// inherits the gateway's Landlock + seccomp + egress-proxy policy.
+	// "off" preserves today's behaviour: a plain `sh -c <cmd>` with no proxy
+	// and full user latitude (the operator chose to disable the sandbox).
+	SandboxMode string
+
+	// EgressProxy is the kernel-sandbox HTTP/HTTPS egress proxy. When non-nil
+	// AND SandboxMode != "off", the child's HTTP_PROXY/HTTPS_PROXY env vars
+	// are pointed at it via sandbox.Limits.EgressProxyAddr. Nil disables the
+	// proxy injection on the sandboxed path; the SEC-28 ExecProxy above is a
+	// separate, complementary mechanism kept for the sandbox-off / fallback
+	// platform paths.
+	EgressProxy *sandbox.EgressProxy
+
+	// ExecTimeoutSeconds is the wall-clock timeout passed to sandbox.Run when
+	// the sandbox-on path is taken. 0 disables the per-call timeout (the
+	// caller's context governs cancellation). Sourced from
+	// cfg.Tools.Exec.TimeoutSeconds.
+	ExecTimeoutSeconds int32
 }
 
 var (
@@ -125,6 +147,18 @@ type ExecTool struct {
 	// auditLogger receives path.access_denied events for workspace-guard
 	// rejections. Nil means audit logging is disabled (best-effort).
 	auditLogger *audit.Logger
+
+	// sandboxMode is the resolved sandbox mode; "off" → legacy `sh -c` path;
+	// any other value (including "" which defaults to enforce in the policy
+	// engine) → hardened-exec path via sandbox.Run / ApplyChildHardening.
+	sandboxMode string
+	// sandboxEgressProxy is the *sandbox.EgressProxy plumbed into the
+	// hardened-exec Limits. Nil disables proxy injection on the sandbox-on
+	// path (children make HTTP requests directly).
+	sandboxEgressProxy *sandbox.EgressProxy
+	// execTimeoutSeconds is the timeout passed to sandbox.Run (sandbox-on
+	// foreground path). 0 = no timeout.
+	execTimeoutSeconds int32
 }
 
 // SetAuditLogger injects an audit.Logger into the ExecTool so that
@@ -230,7 +264,33 @@ func NewExecToolWithDeps(
 	tool.sandboxBackend = deps.SandboxBackend
 	tool.sandboxPolicy = deps.SandboxPolicy
 	tool.execProxy = deps.ExecProxy
+	tool.sandboxMode = deps.SandboxMode
+	tool.sandboxEgressProxy = deps.EgressProxy
+	tool.execTimeoutSeconds = deps.ExecTimeoutSeconds
 	return tool, nil
+}
+
+// sandboxOn reports whether the exec tool should route children through the
+// hardened-exec path (sandbox.Run / ApplyChildHardening). The decision is
+// explicit-opt-in: only "enforce" and "permissive" turn it on. Any other
+// value — including "off" and the empty string — preserves today's behaviour
+// (`sh -c <cmd>`, no proxy, no workspace cwd unless the caller passes one).
+//
+// Empty string explicitly maps to OFF so the many test paths that construct
+// an ExecTool via NewExecTool / NewExecToolWithConfig (no deps) continue to
+// behave exactly as before. Production boot routes through
+// NewExecToolWithDeps which sets SandboxMode from cfg.Sandbox.ResolvedMode(),
+// so production is unaffected by this default.
+func (t *ExecTool) sandboxOn() bool {
+	if t == nil {
+		return false
+	}
+	switch t.sandboxMode {
+	case string(sandbox.ModeEnforce), string(sandbox.ModePermissive):
+		return true
+	default:
+		return false
+	}
 }
 
 // applySandboxToCmd applies the configured sandbox policy to a child process
@@ -524,6 +584,21 @@ func (t *ExecTool) executeRun(ctx context.Context, args map[string]any) *ToolRes
 }
 
 func (t *ExecTool) runSync(ctx context.Context, command, cwd string) *ToolResult {
+	// Sandbox-on path: route the child through sandbox.Run so it picks up
+	// workspace cwd, the egress proxy, RLIMITs, npm cache, scrubbed env, and
+	// inherits the gateway's kernel Landlock + seccomp policy (FS rules + the
+	// new bind/connect port allow-list). The kernel layer is the load-bearing
+	// piece — without it, the agent could still bind 5173 and serve the
+	// internet directly, defeating the purpose of web_serve.
+	if t.sandboxOn() {
+		return t.runSyncHardened(ctx, command, cwd)
+	}
+
+	// Legacy path (sandbox=off): trust mode. Operator opted out of the
+	// sandbox; exec runs as the user with full host latitude (sudo if the
+	// user has it, any port, any path the user can reach). This is the
+	// documented contract for ModeOff.
+
 	// timeout == 0 means no timeout
 	var cmdCtx context.Context
 	var cancel context.CancelFunc
@@ -651,6 +726,125 @@ func (t *ExecTool) runSync(ctx context.Context, command, cwd string) *ToolResult
 	}
 }
 
+// runSyncHardened runs the command via sandbox.Run so it inherits the
+// gateway's Landlock + seccomp policy and gets workspace cwd, scrubbed env,
+// and the egress proxy injected. Output shape mirrors the legacy runSync
+// path so the agent UX does not change.
+func (t *ExecTool) runSyncHardened(ctx context.Context, command, cwd string) *ToolResult {
+	argv := buildShellArgv(command)
+
+	wsDir := cwd
+	if wsDir == "" {
+		wsDir = t.workingDir
+	}
+
+	lim := sandbox.Limits{
+		TimeoutSeconds: t.execTimeoutSeconds,
+		WorkspaceDir:   wsDir,
+	}
+	if t.sandboxEgressProxy != nil {
+		lim.EgressProxyAddr = t.sandboxEgressProxy.Addr()
+	}
+
+	res, err := sandbox.Run(ctx, argv, nil, lim)
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("sandbox.Run failed: %v", err))
+	}
+
+	output := string(res.Stdout)
+	if len(res.Stderr) > 0 {
+		if output != "" {
+			output += "\n"
+		}
+		output += "STDERR:\n" + string(res.Stderr)
+	}
+
+	if res.TimedOut {
+		msg := fmt.Sprintf("Command timed out after %d seconds", t.execTimeoutSeconds)
+		if output != "" {
+			msg += "\n\nPartial output before timeout:\n" + output
+		}
+		return &ToolResult{
+			ForLLM:  msg,
+			ForUser: msg,
+			IsError: true,
+			Err:     errors.New("command timeout"),
+		}
+	}
+
+	if res.ExitCode != 0 {
+		output += fmt.Sprintf("\n\n[Command exited with code %d]", res.ExitCode)
+		if res.ExitCode == -1 {
+			output += " (killed by signal)"
+		}
+	}
+
+	if output == "" {
+		output = "(no output)"
+	}
+
+	const maxLen = 10000
+	if len(output) > maxLen {
+		totalLen := len(output)
+		output = output[:maxLen] + fmt.Sprintf("\n... (truncated, %d more chars)", totalLen-maxLen)
+	}
+
+	return &ToolResult{
+		ForLLM:  output,
+		ForUser: output,
+		IsError: res.ExitCode != 0,
+	}
+}
+
+// sandboxLimitsEnv replicates the env layering that sandbox.Run.mergeEnv
+// performs internally so background sessions on the sandbox-on path see the
+// same HTTP_PROXY / npm_config_cache injections as foreground sandbox.Run
+// callers. The gateway env is inherited (with sensitive keys stripped) so
+// children get a working PATH/HOME/LANG without leaking master-key material.
+//
+// Order matters: gateway env first, then injected proxy/cache vars last so
+// they take precedence on duplicate keys (POSIX exec(3) semantics).
+func sandboxLimitsEnv(lim sandbox.Limits) []string {
+	parent := os.Environ()
+	scrubbed := make([]string, 0, len(parent)+8)
+	for _, kv := range parent {
+		eq := strings.IndexByte(kv, '=')
+		if eq <= 0 {
+			continue
+		}
+		switch kv[:eq] {
+		case "OMNIPUS_MASTER_KEY", "OMNIPUS_KEY_FILE", "OMNIPUS_BEARER_TOKEN":
+			continue
+		}
+		scrubbed = append(scrubbed, kv)
+	}
+	if lim.EgressProxyAddr != "" {
+		proxyURL := "http://" + lim.EgressProxyAddr
+		scrubbed = append(scrubbed,
+			"HTTP_PROXY="+proxyURL,
+			"HTTPS_PROXY="+proxyURL,
+			"http_proxy="+proxyURL,
+			"https_proxy="+proxyURL,
+			"NO_PROXY=127.0.0.1,localhost,::1",
+			"no_proxy=127.0.0.1,localhost,::1",
+		)
+	}
+	if lim.WorkspaceDir != "" {
+		scrubbed = append(scrubbed, "npm_config_cache="+lim.WorkspaceDir+"/.npm-cache")
+	}
+	return scrubbed
+}
+
+// buildShellArgv returns the platform-appropriate shell argv to execute a
+// free-form command. Mirrors the legacy runSync / runBackground branches so
+// shell features (pipes, &&, redirects) keep working on the sandbox-on path.
+func buildShellArgv(command string) []string {
+	if runtime.GOOS == "windows" {
+		return []string{"powershell", "-NoProfile", "-NonInteractive", "-Command", command}
+	}
+	return []string{"sh", "-c", command}
+}
+
 func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEnabled bool) *ToolResult {
 	sessionID := generateSessionID()
 	session := &ProcessSession{
@@ -726,6 +920,41 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 		return ErrorResult(err.Error())
 	}
 
+	// Sandbox-on path for background sessions: inject the same Limits-derived
+	// env (HTTP_PROXY/HTTPS_PROXY, NO_PROXY, npm_config_cache) that
+	// sandbox.Run applies on the foreground path, and apply Setpgid + Pdeathsig
+	// process-group hardening via ApplyChildHardening when not in PTY mode.
+	// PTY sessions require Setsid (set by setSysProcAttrForPty above), which
+	// conflicts with Setpgid; skip the SysProcAttr step for PTY. Kernel
+	// Landlock + seccomp + the bind/connect port allow-list are process-wide
+	// and inherit to the child regardless, so the security-critical pieces
+	// are still in force on the PTY path.
+	var hardenedLim sandbox.Limits
+	if t.sandboxOn() {
+		hardenedLim = sandbox.Limits{
+			TimeoutSeconds: 0, // background sessions are governed by maxBackgroundSeconds
+			WorkspaceDir:   cwd,
+		}
+		if t.sandboxEgressProxy != nil {
+			hardenedLim.EgressProxyAddr = t.sandboxEgressProxy.Addr()
+		}
+		// Build env: scrub gateway secrets, then layer the Limits injections.
+		// We let mergeEnv do the work by handing its output back via cmd.Env.
+		cmd.Env = sandboxLimitsEnv(hardenedLim)
+
+		if !ptyEnabled {
+			if err := sandbox.ApplyChildHardening(cmd, hardenedLim); err != nil {
+				if session.ptyMaster != nil {
+					session.ptyMaster.Close()
+				}
+				if ptySlaveToClose != nil {
+					ptySlaveToClose.Close()
+				}
+				return ErrorResult(fmt.Sprintf("sandbox hardening failed: %v", err))
+			}
+		}
+	}
+
 	// SEC-28: Route child-process HTTP(S) traffic through the loopback SSRF
 	// proxy. Unlike runSync we cannot defer CmdDone() here because the command
 	// runs asynchronously; the paired CmdDone() call is made from the wait
@@ -739,7 +968,21 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 		proxyActive = true
 	}
 
-	if err := cmd.Start(); err != nil {
+	// When the sandbox is on, the spawn must happen on a thread that has
+	// Landlock re-applied so the child inherits the kernel domain. Without
+	// this hop, Go's M:N scheduler routes the fork through whichever worker
+	// thread is currently running this goroutine, and that thread is almost
+	// never the boot thread that received restrict_self at gateway start —
+	// so the child silently escapes the sandbox. PTY mode skips Setpgid but
+	// still needs the per-thread re-apply for the Landlock inheritance to
+	// kick in.
+	startErr := func() error {
+		if t.sandboxOn() {
+			return sandbox.StartLocked(cmd)
+		}
+		return cmd.Start()
+	}()
+	if startErr != nil {
 		// Start failed after PrepareCmd: balance the counter immediately so
 		// the proxy's idle watcher can still shut it down.
 		if proxyActive {
@@ -752,7 +995,7 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 		if ptySlaveToClose != nil {
 			ptySlaveToClose.Close()
 		}
-		return ErrorResult(fmt.Sprintf("failed to start command: %v", err))
+		return ErrorResult(fmt.Sprintf("failed to start command: %v", startErr))
 	}
 	if ptySlaveToClose != nil {
 		ptySlaveToClose.Close()

@@ -1,11 +1,11 @@
 // Package sandbox — SpawnBackgroundChild: shared helper for long-running
 // background processes (dev servers) that must run under sandbox hardening.
 //
-// This was lifted from pkg/tools/run_in_workspace.go:startBackgroundChild
-// so that both run_in_workspace and workspace.shell_bg share the same
-// spawn+harden sequence without duplication. The original file's
-// startBackgroundChild delegates here; the new workspace.shell_bg uses it
-// directly.
+// Used by web_serve (dev mode) and workspace.shell_bg to spawn child
+// processes through the sandbox's hardened-exec path. The two callers share
+// the same spawn+harden sequence so kernel restrictions (Landlock, seccomp,
+// no-new-privs) apply consistently regardless of which tool started the
+// child.
 //
 // Callers are responsible for:
 //   - Waiting on the returned *exec.Cmd (via a goroutine) so the zombie
@@ -134,7 +134,11 @@ func SpawnBackgroundChild(
 		clearPdeathsigForBackground(cmd)
 	}
 
-	if err := cmd.Start(); err != nil {
+	// Thread-locked spawn: re-applies Landlock to the launching OS thread
+	// so the child inherits the kernel sandbox. See StartLocked for the
+	// full rationale. clearPdeathsigForBackground above ensures the dev
+	// server survives the launching thread's death.
+	if err := StartLocked(cmd); err != nil {
 		return nil, fmt.Errorf("SpawnBackgroundChild: start %s: %w", strings.Join(parts, " "), err)
 	}
 
