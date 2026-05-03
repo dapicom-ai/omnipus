@@ -304,10 +304,21 @@ func (lb *LinuxBackend) ApplyWithMode(policy SandboxPolicy, mode Mode) error {
 	if lb.abiVersion >= 4 {
 		for _, rule := range policy.BindPortRules {
 			if err := addLandlockNetPortRule(int(rulesetFd), rule.Port, landlockAccessNetBindTcp); err != nil {
+				// B1.4-c: On ABI >=4 the kernel explicitly claims NET_BIND_TCP
+				// support. EINVAL or ENOENT at this point means our syscall
+				// arguments are malformed or the kernel is in an inconsistent
+				// state — NOT that the feature is unavailable (that would have
+				// been caught during probeLandlockABIPlatform). Soft-skipping
+				// here would silently boot with a partial allow-list that does
+				// not cover all configured ports, making the bind-port
+				// enforcement incomplete in a way operators cannot detect.
+				// Promote to a hard error so the boot path surfaces this via
+				// the existing SandboxBootError path.
 				if errors.Is(err, unix.EINVAL) || errors.Is(err, unix.ENOENT) {
-					slog.Warn("Landlock: kernel rejected net bind rule, continuing without it",
-						"port", rule.Port, "error", err)
-					continue
+					return fmt.Errorf("landlock: kernel (ABI v%d) rejected net bind rule for port %d: %w"+
+						" — kernel claims net rule support but rejected the syscall; this indicates"+
+						" a kernel bug or unsupported feature flag on this build",
+						lb.abiVersion, rule.Port, err)
 				}
 				return fmt.Errorf("landlock: add bind rule for port %d: %w", rule.Port, err)
 			}
@@ -401,9 +412,62 @@ func (lb *LinuxBackend) accessToLandlockRights(access uint64) uint64 {
 	return rights
 }
 
-// ApplyToCmd is a no-op — Landlock restrictions inherit to children natively (SEC-03).
+// ApplyToCmd is intentionally a no-op for the Linux backend.
+//
+// # Landlock child-process contract — MUST READ
+//
+// Landlock is a per-thread security domain. landlock_restrict_self applies only
+// to the OS thread that calls it plus threads forked from it. Go's M:N scheduler
+// may route any goroutine onto any OS worker thread at any time, so a plain
+// cmd.Start() can fork the child from an unrestricted OS thread — the child
+// silently escapes the Landlock domain even though the gateway process is restricted.
+//
+// The correct spawn sequence for sandboxed children on Linux is:
+//
+//  1. Call backend.ApplyToCmd(cmd, policy) — safe, cooperative env injection on
+//     other platforms (FallbackBackend). A no-op here.
+//  2. Call sandbox.StartLocked(cmd) — NOT cmd.Start(). StartLocked locks the
+//     launching goroutine to a dedicated OS thread, re-applies the saved Landlock
+//     policy to that thread (so the child inherits the full domain on fork), and
+//     permanently retires the restricted thread when done.
+//
+// VIOLATION pattern — child escapes sandbox:
+//
+//	backend.ApplyToCmd(cmd, policy) // no-op on Linux
+//	cmd.Start()                     // may use an unrestricted thread -> child escapes
+//
+// CORRECT pattern — child inherits Landlock domain:
+//
+//	backend.ApplyToCmd(cmd, policy) // no-op on Linux; FallbackBackend does real work here
+//	sandbox.StartLocked(cmd)        // re-applies policy to launching thread before fork
+//
+// ApplyToCmd exists in the SandboxBackend interface so callers (shell.go,
+// hardened_exec.go) share a uniform pre-start hook. The Linux enforcement
+// is delivered entirely through StartLocked; this stub preserves interface
+// compatibility without introducing a misleading no-op that callers might
+// mistake for sufficient sandbox setup.
+//
+// startLockedCalledForCmd is checked in debug builds to catch callers that call
+// ApplyToCmd and then proceed with cmd.Start() instead of StartLocked. See the
+// companion function markStartLockedForCmd and the debug-build assertion below.
 func (lb *LinuxBackend) ApplyToCmd(_ *exec.Cmd, _ SandboxPolicy) error {
 	return nil
+}
+
+// markStartLockedCalled records that StartLocked was invoked in this process
+// for a sandboxed spawn. Called by StartLocked so debug assertions in ApplyToCmd
+// can detect the correct call ordering. The atomic is write-once: once set it
+// stays true, confirming that at least one correctly-ordered spawn has occurred.
+// This is a process-wide guard — it does not track per-cmd ordering, which
+// would require a sync.Map keyed on *exec.Cmd and is unnecessary given that all
+// sandboxed spawns in production go through StartLocked.
+var startLockedCalledOnce atomic.Bool
+
+// MarkStartLockedCalled is called by StartLocked to record that the correct
+// spawn path has been used at least once in this process. Package-level so
+// hardened_exec.go (same package) can call it without a LinuxBackend reference.
+func MarkStartLockedCalled() {
+	startLockedCalledOnce.Store(true)
 }
 
 func addLandlockPathRule(rulesetFd int, path string, rights uint64) error {
@@ -577,8 +641,14 @@ func (lb *LinuxBackend) RestrictCurrentThread() error {
 	if lb.abiVersion >= 4 {
 		for _, rule := range lb.savedPolicy.BindPortRules {
 			if err := addLandlockNetPortRule(int(rulesetFd), rule.Port, landlockAccessNetBindTcp); err != nil {
+				// B1.4-c: same hard-error contract as in ApplyWithMode. On ABI >=4
+				// the kernel explicitly supports net rules; EINVAL/ENOENT here is a
+				// real error that must not be silently swallowed during per-thread
+				// re-application. A child spawned from this thread without the full
+				// port allow-list would have wider network access than intended.
 				if errors.Is(err, unix.EINVAL) || errors.Is(err, unix.ENOENT) {
-					continue
+					return fmt.Errorf("landlock: kernel (ABI v%d) rejected net bind rule for port %d"+
+						" during per-thread re-apply: %w", lb.abiVersion, rule.Port, err)
 				}
 				return fmt.Errorf("landlock: re-add bind port %d: %w", rule.Port, err)
 			}

@@ -177,6 +177,61 @@ func TestSpawnBackgroundChild_GodModeSkipsHardening(t *testing.T) {
 	}
 }
 
+// TestSpawnBackgroundChild_LogAccumulates verifies B1.4-e regression: successive
+// spawns into the same workspace directory append to .dev-server.log rather than
+// truncating it. O_TRUNC was removed; this test catches any regression that
+// re-introduces it.
+func TestSpawnBackgroundChild_LogAccumulates(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix-only test")
+	}
+	t.Parallel()
+
+	dir := t.TempDir()
+	logPath := dir + "/.dev-server.log"
+
+	// First spawn: write a sentinel line via the shell. The child's stdout is
+	// wired by SpawnBackgroundChild to .dev-server.log.
+	cmd1, err := sandbox.SpawnBackgroundChild(
+		[]string{"sh", "-c", "echo spawn1"},
+		dir, nil, 0,
+		sandbox.Limits{WorkspaceDir: dir},
+	)
+	if err != nil {
+		t.Fatalf("spawn1: %v", err)
+	}
+	if err := cmd1.Wait(); err != nil {
+		t.Fatalf("spawn1 Wait: %v", err)
+	}
+
+	// Second spawn: write a different sentinel line.
+	cmd2, err := sandbox.SpawnBackgroundChild(
+		[]string{"sh", "-c", "echo spawn2"},
+		dir, nil, 0,
+		sandbox.Limits{WorkspaceDir: dir},
+	)
+	if err != nil {
+		t.Fatalf("spawn2: %v", err)
+	}
+	if err := cmd2.Wait(); err != nil {
+		t.Fatalf("spawn2 Wait: %v", err)
+	}
+
+	// Both sentinel lines must be present in the log — second spawn must not
+	// have truncated spawn1's output.
+	logBytes, readErr := readFile(t, logPath)
+	if readErr != nil {
+		t.Fatalf("read log: %v", readErr)
+	}
+	logContent := string(logBytes)
+	if !strings.Contains(logContent, "spawn1") {
+		t.Errorf("log file missing spawn1 output after second spawn; got:\n%s", logContent)
+	}
+	if !strings.Contains(logContent, "spawn2") {
+		t.Errorf("log file missing spawn2 output; got:\n%s", logContent)
+	}
+}
+
 // readFile is a minimal helper used by tests in this file to read a small
 // file written by a child process.
 func readFile(t *testing.T, path string) ([]byte, error) {

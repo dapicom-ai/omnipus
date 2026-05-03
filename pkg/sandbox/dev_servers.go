@@ -211,8 +211,17 @@ func (r *DevServerRegistry) Register(
 	return reg, nil
 }
 
-// Lookup returns the registration matching token, or nil if none exists.
-// Touches LastActivity on success so the idle timer slides forward.
+// Lookup returns the registration matching token, or nil if the token is
+// unknown or the entry has already expired.
+//
+// Expiry check: before touching LastActivity, Lookup tests both the idle
+// deadline (time since LastActivity > IdleTimeout) and the hard deadline
+// (time since CreatedAt > HardTimeout). If either has passed the entry is
+// considered expired and nil is returned immediately — the LastActivity field
+// is NOT updated and the janitor remains responsible for physically removing
+// the entry. This prevents the proxy from resurrecting a stale entry by
+// calling Lookup on it, which was the root cause of the "expired entries live
+// forever" bug (B1.4-a).
 func (r *DevServerRegistry) Lookup(token string) *DevServerRegistration {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -220,7 +229,15 @@ func (r *DevServerRegistry) Lookup(token string) *DevServerRegistration {
 	if !ok {
 		return nil
 	}
-	reg.LastActivity = time.Now()
+	now := time.Now()
+	if now.Sub(reg.CreatedAt) > HardTimeout || now.Sub(reg.LastActivity) > IdleTimeout {
+		// Entry is past its deadline. Do not update LastActivity — that would
+		// extend the lifetime and defeat the timeout. Leave removal to the
+		// janitor's next sweep so we don't hold the write lock longer than
+		// necessary here.
+		return nil
+	}
+	reg.LastActivity = now
 	// Return a copy so callers can read fields without holding mu.
 	cp := *reg
 	return &cp

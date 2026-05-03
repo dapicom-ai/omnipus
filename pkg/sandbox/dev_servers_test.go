@@ -159,6 +159,87 @@ func TestDevServerRegistry_TokenIsRandom(t *testing.T) {
 	}
 }
 
+// TestDevServerRegistry_LookupFreshEntry verifies that a Lookup on a fresh
+// (non-expired) entry returns the registration and advances LastActivity.
+// This is the positive-path counterpart to the expiry tests below.
+func TestDevServerRegistry_LookupFreshEntry(t *testing.T) {
+	r := NewDevServerRegistry()
+	defer r.Close()
+
+	reg, err := r.Register("agent-fresh", 18100, 9001, "vite", 5)
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	before := reg.LastActivity
+
+	time.Sleep(5 * time.Millisecond)
+
+	got := r.Lookup(reg.Token)
+	if got == nil {
+		t.Fatal("Lookup returned nil for a fresh entry; want the registration")
+	}
+	if !got.LastActivity.After(before) {
+		t.Errorf("Lookup did not advance LastActivity: before=%v after=%v", before, got.LastActivity)
+	}
+}
+
+// TestDevServerRegistry_LookupExpiredHardTimeout verifies that Lookup returns
+// nil when the entry's hard timeout has elapsed — even if LastActivity is recent.
+// The entry must NOT have its LastActivity updated (which would resurrect it).
+func TestDevServerRegistry_LookupExpiredHardTimeout(t *testing.T) {
+	r := NewDevServerRegistry()
+	defer r.Close()
+
+	reg, err := r.Register("agent-hard", 18101, 9002, "vite", 5)
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	// Fast-forward CreatedAt so the hard deadline has passed.
+	r.mu.Lock()
+	r.entries[reg.Token].CreatedAt = time.Now().Add(-(HardTimeout + time.Second))
+	// Keep LastActivity fresh so we know it is the hard cap that fires.
+	r.entries[reg.Token].LastActivity = time.Now()
+	r.mu.Unlock()
+
+	got := r.Lookup(reg.Token)
+	if got != nil {
+		t.Errorf("Lookup returned non-nil for hard-expired entry; want nil")
+	}
+
+	// Confirm LastActivity was not mutated (entry not resurrected).
+	r.mu.Lock()
+	storedActivity := r.entries[reg.Token].LastActivity
+	r.mu.Unlock()
+	if time.Since(storedActivity) > 500*time.Millisecond {
+		t.Error("Lookup must not have updated LastActivity on an expired entry")
+	}
+}
+
+// TestDevServerRegistry_LookupExpiredIdleTimeout verifies that Lookup returns
+// nil when the entry's idle timeout has elapsed — even if CreatedAt is recent.
+func TestDevServerRegistry_LookupExpiredIdleTimeout(t *testing.T) {
+	r := NewDevServerRegistry()
+	defer r.Close()
+
+	reg, err := r.Register("agent-idle", 18102, 9003, "vite", 5)
+	if err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	// Fast-forward LastActivity so the idle deadline has passed.
+	r.mu.Lock()
+	r.entries[reg.Token].LastActivity = time.Now().Add(-(IdleTimeout + time.Second))
+	// Keep CreatedAt recent so we know it is the idle cap that fires.
+	r.entries[reg.Token].CreatedAt = time.Now()
+	r.mu.Unlock()
+
+	got := r.Lookup(reg.Token)
+	if got != nil {
+		t.Errorf("Lookup returned non-nil for idle-expired entry; want nil")
+	}
+}
+
 func fakeID(i int) string {
 	return "agent-" + string(rune('a'+i%26)) + string(rune('0'+i/26))
 }

@@ -33,6 +33,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -91,23 +92,32 @@ func SpawnBackgroundChild(
 	cmd.Env = merged
 
 	// Stdio: bind stdin to an empty reader, and route stdout/stderr to a
-	// rotating log file inside the workspace so operators can debug a
-	// silently-dying dev server. os/exec opens /dev/null for nil streams,
-	// which is blocked by the gateway's Landlock policy (no /dev access),
-	// so leaving them nil is not an option. Falls back to io.Discard when
-	// the workspace is unwritable (god-mode without a workspaceDir).
+	// log file inside the workspace so operators can debug a silently-dying
+	// dev server. os/exec opens /dev/null for nil streams, which is blocked
+	// by the gateway's Landlock policy (no /dev access), so leaving them nil
+	// is not an option. Falls back to io.Discard when the workspace is
+	// unwritable (god-mode without a workspaceDir).
+	//
+	// B1.4-e: Open with O_APPEND only (no O_TRUNC) so that successive spawns
+	// accumulate log output rather than silently discarding the previous run's
+	// lines. This matches standard daemon log behaviour and is critical for
+	// post-mortem debugging when a dev server exits and is restarted.
+	//
+	// The parent-side file handle is stored in logFile so it can be closed
+	// after cmd.Start() returns. The kernel duplicates the fd into the child
+	// at fork time; the parent no longer needs its copy and holding it open
+	// would leak an fd for the lifetime of the gateway process (B1.4-e).
 	if cmd.Stdin == nil {
 		cmd.Stdin = bytes.NewReader(nil)
 	}
+	var logFile *os.File // closed after Start; child retains its own fd
 	if cmd.Stdout == nil || cmd.Stderr == nil {
 		var logSink io.Writer = io.Discard
 		if workspaceDir != "" {
 			logPath := filepath.Join(workspaceDir, ".dev-server.log")
-			if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND|os.O_TRUNC, 0o600); err == nil {
+			if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err == nil {
 				logSink = f
-				// Note: file handle leaks intentionally — the OS reclaims it
-				// when the child process exits. Closing it here would shut
-				// off the child's logging mid-run.
+				logFile = f
 			}
 		}
 		if cmd.Stdout == nil {
@@ -139,7 +149,21 @@ func SpawnBackgroundChild(
 	// full rationale. clearPdeathsigForBackground above ensures the dev
 	// server survives the launching thread's death.
 	if err := StartLocked(cmd); err != nil {
+		if logFile != nil {
+			_ = logFile.Close()
+		}
 		return nil, fmt.Errorf("SpawnBackgroundChild: start %s: %w", strings.Join(parts, " "), err)
+	}
+
+	// B1.4-e: close the parent-side log fd now that the child has been forked
+	// and holds its own copy. The kernel duplicated the fd at fork time; the
+	// parent's copy is redundant and leaks an open fd until the gateway exits.
+	if logFile != nil {
+		if err := logFile.Close(); err != nil {
+			slog.Warn("SpawnBackgroundChild: failed to close parent log fd after fork",
+				"path", filepath.Join(workspaceDir, ".dev-server.log"),
+				"error", err)
+		}
 	}
 
 	// Post-start hardening (Windows Job Object assignment, prlimit on Linux).

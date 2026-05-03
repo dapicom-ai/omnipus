@@ -339,9 +339,19 @@ func NewAgentLoop(
 			RetentionDays: 90,
 		})
 		if auditErr != nil {
-			logger.ErrorCF("agent", "Failed to initialize audit logger; audit logging disabled",
+			// B1.2(b): when sandbox.audit_log is explicitly enabled,
+			// audit construction failure is a fail-closed boot abort.
+			// CLAUDE.md "audit-everything stance is non-negotiable" —
+			// silently dropping audit while the operator asked for it would
+			// be a security regression. The gateway maps the returned typed
+			// error to a SandboxBootError + EX_CONFIG (78) exit code; see
+			// pkg/gateway/gateway.go around the agent.NewAgentLoop call.
+			logger.ErrorCF("agent",
+				"Audit logger construction failed; aborting boot because sandbox.audit_log=true",
 				map[string]any{"error": auditErr.Error(), "dir": auditDir})
-		} else {
+			return nil, &audit.LoggerConstructionError{Dir: auditDir, Err: auditErr}
+		}
+		{
 			al.auditLogger = auditLogger
 
 			// Log startup event.
@@ -4541,7 +4551,7 @@ turnLoop:
 					string(argsJSON),
 					al.cfg.Agents.Defaults.GetToolFeedbackMaxArgsLength(),
 				)
-				feedbackMsg := fmt.Sprintf("\U0001f527 `%s`\n```\n%s\n```", tc.Name, feedbackPreview)
+				feedbackMsg := fmt.Sprintf("[tool] `%s`\n```\n%s\n```", tc.Name, feedbackPreview)
 				fbCtx, fbCancel := context.WithTimeout(turnCtx, 3*time.Second)
 				if fbErr := al.bus.PublishOutbound(fbCtx, bus.OutboundMessage{
 					Channel: ts.channel,

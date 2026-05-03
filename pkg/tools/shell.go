@@ -670,7 +670,25 @@ func (t *ExecTool) runSync(ctx context.Context, command, cwd string) *ToolResult
 	select {
 	case err = <-done:
 	case <-cmdCtx.Done():
-		if termErr := terminateProcessTree(cmd); termErr != nil {
+		// B1.4-f: build an audit-emit callback so kill failures are
+		// recorded in the audit log, not just slog. The callback is nil-safe
+		// when auditLogger is not wired (e.g. god-mode or test scaffolding).
+		var killAuditFn func(pid int, killErr error, caller string)
+		if t.auditLogger != nil {
+			al := t.auditLogger
+			killAuditFn = func(pid int, killErr error, caller string) {
+				_ = al.Log(&audit.Entry{
+					Event:    "process_kill_failed",
+					Decision: audit.DecisionError,
+					Details: map[string]any{
+						"pid":    pid,
+						"error":  killErr.Error(),
+						"caller": caller,
+					},
+				})
+			}
+		}
+		if termErr := terminateProcessTree(cmd, killAuditFn); termErr != nil {
 			logger.WarnCF("shell", "terminateProcessTree error", map[string]any{"error": termErr.Error()})
 		}
 		select {

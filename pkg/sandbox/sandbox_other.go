@@ -16,3 +16,8 @@ func probeLandlockABIPlatform() int {
 }
 
 func restrictCurrentThreadIfNeeded() error { return nil }
+
+// MarkStartLockedCalled is a no-op on non-Linux platforms: there is no
+// Landlock domain to track, so the StartLocked contract marker has no effect.
+// See the linux implementation in sandbox_linux.go for the full description.
+func MarkStartLockedCalled() {}
