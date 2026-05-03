@@ -17,6 +17,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { IframePreview, type IframePreviewProps } from './IframePreview'
 
+// Re-export the module under test so we can access the private extractPath via
+// a render-based integration test (the function is not exported, so we exercise
+// it through the component's rendering behaviour).
+// For purely unit-level tests we test via observable component output.
+
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
 const mockAddToast = vi.fn()
@@ -798,5 +803,187 @@ describe('IframePreview — misconfigured-origin error block (F-31)', () => {
     expect(
       screen.queryByText(/preview origin is misconfigured/i)
     ).toBeNull()
+  })
+})
+
+// ── H-5 — About query error state ────────────────────────────────────────────
+
+describe('IframePreview — about query error state (H-5)', () => {
+  // Traces to: Wave A4 H-5 — when /api/v1/about fails (isError=true),
+  // the component must render a visible error block with a Retry button
+  // rather than spinning forever (the old `!aboutInfo` guard was infinite-spinner).
+
+  beforeEach(() => {
+    Object.defineProperty(window, 'location', {
+      value: { hostname: 'localhost', protocol: 'http:' },
+      writable: true,
+    })
+  })
+
+  it('renders an error message and Retry button when useQuery isError=true', () => {
+    // Simulate /api/v1/about returning an error (network failure, 5xx, etc.)
+    mockUseQuery.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      refetch: vi.fn(),
+    })
+
+    render(<IframePreview {...makeReadyProps()} />)
+
+    // Error message is displayed
+    expect(
+      screen.getByText(/could not load preview configuration/i)
+    ).toBeInTheDocument()
+
+    // Retry button is present and clickable
+    const retryBtn = screen.getByRole('button', { name: /retry/i })
+    expect(retryBtn).toBeInTheDocument()
+
+    // No iframe rendered while config is unavailable
+    expect(document.querySelectorAll('iframe').length).toBe(0)
+  })
+
+  it('calls refetch when Retry button is clicked', async () => {
+    const mockRefetch = vi.fn().mockResolvedValue({ data: undefined })
+    mockUseQuery.mockReturnValueOnce({
+      data: undefined,
+      isLoading: false,
+      isError: true,
+      refetch: mockRefetch,
+    })
+
+    render(<IframePreview {...makeReadyProps()} />)
+
+    const retryBtn = screen.getByRole('button', { name: /retry/i })
+    fireEvent.click(retryBtn)
+
+    await waitFor(() => {
+      expect(mockRefetch).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  it('does not render error block when query is still loading', () => {
+    // isLoading=true → spinner is shown, not the error block
+    mockUseQuery.mockReturnValueOnce({
+      data: undefined,
+      isLoading: true,
+      isError: false,
+      refetch: vi.fn(),
+    })
+
+    render(<IframePreview {...makeReadyProps()} />)
+
+    expect(
+      screen.queryByText(/could not load preview configuration/i)
+    ).toBeNull()
+    expect(screen.getByText(/loading preview/i)).toBeInTheDocument()
+  })
+})
+
+// ── H-6 — extractPath relative-path handling ──────────────────────────────────
+
+describe('IframePreview — extractPath relative-path URL handling (H-6)', () => {
+  // Traces to: Wave A4 H-6 — extractPath must handle relative-path URLs
+  // (starting with "/") without throwing, so legacy/malformed transcripts
+  // where `path` is undefined and `url` is a relative path (e.g. "/preview/jim/tok/")
+  // are replayed correctly rather than falling back to LinkOnlyFallback.
+
+  beforeEach(() => {
+    Object.defineProperty(window, 'location', {
+      value: { hostname: 'localhost', protocol: 'http:' },
+      writable: true,
+    })
+  })
+
+  it('renders iframe when result has no path but url is a relative path "/preview/jim/tok/"', () => {
+    // extractPath: path=undefined, url="/preview/jim/tok/" → returns "/preview/jim/tok/"
+    // (before this fix, new URL("/preview/jim/tok/") would throw → null → LinkOnlyFallback)
+    render(
+      <IframePreview
+        {...makeReadyProps({
+          result: {
+            path: undefined,
+            url: '/preview/jim/tok/',
+            expires_at: '2099-01-01T00:00:00Z',
+          },
+        })}
+      />
+    )
+
+    // The component must render an iframe (not a link-only fallback)
+    const iframes = document.querySelectorAll('iframe:not([aria-hidden])')
+    expect(iframes.length).toBeGreaterThan(0)
+    const src = iframes[0].getAttribute('src') ?? ''
+    expect(src).toContain('/preview/jim/tok/')
+  })
+
+  it('renders iframe when result has path="/preview/jim/tok/" (existing behaviour unchanged)', () => {
+    // extractPath: path="/preview/jim/tok/", url=undefined → returns "/preview/jim/tok/"
+    render(
+      <IframePreview
+        {...makeReadyProps({
+          result: {
+            path: '/preview/jim/tok/',
+            url: undefined,
+            expires_at: '2099-01-01T00:00:00Z',
+          },
+        })}
+      />
+    )
+
+    const iframes = document.querySelectorAll('iframe:not([aria-hidden])')
+    expect(iframes.length).toBeGreaterThan(0)
+    const src = iframes[0].getAttribute('src') ?? ''
+    expect(src).toContain('/preview/jim/tok/')
+  })
+
+  it('renders iframe when result has no path but url is an absolute URL (existing behaviour unchanged)', () => {
+    // extractPath: path=undefined, url="https://example.com/preview/jim/tok/" →
+    //   parsed.pathname = "/preview/jim/tok/" → returns "/preview/jim/tok/"
+    //
+    // NOTE: in the test environment we mock the about query to return
+    // preview_port=5001 and no preview_origin, so buildIframeURL assembles
+    // "http://localhost:5001/preview/jim/tok/" — the iframe src contains the path.
+    render(
+      <IframePreview
+        {...makeReadyProps({
+          result: {
+            path: undefined,
+            url: 'http://localhost:5001/preview/jim/tok/',
+            expires_at: '2099-01-01T00:00:00Z',
+          },
+        })}
+      />
+    )
+
+    const iframes = document.querySelectorAll('iframe:not([aria-hidden])')
+    expect(iframes.length).toBeGreaterThan(0)
+    const src = iframes[0].getAttribute('src') ?? ''
+    expect(src).toContain('/preview/jim/tok/')
+  })
+
+  it('falls back to LinkOnlyFallback (or invalid-scheme message) when url is invalid junk', () => {
+    // extractPath: path=undefined, url="invalid junk" →
+    //   does not start with "/" → new URL("invalid junk") throws → returns null
+    //   → absoluteUrl=null, result.url is truthy → LinkOnlyFallback branch
+    //   → isSafeHref("invalid junk") is false → renders "cannot render link" message
+    render(
+      <IframePreview
+        {...makeReadyProps({
+          result: {
+            path: undefined,
+            url: 'invalid junk',
+            expires_at: '2099-01-01T00:00:00Z',
+          },
+        })}
+      />
+    )
+
+    // No iframe should be rendered
+    expect(document.querySelectorAll('iframe').length).toBe(0)
+
+    // F-10: invalid scheme → plain text "cannot render link" message
+    expect(screen.getByText(/cannot render link/i)).toBeInTheDocument()
   })
 })

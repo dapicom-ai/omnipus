@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strings"
 )
 
 // fr001RemovedKeysMsg is the exact error message required by.
@@ -279,6 +280,32 @@ func validateBootConfig(cfg *Config) error {
 	if cfg.Sandbox.Experimental.WorkspaceShellEnabled == nil {
 		f := false
 		cfg.Sandbox.Experimental.WorkspaceShellEnabled = &f
+	}
+
+	// Validate Tier3Commands: each entry must have ≥2 non-empty tokens after
+	// strings.Fields. The baseline allow-list always uses "binary subcommand"
+	// format (e.g. "next dev", "vite dev"). A single-token entry like "node"
+	// would allow "node anything.js" — that is too broad and is never the
+	// operator's intent. Reject at config-load time so the error surfaces at
+	// boot rather than silently during a first Tier 3 invocation.
+	//
+	// Empty-string entries are also rejected: they are almost certainly a
+	// config authoring mistake (e.g. a trailing comma in a JSON array).
+	for i, entry := range cfg.Sandbox.Tier3Commands {
+		tokens := strings.Fields(entry)
+		switch {
+		case len(tokens) == 0:
+			return fmt.Errorf(
+				"config error: cfg.Sandbox.Tier3Commands[%d] is empty or all-whitespace — remove or replace it",
+				i,
+			)
+		case len(tokens) == 1:
+			return fmt.Errorf(
+				"config error: cfg.Sandbox.Tier3Commands[%d]=%q has only one token %q; "+
+					"entries must specify \"binary subcommand\" (≥2 tokens, e.g. \"remix dev\")",
+				i, entry, tokens[0],
+			)
+		}
 	}
 
 	// --- : AuthMismatchLogLevel ---

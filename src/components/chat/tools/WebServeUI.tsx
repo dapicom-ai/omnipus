@@ -120,7 +120,8 @@ export function WebServeBlock({
 
   // IframePreview kind: map to the existing discriminated union.
   // For web_serve static → 'serve_workspace', dev → 'run_in_workspace'.
-  // Back-compat aliases pass through their own kind directly via toolName inference.
+  // `toolName` only feeds the header label; `iframeKind` is derived from the
+  // result shape (effectiveKind / isDevMode), not from toolName.
   const iframeKind =
     isDevMode ? 'run_in_workspace' : 'serve_workspace'
 

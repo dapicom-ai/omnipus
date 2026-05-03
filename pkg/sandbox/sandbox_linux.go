@@ -299,8 +299,8 @@ func (lb *LinuxBackend) ApplyWithMode(policy SandboxPolicy, mode Mode) error {
 	// rule-add syscall returns EINVAL because handledAccessNet is zero and
 	// LANDLOCK_RULE_NET_PORT is unknown — we treat that as a soft skip so
 	// the FS rules still take effect. On capable kernels, every entry in
-	// BindPortRules / ConnectPortRules is registered as an allow-rule;
-	// any bind/connect to a port not listed will be denied with EACCES.
+	// BindPortRules is registered as an allow-rule; any bind to a port not
+	// listed will be denied with EACCES.
 	if lb.abiVersion >= 4 {
 		for _, rule := range policy.BindPortRules {
 			if err := addLandlockNetPortRule(int(rulesetFd), rule.Port, landlockAccessNetBindTcp); err != nil {

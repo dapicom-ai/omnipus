@@ -84,12 +84,17 @@ type ExecToolDeps struct {
 	// receives no HTTP_PROXY env vars and traffic flows directly to the network.
 	ExecProxy ExecChildProxy
 
-	// SandboxMode is the resolved sandbox mode from cfg.Sandbox.ResolvedMode().
-	// Empty string and "enforce" / "permissive" route the child process through
-	// sandbox.Run (foreground) or ApplyChildHardening (background) so it
-	// inherits the gateway's Landlock + seccomp + egress-proxy policy.
-	// "off" preserves today's behaviour: a plain `sh -c <cmd>` with no proxy
-	// and full user latitude (the operator chose to disable the sandbox).
+	// SandboxMode is the applied sandbox mode from al.appliedSandboxMode
+	// (set via AgentLoop.SetAppliedSandboxMode after boot). The value flows
+	// from SandboxApplyResult.Mode — the post-Apply truth — rather than from
+	// cfg.Sandbox.ResolvedMode(), which only reports what the config file says
+	// and would disagree when the CLI --sandbox flag overrides config.
+	//
+	// "enforce" and "permissive" route the child process through sandbox.Run
+	// (foreground) or ApplyChildHardening (background) so it inherits the
+	// gateway's Landlock + seccomp + egress-proxy policy.
+	// "off" and the empty string both map to sandbox disabled: a plain
+	// `sh -c <cmd>` with no proxy and full user latitude. See sandboxOn().
 	SandboxMode string
 
 	// EgressProxy is the kernel-sandbox HTTP/HTTPS egress proxy. When non-nil

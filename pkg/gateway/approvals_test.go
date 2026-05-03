@@ -65,6 +65,90 @@ func TestApprovalRegistry_ResolveDeletesEntry(t *testing.T) {
 		count)
 }
 
+// TestApprovalRegistry_BatchShortCircuitDeletesEntry verifies that
+// cancelBatchShortCircuit() removes the entry from r.entries when
+// terminalRetention=0.
+// BDD: Given a registry with terminalRetention=0,
+// When an approval is requested and then cancelled via batch short-circuit,
+// Then r.entries is empty after the cancellation.
+func TestApprovalRegistry_BatchShortCircuitDeletesEntry(t *testing.T) {
+	reg := newApprovalRegistryV2(64, 300*time.Second)
+	reg.terminalRetention = 0
+
+	e, accepted := reg.requestApproval(
+		"tc-bsc-cleanup", "web_search",
+		map[string]any{"q": "x"},
+		"agent-C", "sess-C", "turn-C",
+		false,
+	)
+	require.True(t, accepted, "approval must be accepted")
+
+	// Drain outcome so cancelBatchShortCircuit does not block.
+	doneCh := make(chan struct{})
+	go func() {
+		<-e.resultCh
+		close(doneCh)
+	}()
+
+	ok := reg.cancelBatchShortCircuit(e.ApprovalID)
+	require.True(t, ok, "cancelBatchShortCircuit must return true for a pending entry")
+
+	select {
+	case <-doneCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("resultCh never received outcome")
+	}
+
+	reg.mu.Lock()
+	count := len(reg.entries)
+	reg.mu.Unlock()
+	assert.Equal(t, 0, count,
+		"entries map must be empty after cancelBatchShortCircuit when terminalRetention=0; got %d",
+		count)
+}
+
+// TestApprovalRegistry_RestartCancelDeletesEntry verifies that
+// cancelAllPendingForRestart() removes entries from r.entries when
+// terminalRetention=0.
+// BDD: Given a registry with terminalRetention=0 and one pending entry,
+// When cancelAllPendingForRestart is called,
+// Then r.entries is empty after all outcomes are delivered.
+func TestApprovalRegistry_RestartCancelDeletesEntry(t *testing.T) {
+	reg := newApprovalRegistryV2(64, 300*time.Second)
+	reg.terminalRetention = 0
+
+	e, accepted := reg.requestApproval(
+		"tc-restart-cleanup", "read_file",
+		map[string]any{"path": "/tmp/y"},
+		"agent-D", "sess-D", "turn-D",
+		false,
+	)
+	require.True(t, accepted, "approval must be accepted")
+
+	// Drain outcome so cancelAllPendingForRestart does not block.
+	doneCh := make(chan struct{})
+	go func() {
+		<-e.resultCh
+		close(doneCh)
+	}()
+
+	cancelled := reg.cancelAllPendingForRestart()
+	require.Len(t, cancelled, 1, "must have cancelled exactly one entry")
+
+	select {
+	case <-doneCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("resultCh never received outcome")
+	}
+
+	reg.mu.Lock()
+	count := len(reg.entries)
+	reg.mu.Unlock()
+	assert.Equal(t, 0, count,
+		"entries map must be empty after cancelAllPendingForRestart when terminalRetention=0; got %d",
+		count)
+}
+
 // TestApprovalRegistry_TimeoutDeletesEntry verifies that fireTimeout()
 // removes the entry from r.entries after the timeout fires.
 // BDD: Given a registry with a short timeout and terminalRetention=0,

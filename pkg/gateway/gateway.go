@@ -495,35 +495,20 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 		return &SandboxBootError{Err: sandboxErr}
 	}
 
-	// A1.1(c): boot-abort if the actually-applied sandbox mode disagrees with
-	// what cfg.Sandbox.ResolvedMode() reports. This catches the MAJOR-1 class
-	// of bug: a CLI --sandbox flag or fallback-degradation produced a different
-	// mode than the config file implies, and the two paths would produce different
-	// runtime behaviour. Fail loudly so operators can correct the discrepancy
-	// rather than silently running with inconsistent enforcement.
-	//
-	// Note: cfg.Sandbox.ResolvedMode() returns "" → "off" when the config file
-	// has no mode set. applySandbox may resolve that to "enforce" for a fresh
-	// install (the CLI > config > default precedence rule), so any mismatch
-	// between the two surfaces a real discrepancy worth catching.
-	//
-	// Exception: when sandboxResult.Mode is empty (shouldn't happen but can
-	// happen in tests with mocked backends) we skip the check rather than
-	// falsely aborting.
-	if sandboxResult.Mode != "" {
-		configReported := sandbox.Mode(cfg.Sandbox.ResolvedMode())
-		if sandboxResult.Mode != configReported {
-			slog.Error("gateway: sandbox mode mismatch — aborting boot",
-				"applied_mode", string(sandboxResult.Mode),
-				"config_reported_mode", string(configReported),
-				"remediation", "docs/operations/security-considerations.md",
-			)
-			return &SandboxBootError{Err: fmt.Errorf(
-				"sandbox mode mismatch: applied=%q config=%q — set gateway.sandbox.mode in config.json to match the CLI --sandbox flag or remove the flag; see docs/operations/security-considerations.md",
-				sandboxResult.Mode, configReported,
-			)}
-		}
-	}
+	// Log the applied sandbox mode and degradation state so operators can
+	// verify the runtime posture from logs without hitting the authenticated
+	// /api/v1/security/sandbox-status endpoint. applySandbox is the single
+	// source of truth for mode resolution (CLI > config > default); any
+	// discrepancy between the applied mode and the config file is already
+	// visible via result.ApplyState in /api/v1/security/sandbox-status.
+	slog.Info("gateway: sandbox applied",
+		"applied_mode", string(sandboxResult.Mode),
+		"backend", sandboxResult.BackendName,
+		"landlock_enforced", sandboxResult.ApplyState.LandlockEnforced,
+		"seccomp_enforced", sandboxResult.ApplyState.SeccompEnforced,
+		"audit_only", sandboxResult.ApplyState.AuditOnly,
+		"disabled_by", sandboxResult.DisabledBy,
+	)
 
 	// Thread the actually-applied mode into the agent loop so exec tool
 	// deps use the true runtime enforcement level (not the config file value).

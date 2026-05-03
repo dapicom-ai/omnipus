@@ -382,7 +382,7 @@ func TestBootConfigRoundTrip_NewFields(t *testing.T) {
 	cfg.Sandbox.PathGuardAuditFailClosed = &failClosed
 	cfg.Sandbox.MaxConcurrentDevServers = 5
 	cfg.Sandbox.MaxConcurrentBuilds = 3
-	cfg.Sandbox.Tier3Commands = []string{"node", "python3"}
+	cfg.Sandbox.Tier3Commands = []string{"node server", "python3 -m"}
 	cfg.Sandbox.EgressAllowList = []string{"registry.npmjs.org"}
 	cfg.Sandbox.DevServerPortRange = PortRange{19000, 19999}
 	cfg.Tools.BuildStatic.TimeoutSeconds = 600
@@ -420,7 +420,7 @@ func TestBootConfigRoundTrip_NewFields(t *testing.T) {
 	if loaded.Sandbox.MaxConcurrentBuilds != 3 {
 		t.Errorf("MaxConcurrentBuilds: got %d, want 3", loaded.Sandbox.MaxConcurrentBuilds)
 	}
-	if len(loaded.Sandbox.Tier3Commands) != 2 || loaded.Sandbox.Tier3Commands[0] != "node" {
+	if len(loaded.Sandbox.Tier3Commands) != 2 || loaded.Sandbox.Tier3Commands[0] != "node server" {
 		t.Errorf("Tier3Commands did not survive round-trip: %v", loaded.Sandbox.Tier3Commands)
 	}
 	if len(loaded.Sandbox.EgressAllowList) != 1 || loaded.Sandbox.EgressAllowList[0] != "registry.npmjs.org" {

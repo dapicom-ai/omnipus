@@ -368,6 +368,49 @@ func TestTier3Commands_MarshalRoundTrip(t *testing.T) {
 	}
 }
 
+// TestTier3Commands_SingleTokenRejectedAtBoot verifies that validateBootConfig
+// rejects Tier3Commands entries that have fewer than two tokens. A single-token
+// entry like "bash" or "node" would enable arbitrary execution of that binary
+// and is never the operator's intent.
+func TestTier3Commands_SingleTokenRejectedAtBoot(t *testing.T) {
+	cases := []struct {
+		name    string
+		entries []string
+	}{
+		{
+			name:    "bare binary bash",
+			entries: []string{"bash"},
+		},
+		{
+			name:    "trailing space single token (next )",
+			entries: []string{"next "},
+		},
+		{
+			name:    "empty string entry",
+			entries: []string{"", "next dev"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := DefaultConfig()
+			cfg.Sandbox.Tier3Commands = tc.entries
+			if err := validateBootConfig(cfg); err == nil {
+				t.Fatalf("validateBootConfig must error for Tier3Commands=%v, got nil", tc.entries)
+			}
+		})
+	}
+}
+
+// TestTier3Commands_TwoTokenLoadsFine verifies that a well-formed two-token
+// entry passes validateBootConfig without error.
+func TestTier3Commands_TwoTokenLoadsFine(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Sandbox.Tier3Commands = []string{"hugo server"}
+	if err := validateBootConfig(cfg); err != nil {
+		t.Fatalf("validateBootConfig must accept 'hugo server'; got: %v", err)
+	}
+}
+
 // TestWorkspaceShellEnabled_DefaultFalse verifies deny-by-default: a nil pointer
 // is filled with false by validateBootConfig, matching hard constraint #6.
 func TestWorkspaceShellEnabled_DefaultFalse(t *testing.T) {
