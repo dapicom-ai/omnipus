@@ -33,6 +33,7 @@ import { cn } from '@/lib/utils'
 export type IframePreviewProps =
   | { kind: 'serve_workspace'; result: ServeWorkspaceResult | null; warmupTimeoutSeconds?: number }
   | { kind: 'run_in_workspace'; result: RunInWorkspaceResult | null; warmupTimeoutSeconds?: number }
+  | { kind: 'web_serve'; result: ServeWorkspaceResult | null; warmupTimeoutSeconds?: number }
 
 // Internal warmup state machine phases.
 type WarmupPhase = 'starting' | 'probing' | 'ready' | 'error'

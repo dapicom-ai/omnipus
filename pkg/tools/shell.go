@@ -587,7 +587,7 @@ func (t *ExecTool) runSync(ctx context.Context, command, cwd string) *ToolResult
 	// Sandbox-on path: route the child through sandbox.Run so it picks up
 	// workspace cwd, the egress proxy, RLIMITs, npm cache, scrubbed env, and
 	// inherits the gateway's kernel Landlock + seccomp policy (FS rules + the
-	// new bind/connect port allow-list). The kernel layer is the load-bearing
+	// new bind port allow-list). The kernel layer is the load-bearing
 	// piece — without it, the agent could still bind 5173 and serve the
 	// internet directly, defeating the purpose of web_serve.
 	if t.sandboxOn() {
@@ -598,6 +598,12 @@ func (t *ExecTool) runSync(ctx context.Context, command, cwd string) *ToolResult
 	// sandbox; exec runs as the user with full host latitude (sudo if the
 	// user has it, any port, any path the user can reach). This is the
 	// documented contract for ModeOff.
+	//
+	// Security: even on the legacy path, scrub gateway secrets from the
+	// inherited environment unconditionally. This prevents a prompt-injected
+	// LLM from reading OMNIPUS_MASTER_KEY, OMNIPUS_KEY_FILE, or
+	// OMNIPUS_BEARER_TOKEN via `exec env`. The master-key leak is a total
+	// credential-store compromise regardless of sandbox mode.
 
 	// timeout == 0 means no timeout
 	var cmdCtx context.Context
@@ -618,6 +624,11 @@ func (t *ExecTool) runSync(ctx context.Context, command, cwd string) *ToolResult
 	if cwd != "" {
 		cmd.Dir = cwd
 	}
+	// Unconditionally scrub sensitive gateway env vars so children never see
+	// OMNIPUS_MASTER_KEY/OMNIPUS_KEY_FILE/OMNIPUS_BEARER_TOKEN regardless of
+	// sandbox mode. This replaces the nil Env (which would inherit the full
+	// process environment including secrets) with a scrubbed copy.
+	cmd.Env = sandbox.ScrubGatewayEnv()
 
 	prepareCommandForTermination(cmd)
 
@@ -796,28 +807,13 @@ func (t *ExecTool) runSyncHardened(ctx context.Context, command, cwd string) *To
 	}
 }
 
-// sandboxLimitsEnv replicates the env layering that sandbox.Run.mergeEnv
-// performs internally so background sessions on the sandbox-on path see the
-// same HTTP_PROXY / npm_config_cache injections as foreground sandbox.Run
-// callers. The gateway env is inherited (with sensitive keys stripped) so
-// children get a working PATH/HOME/LANG without leaking master-key material.
-//
-// Order matters: gateway env first, then injected proxy/cache vars last so
-// they take precedence on duplicate keys (POSIX exec(3) semantics).
+// sandboxLimitsEnv builds the environment for background sessions on the
+// sandbox-on path. It starts from sandbox.ScrubGatewayEnv() (which strips
+// OMNIPUS_MASTER_KEY / OMNIPUS_KEY_FILE / OMNIPUS_BEARER_TOKEN) and then
+// layers the Limits-derived injections (HTTP_PROXY, npm_config_cache) on top
+// so they take precedence on duplicate keys (POSIX exec(3) semantics).
 func sandboxLimitsEnv(lim sandbox.Limits) []string {
-	parent := os.Environ()
-	scrubbed := make([]string, 0, len(parent)+8)
-	for _, kv := range parent {
-		eq := strings.IndexByte(kv, '=')
-		if eq <= 0 {
-			continue
-		}
-		switch kv[:eq] {
-		case "OMNIPUS_MASTER_KEY", "OMNIPUS_KEY_FILE", "OMNIPUS_BEARER_TOKEN":
-			continue
-		}
-		scrubbed = append(scrubbed, kv)
-	}
+	scrubbed := sandbox.ScrubGatewayEnv()
 	if lim.EgressProxyAddr != "" {
 		proxyURL := "http://" + lim.EgressProxyAddr
 		scrubbed = append(scrubbed,
@@ -866,6 +862,13 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 	if cwd != "" {
 		cmd.Dir = cwd
 	}
+
+	// Unconditionally scrub sensitive gateway env vars so background children
+	// never see OMNIPUS_MASTER_KEY/OMNIPUS_KEY_FILE/OMNIPUS_BEARER_TOKEN
+	// regardless of sandbox mode. The sandbox-on path below will override
+	// cmd.Env with sandboxLimitsEnv (which also scrubs), but we set the
+	// scrubbed base here so the sandbox-off legacy path is covered too.
+	cmd.Env = sandbox.ScrubGatewayEnv()
 
 	prepareCommandForTermination(cmd)
 

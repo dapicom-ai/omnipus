@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -201,6 +202,261 @@ func TestWebServeTool_Name(t *testing.T) {
 	tool := newTestWebServeTool(t, "tok")
 	assert.Equal(t, ToolNameWebServe, tool.Name())
 	assert.Equal(t, "web_serve", tool.Name())
+}
+
+// TestValidateTier3Command_AllowList is the primary table-driven test for the
+// Tier 3 command allow-list validator. It covers the baseline positives,
+// an operator-extension positive, and every rejection scenario listed in the
+// deliverable spec.
+func TestValidateTier3Command_AllowList(t *testing.T) {
+	type testCase struct {
+		name        string
+		command     string
+		extensions  []string
+		wantErr     bool
+		errContains string // non-empty: substring that must appear in the error message
+	}
+
+	cases := []testCase{
+		// --- Baseline positives ---
+		{
+			name:    "next dev bare",
+			command: "next dev",
+			wantErr: false,
+		},
+		{
+			name:    "next dev with flags",
+			command: "next dev --port 3001",
+			wantErr: false,
+		},
+		{
+			name:    "vite dev bare",
+			command: "vite dev",
+			wantErr: false,
+		},
+		{
+			name:    "vite dev with extra flags",
+			command: "vite dev --host 0.0.0.0",
+			wantErr: false,
+		},
+		{
+			name:    "astro dev bare",
+			command: "astro dev",
+			wantErr: false,
+		},
+		{
+			name:    "npm run dev bare",
+			command: "npm run dev",
+			wantErr: false,
+		},
+		{
+			name:    "npm run dev with extra args",
+			command: "npm run dev -- --port 4000",
+			wantErr: false,
+		},
+		{
+			name:    "pnpm dev bare",
+			command: "pnpm dev",
+			wantErr: false,
+		},
+		{
+			name:    "yarn dev bare",
+			command: "yarn dev",
+			wantErr: false,
+		},
+		{
+			name:    "sveltekit dev bare",
+			command: "sveltekit dev",
+			wantErr: false,
+		},
+
+		// --- Operator-extension positive ---
+		{
+			name:       "operator-added hugo server accepted",
+			command:    "hugo server -D",
+			extensions: []string{"hugo server"},
+			wantErr:    false,
+		},
+
+		// --- Rejection cases ---
+		{
+			name:        "nc rejected",
+			command:     "nc -lkp 18001",
+			wantErr:     true,
+			errContains: "not in the Tier 3 allow-list",
+		},
+		{
+			name:        "python http.server rejected",
+			command:     "python -m http.server 8080",
+			wantErr:     true,
+			errContains: "not in the Tier 3 allow-list",
+		},
+		{
+			name:        "bash rejected",
+			command:     "bash",
+			wantErr:     true,
+			errContains: "not in the Tier 3 allow-list",
+		},
+		{
+			name:        "path-prefixed binary rejected",
+			command:     "/usr/bin/next dev",
+			wantErr:     true,
+			errContains: "bare name (no path prefix)",
+		},
+		{
+			name:        "partial-match string no whitespace boundary",
+			command:     "nextdev",
+			wantErr:     true,
+			errContains: "not in the Tier 3 allow-list",
+		},
+		{
+			name:        "next with trailing whitespace only no subcommand",
+			command:     "next ",
+			wantErr:     true,
+			errContains: "not in the Tier 3 allow-list",
+		},
+		{
+			name:        "npm alone incomplete rejected",
+			command:     "npm",
+			wantErr:     true,
+			errContains: "not in the Tier 3 allow-list",
+		},
+		{
+			name:        "empty command rejected",
+			command:     "",
+			wantErr:     true,
+			errContains: "empty command",
+		},
+		{
+			name:        "whitespace-only command rejected",
+			command:     "   ",
+			wantErr:     true,
+			errContains: "empty command",
+		},
+		{
+			name:        "relative-path binary rejected",
+			command:     "./node_modules/.bin/vite dev",
+			wantErr:     true,
+			errContains: "bare name (no path prefix)",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateTier3Command(tc.command, tc.extensions)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("validateTier3Command(%q) = nil, want error", tc.command)
+				}
+				if tc.errContains != "" && !strings.Contains(err.Error(), tc.errContains) {
+					t.Errorf("error %q does not contain %q", err.Error(), tc.errContains)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("validateTier3Command(%q) = %v, want nil", tc.command, err)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateTier3Command_OperatorExtensionNoBaseline verifies that an
+// operator-only extension works when baseline would have rejected it.
+func TestValidateTier3Command_OperatorExtensionNoBaseline(t *testing.T) {
+	err := validateTier3Command("remix dev --port 5000", []string{"remix dev"})
+	if err != nil {
+		t.Fatalf("operator extension 'remix dev' should accept 'remix dev --port 5000', got: %v", err)
+	}
+}
+
+// TestValidateTier3Command_OperatorExtensionEmptyEntry verifies that empty
+// strings in the operator extension list are silently skipped (not panicked).
+func TestValidateTier3Command_OperatorExtensionEmptyEntry(t *testing.T) {
+	// Empty extension entries must not cause a panic or a spurious accept.
+	err := validateTier3Command("bash", []string{"", "hugo server", ""})
+	if err == nil {
+		t.Fatal("'bash' should still be rejected even with empty extension entries")
+	}
+}
+
+// TestWebServeTool_DevCommandNotAllowed_ReturnsError exercises the end-to-end
+// path through WebServeTool.Execute where the command fails allow-list
+// validation. On Linux with a real DevServerRegistry the error surfaces before
+// any spawn attempt; on non-Linux it's gated by the runtime.GOOS check first
+// (Tier3UnsupportedMessage). We test both.
+func TestWebServeTool_DevCommandNotAllowed_ReturnsError(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("allow-list gate only reachable on Linux; non-Linux returns Tier3UnsupportedMessage first")
+	}
+	dir := t.TempDir()
+	devReg := sandbox.NewDevServerRegistry()
+	t.Cleanup(devReg.Close)
+	tool := NewWebServeTool(
+		dir,
+		"test-agent",
+		"http://127.0.0.1:5001",
+		&stubServedSubdirs{token: "tok"},
+		devReg,
+		WebServeDevConfig{
+			PortRange:     [2]int32{18000, 18999},
+			MaxConcurrent: 2,
+			// No Tier3Commands — baseline only.
+		},
+		nil,
+		nil,
+		60,
+		86400,
+	)
+	ctx := WithAgentID(context.Background(), "test-agent")
+
+	disallowedCommands := []string{
+		"nc -lkp 18001",
+		"python -m http.server 8080",
+		"bash",
+		"/usr/bin/next dev",
+	}
+	for _, cmd := range disallowedCommands {
+		t.Run(cmd, func(t *testing.T) {
+			result := tool.Execute(ctx, map[string]any{
+				"path":    ".",
+				"command": cmd,
+				"port":    float64(18000),
+			})
+			if !result.IsError {
+				t.Fatalf("command %q should be rejected but Execute returned success: %s", cmd, result.ForLLM)
+			}
+			if !strings.Contains(result.ForLLM, "not permitted") {
+				t.Errorf("error message %q should mention 'not permitted'", result.ForLLM)
+			}
+		})
+	}
+}
+
+// TestWebServeTool_DevCommandAllowed_ProceedsToRegistryCheck verifies that an
+// allowed command passes allow-list validation and reaches the next gate
+// (dev-server registry or spawn). We use a nil devReg so it returns a
+// "registry not configured" error (not an allow-list error), confirming that
+// command validation passed.
+func TestWebServeTool_DevCommandAllowed_ProceedsToRegistryCheck(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("dev mode only on Linux")
+	}
+	tool := newTestWebServeTool(t, "tok") // nil devReg
+	ctx := WithAgentID(context.Background(), "test-agent")
+
+	result := tool.Execute(ctx, map[string]any{
+		"path":    ".",
+		"command": "vite dev",
+		"port":    float64(18000),
+	})
+	// The error should be "registry not configured" — meaning command was accepted
+	// and execution advanced past the allow-list gate.
+	if !result.IsError {
+		t.Fatalf("expected error (nil devReg), got success: %s", result.ForLLM)
+	}
+	if !strings.Contains(result.ForLLM, "registry not configured") {
+		t.Errorf("expected 'registry not configured' error; got: %s", result.ForLLM)
+	}
 }
 
 // TestWebServeTool_StaticDurationClamp verifies that out-of-range

@@ -45,6 +45,15 @@ var sensitiveEnvKeys = map[string]struct{}{
 	"OMNIPUS_BEARER_TOKEN": {},
 }
 
+// ScrubGatewayEnv returns a copy of os.Environ() with sensitive gateway keys
+// removed. It is exported so callers outside this package (e.g. pkg/tools)
+// can apply the same scrub unconditionally, regardless of whether the kernel
+// sandbox is active. This prevents OMNIPUS_MASTER_KEY, OMNIPUS_KEY_FILE, and
+// OMNIPUS_BEARER_TOKEN from leaking to child processes even when sandbox=off.
+func ScrubGatewayEnv() []string {
+	return scrubGatewayEnv()
+}
+
 // scrubGatewayEnv returns a copy of os.Environ() with sensitive keys removed.
 // Used by mergeEnv so children inherit PATH/HOME/LANG without seeing secrets.
 func scrubGatewayEnv() []string {

@@ -291,6 +291,82 @@ func (t *WebServeTool) executeStatic(ctx context.Context, rawPath string, args m
 	))
 }
 
+// tier3BaselineAllowList is the hardcoded baseline of allowed Tier 3 dev-server
+// commands. Each entry is a "binary subcommand" prefix. The validation rule
+// in validateTier3Command checks that the agent-supplied command, once
+// tokenised and normalised, has one of these entries as a prefix.
+var tier3BaselineAllowList = []string{
+	"next dev",
+	"vite dev",
+	"astro dev",
+	"sveltekit dev",
+	"npm run dev",
+	"pnpm dev",
+	"yarn dev",
+}
+
+// validateTier3Command checks that command is prefixed by an entry from the
+// combined allow-list (baseline + operator-supplied Tier3Commands). Returns
+// nil on success, or an error describing why the command was rejected.
+//
+// Validation rules (per deliverable spec):
+//  1. Tokenise command on whitespace (strings.Fields — handles multiple spaces).
+//  2. The first 1-2 tokens must form a prefix matching an allow-list entry.
+//  3. Path-prefixed binaries (e.g. "/usr/bin/next") are rejected outright —
+//     the binary token must be a bare name with no path separator.
+//  4. Case-sensitive match.
+//
+// Reusing PolicyAuditor.EvaluateExec was considered but rejected: that
+// function performs glob-match on the full command against an exec
+// allow-list, whereas here we need an exact token-prefix match against a
+// "binary subcommand" allow-list. Wiring a PolicyAuditor into WebServeTool
+// would also couple tools → policy → (agent, config) and create import-cycle
+// risk. A focused local validator is the architecturally cleaner choice.
+func validateTier3Command(command string, operatorExtensions []string) error {
+	tokens := strings.Fields(command)
+	if len(tokens) == 0 {
+		return fmt.Errorf("empty command")
+	}
+
+	// Reject path-prefixed binaries — bare names only.
+	if strings.ContainsRune(tokens[0], '/') {
+		return fmt.Errorf("command binary %q must be a bare name (no path prefix)", tokens[0])
+	}
+
+	// Build the combined allow-list: baseline + operator extensions.
+	combined := make([]string, 0, len(tier3BaselineAllowList)+len(operatorExtensions))
+	combined = append(combined, tier3BaselineAllowList...)
+	combined = append(combined, operatorExtensions...)
+
+	// Check whether the normalised command has an allow-list entry as a token
+	// prefix. We normalise by re-joining the tokens from the entry (which may
+	// itself be multi-token, e.g. "npm run dev") and checking that the
+	// supplied command starts with exactly those tokens, each delimited by a
+	// single space.
+	for _, entry := range combined {
+		entryTokens := strings.Fields(entry)
+		if len(entryTokens) == 0 {
+			continue
+		}
+		if len(tokens) < len(entryTokens) {
+			continue
+		}
+		// Compare token-by-token up to len(entryTokens).
+		match := true
+		for i, et := range entryTokens {
+			if tokens[i] != et {
+				match = false
+				break
+			}
+		}
+		if match {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("command %q is not in the Tier 3 allow-list", tokens[0])
+}
+
 // executeDev handles the dev-server mode.
 func (t *WebServeTool) executeDev(ctx context.Context, rawPath, command string, args map[string]any) *ToolResult {
 	// Linux gate.
@@ -300,6 +376,16 @@ func (t *WebServeTool) executeDev(ctx context.Context, rawPath, command string, 
 
 	if t.devReg == nil {
 		return ErrorResult("web_serve: dev-server registry not configured")
+	}
+
+	// Validate command against Tier 3 allow-list BEFORE any other work.
+	if err := validateTier3Command(command, t.devCfg.Tier3Commands); err != nil {
+		agentID := t.agentID
+		if agentID == "" {
+			agentID = ToolAgentID(ctx)
+		}
+		t.auditDevDeny(ctx, agentID, command, err.Error())
+		return ErrorResult(fmt.Sprintf("web_serve: command not permitted: %v", err))
 	}
 
 	// Resolve the workspace subdirectory.
@@ -486,6 +572,30 @@ func (t *WebServeTool) spawnDevChild(
 	}
 
 	return sandbox.SpawnBackgroundChild(parts, workDir, env, port, limits)
+}
+
+// auditDevDeny emits an audit entry when a dev-server command is rejected by
+// the Tier 3 allow-list validator. Best-effort: write failures are logged at
+// Error level and do not change the caller's deny decision.
+func (t *WebServeTool) auditDevDeny(ctx context.Context, agentID, command, reason string) {
+	if t.auditLogger == nil {
+		return
+	}
+	logErr := t.auditLogger.Log(&audit.Entry{
+		Event:    audit.EventExec,
+		Decision: audit.DecisionDeny,
+		AgentID:  agentID,
+		Tool:     ToolNameWebServe,
+		Command:  command,
+		Details: map[string]any{
+			"reason":    reason,
+			"workspace": t.workspace,
+		},
+	})
+	if logErr != nil {
+		slog.Error("web_serve: audit write failed for command deny",
+			"agent_id", agentID, "command", command, "error", logErr)
+	}
 }
 
 // auditDevStart emits an audit entry before spawning the child (HIGH-6).

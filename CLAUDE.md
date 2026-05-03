@@ -63,7 +63,7 @@ These are non-negotiable and apply to every decision:
 3. **Minimal footprint** — total RAM overhead for all security features must stay under 10MB beyond baseline.
 4. **Graceful degradation** — features requiring Linux 5.13+ (Landlock, seccomp) must fall back to application-level enforcement on older kernels, non-Linux platforms, and Android/Termux.
 5. **Ecosystem compatibility** — follows Omnipus/OpenClaw conventions (SKILL.md, HEARTBEAT.md, SOUL.md, AGENTS.md, JSON config patterns) for skill ecosystem and community compatibility. Omnipus has its own config format but adopts the same concepts.
-6. **Deny-by-default for security, opt-in for features** — security policies default to most restrictive; functional features default to disabled.
+6. **Deny-by-default for security, opt-in for features** — security policies default to most restrictive; functional features default to disabled. **Documented exception:** when a sandbox mode (`enforce` or `permissive`) is active, the workspace shell tools (`workspace.shell`, `workspace.shell_bg`) are enabled by default for Jim. Rationale: the kernel sandbox itself is the protective layer, and Jim's seed forces `experimental.workspace_shell_enabled = true` at config-creation time anyway — making the helper-default `false` only creates a test-vs-production behavioral gap, not real safety. Operators who want shell tools fully off must set `experimental.workspace_shell_enabled = false` explicitly. With sandbox `off` (god-mode), no implicit defaults apply — operator opt-in is required.
 
 ## Tech Stack
 

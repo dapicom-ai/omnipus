@@ -299,21 +299,20 @@ func applySandbox(opts SandboxApplyOptions) (*SandboxApplyResult, error) {
 		allowedPaths = opts.Cfg.Sandbox.AllowedPaths
 	}
 
-	// Compute the network port allow-list for Landlock ABI v4+.
+	// Compute the bind-port allow-list for Landlock ABI v4+.
 	//
 	// Bind ports: every port in cfg.Sandbox.DevServerPortRange. The kernel
 	//   does not accept ranges, so we expand to one rule per port. Agents
 	//   serving via web_serve (dev mode) and workspace.shell_bg bind here.
-	// Connect ports: gateway port, preview port, AND the same dev-server
-	//   range so the gateway's reverse proxy can connect back into agent
-	//   dev servers from inside the sandbox. Without the connect rules
-	//   for the dev range, /preview/<agent>/<token>/ would be denied at
-	//   the kernel layer.
 	//
-	// On ABI < 4 we leave both lists nil — handledAccessNet stays 0, and
+	// Connect-port rules were removed in v0.1 (A1.3): the kernel only handles
+	// NET_BIND_TCP in handledAccessNet. Outbound TCP filtering is delegated to
+	// the egress proxy layer.
+	//
+	// On ABI < 4 we leave bindPorts nil — handledAccessNet stays 0, and
 	// passing rules to a kernel that does not handle net access would only
 	// trigger the defensive warn-and-skip in ApplyWithMode.
-	var bindPorts, connectPorts []uint16
+	var bindPorts []uint16
 	abiVersion := 0
 	if rep, ok := backend.(interface{ ABIVersion() int }); ok {
 		abiVersion = rep.ABIVersion()
@@ -326,17 +325,10 @@ func applySandbox(opts SandboxApplyOptions) (*SandboxApplyResult, error) {
 					continue
 				}
 				bindPorts = append(bindPorts, uint16(p))
-				connectPorts = append(connectPorts, uint16(p))
 			}
 		}
-		if opts.Cfg.Gateway.Port > 0 && opts.Cfg.Gateway.Port <= 65535 {
-			connectPorts = append(connectPorts, uint16(opts.Cfg.Gateway.Port))
-		}
-		if opts.Cfg.Gateway.PreviewPort > 0 && opts.Cfg.Gateway.PreviewPort <= 65535 {
-			connectPorts = append(connectPorts, uint16(opts.Cfg.Gateway.PreviewPort))
-		}
 	}
-	policy := sandbox.DefaultPolicy(opts.HomePath, allowedPaths, warnFn, bindPorts, connectPorts)
+	policy := sandbox.DefaultPolicy(opts.HomePath, allowedPaths, warnFn, bindPorts)
 	result.Policy = policy
 
 	// Step 6 — Apply Landlock. Seccomp Install MUST run after this

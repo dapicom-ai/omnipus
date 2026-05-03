@@ -139,6 +139,14 @@ type AgentLoop struct {
 	// hardened-exec path.
 	sandboxEgressProxy *sandbox.EgressProxy
 
+	// appliedSandboxMode is the mode actually applied by the kernel sandbox at
+	// boot (from SandboxApplyResult.Mode), set via SetAppliedSandboxMode. This
+	// is the authoritative source for ExecToolDeps.SandboxMode — using the boot
+	// result rather than cfg.Sandbox.ResolvedMode() prevents the two from
+	// disagreeing when the CLI --sandbox flag overrides the config file (MAJOR-1).
+	// Zero value (empty string) maps to ModeOff in wireExecToolDepsOn.
+	appliedSandboxMode sandbox.Mode
+
 	// sysagentDeps holds the dependencies for system.* tool registration (FR-001, FR-002).
 	// Wired by the gateway after boot via SetSysagentDeps. Nil until wired; if nil,
 	// system tools are not registered (graceful degradation in tests without a store).
@@ -669,6 +677,18 @@ func (al *AgentLoop) SandboxBackend() sandbox.SandboxBackend {
 	return al.sandboxBackend
 }
 
+// SetAppliedSandboxMode stores the mode that the kernel sandbox actually applied
+// at boot (from SandboxApplyResult.Mode). Must be called from the gateway boot
+// path after applySandbox returns successfully, before WireTier13Deps and
+// wireExecToolDeps run, so that ExecToolDeps.SandboxMode reflects the true
+// runtime enforcement level rather than the config file value.
+func (al *AgentLoop) SetAppliedSandboxMode(mode sandbox.Mode) {
+	if al == nil {
+		return
+	}
+	al.appliedSandboxMode = mode
+}
+
 // recordRateLimitDenial writes an audit entry and emits a RateLimit event for
 // a denied rate-limit or cost-cap check (SEC-26). Centralizing this avoids
 // repeating the same audit + emit boilerplate for each of the three checks
@@ -742,15 +762,19 @@ func (al *AgentLoop) wireExecToolDepsOn(registry *AgentRegistry) {
 		// there — the fallback backend still uses this to emit
 		// OMNIPUS_SANDBOX_PATHS for cooperative scripts.
 		//
-		// Network port rules: kernel-level enforcement is installed once at
+		// Bind-port rules: kernel-level enforcement is installed once at
 		// gateway boot (see pkg/gateway/sandbox_apply.go) and inherited by
 		// all child processes via Landlock's restrict_self ratchet — there
 		// is no need to re-add the rules on each exec child. We still
-		// populate BindPortRules / ConnectPortRules here for two reasons:
-		// (a) cooperative children that read OMNIPUS_SANDBOX_* env vars get
-		// the full picture of what they may bind/connect; (b) the rules
-		// are visible in any tooling that introspects ExecToolDeps.
-		var bindPorts, connectPorts []sandbox.NetPortRule
+		// populate BindPortRules here so cooperative children that read
+		// OMNIPUS_SANDBOX_* env vars get the full picture of what they may
+		// bind, and the rules are visible in tooling that introspects
+		// ExecToolDeps.
+		//
+		// ConnectPortRules were removed in v0.1 (A1.3): the kernel only
+		// handles NET_BIND_TCP in handledAccessNet. Outbound TCP filtering
+		// is delegated to the egress proxy.
+		var bindPorts []sandbox.NetPortRule
 		if al.sandboxBackend != nil {
 			abi := 0
 			if rep, ok := al.sandboxBackend.(interface{ ABIVersion() int }); ok {
@@ -764,14 +788,7 @@ func (al *AgentLoop) wireExecToolDepsOn(registry *AgentRegistry) {
 							continue
 						}
 						bindPorts = append(bindPorts, sandbox.NetPortRule{Port: uint16(p)})
-						connectPorts = append(connectPorts, sandbox.NetPortRule{Port: uint16(p)})
 					}
-				}
-				if cfg.Gateway.Port > 0 && cfg.Gateway.Port <= 65535 {
-					connectPorts = append(connectPorts, sandbox.NetPortRule{Port: uint16(cfg.Gateway.Port)})
-				}
-				if cfg.Gateway.PreviewPort > 0 && cfg.Gateway.PreviewPort <= 65535 {
-					connectPorts = append(connectPorts, sandbox.NetPortRule{Port: uint16(cfg.Gateway.PreviewPort)})
 				}
 			}
 		}
@@ -783,13 +800,17 @@ func (al *AgentLoop) wireExecToolDepsOn(registry *AgentRegistry) {
 				},
 			},
 			BindPortRules:     bindPorts,
-			ConnectPortRules:  connectPorts,
 			InheritToChildren: true,
 		}
 
+		// Use the mode that the kernel sandbox actually applied at boot
+		// (SetAppliedSandboxMode sets this from SandboxApplyResult.Mode).
+		// Zero value maps to ModeOff in ExecTool.sandboxOn(), which is the
+		// correct default when the gateway did not wire the applied mode
+		// (headless tests, legacy callers).
 		deps := tools.ExecToolDeps{
 			SandboxPolicy:      policy,
-			SandboxMode:        cfg.Sandbox.ResolvedMode(),
+			SandboxMode:        string(al.appliedSandboxMode),
 			ExecTimeoutSeconds: int32(cfg.Tools.Exec.TimeoutSeconds),
 		}
 		// Plumb the kernel-sandbox egress proxy into the exec tool so the

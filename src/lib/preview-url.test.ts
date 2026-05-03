@@ -17,30 +17,33 @@ describe('validatePreviewPath — 8-row spec dataset (FR-010b / MR-10)', () => {
   // Traces to: preview-url.ts @example block — validatePreviewPath dataset
 
   it.each([
-    // row 1 — valid /serve/ path
+    // row 1 — valid /preview/ path (canonical new shape)
+    { name: 'preview path with trailing slash', path: '/preview/agent-1/abc123/', expected: true },
+    // row 2 — valid /serve/ path (back-compat)
     { name: 'serve path with trailing slash', path: '/serve/agent-1/abc123/', expected: true },
-    // row 2 — valid /dev/ path
+    // row 3 — valid /dev/ path (back-compat)
     { name: 'dev path with trailing slash', path: '/dev/agent-2/xyz789/', expected: true },
-    // row 3 — XSS injection
+    // row 4 — XSS injection
     { name: 'javascript: scheme rejected', path: 'javascript:alert(1)', expected: false },
-    // row 4 — scheme-relative
+    // row 5 — scheme-relative
     { name: 'scheme-relative rejected', path: '//attacker.com/exfil', expected: false },
-    // row 5 — API path
+    // row 6 — API path
     { name: 'API path rejected', path: '/api/v1/agents', expected: false },
-    // row 6 — data: URI
+    // row 7 — data: URI
     { name: 'data: URI rejected', path: 'data:text/html,...', expected: false },
-    // row 7 — path traversal
+    // row 8 — path traversal
     { name: 'path traversal rejected', path: '/serve/../../etc/passwd', expected: false },
-    // row 8 — empty string
+    // row 9 — empty string
     { name: 'empty string rejected', path: '', expected: false },
   ])('$name: validatePreviewPath($path) === $expected', ({ path, expected }) => {
     // Traces to: chat-served-iframe-preview-spec.md — Scenario: validatePreviewPath rejects unsafe paths
     expect(validatePreviewPath(path)).toBe(expected)
   })
 
-  it('differentiation: two valid paths produce true, one invalid produces false', () => {
+  it('differentiation: three valid paths produce true, one invalid produces false', () => {
     // Traces to: chat-served-iframe-preview-spec.md — anti-shortcut differentiation
     // Proves the function is not hardcoded to always return true or always return false.
+    expect(validatePreviewPath('/preview/agent-a/token0/')).toBe(true)
     expect(validatePreviewPath('/serve/agent-a/token1/')).toBe(true)
     expect(validatePreviewPath('/dev/agent-b/token2/')).toBe(true)
     expect(validatePreviewPath('/notserve/agent-a/token1/')).toBe(false)
@@ -203,6 +206,17 @@ describe('rewriteLegacyURL — 15-row spec dataset (FR-016 / FR-017)', () => {
     const result = rewriteLegacyURL('https://0.0.0.0:5000/serve/a/b/', '10.0.0.1', 5001)
     expect(result).toBe('https://10.0.0.1:5001/serve/a/b/')
   })
+
+  it('0.0.0.0 + /preview/ path → port swapped to preview port (canonical new shape)', () => {
+    // Traces to: FR-017 — /preview/ is now a first-class preview path prefix.
+    const result = rewriteLegacyURL('http://0.0.0.0:5000/preview/agent-1/tok/', '146.190.89.151', 5001)
+    expect(result).toBe('http://146.190.89.151:5001/preview/agent-1/tok/')
+  })
+
+  it('127.0.0.1 + /preview/ path → host and port rewritten', () => {
+    const result = rewriteLegacyURL('http://127.0.0.1:5000/preview/m/t/', '1.2.3.4', 5001)
+    expect(result).toBe('http://1.2.3.4:5001/preview/m/t/')
+  })
 })
 
 // ── buildIframeURL ────────────────────────────────────────────────────────────
@@ -342,6 +356,28 @@ describe('buildIframeURL — success and error paths (FR-010 / FR-010a / FR-010b
       protocol: 'http:',
     })
     expect(result).toEqual({ url: 'http://10.0.0.2:5001/dev/agent-1/xyz789/' })
+  })
+
+  it('happy path — /preview/ canonical path, no previewOrigin', () => {
+    // Traces to: FR-010 — canonical new /preview/ shape accepted by buildIframeURL.
+    const result = buildIframeURL({
+      path: '/preview/agent-1/abc123/',
+      previewPort: 5001,
+      hostname: '146.190.89.151',
+      protocol: 'http:',
+    })
+    expect(result).toEqual({ url: 'http://146.190.89.151:5001/preview/agent-1/abc123/' })
+  })
+
+  it('happy path — /preview/ canonical path with previewOrigin', () => {
+    const result = buildIframeURL({
+      path: '/preview/agent-1/abc123/',
+      previewOrigin: 'https://preview.acme.com',
+      previewPort: 5001,
+      hostname: 'omnipus.acme.com',
+      protocol: 'https:',
+    })
+    expect(result).toEqual({ url: 'https://preview.acme.com/preview/agent-1/abc123/' })
   })
 
   it('unparseable previewOrigin returns misconfigured-origin error (F-31)', () => {

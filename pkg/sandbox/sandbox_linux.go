@@ -163,10 +163,13 @@ func (lb *LinuxBackend) computeRights() {
 	// allow-list would break those without buying us much over the
 	// already-existing application-layer egress proxy, and (b) agent
 	// children still get egress filtering when sandbox.Run injects
-	// HTTP_PROXY/HTTPS_PROXY into their environment. SandboxPolicy may
-	// still carry ConnectPortRules but they are silently ignored when
-	// handledAccessNet does not include NET_CONNECT_TCP. On kernels
-	// < ABI v4 handledAccessNet stays 0 entirely, preserving legacy.
+	// HTTP_PROXY/HTTPS_PROXY into their environment.
+	//
+	// ConnectPortRules were removed from SandboxPolicy in v0.1 (A1.3):
+	// the public API no longer advertises connect-port enforcement that
+	// the kernel never applied. Outbound TCP filtering is delegated to
+	// the egress proxy. On kernels < ABI v4 handledAccessNet stays 0
+	// entirely, preserving legacy unrestricted-network behaviour.
 	if lb.abiVersion >= 4 {
 		lb.handledAccessNet = landlockAccessNetBindTcp
 	}
@@ -313,16 +316,17 @@ func (lb *LinuxBackend) ApplyWithMode(policy SandboxPolicy, mode Mode) error {
 		// includes NET_BIND_TCP, so the kernel does not enforce connect
 		// allow-listing. Outbound TCP filtering is delegated to the egress
 		// proxy. See computeRights for the rationale.
-	} else if len(policy.BindPortRules) > 0 || len(policy.ConnectPortRules) > 0 {
-		// Defensive: caller passed net rules but the kernel ABI is too
+	} else if len(policy.BindPortRules) > 0 {
+		// Defensive: caller passed bind rules but the kernel ABI is too
 		// low to honor them. Log once and proceed — refusing to apply
 		// here would force the operator into a no-sandbox-at-all state
 		// just because they configured net rules on an older kernel.
+		// Note: ConnectPortRules were removed in v0.1 (A1.3); outbound TCP
+		// filtering is delegated to the egress proxy.
 		slog.Warn("Landlock: net port rules ignored on this kernel",
 			"abi_version", lb.abiVersion,
 			"required_abi", 4,
-			"bind_rules", len(policy.BindPortRules),
-			"connect_rules", len(policy.ConnectPortRules))
+			"bind_rules", len(policy.BindPortRules))
 	}
 
 	// Set no_new_privs unconditionally — seccomp install (which runs after
@@ -346,8 +350,7 @@ func (lb *LinuxBackend) ApplyWithMode(policy SandboxPolicy, mode Mode) error {
 			"reason", "kernel_lacks_permissive_landlock",
 			"abi_version", lb.abiVersion,
 			"rules", len(policy.FilesystemRules),
-			"bind_rules", len(policy.BindPortRules),
-			"connect_rules", len(policy.ConnectPortRules))
+			"bind_rules", len(policy.BindPortRules))
 		return nil
 	}
 
@@ -371,7 +374,6 @@ func (lb *LinuxBackend) ApplyWithMode(policy SandboxPolicy, mode Mode) error {
 		"abi_version", lb.abiVersion,
 		"rules", len(policy.FilesystemRules),
 		"bind_rules", len(policy.BindPortRules),
-		"connect_rules", len(policy.ConnectPortRules),
 		"mode", string(mode))
 	return nil
 }

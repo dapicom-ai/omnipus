@@ -122,9 +122,24 @@ type approvalRegistryV2 struct {
 	maxPending       int // canonical source
 	timeout          time.Duration
 
+	// terminalRetention is how long a terminal-state entry is kept in the map
+	// before it is deleted. The retention window preserves FR-018 HTTP 410
+	// Gone semantics for late actions (so a second POST to /api/v1/tool-approvals/{id}
+	// after resolve still returns 410, not 404). After the window elapses, the
+	// entry is removed to bound memory growth.
+	//
+	// Defaults to 60 s; tests set this directly to 0 to assert deletion
+	// synchronously without waiting on a timer.
+	terminalRetention time.Duration
+
 	// pendingGauge is a snapshot updated under mu; used for the Prometheus gauge.
 	pendingCount atomic.Int64
 }
+
+// defaultTerminalRetention is the grace window during which a terminal-state
+// entry is retained in the map after its state transition. After this window
+// expires, the entry is deleted to bound memory growth.
+const defaultTerminalRetention = 60 * time.Second
 
 // newApprovalRegistryV2 creates a registry with the given saturation cap and timeout.
 // cap == 0 means unlimited (ShouldSaturate always returns false per FR-016).
@@ -136,12 +151,35 @@ func newApprovalRegistryV2(cap int, timeout time.Duration) *approvalRegistryV2 {
 		timeout = 300 * time.Second
 	}
 	r := &approvalRegistryV2{
-		entries:    make(map[string]*approvalEntry),
-		maxPending: cap,
-		timeout:    timeout,
+		entries:           make(map[string]*approvalEntry),
+		maxPending:        cap,
+		timeout:           timeout,
+		terminalRetention: defaultTerminalRetention,
 	}
 	r.maxPendingAtomic.Store(int64(cap))
 	return r
+}
+
+// scheduleTerminalDelete arms a timer that removes the entry from r.entries
+// after r.terminalRetention has elapsed. The deletion runs under r.mu so it
+// is race-free with respect to resolve / get / pendingApprovals. If
+// terminalRetention <= 0 the entry is deleted synchronously by the caller
+// (used by tests and by cancelAllPendingForRestart on shutdown).
+//
+// MUST be called with r.mu held (it reads r.terminalRetention).
+func (r *approvalRegistryV2) scheduleTerminalDelete(approvalID string) {
+	retention := r.terminalRetention
+	if retention <= 0 {
+		// Caller (or shutdown path) requested immediate deletion; do it inline
+		// while we still hold the lock.
+		delete(r.entries, approvalID)
+		return
+	}
+	time.AfterFunc(retention, func() {
+		r.mu.Lock()
+		delete(r.entries, approvalID)
+		r.mu.Unlock()
+	})
 }
 
 // requestApproval creates a new pending approval entry and returns it.
@@ -214,7 +252,8 @@ func (r *approvalRegistryV2) requestApproval(
 }
 
 // fireTimeout is called by the entry's timer goroutine.
-// It transitions pending→denied_timeout and delivers the outcome.
+// It transitions pending→denied_timeout, delivers the outcome, and schedules
+// the entry's removal from the map (FR-018 retention window then delete).
 func (r *approvalRegistryV2) fireTimeout(approvalID string) {
 	r.mu.Lock()
 	e, ok := r.entries[approvalID]
@@ -224,6 +263,7 @@ func (r *approvalRegistryV2) fireTimeout(approvalID string) {
 	}
 	e.state = ApprovalStateDeniedTimeout
 	r.pendingCount.Add(-1)
+	r.scheduleTerminalDelete(approvalID)
 	r.mu.Unlock()
 
 	slog.Info("approval: timeout fired", "approval_id", approvalID, "tool", e.ToolName)
@@ -277,6 +317,7 @@ func (r *approvalRegistryV2) resolve(
 		e.timer = nil
 	}
 	r.pendingCount.Add(-1)
+	r.scheduleTerminalDelete(approvalID)
 	r.mu.Unlock()
 
 	e.resultCh <- outcome
@@ -299,6 +340,7 @@ func (r *approvalRegistryV2) cancelBatchShortCircuit(approvalID string) bool {
 		e.timer = nil
 	}
 	r.pendingCount.Add(-1)
+	r.scheduleTerminalDelete(approvalID)
 	r.mu.Unlock()
 
 	e.resultCh <- ApprovalOutcome{Approved: false, Reason: "batch_short_circuit"}
@@ -331,9 +373,16 @@ func (r *approvalRegistryV2) pendingApprovals() []*approvalEntry {
 // cancelAllPendingForRestart transitions every pending approval to denied_restart.
 // Called during graceful shutdown (FR-013, FR-048).
 // Returns the IDs and tool names of cancelled approvals for audit logging.
+//
+// On shutdown the gateway is going down anyway, so each cancelled entry is
+// scheduled for deletion via the same retention path as resolve/fireTimeout.
+// This keeps the contract uniform across all terminal-state transitions and
+// prevents the entries from leaking if the process happens to live longer
+// than expected (e.g. a slow shutdown sequence).
 func (r *approvalRegistryV2) cancelAllPendingForRestart() []approvalEntry {
 	r.mu.Lock()
 	var cancelled []approvalEntry
+	cancelledIDs := make([]string, 0)
 	for _, e := range r.entries {
 		if e.state == ApprovalStatePending {
 			e.state = ApprovalStateDeniedRestart
@@ -342,8 +391,12 @@ func (r *approvalRegistryV2) cancelAllPendingForRestart() []approvalEntry {
 				e.timer = nil
 			}
 			cancelled = append(cancelled, *e)
+			cancelledIDs = append(cancelledIDs, e.ApprovalID)
 			r.pendingCount.Add(-1)
 		}
+	}
+	for _, id := range cancelledIDs {
+		r.scheduleTerminalDelete(id)
 	}
 	r.mu.Unlock()
 

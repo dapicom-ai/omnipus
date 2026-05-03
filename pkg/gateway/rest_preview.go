@@ -123,6 +123,7 @@ func (a *restAPI) HandlePreview(w http.ResponseWriter, r *http.Request) {
 // HandleServeWorkspace serves GET /serve/{agent_id}/{token}/{file_path...}.
 // Kept for back-compat with registrations produced before the /preview/ route
 // landed.
+// TODO(v0.2 cleanup, target 2026-08-01): delete /serve/ and /dev/ shims
 func (a *restAPI) HandleServeWorkspace(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		a.handleServePreviewPreflight(w, r)
@@ -180,6 +181,7 @@ func (a *restAPI) HandleServeWorkspace(w http.ResponseWriter, r *http.Request) {
 
 // HandleDevProxy serves /dev/{agent_id}/{token}/... requests.
 // Kept for back-compat with registrations produced before the /preview/ route.
+// TODO(v0.2 cleanup, target 2026-08-01): delete /serve/ and /dev/ shims
 func (a *restAPI) HandleDevProxy(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		a.handleServePreviewPreflight(w, r)
@@ -453,9 +455,15 @@ func (a *restAPI) proxyDevRequest(
 			}
 			a.auditDevFailure(r, "dev.upstream_unreachable", "error", agentID, token, http.StatusBadGateway, startedAt)
 		}
-		writeDevProxyError(rw, http.StatusBadGateway,
-			fmt.Sprintf("dev server unreachable on port %d: %v", reg.Port, err))
-		_ = errReq
+		// Do NOT echo the upstream-error message back to the (anonymous,
+		// auth-less) preview client: it can leak the loopback port number,
+		// dial/TLS error details, and other implementation specifics that an
+		// agent's child process should not see. Operators retain the full
+		// detail via the slog.Warn line below and the audit-emitted event.
+		// Mirrors the pattern in pkg/sandbox/egress_proxy.go::handleHTTP.
+		slog.Warn("preview: dev upstream unreachable",
+			"agent_id", agentID, "port", reg.Port, "error", err)
+		writeDevProxyError(rw, http.StatusBadGateway, "dev server unreachable")
 	}
 
 	rp.ServeHTTP(w, r)

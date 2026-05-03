@@ -44,27 +44,28 @@ func (a *restAPI) HandleSandboxStatus(w http.ResponseWriter, r *http.Request) {
 	// applySandbox), fall back to the bare backend description — the
 	// response will have the same shape but with Mode empty.
 	var state sandbox.ApplyState
-	var bindCount, connectCount int
+	var bindCount int
 	if a.sandboxResult != nil {
 		state = a.sandboxResult.ApplyState
 		bindCount = len(a.sandboxResult.Policy.BindPortRules)
-		connectCount = len(a.sandboxResult.Policy.ConnectPortRules)
 	}
 	status := sandbox.DescribeBackendWithState(backend, state)
-	// Wrap the status with the network-rule counts so operators can curl
-	// /api/v1/security/sandbox-status and verify the bind/connect allow-list
-	// is the size they expect (per cfg.Sandbox.DevServerPortRange + gateway
-	// port + preview port). Counts are zero on FallbackBackend, on Mode=Off,
-	// and on Landlock ABI < 4 — exactly the cases where no kernel net rules
-	// were installed.
+	// Wrap the status with the bind-port-rule count so operators can curl
+	// /api/v1/security/sandbox-status and verify the bind allow-list is the
+	// size they expect (per cfg.Sandbox.DevServerPortRange). Count is zero on
+	// FallbackBackend, on Mode=Off, and on Landlock ABI < 4 — exactly the
+	// cases where no kernel net rules were installed.
+	//
+	// connect_ports_count was removed in v0.1 (A1.3): the kernel never
+	// enforced connect-port rules (NET_CONNECT_TCP not in handledAccessNet),
+	// so advertising a count was misleading. Outbound TCP filtering is
+	// handled by the egress proxy.
 	resp := struct {
 		sandbox.Status
-		BindPortsCount    int `json:"bind_ports_count"`
-		ConnectPortsCount int `json:"connect_ports_count"`
+		BindPortsCount int `json:"bind_ports_count"`
 	}{
-		Status:            status,
-		BindPortsCount:    bindCount,
-		ConnectPortsCount: connectCount,
+		Status:         status,
+		BindPortsCount: bindCount,
 	}
 	jsonOK(w, resp)
 }

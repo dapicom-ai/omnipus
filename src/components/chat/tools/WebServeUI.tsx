@@ -18,9 +18,8 @@
  */
 
 import { makeAssistantToolUI } from '@assistant-ui/react'
-import { useQuery } from '@tanstack/react-query'
 import { Globe, Terminal, CheckCircle, ArrowsClockwise, XCircle } from '@phosphor-icons/react'
-import { fetchAboutInfo, type ServeWorkspaceResult as ServeWorkspaceIframeResult, type RunInWorkspaceResult as RunInWorkspaceIframeResult } from '@/lib/api'
+import { type ServeWorkspaceResult as ServeWorkspaceIframeResult, type RunInWorkspaceResult as RunInWorkspaceIframeResult } from '@/lib/api'
 import { hasPreviewShape } from '@/lib/preview-url'
 import { IframePreview } from '../IframePreview'
 import { PreviewToolHeader } from './PreviewToolHeader'
@@ -93,12 +92,6 @@ export function WebServeBlock({
   isRunning: boolean
   toolName: string
 }) {
-  const { data: aboutInfo } = useQuery({
-    queryKey: ['about'],
-    queryFn: fetchAboutInfo,
-    staleTime: 5 * 60 * 1000,
-  })
-
   const typedResult = isWebServeResult(result) ? result : null
   const effectiveKind = typedResult ? inferKind(typedResult) : null
 
@@ -132,19 +125,19 @@ export function WebServeBlock({
     isDevMode ? 'run_in_workspace' : 'serve_workspace'
 
   // Build the result shape expected by IframePreview — it uses path + url.
-  // For new web_serve results, `url` contains the preview path; map it to `path`
-  // when the result has no separate `path` field.
+  // Pass path directly; IframePreview.extractPath falls back to url when
+  // path is absent, so there is no need to duplicate the fallback logic here.
   const iframeResult = typedResult
     ? iframeKind === 'run_in_workspace'
       ? {
-          path: typedResult.path ?? typedResult.url,
+          path: typedResult.path,
           url: typedResult.url,
           expires_at: typedResult.expires_at,
           command: typedResult.command ?? command,
           port: typedResult.port ?? port ?? 0,
         }
       : {
-          path: typedResult.path ?? typedResult.url,
+          path: typedResult.path,
           url: typedResult.url,
           expires_at: typedResult.expires_at,
         }
@@ -190,7 +183,6 @@ export function WebServeBlock({
         <IframePreview
           kind="run_in_workspace"
           result={iframeResult as RunInWorkspaceIframeResult | null}
-          warmupTimeoutSeconds={aboutInfo?.warmup_timeout_seconds ?? 3}
         />
       ) : (
         <IframePreview

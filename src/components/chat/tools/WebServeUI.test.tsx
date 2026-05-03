@@ -45,13 +45,13 @@ beforeEach(() => {
 // ── kind="static" ─────────────────────────────────────────────────────────────
 
 describe('WebServeUI — kind=static', () => {
-  it('renders tool name chip and path label', () => {
+  it('renders tool name chip and path label (canonical /preview/ path)', () => {
     render(
       <WebServeBlock
         args={{ path: 'elicify-hello' }}
         result={{
           kind: 'static',
-          url: '/serve/jim/tok/',
+          url: '/preview/jim/tok/',
           path: 'elicify-hello',
           expires_at: '2099-01-01T00:00:00Z',
         }}
@@ -71,7 +71,8 @@ describe('WebServeUI — kind=static', () => {
     expect(screen.queryByText(/starting dev server/i)).toBeNull()
   })
 
-  it('renders iframe using path field from result (valid /serve/ path)', () => {
+  it('renders iframe using path field from result (back-compat /serve/ path)', () => {
+    // Retains legacy /serve/ coverage — back-compat shim path must still work.
     render(
       <WebServeBlock
         args={{}}
@@ -92,6 +93,27 @@ describe('WebServeUI — kind=static', () => {
     expect(src).toContain('/serve/jim/tok/')
   })
 
+  it('renders iframe using path field from result (canonical /preview/ path)', () => {
+    render(
+      <WebServeBlock
+        args={{}}
+        result={{
+          kind: 'static',
+          url: '/preview/jim/tok/',
+          path: '/preview/jim/tok/',
+          expires_at: '2099-01-01T00:00:00Z',
+        }}
+        isRunning={false}
+        toolName="web_serve"
+      />
+    )
+
+    const iframes = document.querySelectorAll('iframe:not([aria-hidden])')
+    expect(iframes.length).toBeGreaterThan(0)
+    const src = iframes[0].getAttribute('src') ?? ''
+    expect(src).toContain('/preview/jim/tok/')
+  })
+
   it('shows "Waiting for" when result is null (tool still running)', () => {
     render(
       <WebServeBlock
@@ -109,14 +131,14 @@ describe('WebServeUI — kind=static', () => {
 // ── kind="dev" ────────────────────────────────────────────────────────────────
 
 describe('WebServeUI — kind=dev', () => {
-  it('renders Terminal icon, command label, and port chip', () => {
+  it('renders Terminal icon, command label, and port chip (canonical /preview/ path)', () => {
     render(
       <WebServeBlock
         args={{ command: 'vite dev', port: 18000 }}
         result={{
           kind: 'dev',
-          url: '/dev/jim/tok/',
-          path: '/dev/jim/tok/',
+          url: '/preview/jim/tok/',
+          path: '/preview/jim/tok/',
           command: 'vite dev',
           port: 18000,
           expires_at: '2099-01-01T00:00:00Z',
@@ -136,7 +158,8 @@ describe('WebServeUI — kind=dev', () => {
     expect(screen.getByText(':18000')).toBeInTheDocument()
   })
 
-  it('shows warmup state machine (aria-live region) while warming up', () => {
+  it('shows warmup state machine (aria-live region) while warming up (back-compat /dev/ path)', () => {
+    // Retains legacy /dev/ coverage — back-compat shim path must still work.
     render(
       <WebServeBlock
         args={{ command: 'vite dev', port: 18000 }}
@@ -159,14 +182,14 @@ describe('WebServeUI — kind=dev', () => {
     expect(liveRegion).not.toBeNull()
   })
 
-  it('infers dev mode from command + port when kind is absent (legacy back-compat)', () => {
+  it('infers dev mode from command + port when kind is absent (back-compat /preview/ path)', () => {
     render(
       <WebServeBlock
         args={{}}
         result={{
-          // No `kind` field — legacy run_in_workspace transcript shape
-          url: '/dev/agent-1/tok/',
-          path: '/dev/agent-1/tok/',
+          // No `kind` field — legacy run_in_workspace transcript shape using new canonical path
+          url: '/preview/agent-1/tok/',
+          path: '/preview/agent-1/tok/',
           command: 'npm run dev',
           port: 3000,
           expires_at: '2099-01-01T00:00:00Z',

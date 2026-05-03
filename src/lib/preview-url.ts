@@ -58,10 +58,10 @@ const LEGACY_HOSTS = new Set([
 
 /**
  * Validates the `path` field returned by `serve_workspace` /
- * `run_in_workspace` tool results.
+ * `run_in_workspace` / `web_serve` tool results.
  *
  * The regex enforces:
- *   • Starts with `/serve/` or `/dev/`
+ *   • Starts with `/preview/`, `/serve/`, or `/dev/`
  *   • Followed by an agent segment (`[A-Za-z0-9_-]+`)
  *   • Followed by a token segment (`[A-Za-z0-9_-]+`)
  *   • Optionally followed by any additional path segments
@@ -69,20 +69,21 @@ const LEGACY_HOSTS = new Set([
  * Notably rejects:
  *   • `javascript:alert(1)` — no leading slash with recognised segment
  *   • `//attacker.com/exfil` — scheme-relative
- *   • `/api/v1/agents` — not a `/serve/` or `/dev/` path
+ *   • `/api/v1/agents` — not a `/preview/`, `/serve/`, or `/dev/` path
  *   • `data:text/html,…` — no leading slash
  *   • `/serve/../../etc/passwd` — `..` is not `[A-Za-z0-9_-]`
  *   • `""` (empty) — does not match
  *
  * Per FR-010b / MR-10.
  */
-const PREVIEW_PATH_REGEX = /^\/(?:serve|dev)\/[A-Za-z0-9_\-]+\/[A-Za-z0-9_\-]+(?:\/.*)?$/
+const PREVIEW_PATH_REGEX = /^\/(?:preview|serve|dev)\/[A-Za-z0-9_\-]+\/[A-Za-z0-9_\-]+(?:\/.*)?$/
 
 /**
  * Returns `true` when `path` is a safe, well-formed preview path that the
  * SPA may use as an iframe `src` suffix.
  *
  * @example
+ * validatePreviewPath('/preview/agent-1/abc123/')     // true
  * validatePreviewPath('/serve/agent-1/abc123/')       // true
  * validatePreviewPath('/dev/agent-2/xyz789/')         // true
  * validatePreviewPath('javascript:alert(1)')          // false
@@ -108,8 +109,8 @@ export function validatePreviewPath(path: string): boolean {
  *     (passes through `mailto:`, `tel:`, `javascript:`, `data:`, etc.).
  *  4. If the parsed `hostname` is NOT in `LEGACY_HOSTS`, return unchanged.
  *  5. Rewrite the host to `hostname` (the caller's `window.location.hostname`).
- *  6. If the path starts with `/serve/` or `/dev/`, also swap the port to
- *     `previewPort`. Otherwise preserve the original port.
+ *  6. If the path starts with `/preview/`, `/serve/`, or `/dev/`, also swap
+ *     the port to `previewPort`. Otherwise preserve the original port.
  *
  * @param href - The raw href string from the markdown link.
  * @param hostname - The host the user is accessing the SPA from
@@ -226,12 +227,16 @@ export function rewriteLegacyURL(href: string, hostname: string, previewPort: nu
   // We set `hostname` (not `host`) so we can control the port separately.
   parsed.hostname = hostname
 
-  // Rule 6: if the path is a serve/dev path, swap to the preview port;
+  // Rule 6: if the path is a preview/serve/dev path, swap to the preview port;
   // otherwise preserve the port already in the URL.
-  if (parsed.pathname.startsWith('/serve/') || parsed.pathname.startsWith('/dev/')) {
+  if (
+    parsed.pathname.startsWith('/preview/') ||
+    parsed.pathname.startsWith('/serve/') ||
+    parsed.pathname.startsWith('/dev/')
+  ) {
     parsed.port = String(previewPort)
   }
-  // (If not a serve/dev path, parsed.port was already preserved by the
+  // (If not a preview/serve/dev path, parsed.port was already preserved by the
   // assignment to `parsed.hostname` above, which does not affect the port.)
 
   try {

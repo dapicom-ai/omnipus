@@ -170,3 +170,51 @@ func TestExecTool_SandboxEnforce_BackgroundSessionRegisters(t *testing.T) {
 	}
 	t.Fatalf("background session did not complete within 5s")
 }
+
+// TestExecTool_SandboxOff_ScrubsGatewayEnv verifies that sensitive gateway
+// env vars are NOT passed to child processes even when sandbox=off (A1.1-b).
+// Without the fix, `exec env` on the sandbox-off path would print
+// OMNIPUS_MASTER_KEY — a total credential-store compromise.
+func TestExecTool_SandboxOff_ScrubsGatewayEnv(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses POSIX shell")
+	}
+
+	// Inject a bogus master key into the current process environment.
+	// t.Setenv restores the original value (or unsets it) at test cleanup.
+	const fakeKey = "FAKE_MASTER_KEY_SHOULD_NOT_LEAK_12345"
+	t.Setenv("OMNIPUS_MASTER_KEY", fakeKey)
+	t.Setenv("OMNIPUS_KEY_FILE", "/fake/path/master.key")
+	t.Setenv("OMNIPUS_BEARER_TOKEN", "fake-bearer-token-abc")
+
+	tool := makeExecToolWithMode(t, string(sandbox.ModeOff), nil)
+	if tool.sandboxOn() {
+		t.Fatalf("sandboxOn() = true for ModeOff; want false")
+	}
+
+	ctx, cancel := context.WithTimeout(WithToolContext(context.Background(), "cli", ""), 10*time.Second)
+	defer cancel()
+
+	// Run `env` and capture its output — this shows every env var the child inherited.
+	res := tool.Execute(ctx, map[string]any{
+		"action":  "run",
+		"command": "env",
+	})
+	if res.IsError {
+		t.Fatalf("expected success, got error: %s", res.ForLLM)
+	}
+
+	output := res.ForLLM
+	if strings.Contains(output, fakeKey) {
+		t.Errorf("OMNIPUS_MASTER_KEY leaked to child process env on sandbox=off path")
+	}
+	if strings.Contains(output, "OMNIPUS_MASTER_KEY") {
+		t.Errorf("OMNIPUS_MASTER_KEY key name leaked to child process env on sandbox=off path")
+	}
+	if strings.Contains(output, "OMNIPUS_KEY_FILE") {
+		t.Errorf("OMNIPUS_KEY_FILE leaked to child process env on sandbox=off path")
+	}
+	if strings.Contains(output, "OMNIPUS_BEARER_TOKEN") {
+		t.Errorf("OMNIPUS_BEARER_TOKEN leaked to child process env on sandbox=off path")
+	}
+}

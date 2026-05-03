@@ -305,6 +305,69 @@ func TestAllowedPaths_ReadOnlySemanticDocumented(t *testing.T) {
 	}
 }
 
+// TestTier3Commands_LoadFromJSON verifies that OmnipusSandboxConfig.Tier3Commands
+// round-trips through JSON serialisation so operators can extend the baseline
+// Tier 3 allow-list via config.json under "sandbox.tier3_commands".
+func TestTier3Commands_LoadFromJSON(t *testing.T) {
+	raw := `{
+		"tier3_commands": ["remix dev", "hugo server"]
+	}`
+	var cfg OmnipusSandboxConfig
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if len(cfg.Tier3Commands) != 2 {
+		t.Fatalf("expected 2 Tier3Commands, got %d: %v", len(cfg.Tier3Commands), cfg.Tier3Commands)
+	}
+	if cfg.Tier3Commands[0] != "remix dev" {
+		t.Errorf("Tier3Commands[0] = %q, want %q", cfg.Tier3Commands[0], "remix dev")
+	}
+	if cfg.Tier3Commands[1] != "hugo server" {
+		t.Errorf("Tier3Commands[1] = %q, want %q", cfg.Tier3Commands[1], "hugo server")
+	}
+}
+
+// TestTier3Commands_OmittedFieldYieldsNilSlice verifies that when
+// tier3_commands is absent from config.json, the field is nil (not an empty
+// slice). This ensures callers that range over it behave correctly.
+func TestTier3Commands_OmittedFieldYieldsNilSlice(t *testing.T) {
+	raw := `{}`
+	var cfg OmnipusSandboxConfig
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if cfg.Tier3Commands != nil {
+		t.Errorf("expected Tier3Commands nil when omitted, got %v", cfg.Tier3Commands)
+	}
+}
+
+// TestTier3Commands_MarshalRoundTrip verifies that the field marshals back to
+// the correct JSON key ("tier3_commands") and the values survive a round-trip.
+func TestTier3Commands_MarshalRoundTrip(t *testing.T) {
+	cfg := OmnipusSandboxConfig{
+		Tier3Commands: []string{"remix dev", "hugo server"},
+	}
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	jsonStr := string(b)
+	if !strings.Contains(jsonStr, `"tier3_commands"`) {
+		t.Errorf("marshalled JSON missing tier3_commands key: %s", jsonStr)
+	}
+
+	var cfg2 OmnipusSandboxConfig
+	if err := json.Unmarshal(b, &cfg2); err != nil {
+		t.Fatalf("Unmarshal round-trip: %v", err)
+	}
+	if len(cfg2.Tier3Commands) != 2 {
+		t.Fatalf("round-trip: expected 2 commands, got %d", len(cfg2.Tier3Commands))
+	}
+	if cfg2.Tier3Commands[0] != "remix dev" || cfg2.Tier3Commands[1] != "hugo server" {
+		t.Errorf("round-trip values mismatch: %v", cfg2.Tier3Commands)
+	}
+}
+
 // TestWorkspaceShellEnabled_DefaultFalse verifies deny-by-default: a nil pointer
 // is filled with false by validateBootConfig, matching hard constraint #6.
 func TestWorkspaceShellEnabled_DefaultFalse(t *testing.T) {

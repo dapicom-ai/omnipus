@@ -103,11 +103,16 @@ func coreAgentSeed(id CoreAgentID) (defaultPolicy config.ToolPolicy, policies ma
 	// Every core agent starts with the same rail: allow-by-default + deny system.*.
 	// Memory tools are explicitly seeded as allow (FR-016/FR-017) so they survive
 	// any future default_policy change and appear prominently in the tool picker UI.
+	// web_serve is explicitly allowed for every core agent (MAJOR-4): hoisting it
+	// here ensures that all agents have a traceable allow entry, not just Jim.
+	// Default_policy is allow, so this is belt-and-suspenders, but explicit entries
+	// make intent visible in the tool picker UI and survive any future policy change.
 	base := map[string]config.ToolPolicy{
 		"system.*":      config.ToolPolicyDeny,
 		"remember":      config.ToolPolicyAllow,
 		"recall_memory": config.ToolPolicyAllow,
 		"retrospective": config.ToolPolicyAllow,
+		"web_serve":     config.ToolPolicyAllow,
 	}
 	switch id {
 	case IDAva:
@@ -118,12 +123,12 @@ func coreAgentSeed(id CoreAgentID) (defaultPolicy config.ToolPolicy, policies ma
 		base["system.agent.delete"] = config.ToolPolicyAllow
 		base["system.models.list"] = config.ToolPolicyAllow
 	case IDJim:
-		// Jim uses workspace.shell, workspace.shell_bg, and web_serve (all
+		// Jim additionally uses workspace.shell and workspace.shell_bg (all
 		// explicitly allowed so the policy passes through even when
-		// default_policy is allow — belt-and-suspenders).
+		// default_policy is allow — belt-and-suspenders). web_serve is already
+		// in the base map above so it is not repeated here.
 		base["workspace.shell"] = config.ToolPolicyAllow
 		base["workspace.shell_bg"] = config.ToolPolicyAllow
-		base["web_serve"] = config.ToolPolicyAllow
 		return config.ToolPolicyAllow, base, config.SandboxProfileWorkspaceNet
 	}
 	return config.ToolPolicyAllow, base, ""
