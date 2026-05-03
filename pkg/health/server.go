@@ -9,6 +9,8 @@ import (
 	"os"
 	"sync"
 	"time"
+
+	"github.com/dapicom-ai/omnipus/pkg/audit"
 )
 
 type Server struct {
@@ -25,6 +27,15 @@ type Server struct {
 	// {applied, mode, backend} after Apply has completed. See
 	// gateway.registerSandboxHealthCheck for the wiring.
 	sandboxInfoFn func() map[string]any
+
+	// auditLoggerAvailableFn, when non-nil, reports whether the audit
+	// logger is wired and operational. Returns true when audit is
+	// available (a real *audit.Logger is reachable), false when audit is
+	// disabled by config or has been emitting skip events recently. Used
+	// by /health to populate audit_logger and audit_degraded.
+	//
+	// B1.2(f): wired by gateway boot to a closure over agentLoop.AuditLogger().
+	auditLoggerAvailableFn func() bool
 }
 
 type Check struct {
@@ -145,6 +156,16 @@ func (s *Server) SetSandboxInfoFunc(fn func() map[string]any) {
 	s.sandboxInfoFn = fn
 }
 
+// SetAuditLoggerAvailableFunc sets the closure /health calls to determine
+// whether the audit logger is wired and operational. B1.2(f): gateway boot
+// passes a closure over agentLoop.AuditLogger() != nil so the response
+// reflects the live state without exposing the logger pointer to health.
+func (s *Server) SetAuditLoggerAvailableFunc(fn func() bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.auditLoggerAvailableFn = fn
+}
+
 func (s *Server) reloadHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		w.Header().Set("Content-Type", "application/json")
@@ -180,6 +201,7 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	degradedFn := s.degradedFn
 	sandboxInfoFn := s.sandboxInfoFn
+	auditAvailFn := s.auditLoggerAvailableFn
 	s.mu.RUnlock()
 
 	w.Header().Set("Content-Type", "application/json")
@@ -193,13 +215,31 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 		sandboxInfo = sandboxInfoFn()
 	}
 
+	// B1.2(f): surface audit-degraded mode. audit_logger reflects whether
+	// the gateway constructed a real audit.Logger; audit_skipped is the
+	// cumulative count of writes that fell through to slog because either
+	// the logger was unavailable or AuditFailClosed=false on a write error.
+	auditLoggerStatus := "unknown"
+	if auditAvailFn != nil {
+		if auditAvailFn() {
+			auditLoggerStatus = "ok"
+		} else {
+			auditLoggerStatus = "unavailable"
+		}
+	}
+	skipped := audit.SnapshotSkipped()
+	auditDegraded := auditLoggerStatus == "unavailable" || skipped.Total > 0
+
 	if degradedFn != nil {
 		if isDegraded, reason := degradedFn(); isDegraded {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			resp := map[string]any{
-				"status": "degraded",
-				"reason": reason,
-				"pid":    os.Getpid(),
+				"status":         "degraded",
+				"reason":         reason,
+				"pid":            os.Getpid(),
+				"audit_logger":   auditLoggerStatus,
+				"audit_skipped":  skipped,
+				"audit_degraded": auditDegraded,
 			}
 			if sandboxInfo != nil {
 				resp["sandbox"] = sandboxInfo
@@ -213,10 +253,16 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 	uptime := time.Since(s.startTime)
 	// Use a generic map instead of StatusResponse so callers can include
 	// the optional "sandbox" field without expanding the exported struct.
+	// audit_degraded is surfaced as a field but does NOT flip /health to
+	// 503 — operators read the field to decide. The HTTP status remains
+	// driven by degradedFn (gateway-fatal conditions).
 	resp := map[string]any{
-		"status": "ok",
-		"uptime": uptime.String(),
-		"pid":    os.Getpid(),
+		"status":         "ok",
+		"uptime":         uptime.String(),
+		"pid":            os.Getpid(),
+		"audit_logger":   auditLoggerStatus,
+		"audit_skipped":  skipped,
+		"audit_degraded": auditDegraded,
 	}
 	if sandboxInfo != nil {
 		resp["sandbox"] = sandboxInfo

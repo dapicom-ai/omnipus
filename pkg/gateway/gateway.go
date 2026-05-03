@@ -447,7 +447,52 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 	var agentLoop *agent.AgentLoop
 	agentLoop, err = agent.NewAgentLoop(cfg, msgBus, provider)
 	if err != nil {
+		// B1.2(b): when the failure is an audit logger construction error and
+		// the operator explicitly requested audit logging (cfg.Sandbox.AuditLog
+		// = true), this is a fail-closed boot abort. CLAUDE.md "audit-everything
+		// stance is non-negotiable" — silently disabling audit while it's
+		// requested would be a security regression. Map to SandboxBootError so
+		// cmd/omnipus exits with EX_CONFIG (78) per FR-J-004 and surfaces the
+		// remediation message ("either disable `sandbox.audit_log` or fix
+		// <error>") to the operator.
+		var auditConstructErr *audit.LoggerConstructionError
+		if errors.As(err, &auditConstructErr) && cfg.Sandbox.AuditLog {
+			audit.EmitBootAbortStderr(
+				"gateway.audit.construction_failed",
+				"-",
+				auditConstructErr.Dir,
+				auditConstructErr,
+				nil,
+			)
+			return &SandboxBootError{Err: auditConstructErr}
+		}
 		return fmt.Errorf("gateway: agent loop boot failed: %w", err)
+	}
+
+	// B1.2(d): wire the per-thread restrict-failure audit emitter into the
+	// sandbox package now that the agent loop (and thus the audit logger) is
+	// constructed. The hook bridges sandbox → audit without an import cycle —
+	// sandbox only knows about the *audit.Entry type, not the agent loop.
+	// SetRestrictAuditHook is idempotent so this is safe across hot reloads
+	// and the test gateway helpers that re-boot in-process.
+	{
+		al := agentLoop
+		sandbox.SetRestrictAuditHook(func(entry *audit.Entry) {
+			if al == nil {
+				return
+			}
+			logger := al.AuditLogger()
+			if logger == nil {
+				slog.Error("sandbox: per-thread restrict failed (audit logger disabled)",
+					"event", entry.Event, "details", entry.Details)
+				return
+			}
+			// B1.2(a): logger.Log is nil-safe; no further guard needed.
+			if err := logger.Log(entry); err != nil {
+				slog.Error("sandbox: restrict-failure audit write failed",
+					"event", entry.Event, "error", err)
+			}
+		})
 	}
 
 	// Boot Order step 4 (FR-062 / M7): validate per-agent tool policies before
@@ -677,6 +722,13 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 			return true, fmt.Sprintf("config reload failed: %v", runningServices.reloadError)
 		}
 		return false, ""
+	})
+
+	// B1.2(f): /health surfaces audit-degraded mode. The closure reports
+	// whether the agent loop currently has a non-nil audit logger so /health
+	// can flag "audit_logger: unavailable" without exposing the pointer.
+	runningServices.HealthServer.SetAuditLoggerAvailableFunc(func() bool {
+		return agentLoop.AuditLogger() != nil
 	})
 
 	var configReloadChan <-chan *config.Config
@@ -1052,8 +1104,41 @@ func setupAndStartServices(
 	// Start the egress proxy only when allow-list entries are configured.
 	// An empty allow-list means deny-all, which is enforced by the proxy itself;
 	// the proxy is still useful for audit logging even with an empty list.
+	//
+	// B1.2(c): wire the structured audit closure so every egress denial and
+	// upstream-error condition emits a real audit row instead of slog-only.
+	// agentLoop.AuditLogger() may be nil (when sandbox.audit_log=false); the
+	// closure handles the nil case by falling through to slog so denials are
+	// never silently swallowed. The B1.2(a) nil-receiver guard makes this
+	// safe even if the logger reference is nil at the moment of call.
+	egressAuditFn := func(entry *audit.Entry) {
+		al := agentLoop // captured by reference — may be wired up by reload
+		if al == nil {
+			slog.Warn("egress_proxy: audit fired before agent loop ready",
+				"event", entry.Event, "decision", entry.Decision)
+			return
+		}
+		logger := al.AuditLogger()
+		if logger == nil {
+			// audit_log disabled by config — fall through to slog so the
+			// denial is at least visible in operator logs. CLAUDE.md
+			// "audit-everything stance" still permits this fallback because
+			// the operator explicitly chose to disable structured audit
+			// (sandbox.audit_log=false). Loud-failure principle: log it.
+			slog.Warn("egress_proxy: audit denied (audit logger disabled)",
+				"event", entry.Event, "decision", entry.Decision,
+				"details", entry.Details)
+			return
+		}
+		// B1.2(a): logger.Log is nil-safe by contract; no extra guard.
+		if err := logger.Log(entry); err != nil {
+			slog.Error("egress_proxy: audit write failed",
+				"event", entry.Event, "error", err)
+		}
+	}
+
 	var egressProxy *sandbox.EgressProxy
-	if egressProx, epErr := sandbox.NewEgressProxy(cfg.Sandbox.EgressAllowList, nil); epErr != nil {
+	if egressProx, epErr := sandbox.NewEgressProxy(cfg.Sandbox.EgressAllowList, egressAuditFn); epErr != nil {
 		slog.Warn("gateway: egress proxy failed to start; run_in_workspace will run without egress enforcement",
 			"error", epErr)
 	} else {

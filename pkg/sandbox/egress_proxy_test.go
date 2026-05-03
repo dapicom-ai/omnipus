@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/dapicom-ai/omnipus/pkg/audit"
 )
 
 // listenLoopback opens a TCP listener on 127.0.0.1:0 for use in tests
@@ -86,16 +88,17 @@ func TestCompileEgressAllowList_Errors(t *testing.T) {
 }
 
 // TestEgressProxy_DenyEmitsAudit verifies that a denied request triggers
-// the EgressAuditFunc callback with the host and the operator's allow-list.
-// : audit shape uses Details["host"] + Details["allow_list"].
+// the EgressAuditFunc callback with a fully-shaped audit.Entry.
+//
+// B1.2(c): the proxy now emits a structured *audit.Entry rather than the
+// legacy (host, allowList) tuple. event="egress_denied", decision="deny",
+// host + allow_list + reason in Details.
 func TestEgressProxy_DenyEmitsAudit(t *testing.T) {
-	var auditedHost atomic.Value
-	var auditedList atomic.Value
-	audit := func(host string, list []string) {
-		auditedHost.Store(host)
-		auditedList.Store(list)
+	var captured atomic.Value
+	auditFn := func(entry *audit.Entry) {
+		captured.Store(entry)
 	}
-	p, err := NewEgressProxy([]string{"registry.npmjs.org"}, audit)
+	p, err := NewEgressProxy([]string{"registry.npmjs.org"}, auditFn)
 	if err != nil {
 		t.Fatalf("NewEgressProxy: %v", err)
 	}
@@ -119,14 +122,26 @@ func TestEgressProxy_DenyEmitsAudit(t *testing.T) {
 		t.Errorf("status = %d, want 403; body=%s", resp.StatusCode, body)
 	}
 
-	// Audit callback should have fired.
-	hostV, ok := auditedHost.Load().(string)
-	if !ok || hostV != "evil.example.com" {
-		t.Errorf("audited host = %v, want evil.example.com", hostV)
+	// Audit callback should have fired with a structured entry.
+	entry, ok := captured.Load().(*audit.Entry)
+	if !ok || entry == nil {
+		t.Fatalf("captured audit entry not stored; got %v", captured.Load())
 	}
-	listV, ok := auditedList.Load().([]string)
+	if entry.Event != "egress_denied" {
+		t.Errorf("entry.Event = %q, want egress_denied", entry.Event)
+	}
+	if entry.Decision != audit.DecisionDeny {
+		t.Errorf("entry.Decision = %q, want deny", entry.Decision)
+	}
+	if got, _ := entry.Details["host"].(string); got != "evil.example.com" {
+		t.Errorf("entry.Details[host] = %v, want evil.example.com", entry.Details["host"])
+	}
+	listV, ok := entry.Details["allow_list"].([]string)
 	if !ok || len(listV) != 1 || listV[0] != "registry.npmjs.org" {
-		t.Errorf("audited list = %v, want [registry.npmjs.org]", listV)
+		t.Errorf("entry.Details[allow_list] = %v, want [registry.npmjs.org]", entry.Details["allow_list"])
+	}
+	if reason, _ := entry.Details["reason"].(string); reason == "" {
+		t.Errorf("entry.Details[reason] should be populated; got empty")
 	}
 }
 

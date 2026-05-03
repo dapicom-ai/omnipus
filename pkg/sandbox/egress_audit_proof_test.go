@@ -29,15 +29,15 @@ func TestEgressProxy_AuditEntryShape(t *testing.T) {
 	}
 	defer logger.Close()
 
-	auditFn := func(host string, list []string) {
-		if logErr := logger.Log(&audit.Entry{
-			Event:    "path.network_denied",
-			Decision: audit.DecisionDeny,
-			Details: map[string]any{
-				"host":       host,
-				"allow_list": list,
-			},
-		}); logErr != nil {
+	// B1.2(c): the proxy now hands us a fully-shaped *audit.Entry. Tests
+	// re-tag the event from "egress_denied" to the documented gateway-side
+	// event name "path.network_denied" so the on-disk shape continues to
+	// match the spec — the proxy emits the canonical sandbox-layer event,
+	// and the gateway-side closure (this one) maps it onto the gateway's
+	// preferred event taxonomy. Other Details fields pass through verbatim.
+	auditFn := func(entry *audit.Entry) {
+		entry.Event = "path.network_denied"
+		if logErr := logger.Log(entry); logErr != nil {
 			t.Logf("audit log: %v", logErr)
 		}
 	}

@@ -41,13 +41,25 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/dapicom-ai/omnipus/pkg/audit"
 )
 
-// EgressAuditFunc is invoked for every denied egress request so the caller
-// (gateway) can write a structured audit entry. Passing nil disables audit
-// (used in tests). Implementations should be non-blocking — the proxy's
+// EgressAuditFunc is invoked for every denied egress request, and for any
+// upstream-error condition that the proxy detects, so the caller (gateway)
+// can write a structured audit entry. Passing nil disables audit (used in
+// tests). Implementations should be non-blocking — the proxy's
 // request-handling goroutine waits on this call.
-type EgressAuditFunc func(host string, allowList []string)
+//
+// B1.2(c): the function now receives a fully-populated *audit.Entry rather
+// than (host, allowList) so the proxy can emit canonical event names and
+// decisions (e.g. event="egress_denied", decision="deny") without each
+// call site reshaping the audit row. The host, allow-list, port, and
+// reason all live in entry.Details. The agent_id is left empty here
+// because the proxy does not know which agent originated a given child-
+// process request — the caller's closure can fill that in if it has the
+// information; B1.2(c) leaves it blank by design.
+type EgressAuditFunc func(*audit.Entry)
 
 // EgressProxy is a loopback HTTP/HTTPS forward proxy with host allow-listing.
 // One instance is created per gateway; child processes target it via
@@ -211,11 +223,23 @@ func (p *EgressProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("egress_proxy: upstream error",
 			"host", host, "error", err)
 		if p.audit != nil {
-			// Reuse the audit hook with an empty allow-list slice so the
-			// gateway-side audit emitter can distinguish "upstream-error"
-			// from "denied" by the empty allow-list. The gateway emits a
-			// distinct path.network_upstream_error event for this branch.
-			p.audit("upstream-error:"+host, []string{})
+			// B1.2(c): emit a distinct event so audit consumers can
+			// distinguish "denied by allow-list" from "allowed but
+			// upstream unreachable". decision="error" matches the
+			// audit.DecisionError convention. The underlying error string
+			// stays in Details where it's redactable; we don't echo it
+			// back to the child (HIGH-2 silent-failure-hunter — see the
+			// comment above the rp.ErrorHandler assignment).
+			p.audit(&audit.Entry{
+				Event:    "egress_upstream_error",
+				Decision: audit.DecisionError,
+				Details: map[string]any{
+					"host":   host,
+					"error":  err.Error(),
+					"phase":  "http_proxy",
+					"method": req.Method,
+				},
+			})
 		}
 		http.Error(rw, "egress_proxy: upstream unavailable", http.StatusBadGateway)
 	}
@@ -258,7 +282,19 @@ func (p *EgressProxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("egress_proxy: connect dial failed",
 			"host", host, "error", err)
 		if p.audit != nil {
-			p.audit("upstream-error:"+host, []string{})
+			// B1.2(c): structured upstream-error audit for the CONNECT
+			// (HTTPS tunnel) path. Same shape as the plain-HTTP branch
+			// above so audit consumers can union the two by event name.
+			p.audit(&audit.Entry{
+				Event:    "egress_upstream_error",
+				Decision: audit.DecisionError,
+				Details: map[string]any{
+					"host":   host,
+					"error":  err.Error(),
+					"phase":  "connect_dial",
+					"method": http.MethodConnect,
+				},
+			})
 		}
 		http.Error(w, "egress_proxy: upstream unavailable", http.StatusBadGateway)
 		return
@@ -305,10 +341,26 @@ func (p *EgressProxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 }
 
 // deny writes a 403 to the client and emits the audit entry.
+//
+// B1.2(c): the audit closure receives a fully-shaped audit.Entry with
+// event="egress_denied", decision="deny", and Details = {host, allow_list,
+// reason}. Falls back to slog.Warn when no closure is wired so denials are
+// always visible in logs even in tests/development.
 func (p *EgressProxy) deny(w http.ResponseWriter, host string) {
 	slog.Info("egress_proxy: denied", "host", host, "allow_list", p.allowList)
 	if p.audit != nil {
-		p.audit(host, p.AllowList())
+		p.audit(&audit.Entry{
+			Event:    "egress_denied",
+			Decision: audit.DecisionDeny,
+			Details: map[string]any{
+				"host":       host,
+				"allow_list": p.AllowList(),
+				"reason":     "host not in egress allow-list",
+			},
+		})
+	} else {
+		slog.Warn("egress_proxy: deny without audit hook (audit logger unavailable)",
+			"host", host, "allow_list", p.allowList)
 	}
 	http.Error(w, fmt.Sprintf("egress_proxy: host %q not in allow-list", host), http.StatusForbidden)
 }

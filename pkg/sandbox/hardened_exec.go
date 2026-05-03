@@ -29,12 +29,71 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
+
+	"github.com/dapicom-ai/omnipus/pkg/audit"
 )
+
+// restrictAuditHook is the package-level audit emitter for B1.2(d)
+// per-thread restrict failures. Set by SetRestrictAuditHook at gateway
+// boot; nil until then. Stored atomically so the read path on the
+// hardened-exec hot loop is lock-free.
+//
+// Threat note: a per-thread restrict failure means the OS thread we
+// locked could not have its Landlock domain re-applied, so the spawn
+// MUST abort (the caller surfaces an error). Audit emission is a loud
+// signal that the gateway's kernel sandbox is in a degraded state — an
+// operator who sees this entry should investigate kernel ABI / namespace
+// drift immediately.
+var restrictAuditHook atomic.Pointer[func(*audit.Entry)]
+
+// SetRestrictAuditHook installs the audit emitter for per-thread restrict
+// failures. Pass nil to clear (used in tests). Safe to call from any
+// goroutine. The function is invoked from within Run / StartLocked
+// goroutines that have runtime.LockOSThread'd, so implementations MUST
+// be cheap and non-blocking.
+//
+// B1.2(d): the gateway wires this at boot to agent.AgentLoop.AuditLogger().Log
+// so a Landlock / seccomp re-apply failure on a worker thread surfaces in the
+// audit JSONL rather than only in slog.
+func SetRestrictAuditHook(fn func(*audit.Entry)) {
+	if fn == nil {
+		restrictAuditHook.Store(nil)
+		return
+	}
+	restrictAuditHook.Store(&fn)
+}
+
+// emitRestrictFailure dispatches to the registered hook, falling back to
+// slog.Error when no hook is wired. Called from Run and StartLocked when
+// restrictCurrentThreadIfNeeded returns a non-nil error so the operator
+// sees the failure in audit even though the spawn itself aborts.
+func emitRestrictFailure(callsite string, err error) {
+	if err == nil {
+		return
+	}
+	hookPtr := restrictAuditHook.Load()
+	if hookPtr == nil {
+		slog.Error("hardened_exec: per-thread restrict failed (no audit hook wired)",
+			"callsite", callsite, "error", err)
+		return
+	}
+	(*hookPtr)(&audit.Entry{
+		Event:    "sandbox_restrict_failed",
+		Decision: audit.DecisionError,
+		Details: map[string]any{
+			"callsite": callsite,
+			"error":    err.Error(),
+			"phase":    "per_thread_restrict",
+		},
+	})
+}
 
 // sensitiveEnvKeys are stripped from any inherited gateway environment before
 // it reaches a child process. Includes the master key, the bearer auth token,
@@ -190,6 +249,12 @@ func Run(ctx context.Context, argv []string, env []string, lim Limits) (Result, 
 		// goroutine returns at the end of this function, which causes the
 		// runtime to terminate the locked thread.
 		if err := restrictCurrentThreadIfNeeded(); err != nil {
+			// B1.2(d): emit a sandbox_restrict_failed audit entry BEFORE
+			// returning the error so operators see the kernel-level
+			// degradation in the audit trail, not just in slog. The spawn
+			// is aborted unconditionally — we never run an unrestricted
+			// child even if audit emission itself failed.
+			emitRestrictFailure("hardened_exec.Run", err)
 			ch <- runResult{Result{}, fmt.Errorf("hardened_exec: per-thread restrict: %w", err)}
 			return
 		}
@@ -224,12 +289,20 @@ func Run(ctx context.Context, argv []string, env []string, lim Limits) (Result, 
 // restrictCurrentThreadIfNeeded is a no-op and this wrapper costs only one
 // goroutine + channel hop per spawn.
 func StartLocked(cmd *exec.Cmd) error {
+	// Record that the correct spawn path (StartLocked) has been used in this
+	// process. ApplyToCmd contract enforcement (B1.4-b) uses this marker in
+	// debug assertions to confirm callers are not bypassing StartLocked.
+	MarkStartLockedCalled()
 	clearPdeathsigForBackground(cmd)
 	ch := make(chan error, 1)
 	go func() {
 		runtime.LockOSThread()
 		// Intentionally NO UnlockOSThread.
 		if err := restrictCurrentThreadIfNeeded(); err != nil {
+			// B1.2(d): same audit emission as Run() — every per-thread
+			// restrict failure is a loud signal of sandbox degradation,
+			// regardless of which spawn entry point fired it.
+			emitRestrictFailure("hardened_exec.StartLocked", err)
 			ch <- fmt.Errorf("hardened_exec: per-thread restrict: %w", err)
 			return
 		}

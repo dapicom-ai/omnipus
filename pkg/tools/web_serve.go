@@ -645,6 +645,11 @@ func (t *WebServeTool) auditDevDeny(agentID, command, reason string) *ToolResult
 				ForUser: "Tier 3 requires audit logging; aborting",
 			}
 		}
+		// B1.2(e): bump the audit-skipped counter so /health and /metrics
+		// can surface the degraded-audit state. The slog.Warn is sticky
+		// (one per process) but the counter ticks every time, giving
+		// operators rate-of-skip visibility.
+		audit.IncSkipped(ToolNameWebServe, audit.DecisionDeny)
 		auditDevNilOnce.Do(func() {
 			slog.Warn("web_serve: auditLogger is nil; deny will not be recorded",
 				"agent_id", agentID, "command", command)
@@ -674,6 +679,9 @@ func (t *WebServeTool) auditDevDeny(agentID, command, reason string) *ToolResult
 			ForUser: "Tier 3 requires audit logging; aborting",
 		}
 	}
+	// B1.2(e): write-failure path with AuditFailClosed=false. Same counter
+	// bump — every silently-dropped audit row increments audit_skipped_total.
+	audit.IncSkipped(ToolNameWebServe, audit.DecisionDeny)
 	slog.Error("web_serve: audit write failed for command deny",
 		"agent_id", agentID, "command", command, "error", logErr)
 	return nil
@@ -683,6 +691,10 @@ func (t *WebServeTool) auditDevDeny(agentID, command, reason string) *ToolResult
 // Returns a non-nil *ToolResult only when the dev server must be aborted.
 func (t *WebServeTool) auditDevStart(ctx context.Context, agentID, command string, port int32) *ToolResult {
 	if t.auditLogger == nil {
+		// B1.2(e): nil-logger path is silent today by design (operators who
+		// run with audit_log=false have explicitly accepted the trade-off).
+		// Still bump the counter so /health surfaces the degraded state.
+		audit.IncSkipped(ToolNameWebServe, audit.DecisionAllow)
 		return nil
 	}
 	logErr := t.auditLogger.Log(&audit.Entry{
@@ -709,6 +721,8 @@ func (t *WebServeTool) auditDevStart(ctx context.Context, agentID, command strin
 			ForUser: "Tier 3 requires audit logging; aborting",
 		}
 	}
+	// B1.2(e): same counter bump on the allow-side write failure.
+	audit.IncSkipped(ToolNameWebServe, audit.DecisionAllow)
 	slog.Error("web_serve: audit write failed (continuing — audit_fail_closed=false)",
 		"agent_id", agentID, "command", command, "error", logErr)
 	return nil

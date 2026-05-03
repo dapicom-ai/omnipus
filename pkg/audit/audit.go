@@ -81,6 +81,42 @@ type Logger struct {
 	degraded    bool
 }
 
+// LoggerConstructionError wraps an audit.NewLogger failure so callers can
+// distinguish "audit logger could not be built" from generic boot errors.
+//
+// B1.2(b): when cfg.Sandbox.AuditLog == true and audit construction fails,
+// the gateway must fail closed (treat as a sandbox boot error). Wrapping the
+// underlying error in this typed sentinel lets the gateway recognise the
+// case without string-matching the message and without importing internal
+// state from the agent package.
+type LoggerConstructionError struct {
+	Dir string
+	Err error
+}
+
+// Error makes LoggerConstructionError satisfy the error interface.
+func (e *LoggerConstructionError) Error() string {
+	if e == nil {
+		return "audit: logger construction failed"
+	}
+	if e.Err == nil {
+		return fmt.Sprintf("audit: logger construction failed for dir %q", e.Dir)
+	}
+	return fmt.Sprintf(
+		"audit log construction failed for dir %q: %v; "+
+			"either disable `sandbox.audit_log` or fix the underlying problem (permissions, disk, redaction patterns)",
+		e.Dir, e.Err,
+	)
+}
+
+// Unwrap exposes the underlying error for errors.Is/As traversal.
+func (e *LoggerConstructionError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
 // NewLogger creates an audit logger. It recovers from corruption on startup
 // and runs retention cleanup.
 func NewLogger(cfg LoggerConfig) (*Logger, error) {
@@ -125,7 +161,21 @@ func NewLogger(cfg LoggerConfig) (*Logger, error) {
 }
 
 // Log writes an audit entry. Returns an error on write failure but never panics.
+//
+// B1.2(a): Logger.Log is nil-safe. If the receiver is nil (e.g. when audit
+// logger construction failed during boot but the rest of the system continues
+// — see B1.2(b) for the fail-closed path), Log returns nil without panicking.
+// This guard exists because the audit logger is reached through deeply-nested
+// call chains (egress proxy denials, per-thread restrict failures, web_serve
+// audit fail-closed) where adding a defensive nil-check at every call site
+// would be brittle. Keeping the guard on the receiver makes every caller safe.
 func (l *Logger) Log(entry *Entry) error {
+	if l == nil {
+		return nil
+	}
+	if entry == nil {
+		return nil
+	}
 	if entry.Timestamp.IsZero() {
 		entry.Timestamp = time.Now().UTC()
 	}
