@@ -966,6 +966,105 @@ describe('ChatStore_isReplaying_flag', () => {
   })
 })
 
+// ── B1.3(d) — unknown-targetSid done frame handling ───────────────────────────
+
+describe('chat store — done frame for unknown targetSid (B1.3d)', () => {
+  // Traces to: B1.3(d) security hardening
+  // When a done frame arrives for a targetSid that is not in sessionsById, the
+  // store must log a warning and force-clear isStreaming on the active bucket so
+  // the spinner does not render indefinitely.
+
+  it('logs console.warn with chat.done_unknown_sid when targetSid is not in sessionsById', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    act(() => {
+      // Active session IS in the store (set by beforeEach → resetStore)
+      useChatStore.getState().appendMessage({
+        id: 'asst_streaming',
+        session_id: TEST_SESSION_ID,
+        role: 'assistant',
+        content: 'streaming…',
+        timestamp: new Date().toISOString(),
+        status: 'streaming',
+        isStreaming: true,
+      })
+      useChatStore.setState({ isStreaming: true })
+
+      // done arrives for a session that is NOT in sessionsById
+      useChatStore.getState().handleFrame({
+        type: 'done',
+        session_id: 'unknown-session-xyz',
+      })
+    })
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      'chat.done_unknown_sid',
+      expect.objectContaining({ targetSid: 'unknown-session-xyz' })
+    )
+
+    warnSpy.mockRestore()
+  })
+
+  it('force-clears isStreaming on the active bucket when done arrives for unknown targetSid', () => {
+    act(() => {
+      useChatStore.getState().appendMessage({
+        id: 'asst_stuck',
+        session_id: TEST_SESSION_ID,
+        role: 'assistant',
+        content: 'partial…',
+        timestamp: new Date().toISOString(),
+        status: 'streaming',
+        isStreaming: true,
+      })
+      useChatStore.setState({ isStreaming: true })
+    })
+
+    // Verify we start streaming
+    expect(useChatStore.getState().isStreaming).toBe(true)
+
+    act(() => {
+      // done for an unknown session — the active bucket must recover
+      useChatStore.getState().handleFrame({
+        type: 'done',
+        session_id: 'unknown-session-xyz',
+      })
+    })
+
+    // isStreaming must be cleared on the active bucket
+    expect(useChatStore.getState().isStreaming).toBe(false)
+    // The active bucket in sessionsById must also reflect the cleared state
+    const activeBucket = useChatStore.getState().sessionsById[TEST_SESSION_ID]
+    expect(activeBucket?.isStreaming).toBe(false)
+  })
+
+  it('processes done normally when targetSid is known', () => {
+    act(() => {
+      useChatStore.getState().appendMessage({
+        id: 'asst_known',
+        session_id: TEST_SESSION_ID,
+        role: 'assistant',
+        content: 'some text',
+        timestamp: new Date().toISOString(),
+        status: 'streaming',
+        isStreaming: true,
+      })
+      useChatStore.setState({ isStreaming: true })
+
+      // done for the known TEST_SESSION_ID — normal path
+      useChatStore.getState().handleFrame({
+        type: 'done',
+        session_id: TEST_SESSION_ID,
+        stats: { tokens: 42, cost: 0.001, duration_ms: 100 },
+      })
+    })
+
+    expect(useChatStore.getState().isStreaming).toBe(false)
+    const msg = useChatStore.getState().messages.find((m) => m.id === 'asst_known')
+    expect(msg?.status).toBe('done')
+    expect(useChatStore.getState().sessionTokens).toBe(42)
+  })
+})
+
 // W2-10: Sibling-spans cross-wire test.
 // Two spans A (parentCallId "cA") and B (parentCallId "cB") open.
 // Emit 2 tool_call_start frames both with parent_call_id "cA".

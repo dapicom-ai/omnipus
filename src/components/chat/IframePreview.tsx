@@ -9,6 +9,14 @@
  * Preview config: sourced from /api/v1/about via TanStack Query (['about']).
  * Toast system: useUiStore().addToast (existing pattern).
  *
+ * Security (B1.3a — same-origin guard):
+ *   Before mounting an iframe, the component computes the iframe's target
+ *   origin and compares it against window.location.origin. When they match,
+ *   allow-same-origin is suppressed. The combination of allow-scripts +
+ *   allow-same-origin on a same-origin iframe grants the iframe full access to
+ *   the SPA's authenticated API — the most defensive fix is to drop
+ *   allow-same-origin so the iframe is sandboxed at origin level.
+ *
  * Warmup schedule note (FR-013 / MN-02):
  *   The probe schedule is driven by a single setInterval that fires every 2 s,
  *   independent of whether the previous probe completed. Each interval tick
@@ -17,6 +25,12 @@
  *   MN-02: "schedule is fixed — probe N starts at t=(N-1)*2s regardless of
  *   probe N-1's actual completion."
  *   An individual probe times out at 1.8 s (no onload within that window).
+ *
+ * 5xx probe (B1.3b):
+ *   After an iframe onload fires, the component issues a HEAD probe at the same
+ *   URL (authenticated via Authorization header). A 5xx response surfaces an
+ *   "Dev server returned a server error" block with the status code and a Retry
+ *   button instead of silently rendering the browser's error page.
  */
 
 import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from 'react'
@@ -33,9 +47,13 @@ import { cn } from '@/lib/utils'
 export type IframePreviewProps =
   | { kind: 'serve_workspace'; result: ServeWorkspaceResult | null; warmupTimeoutSeconds?: number }
   | { kind: 'run_in_workspace'; result: RunInWorkspaceResult | null; warmupTimeoutSeconds?: number }
+  | { kind: 'web_serve'; result: ServeWorkspaceResult | null; warmupTimeoutSeconds?: number }
 
 // Internal warmup state machine phases.
 type WarmupPhase = 'starting' | 'probing' | 'ready' | 'error'
+
+// B1.3b: 5xx probe result after iframe onload.
+type ProbeStatus = 'idle' | 'pending' | 'ok' | 'server_error'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -77,6 +95,38 @@ function extractPath(result: PreviewResult): string | null {
   }
 
   return null
+}
+
+// ── Same-origin guard (B1.3a) ─────────────────────────────────────────────────
+
+/**
+ * Derives the origin of the given absolute iframe URL.
+ * Returns null if the URL is not an absolute HTTP/HTTPS URL.
+ */
+function extractOrigin(absoluteUrl: string): string | null {
+  try {
+    const parsed = new URL(absoluteUrl)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
+    return parsed.origin
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Returns true when the iframe's resolved origin equals the SPA's origin.
+ * When true, allow-same-origin MUST be dropped from the sandbox attribute to
+ * prevent the iframe from accessing the SPA's authenticated API.
+ *
+ * This is most defensive — losing allow-same-origin in a same-origin scenario
+ * breaks localStorage/cookie access inside the iframe but prevents full SPA
+ * compromise. The documented two-port preview model (gateway.preview_origin
+ * pointing to a different origin) will never trigger this guard.
+ */
+function isSameOriginAsApp(absoluteUrl: string): boolean {
+  const iframeOrigin = extractOrigin(absoluteUrl)
+  if (!iframeOrigin) return false
+  return iframeOrigin === window.location.origin
 }
 
 // ── Link-only fallback ────────────────────────────────────────────────────────
@@ -287,7 +337,7 @@ function WarmupPlaceholder({ toolName }: { toolName: string }) {
 export function IframePreview(props: IframePreviewProps) {
   const { kind, result, warmupTimeoutSeconds } = props
   const isWarmupRequired = kind === 'run_in_workspace'
-  const toolName = kind
+  const toolName = kind === 'web_serve' ? 'serve_workspace' : kind
   const {
     data: aboutInfo,
     isLoading: aboutIsLoading,
@@ -317,6 +367,12 @@ export function IframePreview(props: IframePreviewProps) {
 
   // F-7: visible iframe load error state
   const [iframeFailed, setIframeFailed] = useState(false)
+
+  // B1.3b: 5xx probe state — tracks the result of the HEAD probe issued after
+  // iframe onload. When server_error, the error block with status code is shown
+  // instead of the iframe (which would render the browser's generic error page).
+  const [probeStatus, setProbeStatus] = useState<ProbeStatus>('idle')
+  const [probeHttpStatus, setProbeHttpStatus] = useState<number | null>(null)
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const probeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -482,6 +538,8 @@ export function IframePreview(props: IframePreviewProps) {
       forceFetchRef.current = true
       cacheBusterRef.current = Date.now()
       setIframeFailed(false) // F-7: clear any previous visible-iframe error
+      setProbeStatus('idle')  // B1.3b: reset probe state on reload
+      setProbeHttpStatus(null)
       setIframeKey((k) => k + 1)
     } else {
       // Retry: reset warmup state machine.
@@ -508,6 +566,37 @@ export function IframePreview(props: IframePreviewProps) {
   function handleIframeLoad() {
     // F-7: A successful load clears any previous error state (dev server recovered).
     if (iframeFailed) setIframeFailed(false)
+
+    // B1.3b: Issue a HEAD probe to detect 5xx responses. The iframe's onload
+    // fires even when the server returns a 500 page (the browser renders the HTML
+    // successfully). Without this probe, the user sees a generic error page in the
+    // chat instead of an actionable message.
+    //
+    // We probe the base URL (without the cache-buster) to match the iframe content.
+    if (!absoluteUrl) return
+    const probeUrl = absoluteUrl
+    setProbeStatus('pending')
+    const token = sessionStorage.getItem('omnipus_auth_token') ?? localStorage.getItem('omnipus_auth_token')
+    const headers: Record<string, string> = {}
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    fetch(probeUrl, { method: 'HEAD', headers })
+      .then((res) => {
+        if (!mountedRef.current) return
+        if (res.status >= 500) {
+          setProbeStatus('server_error')
+          setProbeHttpStatus(res.status)
+        } else {
+          setProbeStatus('ok')
+          setProbeHttpStatus(null)
+        }
+      })
+      .catch(() => {
+        // Network error — don't block the iframe; treat as ok (user can see what loaded)
+        if (mountedRef.current) {
+          setProbeStatus('ok')
+          setProbeHttpStatus(null)
+        }
+      })
   }
 
   // ── Render guards ─────────────────────────────────────────────────────────
@@ -605,6 +694,25 @@ export function IframePreview(props: IframePreviewProps) {
     ? `${absoluteUrl}?_=${cacheBusterRef.current}`
     : absoluteUrl
 
+  // B1.3a: same-origin guard — compute whether the iframe's resolved origin
+  // matches the SPA's origin. If so, drop allow-same-origin from the sandbox
+  // attribute. The documented two-port preview model (gateway.preview_origin
+  // pointing to a different port/domain) will never trigger this path.
+  const iframeIsSameOrigin = isSameOriginAsApp(absoluteUrl)
+
+  // Sandbox token sets:
+  //  - Different-origin (normal two-port setup): full token set including allow-same-origin.
+  //  - Same-origin (operator misconfiguration): drop allow-same-origin to prevent SPA API access.
+  const sandboxNormal = 'allow-scripts allow-same-origin allow-forms allow-popups allow-modals'
+  const sandboxRestricted = 'allow-scripts allow-forms allow-popups allow-modals'
+  const sandboxAttr = iframeIsSameOrigin ? sandboxRestricted : sandboxNormal
+
+  // B1.3a: when same-origin is detected, surface a notice so operators know their
+  // gateway.preview_origin is misconfigured (or they are on a single-port build).
+  if (iframeIsSameOrigin) {
+    console.warn('preview.same_origin_guard_triggered', { absoluteUrl, origin: window.location.origin })
+  }
+
   return (
     <div className="mt-2 rounded-md border border-[var(--color-border)] overflow-hidden">
       {/* Chrome bar */}
@@ -616,6 +724,20 @@ export function IframePreview(props: IframePreviewProps) {
         onReloadOrRetry={handleReloadOrRetry}
       />
 
+      {/* B1.3a: same-origin notice — shown when gateway.preview_origin is not configured
+          to a different origin, causing the iframe to share the SPA's origin. In this
+          configuration allow-same-origin has been suppressed (sandboxRestricted). */}
+      {iframeIsSameOrigin && (
+        <div className="px-3 py-2 text-xs bg-amber-900/20 border-b border-amber-500/30 text-amber-400">
+          Preview restricted — gateway is misconfigured for iframe isolation. Set{' '}
+          <code className="font-mono text-[10px] bg-[var(--color-surface-2)] px-1 rounded">
+            gateway.preview_origin
+          </code>{' '}
+          to a different origin to enable full preview. Scripted content runs without
+          same-origin access.
+        </div>
+      )}
+
       {/* Hidden probe iframe (warmup only) */}
       {/* F-6: data-probe-id lets handleProbeLoad/handleProbeError discard stale events */}
       {isWarmupRequired && warmupPhase === 'probing' && (
@@ -626,8 +748,8 @@ export function IframePreview(props: IframePreviewProps) {
           aria-hidden="true"
           className="hidden"
           data-probe-id={probeKey}
-          // FR-011 sandbox
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+          // FR-011 sandbox — B1.3a: use computed sandboxAttr
+          sandbox={sandboxAttr}
           onLoad={handleProbeLoad}
           onError={handleProbeError}
         />
@@ -652,6 +774,7 @@ export function IframePreview(props: IframePreviewProps) {
       )}
 
       {/* Visible iframe — F-7: replaced by error block if load fails */}
+      {/* B1.3b: also replaced by error block when 5xx probe fires after onload */}
       {(!isWarmupRequired || warmupPhase === 'ready') && (
         iframeFailed ? (
           <div className="bg-[var(--color-surface-1)] min-h-[120px] flex items-center justify-center p-4">
@@ -660,6 +783,20 @@ export function IframePreview(props: IframePreviewProps) {
               href={absoluteUrl}
               onRetry={() => {
                 setIframeFailed(false)
+                setProbeStatus('idle')
+                setProbeHttpStatus(null)
+                handleReloadOrRetry()
+              }}
+            />
+          </div>
+        ) : probeStatus === 'server_error' ? (
+          <div className="bg-[var(--color-surface-1)] min-h-[120px] flex items-center justify-center p-4">
+            <ErrorBlock
+              message={`Dev server returned a server error (HTTP ${probeHttpStatus ?? '5xx'}). The server may have crashed or encountered an error.`}
+              href={absoluteUrl}
+              onRetry={() => {
+                setProbeStatus('idle')
+                setProbeHttpStatus(null)
                 handleReloadOrRetry()
               }}
             />
@@ -674,7 +811,8 @@ export function IframePreview(props: IframePreviewProps) {
               'min-h-[400px]',
             )}
             // FR-011 sandbox — NO allow-top-navigation, NO allow-popups-to-escape-sandbox
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
+            // B1.3a: sandboxAttr drops allow-same-origin when iframe is same-origin as SPA
+            sandbox={sandboxAttr}
             onLoad={handleIframeLoad}
             onError={handleIframeError}
           />

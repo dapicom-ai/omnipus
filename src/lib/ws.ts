@@ -305,6 +305,14 @@ export class WsConnection {
   private droppedFrameCount = 0
   private readonly droppedFrameThreshold = 5
 
+  // B1.3c: last non-1000/1001 close code surfaced for the persistent banner.
+  private lastCloseCode: number | null = null
+  private lastCloseReason: string | null = null
+
+  // B1.3c: bound event handler references so they can be removed on disconnect.
+  private _onVisibilityChange: (() => void) | null = null
+  private _onOnline: (() => void) | null = null
+
   constructor(callbacks: WsConnectionCallbacks) {
     this.callbacks = callbacks
   }
@@ -312,6 +320,7 @@ export class WsConnection {
   connect(): void {
     this.intentionalClose = false
     this.reconnectAttempts = 0
+    this._attachWindowListeners()
     this._createSocket()
   }
 
@@ -319,6 +328,7 @@ export class WsConnection {
     this.intentionalClose = true
     this._clearReconnectTimer()
     this._stopHeartbeat()
+    this._detachWindowListeners()
     this.ws?.close(1000, 'User disconnected')
     this.ws = null
   }
@@ -397,7 +407,21 @@ export class WsConnection {
       this.ws = null
       this._stopHeartbeat()
       this.callbacks.onDisconnected()
-      if (!this.intentionalClose && event.code !== 1000) {
+      // B1.3c: surface non-1000/1001 close codes through the persistent connection
+      // error banner (via onError → connectionStore.setConnectionError). The banner
+      // in AppShell.tsx will remain visible until reconnect succeeds (onConnected
+      // clears connectionError via setConnected(true)).
+      if (!this.intentionalClose && event.code !== 1000 && event.code !== 1001) {
+        this.lastCloseCode = event.code
+        this.lastCloseReason = event.reason || null
+        const codeLabel = event.code ? ` code ${event.code}` : ''
+        const reasonLabel = event.reason ? `: ${event.reason}` : ''
+        this.callbacks.onError(
+          `Disconnected from gateway —${codeLabel}${reasonLabel || ' connection lost'}. Reconnecting…`
+        )
+        this._scheduleReconnect()
+      } else if (!this.intentionalClose) {
+        // Normal close (1000/1001) that wasn't intentional — still reconnect but no banner.
         this._scheduleReconnect()
       }
     }
@@ -421,6 +445,50 @@ export class WsConnection {
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
+    }
+  }
+
+  // B1.3c: attach window-level listeners that trigger reconnect on
+  // visibilitychange (tab re-focused after backgrounding) and online (network
+  // recovered). Both fire a reconnect immediately if in disconnected state,
+  // resetting the backoff counter so the next attempt is fast.
+  private _attachWindowListeners(): void {
+    if (this._onVisibilityChange) return // already attached
+
+    this._onVisibilityChange = () => {
+      if (
+        document.visibilityState === 'visible' &&
+        !this.intentionalClose &&
+        this.ws === null
+      ) {
+        // Reset backoff — user is actively looking at the page.
+        this.reconnectAttempts = 0
+        this._clearReconnectTimer()
+        this._createSocket()
+      }
+    }
+
+    this._onOnline = () => {
+      if (!this.intentionalClose && this.ws === null) {
+        // Network recovered — reset backoff and reconnect immediately.
+        this.reconnectAttempts = 0
+        this._clearReconnectTimer()
+        this._createSocket()
+      }
+    }
+
+    window.addEventListener('visibilitychange', this._onVisibilityChange)
+    window.addEventListener('online', this._onOnline)
+  }
+
+  private _detachWindowListeners(): void {
+    if (this._onVisibilityChange) {
+      window.removeEventListener('visibilitychange', this._onVisibilityChange)
+      this._onVisibilityChange = null
+    }
+    if (this._onOnline) {
+      window.removeEventListener('online', this._onOnline)
+      this._onOnline = null
     }
   }
 

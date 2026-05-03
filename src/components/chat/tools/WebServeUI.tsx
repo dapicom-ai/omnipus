@@ -81,6 +81,38 @@ function isWebServeResult(value: unknown): value is WebServeResult {
 
 // ── Block component ───────────────────────────────────────────────────────────
 
+// ── Malformed result block (B1.3e) ────────────────────────────────────────────
+
+/**
+ * Rendered when `isWebServeResult` rejects the tool result. Shows the raw JSON
+ * in a collapsible details element so power users can debug without crashing the
+ * rest of the chat. Does NOT throw — the ErrorBoundary wrapping ChatScreen is
+ * not invoked.
+ */
+function MalformedResultBlock({ raw }: { raw: unknown }) {
+  let rawJson: string
+  try {
+    rawJson = JSON.stringify(raw, null, 2)
+  } catch {
+    rawJson = String(raw)
+  }
+  return (
+    <div className="mt-2 rounded-md border border-[var(--color-error)]/30 bg-[var(--color-error)]/5 px-3 py-2 text-xs space-y-1.5">
+      <p className="text-[var(--color-error)]">
+        web_serve tool returned a malformed result — cannot render preview.
+      </p>
+      <details className="mt-1">
+        <summary className="cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-secondary)] transition-colors">
+          Show raw result
+        </summary>
+        <pre className="mt-1.5 p-2 rounded bg-[var(--color-surface-2)] text-[var(--color-muted)] font-mono text-[10px] overflow-auto max-h-40 whitespace-pre-wrap break-all">
+          {rawJson}
+        </pre>
+      </details>
+    </div>
+  )
+}
+
 export function WebServeBlock({
   args,
   result,
@@ -92,6 +124,13 @@ export function WebServeBlock({
   isRunning: boolean
   toolName: string
 }) {
+  // B1.3e: when the type guard rejects the result and the tool is no longer
+  // running, render the malformed block instead of crashing or rendering nothing.
+  // We allow null result while running (tool not done yet — normal state).
+  if (result !== null && result !== undefined && !isRunning && !isWebServeResult(result)) {
+    return <MalformedResultBlock raw={result} />
+  }
+
   const typedResult = isWebServeResult(result) ? result : null
   const effectiveKind = typedResult ? inferKind(typedResult) : null
 

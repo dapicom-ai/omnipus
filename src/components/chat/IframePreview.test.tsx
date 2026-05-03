@@ -987,3 +987,211 @@ describe('IframePreview — extractPath relative-path URL handling (H-6)', () =>
     expect(screen.getByText(/cannot render link/i)).toBeInTheDocument()
   })
 })
+
+// ── B1.3(a) — Same-origin guard ───────────────────────────────────────────────
+
+describe('IframePreview — same-origin guard (B1.3a)', () => {
+  // Traces to: B1.3(a) security hardening
+  // When the iframe's resolved origin equals window.location.origin, the
+  // combination of allow-scripts + allow-same-origin grants full SPA API access.
+  // The component must drop allow-same-origin in that case.
+
+  it('drops allow-same-origin from sandbox when iframe origin matches SPA origin', () => {
+    // SPA loaded on localhost:5000; preview port is also 5000 → same origin.
+    Object.defineProperty(window, 'location', {
+      value: { hostname: 'localhost', protocol: 'http:', origin: 'http://localhost:5000' },
+      writable: true,
+    })
+    mockUseQuery.mockReturnValue({
+      data: {
+        // No preview_origin set, preview_port same as main port → same origin
+        preview_port: 5000,
+        preview_listener_enabled: true,
+        warmup_timeout_seconds: 10,
+      },
+      isLoading: false,
+    })
+
+    render(
+      <IframePreview
+        {...makeReadyProps({
+          result: {
+            path: '/serve/agent-1/abc123/',
+            url: 'http://localhost:5000/serve/agent-1/abc123/',
+            expires_at: '2099-01-01T00:00:00Z',
+          },
+        })}
+      />
+    )
+
+    const iframes = document.querySelectorAll('iframe:not([aria-hidden])')
+    expect(iframes.length).toBeGreaterThan(0)
+    const sandbox = iframes[0].getAttribute('sandbox') ?? ''
+    // allow-same-origin MUST be absent when same-origin
+    expect(sandbox).not.toContain('allow-same-origin')
+    // allow-scripts must still be present
+    expect(sandbox).toContain('allow-scripts')
+  })
+
+  it('retains allow-same-origin when iframe is on a different port (normal two-port setup)', () => {
+    // SPA on port 5000, preview on port 5001 → different origins (different port).
+    Object.defineProperty(window, 'location', {
+      value: { hostname: 'localhost', protocol: 'http:', origin: 'http://localhost:5000' },
+      writable: true,
+    })
+    mockUseQuery.mockReturnValue({
+      data: {
+        preview_port: 5001,
+        preview_listener_enabled: true,
+        warmup_timeout_seconds: 10,
+      },
+      isLoading: false,
+    })
+
+    render(<IframePreview {...makeReadyProps()} />)
+
+    const iframes = document.querySelectorAll('iframe:not([aria-hidden])')
+    expect(iframes.length).toBeGreaterThan(0)
+    const sandbox = iframes[0].getAttribute('sandbox') ?? ''
+    // Different origin → full sandbox tokens including allow-same-origin
+    expect(sandbox).toContain('allow-same-origin')
+  })
+
+  it('shows inline misconfiguration notice when same-origin is detected', () => {
+    Object.defineProperty(window, 'location', {
+      value: { hostname: 'localhost', protocol: 'http:', origin: 'http://localhost:5000' },
+      writable: true,
+    })
+    mockUseQuery.mockReturnValue({
+      data: {
+        preview_port: 5000,
+        preview_listener_enabled: true,
+        warmup_timeout_seconds: 10,
+      },
+      isLoading: false,
+    })
+
+    render(
+      <IframePreview
+        {...makeReadyProps({
+          result: {
+            path: '/serve/agent-1/abc123/',
+            url: 'http://localhost:5000/serve/agent-1/abc123/',
+            expires_at: '2099-01-01T00:00:00Z',
+          },
+        })}
+      />
+    )
+
+    // The misconfiguration notice must be present
+    expect(screen.getByText(/preview restricted/i)).toBeInTheDocument()
+    expect(screen.getByText(/gateway\.preview_origin/i)).toBeInTheDocument()
+  })
+})
+
+// ── B1.3(b) — 5xx HEAD probe after iframe onload ──────────────────────────────
+
+describe('IframePreview — 5xx HEAD probe after onload (B1.3b)', () => {
+  // Traces to: B1.3(b) security hardening
+  // After the visible iframe's onload fires, a HEAD probe is issued to detect
+  // 5xx responses. The iframe's onload fires even when the server returns a 500
+  // page (the browser renders the HTML). Without this probe, the user sees a
+  // generic browser error page instead of an actionable message.
+
+  beforeEach(() => {
+    Object.defineProperty(window, 'location', {
+      value: { hostname: 'localhost', protocol: 'http:', origin: 'http://localhost:5000' },
+      writable: true,
+    })
+    mockUseQuery.mockReturnValue({
+      data: {
+        preview_port: 5001,
+        preview_listener_enabled: true,
+        warmup_timeout_seconds: 10,
+      },
+      isLoading: false,
+    })
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('renders server error block when HEAD probe returns 500', async () => {
+    // Mock fetch to return a 500 response
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(null, { status: 500, statusText: 'Internal Server Error' })
+    )
+
+    render(<IframePreview {...makeReadyProps()} />)
+
+    const iframe = document.querySelector('iframe:not([aria-hidden])')
+    expect(iframe).not.toBeNull()
+
+    // Simulate the iframe's onload firing
+    await act(async () => {
+      fireEvent.load(iframe!)
+    })
+
+    // The 5xx error block should be visible
+    await waitFor(() => {
+      expect(screen.getByText(/dev server returned a server error/i)).toBeInTheDocument()
+    })
+
+    // HTTP status code is shown — anchor on the word "HTTP 500" so the
+    // assertion doesn't also match "5001" (the preview port in the link).
+    expect(screen.getByText(/HTTP 500/i)).toBeInTheDocument()
+
+    // Retry button is present
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
+
+    // No iframe is visible (replaced by error block)
+    const iframesAfter = document.querySelectorAll('iframe:not([aria-hidden])')
+    expect(iframesAfter.length).toBe(0)
+  })
+
+  it('keeps the iframe rendered when HEAD probe returns 200', async () => {
+    // Mock fetch to return a 200 response
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(null, { status: 200 })
+    )
+
+    render(<IframePreview {...makeReadyProps()} />)
+
+    const iframe = document.querySelector('iframe:not([aria-hidden])')
+    expect(iframe).not.toBeNull()
+
+    // Simulate the iframe's onload
+    await act(async () => {
+      fireEvent.load(iframe!)
+    })
+
+    // No error block
+    await waitFor(() => {
+      expect(screen.queryByText(/dev server returned a server error/i)).toBeNull()
+    })
+
+    // Iframe is still present
+    const iframesAfter = document.querySelectorAll('iframe:not([aria-hidden])')
+    expect(iframesAfter.length).toBeGreaterThan(0)
+  })
+
+  it('does not show error block when HEAD probe returns 503', async () => {
+    // 503 is also a 5xx — should show the error block
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(null, { status: 503 })
+    )
+
+    render(<IframePreview {...makeReadyProps()} />)
+
+    const iframe = document.querySelector('iframe:not([aria-hidden])')
+    await act(async () => {
+      fireEvent.load(iframe!)
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText(/dev server returned a server error/i)).toBeInTheDocument()
+    })
+    expect(screen.getByText(/503/)).toBeInTheDocument()
+  })
+})

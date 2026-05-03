@@ -226,6 +226,103 @@ describe('WebServeUI — back-compat alias: RunInWorkspaceUI', () => {
   })
 })
 
+// ── B1.3(e) — Malformed result block ─────────────────────────────────────────
+
+describe('WebServeUI — malformed result block (B1.3e)', () => {
+  // Traces to: B1.3(e) security hardening
+  // When isWebServeResult rejects the tool result (unexpected shape from replay
+  // of old transcript or corrupted data), the component must render an inline
+  // "tool returned malformed result" block with raw JSON, without crashing the
+  // rest of the chat thread.
+
+  it('renders malformed result block when result is not null/undefined and isRunning is false', () => {
+    render(
+      <WebServeBlock
+        args={{}}
+        result={{ unexpected_field: 'some_value', nested: { a: 1 } }}
+        isRunning={false}
+        toolName="web_serve"
+      />
+    )
+
+    // The malformed result notice must be present
+    expect(screen.getByText(/web_serve tool returned a malformed result/i)).toBeInTheDocument()
+
+    // The raw JSON must be in a details element
+    expect(screen.getByText(/show raw result/i)).toBeInTheDocument()
+
+    // No iframe rendered — the malformed block replaces it
+    expect(document.querySelectorAll('iframe').length).toBe(0)
+  })
+
+  it('renders malformed result block for a string result (not an object)', () => {
+    render(
+      <WebServeBlock
+        args={{}}
+        result="this is not an object"
+        isRunning={false}
+        toolName="web_serve"
+      />
+    )
+
+    expect(screen.getByText(/web_serve tool returned a malformed result/i)).toBeInTheDocument()
+    expect(document.querySelectorAll('iframe').length).toBe(0)
+  })
+
+  it('does NOT render malformed block when result is null and isRunning is true', () => {
+    // null result while running is normal (tool not done yet)
+    render(
+      <WebServeBlock
+        args={{}}
+        result={null}
+        isRunning={true}
+        toolName="web_serve"
+      />
+    )
+
+    expect(screen.queryByText(/web_serve tool returned a malformed result/i)).toBeNull()
+    // Shows waiting state instead
+    expect(screen.getByText(/waiting for/i)).toBeInTheDocument()
+  })
+
+  it('does NOT render malformed block when result is null and isRunning is false', () => {
+    // null + not running is the "failed / no result" path — normal handling
+    render(
+      <WebServeBlock
+        args={{}}
+        result={null}
+        isRunning={false}
+        toolName="web_serve"
+      />
+    )
+
+    expect(screen.queryByText(/web_serve tool returned a malformed result/i)).toBeNull()
+  })
+
+  it('renders normally for a valid WebServeResult shape', () => {
+    render(
+      <WebServeBlock
+        args={{}}
+        result={{
+          kind: 'static',
+          url: '/preview/jim/tok/',
+          path: '/preview/jim/tok/',
+          expires_at: '2099-01-01T00:00:00Z',
+        }}
+        isRunning={false}
+        toolName="web_serve"
+      />
+    )
+
+    // No malformed block
+    expect(screen.queryByText(/web_serve tool returned a malformed result/i)).toBeNull()
+
+    // Normal iframe present
+    const iframes = document.querySelectorAll('iframe:not([aria-hidden])')
+    expect(iframes.length).toBeGreaterThan(0)
+  })
+})
+
 // ── Module exports ─────────────────────────────────────────────────────────────
 
 describe('WebServeUI — module exports', () => {

@@ -942,6 +942,20 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
         case 'done':
           if (targetSid) {
+            // B1.3d: when done arrives for a targetSid that isn't in sessionsById yet,
+            // the session was probably switched away mid-stream. The active bucket's
+            // isStreaming flag would otherwise stay true forever (infinite spinner).
+            // Log a diagnostic warning and force-clear isStreaming on the active bucket.
+            const knownSid = !!get().sessionsById[targetSid]
+            if (!knownSid) {
+              console.warn('chat.done_unknown_sid', { targetSid, activeSid: activeSid })
+              // Force-clear the active bucket so the UI recovers.
+              if (activeSid && get().sessionsById[activeSid]) {
+                withBucket(activeSid, () => ({ isStreaming: false }))
+              }
+              break
+            }
+
             // Decide whether isReplaying must clear now vs. defer to a setTimeout.
             // The clear happens INSIDE the same withBucket return below — never via
             // a nested withBucket call, because the outer set() commits the bucket
