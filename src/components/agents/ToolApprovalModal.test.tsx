@@ -16,9 +16,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { act } from 'react'
 
-vi.mock('@/lib/api', () => ({
-  postToolApproval: vi.fn(),
-}))
+// We mock postToolApproval but pass-through ApiError + isApiError so the
+// component's `isApiError(err)` branch matches errors thrown from inside the
+// mock implementation. Without re-exporting them, the mock would shadow them
+// with undefined and crash on any thrown error.
+vi.mock('@/lib/api', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api')
+  return {
+    ...actual,
+    postToolApproval: vi.fn(),
+  }
+})
 
 vi.mock('@/store/ui', () => ({
   useUiStore: vi.fn((selector) => {
@@ -162,7 +170,7 @@ describe('ToolApprovalModal — button dispatch', () => {
 
 describe('ToolApprovalModal — error handling', () => {
   it('dismisses silently on 410 Gone (already resolved)', async () => {
-    vi.mocked(api.postToolApproval).mockRejectedValue(new Error('410: Gone'))
+    vi.mocked(api.postToolApproval).mockRejectedValue(new api.ApiError(410, 'Gone'))
 
     act(() => {
       useToolApprovalStore.setState({ queue: [SAMPLE_APPROVAL] })
@@ -180,7 +188,7 @@ describe('ToolApprovalModal — error handling', () => {
   })
 
   it('shows admin-required toast on 403', async () => {
-    vi.mocked(api.postToolApproval).mockRejectedValue(new Error('403: Forbidden'))
+    vi.mocked(api.postToolApproval).mockRejectedValue(new api.ApiError(403, 'Forbidden'))
 
     act(() => {
       useToolApprovalStore.setState({ queue: [SAMPLE_APPROVAL] })
@@ -202,7 +210,7 @@ describe('ToolApprovalModal — error handling', () => {
   })
 
   it('shows re-auth toast on 401', async () => {
-    vi.mocked(api.postToolApproval).mockRejectedValue(new Error('401: Unauthorized'))
+    vi.mocked(api.postToolApproval).mockRejectedValue(new api.ApiError(401, 'Unauthorized'))
 
     act(() => {
       useToolApprovalStore.setState({ queue: [SAMPLE_APPROVAL] })

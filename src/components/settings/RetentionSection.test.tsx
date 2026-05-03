@@ -22,7 +22,7 @@ vi.mock('@/store/auth', () => ({
   ),
 }))
 
-import { fetchRetention, updateRetention, triggerRetentionSweep } from '@/lib/api'
+import { fetchRetention, updateRetention, triggerRetentionSweep, ApiError } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { useAuthStore } from '@/store/auth'
 import { RetentionSection } from './RetentionSection'
@@ -250,7 +250,7 @@ describe('RetentionSection — sweep button', () => {
 
   it('409 sweep-in-progress response shows specific toast', async () => {
     vi.mocked(fetchRetention).mockResolvedValue({ session_days: 0, disabled: false })
-    vi.mocked(triggerRetentionSweep).mockRejectedValue(new Error('409: sweep in progress'))
+    vi.mocked(triggerRetentionSweep).mockRejectedValue(new ApiError(409, 'sweep in progress'))
 
     renderSection()
 

@@ -6,6 +6,14 @@
 // /onboarding/complete. State-changing calls made before the cookie exists
 // fail fast client-side so the UI surfaces an actionable error instead of
 // waiting for the server's 403.
+//
+// Errors: request() throws ApiError on non-2xx responses and on transport
+// failures (network down, fetch threw). Callers should branch on err.status
+// (or err.isAuthError() / err.isNotFound() / err.isRateLimited() / etc)
+// rather than regex-matching err.message — see src/lib/api-error.ts.
+
+import { ApiError } from './api-error'
+export { ApiError, isApiError } from './api-error'
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? ''
 
@@ -98,28 +106,39 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // instead of a cryptic "403 csrf cookie missing" from the network tab
   // and also prevents a cascade of dependent requests firing during a
   // broken auth state.
+  //
+  // We synthesize an ApiError with status 403 + a CSRF-specific code so
+  // callers can branch on `err.code === 'csrf_missing'` without having to
+  // string-match the message. The message text is preserved verbatim from
+  // the previous implementation for any caller that hasn't migrated yet.
   const method = (init?.method ?? 'GET').toUpperCase()
   if (
     STATE_CHANGING_METHODS.has(method) &&
     !isPathCSRFExempt(path) &&
     readCSRFCookie() === null
   ) {
-    throw new Error(
+    throw new ApiError(
+      403,
       `CSRF cookie missing — cannot ${method} ${path}. ` +
         `Log in or complete onboarding first so the server can issue the CSRF cookie.`,
+      { code: 'csrf_missing' },
     )
   }
 
-  const res = await fetch(`${BASE_URL}/api/v1${path}`, {
-    ...init,
-    headers: buildHeaders(init?.headers),
-  })
-  if (!res.ok) {
-    const text = await res.text().catch((e) => {
-      console.warn('[api] Could not read response body:', e)
-      return res.statusText
+  let res: Response
+  try {
+    res = await fetch(`${BASE_URL}/api/v1${path}`, {
+      ...init,
+      headers: buildHeaders(init?.headers),
     })
-    throw new Error(`${res.status}: ${text}`)
+  } catch (cause) {
+    // Transport-level failure — DNS, TCP, TLS, AbortController, or fetch threw
+    // for any other reason. Surface as a status-0 ApiError so callers can
+    // distinguish "browser couldn't reach the server" from "server said no".
+    throw new ApiError(0, 'Network unavailable. Check your connection.', { cause })
+  }
+  if (!res.ok) {
+    throw await ApiError.fromResponse(res)
   }
   return res.json() as Promise<T>
 }
@@ -1018,8 +1037,10 @@ export async function uploadFiles(sessionId: string, files: File[]): Promise<{ f
   // (see request() for the same pattern). We still send the header on the
   // off chance the user explicitly set the cookie externally.
   if (csrf === null) {
-    throw new Error(
+    throw new ApiError(
+      403,
       'CSRF cookie missing — cannot upload files. Log in first so the server can issue the CSRF cookie.',
+      { code: 'csrf_missing' },
     )
   }
   // Build headers by hand because FormData must NOT have a Content-Type
@@ -1030,14 +1051,18 @@ export async function uploadFiles(sessionId: string, files: File[]): Promise<{ f
   if (token) {
     headers.Authorization = `Bearer ${token}`
   }
-  const res = await fetch(`${BASE_URL}/api/v1/upload`, {
-    method: 'POST',
-    headers,
-    body: formData,
-  })
+  let res: Response
+  try {
+    res = await fetch(`${BASE_URL}/api/v1/upload`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    })
+  } catch (cause) {
+    throw new ApiError(0, 'Network unavailable. Check your connection.', { cause })
+  }
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(err.error || `Upload failed: ${res.status}`)
+    throw await ApiError.fromResponse(res)
   }
   return res.json()
 }

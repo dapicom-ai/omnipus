@@ -28,6 +28,7 @@ import {
   fetchSandboxConfig,
   updateSandboxConfig,
   fetchAppState,
+  isApiError,
 } from '@/lib/api'
 import type { SandboxStatus, SandboxProfile } from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
@@ -685,8 +686,12 @@ export function SandboxSection(): React.ReactElement {
     },
     onError: (err: Error) => {
       setSaveState('error')
-      setErrorMessage(err.message)
-      const msg = err.message.replace(/^\d+:\s*/, '')
+      // Prefer ApiError's parsed userMessage (already prefix-free); fall back
+      // to the legacy "${status}: text" trim for non-ApiError values.
+      const msg = isApiError(err)
+        ? err.userMessage
+        : err.message.replace(/^\d+:\s*/, '')
+      setErrorMessage(isApiError(err) ? err.userMessage : err.message)
       const pathRowMatch = /allowed_paths\[(\d+)\]:\s*(.+)/.exec(msg)
       if (pathRowMatch) {
         const rowIdx = parseInt(pathRowMatch[1], 10)
@@ -1125,9 +1130,11 @@ export function SandboxSection(): React.ReactElement {
 
                 {saveMutation.isError && (
                   <p className="text-xs text-[var(--color-error)]">
-                    {saveMutation.error instanceof Error
-                      ? saveMutation.error.message.replace(/^\d+:\s*/, '')
-                      : 'Save failed'}
+                    {isApiError(saveMutation.error)
+                      ? saveMutation.error.userMessage
+                      : saveMutation.error instanceof Error
+                        ? saveMutation.error.message.replace(/^\d+:\s*/, '')
+                        : 'Save failed'}
                   </p>
                 )}
               </>

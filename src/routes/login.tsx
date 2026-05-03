@@ -4,7 +4,7 @@ import { motion } from 'framer-motion'
 import { Eye, EyeSlash, SpinnerGap, ArrowRight, User, Key, Rocket } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { login, fetchAppState } from '@/lib/api'
+import { login, fetchAppState, isApiError } from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 import OmnipusAvatar from '@/assets/logo/omnipus-avatar.svg?url'
 
@@ -34,17 +34,15 @@ function LoginScreen() {
       }
     } catch (err) {
       setStatus('error')
-      if (err instanceof Error) {
-        const match = err.message.match(/\d+:\s*(.*)/)
-        if (match) {
-          try {
-            const parsed = JSON.parse(match[1])
-            setError(parsed.error ?? 'Login failed')
-          } catch {
-            setError('Login failed')
-          }
+      // ApiError.fromResponse already parses {error: "..."} JSON bodies into
+      // userMessage, so the old "match status prefix → JSON.parse the rest"
+      // dance is no longer necessary. The transport-failure case (status 0)
+      // gets a sensible default from the network-error branch.
+      if (isApiError(err)) {
+        if (err.isNetworkError()) {
+          setError('Could not reach the server. Check your connection.')
         } else {
-          setError('Login failed')
+          setError(err.userMessage || 'Login failed')
         }
       } else {
         setError('Login failed')

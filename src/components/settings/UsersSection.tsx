@@ -42,6 +42,7 @@ import {
   resetUserPassword,
   updateUserRole,
   changePassword,
+  isApiError,
 } from '@/lib/api'
 import type { UserEntry, UserRole } from '@/lib/api'
 
@@ -540,9 +541,15 @@ function DeleteUserDialog({ open, onOpenChange, target, onDeleted }: DeleteUserD
       onDeleted()
     },
     onError: (err: Error) => {
-      // 409 last-admin error: show inline, keep dialog open
-      if (err.message.includes('409') || err.message.toLowerCase().includes('administrator')) {
-        setInlineError('Cannot leave the deployment with zero administrators.')
+      // 409 last-admin error: show inline, keep dialog open. Defensively
+      // also match the legacy "administrator" substring for any server
+      // version that returns the message with a different status code.
+      if (isApiError(err)) {
+        if (err.status === 409 || err.userMessage.toLowerCase().includes('administrator')) {
+          setInlineError('Cannot leave the deployment with zero administrators.')
+        } else {
+          setInlineError(err.userMessage)
+        }
       } else {
         setInlineError(err.message)
       }

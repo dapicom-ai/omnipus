@@ -23,7 +23,7 @@ import { CheckCircle, XCircle, ProhibitInset, Shield } from '@phosphor-icons/rea
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { useToolApprovalStore } from '@/store/toolApproval'
-import { postToolApproval } from '@/lib/api'
+import { postToolApproval, isApiError } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { cn } from '@/lib/utils'
 
@@ -90,21 +90,28 @@ function ToolApprovalCard({
         await postToolApproval(approvalId, action)
         dequeue(approvalId)
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        if (message.startsWith('401')) {
-          addToast({
-            message: 'Session expired — please log in again to approve tool calls.',
-            variant: 'error',
-          })
-        } else if (message.startsWith('403')) {
-          addToast({
-            message: 'You must be an admin to approve this tool.',
-            variant: 'error',
-          })
-        } else if (message.startsWith('410')) {
-          // Already resolved — silently dismiss
-          dequeue(approvalId)
+        if (isApiError(err)) {
+          if (err.status === 401) {
+            addToast({
+              message: 'Session expired — please log in again to approve tool calls.',
+              variant: 'error',
+            })
+          } else if (err.status === 403) {
+            addToast({
+              message: 'You must be an admin to approve this tool.',
+              variant: 'error',
+            })
+          } else if (err.status === 410) {
+            // Already resolved — silently dismiss
+            dequeue(approvalId)
+          } else {
+            addToast({
+              message: `Failed to submit approval: ${err.userMessage}`,
+              variant: 'error',
+            })
+          }
         } else {
+          const message = err instanceof Error ? err.message : String(err)
           addToast({
             message: `Failed to submit approval: ${message}`,
             variant: 'error',
