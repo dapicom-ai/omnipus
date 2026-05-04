@@ -116,7 +116,15 @@ func IsValidEventName(e EventName) bool {
 		"egress_denied",
 		"egress_upstream_error",
 		"path.network_denied",
-		"sandbox.thread_restrict_failed":
+		"sandbox.thread_restrict_failed",
+		// pkg/tools/memory.go: long-term memory write events.
+		// "memory.remember" and "memory.retrospective" are the success-path
+		// events; "memory.rate_limited" is emitted by the v0.2 #155 item 6
+		// gate when a write is rejected (see RememberTool.logRateLimited
+		// and RetrospectiveTool.logRateLimited).
+		"memory.remember",
+		"memory.retrospective",
+		"memory.rate_limited":
 		return true
 	}
 	return false
@@ -152,6 +160,21 @@ type LoggerConfig struct {
 	// and a nil error so callers wired with audit-disabled don't get spurious
 	// boot aborts on permission/disk hiccups.
 	AuditLogRequested bool
+
+	// HMACKey is the 32-byte tamper-evident chain key (v0.2 #155). Each
+	// audit entry carries a `hmac` field computed over
+	//   HMAC-SHA256(HMACKey, prev_hmac || canonical_json_without_hmac)
+	// so truncation or surgical rewrite of the JSONL file is detectable
+	// via Logger.Verify / audit.VerifyFile.
+	//
+	// In production the key is derived from the master key via
+	// credentials.Store.DeriveSubkey(audit.AuditChainKeyInfo); the gateway
+	// passes the derived bytes here. When this field is nil, NewLogger
+	// falls back to the package-level processChainKey set via
+	// audit.SetProcessChainKey; if neither is set, NewLogger uses an
+	// insecure deterministic dev key with a sticky slog.Warn so tests pass
+	// while production deployments are loud about the misconfiguration.
+	HMACKey []byte
 }
 
 const defaultMaxSize = 50 * 1024 * 1024 // 50MB
@@ -168,6 +191,17 @@ type Logger struct {
 	retDays     int
 	redactor    *Redactor
 	degraded    bool
+
+	// chainKey is the 32-byte HMAC-SHA256 key for the tamper-evident audit
+	// chain (v0.2 #155). Held only in process memory — never written to disk.
+	// See pkg/audit/hmac.go for the threat model.
+	chainKey []byte
+
+	// prevHMAC tracks the previous entry's HMAC so the next write can chain
+	// off it. Initialised from the last line of audit.jsonl on open (or from
+	// genesisSeed for a fresh file). Updated under mu after every successful
+	// write. 32 bytes (raw, not hex-encoded).
+	prevHMAC []byte
 
 	// unknownDecisionWarn / unknownEventWarn fire at most once per process for
 	// the "Decision/Event was an unrecognised value" path. Surfaces typos and
@@ -247,6 +281,8 @@ func NewLogger(cfg LoggerConfig) (*Logger, error) {
 		maxSize:  cfg.MaxSizeBytes,
 		retDays:  cfg.RetentionDays,
 		redactor: redactor,
+		chainKey: resolveChainKey(cfg.HMACKey),
+		prevHMAC: GenesisSeed(),
 	}
 
 	l.recoverCorruption()
@@ -387,6 +423,15 @@ func criticalEventNeedsSync(entry *Entry) bool {
 // fsyncRequired (CRIT-5): when true, the file is f.Sync()'d after the write so
 // the entry is guaranteed durable before this function returns. See
 // criticalEventNeedsSync for the gating policy.
+//
+// v0.2 #155: this function ALSO computes and embeds the HMAC chain link
+// (`hmac` field) before writing. The computation is done while holding l.mu
+// so the prevHMAC update is consistent with the on-disk byte sequence. If
+// embedHMAC fails (malformed pre-marshaled JSON), the row is written WITHOUT
+// the hmac field and prevHMAC is NOT advanced — Verify will then flag this
+// row as a chain break. Failing closed on the chain (refuse to write) would
+// be worse than dropping a chain link: losing audit data is a known
+// non-goal of the chain feature.
 func (l *Logger) writeLine(data []byte, fsyncRequired bool) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -408,7 +453,23 @@ func (l *Logger) writeLine(data []byte, fsyncRequired bool) error {
 		}
 	}
 
-	line := append(data, '\n')
+	// v0.2 #155: embed the HMAC chain link before writing. embedHMAC parses
+	// the pre-marshaled `data`, removes any pre-existing `hmac` field
+	// (defence against caller mistake), computes HMAC-SHA256 over
+	//   prev_hmac || canonical_json_without_hmac
+	// and re-marshals with the new `hmac` field. The output is what we
+	// write to disk.
+	out, mac, hmacErr := embedHMAC(data, l.prevHMAC, l.chainKey)
+	if hmacErr != nil {
+		slog.Error("audit: HMAC chain embed failed; writing entry without chain link",
+			"error", hmacErr, "entry", string(data))
+		// Fall back to the original data so the row is at least preserved.
+		// Verify will flag the chain as broken at this entry.
+		out = data
+		mac = nil
+	}
+
+	line := append(out, '\n')
 	n, err := l.writer.Write(line)
 	if err != nil {
 		l.degraded = true
@@ -437,6 +498,13 @@ func (l *Logger) writeLine(data []byte, fsyncRequired bool) error {
 		}
 	}
 	l.currentSize += int64(n)
+	// Advance the chain only after the write succeeded. If embedHMAC failed
+	// upstream, mac is nil — leaving prevHMAC unchanged means the NEXT entry
+	// chains off the LAST GOOD entry, so a single embed failure does not
+	// break the chain for every subsequent row.
+	if mac != nil {
+		l.prevHMAC = mac
+	}
 	return nil
 }
 
@@ -490,6 +558,21 @@ func (l *Logger) openCurrentFile() error {
 	l.currentSize = info.Size()
 	l.currentDate = time.Now().UTC().Format("2006-01-02")
 	l.degraded = false
+
+	// v0.2 #155: seed the HMAC chain from the last good entry of the
+	// existing file. If the file is empty (fresh install or just rotated),
+	// prevHMAC stays at the genesisSeed installed by NewLogger. If the last
+	// line carries an `hmac` field, parse it and resume the chain so the
+	// next write chains correctly across process restarts. If the last line
+	// lacks an `hmac` field (legacy entry from before this fix), fall back
+	// to genesisSeed for the next entry — Verify will mark the legacy
+	// region as "pre-chain" rather than failing.
+	if info.Size() > 0 {
+		seed, ok := readChainSeedFromFile(path)
+		if ok {
+			l.prevHMAC = seed
+		}
+	}
 	return nil
 }
 
@@ -502,6 +585,11 @@ func (l *Logger) openCurrentFile() error {
 // ENOSPC, EBUSY) but openCurrentFile succeeded, the next write appended to
 // the OLD file because the file handle still pointed at the original inode.
 // Latching degraded forces the next write to refuse and surface the failure.
+//
+// v0.2 #155: rotation preserves the HMAC chain across files. l.prevHMAC is
+// the last entry of the about-to-rotate file, and openCurrentFile will see
+// an empty audit.jsonl and skip the readChainSeedFromFile path — leaving
+// l.prevHMAC pointed at the correct seed for the new file's first entry.
 func (l *Logger) rotate() error {
 	if l.writer != nil {
 		l.writer.Flush()
@@ -509,6 +597,12 @@ func (l *Logger) rotate() error {
 	if l.file != nil {
 		l.file.Close()
 	}
+
+	// v0.2 #155: capture the chain seed BEFORE we rename. l.prevHMAC is
+	// already correct (it tracks every successful write), but if we ever
+	// add a code path that resets it on rotate, this comment is the
+	// reminder that doing so breaks cross-file chain verification.
+	chainSeed := l.prevHMAC
 
 	src := l.auditPath()
 	dst := filepath.Join(l.dir, fmt.Sprintf("audit-%s.jsonl", l.currentDate))
@@ -530,7 +624,18 @@ func (l *Logger) rotate() error {
 	}
 
 	slog.Info("Audit log rotated", "to", dst)
-	return l.openCurrentFile()
+	if err := l.openCurrentFile(); err != nil {
+		return err
+	}
+	// openCurrentFile() called readChainSeedFromFile against the NEW (empty)
+	// audit.jsonl, which returned ok=false because the file was empty — so
+	// l.prevHMAC was reset to genesisSeed by the NewLogger initialisation.
+	// We must restore the seed captured before rename so the first entry of
+	// the new file chains to the last entry of the rotated-out file.
+	if chainSeed != nil {
+		l.prevHMAC = chainSeed
+	}
+	return nil
 }
 
 // recoverCorruption validates the last line of audit.jsonl on startup and

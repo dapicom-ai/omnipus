@@ -390,6 +390,24 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 		return err
 	}
 
+	// v0.2 #155: derive the audit-chain HMAC key from the master key and
+	// install it process-wide BEFORE constructing the agent loop. The
+	// agent loop's audit.NewLogger picks this up via the package-level
+	// fallback when LoggerConfig.HMACKey is nil. The master key never
+	// crosses the credentials package boundary — DeriveSubkey runs HKDF
+	// internally and returns 32 bytes of independent key material.
+	//
+	// Failure here is logged and not fatal: audit.NewLogger will fall
+	// back to its dev-only deterministic key with a sticky slog.Warn.
+	// Operators running with audit_log=true should treat this warning as
+	// a configuration bug.
+	if chainKey, derrErr := credStore.DeriveSubkey(audit.AuditChainKeyInfo); derrErr == nil {
+		audit.SetProcessChainKey(chainKey)
+	} else {
+		slog.Warn("audit: could not derive HMAC chain key from master key — audit chain will use dev-only fallback",
+			"error", derrErr)
+	}
+
 	logger.SetLevelFromString(cfg.Gateway.LogLevel)
 
 	if debug {
