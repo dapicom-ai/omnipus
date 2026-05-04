@@ -271,6 +271,9 @@ var (
 		regexp.MustCompile(`\bsource\s+.*\.sh\b`),
 		regexp.MustCompile(`<\([^)]*\)`),
 		regexp.MustCompile(`>\([^)]*\)`),
+		// v0.2 #155 item 8 — secrets-subtree path-guard (option B backstop).
+		regexp.MustCompile(`\bmaster\.key\b`),
+		regexp.MustCompile(`\bcredentials\.json\b`),
 	}
 
 	// absolutePathPattern matches absolute file paths in commands (Unix and Windows).

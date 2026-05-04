@@ -169,6 +169,83 @@ func isSystemRestricted(path string) bool {
 // is layered on top via pkg/security/SSRFChecker.
 var DefaultConnectPorts = []uint16{53, 80, 443}
 
+// SecretFilesRelative is the list of file basenames under $OMNIPUS_HOME that
+// hold cryptographic key material or other root-of-trust state. Tool-exec
+// children (and the redteam carve-out test) MUST NOT have these paths in
+// their Landlock allow-tree even when the rest of $OMNIPUS_HOME is granted.
+// Closes pentest items C1 (master.key exfil) and C2 (credentials.json
+// exfil) per v0.2 #155 item 8.
+var SecretFilesRelative = []string{
+	"master.key",
+	"credentials.json",
+}
+
+// DefaultChildPolicy is the narrowed policy for tool-exec children. It
+// returns the same shape as DefaultPolicy but with the SecretFilesRelative
+// carve-out applied to $OMNIPUS_HOME — the home root is NOT granted as a
+// single tree; instead each existing subdirectory is granted RWX
+// individually, and top-level files matching SecretFilesRelative are
+// skipped. This relies on Landlock's hierarchical allow-tree semantics:
+// a file not under any granted tree is unreachable.
+//
+// The gateway boot path uses DefaultPolicy (which grants $OMNIPUS_HOME RWX
+// as a single tree) so the gateway itself can read/write credentials at
+// runtime. Tool-exec children apply DefaultChildPolicy via per-thread
+// re-restriction so the LAYERED Landlock domain blocks secret reads even
+// though the parent allows them.
+//
+// Closes pentest items C1, C2 (#155 item 8).
+func DefaultChildPolicy(homePath string, allowedPaths []string, warnFn func(msg string, path string), bindPorts []uint16) SandboxPolicy {
+	policy := DefaultPolicy(homePath, allowedPaths, warnFn, bindPorts)
+	if homePath == "" {
+		return policy
+	}
+	cleanHome := filepath.Clean(homePath)
+
+	// Strip the original $OMNIPUS_HOME RWX rule.
+	filtered := policy.FilesystemRules[:0]
+	for _, r := range policy.FilesystemRules {
+		if filepath.Clean(r.Path) == cleanHome {
+			continue
+		}
+		filtered = append(filtered, r)
+	}
+	policy.FilesystemRules = filtered
+
+	entries, err := os.ReadDir(cleanHome)
+	if err != nil {
+		if warnFn != nil {
+			warnFn("DefaultChildPolicy: cannot enumerate $OMNIPUS_HOME for carve-out", cleanHome)
+		}
+		return policy
+	}
+
+	secretSet := make(map[string]struct{}, len(SecretFilesRelative))
+	for _, name := range SecretFilesRelative {
+		secretSet[name] = struct{}{}
+	}
+
+	for _, e := range entries {
+		name := e.Name()
+		if _, isSecret := secretSet[name]; isSecret {
+			continue
+		}
+		path := filepath.Join(cleanHome, name)
+		if e.IsDir() {
+			policy.FilesystemRules = append(policy.FilesystemRules, PathRule{
+				Path:   path,
+				Access: AccessRead | AccessWrite | AccessExecute,
+			})
+			continue
+		}
+		policy.FilesystemRules = append(policy.FilesystemRules, PathRule{
+			Path:   path,
+			Access: AccessRead | AccessWrite,
+		})
+	}
+	return policy
+}
+
 // DefaultPolicy builds the workspace SandboxPolicy from the Omnipus home
 // directory and an optional list of user-declared additional allowed paths.
 // Implements FR-J-003 and FR-J-013 (user read wins, write unconditionally

@@ -40,6 +40,30 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/sandbox"
 )
 
+// nonTmpHome returns a fresh tempdir that is NOT under /tmp. The DefaultPolicy
+// (and hence DefaultChildPolicy by inheritance) grants RWX on /tmp, so the
+// secrets carve-out is meaningless when the test home sits inside /tmp — the
+// /tmp rule alone permits the read regardless of whether the home root is
+// granted. Putting the test home under /var/tmp/<random> sidesteps this:
+// /var/tmp is not granted by the policy, so the child has access only to
+// the explicitly-granted subdirs of $OMNIPUS_HOME — and the carved-out
+// secret files are unreachable.
+func nonTmpHome(t *testing.T) string {
+	t.Helper()
+	const base = "/var/tmp"
+	if _, err := os.Stat(base); err != nil {
+		t.Skipf("non-/tmp tempdir base %q unavailable on this host: %v", base, err)
+	}
+	dir, err := os.MkdirTemp(base, "omnipus-redteam-")
+	if err != nil {
+		t.Skipf("cannot create non-/tmp tempdir under %q: %v", base, err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(dir)
+	})
+	return dir
+}
+
 // runSecretReadChild is the in-child phase of TestRedteam_MasterKey_Exfil_Blocked
 // and TestRedteam_Credentials_Exfil_Blocked. The parent re-execs the test binary
 // with one of two sentinel env vars set; this helper dispatches based on which.
@@ -71,7 +95,7 @@ func runSecretReadChild(target string) {
 	// /tmp gets RWX, and the standard system read paths get R+X. This is
 	// EXACTLY the policy DefaultPolicy returns, so if a real production
 	// child can read master.key under it, this child will too.
-	policy := sandbox.DefaultPolicy(home, nil, nil, nil)
+	policy := sandbox.DefaultChildPolicy(home, nil, nil, nil)
 
 	if err := backend.Apply(policy); err != nil {
 		fmt.Fprintf(os.Stderr, "Apply failed (skip): %v\n", err)
@@ -122,7 +146,7 @@ func TestRedteam_MasterKey_Exfil_Blocked(t *testing.T) {
 	}
 	_ = backend
 
-	home := t.TempDir()
+	home := nonTmpHome(t)
 	target := filepath.Join(home, "master.key")
 	// 64 hex chars — same shape as the real master key, content irrelevant.
 	keyBlob := strings.Repeat("a1b2c3d4", 8)
@@ -193,7 +217,7 @@ func TestRedteam_Credentials_Exfil_Blocked(t *testing.T) {
 	}
 	_ = backend
 
-	home := t.TempDir()
+	home := nonTmpHome(t)
 	target := filepath.Join(home, "credentials.json")
 	// Realistic shape of an encrypted credentials file. Content is opaque
 	// AES-GCM ciphertext in production; whatever bytes we put here is fine
