@@ -861,10 +861,11 @@ func (t *ExecTool) runSyncHardened(ctx context.Context, command, cwd string) *To
 }
 
 // sandboxLimitsEnv builds the environment for background sessions on the
-// sandbox-on path. It starts from sandbox.ScrubGatewayEnv() (which strips
-// OMNIPUS_MASTER_KEY / OMNIPUS_KEY_FILE / OMNIPUS_BEARER_TOKEN) and then
-// layers the Limits-derived injections (HTTP_PROXY, npm_config_cache) on top
-// so they take precedence on duplicate keys (POSIX exec(3) semantics).
+// sandbox-on path. It starts from sandbox.ScrubGatewayEnv() (which under
+// v0.2 #155 item 3 enforces a closed allowlist of PATH/HOME/LANG/LC_*/XDG_*/
+// OMNIPUS_CHILD_*) and then layers the Limits-derived injections
+// (HTTP_PROXY, npm_config_cache) on top so they take precedence on duplicate
+// keys (POSIX exec(3) semantics).
 func sandboxLimitsEnv(lim sandbox.Limits) []string {
 	scrubbed := sandbox.ScrubGatewayEnv()
 	if lim.EgressProxyAddr != "" {
