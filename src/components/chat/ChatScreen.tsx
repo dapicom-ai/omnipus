@@ -43,7 +43,7 @@ import { cn } from '@/lib/utils'
 
 function UserMessage() {
   return (
-    <MessagePrimitive.Root className="group flex gap-3 px-4 py-3 flex-row-reverse">
+    <MessagePrimitive.Root data-testid="user-message" className="group flex gap-3 px-4 py-3 flex-row-reverse">
       <div className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center bg-[var(--color-accent)]/20 text-[var(--color-accent)]">
         <User size={14} weight="bold" />
       </div>
@@ -285,7 +285,7 @@ function AssistantMessage() {
   const agent = agents.find((a) => a.id === activeAgentId)
 
   return (
-    <MessagePrimitive.Root className="group flex gap-3 px-4 py-3">
+    <MessagePrimitive.Root data-testid="assistant-message" className="group flex gap-3 px-4 py-3">
       <AssistantMessageAvatar />
       <div className="flex flex-col gap-1 max-w-[85%] min-w-0 flex-1">
         {agent && (
@@ -656,6 +656,7 @@ export function OmnipusComposer() {
         }}
       >
         <ComposerPrimitive.Input
+          data-testid="chat-input"
           placeholder={composerPlaceholder(isConnected, isStreaming || isUploading, isReplaying, activeAgentName)}
           disabled={!isConnected || isStreaming || isUploading || isReplaying}
           rows={1}
@@ -709,6 +710,7 @@ export function OmnipusComposer() {
         {isStreaming || isUploading ? (
           <button
             type="button"
+            data-testid="stop-btn"
             onClick={isStreaming ? cancelStream : undefined}
             disabled={isUploading}
             className={cn(
@@ -726,7 +728,7 @@ export function OmnipusComposer() {
           // FR-I-014: also disabled during replay (isReplaying) so user cannot send out-of-order
           <ComposerPrimitive.Send
             disabled={!isConnected || isReplaying}
-            data-testid="send-button"
+            data-testid="chat-send"
             className={cn(
               'shrink-0 w-11 h-11 rounded-xl flex items-center justify-center transition-colors',
               isConnected && !isReplaying
@@ -884,7 +886,7 @@ export function ChatScreen() {
               <WelcomeState hasAgent={!!activeAgentId} />
             </AuiIf>
 
-            <div className="max-w-4xl mx-auto w-full">
+            <div data-testid="messages-list" className="max-w-4xl mx-auto w-full">
               <ThreadPrimitive.Messages>
                 {({ message }) => {
                   if (message.role === 'user') return <UserMessage />

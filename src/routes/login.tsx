@@ -146,7 +146,7 @@ function LoginScreen() {
           </div>
 
           {status === 'error' && error && (
-            <div className="text-sm text-center" style={{ color: 'var(--color-error)' }}>
+            <div data-testid="login-error" className="text-sm text-center" style={{ color: 'var(--color-error)' }}>
               {error}
             </div>
           )}

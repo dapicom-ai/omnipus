@@ -573,7 +573,7 @@ function ProviderStep({
 
               {/* Connection feedback */}
               {testStatus === 'error' && (
-                <div className="flex items-start gap-2 text-sm" style={{ color: 'var(--color-error)' }}>
+                <div data-testid="onboarding-error" className="flex items-start gap-2 text-sm" style={{ color: 'var(--color-error)' }}>
                   <XCircle size={14} weight="fill" className="shrink-0 mt-0.5" />
                   <span>{testError || 'Connection failed — check your key and try again'}</span>
                 </div>
@@ -802,7 +802,7 @@ function AdminCredentialsStep({
 
         {/* Error feedback */}
         {status === 'error' && error && (
-          <div className="flex items-start gap-2 text-sm" style={{ color: 'var(--color-error)' }}>
+          <div data-testid="onboarding-error" className="flex items-start gap-2 text-sm" style={{ color: 'var(--color-error)' }}>
             <XCircle size={14} weight="fill" className="shrink-0 mt-0.5" />
             <span>{error}</span>
           </div>

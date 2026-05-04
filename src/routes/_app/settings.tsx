@@ -45,15 +45,15 @@ function SettingsScreen() {
         <Tabs defaultValue="providers">
           {/* Sticky tab bar — stays visible while scrolling tab content */}
           <TabsList className="mb-6 flex-wrap h-auto gap-1 sticky top-0 z-10 bg-[var(--color-primary)] py-2 -mx-1 px-1">
-            <TabsTrigger value="providers">Providers</TabsTrigger>
-            <TabsTrigger value="security">Security</TabsTrigger>
+            <TabsTrigger data-testid="settings-tab-providers" value="providers">Providers</TabsTrigger>
+            <TabsTrigger data-testid="settings-tab-security" value="security">Security</TabsTrigger>
             <TabsTrigger value="gateway">Gateway</TabsTrigger>
             <TabsTrigger value="data">Data</TabsTrigger>
             <TabsTrigger value="routing">Routing</TabsTrigger>
             <TabsTrigger value="profile">Profile</TabsTrigger>
             {isAdmin && <TabsTrigger value="devices">Devices</TabsTrigger>}
             {showAccessTab && <TabsTrigger value="access">Access</TabsTrigger>}
-            <TabsTrigger value="about">About</TabsTrigger>
+            <TabsTrigger data-testid="settings-tab-about" value="about">About</TabsTrigger>
           </TabsList>
 
           <TabsContent value="providers">

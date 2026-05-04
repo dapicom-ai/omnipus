@@ -83,7 +83,7 @@ export function AboutSection() {
           )}
           {info && (
             <>
-              <InfoRow label="Version" value={info.version} mono />
+              <InfoRow label="Version" value={info.version} mono testId="build-version" />
               <InfoRow label="Go version" value={info.go_version} mono />
               <InfoRow label="Operating system" value={info.os} mono />
               <InfoRow label="Architecture" value={info.arch} mono />
@@ -127,11 +127,11 @@ export function AboutSection() {
   )
 }
 
-function InfoRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function InfoRow({ label, value, mono, testId }: { label: string; value: string; mono?: boolean; testId?: string }) {
   return (
     <div className="flex items-center justify-between px-4 py-2.5">
       <span className="text-xs text-[var(--color-muted)]">{label}</span>
-      <span className={`text-xs text-[var(--color-secondary)] ${mono ? 'font-mono' : ''}`}>{value}</span>
+      <span data-testid={testId} className={`text-xs text-[var(--color-secondary)] ${mono ? 'font-mono' : ''}`}>{value}</span>
     </div>
   )
 }

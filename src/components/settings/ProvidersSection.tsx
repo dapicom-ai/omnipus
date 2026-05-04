@@ -95,7 +95,7 @@ export function ProvidersSection() {
                         {displayName}
                       </span>
                       {connected ? (
-                        <Badge variant="success" className="gap-1">
+                        <Badge data-testid="connected-badge" variant="success" className="gap-1">
                           <CheckCircle size={10} weight="fill" /> Connected
                         </Badge>
                       ) : provider.status === 'error' ? (
