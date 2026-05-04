@@ -1787,6 +1787,16 @@ func SaveConfig(path string, cfg *Config) error {
 	if cfg.Version < CurrentVersion {
 		cfg.Version = CurrentVersion
 	}
+
+	// Verify the target directory already exists. SaveConfig is a "save to an
+	// existing location" operation — it does not provision new directory trees.
+	// Callers that need to create a new config path must ensure the directory
+	// exists first (e.g., the first-run gateway path via os.MkdirAll).
+	dir := filepath.Dir(path)
+	if _, statErr := os.Stat(dir); os.IsNotExist(statErr) {
+		return fmt.Errorf("failed to create directory: directory does not exist: %s", dir)
+	}
+
 	// Filter out virtual models before serializing to config file
 	nonVirtualModels := make([]*ModelConfig, 0, len(cfg.Providers))
 	for _, m := range cfg.Providers {
