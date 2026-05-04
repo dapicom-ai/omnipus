@@ -140,7 +140,7 @@ func (t *RememberTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 	// The gate runs BEFORE AppendLongTerm so a flood does not contend on
 	// the FS write lock.
 	if decision := t.checkRateLimit(ctx, agentID); !decision.Allowed {
-		t.logRateLimited(agentID, sessionID, category, content, decision)
+		t.logRateLimited(agentID, sessionID, callerIdentity(ctx), category, content, decision)
 		return rateLimitedResult("remember", decision)
 	}
 
@@ -165,7 +165,7 @@ func (t *RememberTool) checkRateLimit(ctx context.Context, agentID string) Memor
 // (v0.2 #155 item 6) so SIEM rules can route on it independently from
 // the success-path "memory.remember" event. Content is never logged raw —
 // only a SHA-256 hex digest is emitted.
-func (t *RememberTool) logRateLimited(agentID, sessionID, category, content string, decision MemoryRateLimitDecision) {
+func (t *RememberTool) logRateLimited(agentID, sessionID, caller, category, content string, decision MemoryRateLimitDecision) {
 	if t.auditLogger == nil {
 		return
 	}
@@ -185,6 +185,12 @@ func (t *RememberTool) logRateLimited(agentID, sessionID, category, content stri
 			"category":            category,
 			"content_sha256":      fmt.Sprintf("%x", sum),
 			"byte_count":          len([]byte(content)),
+			// HIGH (silent-failure-hunter, #155): record the per-caller
+			// bucket key so a forensic question "which Telegram chat is
+			// hammering remember?" is answerable from audit alone. The
+			// caller identity is not a secret — it's the channel:chat_id
+			// pair, already visible elsewhere in the audit trail.
+			"caller": caller,
 		},
 	}
 	if err := t.auditLogger.Log(entry); err != nil {
@@ -403,7 +409,7 @@ func (t *RetrospectiveTool) Execute(ctx context.Context, args map[string]any) *T
 	// agent can't trivially work around the limit by alternating remember
 	// and retrospective calls.
 	if decision := t.rateLimiter.Allow(agentID, callerIdentity(ctx)); !decision.Allowed {
-		t.logRateLimited(agentID, sessionID, r, decision)
+		t.logRateLimited(agentID, sessionID, callerIdentity(ctx), r, decision)
 		return rateLimitedResult("retrospective", decision)
 	}
 
@@ -418,7 +424,7 @@ func (t *RetrospectiveTool) Execute(ctx context.Context, args map[string]any) *T
 
 // logRateLimited emits a memory.rate_limited audit entry for retrospective
 // writes that were rejected by the rate-limit gate (v0.2 #155 item 6).
-func (t *RetrospectiveTool) logRateLimited(agentID, sessionID string, r MemoryRetro, decision MemoryRateLimitDecision) {
+func (t *RetrospectiveTool) logRateLimited(agentID, sessionID, caller string, r MemoryRetro, decision MemoryRateLimitDecision) {
 	if t.auditLogger == nil {
 		return
 	}
@@ -436,6 +442,7 @@ func (t *RetrospectiveTool) logRateLimited(agentID, sessionID string, r MemoryRe
 			"retry_after_seconds": int(decision.RetryAfter.Round(time.Second).Seconds()),
 			"went_well_count":     len(r.WentWell),
 			"needs_improve_count": len(r.NeedsImprovement),
+			"caller":              caller, // see RememberTool.logRateLimited
 		},
 	}
 	if err := t.auditLogger.Log(entry); err != nil {

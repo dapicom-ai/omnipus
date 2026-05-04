@@ -10,13 +10,22 @@ package sandbox
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strconv"
+	"sync"
 	"syscall"
 
 	"golang.org/x/sys/unix"
 )
+
+// procReadFallbackWarnOnce ensures the /proc-unreadable degradation is
+// logged exactly once per process lifetime. Without the gate, an operator
+// running a stripped container or a kernel with /proc masked would see
+// the same WARN on every spawn — so the signal would be drowned out and
+// likely filtered. Once-per-boot keeps it visible without spamming.
+var procReadFallbackWarnOnce sync.Once
 
 // applyPlatformHardening configures the child's SysProcAttr and applies
 // pre-start prlimit when supported. RLIMIT_AS is set via SysProcAttr.Rlimits
@@ -132,6 +141,16 @@ func applyPostStartHardening(cmd *exec.Cmd, lim Limits) error {
 		// /proc unreadable — fall back to a conservative absolute cap
 		// large enough that a typical multi-user system isn't broken
 		// but tight enough that a runaway fork-bomb saturates fast.
+		// HIGH (silent-failure-hunter, #155): one-shot warn so an
+		// operator triaging a fork-bomb-related deny on a /proc-masked
+		// host (k8s with securityContext.procMount, stripped container)
+		// has a breadcrumb. Per-spawn warn would drown the signal.
+		procReadFallbackWarnOnce.Do(func() {
+			slog.Warn("sandbox: /proc unreadable; using conservative absolute RLIMIT_NPROC fallback",
+				"fallback_baseline", uint64(1024),
+				"slack", childNProcSlack,
+				"effective_cap", uint64(1024)+childNProcSlack)
+		})
 		baseline = 1024
 	}
 	nprocCap := baseline + childNProcSlack

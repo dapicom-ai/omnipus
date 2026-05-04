@@ -180,21 +180,35 @@ var SecretFilesRelative = []string{
 	"credentials.json",
 }
 
-// DefaultChildPolicy is the narrowed policy for tool-exec children. It
-// returns the same shape as DefaultPolicy but with the SecretFilesRelative
-// carve-out applied to $OMNIPUS_HOME — the home root is NOT granted as a
-// single tree; instead each existing subdirectory is granted RWX
-// individually, and top-level files matching SecretFilesRelative are
-// skipped. This relies on Landlock's hierarchical allow-tree semantics:
-// a file not under any granted tree is unreachable.
+// DefaultChildPolicy is the narrowed policy DESIGN for tool-exec children.
+// It returns the same shape as DefaultPolicy but with the
+// SecretFilesRelative carve-out applied to $OMNIPUS_HOME — the home root
+// is NOT granted as a single tree; instead each existing subdirectory is
+// granted RWX individually, and top-level files matching
+// SecretFilesRelative are skipped. This relies on Landlock's hierarchical
+// allow-tree semantics: a file not under any granted tree is unreachable.
 //
-// The gateway boot path uses DefaultPolicy (which grants $OMNIPUS_HOME RWX
-// as a single tree) so the gateway itself can read/write credentials at
-// runtime. Tool-exec children apply DefaultChildPolicy via per-thread
-// re-restriction so the LAYERED Landlock domain blocks secret reads even
-// though the parent allows them.
+// **Production wiring is NOT yet active.** As of v0.2 (#155 item 8) this
+// function is exercised only by the redteam tests and unit tests, which
+// apply it directly to a re-execed test child. The production sandbox-
+// apply path (pkg/gateway/sandbox_apply.go) calls DefaultPolicy at gateway
+// boot, and tool-exec children inherit that policy unchanged across
+// fork+exec. The kernel-level path-guard against C1/C2 therefore depends
+// on:
+//   - The shell-guard regex in pkg/tools/shell.go (blocks `master.key` and
+//     `credentials.json` literal tokens in commands)
+//   - HardenGatewaySelf (pkg/sandbox/self_hardening_linux.go) preventing
+//     same-uid /proc/<gateway>/environ reads
+//   - The kernel sandbox itself (Landlock + seccomp) blocking arbitrary
+//     filesystem traversal via syscalls outside DefaultPolicy
 //
-// Closes pentest items C1, C2 (#155 item 8).
+// Wiring DefaultChildPolicy into production via per-thread Landlock
+// re-restriction is tracked as a v0.3 follow-up (#156 architectural
+// work). The pattern is described in `RestrictCurrentThread`'s contract.
+// Until that lands, this function exists for testing and to document the
+// intended structure.
+//
+// Documents (does not close at the kernel layer): pentest items C1, C2.
 func DefaultChildPolicy(homePath string, allowedPaths []string, warnFn func(msg string, path string), bindPorts []uint16) SandboxPolicy {
 	policy := DefaultPolicy(homePath, allowedPaths, warnFn, bindPorts)
 	if homePath == "" {

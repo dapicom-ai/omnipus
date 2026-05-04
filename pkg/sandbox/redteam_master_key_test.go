@@ -2,28 +2,28 @@
 
 // Package sandbox_test — insider-LLM red-team coverage for credential exfil.
 //
-// These tests are documenting-failures by design. They model the threat that
-// a hostile prompt steers an agent into reading the gateway's master key or
-// credentials.json out from under the active sandbox. The threats are
-// catalogued in the insider-pentest report:
+// These tests model the threat that a hostile prompt steers an agent into
+// reading the gateway's master key or credentials.json out from under the
+// active sandbox.
 //
-//	C1 — master.key exfil. The kernel sandbox grants RWX on $OMNIPUS_HOME so
-//	     a child process started in production can read master.key directly
-//	     even though the env-var scrub keeps OMNIPUS_KEY_FILE / MASTER_KEY out
-//	     of the child's environment.
-//	C2 — credentials.json exfil. Identical shape: $OMNIPUS_HOME is writable
-//	     and credentials.json sits inside it.
+//	C1 — master.key exfil.
+//	C2 — credentials.json exfil.
 //
-// Both fixes belong to v0.2 (#155). The wave2 sandbox carve-out for
-// $OMNIPUS_HOME is the open hole; the underlying control is "narrow the
-// hardened-exec child policy so that the secrets sub-tree (master.key,
-// credentials.json, system/ telemetry) is denied even when the rest of
-// $OMNIPUS_HOME is writable".
+// **Scope of these tests.** They re-exec the test binary as a sandboxed
+// child and apply DefaultChildPolicy directly. They prove that
+// DefaultChildPolicy's structure (subdirectory enumeration with secret-file
+// carve-out) blocks reads at the kernel layer when applied. They do NOT
+// prove that the production sandbox-apply path uses DefaultChildPolicy —
+// it does not, as of v0.2. See the doc comment on DefaultChildPolicy in
+// pkg/sandbox/sandbox.go for the production threat model (regex backstop +
+// HardenGatewaySelf + kernel sandbox baseline).
 //
-// Until that ships, these tests will FAIL. The failure is the documentation.
-// Each test logs the threat ID and the closing fix-id at the start of the body
-// so a CI audit can grep `documents C1` / `documents C2` and confirm coverage
-// is still wired even when the suite is otherwise green.
+// Production wiring (Landlock per-thread re-restriction in hardened-exec)
+// is tracked as a v0.3 follow-up. Until it lands, these tests serve as:
+//   (a) policy-correctness tests for DefaultChildPolicy — the carve-out
+//       structure works at the kernel level when applied
+//   (b) regression tests to prevent the carve-out from being broken when
+//       the v0.3 wiring eventually lands
 package sandbox_test
 
 import (

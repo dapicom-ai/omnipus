@@ -463,6 +463,11 @@ func (l *Logger) writeLine(data []byte, fsyncRequired bool) error {
 	if hmacErr != nil {
 		slog.Error("audit: HMAC chain embed failed; writing entry without chain link",
 			"error", hmacErr, "entry", string(data))
+		// CRIT-1 (silent-failure-hunter): bump the skipped-counter so an
+		// operator monitoring `audit.skipped` sees chain-link drops without
+		// having to grep slog. Symmetric with the empty-event path which
+		// already calls IncSkipped.
+		IncSkipped("hmac_embed_failed", "unknown")
 		// Fall back to the original data so the row is at least preserved.
 		// Verify will flag the chain as broken at this entry.
 		out = data
