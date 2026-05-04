@@ -2198,6 +2198,10 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	// Prometheus-compatible metrics endpoint (FR-039).
 	// Unauthenticated for Prometheus scrape compatibility; does not expose secrets.
 	cm.RegisterHTTPHandler("/metrics", http.HandlerFunc(a.HandleMetrics))
+
+	// Register the test-harness scenario endpoint (test_harness build tag only).
+	// In non-test_harness builds this is a no-op stub in test_harness_disabled.go.
+	a.registerTestHarness(cm)
 }
 
 // registerPreviewEndpoints registers /preview/, /serve/, and /dev/ on the

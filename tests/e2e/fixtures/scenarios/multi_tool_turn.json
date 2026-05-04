@@ -1,0 +1,32 @@
+{
+  "responses": [
+    {
+      "type": "text",
+      "content": "I'll read the three files simultaneously."
+    },
+    {
+      "type": "tool_calls",
+      "tool_calls": [
+        {
+          "id": "tc_multi_1",
+          "name": "fs_read_file",
+          "arguments": {"path": "README.md"}
+        },
+        {
+          "id": "tc_multi_2",
+          "name": "fs_read_file",
+          "arguments": {"path": "CHANGELOG.md"}
+        },
+        {
+          "id": "tc_multi_3",
+          "name": "fs_read_file",
+          "arguments": {"path": "LICENSE"}
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "content": "I've read all three files. Here's a summary."
+    }
+  ]
+}
