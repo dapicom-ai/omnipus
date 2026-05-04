@@ -283,6 +283,36 @@ type OmnipusSandboxConfig struct {
 	// or permissive.
 	AllowNetworkOutbound bool `json:"allow_network_outbound,omitempty"`
 
+	// EgressAllowCIDRs is the operator-supplied list of CIDR ranges that are
+	// explicitly permitted for outbound connections from sandboxed children
+	// (v0.2 #155 item 4). The default-deny set covers RFC1918 (10/8,
+	// 172.16/12, 192.168/16), link-local (169.254/16 — including the cloud
+	// metadata endpoint), loopback (127/8, ::1/128), and IPv6 unique-local
+	// + link-local (fc00::/7, fe80::/10). Operators with a legitimate
+	// internal-service requirement add the CIDR here to bypass the deny.
+	//
+	// What is enforced where:
+	//   - Kernel layer (Landlock NET_CONNECT_TCP, ABI v4+): port-level
+	//     allow-list only — Landlock cannot filter by destination IP. The
+	//     gateway installs a port allow-list of {53, 80, 443} plus the
+	//     dev-server port range; everything else is blocked at connect(2).
+	//   - Go-side layer (pkg/security/SSRFChecker): the CIDR-level filter
+	//     applies to gateway-controlled HTTP clients (web_search, MCP fetches,
+	//     skills installer). Entries here are merged into the SSRFChecker's
+	//     allow-list at boot.
+	//
+	// Documented gap: a compiled binary spawned via workspace.shell can still
+	// dial RFC1918 IPs on allowed ports (e.g. https://192.168.1.1/) because
+	// kernel enforcement is port-only. CIDR-level enforcement for compiled
+	// children would require eBPF cgroup CGROUP_INET4_CONNECT, deferred to a
+	// later release. Operators concerned about this gap should keep
+	// experimental.workspace_shell_enabled=false on agents that handle
+	// untrusted content.
+	//
+	// Empty list (the default) means strict-block of the default-deny set
+	// for code paths the gateway controls.
+	EgressAllowCIDRs []string `json:"egress_allow_cidrs,omitempty"`
+
 	// AllowedPaths lists additional filesystem paths the sandbox may read.
 	// Paths outside this list (and the agent workspace) are inaccessible.
 	AllowedPaths []string `json:"allowed_paths,omitempty"`

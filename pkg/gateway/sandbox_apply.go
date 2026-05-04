@@ -305,13 +305,20 @@ func applySandbox(opts SandboxApplyOptions) (*SandboxApplyResult, error) {
 	//   does not accept ranges, so we expand to one rule per port. Agents
 	//   serving via web_serve (dev mode) and workspace.shell_bg bind here.
 	//
-	// Connect-port rules were removed in v0.1 (A1.3): the kernel only handles
-	// NET_BIND_TCP in handledAccessNet. Outbound TCP filtering is delegated to
-	// the egress proxy layer.
+	// Connect ports (v0.2 #155 item 4): DefaultPolicy seeds the policy with
+	//   sandbox.DefaultConnectPorts ({53, 80, 443}) so the gateway and every
+	//   forked child can reach DNS, HTTP, and HTTPS. We additionally extend
+	//   the connect allow-list with DevServerPortRange so children can
+	//   connect back to gateway-owned dev servers and the egress proxy
+	//   (which binds inside that range when configured). Anything else —
+	//   custom backdoor channels, lateral SSH/MySQL/Redis — is denied at the
+	//   kernel layer with EACCES.
 	//
 	// On ABI < 4 we leave bindPorts nil — handledAccessNet stays 0, and
 	// passing rules to a kernel that does not handle net access would only
-	// trigger the defensive warn-and-skip in ApplyWithMode.
+	// trigger the defensive warn-and-skip in ApplyWithMode. Connect rules
+	// are still populated by DefaultPolicy but ignored by the kernel; a
+	// boot-time WARN documents the degradation.
 	var bindPorts []uint16
 	abiVersion := 0
 	if rep, ok := backend.(interface{ ABIVersion() int }); ok {
@@ -329,6 +336,26 @@ func applySandbox(opts SandboxApplyOptions) (*SandboxApplyResult, error) {
 		}
 	}
 	policy := sandbox.DefaultPolicy(opts.HomePath, allowedPaths, warnFn, bindPorts)
+
+	// Extend the connect-port allow-list (v0.2 #155 item 4). DefaultPolicy
+	// pre-seeds {53, 80, 443}; we append every port in DevServerPortRange so
+	// children can dial loopback dev servers and the egress proxy without
+	// the kernel intercepting at connect(2). Done after DefaultPolicy
+	// returns so we don't have to thread an additional parameter through
+	// DefaultPolicy's call sites (the redteam test, agent loop, etc.).
+	if abiVersion >= 4 && opts.Cfg != nil {
+		pr := opts.Cfg.Sandbox.DevServerPortRange
+		if !pr.IsZero() {
+			extra := make([]sandbox.NetPortRule, 0, pr.Max()-pr.Min()+1)
+			for p := pr.Min(); p <= pr.Max(); p++ {
+				if p < 1 || p > 65535 {
+					continue
+				}
+				extra = append(extra, sandbox.NetPortRule{Port: uint16(p)})
+			}
+			policy.ConnectPortRules = append(policy.ConnectPortRules, extra...)
+		}
+	}
 	result.Policy = policy
 
 	// Step 6 — Apply Landlock. Seccomp Install MUST run after this

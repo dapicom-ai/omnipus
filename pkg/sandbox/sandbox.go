@@ -48,14 +48,30 @@ type NetPortRule struct {
 // unrestricted networking. When non-empty, the kernel denies any bind() to a
 // TCP port not enumerated here.
 //
-// ConnectPortRules were removed in v0.1 (A1.3): the kernel Landlock
-// implementation only handles NET_BIND_TCP in handledAccessNet — connect-port
-// enforcement would require NET_CONNECT_TCP which is intentionally excluded
-// (see sandbox_linux.go computeRights). Outbound TCP filtering is delegated
-// to the egress proxy layer instead.
+// ConnectPortRules — re-introduced in v0.2 (#155 item 4) — install kernel-
+// enforced port-level outbound allow-listing via Landlock NET_CONNECT_TCP on
+// ABI v4+. A non-empty list activates connect filtering: connect(2) to any
+// destination port not enumerated here returns EACCES from the kernel. The
+// list applies process-wide and is inherited by every forked child, so a
+// hardened-exec child that issues a raw `socket()+connect()` syscall sequence
+// to e.g. 127.0.0.1:1 is denied at the kernel layer rather than at the
+// userspace egress-proxy layer (which it would otherwise bypass).
+//
+// Limitations of the kernel mechanism:
+//   - Port-level only. Landlock NET_CONNECT_TCP cannot filter by destination
+//     IP/CIDR. A child connecting to https://192.168.1.1/ on port 443 (a
+//     port we must allow for legitimate LLM/HTTPS traffic) is permitted.
+//     CIDR-level filtering for the same code paths is enforced separately
+//     by the Go-side SSRFChecker (cfg.Sandbox.EgressAllowCIDRs and the SSRF
+//     allow_internal list); however, the SSRFChecker only applies to HTTP
+//     clients we control — a compiled binary spawned via workspace.shell
+//     bypasses it.
+//   - Pre-ABI v4 kernels silently degrade: ConnectPortRules are computed but
+//     not enforced. A boot-time WARN documents this.
 type SandboxPolicy struct {
 	FilesystemRules   []PathRule
 	BindPortRules     []NetPortRule
+	ConnectPortRules  []NetPortRule
 	InheritToChildren bool
 }
 
@@ -132,6 +148,27 @@ func isSystemRestricted(path string) bool {
 	return false
 }
 
+// DefaultConnectPorts is the baseline outbound TCP port allow-list installed
+// by DefaultPolicy via the Landlock NET_CONNECT_TCP rule type (kernel ABI v4+).
+// Any connect(2) to a destination port not in this list is denied with EACCES
+// at the kernel layer for the gateway and every forked child.
+//
+// The set is intentionally minimal:
+//   - 53  — DNS over TCP (resolver fallback when UDP is truncated).
+//   - 80  — plain HTTP (egress-proxy upstreams, package registries).
+//   - 443 — HTTPS (LLM provider calls, all production HTTP traffic).
+//
+// Operators who need additional outbound ports (e.g. SMTP, custom registries)
+// extend this set via the gateway's connect-port computation in
+// pkg/gateway/sandbox_apply.go — DevServerPortRange entries are appended so
+// children can reach loopback dev servers and the egress proxy.
+//
+// Threat note: this allow-list is port-level only. Landlock NET_CONNECT_TCP
+// cannot filter by destination IP, so a child can still reach 192.168.1.1:443
+// or 127.0.0.1:80. CIDR-level filtering for code paths the gateway controls
+// is layered on top via pkg/security/SSRFChecker.
+var DefaultConnectPorts = []uint16{53, 80, 443}
+
 // DefaultPolicy builds the workspace SandboxPolicy from the Omnipus home
 // directory and an optional list of user-declared additional allowed paths.
 // Implements FR-J-003 and FR-J-013 (user read wins, write unconditionally
@@ -156,13 +193,18 @@ func isSystemRestricted(path string) bool {
 // and takes the union of access rights per path.
 //
 // bindPorts populates SandboxPolicy.BindPortRules. Each uint16 entry becomes
-// one NetPortRule. Pass nil (the historical caller default) to leave network
-// rules empty, which preserves pre-ABI-v4 behavior of unrestricted networking.
-// The gateway expands cfg.Sandbox.DevServerPortRange into bindPorts so dev
+// one NetPortRule. Pass nil (the historical caller default) to leave bind
+// rules empty, which preserves pre-ABI-v4 behavior of unrestricted bind. The
+// gateway expands cfg.Sandbox.DevServerPortRange into bindPorts so dev
 // servers can bind their assigned port.
 //
-// Connect-port rules were removed in v0.1 (A1.3): outbound TCP filtering is
-// delegated to the egress proxy layer. See SandboxPolicy for details.
+// ConnectPortRules are populated unconditionally with DefaultConnectPorts
+// (v0.2 #155 item 4 — default-deny outbound). On Landlock ABI v4+ this
+// activates kernel-level enforcement: connect(2) to any port outside the
+// allow-list returns EACCES. On older kernels the field is computed but not
+// enforced (a boot-time WARN documents the degradation). Callers that need
+// to extend or replace the connect-port set should call DefaultPolicy first
+// and then mutate the returned policy's ConnectPortRules slice.
 func DefaultPolicy(homePath string, allowedPaths []string, warnFn func(msg string, path string), bindPorts []uint16) SandboxPolicy {
 	rules := make([]PathRule, 0, 16+len(allowedPaths))
 
@@ -257,9 +299,23 @@ func DefaultPolicy(homePath string, allowedPaths []string, warnFn func(msg strin
 		}
 	}
 
+	// v0.2 (#155 item 4): default-deny outbound TCP via Landlock
+	// NET_CONNECT_TCP. The kernel installs the allow-list once and inherits
+	// it to every child forked from the restricted thread, so a hardened-
+	// exec child issuing raw socket()+connect() to e.g. 127.0.0.1:1 is
+	// denied at the kernel layer rather than reaching the network stack.
+	// We allocate a fresh slice (not aliased to DefaultConnectPorts) so a
+	// caller mutating policy.ConnectPortRules cannot pollute the package-
+	// level baseline used by future DefaultPolicy() invocations.
+	connectRules := make([]NetPortRule, 0, len(DefaultConnectPorts))
+	for _, p := range DefaultConnectPorts {
+		connectRules = append(connectRules, NetPortRule{Port: p})
+	}
+
 	return SandboxPolicy{
 		FilesystemRules:   rules,
 		BindPortRules:     bindRules,
+		ConnectPortRules:  connectRules,
 		InheritToChildren: true,
 	}
 }

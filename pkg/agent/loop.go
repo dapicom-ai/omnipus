@@ -491,10 +491,27 @@ func NewAgentLoop(
 	// all outbound HTTP tool surfaces receive this checker so allow_internal is
 	// honored uniformly. When disabled the checker is nil and callers fall back
 	// to their default (proxy-aware) HTTP clients.
+	//
+	// v0.2 (#155 item 4): cfg.Sandbox.EgressAllowCIDRs is the operator escape
+	// hatch for the default-deny outbound posture. Entries here are merged
+	// into the SSRFChecker's allow-list alongside the SSRF.AllowInternal list
+	// so a single field per concern keeps semantics clear: SSRF allow-list =
+	// "this hostname/IP/CIDR is exempt from SSRF blocking". Both fields feed
+	// the same checker; the merge is order-stable so an operator who lists
+	// "10.0.0.5" in AllowInternal AND "10.0.0.0/8" in EgressAllowCIDRs gets
+	// both — the more specific exact-IP entry takes O(1) precedence in
+	// CheckIP's lookup map.
 	if cfg.Sandbox.SSRF.Enabled {
-		al.ssrfChecker = security.NewSSRFChecker(cfg.Sandbox.SSRF.AllowInternal)
+		merged := make([]string, 0,
+			len(cfg.Sandbox.SSRF.AllowInternal)+len(cfg.Sandbox.EgressAllowCIDRs))
+		merged = append(merged, cfg.Sandbox.SSRF.AllowInternal...)
+		merged = append(merged, cfg.Sandbox.EgressAllowCIDRs...)
+		al.ssrfChecker = security.NewSSRFChecker(merged)
 		logger.InfoCF("agent", "SSRF protection enabled",
-			map[string]any{"allow_internal_count": len(cfg.Sandbox.SSRF.AllowInternal)})
+			map[string]any{
+				"allow_internal_count":     len(cfg.Sandbox.SSRF.AllowInternal),
+				"egress_allow_cidrs_count": len(cfg.Sandbox.EgressAllowCIDRs),
+			})
 	}
 
 	// SEC-28: Start the loopback SSRF proxy for exec child processes when
@@ -793,9 +810,15 @@ func (al *AgentLoop) wireExecToolDepsOn(registry *AgentRegistry) {
 		// bind, and the rules are visible in tooling that introspects
 		// ExecToolDeps.
 		//
-		// ConnectPortRules were removed in v0.1 (A1.3): the kernel only
-		// handles NET_BIND_TCP in handledAccessNet. Outbound TCP filtering
-		// is delegated to the egress proxy.
+		// ConnectPortRules were re-introduced in v0.2 (#155 item 4) and
+		// are installed process-wide once at gateway boot via DefaultPolicy
+		// + sandbox_apply.go. Children inherit the connect-port allow-list
+		// through Landlock's restrict_self ratchet — no per-child re-add
+		// is required. The tool-side ExecToolDeps.SandboxPolicy struct
+		// carries an empty ConnectPortRules slice here intentionally; it
+		// exists to keep the type symmetric and to feed cooperative
+		// FallbackBackend env-var injection without duplicating the
+		// kernel-level allow-list across every spawned child.
 		var bindPorts []sandbox.NetPortRule
 		if al.sandboxBackend != nil {
 			abi := 0
