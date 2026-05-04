@@ -11,7 +11,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { SmartSelect } from '@/components/ui/smart-select'
 import { Separator } from '@/components/ui/separator'
 import { useUiStore } from '@/store/ui'
-import { fetchUserContext, updateUserContext, changePassword } from '@/lib/api'
+import { fetchUserContext, updateUserContext, changePassword, isApiError } from '@/lib/api'
 
 const TIMEZONES = [
   'UTC',
@@ -102,7 +102,7 @@ export function ProfileSection() {
       setPasswordError(null)
     },
     onError: (err: Error) => {
-      setPasswordError(err.message)
+      setPasswordError(isApiError(err) ? err.userMessage : err.message)
     },
   })
 

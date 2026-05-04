@@ -34,6 +34,7 @@ import {
   deleteMcpServer,
   enableChannel,
   disableChannel,
+  isApiError,
 } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { SkillBrowser } from '@/components/skills/SkillBrowser'
@@ -82,7 +83,7 @@ function SkillsScreen() {
       setConfirmDeleteSkill(null)
     },
     onError: (err: Error) => {
-      addToast({ message: err.message, variant: 'error' })
+      addToast({ message: isApiError(err) ? err.userMessage : err.message, variant: 'error' })
       setConfirmDeleteSkill(null)
     },
   })
@@ -95,7 +96,7 @@ function SkillsScreen() {
       setConfirmDeleteMcp(null)
     },
     onError: (err: Error) => {
-      addToast({ message: err.message, variant: 'error' })
+      addToast({ message: isApiError(err) ? err.userMessage : err.message, variant: 'error' })
       setConfirmDeleteMcp(null)
     },
   })
@@ -107,7 +108,7 @@ function SkillsScreen() {
       queryClient.invalidateQueries({ queryKey: ['channels'] })
       addToast({ message: enabled ? 'Channel disabled' : 'Channel enabled', variant: 'success' })
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: Error) => addToast({ message: isApiError(err) ? err.userMessage : err.message, variant: 'error' }),
   })
 
   return (

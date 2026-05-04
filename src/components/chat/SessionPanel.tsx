@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { useUiStore } from '@/store/ui'
 import { useSessionStore } from '@/store/session'
 import { useChatStore } from '@/store/chat'
-import { fetchAgents, fetchSessions, renameSession, deleteSession } from '@/lib/api'
+import { fetchAgents, fetchSessions, renameSession, deleteSession, isApiError } from '@/lib/api'
 import type { Agent, Session } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
@@ -115,8 +115,9 @@ function SessionItem({ session, agents, isActive, isStreaming, onSelect, onDelet
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
     },
-    onError: (err: Error) => {
-      addToast({ message: `Could not rename session: ${err.message}`, variant: 'error' })
+    onError: (err: unknown) => {
+      const msg = isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Rename failed'
+      addToast({ message: `Could not rename session: ${msg}`, variant: 'error' })
       setEditValue(session.title || UNTITLED_SESSION)
     },
     onSettled: () => setIsEditing(false),
@@ -127,8 +128,9 @@ function SessionItem({ session, agents, isActive, isStreaming, onSelect, onDelet
     onSuccess: () => {
       onDeleted(session.id)
     },
-    onError: (err: Error) => {
-      addToast({ message: `Could not delete session: ${err.message}`, variant: 'error' })
+    onError: (err: unknown) => {
+      const msg = isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Delete failed'
+      addToast({ message: `Could not delete session: ${msg}`, variant: 'error' })
       setConfirmDelete(false)
     },
   })

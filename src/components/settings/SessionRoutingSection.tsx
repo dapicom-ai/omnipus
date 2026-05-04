@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { ArrowsSplit } from '@phosphor-icons/react'
-import { fetchSessionScope, updateSessionScope } from '@/lib/api'
+import { fetchSessionScope, updateSessionScope, isApiError } from '@/lib/api'
 import type { DMScope } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { useAuthStore } from '@/store/auth'
@@ -76,10 +76,11 @@ export function SessionRoutingSection(): React.ReactElement {
       if (resp.requires_restart) setRestartRequired(true)
       queryClient.setQueryData(['session-scope'], { dm_scope: resp.applied_dm_scope })
     },
-    onError: (err: Error) => {
+    onError: (err: unknown) => {
+      const msg = isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Save failed'
       setSaveState('error')
-      setErrorMessage(err.message)
-      addToast({ message: err.message, variant: 'error' })
+      setErrorMessage(msg)
+      addToast({ message: msg, variant: 'error' })
     },
   })
 

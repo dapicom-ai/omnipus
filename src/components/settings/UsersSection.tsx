@@ -80,8 +80,8 @@ function AddUserDialog({ open, onOpenChange, onCreated }: AddUserDialogProps) {
       onOpenChange(false)
       onCreated()
     },
-    onError: (err: Error) => {
-      setServerError(err.message)
+    onError: (err: unknown) => {
+      setServerError(isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Failed to create user')
     },
   })
 
@@ -238,8 +238,8 @@ function ChangeRoleDialog({ open, onOpenChange, target, onChanged }: ChangeRoleD
       onOpenChange(false)
       onChanged()
     },
-    onError: (err: Error) => {
-      setServerError(err.message)
+    onError: (err: unknown) => {
+      setServerError(isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Failed to update role')
     },
   })
 
@@ -331,8 +331,8 @@ function ResetPasswordDialog({ open, onOpenChange, target, onReset }: ResetPassw
       onOpenChange(false)
       onReset()
     },
-    onError: (err: Error) => {
-      setServerError(err.message)
+    onError: (err: unknown) => {
+      setServerError(isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Failed to reset password')
     },
   })
 
@@ -422,8 +422,8 @@ function ChangeMyPasswordDialog({ open, onOpenChange }: ChangeMyPasswordDialogPr
       resetForm()
       onOpenChange(false)
     },
-    onError: (err: Error) => {
-      setServerError(err.message)
+    onError: (err: unknown) => {
+      setServerError(isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Failed to change password')
     },
   })
 
@@ -540,7 +540,7 @@ function DeleteUserDialog({ open, onOpenChange, target, onDeleted }: DeleteUserD
       onOpenChange(false)
       onDeleted()
     },
-    onError: (err: Error) => {
+    onError: (err: unknown) => {
       // 409 last-admin error: show inline, keep dialog open. Defensively
       // also match the legacy "administrator" substring for any server
       // version that returns the message with a different status code.
@@ -551,7 +551,7 @@ function DeleteUserDialog({ open, onOpenChange, target, onDeleted }: DeleteUserD
           setInlineError(err.userMessage)
         }
       } else {
-        setInlineError(err.message)
+        setInlineError(err instanceof Error ? err.message : 'Failed to delete user')
       }
     },
   })

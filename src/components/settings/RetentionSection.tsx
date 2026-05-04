@@ -133,7 +133,7 @@ export function RetentionSection(): React.ReactElement {
     onSuccess: (resp) => {
       addToast({ message: `Sweep complete — ${resp.removed} session(s) removed`, variant: 'success' })
     },
-    onError: (err: Error) => {
+    onError: (err: unknown) => {
       // Defensively match both the typed status (409 from MaxBytes / conflict)
       // and the legacy "sweep in progress" body substring so the toast still
       // works against pre-ApiError servers.
@@ -144,7 +144,7 @@ export function RetentionSection(): React.ReactElement {
           addToast({ message: err.userMessage, variant: 'error' })
         }
       } else {
-        addToast({ message: err.message, variant: 'error' })
+        addToast({ message: err instanceof Error ? err.message : 'Sweep failed', variant: 'error' })
       }
     },
   })

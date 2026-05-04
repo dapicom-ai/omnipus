@@ -219,14 +219,14 @@ export function TaskList({ statusFilter = 'all', onTaskSelect }: TaskListProps) 
       setStartImmediately(false)
       setShowCreate(false)
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: unknown) => addToast({ message: isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Failed to create task', variant: 'error' }),
   })
 
   const { mutate: doUpdateStatus } = useMutation({
     mutationFn: ({ id, status }: { id: string; status: Task['status'] }) =>
       updateTask(id, { status }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tasks'] }),
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: unknown) => addToast({ message: isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Failed to update task', variant: 'error' }),
   })
 
   const tasks = statusFilter === 'all'

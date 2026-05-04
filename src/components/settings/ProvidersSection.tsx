@@ -11,7 +11,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { fetchProviders, configureProvider, testProvider } from '@/lib/api'
+import { fetchProviders, configureProvider, testProvider, isApiError } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { PROVIDER_HINTS } from '@/lib/constants'
 
@@ -36,7 +36,7 @@ export function ProvidersSection() {
       setExpandedProvider(null)
       setApiKeys((prev) => ({ ...prev, [id]: '' }))
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: Error) => addToast({ message: isApiError(err) ? err.userMessage : err.message, variant: 'error' }),
   })
 
   const handleTest = async (id: string) => {

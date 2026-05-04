@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { isApiError } from '@/lib/api'
 
 export type AutoSaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 
@@ -61,7 +62,7 @@ export function useAutoSave<T>(
       }, 2000)
     } catch (err) {
       setStatus('error')
-      setError(err instanceof Error ? err.message : String(err))
+      setError(isApiError(err) ? err.userMessage : err instanceof Error ? err.message : String(err))
     }
   }, [disabled])
 

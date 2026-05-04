@@ -15,7 +15,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
-import { fetchChannelConfig, configureChannel, enableChannel, testChannel } from '@/lib/api'
+import { fetchChannelConfig, configureChannel, enableChannel, testChannel, isApiError } from '@/lib/api'
 import { getChannelFields, type ChannelField } from '@/lib/channel-fields'
 import { useUiStore } from '@/store/ui'
 
@@ -117,7 +117,7 @@ export function ChannelConfigPanel({
       queryClient.invalidateQueries({ queryKey: ['channel-config', channelId] })
       addToast({ message: 'Configuration saved', variant: 'success' })
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: unknown) => addToast({ message: isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Save failed', variant: 'error' }),
   })
 
   const { mutate: doSaveAndEnable, isPending: savingAndEnabling } = useMutation({
@@ -132,7 +132,7 @@ export function ChannelConfigPanel({
       addToast({ message: 'Channel configured and enabled', variant: 'success' })
       onOpenChange(false)
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: unknown) => addToast({ message: isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Failed to enable channel', variant: 'error' }),
   })
 
   const { mutate: doTest, isPending: testing } = useMutation({
@@ -145,9 +145,10 @@ export function ChannelConfigPanel({
         addToast({ message: result.message || 'Test failed', variant: 'error' })
       }
     },
-    onError: (err: Error) => {
-      setTestResult({ success: false, message: err.message })
-      addToast({ message: err.message, variant: 'error' })
+    onError: (err: unknown) => {
+      const msg = isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Test failed'
+      setTestResult({ success: false, message: msg })
+      addToast({ message: msg, variant: 'error' })
     },
   })
 

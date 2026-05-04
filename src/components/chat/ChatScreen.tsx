@@ -36,7 +36,7 @@ import { useChatStore } from '@/store/chat'
 import { useConnectionStore } from '@/store/connection'
 import { useSessionStore } from '@/store/session'
 import { useUiStore } from '@/store/ui'
-import { fetchAgents, fetchSessionMessages, createSession, uploadFiles } from '@/lib/api'
+import { fetchAgents, fetchSessionMessages, createSession, uploadFiles, isApiError } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 // ── Message components ────────────────────────────────────────────────────────
@@ -428,7 +428,7 @@ export function OmnipusComposer() {
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
       addToast({ message: 'New session started', variant: 'success' })
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: unknown) => addToast({ message: isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Failed to create session', variant: 'error' }),
   })
 
   const [inputValue, setInputValue] = useState('')
@@ -532,7 +532,7 @@ export function OmnipusComposer() {
       setPendingFiles([])
     } catch (err) {
       addToast({
-        message: err instanceof Error ? err.message : 'Upload failed',
+        message: isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Upload failed',
         variant: 'error',
       })
     } finally {

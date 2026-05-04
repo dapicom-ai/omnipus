@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Package, Warning } from '@phosphor-icons/react'
-import { fetchSkillTrust, updateSkillTrust } from '@/lib/api'
+import { fetchSkillTrust, updateSkillTrust, isApiError } from '@/lib/api'
 import type { SkillTrustLevel } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { useAuthStore } from '@/store/auth'
@@ -73,8 +73,9 @@ export function SkillTrustSection(): React.ReactElement {
     },
     onError: (err: Error) => {
       setSaveState('error')
-      setErrorMessage(err.message)
-      addToast({ message: err.message, variant: 'error' })
+      const msg = isApiError(err) ? err.userMessage : err.message
+      setErrorMessage(msg)
+      addToast({ message: msg, variant: 'error' })
     },
   })
 

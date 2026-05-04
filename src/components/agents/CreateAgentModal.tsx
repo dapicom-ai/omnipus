@@ -22,7 +22,7 @@ import { ModelSelector } from '@/components/ui/model-selector'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { useQuery } from '@tanstack/react-query'
 import { useUiStore } from '@/store/ui'
-import { createAgent, fetchProviders } from '@/lib/api'
+import { createAgent, fetchProviders, isApiError } from '@/lib/api'
 import type { Agent, AgentToolsCfg } from '@/lib/api'
 import { AVATAR_COLORS } from '@/lib/constants'
 import { ToolsAndPermissions } from './ToolsAndPermissions'
@@ -122,7 +122,7 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
       resetForm()
     },
     onError: (err: Error) => {
-      useUiStore.getState().addToast({ message: err.message, variant: 'error' })
+      useUiStore.getState().addToast({ message: isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Failed to create agent', variant: 'error' })
     },
   })
 

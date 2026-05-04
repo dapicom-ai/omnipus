@@ -31,6 +31,7 @@ import {
   fetchBuiltinTools,
   fetchGlobalToolPolicies,
   updateGlobalToolPolicies,
+  isApiError,
   type BuiltinTool,
 } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
@@ -348,7 +349,7 @@ export function SecuritySection() {
       setCredKey('')
       setCredValue('')
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: unknown) => addToast({ message: isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Save failed', variant: 'error' }),
   })
 
   const { mutate: doDeleteCred } = useMutation({
@@ -358,7 +359,7 @@ export function SecuritySection() {
       addToast({ message: `Credential "${key}" removed`, variant: 'success' })
       setDeletingKey(null)
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: unknown) => addToast({ message: isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Delete failed', variant: 'error' }),
   })
 
   if (isLoading) {

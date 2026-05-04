@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { SmartSelect } from '@/components/ui/smart-select'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { fetchConfig, updateConfig, rotateGatewayToken, fetchGatewayStatus, fetchAgents } from '@/lib/api'
+import { fetchConfig, updateConfig, rotateGatewayToken, fetchGatewayStatus, fetchAgents, isApiError } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { useAutoSave } from '@/hooks/useAutoSave'
 import { AutoSaveIndicator } from '@/components/ui/AutoSaveIndicator'
@@ -93,7 +93,7 @@ export function GatewaySection() {
       queryClient.invalidateQueries({ queryKey: ['config'] })
       addToast({ message: 'Gateway token rotated', variant: 'success' })
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: unknown) => addToast({ message: isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Token rotation failed', variant: 'error' }),
   })
 
   const copyToken = async () => {

@@ -687,11 +687,7 @@ export function SandboxSection(): React.ReactElement {
     },
     onError: (err: Error) => {
       setSaveState('error')
-      // Prefer ApiError's parsed userMessage (already prefix-free); fall back
-      // to the legacy "${status}: text" trim for non-ApiError values.
-      const msg = isApiError(err)
-        ? err.userMessage
-        : err.message.replace(/^\d+:\s*/, '')
+      const msg = isApiError(err) ? err.userMessage : String(err)
       setErrorMessage(msg)
       const pathRowMatch = /allowed_paths\[(\d+)\]:\s*(.+)/.exec(msg)
       if (pathRowMatch) {
@@ -1134,7 +1130,7 @@ export function SandboxSection(): React.ReactElement {
                     {isApiError(saveMutation.error)
                       ? saveMutation.error.userMessage
                       : saveMutation.error instanceof Error
-                        ? saveMutation.error.message.replace(/^\d+:\s*/, '')
+                        ? saveMutation.error.message
                         : 'Save failed'}
                   </p>
                 )}
