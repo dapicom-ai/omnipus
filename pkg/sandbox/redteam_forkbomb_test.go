@@ -117,6 +117,141 @@ func TestRedteam_ForkBomb_DirectPattern_Blocked(t *testing.T) {
 	}
 }
 
+// TestRedteam_ForkBomb_BypassShapes documents additional bypass variants that
+// should be caught by the shell-guard regex but are NOT matched by the current
+// pattern (C3-DIRECT-NARROW gap set).
+//
+// Each case is marked with whether it is EXPECTED to match today or is a
+// documented gap. Cases marked mustMatch=false are EXPECTED TO FAIL until
+// v0.2 #155 broadens the shell-guard regex. A future maintainer who sees
+// these pass should flip mustMatch=true.
+//
+// DO NOT widen the production regex in this test — widening is tracked in
+// pkg/tools/shell.go and closes under issue #155. This test only documents
+// the gap and asserts that the expected-match cases DO match.
+//
+// Traces to: quizzical-marinating-frog.md — Wave V2.G stage 3, item 8
+// Production regex location: pkg/tools/shell.go ~L224
+func TestRedteam_ForkBomb_BypassShapes(t *testing.T) {
+	t.Logf("documents C3-DIRECT bypass shapes from insider-pentest report; " +
+		"cases marked mustMatch=false are EXPECTED TO FAIL until v0.2 #155 broadens shell-guard")
+
+	// Production regex — keep in sync with pkg/tools/shell.go:224.
+	const guardPattern = `:\(\)\s*\{.*\};\s*:`
+	guard, err := regexp.Compile(guardPattern)
+	if err != nil {
+		t.Fatalf("compile guard regex: %v", err)
+	}
+
+	// Notes on expected-fail cases:
+	//   All of the following are valid fork-bomb invocations that exploit the
+	//   narrow regex. They represent progressively harder-to-detect variants.
+	//   mustMatch=false means the CURRENT regex does NOT catch them; the test
+	//   t.Errorf (not t.Fatalf) so all cases are reported in one run.
+	//
+	//   When v0.2 #155 ships: flip these to mustMatch=true and the test
+	//   validates the widened coverage.
+	bypasses := []struct {
+		name      string
+		text      string
+		mustMatch bool
+		gapNote   string
+	}{
+		{
+			// Whitespace injected inside the parens — `: ( ) { : | : & } ; :`.
+			// The production regex requires `\(\)` with NO space inside, so
+			// `: ( ) {…}` slips through.
+			// Expected: FAIL today (mustMatch=false).
+			// Closes when: regex is widened to `:\s*\(\s*\)\s*\{.*\};\s*:`.
+			name:      "whitespace_inside_parens",
+			text:      ": ( ) { : | : & } ; :",
+			mustMatch: false,
+			gapNote:   "C3-BYPASS-1: spaces inside `:( )` slip through current regex. Fix: allow \\s* inside parens.",
+		},
+		{
+			// Classic bomb followed by a newline continuation.
+			// `:(){ :|:& };:` + newline + `echo done`
+			// The regex uses MatchString which searches for the pattern anywhere
+			// in the string — the newline between lines should not prevent a match
+			// on the first line if `.` does not cross `\n`. Since MatchString
+			// uses RE2 default (`.` does not match `\n`), the pattern `.*` stops
+			// at the newline, meaning `{…}` matches the first-line content.
+			// Expected: the canonical pattern IS in the first line, so this MUST MATCH.
+			name:      "newline_after_bomb",
+			text:      ":(){ :|:& };:\necho done",
+			mustMatch: true,
+			gapNote:   "",
+		},
+		{
+			// Bomb invoked via `bash -c`. The guard sees the outer command string,
+			// not the -c argument. If the outer string is `bash -c ":(){:|:&};:"`,
+			// the bomb pattern is present as a substring — MatchString SHOULD catch it.
+			// Expected: MUST MATCH (the bomb literal is a substring of the full string).
+			name:      "via_bash_dash_c",
+			text:      `bash -c ":(){:|:&};:"`,
+			mustMatch: true,
+			gapNote:   "",
+		},
+		{
+			// Function defined in env var and eval'd: `f=":(){:|:&};:"; eval $f`.
+			// The guard sees `f=":(){:|:&};:"; eval $f`. The bomb pattern is inside
+			// the string assignment — MatchString should find it as a substring.
+			// Expected: MUST MATCH (bomb literal present in the full command string).
+			name:      "via_eval_env_var",
+			text:      `f=":(){:|:&};:"; eval $f`,
+			mustMatch: true,
+			gapNote:   "",
+		},
+		{
+			// Disguised variant: `b()(b|b);b` — substitutes `:` with `b`.
+			// This is a valid fork bomb using a different identifier. The current
+			// guard pattern anchors on `:` and `\(` — it will NOT match `b()`.
+			// Expected: FAIL today (mustMatch=false).
+			// Closes when: the regex is generalised to match any identifier.
+			name:      "disguised_identifier_b",
+			text:      "b()(b|b);b",
+			mustMatch: false,
+			gapNote:   "C3-BYPASS-2: disguised fork bomb with different identifier `b` bypasses `:()` pattern. Fix: generalise to `[a-zA-Z_][a-zA-Z0-9_]*\\(\\)\\s*\\{`.",
+		},
+		{
+			// Semicolon omitted, replaced with newline: `:(){ :|:& }\n:`.
+			// The regex requires `};\s*:` — the `\n` between `}` and `:` would
+			// only be matched if `\s*` covers `\n`. RE2 `\s` includes `\n`, so
+			// this SHOULD match IF the `.*` in `\{.*\}` matches the inter-newline
+			// content. Since `.` does NOT match `\n` in RE2, `{.*}` fails across
+			// a newline and the pattern does not match.
+			// Expected: FAIL today (mustMatch=false).
+			name:      "newline_inside_braces",
+			text:      ":(){ :|:&\n};:",
+			mustMatch: false,
+			gapNote:   "C3-BYPASS-3: newline inside `{…}` bypasses `.*` which does not cross `\\n`. Fix: use `[\\s\\S]*` or (?s) mode.",
+		},
+	}
+
+	for _, b := range bypasses {
+		t.Run(b.name, func(t *testing.T) {
+			ok := guard.MatchString(b.text)
+			if b.mustMatch {
+				if !ok {
+					t.Errorf("C3-BYPASS REGRESSION: shell-guard regex %q failed to match %q — "+
+						"this bypass variant should be blocked: %s",
+						guardPattern, b.text, b.gapNote)
+				} else {
+					t.Logf("OK: regex matched bypass variant %q", b.name)
+				}
+				return
+			}
+			// mustMatch=false: document the gap.
+			if !ok {
+				t.Errorf("C3-BYPASS GAP CONFIRMED: regex did not match %q. %s "+
+					"(expected-fail; flip mustMatch=true when v0.2 #155 ships)", b.text, b.gapNote)
+			} else {
+				t.Logf("C3-BYPASS closed: regex now matches %q — flip mustMatch=true in this test", b.name)
+			}
+		})
+	}
+}
+
 // TestRedteam_ForkBomb_IndirectViaScript_Limited documents C3-INDIRECT.
 //
 // The threat: an attacker can sidestep the shell-guard regex by writing
