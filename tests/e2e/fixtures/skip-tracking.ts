@@ -92,14 +92,87 @@ import { execSync } from 'child_process';
 //
 // Empty by default. Add entries only for genuinely tracked issues with a deadline.
 
+// ── V2.G stage 3 — Formally tracked skips ──────────────────────────────────────
+//
+// These entries document all raw test.skip() and test.fixme() calls in the
+// E2E suite. They are listed here so that when skip-tracking is extended to
+// capture raw test.skip calls (planned for v0.2 / #155 phase V2.G), the gate
+// already has corresponding allow-list entries and will not immediately fail CI.
+//
+// Each entry references the GitHub issue that blocks the underlying feature.
+// The `until` date is the v0.2 target (2026-06-30). Update the date when the
+// issue is resolved or the deadline is formally extended.
+//
+// Traces to: quizzical-marinating-frog.md — Wave V2.G stage 3, items 10–11
 export const SKIP_ALLOWLIST: { test: string; issue: string; until: string; note?: string }[] = [
-  // Example (remove when resolved):
-  // {
-  //   test: '(a) Ray→Max→Jim chain: transcript shows all three agent labels',
-  //   issue: 'https://github.com/dapicom-ai/omnipus/issues/111',
-  //   until: '2026-07-01',
-  //   note: 'Subagent handoff not yet wired in this environment.',
-  // },
+  // agents.spec.ts
+  {
+    test: '(d) locked fields render read-only on core agents',
+    issue: 'https://github.com/dapicom-ai/omnipus/issues/101',
+    until: '2026-06-30',
+    note: 'AgentProfile hides the Identity accordion for locked (core) agents; canEdit guard at AgentProfile.tsx:353.',
+  },
+  {
+    test: '(e) deleted agent URL returns branded 404 with "Back to Agents" link',
+    issue: 'https://github.com/dapicom-ai/omnipus/issues/102',
+    until: '2026-06-30',
+    note: '/agents/:nonexistent-slug renders a generic error state without a "Back to Agents" link.',
+  },
+  {
+    test: '(g) session with deleted agent shows read-only transcript and "Agent removed" banner',
+    issue: 'https://github.com/dapicom-ai/omnipus/issues/103',
+    until: '2026-06-30',
+    note: 'ChatScreen does not check agent_removed in session response; needs data-testid="agent-removed-banner".',
+  },
+  // auth.spec.ts
+  {
+    test: '(c) dev_mode_bypass = true shows red persistent banner on every route',
+    issue: 'https://github.com/dapicom-ai/omnipus/issues/104',
+    until: '2026-06-30',
+    note: 'SPA does not render a persistent red banner when dev_mode_bypass is true.',
+  },
+  // command-center.spec.ts
+  {
+    test: '(b) approval-queue: policy=ask tool call triggers approval modal and Approve routes it through',
+    issue: 'https://github.com/dapicom-ai/omnipus/issues/106',
+    until: '2026-06-30',
+    note: 'ExecApprovalBlock has no data-testid="approval-modal".',
+  },
+  // handoff.spec.ts
+  {
+    test: '(a) Ray→Max→Jim chain: transcript shows all three agent labels',
+    issue: 'https://github.com/dapicom-ai/omnipus/issues/111',
+    until: '2026-06-30',
+    note: 'AssistantMessage does not annotate messages with per-agent attribution.',
+  },
+  // skills.spec.ts
+  {
+    test: '(b) skill install with hash mismatch shows block dialog',
+    issue: 'https://github.com/dapicom-ai/omnipus/issues/109',
+    until: '2026-06-30',
+    note: 'SkillBrowser does not expose a file input on the /skills route.',
+  },
+  // settings.spec.ts
+  {
+    test: '(e) tool-policy "Always Allow" toggle persists across page reload',
+    issue: 'https://github.com/dapicom-ai/omnipus/issues/108',
+    until: '2026-06-30',
+    note: 'SecuritySection does not render an "Always Allow" toggle with a testid.',
+  },
+  // replay-fidelity.spec.ts
+  {
+    test: '(c) attach-during-active-turn: second browser context receives all events without loss',
+    issue: 'https://github.com/dapicom-ai/omnipus/issues/133',
+    until: '2026-06-30',
+    note: 'Covered by Go-level TestAttach_RegistersLiveEventsBeforeReplay; E2E requires a second browser context.',
+  },
+  // version-drift.spec.ts
+  {
+    test: 'mock stale build hash triggers "New version available" toast',
+    issue: 'https://github.com/dapicom-ai/omnipus/issues/110',
+    until: '2026-06-30',
+    note: 'SPA does not poll /api/v1/version and does not show a "New version available" toast.',
+  },
 ];
 
 // ── Validation ──────────────────────────────────────────────────────────────────
@@ -195,8 +268,10 @@ export interface SkipManifest {
     test: string;
     reason: string;
     // Only `softSkip()` calls are captured today. `test.skip()` /
-    // `test.fixme()` capture is tracked for V2.G; the union will widen
-    // when that lands.
+    // `test.fixme()` capture is planned for v0.2 (#155 phase V2.G).
+    // When that lands, the corresponding entries must already be in SKIP_ALLOWLIST.
+    // The union is intentionally narrow: 'softSkip' only. Do not widen it here
+    // until the teardown suite-walk for raw skips is implemented.
     kind: 'softSkip';
   }>;
   allowlisted: Array<{
