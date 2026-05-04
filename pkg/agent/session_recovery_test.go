@@ -3,7 +3,7 @@
 //
 // Copyright (c) 2026 Omnipus contributors
 
-// Tests for SIGKILL recovery — recoverOrphanedToolCalls (FR-069, FR-088).
+// Tests for SIGKILL recovery — RecoverOrphanedToolCalls (FR-069, FR-088).
 //
 // BDD Scenario: "SIGKILL recovery — orphaned tool_call gets synthetic deny on next boot"
 //
@@ -180,7 +180,7 @@ func TestRecovery_StripOrphanedTurn_RemovesOrphanedAssistant(t *testing.T) {
 // where the last assistant message has no tool_calls is left unchanged.
 //
 // Note: stripOrphanedAssistantTurn strips the last assistant message IF it has tool
-// calls, regardless of whether a tool result follows. The caller (recoverOrphanedToolCalls)
+// calls, regardless of whether a tool result follows. The caller (RecoverOrphanedToolCalls)
 // only invokes it when orphans are detected first. This test verifies the base no-op case.
 //
 // Traces to: tool-registry-redesign-spec.md FR-088
@@ -195,7 +195,7 @@ func TestRecovery_StripOrphanedTurn_NoOpOnHistoryWithNoToolCalls(t *testing.T) {
 		"history with no tool_calls in last assistant message must be unchanged")
 }
 
-// --- recoverOrphanedToolCalls integration tests ---
+// --- RecoverOrphanedToolCalls integration tests ---
 
 // TestRecovery_RecoverOrphaned_AppendsSyntheticEntry verifies the full recovery:
 //  1. A synthetic system message is appended to the transcript.
@@ -219,7 +219,7 @@ func TestRecovery_RecoverOrphaned_AppendsSyntheticEntry(t *testing.T) {
 	require.NoError(t, store.Save(sessionKey), "Save must succeed")
 
 	// Run recovery.
-	cleanedHistory := recoverOrphanedToolCalls(store, sessionKey, auditLogger)
+	cleanedHistory := RecoverOrphanedToolCalls(store, sessionKey, auditLogger)
 
 	// 1. Cleaned history must not contain the orphaned assistant turn (FR-088).
 	for _, msg := range cleanedHistory {
@@ -282,7 +282,7 @@ func TestRecovery_RecoverOrphaned_NoOpOnCleanSession(t *testing.T) {
 	initialHistory := store.GetHistory(sessionKey)
 	initialLen := len(initialHistory)
 
-	cleanedHistory := recoverOrphanedToolCalls(store, sessionKey, nil)
+	cleanedHistory := RecoverOrphanedToolCalls(store, sessionKey, nil)
 	assert.Len(t, cleanedHistory, initialLen,
 		"clean session history must be unchanged by recovery")
 }
@@ -301,8 +301,8 @@ func TestRecovery_RecoverOrphaned_NilAuditLogger(t *testing.T) {
 	require.NoError(t, store.Save(sessionKey))
 
 	assert.NotPanics(t, func() {
-		recoverOrphanedToolCalls(store, sessionKey, nil)
-	}, "recoverOrphanedToolCalls must not panic with nil audit logger")
+		RecoverOrphanedToolCalls(store, sessionKey, nil)
+	}, "RecoverOrphanedToolCalls must not panic with nil audit logger")
 }
 
 // TestRecovery_RecoverOrphaned_DifferentInputsDifferentOutputs is the differentiation
@@ -322,8 +322,8 @@ func TestRecovery_RecoverOrphaned_DifferentInputsDifferentOutputs(t *testing.T) 
 	require.NoError(t, store.Save("session-a"))
 	require.NoError(t, store.Save("session-b"))
 
-	recoverOrphanedToolCalls(store, "session-a", nil)
-	recoverOrphanedToolCalls(store, "session-b", nil)
+	RecoverOrphanedToolCalls(store, "session-a", nil)
+	RecoverOrphanedToolCalls(store, "session-b", nil)
 
 	hist1 := store.GetHistory("session-a")
 	hist2 := store.GetHistory("session-b")

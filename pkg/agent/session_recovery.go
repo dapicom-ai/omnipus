@@ -2,7 +2,7 @@
 // License: MIT
 // Copyright (c) 2026 Omnipus contributors
 
-// Package agent — recoverOrphanedToolCalls implements FR-069 (SIGKILL / OOM
+// Package agent — RecoverOrphanedToolCalls implements FR-069 (SIGKILL / OOM
 // recovery) and FR-088 (LLM context hygiene on resume).
 //
 // On every session resume / next gateway boot the loop inspects the tail of the
@@ -39,7 +39,7 @@ type orphanedToolCall struct {
 	ToolName   string
 }
 
-// recoverOrphanedToolCalls inspects the tail of the session's message history.
+// RecoverOrphanedToolCalls inspects the tail of the session's message history.
 // If orphaned tool calls are found (assistant message with tool_calls but no
 // subsequent tool result), it:
 //  1. Appends a synthetic system message to the transcript documenting the
@@ -55,7 +55,10 @@ type orphanedToolCall struct {
 //
 // Returns the cleaned history slice (all messages except the orphaned assistant
 // turn). If no orphaned calls are found, returns the original history unchanged.
-func recoverOrphanedToolCalls(
+//
+// Safe to call on every session load — it is idempotent: orphans that already
+// have a synthetic turn_cancelled_restart system message are skipped.
+func RecoverOrphanedToolCalls(
 	store session.SessionStore,
 	sessionKey string,
 	auditLog *audit.Logger,
