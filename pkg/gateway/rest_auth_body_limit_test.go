@@ -69,3 +69,40 @@ func TestWithOptionalAuth_UnderLimit(t *testing.T) {
 	require.NoError(t, readErr)
 	require.Equal(t, underLimit, len(got))
 }
+
+// TestWithOptionalAuth_BodyLimit_AppliesEvenWithValidAuth (T2.10) verifies
+// that the 1 MiB body cap fires even when a valid Bearer token is supplied.
+// Previously only anonymous paths were tested; this closes the coverage gap
+// for authenticated callers with oversized payloads.
+func TestWithOptionalAuth_BodyLimit_AppliesEvenWithValidAuth(t *testing.T) {
+	api := newTestRestAPIWithHome(t)
+
+	const overLimit = (1 << 20) + 1024 // 1 MiB + 1 KiB
+	body := bytes.Repeat([]byte("c"), overLimit)
+
+	// Set a valid env-based bearer token so withOptionalAuth takes the
+	// "authenticated" code path.
+	const testToken = "test-bearer-token-body-limit-check"
+	t.Setenv("OMNIPUS_BEARER_TOKEN", testToken)
+
+	var readErr error
+	stub := func(w http.ResponseWriter, r *http.Request) {
+		_, readErr = io.ReadAll(r.Body)
+		_ = r.Body.Close()
+	}
+	wrapped := api.withOptionalAuth(stub)
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/state", bytes.NewReader(body))
+	r.Header.Set("Content-Type", "application/octet-stream")
+	r.Header.Set("Authorization", "Bearer "+testToken)
+	wrapped(w, r)
+
+	require.Error(t, readErr,
+		"body cap must fire even with a valid Bearer token (T2.10)")
+	var maxBytesErr *http.MaxBytesError
+	require.True(t, errors.As(readErr, &maxBytesErr),
+		"err must be *http.MaxBytesError, got %T: %v", readErr, readErr)
+	require.Equal(t, int64(1<<20), maxBytesErr.Limit,
+		"limit must be 1 MiB regardless of auth state")
+}
