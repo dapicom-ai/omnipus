@@ -1,5 +1,5 @@
 // Package sandbox — egress proxy for Tier 2 (build_static) and Tier 3
-// (run_in_workspace) child processes per.
+// (web_serve dev mode) child processes.
 //
 // Threat model:
 //

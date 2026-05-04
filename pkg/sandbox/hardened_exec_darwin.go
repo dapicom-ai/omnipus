@@ -38,7 +38,7 @@ const memoryLimitSupported = false
 // not expose Pdeathsig at the syscall layer; the closest analogue is
 // Setpgid so the parent can SIGTERM the whole tree on shutdown.
 //
-// Returns nil so build_static / run_in_workspace can run on darwin (Tier 2
+// Returns nil so build_static / web_serve dev mode can run on darwin (Tier 2
 // is cross-platform, Tier 3 is gated separately at the tool layer).
 func applyPlatformHardening(cmd *exec.Cmd, _ Limits) error {
 	if cmd.SysProcAttr == nil {

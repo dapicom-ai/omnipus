@@ -96,9 +96,9 @@ const webServeDevServerStartupGrace = 3 * time.Second
 // static mode when duration_seconds is not provided.
 const webServeDefaultStaticDuration = time.Hour
 
-// WebServeDevConfig is the runtime config snapshot for dev mode. It mirrors
-// RunInWorkspaceConfig from run_in_workspace.go (now removed) and is renamed
-// to clearly scope it to web_serve.
+// WebServeDevConfig is the runtime config snapshot for web_serve dev mode.
+// It replaces the RunInWorkspaceConfig that lived in the now-removed
+// run_in_workspace.go (legacy run_in_workspace (replay-only)).
 type WebServeDevConfig struct {
 	// Tier3Commands extends the baseline allow-list. Each entry is a full
 	// "binary subcommand" string (e.g. "remix dev").

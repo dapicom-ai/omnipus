@@ -1440,7 +1440,11 @@ type ToolsConfig struct {
 	WebFetch        ToolConfig         `json:"web_fetch"         yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_WEB_FETCH_"`
 	WriteFile       ToolConfig         `json:"write_file"        yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_WRITE_FILE_"`
 	Browser         BrowserToolConfig  `json:"browser"           yaml:"-"                                                      envPrefix:"OMNIPUS_TOOLS_BROWSER_"`
-	// RunInWorkspace holds configuration for the run_in_workspace tool (FR-013, CR-04).
+	// RunInWorkspace holds dev-mode configuration for the web_serve tool.
+	// The on-disk key ("run_in_workspace") is preserved for back-compat with
+	// operator config.json files written before the web_serve unification — do
+	// not rename the JSON tag or existing deployments will silently lose their
+	// warmup_timeout_seconds setting on next restart.
 	RunInWorkspace RunInWorkspaceConfig `json:"run_in_workspace,omitempty" yaml:"-"`
 
 	// BuildStatic holds configuration for the build_static Tier 2 tool
@@ -1448,13 +1452,17 @@ type ToolsConfig struct {
 	// validateBootConfig (validator.go).
 	BuildStatic BuildStaticConfig `json:"build_static,omitempty" yaml:"-"`
 
-	// ServeWorkspace holds configuration for the serve_workspace tool
-	// (FR-001..FR-005). Duration bounds are validated at boot.
+	// ServeWorkspace holds static-mode configuration for the web_serve tool.
+	// The on-disk key ("serve_workspace") is preserved for back-compat with
+	// operator config.json files written before the web_serve unification — do
+	// not rename the JSON tag or existing deployments will silently lose their
+	// duration bounds on next restart.
 	ServeWorkspace ServeWorkspaceConfig `json:"serve_workspace,omitempty" yaml:"-"`
 }
 
-// RunInWorkspaceConfig holds configuration for the run_in_workspace tool (FR-013, CR-04).
-// Maps to config.json: tools.run_in_workspace.*
+// RunInWorkspaceConfig holds dev-mode configuration for the web_serve tool.
+// Maps to config.json: tools.run_in_workspace.* (key preserved for back-compat
+// with operator configs predating the web_serve unification).
 type RunInWorkspaceConfig struct {
 	// WarmupTimeoutSeconds is the maximum number of seconds to wait for a dev server
 	// to become responsive after spawning. Default is 60. The SPA polls via a
@@ -1476,8 +1484,9 @@ type BuildStaticConfig struct {
 	MemoryLimitBytes uint64 `json:"memory_limit_bytes,omitempty"`
 }
 
-// ServeWorkspaceConfig holds configuration for the serve_workspace tool.
-// Maps to config.json: tools.serve_workspace.*
+// ServeWorkspaceConfig holds static-mode configuration for the web_serve tool.
+// Maps to config.json: tools.serve_workspace.* (key preserved for back-compat
+// with operator configs predating the web_serve unification).
 type ServeWorkspaceConfig struct {
 	// MaxDurationSeconds is the maximum registration lifetime in seconds.
 	// Default 86400 (24 h), applied by the boot validator when zero.
@@ -1974,7 +1983,8 @@ func (g *GatewayConfig) ValidateAndApplyPreviewDefaults() error {
 	return nil
 }
 
-// ApplyWarmupTimeoutDefault ensures tools.run_in_workspace.warmup_timeout_seconds
+// ApplyWarmupTimeoutDefault ensures the web_serve dev-mode warmup timeout
+// (stored as tools.run_in_workspace.warmup_timeout_seconds in config.json)
 // has the default value of 60 when unset. Called by the boot validator.
 func (t *ToolsConfig) ApplyWarmupTimeoutDefault() {
 	if t.RunInWorkspace.WarmupTimeoutSeconds <= 0 {

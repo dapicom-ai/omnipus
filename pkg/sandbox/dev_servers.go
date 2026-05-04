@@ -1,25 +1,24 @@
-// Package sandbox — dev-server registration and lifecycle for Tier 3
-// (run_in_workspace) per...
+// Package sandbox — dev-server registration and lifecycle for web_serve dev
+// mode (Tier 3).
 //
 // Lifecycle:
-// - Registration created when run_in_workspace successfully spawns a
+// - Registration created when web_serve dev mode successfully spawns a
 // hardened child that bound the requested port.
 // - Idle deadline: 30 min from last activity (touched by the
-// /dev/<agent>/<token>/ reverse proxy on each request).
+// /preview/<agent>/<token>/ reverse proxy on each request).
 // - Hard cap: 4 h from registration time, regardless of activity. The
 // janitor enforces both.
 // - Per-agent cap: 1 active dev server. Per-gateway cap from
 // cfg.Sandbox.MaxConcurrentDevServers (operator-configurable).
 //
 // Threat model: dev servers are Tier 3 (Linux-only), trusted-prompt feature.
-// The token in the URL is the gating credential paired with cookie/bearer
-// auth — see /dev/<agent>/<token>/ reverse proxy in pkg/gateway/rest_dev.go.
+// The token in the URL is the gating credential — see /preview/<agent>/<token>/
+// reverse proxy in pkg/gateway/rest_preview.go.
 //
 // Package placement: the spec calls for pkg/agent/dev_servers.go but that
-// would create an import cycle — pkg/tools (which contains the
-// run_in_workspace tool that uses this registry) is already imported by
-// pkg/agent. The registry lives in pkg/sandbox so both pkg/agent (via
-// the gateway wiring) and pkg/tools can import it without a cycle.
+// would create an import cycle — pkg/tools (which contains web_serve) is
+// already imported by pkg/agent. The registry lives in pkg/sandbox so both
+// pkg/agent (via the gateway wiring) and pkg/tools can import it without a cycle.
 
 package sandbox
 
@@ -54,7 +53,7 @@ type DevServerRegistration struct {
 	// CreatedAt is when this registration was first inserted (drives the
 	// 4-h hard cap).
 	CreatedAt time.Time
-	// LastActivity is the most recent /dev/<agent>/<token>/ proxy hit
+	// LastActivity is the most recent /preview/<agent>/<token>/ proxy hit
 	// (drives the 30-min idle cap).
 	LastActivity time.Time
 	// Command is the user-supplied command for diagnostics; not used in
@@ -70,12 +69,12 @@ const IdleTimeout = 30 * time.Minute
 const HardTimeout = 4 * time.Hour
 
 // JanitorInterval is how often the janitor sweeps for expired registrations.
-// 30 s matches the existing serve_workspace janitor cadence so
-// expired entries clear within one sweep window of their deadline.
+// 30 s matches the web_serve static-mode janitor cadence so expired entries
+// clear within one sweep window of their deadline.
 const JanitorInterval = 30 * time.Second
 
 // devServerTokenBytes is the entropy of the URL-path token (256 bits before
-// base64). Matches the pattern used by SessionCookieToken / serve_workspace.
+// base64). Matches the pattern used by SessionCookieToken / web_serve static mode.
 const devServerTokenBytes = 32
 
 // ErrPerAgentCap is returned by Register when the agent already has an
@@ -244,7 +243,7 @@ func (r *DevServerRegistry) Lookup(token string) *DevServerRegistration {
 }
 
 // LookupByAgent returns the active registration for agentID, or nil if none.
-// Used by run_in_workspace to enforce the per-agent cap with a clear error
+// Used by web_serve dev mode to enforce the per-agent cap with a clear error
 // before attempting Register.
 func (r *DevServerRegistry) LookupByAgent(agentID string) *DevServerRegistration {
 	r.mu.Lock()

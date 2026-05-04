@@ -1085,10 +1085,10 @@ func setupAndStartServices(
 	// configure per-agent ToolPolicyCfg or sandbox_profile to restrict exec.
 	emitGHSARemovalWarn(cfg)
 
-	// Construct the Tier 1 (serve_workspace) and Tier 3 (run_in_workspace)
+	// Construct the web_serve static-mode (Tier 1) and dev-mode (Tier 3)
 	// shared registries. These are created regardless of previewListenerEnabled so
-	// that operators who run on the single-port fallback still get serve_workspace.
-	// run_in_workspace requires the DevServerRegistry; the tool itself gates to Linux.
+	// that operators who run on the single-port fallback still get static-mode serving.
+	// Dev mode requires the DevServerRegistry; the tool itself gates to Linux.
 	servedSubdirs := agent.NewServedSubdirs()
 	devServers := sandbox.NewDevServerRegistry()
 	runningServices.servedSubdirs = servedSubdirs
@@ -1139,7 +1139,7 @@ func setupAndStartServices(
 
 	var egressProxy *sandbox.EgressProxy
 	if egressProx, epErr := sandbox.NewEgressProxy(cfg.Sandbox.EgressAllowList, egressAuditFn); epErr != nil {
-		slog.Warn("gateway: egress proxy failed to start; run_in_workspace will run without egress enforcement",
+		slog.Warn("gateway: egress proxy failed to start; web_serve dev mode will run without egress enforcement",
 			"error", epErr)
 	} else {
 		egressProxy = egressProx
@@ -1218,8 +1218,8 @@ func setupAndStartServices(
 		ssrfChecker:     agent.GetSSRFChecker(agentLoop), // SEC-24: nil when SSRF disabled
 		sandboxResult:   sandboxResult,                   // immutable post-boot snapshot
 		appliedConfig:   mustDeepCopyConfig(cfg),         // boot-time snapshot for pending-restart diff
-		servedSubdirs:   runningServices.servedSubdirs,   // serve_workspace token registry
-		devServers:      runningServices.devServers,      // run_in_workspace process registry
+		servedSubdirs:   runningServices.servedSubdirs,   // web_serve static-mode token registry
+		devServers:      runningServices.devServers,      // web_serve dev-mode process registry
 		approvalReg:     approvalReg,                     // in-process tool-approval registry (FR-016)
 		builtinRegistry: builtinReg,                      // M16: central builtin registry (FR-001)
 		mcpRegistry:     mcpReg,                          // M16: central MCP registry (FR-001)
@@ -1242,11 +1242,11 @@ func setupAndStartServices(
 	// serve HTML (which causes "Unexpected token '<'" JSON parse errors).
 	api.registerAdditionalEndpoints(runningServices.ChannelManager)
 
-	// Register /serve/ and /dev/ on the preview mux (FR-005, FR-006).
-	// These paths are intentionally absent from the main mux — any hit on
-	// <main_host>:<port>/serve/... returns 404 from the catch-all handler.
-	// The preview mux has no auth middleware: the URL path token is the credential (FR-023).
-	// Handler implementations belong to Track B (rest_serve.go / rest_dev.go).
+	// Register /preview/ (canonical web_serve URL) plus back-compat /serve/ and /dev/
+	// shims on the preview mux (FR-005, FR-006). These paths are intentionally absent
+	// from the main mux — any hit on <main_host>:<port>/preview/... returns 404 from
+	// the catch-all handler. The preview mux has no auth middleware: the URL path
+	// token is the credential (FR-023). All handlers live in rest_preview.go.
 	if previewListenerEnabled {
 		api.registerPreviewEndpoints(runningServices.ChannelManager)
 	}

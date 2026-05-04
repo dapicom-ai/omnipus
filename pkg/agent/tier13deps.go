@@ -4,8 +4,8 @@
 // License: MIT
 // Copyright (c) 2026 Omnipus contributors
 
-// Package agent — Tier13Deps carrier for serve_workspace, build_static, and
-// run_in_workspace tool wiring.
+// Package agent — Tier13Deps carrier for web_serve (static + dev modes),
+// build_static, and related tool wiring.
 //
 // Tier13Deps bundles the shared infrastructure instances that are created once
 // at gateway boot and passed down into every NewAgentInstance call. Keeping
@@ -19,14 +19,14 @@ import (
 )
 
 // Tier13Deps carries the shared singletons required to register the Tier 1
-// (serve_workspace), Tier 2 (build_static), and Tier 3 (run_in_workspace)
-// tools for non-system agents.
+// (web_serve static mode), Tier 2 (build_static), and Tier 3 (web_serve dev
+// mode) tools for non-system agents.
 //
 // All fields are nullable — a nil registry / proxy means the corresponding
 // tool is not registered (graceful degradation when the gateway skips Tier
 // 2/3 setup, e.g. in unit tests that only need Tier 1).
 type Tier13Deps struct {
-	// ServedSubdirs is the process-wide serve_workspace registration map.
+	// ServedSubdirs is the process-wide web_serve static-mode registration map.
 	// Non-nil when the gateway has initialised it at boot.
 	ServedSubdirs *ServedSubdirs
 
@@ -34,7 +34,7 @@ type Tier13Deps struct {
 	// Non-nil when sandbox.NewEgressProxy succeeded at boot.
 	EgressProxy *sandbox.EgressProxy
 
-	// DevServerRegistry is the process-wide run_in_workspace registration map.
+	// DevServerRegistry is the process-wide web_serve dev-mode registration map.
 	// Non-nil when the gateway has initialised it at boot.
 	DevServerRegistry *sandbox.DevServerRegistry
 
@@ -52,10 +52,9 @@ type Tier13Deps struct {
 	// Sourced from cfg.Gateway.PreviewOrigin when set, otherwise computed
 	// from cfg.Gateway.Host + cfg.Gateway.PreviewPort at boot.
 	//
-	// serve_workspace and run_in_workspace use this to build the absolute
-	// /serve/<agent>/<token>/ and /dev/<agent>/<token>/ URLs returned in
-	// their tool results. The preview origin is browser-cross-origin to the
-	// SPA's main origin, providing the T-01 mitigation (parent.localStorage
+	// web_serve uses this to build the absolute /preview/<agent>/<token>/
+	// URLs returned in tool results. The preview origin is browser-cross-origin
+	// to the SPA's main origin, providing the T-01 mitigation (parent.localStorage
 	// access throws SecurityError).
 	GatewayPreviewBaseURL string
 }

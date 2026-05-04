@@ -4,10 +4,9 @@
 // License: MIT
 // Copyright (c) 2026 Omnipus contributors
 
-// Package agent — serve_workspace registration map and janitor (..,
-// US-4).
+// Package agent — web_serve static-mode registration map and janitor (US-4).
 //
-// ServedSubdirs maintains the in-memory map of active serve_workspace
+// ServedSubdirs maintains the in-memory map of active web_serve static-mode
 // registrations. Each registration binds a 32-byte random token to an agent's
 // absolute workspace directory for a bounded lifetime. The janitor goroutine
 // removes expired entries every 30 seconds.
@@ -26,18 +25,18 @@ import (
 	"time"
 )
 
-// ServedEntry holds a single serve_workspace registration.
+// ServedEntry holds a single web_serve static-mode registration.
 type ServedEntry struct {
 	// AgentID is the ID of the agent that owns this registration.
 	AgentID string
 	// AbsDir is the canonicalised absolute path to the served directory.
-	// It is within the agent's workspace (validated by the serve_workspace tool).
+	// It is within the agent's workspace (validated by the web_serve tool).
 	AbsDir string
 	// Deadline is when this registration expires.
 	Deadline time.Time
 }
 
-// ServedSubdirs is the process-wide registry of active serve_workspace
+// ServedSubdirs is the process-wide registry of active web_serve static-mode
 // registrations. The zero value is not usable — call NewServedSubdirs.
 type ServedSubdirs struct {
 	mu sync.RWMutex
@@ -78,9 +77,9 @@ func (s *ServedSubdirs) SetOnEvict(fn func(tokens []string)) {
 	s.mu.Unlock()
 }
 
-// Register creates a new serve_workspace registration for agentID pointing at
-// absDir with a lifetime of duration. Any previous registration for agentID is
-// atomically replaced (per-agent cap, ).
+// Register creates a new web_serve static-mode registration for agentID pointing
+// at absDir with a lifetime of duration. Any previous registration for agentID
+// is atomically replaced (per-agent cap).
 //
 // Returns the token (for embedding in the URL) and the registration's
 // expiry time.

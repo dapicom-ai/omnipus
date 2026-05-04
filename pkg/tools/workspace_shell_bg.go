@@ -3,9 +3,11 @@
 // workspace.shell_bg starts a long-running process (typically a dev server)
 // inside the agent's workspace directory, registers it with the gateway's
 // DevServerRegistry, and returns a /dev/<agent>/<token>/ URL that the
-// existing chat UI renders as a clickable iframe preview.
+// existing chat UI renders as a clickable iframe preview. The /dev/ path
+// resolves via the back-compat shim on the preview listener; web_serve dev
+// mode emits /preview/ URLs instead.
 //
-// Design differences from run_in_workspace:
+// Design differences from web_serve dev mode:
 //   - No Tier-3 command prefix-allowlist (commandAllowed). The sandbox
 //     profile is the security boundary; the agent invokes any command.
 //   - No ensureNodeModules shim. The agent runs `npm install` itself via
@@ -15,7 +17,7 @@
 //     where `next dev` must run from inside `hello-world/` not the workspace
 //     root.
 //   - Uses sandbox.LimitsForProfile to derive Limits from the agent's profile.
-//   - Returns the same JSON shape as run_in_workspace so RunInWorkspaceUI.tsx
+//   - Returns the same JSON shape as web_serve dev mode so RunInWorkspaceUI.tsx
 //     and IframePreview.tsx render the preview without modification.
 //
 // SECURITY CONTRACT:
@@ -82,7 +84,7 @@ type WorkspaceShellBgTool struct {
 	portRange [2]int32
 
 	// gatewayHost is the operator-configured PREVIEW listener origin used
-	// to construct the absolute URL in the tool result. See run_in_workspace.go
+	// to construct the absolute URL in the tool result. See web_serve.go
 	// for the two-port topology rationale and scheme-coercion rules.
 	gatewayHost string
 
@@ -183,7 +185,7 @@ func (t *WorkspaceShellBgTool) Scope() ToolScope { return ScopeCore }
 func (t *WorkspaceShellBgTool) Category() ToolCategory { return CategoryWorkspace }
 
 func (t *WorkspaceShellBgTool) Description() string {
-	return `Start a long-running background process (dev server, proxy, etc.) in the agent's workspace directory under the configured sandbox profile. Unlike 'run_in_workspace', there is no command allow-list — any command may be run. The agent is responsible for running 'npm install' or equivalent setup before calling this tool. Returns a dev_url JSON payload with a clickable iframe preview URL.`
+	return `Start a long-running background process (dev server, proxy, etc.) in the agent's workspace directory under the configured sandbox profile. Unlike 'web_serve' dev mode, there is no command allow-list — any command may be run. The agent is responsible for running 'npm install' or equivalent setup before calling this tool. Returns a dev_url JSON payload with a clickable iframe preview URL.`
 }
 
 func (t *WorkspaceShellBgTool) Parameters() map[string]any {
@@ -213,7 +215,7 @@ func (t *WorkspaceShellBgTool) Parameters() map[string]any {
 }
 
 // devServerStartupGraceShellBg is how long we wait between spawning the child
-// and returning the URL. Mirrors run_in_workspace's devServerStartupGrace.
+// and returning the URL. Mirrors web_serve dev mode's devServerStartupGrace.
 const devServerStartupGraceShellBg = 3 * time.Second
 
 // BackgroundShellLinuxOnlyMessage is the error returned when workspace.shell_bg
@@ -306,7 +308,7 @@ func (t *WorkspaceShellBgTool) Execute(ctx context.Context, args map[string]any)
 		return ErrorResult("workspace.shell_bg: missing agent id in context")
 	}
 
-	// Per-agent cap pre-check (same as run_in_workspace).
+	// Per-agent cap pre-check (same as web_serve dev mode).
 	t.runMu.Lock()
 	existing := t.registry.LookupByAgent(agentID)
 	t.runMu.Unlock()

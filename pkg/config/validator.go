@@ -244,7 +244,7 @@ func validateBootConfig(cfg *Config) error {
 
 	// Apply defaults for DevServerPortRange if unset, then validate.
 	// FR-024 / type-design F-24: reject malformed ranges (min>max, out-of-bounds)
-	// at boot rather than at first run_in_workspace tool call.
+	// at boot rather than at first web_serve dev-mode tool call.
 	if cfg.Sandbox.DevServerPortRange.IsZero() {
 		cfg.Sandbox.DevServerPortRange = PortRange{18000, 18999}
 	}

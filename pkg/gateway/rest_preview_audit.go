@@ -4,12 +4,12 @@
 // License: MIT
 // Copyright (c) 2026 Omnipus contributors
 
-// Package gateway — shared audit emission for /serve/ and /dev/ preview-
-// listener routes (FR-024 / FR-024a / chat-served-iframe-preview-spec.md).
+// Package gateway — shared audit emission for preview-listener routes
+// (/preview/, /serve/, /dev/) (FR-024 / FR-024a).
 //
-// Both rest_serve.go and rest_dev.go call into emitPreviewAuditEntry so
+// All three handlers in rest_preview.go call emitPreviewAuditEntry so
 // the payload schema and remote-IP canonicalisation logic stay
-// consistent between the two surfaces.
+// consistent across the unified and back-compat surfaces.
 
 package gateway
 

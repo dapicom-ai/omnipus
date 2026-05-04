@@ -2207,12 +2207,12 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 // Auth model: token-only (FR-023). No RequireSessionCookieOrBearer, no
 // RequireMatchingOriginOnStateChanging (FR-023a).
 //
-// /preview/ is the unified route for the web_serve tool (Step 3).
+// /preview/ is the unified route for the web_serve tool.
 // /serve/ and /dev/ are kept ONLY for replay of historical session transcripts
-// that still link to the old URL shapes. The serve_workspace and
-// run_in_workspace tools that originally produced those registrations are
-// removed; no in-flight registration can reach these handlers anymore. Schedule
-// for deletion in the release after this one ships.
+// that still link to the old URL shapes. The legacy serve_workspace (static
+// mode) and run_in_workspace (dev mode) tools that produced those registrations
+// are removed; no new registration can reach these back-compat handlers.
+// Scheduled for deletion in v0.2 cleanup (target 2026-08-01).
 func (a *restAPI) registerPreviewEndpoints(cm previewHandlerRegistrar) {
 	cm.RegisterPreviewHandler("/preview/", http.HandlerFunc(a.HandlePreview))
 	cm.RegisterPreviewHandler("/serve/", http.HandlerFunc(a.HandleServeWorkspace))

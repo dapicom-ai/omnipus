@@ -1,10 +1,9 @@
 // Package sandbox — BuildDevURL: shared helper for constructing absolute
-// /dev/<agentID>/<token>/ preview URLs.
+// /preview/<agentID>/<token>/ preview URLs for dev-mode registrations.
 //
-// Lifted from pkg/tools/run_in_workspace.go:buildDevURL so that both
-// run_in_workspace and workspace.shell_bg use the same URL construction
-// logic. The original buildDevURL delegates here; the new tool calls this
-// directly.
+// Originally lifted from the now-removed pkg/tools/run_in_workspace.go so
+// that both web_serve dev mode and workspace.shell_bg use the same URL
+// construction logic.
 //
 // Scheme coercion rule: if gatewayHost does not contain "://" it is treated
 // as a bare host[:port] and "https://" is prepended. Operators running a
@@ -24,9 +23,13 @@ import (
 // devURLSchemeWarnOnce guards the one-time scheme-coercion WARN.
 var devURLSchemeWarnOnce sync.Once
 
-// BuildDevURL returns the absolute /dev/<agentID>/<token>/ URL for a
-// preview, using gatewayHost as the origin. When gatewayHost is empty,
-// returns just the path (test wiring and replay-safe transcripts).
+// BuildDevURL returns the absolute /dev/<agentID>/<token>/ URL for a preview,
+// using gatewayHost as the origin. When gatewayHost is empty, returns just
+// the path (test wiring).
+//
+// Note: web_serve dev mode overrides the result to emit /preview/ URLs.
+// workspace.shell_bg still uses the /dev/ form directly (back-compat shim
+// on the preview listener resolves both paths).
 //
 // gatewayHost examples accepted:
 //   - ""                       → "/dev/agent/token/"
