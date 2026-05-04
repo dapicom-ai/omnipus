@@ -1494,6 +1494,16 @@ export const useChatStore = create<ChatStore>((set, get) => {
           })
           break
 
+        case 'replay_warning':
+          // V1.B: gateway detected duplicate tool_call_ids in the transcript on
+          // replay. Server-only slog.Warn was invisible to operators because
+          // the count was buried in done.Stats. One-shot toast surfaces it.
+          useUiStore.getState().addToast({
+            message: frame.message,
+            variant: 'warning',
+          })
+          break
+
         default:
           console.warn('[chat] Unknown frame type', { type: (frame as { type?: string }).type })
           break

@@ -313,6 +313,27 @@ func streamReplay(
 		}
 	}
 
+	// V1.B: when the transcript contained duplicate tool_call_ids, surface a
+	// one-shot replay_warning frame before the done frame so the SPA can toast
+	// the operator. The full counts still live in done.Stats for diagnostics;
+	// this frame is just the visible UX hook. Server-only `slog.Warn` was
+	// invisible to operators because the counter was buried in done.Stats.
+	if rs.duplicateToolCallIDCount > 0 {
+		if ctx.Err() != nil {
+			return framesEmitted, ctx.Err()
+		}
+		if err2 := emit(wsServerFrame{
+			Type:      "replay_warning",
+			SessionID: sessionID,
+			Message:   "transcript contained duplicate tool calls — older copies omitted",
+			Stats: map[string]any{
+				"duplicate_tool_call_id_count": rs.duplicateToolCallIDCount,
+			},
+		}); err2 != nil {
+			return framesEmitted, err2
+		}
+	}
+
 	// FR-I-004: exactly one done frame at the end.
 	// W3-2: populate Stats with the pre-computed counters so operators reading
 	// the WS trace can see orphan / duplicate / truncated counts inline.

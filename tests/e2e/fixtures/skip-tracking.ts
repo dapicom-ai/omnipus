@@ -9,8 +9,11 @@
  *
  * After every test run, this module writes a JSON manifest to
  * `test-results/skip-manifest.json` (configurable via `OMNIPUS_SKIP_MANIFEST_PATH`).
- * The manifest captures every skip that occurred during the run, whether
- * authorized (in SKIP_ALLOWLIST) or unauthorized.
+ * The manifest captures every `softSkip()` call made during the run, whether
+ * authorized (in SKIP_ALLOWLIST) or unauthorized. Direct `test.skip(...)` /
+ * `test.fixme(...)` calls bypass this gate today — capture of those is
+ * tracked for v0.2 (V2.G) and is the reason the SKIP_ALLOWLIST should also
+ * cover any test that uses them.
  *
  * ## Baseline comparison gate
  *
@@ -191,7 +194,10 @@ export interface SkipManifest {
   skips: Array<{
     test: string;
     reason: string;
-    kind: 'softSkip' | 'test.skip' | 'test.fixme';
+    // Only `softSkip()` calls are captured today. `test.skip()` /
+    // `test.fixme()` capture is tracked for V2.G; the union will widen
+    // when that lands.
+    kind: 'softSkip';
   }>;
   allowlisted: Array<{
     test: string;

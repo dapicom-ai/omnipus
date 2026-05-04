@@ -246,6 +246,20 @@ export interface WsSystemOverloadFrame {
   message?: string
 }
 
+// V1.B: emitted by replay.go just before `done` when the transcript contained
+// duplicate tool_call_ids (older copies are silently overwritten on disk;
+// only the latest one is replayed). Surfacing the count as a one-shot toast
+// gives the operator visible feedback that something irregular was detected
+// — server-only `slog.Warn` was invisible before this frame existed.
+export interface WsReplayWarningFrame {
+  type: 'replay_warning'
+  session_id: string
+  message: string
+  stats?: {
+    duplicate_tool_call_id_count?: number
+  }
+}
+
 // F-S5: session_id contract — session-scoped frames have session_id: string (required);
 // global frames (error, session_state, device_pairing_*) may omit it.
 // WsSessionStartedFrame carries session_id as the minted id, not as routing context.
@@ -267,6 +281,7 @@ export type WsReceiveFrame =
   | WsToolApprovalRequiredFrame
   | WsSessionStateFrame
   | WsSystemOverloadFrame
+  | WsReplayWarningFrame
 
 /** Allowed status values for subagent_end frames. */
 const SUBAGENT_END_STATUSES = new Set<string>(['success', 'error', 'cancelled', 'interrupted', 'timeout'])
