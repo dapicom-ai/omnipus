@@ -245,6 +245,7 @@ describe('SessionPanel — per-session isStreaming dot (F-S11)', () => {
             sessionTokens: 0,
             sessionCost: 0,
             rateLimitEvent: null,
+            lastUserMessageAt: null,
           },
         },
       }))
@@ -280,6 +281,7 @@ describe('SessionPanel — per-session isStreaming dot (F-S11)', () => {
             sessionTokens: 0,
             sessionCost: 0,
             rateLimitEvent: null,
+            lastUserMessageAt: null,
           },
         },
       }))

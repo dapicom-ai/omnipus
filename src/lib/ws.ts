@@ -323,10 +323,6 @@ export class WsConnection {
   private droppedFrameCount = 0
   private readonly droppedFrameThreshold = 5
 
-  // B1.3c: last non-1000/1001 close code surfaced for the persistent banner.
-  private lastCloseCode: number | null = null
-  private lastCloseReason: string | null = null
-
   // B1.3c: bound event handler references so they can be removed on disconnect.
   private _onVisibilityChange: (() => void) | null = null
   private _onOnline: (() => void) | null = null
@@ -434,8 +430,6 @@ export class WsConnection {
       // in AppShell.tsx will remain visible until reconnect succeeds (onConnected
       // clears connectionError via setConnected(true)).
       if (!this.intentionalClose && event.code !== 1000 && event.code !== 1001) {
-        this.lastCloseCode = event.code
-        this.lastCloseReason = event.reason || null
         const codeLabel = event.code ? ` code ${event.code}` : ''
         const reasonLabel = event.reason ? `: ${event.reason}` : ''
         this.callbacks.onError(

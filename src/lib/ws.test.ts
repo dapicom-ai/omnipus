@@ -32,7 +32,12 @@ const MockWebSocket = vi.fn(function (this: any) {
   this.close = vi.fn()
   this.readyState = 1 // OPEN
   lastWsInstance = this
-}) as unknown as typeof WebSocket & { OPEN: number; CLOSED: number; mockClear: () => void }
+}) as unknown as typeof WebSocket & {
+  OPEN: number
+  CLOSED: number
+  mockClear: () => void
+  mock: { calls: unknown[][] }
+}
 
 MockWebSocket.OPEN = 1
 MockWebSocket.CLOSED = 3

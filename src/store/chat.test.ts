@@ -1212,7 +1212,7 @@ describe('chat store — H1-FE: unknown-sid done does not corrupt active stream'
       useChatStore.getState().handleFrame({
         type: 'done',
         session_id: GHOST_SID,
-        stats: { tokens: 0, cost: 0 },
+        stats: { tokens: 0, cost: 0, duration_ms: 0 },
       })
     })
 
@@ -1230,7 +1230,7 @@ describe('chat store — H1-FE: unknown-sid done does not corrupt active stream'
       useChatStore.getState().handleFrame({
         type: 'done',
         session_id: GHOST_SID,
-        stats: { tokens: 0, cost: 0 },
+        stats: { tokens: 0, cost: 0, duration_ms: 0 },
       })
     })
 

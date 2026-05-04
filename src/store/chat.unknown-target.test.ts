@@ -58,7 +58,7 @@ describe('chat.unknown-target — T1.14: done for unknown targetSid force-clears
     // Arrange: plant a spinning (isStreaming=true) active bucket
     // with NO recent lastUserMessageAt (null → stale spinner).
     act(() => {
-      useChatStore.setState((s) => ({
+      useChatStore.setState((_s) => ({
         sessionsById: {
           [ACTIVE_SID]: {
             messages: [
@@ -126,7 +126,7 @@ describe('chat.unknown-target — T1.14: done for unknown targetSid force-clears
     const recentUserMessageAt = Date.now() - 1000 // 1 second ago
 
     act(() => {
-      useChatStore.setState((s) => ({
+      useChatStore.setState((_s) => ({
         sessionsById: {
           [ACTIVE_SID]: {
             messages: [

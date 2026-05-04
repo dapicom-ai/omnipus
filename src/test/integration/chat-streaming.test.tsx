@@ -181,6 +181,7 @@ describe('cancel integration (test #40)', () => {
             sessionTokens: 0,
             sessionCost: 0,
             rateLimitEvent: null,
+            lastUserMessageAt: null,
           },
         },
         isStreaming: true,

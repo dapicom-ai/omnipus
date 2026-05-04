@@ -139,6 +139,7 @@ interface ChatStore {
   sessionTokens: number
   sessionCost: number
   rateLimitEvent: RateLimitEventData | null
+  lastUserMessageAt: number | null
 
   // ── Actions that operate on the foreground session ───────────────────────────
   setReplaying: (value: boolean) => void
