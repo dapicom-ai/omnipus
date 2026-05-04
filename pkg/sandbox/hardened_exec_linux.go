@@ -10,7 +10,9 @@ package sandbox
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"strconv"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -40,25 +42,65 @@ func applyPlatformHardening(cmd *exec.Cmd, lim Limits) error {
 // Result.MemoryLimitUnsupported (HIGH-1, silent-failure-hunter).
 const memoryLimitSupported = true
 
-// childNProcCap caps the number of child processes a hardened-exec subtree
-// can spawn at the kernel layer (RLIMIT_NPROC, v0.2 #155 item 5). The cap is
-// inherited by every fork() the child performs, so a fork-bomb that slips
-// past the shell-guard regex (e.g. via `sh fork.sh` indirection) hits the
-// kernel limit before saturating the host's process table.
+// childNProcSlack caps the number of NEW user-level processes a hardened-exec
+// subtree can spawn beyond the current per-UID baseline (RLIMIT_NPROC, v0.2
+// #155 item 5). The cap is inherited by every fork() the child performs, so
+// a fork-bomb that slips past the shell-guard regex (e.g. via `sh fork.sh`
+// indirection) hits the kernel limit before saturating the host.
 //
 // Sizing rationale: 32 is generous enough for a realistic build pipeline
 // (npm install commonly spawns 8-16 concurrent worker subprocesses; nx /
 // turborepo can spawn slightly more) but tight enough that an exponential
-// fork-bomb saturates within microseconds. Operators with a workload
-// requiring more concurrent helpers can tune this — it is intentionally
-// internal-const, not config, because higher values defeat the protection.
+// fork-bomb saturates within microseconds.
 //
-// Threat note: RLIMIT_NPROC is per-UID, not per-process tree. If two
-// hardened-exec children run concurrently under the same UID, they share
-// the same NPROC budget. That's an acceptable property: the limit caps
-// the BLAST RADIUS, not throughput. A hostile bomb in one child consumes
-// the budget and starves a sibling, but the host stays alive.
-const childNProcCap uint64 = 32
+// Why relative, not absolute: RLIMIT_NPROC is per-UID, not per-process tree.
+// On a multi-user host the gateway's UID may already own dozens or hundreds
+// of legitimate processes (tmux, IDE servers, other gateways). An absolute
+// cap of N would refuse every spawn whenever currentNProc > N, breaking
+// production. Setting cap = baseline + slack contains the BLAST RADIUS
+// without falsely throttling normal operation. The value is hard-coded
+// rather than configurable because operator-supplied values defeat the
+// protection.
+const childNProcSlack uint64 = 32
+
+// readCurrentUserNProc returns the number of processes currently owned by
+// the gateway's UID, for use as the RLIMIT_NPROC baseline. On read failure
+// it returns 0 — the caller falls back to a conservative absolute cap.
+//
+// Implementation: scans /proc, summing entries whose UID matches ours. Linux
+// only; called on the hot path of every hardened-exec spawn so kept simple.
+func readCurrentUserNProc() uint64 {
+	uid := uint64(os.Getuid())
+	dir, err := os.Open("/proc")
+	if err != nil {
+		return 0
+	}
+	defer dir.Close()
+
+	var count uint64
+	for {
+		names, err := dir.Readdirnames(256)
+		if len(names) == 0 && err != nil {
+			break
+		}
+		for _, name := range names {
+			if _, err := strconv.Atoi(name); err != nil {
+				continue
+			}
+			var st unix.Stat_t
+			if err := unix.Stat("/proc/"+name, &st); err != nil {
+				continue
+			}
+			if uint64(st.Uid) == uid {
+				count++
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+	return count
+}
 
 // applyPostStartHardening installs RLIMIT_AS and RLIMIT_NPROC via prlimit
 // on the child PID. We do this AFTER Start (rather than via
@@ -82,8 +124,18 @@ func applyPostStartHardening(cmd *exec.Cmd, lim Limits) error {
 	// RLIMIT_NPROC — fork-bomb defense. Applied unconditionally so even
 	// callers that don't bother to set MemoryLimitBytes still get fork-
 	// bomb containment. The cap is per-UID and inherited by every fork()
-	// the child performs.
-	nprocLim := &unix.Rlimit{Cur: childNProcCap, Max: childNProcCap}
+	// the child performs. Compute as baseline + slack so existing user
+	// processes (tmux, IDE, sibling gateways) don't immediately trip the
+	// limit.
+	baseline := readCurrentUserNProc()
+	if baseline == 0 {
+		// /proc unreadable — fall back to a conservative absolute cap
+		// large enough that a typical multi-user system isn't broken
+		// but tight enough that a runaway fork-bomb saturates fast.
+		baseline = 1024
+	}
+	nprocCap := baseline + childNProcSlack
+	nprocLim := &unix.Rlimit{Cur: nprocCap, Max: nprocCap}
 	if err := unix.Prlimit(cmd.Process.Pid, unix.RLIMIT_NPROC, nprocLim, nil); err != nil {
 		// EPERM here means the calling process lacks CAP_SYS_RESOURCE to
 		// raise (or even SET) the limit. On a non-root gateway that would

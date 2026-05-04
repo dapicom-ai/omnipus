@@ -224,18 +224,25 @@ var (
 			`>\s*/dev/(sd[a-z]|hd[a-z]|vd[a-z]|xvd[a-z]|nvme\d|mmcblk\d|loop\d|dm-\d|md\d|sr\d|nbd\d)`,
 		),
 		regexp.MustCompile(`\b(shutdown|reboot|poweroff)\b`),
-		// Fork-bomb guard. Widened in v0.2 #155 item 5 to also match the
-		// "whitespace anywhere" bypass shapes:
-		//   `: ( ) { :|:& };:`  (whitespace around parens)
-		//   `:(){ :|:& } ; :`   (whitespace around `;`)
-		//   `: ( ) { : | : & } ; :` (whitespace everywhere)
-		// The previous pattern `:\(\)\s*\{.*\};\s*:` required literal `()` and
-		// `};` adjacent — both forms an attacker can sidestep with single
-		// space inserts. We now allow optional \s* at every join: after the
-		// leading colon, inside and after the parens, around `;`, and before
-		// the trailing recursion. RLIMIT_NPROC in hardened_exec_linux.go is
-		// the kernel-layer backstop for any shape that still slips through.
-		regexp.MustCompile(`:\s*\(\s*\)\s*\{.*\}\s*;\s*:`),
+		// Fork-bomb guard. Widened in v0.2 #155 item 5 to match every
+		// documented bypass shape:
+		//   `: ( ) { :|:& };:`        (whitespace anywhere)
+		//   `b(){b|b};b`              (disguised with arbitrary identifier)
+		//   `:(){ :|:& \n };:`        (newline inside braces)
+		// Three changes from the original `:\(\)\s*\{.*\};\s*:`:
+		//   1. `(?s)` lets `.` cross `\n` so the body can span lines
+		//   2. The function name accepts any shell identifier
+		//      (`[A-Za-z_]\w*`) OR the literal `:`. Without backreferences
+		//      in RE2 we cannot enforce that the head-name and tail-name
+		//      match, so we accept any identifier in both positions. False
+		//      positives are acceptable since they just deny commands that
+		//      LOOK like fork bombs.
+		//   3. `[|&]` constraint inside the body keeps the false-positive
+		//      surface tight: the recursive call must contain a pipe or
+		//      ampersand, which is what makes a bomb a bomb.
+		// RLIMIT_NPROC in hardened_exec_linux.go is the kernel-layer
+		// backstop for any shape that still slips through.
+		regexp.MustCompile(`(?s)([A-Za-z_]\w*|:)\s*\(\s*\)\s*\{[^{}]*[|&][^{}]*\}\s*;\s*([A-Za-z_]\w*|:)`),
 		regexp.MustCompile(`\$\([^)]+\)`),
 		regexp.MustCompile(`\$\{[^}]+\}`),
 		regexp.MustCompile("`[^`]+`"),

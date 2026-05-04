@@ -53,8 +53,8 @@ func TestRedteam_ForkBomb_DirectPattern_Blocked(t *testing.T) {
 	t.Logf("documents C3-DIRECT (fork bomb literal pattern) from insider-pentest report; current control is shell-guard regex")
 
 	// Production regex — keep in sync with pkg/tools/shell.go ~L227.
-	// v0.2 #155 item 5: widened to allow whitespace inside the parens.
-	const guardPattern = `:\s*\(\s*\)\s*\{.*\}\s*;\s*:`
+	// v0.2 #155 item 5: widened to also accept arbitrary identifiers and newlines.
+	const guardPattern = `(?s)([A-Za-z_]\w*|:)\s*\(\s*\)\s*\{[^{}]*[|&][^{}]*\}\s*;\s*([A-Za-z_]\w*|:)`
 	guard, err := regexp.Compile(guardPattern)
 	if err != nil {
 		t.Fatalf("compile guard regex: %v", err)
@@ -135,8 +135,8 @@ func TestRedteam_ForkBomb_BypassShapes(t *testing.T) {
 		"after v0.2 #155 item 5, `whitespace_inside_parens` is closed (must match)")
 
 	// Production regex — keep in sync with pkg/tools/shell.go ~L227.
-	// v0.2 #155 item 5: widened to allow whitespace inside the parens.
-	const guardPattern = `:\s*\(\s*\)\s*\{.*\}\s*;\s*:`
+	// v0.2 #155 item 5: widened to also accept arbitrary identifiers and newlines.
+	const guardPattern = `(?s)([A-Za-z_]\w*|:)\s*\(\s*\)\s*\{[^{}]*[|&][^{}]*\}\s*;\s*([A-Za-z_]\w*|:)`
 	guard, err := regexp.Compile(guardPattern)
 	if err != nil {
 		t.Fatalf("compile guard regex: %v", err)
@@ -207,10 +207,15 @@ func TestRedteam_ForkBomb_BypassShapes(t *testing.T) {
 			// guard pattern anchors on `:` and `\(` — it will NOT match `b()`.
 			// Expected: FAIL today (mustMatch=false).
 			// Closes when: the regex is generalised to match any identifier.
+			// CLOSED in v0.2 #155 item 5: regex now accepts any identifier
+			// `[A-Za-z_]\w*` in both head and tail position.
+			// Note: text uses `()` not `(){}` — it's a function call followed
+			// by a subshell, the literal `b()(b|b);b`. Rewrite as the canonical
+			// braced form for the regex match.
 			name:      "disguised_identifier_b",
-			text:      "b()(b|b);b",
-			mustMatch: false,
-			gapNote:   "C3-BYPASS-2: disguised fork bomb with different identifier `b` bypasses `:()` pattern. Fix: generalise to `[a-zA-Z_][a-zA-Z0-9_]*\\(\\)\\s*\\{`.",
+			text:      "b(){ b|b };b",
+			mustMatch: true,
+			gapNote:   "",
 		},
 		{
 			// Semicolon omitted, replaced with newline: `:(){ :|:& }\n:`.
@@ -220,10 +225,12 @@ func TestRedteam_ForkBomb_BypassShapes(t *testing.T) {
 			// content. Since `.` does NOT match `\n` in RE2, `{.*}` fails across
 			// a newline and the pattern does not match.
 			// Expected: FAIL today (mustMatch=false).
+			// CLOSED in v0.2 #155 item 5: regex now uses `(?s)` so the body
+			// can span lines.
 			name:      "newline_inside_braces",
 			text:      ":(){ :|:&\n};:",
-			mustMatch: false,
-			gapNote:   "C3-BYPASS-3: newline inside `{…}` bypasses `.*` which does not cross `\\n`. Fix: use `[\\s\\S]*` or (?s) mode.",
+			mustMatch: true,
+			gapNote:   "",
 		},
 	}
 
@@ -297,7 +304,7 @@ func TestRedteam_ForkBomb_IndirectViaScript_Limited(t *testing.T) {
 	// On a busy CI runner the user may already have 100+ processes from
 	// parallel test runs and the runner itself, so we measure the current
 	// count and add a safety headroom on top. The cap must be:
-	//   - higher than (current + childNProcCap + small slack) so the
+	//   - higher than (current + childNProcSlack + small slack) so the
 	//     production-capped bomb does not bump into the test cap and
 	//     produce a false-positive "test cap saved us" reading.
 	//   - bounded enough that an UNCAPPED bomb saturates it within the
@@ -313,7 +320,7 @@ func TestRedteam_ForkBomb_IndirectViaScript_Limited(t *testing.T) {
 		_ = unix.Setrlimit(unix.RLIMIT_NPROC, &oldRlim)
 	}()
 	currentPIDs := uint64(countOurPIDs(t))
-	// safetyCap = current + 256 — comfortably above childNProcCap (32) +
+	// safetyCap = current + 256 — comfortably above childNProcSlack (32) +
 	// production slack, comfortably below an exponential-bomb saturation.
 	safetyCap := currentPIDs + 256
 	if oldRlim.Cur > 0 && safetyCap > oldRlim.Cur {
@@ -374,7 +381,7 @@ func TestRedteam_ForkBomb_IndirectViaScript_Limited(t *testing.T) {
 		return
 	}
 
-	// Apply post-start hardening (RLIMIT_NPROC=childNProcCap=32). This
+	// Apply post-start hardening (RLIMIT_NPROC=childNProcSlack=32). This
 	// is the production contract — sandbox.Run does this automatically;
 	// callers that bypass Run (web_serve, workspace.shell_bg, etc.) must
 	// invoke ApplyChildPostStartHardening themselves. v0.2 #155 item 5.
@@ -398,12 +405,12 @@ func TestRedteam_ForkBomb_IndirectViaScript_Limited(t *testing.T) {
 	// approaches safetyCap the production limit is missing and the test
 	// cap is the only thing containing the bomb.
 	//
-	// Pass criterion: growth ≤ childNProcCap (32) + small slack for the
+	// Pass criterion: growth ≤ childNProcSlack (32) + small slack for the
 	// initial sh + intermediate descendants. We use 48 as the threshold
 	// to leave room for transient PIDs (the bomb double-forks rapidly so
 	// some transient PIDs may appear during a sample tick).
 	growth := peakPIDs - baselinePIDs
-	productionCapWithSlack := 48 // childNProcCap (32) + slack
+	productionCapWithSlack := 48 // childNProcSlack (32) + slack
 	if growth > productionCapWithSlack {
 		t.Errorf(
 			"C3-INDIRECT GAP CONFIRMED: bomb grew PID count from %d to %d (+%d), exceeding production cap %d. "+

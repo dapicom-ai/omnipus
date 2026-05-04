@@ -358,6 +358,19 @@ func applySandbox(opts SandboxApplyOptions) (*SandboxApplyResult, error) {
 	}
 	result.Policy = policy
 
+	// Step 5.5 — process-level self-hardening (PR_SET_DUMPABLE=0). Closes
+	// C6 from the insider-pentest report: same-uid children can read
+	// /proc/<gateway-pid>/environ — and therefore OMNIPUS_MASTER_KEY /
+	// OMNIPUS_BEARER_TOKEN — without this. Applied BEFORE Landlock so a
+	// failure still surfaces via slog. Applied unconditionally because
+	// the property is independent of sandbox mode — even ModeOff benefits
+	// from /proc hardening.
+	if err := sandbox.HardenGatewaySelf(); err != nil {
+		slog.Warn("sandbox.harden_gateway_self_failed",
+			"error", err,
+			"impact", "/proc/<gateway>/environ may be readable by same-uid children")
+	}
+
 	// Step 6 — Apply Landlock. Seccomp Install MUST run after this
 	// (FR-J-002) because seccomp filters all syscalls including
 	// landlock_*; reversing the order would cause Install to block

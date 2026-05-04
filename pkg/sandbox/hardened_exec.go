@@ -156,6 +156,16 @@ var allowedChildEnvKeys = map[string]struct{}{
 	"LANG":    {},
 	"TMPDIR":  {},
 	"TERM":    {},
+	// Standard proxy variables. Forwarded so operator-set or
+	// EgressProxy-injected proxies route child traffic correctly. Values
+	// are operator-controlled (egress proxy address) or operator-inherited
+	// from the parent, never secrets. Required by TestExecProxy_*.
+	"HTTP_PROXY":  {},
+	"HTTPS_PROXY": {},
+	"NO_PROXY":    {},
+	"http_proxy":  {},
+	"https_proxy": {},
+	"no_proxy":    {},
 }
 
 // allowedChildEnvPrefixes are key prefixes whose entire family is allowed.
