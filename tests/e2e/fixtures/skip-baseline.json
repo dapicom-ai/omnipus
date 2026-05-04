@@ -1,0 +1,5 @@
+{
+  "baseline_skip_count": 0,
+  "baseline_unauthorized_skips": 0,
+  "comment": "Previous-green-main anchor for the skip-tracking dashboard (T4.3). CI fails if manifest.unauthorized_skips.length > baseline_unauthorized_skips. Update this baseline only when a new long-term skip is intentionally absorbed: (1) add the entry to SKIP_ALLOWLIST with issue + until, (2) increment baseline_unauthorized_skips here, (3) commit with a rationale comment. Never auto-increment from code."
+}

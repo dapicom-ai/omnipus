@@ -90,21 +90,95 @@ Required secrets (Settings > Secrets > Actions):
 - `OPENROUTER_API_KEY_CI` — OpenRouter API key.
 - `OMNIPUS_MASTER_KEY_CI` — AES-256 master key (hex) for the test `credentials.json`.
 
+## Skip-tracking dashboard
+
+The skip-tracking system prevents unauthorized or silent test skips from accumulating
+across commits. It consists of three components:
+
+### skip-manifest.json
+
+Written to `test-results/skip-manifest.json` (configurable via
+`OMNIPUS_SKIP_MANIFEST_PATH`) at the end of every run by `global-teardown.ts`.
+
+```json
+{
+  "timestamp": "2026-05-04T12:34:56Z",
+  "run_id": "<CI run ID or 'local'>",
+  "git_sha": "<short SHA>",
+  "branch": "<branch name>",
+  "skips": [
+    { "test": "some test title", "reason": "...", "kind": "softSkip" }
+  ],
+  "allowlisted": [
+    { "test": "...", "issue": "https://github.com/...", "until": "YYYY-MM-DD", "note": "..." }
+  ],
+  "unauthorized_skips": [
+    { "test": "...", "reason": "..." }
+  ]
+}
+```
+
+The manifest is written regardless of whether any skips occurred (it will have
+empty arrays). It is useful for auditing skip trends across CI runs.
+
+### skip-baseline.json
+
+Located at `tests/e2e/fixtures/skip-baseline.json`. This is the "previous green
+main" anchor. The teardown gate fails the CI run if:
+
+```
+manifest.unauthorized_skips.length > baseline.baseline_unauthorized_skips
+```
+
+**Updating the baseline** (only when a long-term skip is intentionally absorbed):
+1. Ensure the skip has a valid `SKIP_ALLOWLIST` entry with `issue` and `until`.
+2. Manually increment `baseline_unauthorized_skips` in `skip-baseline.json`.
+3. Commit with a comment explaining the rationale.
+
+Never auto-increment the baseline from code or CI scripts.
+
+### What causes CI to fail
+
+The teardown exits with code 1 (failing the run) when:
+
+1. `manifest.unauthorized_skips.length > baseline.baseline_unauthorized_skips` —
+   the unauthorized skip count has risen above the previous-green-main anchor.
+
+2. Any entry in `SKIP_ALLOWLIST` has an `until` date that is in the past —
+   the entry has expired and the underlying issue must be resolved or the
+   deadline extended with justification.
+
+Note: individual tests that call `softSkip()` without a valid allow-list entry
+are already marked **FAILED** before teardown runs — the teardown is defense-in-depth.
+
+### SKIP_ALLOWLIST entry requirements
+
+Each entry must include:
+- `test` — exact test title string (first argument to `test(...)`)
+- `issue` — GitHub issue or PR URL: `https://github.com/<owner>/<repo>/issues/<n>`
+  or `https://github.com/<owner>/<repo>/pull/<n>`
+- `until` — target resolution date in `YYYY-MM-DD` format
+
+The validator runs at module load time. Any malformed entry throws immediately,
+before any test runs, so CI fails loudly rather than silently accepting bad metadata.
+
 ## Test structure
 
 ```
 tests/e2e/
-  *.spec.ts           — test suites (one per feature area)
-  global-setup.ts     — auth setup + preflight checks
-  global-teardown.ts  — skip-tracking summary + unauthorized-skip detection
-  setup.ts            — self-managed gateway helpers (startGateway, stopGateway)
+  *.spec.ts               — test suites (one per feature area)
+  global-setup.ts         — auth setup + preflight checks
+  global-teardown.ts      — skip manifest writer + baseline gate + expired-entry gate
+  setup.ts                — self-managed gateway helpers (startGateway, stopGateway)
   fixtures/
-    skip-tracking.ts  — softSkip() + SKIP_ALLOWLIST (record-and-fail governance)
-    console-errors.ts — fixture that asserts zero unexpected JS console errors
-    a11y.ts           — axe accessibility check helper
-    login.ts          — loginAs() helper
-    onboard-via-api.ts — onboardViaAPI() helper
-    selectors.ts      — canonical DOM selector helpers
-    session-setup.ts  — session creation helpers
-    .auth/admin.json  — persisted auth state (gitignored)
+    skip-tracking.ts      — softSkip() + SKIP_ALLOWLIST + manifest writer + validator
+    skip-baseline.json    — previous-green-main anchor for the baseline gate
+    aging.ts              — agedTranscript() + agedSessionExists() helpers for T4.2
+    console-errors.ts     — fixture that asserts zero unexpected JS console errors
+    a11y.ts               — axe accessibility check helper
+    login.ts              — loginAs() helper
+    onboard-via-api.ts    — onboardViaAPI() helper
+    selectors.ts          — canonical DOM selector helpers
+    session-setup.ts      — session creation helpers
+    .auth/admin.json      — persisted auth state (gitignored)
 ```

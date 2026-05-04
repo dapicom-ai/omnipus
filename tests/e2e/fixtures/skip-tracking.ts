@@ -2,13 +2,43 @@
  * skip-tracking.ts — Runtime skip governance for the Playwright E2E suite.
  *
  * T0.2: Flipped from record-and-continue to record-and-FAIL.
+ * T4.3: Extended with JSON manifest writer, baseline comparison gate, and
+ *       SKIP_ALLOWLIST entry validation.
  *
- * When a test calls softSkip() at runtime, this module:
- *   1. Records the skip into test-results/soft-skips.json (for audit).
- *   2. Checks whether the test's title appears in SKIP_ALLOWLIST.
- *   3. If NOT allow-listed → throws an error so the test fails loudly.
- *      The run will be marked FAILED, not SKIPPED.
- *   4. If allow-listed → calls test.skip() and records the entry normally.
+ * ## Skip manifest
+ *
+ * After every test run, this module writes a JSON manifest to
+ * `test-results/skip-manifest.json` (configurable via `OMNIPUS_SKIP_MANIFEST_PATH`).
+ * The manifest captures every skip that occurred during the run, whether
+ * authorized (in SKIP_ALLOWLIST) or unauthorized.
+ *
+ * ## Baseline comparison gate
+ *
+ * The baseline is stored in `tests/e2e/fixtures/skip-baseline.json`. The
+ * global teardown compares `manifest.unauthorized_skips.length` against
+ * `baseline.baseline_unauthorized_skips`. If the manifest count is higher,
+ * the run fails.
+ *
+ * To update the baseline (when a long-term skip is intentionally absorbed):
+ *   1. Ensure the skip has a valid SKIP_ALLOWLIST entry with issue + until.
+ *   2. Manually edit `skip-baseline.json` to increment `baseline_unauthorized_skips`.
+ *   3. Commit the change with a comment explaining the rationale.
+ *
+ * ## SKIP_ALLOWLIST entry requirements
+ *
+ * Each entry MUST include:
+ *   - `test`  — exact test title (first argument to `test(...)`)
+ *   - `issue` — GitHub issue or PR URL matching `https://github.com/.+/issues/\d+`
+ *               or `https://github.com/.+/pull/\d+`
+ *   - `until` — target resolution date in `YYYY-MM-DD` format
+ *
+ * Validation runs at module load time. Any entry that fails validation causes
+ * an immediate throw before any test runs. This prevents silently-invalid
+ * entries from slipping through.
+ *
+ * An entry with an expired `until` date causes the corresponding test to FAIL
+ * at runtime regardless of the allow-list — the entry is treated as if it does
+ * not exist.
  *
  * === How to add a skip to the allow-list ===
  *
@@ -17,7 +47,7 @@
  *
  * Rules:
  *   - `test` must be the exact string passed as the first argument to test().
- *   - `issue` must be a GitHub issue URL (not a tag, not a keyword).
+ *   - `issue` must be a GitHub issue or PR URL.
  *   - `until` is the target date by which the skip should be resolved and removed.
  *     After this date, CI will treat the entry as expired and fail the run.
  *
@@ -38,10 +68,19 @@
  * Do NOT call softSkip() for permanent/intentional skips. Those must either:
  *   (a) Be added to SKIP_ALLOWLIST with an issue + target date, or
  *   (b) Be promoted to a failing test with expect(false).toBe(true).
+ *
+ * === Skip-baseline.json anchor ===
+ *
+ * This is the "previous green main" anchor. CI fails if the manifest's
+ * unauthorized_skip count is greater than this baseline. To absorb a new
+ * long-term skip: (1) add it to SKIP_ALLOWLIST, (2) update the baseline.
+ * Never auto-increment the baseline from code — it must be a deliberate
+ * human commit.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { execSync } from 'child_process';
 
 // ── Allow-list ─────────────────────────────────────────────────────────────────
 //
@@ -50,14 +89,88 @@ import * as path from 'path';
 //
 // Empty by default. Add entries only for genuinely tracked issues with a deadline.
 
-export const SKIP_ALLOWLIST: { test: string; issue: string; until: string }[] = [
+export const SKIP_ALLOWLIST: { test: string; issue: string; until: string; note?: string }[] = [
   // Example (remove when resolved):
   // {
   //   test: '(a) Ray→Max→Jim chain: transcript shows all three agent labels',
   //   issue: 'https://github.com/dapicom-ai/omnipus/issues/111',
   //   until: '2026-07-01',
+  //   note: 'Subagent handoff not yet wired in this environment.',
   // },
 ];
+
+// ── Validation ──────────────────────────────────────────────────────────────────
+//
+// Runs at module load time. Any malformed SKIP_ALLOWLIST entry causes an
+// immediate throw, ensuring CI cannot silently pass with invalid entries.
+
+const GITHUB_ISSUE_RE = /^https:\/\/github\.com\/.+\/(?:issues|pull)\/\d+$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * validateAllowList — Check that every SKIP_ALLOWLIST entry has:
+ *   - `issue` matching the GitHub issue/PR URL pattern
+ *   - `until` matching YYYY-MM-DD and being a parseable date
+ *
+ * Throws on the first invalid entry. Warns (does not throw) for expired entries —
+ * the expired-entry check at runtime already fails the individual test.
+ *
+ * This function is exported so the unit-style sanity checks below can call it
+ * without going through the full softSkip() path.
+ */
+export function validateAllowList(
+  list: { test: string; issue: string; until: string; note?: string }[],
+): void {
+  for (const entry of list) {
+    if (!entry.test || typeof entry.test !== 'string' || entry.test.trim() === '') {
+      throw new Error(
+        `[skip-tracking] Invalid SKIP_ALLOWLIST entry: missing or empty 'test' field.\n` +
+        `  Entry: ${JSON.stringify(entry)}\n` +
+        `  Fix: set 'test' to the exact string passed as the first argument to test().`,
+      );
+    }
+
+    if (!entry.issue || !GITHUB_ISSUE_RE.test(entry.issue)) {
+      throw new Error(
+        `[skip-tracking] Invalid SKIP_ALLOWLIST entry: 'issue' must be a GitHub issue or PR URL.\n` +
+        `  Received: "${entry.issue}"\n` +
+        `  Expected pattern: https://github.com/<owner>/<repo>/issues/<number>\n` +
+        `               or:  https://github.com/<owner>/<repo>/pull/<number>\n` +
+        `  Test: "${entry.test}"`,
+      );
+    }
+
+    if (!entry.until || !DATE_RE.test(entry.until)) {
+      throw new Error(
+        `[skip-tracking] Invalid SKIP_ALLOWLIST entry: 'until' must match YYYY-MM-DD.\n` +
+        `  Received: "${entry.until}"\n` +
+        `  Test: "${entry.test}"`,
+      );
+    }
+
+    const untilDate = new Date(entry.until + 'T00:00:00Z');
+    if (isNaN(untilDate.getTime())) {
+      throw new Error(
+        `[skip-tracking] Invalid SKIP_ALLOWLIST entry: 'until' is not a valid date.\n` +
+        `  Received: "${entry.until}"\n` +
+        `  Test: "${entry.test}"`,
+      );
+    }
+
+    // Warn for expired entries — they do not throw here because the individual
+    // test will already fail loudly when softSkip() is called with an expired entry.
+    if (untilDate < new Date()) {
+      console.warn(
+        `[skip-tracking] WARNING: SKIP_ALLOWLIST entry for "${entry.test}" has expired ` +
+        `(until: ${entry.until}, issue: ${entry.issue}). ` +
+        `The test will fail at runtime. Resolve the issue or update the deadline.`,
+      );
+    }
+  }
+}
+
+// Run validation at module load time. Any malformed entry throws immediately.
+validateAllowList(SKIP_ALLOWLIST);
 
 // ── Internal types ─────────────────────────────────────────────────────────────
 
@@ -68,6 +181,127 @@ interface SkipEntry {
   allowed: boolean;
   issue?: string;
   until?: string;
+}
+
+export interface SkipManifest {
+  timestamp: string;
+  run_id: string;
+  git_sha: string;
+  branch: string;
+  skips: Array<{
+    test: string;
+    reason: string;
+    kind: 'softSkip' | 'test.skip' | 'test.fixme';
+  }>;
+  allowlisted: Array<{
+    test: string;
+    issue: string;
+    until: string;
+    note?: string;
+  }>;
+  unauthorized_skips: Array<{
+    test: string;
+    reason: string;
+  }>;
+}
+
+// ── Git helpers ────────────────────────────────────────────────────────────────
+
+function getGitSha(): string {
+  if (process.env.GITHUB_SHA) return process.env.GITHUB_SHA;
+  try {
+    return execSync('git rev-parse --short HEAD', { stdio: ['pipe', 'pipe', 'pipe'] })
+      .toString()
+      .trim();
+  } catch {
+    return 'unknown';
+  }
+}
+
+function getGitBranch(): string {
+  if (process.env.GITHUB_REF_NAME) return process.env.GITHUB_REF_NAME;
+  if (process.env.GITHUB_HEAD_REF) return process.env.GITHUB_HEAD_REF;
+  try {
+    return execSync('git rev-parse --abbrev-ref HEAD', { stdio: ['pipe', 'pipe', 'pipe'] })
+      .toString()
+      .trim();
+  } catch {
+    return 'unknown';
+  }
+}
+
+// ── Manifest writer ────────────────────────────────────────────────────────────
+
+/**
+ * manifestPath — Resolve the output path for the skip manifest.
+ * Configurable via `OMNIPUS_SKIP_MANIFEST_PATH` env var.
+ * Defaults to `test-results/skip-manifest.json`.
+ */
+function manifestPath(): string {
+  return process.env.OMNIPUS_SKIP_MANIFEST_PATH
+    ? path.resolve(process.env.OMNIPUS_SKIP_MANIFEST_PATH)
+    : path.resolve('test-results', 'skip-manifest.json');
+}
+
+/**
+ * writeSkipManifest — Build and write the skip manifest from the in-process
+ * soft-skips.json accumulated during the run.
+ *
+ * Called by global-teardown.ts at the end of every run.
+ */
+export function writeSkipManifest(): SkipManifest {
+  // Read the in-run skip accumulator (soft-skips.json).
+  let rawSkips: SkipEntry[] = [];
+  const softSkipsPath = path.resolve('test-results', 'soft-skips.json');
+  if (fs.existsSync(softSkipsPath)) {
+    try {
+      const raw = fs.readFileSync(softSkipsPath, 'utf-8').trim();
+      if (raw) rawSkips = JSON.parse(raw) as SkipEntry[];
+    } catch {
+      console.warn('[skip-tracking] Could not parse soft-skips.json; manifest will be empty');
+    }
+  }
+
+  const authorizedEntries = SKIP_ALLOWLIST.map((e) => ({
+    test: e.test,
+    issue: e.issue,
+    until: e.until,
+    note: e.note,
+  }));
+
+  const allSkips = rawSkips.map((s) => ({
+    test: s.test,
+    reason: s.reason,
+    kind: 'softSkip' as const,
+  }));
+
+  const unauthorizedSkips = rawSkips
+    .filter((s) => !s.allowed)
+    .map((s) => ({ test: s.test, reason: s.reason }));
+
+  const manifest: SkipManifest = {
+    timestamp: new Date().toISOString(),
+    run_id: process.env.GITHUB_RUN_ID ?? process.env.CI_JOB_ID ?? 'local',
+    git_sha: getGitSha(),
+    branch: getGitBranch(),
+    skips: allSkips,
+    allowlisted: authorizedEntries,
+    unauthorized_skips: unauthorizedSkips,
+  };
+
+  // Write to disk.
+  const outPath = manifestPath();
+  const outDir = path.dirname(outPath);
+  try {
+    if (!fs.existsSync(outDir)) {
+      fs.mkdirSync(outDir, { recursive: true });
+    }
+    fs.writeFileSync(outPath, JSON.stringify(manifest, null, 2), 'utf-8');
+  } catch (writeErr) {
+    console.warn('[skip-tracking] Failed to write skip manifest:', writeErr);
+  }
+
+  return manifest;
 }
 
 // ── Implementation ─────────────────────────────────────────────────────────────
@@ -94,7 +328,7 @@ export function softSkip(
   // Check expiry: if the entry has a `until` date in the past, treat as expired.
   let expired = false;
   if (entry) {
-    const until = new Date(entry.until);
+    const until = new Date(entry.until + 'T00:00:00Z');
     if (!isNaN(until.getTime()) && until < new Date()) {
       expired = true;
     }
@@ -165,3 +399,80 @@ export function softSkip(
   // Allow-listed and not expired → skip normally.
   t.skip();
 }
+
+// ── Unit-style sanity checks ────────────────────────────────────────────────────
+//
+// These run at module load time (not in a test framework) and verify that the
+// validator itself works correctly. They do not require Playwright or Vitest.
+// If they throw, the import of this module will fail — which surfaces the bug
+// immediately in CI rather than hiding it until a test runs.
+
+(function _selfTestValidator(): void {
+  // The validator must accept a valid entry.
+  const validEntry = {
+    test: 'some test title',
+    issue: 'https://github.com/dapicom-ai/omnipus/issues/123',
+    until: '2099-12-31',
+  };
+  try {
+    validateAllowList([validEntry]);
+  } catch (e) {
+    throw new Error(
+      `[skip-tracking] Self-test FAILED: validateAllowList rejected a valid entry.\n` +
+      `Entry: ${JSON.stringify(validEntry)}\n` +
+      `Error: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
+
+  // The validator must reject an entry missing 'issue'.
+  let threw = false;
+  try {
+    validateAllowList([{ test: 'x', issue: '', until: '2099-01-01' }]);
+  } catch {
+    threw = true;
+  }
+  if (!threw) {
+    throw new Error(
+      `[skip-tracking] Self-test FAILED: validateAllowList did NOT throw for empty 'issue'.`,
+    );
+  }
+
+  // The validator must reject a non-GitHub URL for 'issue'.
+  threw = false;
+  try {
+    validateAllowList([{ test: 'x', issue: 'https://jira.example.com/browse/XYZ-123', until: '2099-01-01' }]);
+  } catch {
+    threw = true;
+  }
+  if (!threw) {
+    throw new Error(
+      `[skip-tracking] Self-test FAILED: validateAllowList did NOT throw for non-GitHub 'issue'.`,
+    );
+  }
+
+  // The validator must reject a malformed 'until' date.
+  threw = false;
+  try {
+    validateAllowList([{ test: 'x', issue: 'https://github.com/dapicom-ai/omnipus/issues/1', until: '01/01/2099' }]);
+  } catch {
+    threw = true;
+  }
+  if (!threw) {
+    throw new Error(
+      `[skip-tracking] Self-test FAILED: validateAllowList did NOT throw for non-YYYY-MM-DD 'until'.`,
+    );
+  }
+
+  // The validator must reject a missing 'until' field.
+  threw = false;
+  try {
+    validateAllowList([{ test: 'x', issue: 'https://github.com/dapicom-ai/omnipus/issues/1', until: '' }]);
+  } catch {
+    threw = true;
+  }
+  if (!threw) {
+    throw new Error(
+      `[skip-tracking] Self-test FAILED: validateAllowList did NOT throw for empty 'until'.`,
+    );
+  }
+})();
