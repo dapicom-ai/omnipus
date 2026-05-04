@@ -248,7 +248,15 @@ func Emit(ctx context.Context, logger *Logger, event string, sev Severity, field
 		slog.Error("audit: marshal record failed", "error", err, "event", event)
 		return
 	}
-	if writeErr := logger.writeLine(data); writeErr != nil {
+	// CRIT-5: structured Record emissions inherit the same fsync gate as
+	// Logger.Log — High-severity events and the policy-deny event names go
+	// to disk synchronously so they survive a crash. INFO/WARN allow rows
+	// batch through bufio.
+	fsyncRequired := sev == SeverityHigh ||
+		event == EventToolPolicyDenyAttempted ||
+		event == EventToolPolicyAskDenied ||
+		event == EventBootAbort
+	if writeErr := logger.writeLine(data, fsyncRequired); writeErr != nil {
 		slog.Error("audit: write record failed", "error", writeErr, "event", event)
 	}
 }

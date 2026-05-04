@@ -337,6 +337,14 @@ func NewAgentLoop(
 		auditLogger, auditErr := audit.NewLogger(audit.LoggerConfig{
 			Dir:           auditDir,
 			RetentionDays: 90,
+			// CRIT-2: signal to NewLogger that the operator explicitly enabled
+			// audit. Without this, NewLogger would swallow openCurrentFile
+			// errors and return a degraded logger + nil error — the gateway
+			// would think audit_logger=ok at startup while every subsequent
+			// write rejects in degraded mode. Setting AuditLogRequested makes
+			// openCurrentFile failure surface as a *LoggerConstructionError so
+			// the gateway boot path can fail closed.
+			AuditLogRequested: true,
 		})
 		if auditErr != nil {
 			// B1.2(b): when sandbox.audit_log is explicitly enabled,
@@ -354,17 +362,15 @@ func NewAgentLoop(
 		{
 			al.auditLogger = auditLogger
 
-			// Log startup event.
-			if err := auditLogger.Log(&audit.Entry{
+			// Log startup event. CRIT-6: route through audit.EmitEntry so a
+			// Log failure bumps the audit-skipped counter (/health audit_degraded).
+			audit.EmitEntry(auditLogger, &audit.Entry{
 				Event:    audit.EventStartup,
 				Decision: audit.DecisionAllow,
 				Details: map[string]any{
 					"audit_dir": auditDir,
 				},
-			}); err != nil {
-				logger.ErrorCF("agent", "Failed to write audit startup entry — audit logging may be non-functional",
-					map[string]any{"error": err.Error()})
-			}
+			})
 
 			// Wire audit logger into all agent tool registries.
 			for _, agentID := range registry.ListAgentIDs() {
@@ -718,17 +724,16 @@ func (al *AgentLoop) recordRateLimitDenial(
 		for k, v := range extraDetails {
 			details[k] = v
 		}
-		if err := al.auditLogger.Log(&audit.Entry{
+		// CRIT-6: route through audit.EmitEntry — Log failure bumps the
+		// audit-skipped counter (/health audit_degraded).
+		audit.EmitEntry(al.auditLogger, &audit.Entry{
 			Event:      audit.EventRateLimit,
 			Decision:   audit.DecisionDeny,
 			AgentID:    ts.agent.ID,
 			Tool:       payload.Tool,
 			PolicyRule: payload.PolicyRule,
 			Details:    details,
-		}); err != nil {
-			logger.WarnCF("agent", "failed to write rate-limit audit entry",
-				map[string]any{"limit_type": limitType, "error": err.Error()})
-		}
+		})
 	}
 	al.emitEvent(
 		EventKindRateLimit,
@@ -985,19 +990,19 @@ func (al *AgentLoop) wireTier13DepsLocked(registry *AgentRegistry, deps Tier13De
 					if _, alreadyLogged := al.coercionLogged.LoadOrStore(ag.ID, true); !alreadyLogged {
 						logger.WarnCF("agent", "sandbox_profile=off coerced to workspace; --allow-god-mode not set",
 							map[string]any{"agent_id": ag.ID})
-						if al.auditLogger != nil {
-							_ = al.auditLogger.Log(&audit.Entry{
-								Event:    audit.EventPolicyEval,
-								Decision: audit.DecisionDeny,
-								AgentID:  ag.ID,
-								Tool:     "sandbox_profile",
-								Details: map[string]any{
-									"reason":       "god_mode_unavailable",
-									"coerced_from": "off",
-									"coerced_to":   "workspace",
-								},
-							})
-						}
+						// CRIT-6: route through audit.EmitEntry so a Log failure
+						// bumps the audit-skipped counter (/health audit_degraded).
+						audit.EmitEntry(al.auditLogger, &audit.Entry{
+							Event:    audit.EventPolicyEval,
+							Decision: audit.DecisionDeny,
+							AgentID:  ag.ID,
+							Tool:     "sandbox_profile",
+							Details: map[string]any{
+								"reason":       "god_mode_unavailable",
+								"coerced_from": "off",
+								"coerced_to":   "workspace",
+							},
+						})
 					}
 					agentProfile = config.SandboxProfileWorkspace
 				}
@@ -1833,13 +1838,13 @@ func (al *AgentLoop) Close() {
 
 	// SEC-15: Log shutdown event and close audit logger.
 	if al.auditLogger != nil {
-		if err := al.auditLogger.Log(&audit.Entry{
+		// CRIT-6 + typed-Decision migration: route through audit.EmitEntry so
+		// a Log failure bumps the audit-skipped counter, and use the typed
+		// Decision constant in place of the raw "allow" literal.
+		audit.EmitEntry(al.auditLogger, &audit.Entry{
 			Event:    audit.EventShutdown,
-			Decision: "allow",
-		}); err != nil {
-			logger.WarnCF("agent", "Failed to write audit shutdown entry",
-				map[string]any{"error": err.Error()})
-		}
+			Decision: audit.DecisionAllow,
+		})
 		if err := al.auditLogger.Close(); err != nil {
 			logger.ErrorCF("agent", "Failed to close audit logger",
 				map[string]any{"error": err.Error()})
@@ -1875,22 +1880,20 @@ func (al *AgentLoop) writeTurnCancelledRestartForActiveTurns() {
 		}
 
 		// Emit audit event (FR-048).
-		if al.auditLogger != nil {
-			if err := al.auditLogger.Log(&audit.Entry{
-				Event:    "tool.policy.ask.denied",
-				Decision: "deny",
-				SessionID: sessionKey,
-				Details: map[string]any{
-					"reason":      "restart",
-					"turn_id":     ts.turnID,
-					"agent_id":    ts.agentID,
-					"shutdown":    "graceful",
-				},
-			}); err != nil {
-				logger.WarnCF("agent", "FR-048: audit emit failed on shutdown",
-					map[string]any{"session_key": sessionKey, "error": err.Error()})
-			}
-		}
+		// CRIT-6 + typed-Decision/Event migration: route through audit.EmitEntry
+		// so Log failure bumps the audit-skipped counter; use typed Event +
+		// Decision constants in place of raw string literals.
+		audit.EmitEntry(al.auditLogger, &audit.Entry{
+			Event:     audit.EventToolPolicyAskDenied,
+			Decision:  audit.DecisionDeny,
+			SessionID: sessionKey,
+			Details: map[string]any{
+				"reason":   "restart",
+				"turn_id":  ts.turnID,
+				"agent_id": ts.agentID,
+				"shutdown": "graceful",
+			},
+		})
 		return true
 	})
 }
@@ -4828,18 +4831,15 @@ turnLoop:
 						"agent_id":        ts.agent.ID,
 					}
 					logger.InfoCF("agent", "prompt guard sanitized tool result", details)
-					if al.auditLogger != nil {
-						if err := al.auditLogger.Log(&audit.Entry{
-							Event:    audit.EventPolicyEval,
-							Decision: audit.DecisionAllow,
-							AgentID:  ts.agent.ID,
-							Tool:     toolName,
-							Details:  details,
-						}); err != nil {
-							logger.WarnCF("agent", "failed to write prompt_guard audit entry",
-								map[string]any{"error": err.Error(), "tool": toolName})
-						}
-					}
+					// CRIT-6: route through audit.EmitEntry — Log failure bumps the
+					// audit-skipped counter so /health audit_degraded surfaces gaps.
+					audit.EmitEntry(al.auditLogger, &audit.Entry{
+						Event:    audit.EventPolicyEval,
+						Decision: audit.DecisionAllow,
+						AgentID:  ts.agent.ID,
+						Tool:     toolName,
+						Details:  details,
+					})
 				}
 			}
 
@@ -5124,22 +5124,20 @@ func (al *AgentLoop) recordSyntheticDeny(ts *turnState) (shouldAbort bool, abort
 				map[string]any{"session_key": ts.sessionKey, "error": err.Error()})
 		}
 	}
-	if al.auditLogger != nil {
-		if err := al.auditLogger.Log(&audit.Entry{
-			Event:    "turn.aborted_synthetic_loop",
-			Decision: "deny",
-			AgentID:  ts.agentID,
-			SessionID: ts.sessionKey,
-			Details: map[string]any{
-				"turn_id":              ts.turnID,
-				"synthetic_error_count": ts.syntheticErrorCount,
-				"floor":                floor,
-			},
-		}); err != nil {
-			logger.WarnCF("agent", "FR-084: audit emit failed for turn.aborted_synthetic_loop",
-				map[string]any{"session_key": ts.sessionKey, "error": err.Error()})
-		}
-	}
+	// CRIT-6 + typed-Decision/Event migration: route through audit.EmitEntry
+	// so Log failure bumps the audit-skipped counter; use the typed
+	// EventTurnAbortedSyntheticLoop and DecisionDeny constants.
+	audit.EmitEntry(al.auditLogger, &audit.Entry{
+		Event:     audit.EventTurnAbortedSyntheticLoop,
+		Decision:  audit.DecisionDeny,
+		AgentID:   ts.agentID,
+		SessionID: ts.sessionKey,
+		Details: map[string]any{
+			"turn_id":               ts.turnID,
+			"synthetic_error_count": ts.syntheticErrorCount,
+			"floor":                 floor,
+		},
+	})
 	logger.WarnCF("agent", "FR-084: synthetic-error floor reached — aborting turn",
 		map[string]any{
 			"agent_id":    ts.agentID,
@@ -6132,19 +6130,17 @@ func (al *AgentLoop) checkToolDedupInvariant(ts *turnState, filtered []tools.Too
 			}
 			logger.ErrorCF("agent", "FR-066: tools[] dedup invariant violated",
 				map[string]any{"tool_name": name, "sources": sources, "agent_id": ts.agentID})
-			if al.auditLogger != nil {
-				if auditErr := al.auditLogger.Log(&audit.Entry{
-					Event:     "tool.assembly.duplicate_name",
-					Decision:  "deny",
-					AgentID:   ts.agentID,
-					Tool:      name,
-					SessionID: ts.sessionKey,
-					Details:   details,
-				}); auditErr != nil {
-					logger.WarnCF("agent", "failed to write tool.assembly.duplicate_name audit entry",
-						map[string]any{"error": auditErr.Error(), "tool_name": name})
-				}
-			}
+			// CRIT-6 + typed-Decision/Event migration: route through audit.EmitEntry
+			// so Log failure bumps the audit-skipped counter; use the typed
+			// EventToolAssemblyDuplicateName and DecisionDeny constants.
+			audit.EmitEntry(al.auditLogger, &audit.Entry{
+				Event:     audit.EventToolAssemblyDuplicateName,
+				Decision:  audit.DecisionDeny,
+				AgentID:   ts.agentID,
+				Tool:      name,
+				SessionID: ts.sessionKey,
+				Details:   details,
+			})
 			return fmt.Errorf("tools[] dedup invariant violated: tool %q appears from sources %v", name, sources)
 		}
 		seen[name] = sourceTag
@@ -6234,24 +6230,23 @@ func (al *AgentLoop) toolRequiresAdmin(ts *turnState, toolName string) bool {
 
 // emitPolicyDenyAudit writes a tool.policy.deny.attempted audit entry.
 // context is a free-form note such as "mid_turn_policy_change" or the denial reason.
+//
+// CRIT-6 + typed-Decision/Event migration: routes through audit.EmitEntry so
+// Log failure bumps the audit-skipped counter (/health audit_degraded), and
+// uses the typed EventToolPolicyDenyAttempted + DecisionDeny constants in
+// place of raw string literals.
 func (al *AgentLoop) emitPolicyDenyAudit(ts *turnState, toolName, resolvedPolicy, context string) {
-	if al.auditLogger == nil {
-		return
-	}
-	if err := al.auditLogger.Log(&audit.Entry{
-		Event:     "tool.policy.deny.attempted",
-		Decision:  "deny",
+	audit.EmitEntry(al.auditLogger, &audit.Entry{
+		Event:     audit.EventToolPolicyDenyAttempted,
+		Decision:  audit.DecisionDeny,
 		AgentID:   ts.agentID,
 		Tool:      toolName,
 		SessionID: ts.sessionKey,
 		Details: map[string]any{
-			"turn_id":          ts.turnID,
-			"resolved_policy":  resolvedPolicy,
-			"context":          context,
+			"turn_id":         ts.turnID,
+			"resolved_policy": resolvedPolicy,
+			"context":         context,
 		},
-	}); err != nil {
-		logger.WarnCF("agent", "failed to write tool.policy.deny.attempted audit entry",
-			map[string]any{"error": err.Error(), "tool": toolName})
-	}
+	})
 }
 

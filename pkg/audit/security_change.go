@@ -88,7 +88,10 @@ func EmitSecuritySettingChange(ctx context.Context, logger *Logger, resource str
 		return nil
 	}
 
-	if writeErr := logger.writeLine(data); writeErr != nil {
+	// CRIT-5: security_setting_change is a security-relevant configuration
+	// mutation — fsync so an attacker who triggers a crash mid-change can't
+	// hide the audit row that proves what they touched.
+	if writeErr := logger.writeLine(data, true); writeErr != nil {
 		slog.Error("audit: write security_setting_change failed",
 			"error", writeErr, "resource", resource)
 		return nil

@@ -96,22 +96,21 @@ func recoverOrphanedToolCalls(
 		}
 
 		// Emit audit event (FR-069).
-		if auditLog != nil {
-			if err := auditLog.Log(&audit.Entry{
-				Event:    "tool.policy.ask.denied",
-				Decision: "deny",
-				Tool:     o.ToolName,
-				Details: map[string]any{
-					"tool_call_id": o.ToolCallID,
-					"reason":       "restart",
-					"recovery":     "ungraceful_shutdown_recovery",
-					"session_key":  sessionKey,
-				},
-			}); err != nil {
-				slog.Warn("agent: audit emit failed during SIGKILL recovery",
-					"session_key", sessionKey, "tool_call_id", o.ToolCallID, "error", err)
-			}
-		}
+		// CRIT-6 + typed-Decision/Event migration: route through audit.EmitEntry
+		// so Log failure bumps the audit-skipped counter (/health audit_degraded),
+		// and use typed EventToolPolicyAskDenied + DecisionDeny constants in
+		// place of raw string literals.
+		audit.EmitEntry(auditLog, &audit.Entry{
+			Event:    audit.EventToolPolicyAskDenied,
+			Decision: audit.DecisionDeny,
+			Tool:     o.ToolName,
+			Details: map[string]any{
+				"tool_call_id": o.ToolCallID,
+				"reason":       "restart",
+				"recovery":     "ungraceful_shutdown_recovery",
+				"session_key":  sessionKey,
+			},
+		})
 
 		slog.Warn("agent: SIGKILL recovery — orphaned tool call detected and synthetic deny appended",
 			"session_key", sessionKey, "tool_call_id", o.ToolCallID, "tool_name", o.ToolName)

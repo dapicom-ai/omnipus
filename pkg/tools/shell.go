@@ -191,8 +191,11 @@ func (t *ExecTool) SetAuditLogger(l *audit.Logger) {
 	if l != nil {
 		al := l
 		t.killAuditFn = func(pid int, killErr error, caller string) {
-			_ = al.Log(&audit.Entry{
-				Event:    "process_kill_failed",
+			// CRIT-6 + typed-Event migration: route through audit.EmitEntry so
+			// Log failure bumps the audit-skipped counter; use the typed
+			// EventProcessKillFailed constant in place of the raw literal.
+			audit.EmitEntry(al, &audit.Entry{
+				Event:    audit.EventProcessKillFailed,
 				Decision: audit.DecisionError,
 				Details: map[string]any{
 					"pid":    pid,
