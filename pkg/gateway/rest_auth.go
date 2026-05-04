@@ -221,7 +221,15 @@ func withRateLimit(limiter *apiRateLimiter, handler http.HandlerFunc) http.Handl
 // withOptionalAuth is like withAuth but allows unauthenticated requests to pass through.
 // Authenticated requests get role injected into context; anonymous requests get a context
 // without any role so downstream handlers can distinguish.
+//
+// B1.1 backend half: every route wrapped here gets a 1 MiB body cap so an
+// anonymous client cannot pin the gateway with an unbounded POST body. All
+// routes registered with withOptionalAuth are JSON or GET-only (state,
+// providers, media-serve, uploads-serve, onboarding, login, register-admin)
+// — none legitimately exceed 1 MiB. Routes that need a larger body (binary
+// uploads) use withUploadAuth instead.
 func (a *restAPI) withOptionalAuth(handler http.HandlerFunc) http.HandlerFunc {
+	const optionalAuthBodyLimit int64 = 1 << 20 // 1 MiB
 	return func(w http.ResponseWriter, r *http.Request) {
 		if a.handlePreflight(w, r) {
 			return
@@ -233,6 +241,7 @@ func (a *restAPI) withOptionalAuth(handler http.HandlerFunc) http.HandlerFunc {
 			slog.Warn("configFromContext returned nil — configSnapshotMiddleware may not be applied")
 			cfg = a.agentLoop.GetConfig()
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, optionalAuthBodyLimit)
 		authHeader := r.Header.Get("Authorization")
 		prefix := "Bearer "
 		if strings.HasPrefix(authHeader, prefix) {
