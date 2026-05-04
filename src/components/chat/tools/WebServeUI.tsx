@@ -102,7 +102,7 @@ function MalformedResultBlock({ raw }: { raw: unknown }) {
     rawJson = String(raw)
   }
   return (
-    <div className="mt-2 rounded-md border border-[var(--color-error)]/30 bg-[var(--color-error)]/5 px-3 py-2 text-xs space-y-1.5">
+    <div data-testid="webserve-malformed-block" className="mt-2 rounded-md border border-[var(--color-error)]/30 bg-[var(--color-error)]/5 px-3 py-2 text-xs space-y-1.5">
       <p className="text-[var(--color-error)]">
         web_serve tool returned a malformed result — cannot render preview.
       </p>
@@ -193,6 +193,7 @@ export function WebServeBlock({
   return (
     <div className="mt-2 text-xs">
       <PreviewToolHeader
+        data-testid="webserve-tool-header"
         icon={
           isDevMode ? (
             <Terminal

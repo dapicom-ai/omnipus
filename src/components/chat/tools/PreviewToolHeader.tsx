@@ -24,6 +24,8 @@ export interface PreviewToolHeaderProps {
   isRunning: boolean
   /** Whether the tool completed successfully (drives border / icon colour). */
   hasResult: boolean
+  /** Optional data-testid for targeted e2e tests. */
+  'data-testid'?: string
 }
 
 export function PreviewToolHeader({
@@ -33,9 +35,11 @@ export function PreviewToolHeader({
   trailing,
   isRunning,
   hasResult,
+  'data-testid': testId,
 }: PreviewToolHeaderProps) {
   return (
     <div
+      data-testid={testId}
       className={cn(
         'flex items-center gap-2 px-3 py-2 rounded-t-md border bg-[var(--color-surface-1)]',
         isRunning
