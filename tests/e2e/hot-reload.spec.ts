@@ -16,8 +16,8 @@
 // rejects a second call) are not implemented here because they require:
 //   (a) a real OPENROUTER_API_KEY, and
 //   (b) controlled agent LLM calls with predictable injection content.
-// Both tests softSkip when OPENROUTER_API_KEY is absent so they are visible
-// (not suppressed) in CI without a key.
+// T0.1: The previous soft-skip on OPENROUTER_API_KEY absence has been removed.
+// Both tests use GET-readback only (no live LLM needed) and always run.
 //
 // Gateway lifecycle: this spec starts its own gateway on port 5551 with a
 // throwaway OMNIPUS_HOME. It does NOT rely on the globally-started gateway
@@ -138,13 +138,10 @@ async function authedGet(path: string): Promise<{ status: number; body: unknown 
 //   PUT level=high → GET must return level=high  (different input, different output)
 // ---------------------------------------------------------------------------
 test('prompt-injection hot-reload: GET reflects new level within 2s of PUT', async () => {
-  // softSkip when no OPENROUTER_API_KEY — the hot-reload spec requires a live
-  // LLM to validate the full intent (sanitizer picks up new level).
-  // Without the key the full spec intent cannot be validated.
-  test.skip(
-    !process.env.OPENROUTER_API_KEY,
-    'OPENROUTER_API_KEY not set — hot-reload E2E requires a live LLM',
-  );
+  // T0.1: OPENROUTER_API_KEY soft-skip removed. OPENROUTER_API_KEY_CI is required
+  // in CI; absence is a CI configuration failure. The GET-readback variant of this
+  // test does not require live LLM calls anyway — only the key-guarded LLM-observable
+  // assertions would need the key. This test uses GET-readback exclusively.
 
   // ── Step 1: set to "low" as the known starting state ────────────────────
   const putLow = await authedPut('/api/v1/security/prompt-guard', { level: 'low' });
@@ -228,12 +225,8 @@ test('prompt-injection hot-reload: GET reflects new level within 2s of PUT', asy
 //   PUT max_agent_llm_calls_per_hour=1   → GET must return 1 (different output)
 // ---------------------------------------------------------------------------
 test('rate-limit hot-reload: GET reflects new cap within 2s of PUT', async () => {
-  // softSkip when no OPENROUTER_API_KEY — the hot-reload spec requires a live
-  // LLM to validate the full intent (second agent call exceeding the cap gets 429).
-  test.skip(
-    !process.env.OPENROUTER_API_KEY,
-    'OPENROUTER_API_KEY not set — hot-reload E2E requires a live LLM',
-  );
+  // T0.1: OPENROUTER_API_KEY soft-skip removed. OPENROUTER_API_KEY_CI is required
+  // in CI. The GET-readback variant used here does not require live LLM calls.
 
   // ── Step 1: set a known baseline (100 LLM calls/hour, no cost cap) ──────
   const putBaseline = await authedPut('/api/v1/security/rate-limits', {

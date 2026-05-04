@@ -8,15 +8,24 @@ import { useSessionStore } from './session'
 // Traces to: wave5a-wire-ui-spec.md — Scenario: User sends message and receives streaming response
 //             wave5a-wire-ui-spec.md — Scenario: Cancel during streaming preserves partial response
 
+const TEST_SESSION_ID = 'test-session-1'
+
 function resetStore() {
   act(() => {
     useChatStore.setState({
+      sessionsById: {},
       messages: [],
       isStreaming: false,
       toolCalls: {},
+      toolCallOrder: [],
+      textAtToolCallStart: {},
       pendingApprovals: [],
       sessionTokens: 0,
       sessionCost: 0,
+      isReplaying: false,
+      replayCompletedForSession: null,
+      rateLimitEvent: null,
+      lastUserMessageAt: null,
     })
     useConnectionStore.setState({
       connection: null,
@@ -24,7 +33,7 @@ function resetStore() {
       connectionError: null,
     })
     useSessionStore.setState({
-      activeSessionId: null,
+      activeSessionId: TEST_SESSION_ID,
       activeAgentId: null,
       activeAgentType: null,
     })
@@ -34,24 +43,41 @@ function resetStore() {
 beforeEach(resetStore)
 
 describe('chat store — initial state', () => {
-  it('initializes with empty messages, not streaming, no active session', () => {
+  it('initializes with empty messages, not streaming; activeSessionId set by beforeEach', () => {
     const chatState = useChatStore.getState()
     const sessionState = useSessionStore.getState()
     expect(chatState.messages).toEqual([])
     expect(chatState.isStreaming).toBe(false)
-    expect(sessionState.activeSessionId).toBeNull()
+    // beforeEach sets activeSessionId to TEST_SESSION_ID so per-session actions have a target.
+    expect(sessionState.activeSessionId).toBe(TEST_SESSION_ID)
     expect(sessionState.activeAgentId).toBeNull()
   })
 })
 
 describe('chat store — session management', () => {
-  it('setActiveSession updates activeSessionId and activeAgentId', () => {
+  it('setActiveSession updates activeSessionId and activeAgentId without wiping buckets', () => {
+    // Seed a message in the first session bucket.
+    act(() => {
+      useChatStore.getState().appendMessage({
+        id: 'msg_original',
+        session_id: TEST_SESSION_ID,
+        role: 'user',
+        content: 'Original session message',
+        timestamp: '2026-03-29T10:00:00Z',
+        status: 'done',
+      })
+    })
+    // Switch to a different session — the original bucket must survive.
     act(() => {
       useSessionStore.getState().setActiveSession('sess_abc', 'general-assistant')
     })
-    const state = useSessionStore.getState()
-    expect(state.activeSessionId).toBe('sess_abc')
-    expect(state.activeAgentId).toBe('general-assistant')
+    const sessionState = useSessionStore.getState()
+    expect(sessionState.activeSessionId).toBe('sess_abc')
+    expect(sessionState.activeAgentId).toBe('general-assistant')
+    // Original bucket is intact (not wiped by session switch).
+    const bucket = useChatStore.getState().sessionsById[TEST_SESSION_ID]
+    expect(bucket?.messages).toHaveLength(1)
+    expect(bucket?.messages[0].content).toBe('Original session message')
   })
 })
 
@@ -115,11 +141,10 @@ describe('chat store — streaming via handleFrame', () => {
         timestamp: '2026-03-29T10:00:01Z',
         status: 'streaming',
         isStreaming: true,
-        streamCursor: true,
       })
       useChatStore.setState({ isStreaming: true })
-      useChatStore.getState().handleFrame({ type: 'token', content: 'Hello' })
-      useChatStore.getState().handleFrame({ type: 'token', content: ' world' })
+      useChatStore.getState().handleFrame({ type: 'token', content: 'Hello', session_id: TEST_SESSION_ID })
+      useChatStore.getState().handleFrame({ type: 'token', content: ' world', session_id: TEST_SESSION_ID })
     })
     const { messages } = useChatStore.getState()
     const asst = messages.find((m) => m.id === 'asst_1')
@@ -138,17 +163,15 @@ describe('chat store — streaming via handleFrame', () => {
         timestamp: '2026-03-29T10:00:01Z',
         status: 'streaming',
         isStreaming: true,
-        streamCursor: true,
       })
       useChatStore.setState({ isStreaming: true })
-      useChatStore.getState().handleFrame({ type: 'done', stats: { tokens: 150, cost: 0.02, duration_ms: 0 } })
+      useChatStore.getState().handleFrame({ type: 'done', stats: { tokens: 150, cost: 0.02, duration_ms: 0 }, session_id: TEST_SESSION_ID })
     })
     const state = useChatStore.getState()
     expect(state.isStreaming).toBe(false)
     const asst = state.messages.find((m) => m.id === 'asst_2')
     expect(asst?.status).toBe('done')
     expect(asst?.isStreaming).toBe(false)
-    expect(asst?.streamCursor).toBe(false)
     expect(state.sessionTokens).toBe(150)
     expect(state.sessionCost).toBeCloseTo(0.02)
   })
@@ -252,6 +275,7 @@ describe('chat store — exec approval', () => {
         command: 'git pull origin main',
         working_dir: '~/projects/omnipus',
         matched_policy: 'tools.exec.approval=ask',
+        session_id: TEST_SESSION_ID,
       })
     })
     const { pendingApprovals } = useChatStore.getState()
@@ -267,6 +291,7 @@ describe('chat store — exec approval', () => {
         type: 'exec_approval_request',
         id: 'appr_1',
         command: 'git pull origin main',
+        session_id: TEST_SESSION_ID,
       })
       useChatStore.getState().resolveApproval('appr_1', 'allowed')
     })
@@ -304,7 +329,7 @@ describe('chat store — cancel/interrupt (test_cancel_preserves_partial)', () =
     act(() => {
       useChatStore.getState().appendMessage({
         id: 'asst_5',
-        session_id: 'sess_cancel',
+        session_id: TEST_SESSION_ID,
         role: 'assistant',
         content: 'Partial...',
         timestamp: '2026-03-29T10:00:01Z',
@@ -316,10 +341,10 @@ describe('chat store — cancel/interrupt (test_cancel_preserves_partial)', () =
         connection: { send: mockSend, disconnect: vi.fn(), connect: vi.fn(), isConnected: true } as any,
         isConnected: true,
       })
-      useSessionStore.setState({ activeSessionId: 'sess_cancel' })
+      // activeSessionId is already TEST_SESSION_ID from resetStore
       useChatStore.getState().cancelStream()
     })
-    expect(mockSend).toHaveBeenCalledWith({ type: 'cancel', session_id: 'sess_cancel' })
+    expect(mockSend).toHaveBeenCalledWith({ type: 'cancel', session_id: TEST_SESSION_ID })
     expect(useChatStore.getState().isStreaming).toBe(false)
   })
 
@@ -350,7 +375,7 @@ describe('chat store — sendMessage optimistic render', () => {
         isConnected: true,
       })
       useSessionStore.setState({
-        activeSessionId: 'sess_1',
+        activeSessionId: TEST_SESSION_ID,
         activeAgentId: 'general-assistant',
       })
       useChatStore.getState().sendMessage('Hello, world!')
@@ -390,6 +415,7 @@ describe('ChatStore_GroupsFramesBySpan', () => {
         parent_call_id: 'c1',
         task_label: 'audit go files',
         agent_id: 'max',
+        session_id: TEST_SESSION_ID,
       })
     })
 
@@ -409,6 +435,7 @@ describe('ChatStore_GroupsFramesBySpan', () => {
         tool: 'fs.list',
         params: { path: '/tmp' },
         parent_call_id: 'c1',
+        session_id: TEST_SESSION_ID,
       })
     })
 
@@ -429,6 +456,7 @@ describe('ChatStore_GroupsFramesBySpan', () => {
         status: 'success',
         duration_ms: 100,
         parent_call_id: 'c1',
+        session_id: TEST_SESSION_ID,
       })
     })
 
@@ -446,6 +474,7 @@ describe('ChatStore_GroupsFramesBySpan', () => {
         status: 'success',
         duration_ms: 4210,
         final_result: 'Found 1 Go file',
+        session_id: TEST_SESSION_ID,
       })
     })
 
@@ -469,6 +498,7 @@ describe('ChatStore_GroupsFramesBySpan', () => {
         tool: 'shell',
         params: { cmd: 'ls' },
         parent_call_id: 'c2',
+        session_id: TEST_SESSION_ID,
       })
     })
 
@@ -483,6 +513,7 @@ describe('ChatStore_GroupsFramesBySpan', () => {
         span_id: 'span_c2',
         parent_call_id: 'c2',
         task_label: 'list files',
+        session_id: TEST_SESSION_ID,
       })
     })
 
@@ -505,6 +536,7 @@ describe('ChatStore_GroupsFramesBySpan', () => {
         span_id: 'span_c3',
         parent_call_id: 'c3',
         task_label: 'multi-step task',
+        session_id: TEST_SESSION_ID,
       })
     })
 
@@ -516,6 +548,7 @@ describe('ChatStore_GroupsFramesBySpan', () => {
           tool: 'fs.list',
           params: {},
           parent_call_id: 'c3',
+          session_id: TEST_SESSION_ID,
         })
       })
       const msgs = useChatStore.getState().messages
@@ -533,12 +566,14 @@ describe('ChatStore_GroupsFramesBySpan', () => {
         span_id: 'span_s1',
         parent_call_id: 's1',
         task_label: 'first',
+        session_id: TEST_SESSION_ID,
       })
       useChatStore.getState().handleFrame({
         type: 'subagent_start',
         span_id: 'span_s2',
         parent_call_id: 's2',
         task_label: 'second',
+        session_id: TEST_SESSION_ID,
       })
     })
 
@@ -549,6 +584,7 @@ describe('ChatStore_GroupsFramesBySpan', () => {
         tool: 'exec',
         params: {},
         parent_call_id: 's1',
+        session_id: TEST_SESSION_ID,
       })
       useChatStore.getState().handleFrame({
         type: 'tool_call_start',
@@ -556,6 +592,7 @@ describe('ChatStore_GroupsFramesBySpan', () => {
         tool: 'web_search',
         params: {},
         parent_call_id: 's2',
+        session_id: TEST_SESSION_ID,
       })
       useChatStore.getState().handleFrame({
         type: 'tool_call_start',
@@ -563,6 +600,7 @@ describe('ChatStore_GroupsFramesBySpan', () => {
         tool: 'file.read',
         params: {},
         parent_call_id: 's2',
+        session_id: TEST_SESSION_ID,
       })
     })
 
@@ -595,6 +633,7 @@ describe('ChatStore_OrphanFrame_FallsBackFlat', () => {
         tool: 'fs.list',
         params: {},
         parent_call_id: 'orphan_parent',
+        session_id: TEST_SESSION_ID,
       })
     })
 
@@ -636,6 +675,7 @@ describe('ChatStore regression: flat tool call without parent_call_id', () => {
         call_id: 'flat_1',
         tool: 'exec',
         params: { cmd: 'pwd' },
+        session_id: TEST_SESSION_ID,
         // no parent_call_id
       })
     })
@@ -666,7 +706,7 @@ describe('ChatStore_ReplaySequence_MatchesLiveSequence', () => {
     // Emit token frames producing text "A", then a tool call, then text "B", then done.
     act(() => {
       // Seed an assistant placeholder (sendMessage path does this; replicate here)
-      useChatStore.getState().handleFrame({ type: 'token', content: 'A' })
+      useChatStore.getState().handleFrame({ type: 'token', content: 'A', session_id: TEST_SESSION_ID })
     })
     act(() => {
       // tool_call_start (no parent_call_id — flat call)
@@ -675,6 +715,7 @@ describe('ChatStore_ReplaySequence_MatchesLiveSequence', () => {
         call_id: 'tc_live_1',
         tool: 'shell',
         params: { cmd: 'echo hi' },
+        session_id: TEST_SESSION_ID,
       })
     })
     act(() => {
@@ -685,13 +726,14 @@ describe('ChatStore_ReplaySequence_MatchesLiveSequence', () => {
         result: { stdout: 'hi\n' },
         status: 'success',
         duration_ms: 42,
+        session_id: TEST_SESSION_ID,
       })
     })
     act(() => {
-      useChatStore.getState().handleFrame({ type: 'token', content: 'B' })
+      useChatStore.getState().handleFrame({ type: 'token', content: 'B', session_id: TEST_SESSION_ID })
     })
     act(() => {
-      useChatStore.getState().handleFrame({ type: 'done' })
+      useChatStore.getState().handleFrame({ type: 'done', session_id: TEST_SESSION_ID })
     })
 
     const liveState = useChatStore.getState()
@@ -707,7 +749,6 @@ describe('ChatStore_ReplaySequence_MatchesLiveSequence', () => {
     expect(liveToolCall.status).toBe('success')
     // Live sequence: streaming flags settled
     expect(liveAssistant!.isStreaming).toBe(false)
-    expect(liveAssistant!.streamCursor).toBe(false)
 
     // ── Reset ─────────────────────────────────────────────────────────────────
     act(() => {
@@ -721,6 +762,7 @@ describe('ChatStore_ReplaySequence_MatchesLiveSequence', () => {
         type: 'replay_message',
         role: 'assistant',
         content: 'AB',
+        session_id: TEST_SESSION_ID,
       })
     })
     act(() => {
@@ -729,6 +771,7 @@ describe('ChatStore_ReplaySequence_MatchesLiveSequence', () => {
         call_id: 'tc_replay_1',
         tool: 'shell',
         params: { cmd: 'echo hi' },
+        session_id: TEST_SESSION_ID,
       })
     })
     act(() => {
@@ -739,10 +782,11 @@ describe('ChatStore_ReplaySequence_MatchesLiveSequence', () => {
         result: { stdout: 'hi\n' },
         status: 'success',
         duration_ms: 42,
+        session_id: TEST_SESSION_ID,
       })
     })
     act(() => {
-      useChatStore.getState().handleFrame({ type: 'done' })
+      useChatStore.getState().handleFrame({ type: 'done', session_id: TEST_SESSION_ID })
     })
 
     const replayState = useChatStore.getState()
@@ -764,10 +808,8 @@ describe('ChatStore_ReplaySequence_MatchesLiveSequence', () => {
     // Cursor/streaming flags: replay_message arrives as a completed message (no cursor)
     // Live message: also settled after done. Both must be false.
     expect(replayAssistant!.isStreaming).toBe(false)
-    expect(replayAssistant!.streamCursor).toBe(false)
     // Live and replay both settle identically after done
     expect(replayAssistant!.isStreaming).toBe(liveAssistant!.isStreaming)
-    expect(replayAssistant!.streamCursor).toBe(liveAssistant!.streamCursor)
   })
 })
 
@@ -784,6 +826,7 @@ describe('ChatStore_ReplayMessageThenToolCall_InterleavesCorrectly', () => {
         type: 'replay_message',
         role: 'assistant',
         content: 'Hello from replay',
+        session_id: TEST_SESSION_ID,
       })
     })
 
@@ -793,6 +836,7 @@ describe('ChatStore_ReplayMessageThenToolCall_InterleavesCorrectly', () => {
         call_id: 'tc_interleave_1',
         tool: 'fs.read',
         params: { path: '/etc/hosts' },
+        session_id: TEST_SESSION_ID,
       })
     })
 
@@ -818,6 +862,7 @@ describe('ChatStore_ReplayMessageThenToolCall_InterleavesCorrectly', () => {
         call_id: 'tc_no_text',
         tool: 'web_search',
         params: { query: 'test' },
+        session_id: TEST_SESSION_ID,
       })
     })
 
@@ -844,7 +889,7 @@ describe('ChatStore_isReplaying_flag', () => {
     // done frame schedules clear — but minimum 250ms display window is enforced
     // so the placeholder doesn't flicker on sub-frame replays.
     act(() => {
-      useChatStore.getState().handleFrame({ type: 'done' })
+      useChatStore.getState().handleFrame({ type: 'done', session_id: TEST_SESSION_ID })
     })
     // Still true immediately after done (inside the window).
     expect(useChatStore.getState().isReplaying).toBe(true)
@@ -857,7 +902,7 @@ describe('ChatStore_isReplaying_flag', () => {
   it('done frame while not replaying is harmless — isReplaying stays false', () => {
     expect(useChatStore.getState().isReplaying).toBe(false)
     act(() => {
-      useChatStore.getState().handleFrame({ type: 'done' })
+      useChatStore.getState().handleFrame({ type: 'done', session_id: TEST_SESSION_ID })
     })
     expect(useChatStore.getState().isReplaying).toBe(false)
   })
@@ -911,7 +956,7 @@ describe('ChatStore_isReplaying_flag', () => {
 
     // Issue done to schedule the clear.
     act(() => {
-      useChatStore.getState().handleFrame({ type: 'done' })
+      useChatStore.getState().handleFrame({ type: 'done', session_id: TEST_SESSION_ID })
     })
 
     // After another 100ms (total ~300ms from first call), should have cleared.
@@ -919,6 +964,105 @@ describe('ChatStore_isReplaying_flag', () => {
     await new Promise((r) => setTimeout(r, 100))
     // isReplaying should be false by now (250ms from original T=0 has elapsed).
     expect(useChatStore.getState().isReplaying).toBe(false)
+  })
+})
+
+// ── B1.3(d) — unknown-targetSid done frame handling ───────────────────────────
+
+describe('chat store — done frame for unknown targetSid (B1.3d)', () => {
+  // Traces to: B1.3(d) security hardening
+  // When a done frame arrives for a targetSid that is not in sessionsById, the
+  // store must log a warning and force-clear isStreaming on the active bucket so
+  // the spinner does not render indefinitely.
+
+  it('logs console.warn with chat.done_unknown_sid when targetSid is not in sessionsById', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    act(() => {
+      // Active session IS in the store (set by beforeEach → resetStore)
+      useChatStore.getState().appendMessage({
+        id: 'asst_streaming',
+        session_id: TEST_SESSION_ID,
+        role: 'assistant',
+        content: 'streaming…',
+        timestamp: new Date().toISOString(),
+        status: 'streaming',
+        isStreaming: true,
+      })
+      useChatStore.setState({ isStreaming: true })
+
+      // done arrives for a session that is NOT in sessionsById
+      useChatStore.getState().handleFrame({
+        type: 'done',
+        session_id: 'unknown-session-xyz',
+      })
+    })
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      'chat.done_unknown_sid',
+      expect.objectContaining({ targetSid: 'unknown-session-xyz' })
+    )
+
+    warnSpy.mockRestore()
+  })
+
+  it('force-clears isStreaming on the active bucket when done arrives for unknown targetSid', () => {
+    act(() => {
+      useChatStore.getState().appendMessage({
+        id: 'asst_stuck',
+        session_id: TEST_SESSION_ID,
+        role: 'assistant',
+        content: 'partial…',
+        timestamp: new Date().toISOString(),
+        status: 'streaming',
+        isStreaming: true,
+      })
+      useChatStore.setState({ isStreaming: true })
+    })
+
+    // Verify we start streaming
+    expect(useChatStore.getState().isStreaming).toBe(true)
+
+    act(() => {
+      // done for an unknown session — the active bucket must recover
+      useChatStore.getState().handleFrame({
+        type: 'done',
+        session_id: 'unknown-session-xyz',
+      })
+    })
+
+    // isStreaming must be cleared on the active bucket
+    expect(useChatStore.getState().isStreaming).toBe(false)
+    // The active bucket in sessionsById must also reflect the cleared state
+    const activeBucket = useChatStore.getState().sessionsById[TEST_SESSION_ID]
+    expect(activeBucket?.isStreaming).toBe(false)
+  })
+
+  it('processes done normally when targetSid is known', () => {
+    act(() => {
+      useChatStore.getState().appendMessage({
+        id: 'asst_known',
+        session_id: TEST_SESSION_ID,
+        role: 'assistant',
+        content: 'some text',
+        timestamp: new Date().toISOString(),
+        status: 'streaming',
+        isStreaming: true,
+      })
+      useChatStore.setState({ isStreaming: true })
+
+      // done for the known TEST_SESSION_ID — normal path
+      useChatStore.getState().handleFrame({
+        type: 'done',
+        session_id: TEST_SESSION_ID,
+        stats: { tokens: 42, cost: 0.001, duration_ms: 100 },
+      })
+    })
+
+    expect(useChatStore.getState().isStreaming).toBe(false)
+    const msg = useChatStore.getState().messages.find((m) => m.id === 'asst_known')
+    expect(msg?.status).toBe('done')
+    expect(useChatStore.getState().sessionTokens).toBe(42)
   })
 })
 
@@ -954,6 +1098,7 @@ describe('ChatStore_sibling_spans_crosswire (W2-10)', () => {
         parent_call_id: 'cA',
         task_label: 'Span A task',
         agent_id: 'agent-a',
+        session_id: TEST_SESSION_ID,
       })
 
       // Start span B (parentCallId = "cB")
@@ -963,6 +1108,7 @@ describe('ChatStore_sibling_spans_crosswire (W2-10)', () => {
         parent_call_id: 'cB',
         task_label: 'Span B task',
         agent_id: 'agent-b',
+        session_id: TEST_SESSION_ID,
       })
     })
 
@@ -974,6 +1120,7 @@ describe('ChatStore_sibling_spans_crosswire (W2-10)', () => {
         tool: 'web_search',
         params: { query: 'query 1' },
         parent_call_id: 'cA',
+        session_id: TEST_SESSION_ID,
       })
       useChatStore.getState().handleFrame({
         type: 'tool_call_start',
@@ -981,6 +1128,7 @@ describe('ChatStore_sibling_spans_crosswire (W2-10)', () => {
         tool: 'fs.read',
         params: { path: '/tmp/test' },
         parent_call_id: 'cA',
+        session_id: TEST_SESSION_ID,
       })
     })
 
@@ -1003,5 +1151,91 @@ describe('ChatStore_sibling_spans_crosswire (W2-10)', () => {
 
     // Span B must have exactly 0 steps (no frames targeted "cB")
     expect(spanB!.steps).toHaveLength(0)
+  })
+})
+
+// H1-FE: Regression — unknown-sid done must not corrupt an active mid-stream session.
+// When a `done` frame arrives for a session_id not in sessionsById (e.g. a deleted
+// or replayed session), the handler should NOT force-clear isStreaming on the active
+// bucket if the active session sent a user message recently and is still streaming.
+describe('chat store — H1-FE: unknown-sid done does not corrupt active stream', () => {
+  const ACTIVE_SID = 'active-session'
+  const GHOST_SID = 'ghost-session-wiped'
+
+  function seedActiveMidStream(lastUserMessageAt: number) {
+    act(() => {
+      useSessionStore.setState({ activeSessionId: ACTIVE_SID, activeAgentId: null, activeAgentType: null })
+      useChatStore.setState((state) => ({
+        sessionsById: {
+          ...state.sessionsById,
+          [ACTIVE_SID]: {
+            messages: [
+              { id: 'u1', session_id: ACTIVE_SID, role: 'user', content: 'hi', timestamp: new Date().toISOString(), status: 'done' },
+              { id: 'a1', session_id: ACTIVE_SID, role: 'assistant', content: 'thinking…', timestamp: new Date().toISOString(), status: 'streaming', isStreaming: true },
+            ],
+            toolCalls: {},
+            toolCallOrder: [],
+            textAtToolCallStart: {},
+            pendingApprovals: [],
+            isStreaming: true,
+            isReplaying: false,
+            replayCompletedForSession: null,
+            sessionTokens: 0,
+            sessionCost: 0,
+            rateLimitEvent: null,
+            lastUserMessageAt,
+          },
+        },
+        // Sync foreground fields
+        isStreaming: true,
+        messages: [],
+        toolCalls: {},
+        toolCallOrder: [],
+        textAtToolCallStart: {},
+        pendingApprovals: [],
+        sessionTokens: 0,
+        sessionCost: 0,
+        isReplaying: false,
+        replayCompletedForSession: null,
+        rateLimitEvent: null,
+        lastUserMessageAt,
+      }))
+    })
+  }
+
+  it('leaves active bucket isStreaming=true when unknown-sid done arrives mid-stream (within 10s)', () => {
+    // Seed active session as streaming, user sent message 2 seconds ago
+    seedActiveMidStream(Date.now() - 2_000)
+
+    // Dispatch a done frame for the ghost session (not in sessionsById)
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'done',
+        session_id: GHOST_SID,
+        stats: { tokens: 0, cost: 0, duration_ms: 0 },
+      })
+    })
+
+    // Active bucket must still be streaming — the unknown-sid done must not touch it
+    const activeBucket = useChatStore.getState().sessionsById[ACTIVE_SID]
+    expect(activeBucket?.isStreaming).toBe(true)
+  })
+
+  it('clears active bucket isStreaming when unknown-sid done arrives after grace period (>10s)', () => {
+    // Seed active session as streaming, but user sent message 15 seconds ago
+    // (stale spinner from a wiped session — safe to clear)
+    seedActiveMidStream(Date.now() - 15_000)
+
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'done',
+        session_id: GHOST_SID,
+        stats: { tokens: 0, cost: 0, duration_ms: 0 },
+      })
+    })
+
+    // Active bucket spinner is stale — should be cleared
+    const activeBucket = useChatStore.getState().sessionsById[ACTIVE_SID]
+    expect(activeBucket?.isStreaming).toBe(false)
   })
 })

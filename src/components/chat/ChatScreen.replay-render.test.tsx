@@ -3,6 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { act } from 'react'
 import { SubagentBlock } from './SubagentBlock'
 import { useChatStore } from '@/store/chat'
+import { useSessionStore } from '@/store/session'
 import type { SubagentSpan, SubagentSpanTerminal } from '@/store/chat'
 
 // W2-4: ChatScreen replay-render tests — TDD rows I-20 and I-21.
@@ -20,7 +21,14 @@ import type { SubagentSpan, SubagentSpanTerminal } from '@/store/chat'
 
 function resetStore() {
   act(() => {
+    // Clear sessionsById so per-session buckets don't leak across tests, and
+    // set activeSessionId to the same id the test frames carry. handleFrame
+    // routes by frame.session_id, while foreground store selectors
+    // (state.toolCalls, state.messages, ...) read from the bucket of the
+    // active session — those must match for assertions to land on the same
+    // bucket.
     useChatStore.setState({
+      sessionsById: {},
       messages: [],
       isStreaming: false,
       isReplaying: false,
@@ -31,6 +39,7 @@ function resetStore() {
       sessionTokens: 0,
       sessionCost: 0,
     })
+    useSessionStore.setState({ activeSessionId: 'sess_test', activeAgentId: null })
   })
 }
 
@@ -132,6 +141,7 @@ describe('ChatScreen replay-render — TDD row I-20 (tool-call-badge) (W2-4)', (
         type: 'replay_message',
         role: 'assistant',
         content: 'I will search for data',
+        session_id: 'sess_test',
       })
 
       // 2. tool_call_start registers the tool call
@@ -140,6 +150,7 @@ describe('ChatScreen replay-render — TDD row I-20 (tool-call-badge) (W2-4)', (
         call_id: 'tc_replay_web_1',
         tool: 'web_search',
         params: { query: 'replay test' },
+        session_id: 'sess_test',
       })
 
       // 3. tool_call_result resolves it
@@ -150,6 +161,7 @@ describe('ChatScreen replay-render — TDD row I-20 (tool-call-badge) (W2-4)', (
         result: { results: ['found'] },
         status: 'success',
         duration_ms: 300,
+        session_id: 'sess_test',
       })
     })
 
@@ -263,6 +275,7 @@ describe('ChatScreen replay-render — TDD row I-21 (subagent-collapsed/expanded
         parent_call_id: 'spawn_call_replay_1',
         task_label: 'Replay sub-task',
         agent_id: 'agent-1',
+        session_id: 'sess_test',
       })
 
       // 3. tool_call_start (nested — has parent_call_id)
@@ -272,6 +285,7 @@ describe('ChatScreen replay-render — TDD row I-21 (subagent-collapsed/expanded
         tool: 'fs.list',
         params: { path: '/tmp' },
         parent_call_id: 'spawn_call_replay_1',
+        session_id: 'sess_test',
       })
 
       // 4. tool_call_result
@@ -283,6 +297,7 @@ describe('ChatScreen replay-render — TDD row I-21 (subagent-collapsed/expanded
         status: 'success',
         duration_ms: 50,
         parent_call_id: 'spawn_call_replay_1',
+        session_id: 'sess_test',
       })
 
       // 5. subagent_end closes the span
@@ -292,6 +307,7 @@ describe('ChatScreen replay-render — TDD row I-21 (subagent-collapsed/expanded
         status: 'success',
         duration_ms: 1000,
         final_result: 'Listed files',
+        session_id: 'sess_test',
       })
     })
 

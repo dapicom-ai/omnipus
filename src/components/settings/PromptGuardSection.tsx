@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Shield } from '@phosphor-icons/react'
-import { fetchPromptGuardLevel, updatePromptGuardLevel } from '@/lib/api'
+import { fetchPromptGuardLevel, updatePromptGuardLevel, isApiError } from '@/lib/api'
 import type { PromptInjectionLevel } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { useAuthStore } from '@/store/auth'
@@ -75,8 +75,9 @@ export function PromptGuardSection(): React.ReactElement {
     },
     onError: (err: Error) => {
       setSaveState('error')
-      setErrorMessage(err.message)
-      addToast({ message: err.message, variant: 'error' })
+      const msg = isApiError(err) ? err.userMessage : err.message
+      setErrorMessage(msg)
+      addToast({ message: msg, variant: 'error' })
     },
   })
 

@@ -27,13 +27,20 @@ import (
 // Exported so tests and future refactors can reference the canonical list
 // without duplicating it.
 var RestartGatedKeys = []config.ConfigKey{
-	config.SandboxMode,
-	config.SandboxEnabled,
+	config.SandboxModeKey,
 	config.SandboxAuditLog,
 	config.SandboxAllowedPaths,
 	config.SessionDMScope,
 	config.GatewayPort,
 	config.GatewayUsers,
+	// Preview listener fields require restart because changing a listener's bind
+	// address or port mid-process races with active connections (FR-027b, MR-02).
+	config.GatewayPreviewPort,
+	config.GatewayPreviewHost,
+	config.GatewayPreviewOrigin,
+	config.GatewayPublicURL,
+	config.GatewayPreviewListenerEnabled,
+	config.ToolsWebServeWarmup,
 }
 
 // pendingRestartEntry is a single restart-required change: the dotted key
@@ -90,6 +97,10 @@ func (a *restAPI) HandlePendingRestart(w http.ResponseWriter, r *http.Request) {
 	for _, key := range RestartGatedKeys {
 		pv := getAtPath(persisted, string(key))
 		av := getAtPath(applied, string(key))
+		if key == config.GatewayUsers {
+			pv = normalizeUsersForDiff(pv)
+			av = normalizeUsersForDiff(av)
+		}
 		if !reflect.DeepEqual(pv, av) {
 			diffs = append(diffs, pendingRestartEntry{
 				Key:            string(key),
@@ -142,6 +153,41 @@ func mustDeepCopyConfig(cfg *config.Config) *config.Config {
 		panic(fmt.Sprintf("pending-restart: boot snapshot failed: %v", err))
 	}
 	return snap
+}
+
+// normalizeUsersForDiff strips rotating credential fields from each user
+// record so the pending-restart diff isn't triggered by routine session
+// activity. session_token_hash and token_hash are re-issued on every login
+// and persisted immediately, while applied_value reflects the boot snapshot
+// — without this normalization, the banner fires on first login and never
+// clears. Adding/removing a user, changing username, or changing role still
+// produces a diff, since those are the structural changes that genuinely
+// require a restart. password_hash is also stripped: a password change is
+// audited via emitUserAudit and takes effect immediately on the next login,
+// it is not a restart-gated event.
+func normalizeUsersForDiff(v any) any {
+	users, ok := v.([]any)
+	if !ok {
+		return v
+	}
+	out := make([]any, 0, len(users))
+	for _, u := range users {
+		m, ok := u.(map[string]any)
+		if !ok {
+			out = append(out, u)
+			continue
+		}
+		stripped := make(map[string]any, len(m))
+		for k, val := range m {
+			switch k {
+			case "session_token_hash", "token_hash", "password_hash":
+				continue
+			}
+			stripped[k] = val
+		}
+		out = append(out, stripped)
+	}
+	return out
 }
 
 // getAtPath extracts a value from a nested map[string]any using a dotted path

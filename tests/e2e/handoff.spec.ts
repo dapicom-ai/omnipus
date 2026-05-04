@@ -26,6 +26,7 @@ test.skip(
   // in the DOM. No data-testid="messages-list" and no per-message agent label element.
   // A deterministic handoff also requires a mock tool trigger, not a real LLM call.
   // See tests/e2e/SPA-GAPS.md — "Agent handoff transcript labels not surfaced in DOM".
+  // ALLOW-LISTED: { issue: "https://github.com/dapicom-ai/omnipus/issues/111", until: "2026-07-01" }
   async ({ page }) => {},
 );
 
@@ -47,22 +48,10 @@ test.skip(
 test(
   '(b) collapsed subagent display: spawn output renders as collapsed block, expandable',
   async ({ page }) => {
-    // Dependency check: OPENROUTER_API_KEY_CI must be set for this test to trigger
-    // a real LLM spawn. Without it, the LLM call fails and no spawn occurs.
-    const hasApiKey = Boolean(process.env.OPENROUTER_API_KEY_CI);
-    if (!hasApiKey) {
-      // Cannot proceed without a functional LLM — document as blocked rather than silent skip.
-      // This surfaces in the test report as a FAIL with diagnostic context.
-      // Traces to: QA role instructions — "Blocked is a failure, not a skip"
-      console.warn(
-        'BLOCKED: OPENROUTER_API_KEY_CI not set. ' +
-        'This test requires a real LLM to trigger spawn. ' +
-        'Scenario-provider HTTP injection into live gateway is not yet implemented. ' +
-        'Tracks: sprint-h-subagent-block-spec.md SC-H-001',
-      );
-      softSkip(test, 'OPENROUTER_API_KEY_CI not set — handoff test cannot run');
-      return;
-    }
+    // T0.1: OPENROUTER_API_KEY_CI soft-skip removed. The key is required in CI;
+    // its absence is a CI configuration failure, not a per-test skip condition.
+    // If OPENROUTER_API_KEY_CI is unset, the LLM call below will fail and the
+    // test will fail honestly — which is the correct behavior.
 
     const input = chatInput(page);
     await expect(input).toBeVisible({ timeout: 15_000 });

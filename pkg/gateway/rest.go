@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"sort"
@@ -31,6 +32,7 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/sandbox"
 	"github.com/dapicom-ai/omnipus/pkg/coreagent"
 	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/fileutil"
@@ -85,6 +87,42 @@ type restAPI struct {
 	adminUpdateConfigHandler http.Handler
 	adminPutPoliciesOnce     sync.Once
 	adminPutPoliciesHandler  http.Handler
+
+	// devServers is the gateway-wide Tier 3 dev-server registry. Shared with
+	// the web_serve tool (dev mode) and workspace.shell_bg tool via the agent
+	// instance. HandlePreview / HandleDevProxy read this to validate tokens
+	// and resolve the upstream loopback port. Nil when Tier 3 is not
+	// supported on the current platform (non-Linux).
+	devServers *sandbox.DevServerRegistry
+
+	// servedSubdirs is the gateway-wide static-preview registration map.
+	// Shared with the web_serve tool (static mode) via the agent instance.
+	// HandlePreview / HandleServeWorkspace read this to validate tokens and
+	// resolve the served directory. Nil when web_serve is not configured.
+	servedSubdirs *agent.ServedSubdirs
+
+	// approvalReg is the in-process tool-approval registry (FR-016, FR-070).
+	// Injected at boot by the gateway; nil in test setups that do not exercise approvals.
+	approvalReg *approvalRegistryV2
+
+	// builtinRegistry is the central registry for builtin tools (M16, FR-001).
+	// Populated at boot via BuiltinRegistry.RegisterBuiltin for all sysagent tools.
+	// GET /api/v1/tools consults this as the authoritative supply-side source.
+	// Nil in test setups that do not populate it; HandleToolsRegistry falls back
+	// to the per-agent tool set when nil.
+	builtinRegistry *tools.BuiltinRegistry
+
+	// mcpRegistry is the central registry for MCP server tools (M16, FR-001).
+	// Populated at runtime as MCP servers connect.
+	// GET /api/v1/tools includes MCP entries from this registry.
+	// Nil in test setups that do not wire MCP.
+	mcpRegistry *tools.MCPRegistry
+
+	// allowGodMode is set when the gateway was started with --allow-god-mode.
+	// When false, the agent update handler rejects sandbox_profile=off with 403.
+	// Mirrors the same field on AgentLoop for runtime tool coercion.
+	// Latch (2) — REST enforcement.
+	allowGodMode bool
 }
 
 // --- CORS / JSON helpers ---
@@ -527,11 +565,11 @@ func (a *restAPI) HandleAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// GET/PUT /api/v1/agents/{id}/tools — per-agent tool visibility config
+	// GET/PUT /api/v1/agents/{id}/tools — per-agent tool registry view (FR-028, FR-086)
 	if agentID != "" && subPath == "tools" {
 		switch r.Method {
 		case http.MethodGet:
-			a.getAgentTools(w, agentID)
+			a.HandleAgentToolsRegistry(w, r, agentID)
 		case http.MethodPut:
 			a.updateAgentTools(w, r, agentID)
 		default:
@@ -556,6 +594,12 @@ func (a *restAPI) HandleAgents(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPut:
 		if agentID != "" {
 			a.updateAgent(w, r, agentID)
+		} else {
+			jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
+	case http.MethodPatch:
+		if agentID != "" {
+			a.patchAgentOwnership(w, r, agentID)
 		} else {
 			jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
@@ -749,7 +793,7 @@ func agentWorkspacePath(cfg interface {
 	}
 	// Per-agent isolated workspace (FUNC-11). Use OMNIPUS_HOME/agents/{id}
 	// to match where system.agent.create writes SOUL.md.
-	if agentID != "" && agentID != "omnipus-system" {
+	if agentID != "" {
 		base := omnipusHome
 		if base == "" {
 			// Fallback to ~/.omnipus if homePath not provided.
@@ -1009,8 +1053,8 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 		Icon        string `json:"icon"`
 		ToolsCfg    *struct {
 			Builtin struct {
-				Mode    string   `json:"mode"`
-				Visible []string `json:"visible"`
+				DefaultPolicy string            `json:"default_policy"`
+				Policies      map[string]string `json:"policies"`
 			} `json:"builtin"`
 			MCP struct {
 				Servers []struct {
@@ -1039,21 +1083,27 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 	if req.Model != "" {
 		ac.Model = &config.AgentModelConfig{Primary: req.Model}
 	}
+	// Seed the privilege rail (FR-008/FR-022): custom agents always get
+	// system.*: deny unless the caller explicitly overrides it.
+	baseCfg := coreagent.NewCustomAgentToolsCfg()
 	if req.ToolsCfg != nil {
-		mode := config.VisibilityMode(req.ToolsCfg.Builtin.Mode)
-		if mode == "" {
-			mode = config.VisibilityInherit
+		builtin := config.AgentBuiltinToolsCfg{
+			// Start with the base default_policy=allow.
+			DefaultPolicy: baseCfg.Builtin.DefaultPolicy,
+			// Inherit the system.*: deny seed.
+			Policies: make(map[string]config.ToolPolicy, len(baseCfg.Builtin.Policies)),
 		}
-		if mode != config.VisibilityInherit && mode != config.VisibilityExplicit {
-			jsonErr(w, http.StatusUnprocessableEntity, "tools_cfg.builtin.mode must be 'inherit' or 'explicit'")
-			return
+		for k, v := range baseCfg.Builtin.Policies {
+			builtin.Policies[k] = v
 		}
-		ac.Tools = &config.AgentToolsCfg{
-			Builtin: config.AgentBuiltinToolsCfg{
-				Mode:    mode,
-				Visible: req.ToolsCfg.Builtin.Visible,
-			},
+		if req.ToolsCfg.Builtin.DefaultPolicy != "" {
+			builtin.DefaultPolicy = config.ToolPolicy(req.ToolsCfg.Builtin.DefaultPolicy)
 		}
+		// Merge caller-supplied policies; caller's system.* entry overrides seed.
+		for k, v := range req.ToolsCfg.Builtin.Policies {
+			builtin.Policies[k] = config.ToolPolicy(v)
+		}
+		ac.Tools = &config.AgentToolsCfg{Builtin: builtin}
 		if len(req.ToolsCfg.MCP.Servers) > 0 {
 			servers := make([]config.AgentMCPServerBinding, 0, len(req.ToolsCfg.MCP.Servers))
 			for _, s := range req.ToolsCfg.MCP.Servers {
@@ -1061,6 +1111,9 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 			}
 			ac.Tools.MCP = config.AgentMCPToolsCfg{Servers: servers}
 		}
+	} else {
+		// No caller-supplied tools config: use the full base config.
+		ac.Tools = baseCfg
 	}
 	// Persist the new agent to config.json BEFORE mutating the live config.
 	// If persistence fails, the in-memory config stays consistent with disk.
@@ -1089,12 +1142,17 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 			newAgent["model"] = map[string]any{"primary": ac.Model.Primary}
 		}
 		if ac.Tools != nil {
-			toolsCfg := map[string]any{
-				"builtin": map[string]any{
-					"mode":    string(ac.Tools.Builtin.Mode),
-					"visible": ac.Tools.Builtin.Visible,
-				},
+			builtinMap := map[string]any{
+				"default_policy": string(ac.Tools.Builtin.DefaultPolicy),
 			}
+			if len(ac.Tools.Builtin.Policies) > 0 {
+				policies := make(map[string]string, len(ac.Tools.Builtin.Policies))
+				for k, v := range ac.Tools.Builtin.Policies {
+					policies[k] = string(v)
+				}
+				builtinMap["policies"] = policies
+			}
+			toolsCfg := map[string]any{"builtin": builtinMap}
 			if len(ac.Tools.MCP.Servers) > 0 {
 				servers := make([]map[string]any, 0, len(ac.Tools.MCP.Servers))
 				for _, s := range ac.Tools.MCP.Servers {
@@ -1161,22 +1219,49 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 	var req struct {
-		Name              *string `json:"name"`
-		Description       *string `json:"description"`
-		Model             *string `json:"model"`
-		Soul              *string `json:"soul"`
-		Heartbeat         *string `json:"heartbeat"`
-		Instructions      *string `json:"instructions"`
-		TimeoutSeconds    *int    `json:"timeout_seconds"`
-		MaxToolIterations *int    `json:"max_tool_iterations"`
-		SteeringMode      *string `json:"steering_mode"`
-		ToolFeedback      *bool   `json:"tool_feedback"`
-		HeartbeatEnabled  *bool   `json:"heartbeat_enabled"`
-		HeartbeatInterval *int    `json:"heartbeat_interval"`
+		Name              *string                  `json:"name"`
+		Description       *string                  `json:"description"`
+		Model             *string                  `json:"model"`
+		Soul              *string                  `json:"soul"`
+		Heartbeat         *string                  `json:"heartbeat"`
+		Instructions      *string                  `json:"instructions"`
+		TimeoutSeconds    *int                     `json:"timeout_seconds"`
+		MaxToolIterations *int                     `json:"max_tool_iterations"`
+		SteeringMode      *string                  `json:"steering_mode"`
+		ToolFeedback      *bool                    `json:"tool_feedback"`
+		HeartbeatEnabled  *bool                    `json:"heartbeat_enabled"`
+		HeartbeatInterval *int                     `json:"heartbeat_interval"`
+		SandboxProfile    *config.SandboxProfile   `json:"sandbox_profile"`
+		ShellPolicy       *config.AgentShellPolicy `json:"shell_policy"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonErr(w, http.StatusBadRequest, "invalid JSON body")
 		return
+	}
+	// Enforce god-mode latches (1) and (2) at the REST write gate.
+	// Reject sandbox_profile=off unless both sandbox.GodModeAvailable (build
+	// tag) and a.allowGodMode (--allow-god-mode boot flag) are true.
+	if req.SandboxProfile != nil && *req.SandboxProfile == config.SandboxProfileOff {
+		if !sandbox.GodModeAvailable {
+			jsonErr(w, http.StatusForbidden,
+				"sandbox_profile=off is not available in this build")
+			return
+		}
+		if !a.allowGodMode {
+			jsonErr(w, http.StatusForbidden,
+				"sandbox_profile=off requires --allow-god-mode at gateway boot")
+			return
+		}
+	}
+	// Validate any custom deny patterns in shell_policy — each must be a valid Go regexp.
+	if req.ShellPolicy != nil && len(req.ShellPolicy.CustomDenyPatterns) > 0 {
+		for _, pat := range req.ShellPolicy.CustomDenyPatterns {
+			if _, compileErr := regexp.Compile(pat); compileErr != nil {
+				jsonErr(w, http.StatusBadRequest,
+					fmt.Sprintf("shell_policy.custom_deny_patterns: invalid regexp %q: %v", pat, compileErr))
+				return
+			}
+		}
 	}
 	// Locked core agents: reject identity and prompt mutations.
 	// Allowed: model selection, heartbeat schedule (enabled/interval), tools (via updateAgentTools).
@@ -1253,6 +1338,22 @@ func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string)
 						agentMap["tool_feedback"] = tfMap
 					}
 					tfMap["enabled"] = *req.ToolFeedback
+				}
+				if req.SandboxProfile != nil {
+					if *req.SandboxProfile == "" {
+						delete(agentMap, "sandbox_profile")
+					} else {
+						agentMap["sandbox_profile"] = string(*req.SandboxProfile)
+					}
+				}
+				if req.ShellPolicy != nil {
+					spMap := map[string]any{
+						"enable_deny_patterns": req.ShellPolicy.EnableDenyPatterns,
+					}
+					if len(req.ShellPolicy.CustomDenyPatterns) > 0 {
+						spMap["custom_deny_patterns"] = req.ShellPolicy.CustomDenyPatterns
+					}
+					agentMap["shell_policy"] = spMap
 				}
 				break
 			}
@@ -1567,6 +1668,15 @@ func (a *restAPI) safeUpdateConfigJSON(mutate func(m map[string]any) error) erro
 	if refreshErr := a.refreshConfigAndRewireServices(a.configPath()); refreshErr != nil {
 		return fmt.Errorf("config written but in-memory refresh failed: %w", refreshErr)
 	}
+	// FR-061 single chokepoint: every config mutation invalidates all cached
+	// system-prompt preambles so the next agent turn rebuilds from the updated
+	// config. Doing this inside safeUpdateConfigJSON removes the need for
+	// individual call sites to remember the invalidation step.
+	if a.agentLoop != nil {
+		if reg := a.agentLoop.ContextBuilderRegistry(); reg != nil {
+			reg.InvalidateAllContextBuilders()
+		}
+	}
 	return nil
 }
 
@@ -1720,6 +1830,7 @@ func (a *restAPI) updateConfig(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not save config: %v", err))
 		return
 	}
+
 	a.getConfig(w)
 }
 
@@ -1888,8 +1999,11 @@ func (a *restAPI) HandleDoctor(w http.ResponseWriter, r *http.Request) {
 }
 
 // runDiagnosticChecks performs real diagnostic checks and returns issues found.
+// Returns a non-nil empty slice when there are no issues so the JSON shape is
+// always `"issues": []` rather than `"issues": null` — frontend consumers
+// (DiagnosticsSection.tsx) call .filter() directly on the field.
 func (a *restAPI) runDiagnosticChecks(cfg *config.Config) []map[string]any {
-	var issues []map[string]any
+	issues := []map[string]any{}
 
 	// Check if a default model is configured.
 	if len(cfg.Providers) == 0 {
@@ -1915,8 +2029,10 @@ func (a *restAPI) runDiagnosticChecks(cfg *config.Config) []map[string]any {
 		})
 	}
 
-	// Check sandbox configuration.
-	if !cfg.Sandbox.Enabled {
+	// Check sandbox configuration. ResolvedMode is the source of truth.
+	// Both "enforce" and "permissive" represent an active sandbox; only
+	// "off" (or an empty config that resolves to off) should warn.
+	if cfg.Sandbox.ResolvedMode() == string(config.SandboxModeOff) {
 		issues = append(issues, map[string]any{
 			"id":             "sandbox-disabled",
 			"severity":       "medium",
@@ -1991,9 +2107,10 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	cm.RegisterHTTPHandler("/api/v1/mcp-servers", a.withAuth(a.HandleMCPServers))
 	cm.RegisterHTTPHandler("/api/v1/mcp-servers/", a.withAuth(a.HandleMCPServers))
 	cm.RegisterHTTPHandler("/api/v1/storage/stats", a.withAuth(a.HandleStorageStats))
-	cm.RegisterHTTPHandler("/api/v1/tools", a.withAuth(a.HandleTools))
-	cm.RegisterHTTPHandler("/api/v1/tools/builtin", a.withAuth(a.HandleBuiltinTools))
+	cm.RegisterHTTPHandler("/api/v1/tools", a.withAuth(a.HandleToolsRegistry))
+	cm.RegisterHTTPHandler("/api/v1/tools/builtin", a.withAuth(a.HandleBuiltinToolsDeprecated))
 	cm.RegisterHTTPHandler("/api/v1/tools/mcp", a.withAuth(a.HandleMCPTools))
+	cm.RegisterHTTPHandler("/api/v1/tool-approvals/", a.withAuth(a.HandleToolApprovals))
 	cm.RegisterHTTPHandler("/api/v1/channels", a.withAuth(a.HandleChannels))
 	cm.RegisterHTTPHandler("/api/v1/channels/", a.withAuth(a.HandleChannels))
 	cm.RegisterHTTPHandler("/api/v1/agents/", a.withAuth(a.HandleAgents))
@@ -2077,6 +2194,33 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	// File upload endpoints (Milestone 3).
 	cm.RegisterHTTPHandler("/api/v1/upload", a.withUploadAuth(a.HandleUpload))
 	cm.RegisterHTTPHandler("/api/v1/uploads/", a.withOptionalAuth(a.HandleServeUpload))
+
+	// Prometheus-compatible metrics endpoint (FR-039).
+	// Unauthenticated for Prometheus scrape compatibility; does not expose secrets.
+	cm.RegisterHTTPHandler("/metrics", http.HandlerFunc(a.HandleMetrics))
+
+	// Register the test-harness scenario endpoint (test_harness build tag only).
+	// In non-test_harness builds this is a no-op stub in test_harness_disabled.go.
+	a.registerTestHarness(cm)
+}
+
+// registerPreviewEndpoints registers /preview/, /serve/, and /dev/ on the
+// preview mux ONLY (FR-005, FR-006). These paths are not registered on the
+// main mux.
+//
+// Auth model: token-only (FR-023). No RequireSessionCookieOrBearer, no
+// RequireMatchingOriginOnStateChanging (FR-023a).
+//
+// /preview/ is the unified route for the web_serve tool.
+// /serve/ and /dev/ are kept ONLY for replay of historical session transcripts
+// that still link to the old URL shapes. The legacy serve_workspace (static
+// mode) and run_in_workspace (dev mode) tools that produced those registrations
+// are removed; no new registration can reach these back-compat handlers.
+// Scheduled for deletion in v0.2 cleanup (target 2026-08-01).
+func (a *restAPI) registerPreviewEndpoints(cm previewHandlerRegistrar) {
+	cm.RegisterPreviewHandler("/preview/", http.HandlerFunc(a.HandlePreview))
+	cm.RegisterPreviewHandler("/serve/", http.HandlerFunc(a.HandleServeWorkspace))
+	cm.RegisterPreviewHandler("/dev/", http.HandlerFunc(a.HandleDevProxy))
 }
 
 // handleUsersWithParam dispatches /api/v1/users/{username}[/subpath] requests
@@ -2147,6 +2291,14 @@ func (a *restAPI) rotateGatewayToken(w http.ResponseWriter, r *http.Request) {
 // httpHandlerRegistrar is the subset of channels.Manager used for route registration.
 type httpHandlerRegistrar interface {
 	RegisterHTTPHandler(pattern string, handler http.Handler)
+}
+
+// previewHandlerRegistrar is the subset of channels.Manager used to register
+// routes on the preview mux (FR-005). Separate from httpHandlerRegistrar so
+// that existing test mocks implementing the main-mux interface do not need to
+// be updated when preview routes are added.
+type previewHandlerRegistrar interface {
+	RegisterPreviewHandler(pattern string, handler http.Handler)
 }
 
 // --- App State ---
@@ -2523,7 +2675,7 @@ func (a *restAPI) HandleActivity(w http.ResponseWriter, r *http.Request) {
 
 	// Build agent name lookup
 	cfg := a.agentLoop.GetConfig()
-	agentNames := map[string]string{"omnipus-system": "Omnipus"}
+	agentNames := map[string]string{}
 	for _, ac := range cfg.Agents.List {
 		agentNames[ac.ID] = ac.Name
 	}
@@ -3052,17 +3204,6 @@ func toolToMap(t tools.Tool, defaultCategory string) map[string]any {
 	}
 }
 
-// HandleBuiltinTools handles GET /api/v1/tools/builtin — returns the full
-// catalog of all tools available in the system, regardless of which are
-// currently enabled or assigned to agents.
-func (a *restAPI) HandleBuiltinTools(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	jsonOK(w, tools.CatalogAsMapSlice())
-}
-
 // HandleMCPTools handles GET /api/v1/tools/mcp — returns all configured MCP
 // servers with their status and tool lists for the agent tool picker UI.
 func (a *restAPI) HandleMCPTools(w http.ResponseWriter, r *http.Request) {
@@ -3095,22 +3236,17 @@ func (a *restAPI) getAgentTools(w http.ResponseWriter, agentID string) {
 	// Determine agent type and tool config.
 	agentType := "custom"
 	var toolsCfg *config.AgentToolsCfg
-	if agentID == "omnipus-system" {
-		agentType = "system"
-	} else {
-		for _, ac := range cfg.Agents.List {
-			if ac.ID == agentID {
-				at := ac.ResolveType(coreagent.IsCoreAgent)
-				agentType = string(at)
-				toolsCfg = ac.Tools
-				break
-			}
+	for _, ac := range cfg.Agents.List {
+		if ac.ID == agentID {
+			at := ac.ResolveType(coreagent.IsCoreAgent)
+			agentType = string(at)
+			toolsCfg = ac.Tools
+			break
 		}
-		// Core agents may not be in cfg.Agents.List (runtime-only). Detect them
-		// so FilterToolsByVisibility applies the correct scope gate.
-		if agentType == "custom" && coreagent.IsCoreAgent(agentID) {
-			agentType = "core"
-		}
+	}
+	// Core agents may not be in cfg.Agents.List (runtime-only). Detect them.
+	if agentType == "custom" && coreagent.IsCoreAgent(agentID) {
+		agentType = "core"
 	}
 
 	// Build the effective tool list using scope filtering.
@@ -3169,23 +3305,24 @@ func (a *restAPI) getAgentTools(w http.ResponseWriter, agentID string) {
 // updateAgentTools handles PUT /api/v1/agents/{id}/tools — replaces the
 // agent's tool visibility config.
 func (a *restAPI) updateAgentTools(w http.ResponseWriter, r *http.Request, agentID string) {
-	// Legacy system agent ID returns 404 since it no longer exists.
-	// Core agents are protected by the Locked check below.
-	if agentID == "omnipus-system" {
-		jsonErr(w, http.StatusNotFound, fmt.Sprintf("agent %q not found", agentID))
-		return
-	}
-
 	cfg := a.agentLoop.GetConfig()
 	found := false
+	var foundAgent config.AgentConfig
 	for _, ac := range cfg.Agents.List {
 		if ac.ID == agentID {
 			found = true
+			foundAgent = ac
 			break
 		}
 	}
 	if !found {
 		jsonErr(w, http.StatusNotFound, fmt.Sprintf("agent %q not found", agentID))
+		return
+	}
+	// Locked (core/system) agents cannot have their tool policy overwritten via the API.
+	// Use coreagent.IsCoreAgent or check the Locked flag.
+	if foundAgent.Locked {
+		jsonErr(w, http.StatusForbidden, fmt.Sprintf("agent %q is locked and cannot be modified", agentID))
 		return
 	}
 
@@ -3302,38 +3439,24 @@ func (a *restAPI) updateAgentTools(w http.ResponseWriter, r *http.Request, agent
 
 	// Tool policy changes are config-only — no reload needed. The policy is
 	// resolved at request time from the live config, not baked into agent instances.
+	// FR-061 invalidation fires inside safeUpdateConfigJSON above.
 	a.getAgentTools(w, agentID)
 }
 
 // toolsCfgToPolicy converts a config.AgentToolsCfg to ToolPolicyCfg.
-// Handles both new (DefaultPolicy+Policies) and legacy (Mode+Visible) formats.
 func toolsCfgToPolicy(cfg *config.AgentToolsCfg) *tools.ToolPolicyCfg {
 	if cfg == nil {
 		return &tools.ToolPolicyCfg{DefaultPolicy: "allow"}
 	}
-	// New format: use policies directly.
-	if len(cfg.Builtin.Policies) > 0 || cfg.Builtin.DefaultPolicy != "" {
-		policies := make(map[string]string, len(cfg.Builtin.Policies))
-		for k, v := range cfg.Builtin.Policies {
-			policies[k] = string(v)
-		}
-		dp := string(cfg.Builtin.DefaultPolicy)
-		if dp == "" {
-			dp = "allow"
-		}
-		return &tools.ToolPolicyCfg{DefaultPolicy: dp, Policies: policies}
+	policies := make(map[string]string, len(cfg.Builtin.Policies))
+	for k, v := range cfg.Builtin.Policies {
+		policies[k] = string(v)
 	}
-	// Legacy format: convert mode+visible to policies.
-	switch cfg.Builtin.Mode {
-	case config.VisibilityExplicit:
-		policies := make(map[string]string, len(cfg.Builtin.Visible))
-		for _, name := range cfg.Builtin.Visible {
-			policies[name] = "allow"
-		}
-		return &tools.ToolPolicyCfg{DefaultPolicy: "deny", Policies: policies}
-	default: // "inherit" or empty
-		return &tools.ToolPolicyCfg{DefaultPolicy: "allow"}
+	dp := string(cfg.Builtin.DefaultPolicy)
+	if dp == "" {
+		dp = "allow"
 	}
+	return &tools.ToolPolicyCfg{DefaultPolicy: dp, Policies: policies}
 }
 
 // --- Channels ---

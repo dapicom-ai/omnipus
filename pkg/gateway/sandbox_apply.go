@@ -107,18 +107,30 @@ type SandboxApplyResult struct {
 	// Mode=Permissive, "production_off" when Mode=Off + OMNIPUS_ENV=production.
 	// Used by StartNagBanner to decide whether and what to repeat.
 	NagReason string
+	// Policy is the SandboxPolicy that was passed to Apply (or that would
+	// have been passed if Mode == Off / fallback backend). Retained so the
+	// /api/v1/security/sandbox-status endpoint can surface bind/connect
+	// port-rule counts to operators without re-deriving them from config.
+	// Zero-value SandboxPolicy when Mode == Off or no policy was computed.
+	Policy sandbox.SandboxPolicy
 }
 
 // resolveMode implements the CLI > config > default precedence rule from
 // FR-J-006. Returns (mode, disabledBy, error):
 //
 //	"cli_flag"  — CLI flag provided (trumps config, even empty-string config)
-//	"config"    — Mode came from config (either Mode or legacy Enabled)
-//	""          — Mode was derived from defaults (no CLI, no config)
+//	"config"    — Mode came from config (cfgMode non-empty)
+//	""          — Mode was derived from defaults (no CLI, empty cfgMode,
+//	              and configTouched=false → fresh install)
+//
+// configTouched indicates whether the operator has written ANY sandbox
+// settings to disk (Mode set OR a populated AllowedPaths list). When true
+// with an empty Mode we treat it as an explicit "off"; when false we apply
+// the "enforce on capable kernels" default for fresh installs.
 //
 // An invalid CLI value causes an error so cmd/omnipus can exit with code 2
 // (usage error) before any boot logic runs (FR-J-006 second sentence).
-func resolveMode(cliMode, cfgMode string, cfgEnabledSet bool) (sandbox.Mode, string, error) {
+func resolveMode(cliMode, cfgMode string, configTouched bool) (sandbox.Mode, string, error) {
 	// CLI takes priority unconditionally. An empty CLIMode means no flag
 	// was passed — defer to config.
 	if cliMode != "" {
@@ -129,14 +141,11 @@ func resolveMode(cliMode, cfgMode string, cfgEnabledSet bool) (sandbox.Mode, str
 		return mode, "cli_flag", nil
 	}
 
-	// No CLI override. Use the config's ResolvedMode which handles the
-	// legacy Enabled mapping. An empty cfgMode with cfgEnabledSet=false
-	// means neither field was written — this is a fresh config and we
-	// should apply the "enforce on capable kernels" default.
-	if cfgMode == "" && !cfgEnabledSet {
-		// Fresh config: caller-level default. Kernel capability is
-		// checked separately by SelectBackend → FallbackBackend on
-		// pre-5.13 kernels.
+	// No CLI override. Empty cfgMode + nothing else touched in the sandbox
+	// section means a fresh install — apply the "enforce on capable
+	// kernels" default. Kernel capability is checked separately by
+	// SelectBackend → FallbackBackend on pre-5.13 kernels.
+	if cfgMode == "" && !configTouched {
 		return sandbox.ModeEnforce, "", nil
 	}
 
@@ -197,17 +206,15 @@ func applySandbox(opts SandboxApplyOptions) (*SandboxApplyResult, error) {
 	// cmd/omnipus/internal/gateway/command.go) with exit code 2, so any
 	// error returned here is a bug in the caller; we still guard.
 	cfgMode := ""
-	cfgEnabledSet := false
+	configTouched := false
 	if opts.Cfg != nil {
-		cfgMode = opts.Cfg.Sandbox.Mode
-		// Detect "Enabled was written to config" vs "Enabled defaulted
-		// to the zero value". Presence of any Sandbox field indicates
-		// the operator touched the section.
-		cfgEnabledSet = opts.Cfg.Sandbox.Enabled ||
-			opts.Cfg.Sandbox.Mode != "" ||
+		cfgMode = string(opts.Cfg.Sandbox.Mode)
+		// "Operator touched the section" — anything non-zero in the
+		// sandbox config tells us not to apply the fresh-install default.
+		configTouched = opts.Cfg.Sandbox.Mode != "" ||
 			len(opts.Cfg.Sandbox.AllowedPaths) > 0
 	}
-	mode, disabledBy, err := resolveMode(opts.CLIMode, cfgMode, cfgEnabledSet)
+	mode, disabledBy, err := resolveMode(opts.CLIMode, cfgMode, configTouched)
 	if err != nil {
 		return nil, err
 	}
@@ -291,7 +298,38 @@ func applySandbox(opts SandboxApplyOptions) (*SandboxApplyResult, error) {
 	if opts.Cfg != nil {
 		allowedPaths = opts.Cfg.Sandbox.AllowedPaths
 	}
-	policy := sandbox.DefaultPolicy(opts.HomePath, allowedPaths, warnFn)
+
+	// Compute the bind-port allow-list for Landlock ABI v4+.
+	//
+	// Bind ports: every port in cfg.Sandbox.DevServerPortRange. The kernel
+	//   does not accept ranges, so we expand to one rule per port. Agents
+	//   serving via web_serve (dev mode) and workspace.shell_bg bind here.
+	//
+	// Connect-port rules were removed in v0.1 (A1.3): the kernel only handles
+	// NET_BIND_TCP in handledAccessNet. Outbound TCP filtering is delegated to
+	// the egress proxy layer.
+	//
+	// On ABI < 4 we leave bindPorts nil — handledAccessNet stays 0, and
+	// passing rules to a kernel that does not handle net access would only
+	// trigger the defensive warn-and-skip in ApplyWithMode.
+	var bindPorts []uint16
+	abiVersion := 0
+	if rep, ok := backend.(interface{ ABIVersion() int }); ok {
+		abiVersion = rep.ABIVersion()
+	}
+	if abiVersion >= 4 && opts.Cfg != nil {
+		pr := opts.Cfg.Sandbox.DevServerPortRange
+		if !pr.IsZero() {
+			for p := pr.Min(); p <= pr.Max(); p++ {
+				if p < 1 || p > 65535 {
+					continue
+				}
+				bindPorts = append(bindPorts, uint16(p))
+			}
+		}
+	}
+	policy := sandbox.DefaultPolicy(opts.HomePath, allowedPaths, warnFn, bindPorts)
+	result.Policy = policy
 
 	// Step 6 — Apply Landlock. Seccomp Install MUST run after this
 	// (FR-J-002) because seccomp filters all syscalls including
@@ -317,10 +355,7 @@ func applySandbox(opts SandboxApplyOptions) (*SandboxApplyResult, error) {
 	}
 
 	// Step 8 — Populate result state for /health and /api/.../sandbox-status.
-	abiVersion := 0
-	if rep, ok := backend.(interface{ ABIVersion() int }); ok {
-		abiVersion = rep.ABIVersion()
-	}
+	// abiVersion is already resolved above for the net-rule gating.
 	result.ApplyState = sandbox.ApplyState{
 		Mode:             mode,
 		LandlockEnforced: mode == sandbox.ModeEnforce,

@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -137,4 +138,209 @@ func runLandlockChild() {
 	// Unexpected read error — exit 2 so the parent fails with a clear message.
 	fmt.Fprintf(os.Stderr, "Unexpected /etc/passwd read error (not EACCES/EPERM): %v\n", err)
 	os.Exit(2)
+}
+
+// TestLandlock_BindBlockedSubprocess verifies that a Landlock policy with a
+// non-empty BindPortRules list blocks bind() to ports OUTSIDE the allow-list.
+// Re-execs the test binary; the child applies a policy that allows binding
+// only to port 18001 and then tries to bind 0.0.0.0:5173. Expected child exit
+// codes follow the existing convention:
+//
+//	42 — bind correctly blocked with EACCES
+//	77 — Landlock unavailable / ABI < 4 (skip)
+//	1  — bind unexpectedly succeeded (test failure)
+//	2  — unexpected error type
+//
+// Requires Landlock ABI v4+ for NET_BIND_TCP. Pre-v4 kernels skip via 77.
+func TestLandlock_BindBlockedSubprocess(t *testing.T) {
+	if os.Getenv("OMNIPUS_LANDLOCK_BIND_BLOCKED_CHILD") == "1" {
+		runLandlockBindBlockedChild()
+		return
+	}
+	if os.Getuid() == 0 {
+		t.Skip("Landlock tests must run as non-root (root bypasses Landlock restrictions)")
+	}
+	abi := sandbox.ProbeLandlockABI()
+	if abi < 4 {
+		t.Skipf("Landlock ABI v4 required for NET_BIND_TCP (have v%d)", abi)
+	}
+
+	workspace := t.TempDir()
+	//nolint:gosec // intentional test-binary self-exec
+	cmd := exec.Command(os.Args[0],
+		"-test.run=TestLandlock_BindBlockedSubprocess",
+		"-test.count=1",
+		"-test.v",
+	)
+	cmd.Env = append(os.Environ(),
+		"OMNIPUS_LANDLOCK_BIND_BLOCKED_CHILD=1",
+		"OMNIPUS_LANDLOCK_SANDBOX_DIR="+workspace,
+	)
+	out, err := cmd.CombinedOutput()
+	exitCode := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			t.Fatalf("child failed to run: %v\n%s", err, out)
+		}
+	}
+	switch exitCode {
+	case 42:
+		t.Logf("Landlock bind enforcement confirmed (child exited 42)")
+	case 77:
+		t.Skipf("Landlock unavailable in child (exit 77):\n%s", out)
+	default:
+		t.Fatalf("child exit %d (expected 42):\n%s", exitCode, out)
+	}
+}
+
+// TestLandlock_BindAllowedSubprocess is the dual of BindBlocked: the same
+// policy must let bind(0.0.0.0:18001) succeed because 18001 is on the
+// allow-list. Child exits 0 on success, 77 when Landlock is unavailable,
+// 1 on EACCES (rule didn't take effect), 2 on other unexpected errors.
+func TestLandlock_BindAllowedSubprocess(t *testing.T) {
+	if os.Getenv("OMNIPUS_LANDLOCK_BIND_ALLOWED_CHILD") == "1" {
+		runLandlockBindAllowedChild()
+		return
+	}
+	if os.Getuid() == 0 {
+		t.Skip("Landlock tests must run as non-root (root bypasses Landlock restrictions)")
+	}
+	abi := sandbox.ProbeLandlockABI()
+	if abi < 4 {
+		t.Skipf("Landlock ABI v4 required for NET_BIND_TCP (have v%d)", abi)
+	}
+
+	workspace := t.TempDir()
+	//nolint:gosec // intentional test-binary self-exec
+	cmd := exec.Command(os.Args[0],
+		"-test.run=TestLandlock_BindAllowedSubprocess",
+		"-test.count=1",
+		"-test.v",
+	)
+	cmd.Env = append(os.Environ(),
+		"OMNIPUS_LANDLOCK_BIND_ALLOWED_CHILD=1",
+		"OMNIPUS_LANDLOCK_SANDBOX_DIR="+workspace,
+	)
+	out, err := cmd.CombinedOutput()
+	exitCode := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			t.Fatalf("child failed to run: %v\n%s", err, out)
+		}
+	}
+	switch exitCode {
+	case 0:
+		t.Logf("Landlock bind allow-rule confirmed (child exited 0)")
+	case 77:
+		t.Skipf("Landlock unavailable in child (exit 77):\n%s", out)
+	default:
+		t.Fatalf("child exit %d (expected 0):\n%s", exitCode, out)
+	}
+}
+
+// rawTCPBind issues bind(2) directly on a fresh AF_INET TCP socket, bypassing
+// Go's net.Listen. Landlock NET_BIND_TCP enforces at the bind(2) syscall, but
+// net.Listen has internal dual-stack/fallback paths that can mask the rule on
+// some Go versions; for a deterministic kernel-level test we go through the
+// syscall directly.
+func rawTCPBind(port uint16) error {
+	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM, 0)
+	if err != nil {
+		return fmt.Errorf("socket: %w", err)
+	}
+	defer syscall.Close(fd)
+	sa := &syscall.SockaddrInet4{Port: int(port)}
+	// 0.0.0.0
+	return syscall.Bind(fd, sa)
+}
+
+// runLandlockBindBlockedChild applies a workspace-only FS policy plus a
+// single-port (18001) bind allow-rule, then attempts to bind a port that is
+// NOT on the allow-list. The expected outcome is EACCES from the kernel.
+//
+// runtime.LockOSThread is required: Landlock's landlock_restrict_self only
+// restricts the calling thread. Without locking, Go can migrate this goroutine
+// to a different OS thread between Apply and the bind syscall, and the bind
+// happens on an unrestricted thread.
+func runLandlockBindBlockedChild() {
+	runtime.LockOSThread()
+	workspace := os.Getenv("OMNIPUS_LANDLOCK_SANDBOX_DIR")
+	if workspace == "" {
+		os.Exit(77)
+	}
+	backend, name := sandbox.SelectBackend()
+	if !strings.HasPrefix(name, "landlock") {
+		os.Exit(77)
+	}
+	policy := sandbox.SandboxPolicy{
+		FilesystemRules: []sandbox.PathRule{
+			{Path: workspace, Access: sandbox.AccessRead | sandbox.AccessWrite},
+			// Loader needs to read shared libs; mirror the production policy.
+			{Path: "/lib", Access: sandbox.AccessRead | sandbox.AccessExecute},
+			{Path: "/lib64", Access: sandbox.AccessRead | sandbox.AccessExecute},
+			{Path: "/usr/lib", Access: sandbox.AccessRead | sandbox.AccessExecute},
+			{Path: "/usr/lib64", Access: sandbox.AccessRead | sandbox.AccessExecute},
+		},
+		BindPortRules: []sandbox.NetPortRule{{Port: 18001}},
+	}
+	if err := backend.Apply(policy); err != nil {
+		fmt.Fprintf(os.Stderr, "Apply failed (skip): %v\n", err)
+		os.Exit(77)
+	}
+	err := rawTCPBind(5173)
+	if err == nil {
+		fmt.Fprintf(os.Stderr, "Landlock did NOT block bind(0.0.0.0:5173)\n")
+		os.Exit(1)
+	}
+	if isEACCES(err) {
+		fmt.Fprintf(os.Stderr, "bind(5173) blocked as expected: %v\n", err)
+		os.Exit(42)
+	}
+	fmt.Fprintf(os.Stderr, "Unexpected bind error (not EACCES): %v\n", err)
+	os.Exit(2)
+}
+
+// runLandlockBindAllowedChild mirrors the blocked variant but binds a port
+// that IS on the allow-list. The kernel must let it through.
+func runLandlockBindAllowedChild() {
+	runtime.LockOSThread()
+	workspace := os.Getenv("OMNIPUS_LANDLOCK_SANDBOX_DIR")
+	if workspace == "" {
+		os.Exit(77)
+	}
+	backend, name := sandbox.SelectBackend()
+	if !strings.HasPrefix(name, "landlock") {
+		os.Exit(77)
+	}
+	policy := sandbox.SandboxPolicy{
+		FilesystemRules: []sandbox.PathRule{
+			{Path: workspace, Access: sandbox.AccessRead | sandbox.AccessWrite},
+			{Path: "/lib", Access: sandbox.AccessRead | sandbox.AccessExecute},
+			{Path: "/lib64", Access: sandbox.AccessRead | sandbox.AccessExecute},
+			{Path: "/usr/lib", Access: sandbox.AccessRead | sandbox.AccessExecute},
+			{Path: "/usr/lib64", Access: sandbox.AccessRead | sandbox.AccessExecute},
+		},
+		BindPortRules: []sandbox.NetPortRule{{Port: 18001}},
+	}
+	if err := backend.Apply(policy); err != nil {
+		fmt.Fprintf(os.Stderr, "Apply failed (skip): %v\n", err)
+		os.Exit(77)
+	}
+	if err := rawTCPBind(18001); err != nil {
+		fmt.Fprintf(os.Stderr, "bind(18001) unexpectedly failed: %v\n", err)
+		if isEACCES(err) {
+			os.Exit(1)
+		}
+		os.Exit(2)
+	}
+	os.Exit(0)
+}
+
+// isEACCES walks errors.Is to check for EACCES inside wrapped errors.
+func isEACCES(err error) bool {
+	return errors.Is(err, syscall.EACCES) || errors.Is(err, syscall.EPERM)
 }

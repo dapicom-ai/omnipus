@@ -39,12 +39,22 @@ type InboundMessage struct {
 	MessageID  string            `json:"message_id,omitempty"`  // platform message ID
 	MediaScope string            `json:"media_scope,omitempty"` // media lifecycle scope
 	SessionKey string            `json:"session_key"`
-	Metadata   map[string]string `json:"metadata,omitempty"`
+	// SessionID is the transcript-store session ID this message belongs to.
+	// Populated by the gateway from the WS frame.SessionID on every message
+	// (the gateway mints a new id when the SPA sends one without it). Used
+	// by routing, handoff override, and per-agent history keying so two
+	// concurrent sessions in the same browser remain isolated.
+	SessionID string            `json:"session_id,omitempty"`
+	Metadata  map[string]string `json:"metadata,omitempty"`
 }
 
 type OutboundMessage struct {
-	Channel          string `json:"channel"`
-	ChatID           string `json:"chat_id"`
+	Channel string `json:"channel"`
+	ChatID  string `json:"chat_id"`
+	// SessionID is the transcript-store session this message belongs to.
+	// Populated by the agent loop from the originating turn so channels
+	// (and the SPA) can route the frame to the right session bucket.
+	SessionID        string `json:"session_id,omitempty"`
 	Content          string `json:"content"`
 	ReplyToMessageID string `json:"reply_to_message_id,omitempty"`
 }
@@ -60,7 +70,8 @@ type MediaPart struct {
 
 // OutboundMediaMessage carries media attachments from Agent to channels via the bus.
 type OutboundMediaMessage struct {
-	Channel string      `json:"channel"`
-	ChatID  string      `json:"chat_id"`
-	Parts   []MediaPart `json:"parts"`
+	Channel   string      `json:"channel"`
+	ChatID    string      `json:"chat_id"`
+	SessionID string      `json:"session_id,omitempty"`
+	Parts     []MediaPart `json:"parts"`
 }

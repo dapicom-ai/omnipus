@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"log/slog"
 
+	"github.com/dapicom-ai/omnipus/pkg/media"
 	"github.com/dapicom-ai/omnipus/pkg/session"
 )
 
@@ -59,7 +60,15 @@ func streamReplay(
 	entries []session.TranscriptEntry,
 	rs replayStats,
 	emit func(wsServerFrame) error,
+	mediaStore media.MediaStore,
 ) (framesEmitted int, err error) {
+	// Track underlying file paths already emitted so the SPA never receives
+	// two media frames for the same file. Older transcripts can carry
+	// multiple media:// refs pointing at the same on-disk file (browser.
+	// screenshot stored an inline copy AND send_file registered a second
+	// ref before the RefByPath dedup landed). Without this guard, both
+	// frames replay and the user sees the screenshot twice.
+	seenPaths := make(map[string]struct{})
 	// ── Pass 1: build ancillary indexes ─────────────────────────────────────
 
 	// spawnIDsPresent: set of ToolCall.IDs where tool == "spawn" AND at least
@@ -108,10 +117,11 @@ func streamReplay(
 	// construction in the spawn-parent branch and the flat-emission branch.
 	buildStart := func(tc session.ToolCall, agentID, parentCallID string) wsServerFrame {
 		f := wsServerFrame{
-			Type:   "tool_call_start",
-			CallID: string(tc.ID),
-			Tool:   tc.Tool,
-			Params: tc.Parameters,
+			Type:      "tool_call_start",
+			SessionID: sessionID,
+			CallID:    string(tc.ID),
+			Tool:      tc.Tool,
+			Params:    tc.Parameters,
 		}
 		if agentID != "" {
 			f.AgentID = agentID
@@ -128,6 +138,7 @@ func streamReplay(
 		resultPayload := truncateResult(sessionID, tc)
 		f := wsServerFrame{
 			Type:       "tool_call_result",
+			SessionID:  sessionID,
 			CallID:     string(tc.ID),
 			Tool:       tc.Tool,
 			Result:     resultPayload,
@@ -161,9 +172,10 @@ func streamReplay(
 		// FR-I-002: emit replay_message for non-empty content.
 		if entry.Content != "" {
 			f := wsServerFrame{
-				Type:    "replay_message",
-				Role:    entry.Role,
-				Content: entry.Content,
+				Type:      "replay_message",
+				SessionID: sessionID,
+				Role:      entry.Role,
+				Content:   entry.Content,
 			}
 			if entry.AgentID != "" {
 				f.AgentID = entry.AgentID
@@ -233,6 +245,7 @@ func streamReplay(
 				taskLabel := resolveTaskLabel(tc)
 				subStart := wsServerFrame{
 					Type:         "subagent_start",
+					SessionID:    sessionID,
 					SpanID:       spanID,
 					ParentCallID: tcID,
 					TaskLabel:    taskLabel,
@@ -255,6 +268,7 @@ func streamReplay(
 				// Emit subagent_end.
 				subEnd := wsServerFrame{
 					Type:       "subagent_end",
+					SessionID:  sessionID,
 					SpanID:     spanID,
 					DurationMs: nestedDurationMS,
 					Status:     nestedStatus,
@@ -269,6 +283,11 @@ func streamReplay(
 				// Emit tool_call_result for the spawn call.
 				if err2 := emitFrame(buildResult(tc, effectiveAgentID, "")); err2 != nil {
 					return framesEmitted, err2
+				}
+				if mf, ok := buildMediaFrame(sessionID, tc, mediaStore, seenPaths); ok {
+					if err2 := emitFrame(mf); err2 != nil {
+						return framesEmitted, err2
+					}
 				}
 				continue
 			}
@@ -286,6 +305,32 @@ func streamReplay(
 			if err2 := emitFrame(buildResult(tc, effectiveAgentID, parentForFlat)); err2 != nil {
 				return framesEmitted, err2
 			}
+			if mf, ok := buildMediaFrame(sessionID, tc, mediaStore, seenPaths); ok {
+				if err2 := emitFrame(mf); err2 != nil {
+					return framesEmitted, err2
+				}
+			}
+		}
+	}
+
+	// V1.B: when the transcript contained duplicate tool_call_ids, surface a
+	// one-shot replay_warning frame before the done frame so the SPA can toast
+	// the operator. The full counts still live in done.Stats for diagnostics;
+	// this frame is just the visible UX hook. Server-only `slog.Warn` was
+	// invisible to operators because the counter was buried in done.Stats.
+	if rs.duplicateToolCallIDCount > 0 {
+		if ctx.Err() != nil {
+			return framesEmitted, ctx.Err()
+		}
+		if err2 := emit(wsServerFrame{
+			Type:      "replay_warning",
+			SessionID: sessionID,
+			Message:   "transcript contained duplicate tool calls — older copies omitted",
+			Stats: map[string]any{
+				"duplicate_tool_call_id_count": rs.duplicateToolCallIDCount,
+			},
+		}); err2 != nil {
+			return framesEmitted, err2
 		}
 	}
 
@@ -303,10 +348,73 @@ func streamReplay(
 	if ctx.Err() != nil {
 		return framesEmitted, ctx.Err()
 	}
-	if err2 := emit(wsServerFrame{Type: "done", Stats: doneStats}); err2 != nil {
+	if err2 := emit(wsServerFrame{Type: "done", SessionID: sessionID, Stats: doneStats}); err2 != nil {
 		return framesEmitted, err2
 	}
 	return framesEmitted, nil
+}
+
+// buildMediaFrame returns a `media` wsServerFrame reconstructed from a
+// transcript ToolCall, or ok=false when the call has no persisted media
+// descriptors. The agent loop persists media as
+// tc.Result["media"] = []map[string]any{{"ref","filename","content_type","type"}}
+// so replay can re-emit attachments without re-resolving the MediaStore.
+func buildMediaFrame(
+	sessionID string,
+	tc session.ToolCall,
+	mediaStore media.MediaStore,
+	seenPaths map[string]struct{},
+) (wsServerFrame, bool) {
+	raw, ok := tc.Result["media"]
+	if !ok {
+		return wsServerFrame{}, false
+	}
+	list, ok := raw.([]any)
+	if !ok {
+		return wsServerFrame{}, false
+	}
+	parts := make([]wsMediaPart, 0, len(list))
+	for _, item := range list {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		refStr, _ := m["ref"].(string)
+		if refStr == "" {
+			continue
+		}
+		filename, _ := m["filename"].(string)
+		contentType, _ := m["content_type"].(string)
+		mediaType, _ := m["type"].(string)
+		// The wire URL form mirrors webchat_channel.SendMedia.
+		const refPrefix = "media://"
+		if len(refStr) <= len(refPrefix) || refStr[:len(refPrefix)] != refPrefix {
+			continue
+		}
+		// Dedup by underlying file path: an old transcript may have two
+		// distinct refs pointing at the same on-disk file (one from
+		// browser.screenshot's inline-data extraction, another from
+		// send_file). Replaying both produces a duplicate image in the
+		// SPA. Skip refs whose path was already emitted in this replay.
+		if mediaStore != nil && seenPaths != nil {
+			if path, err := mediaStore.Resolve(refStr); err == nil && path != "" {
+				if _, dup := seenPaths[path]; dup {
+					continue
+				}
+				seenPaths[path] = struct{}{}
+			}
+		}
+		parts = append(parts, wsMediaPart{
+			Type:        mediaType,
+			URL:         "/api/v1/media/" + refStr[len(refPrefix):],
+			Filename:    filename,
+			ContentType: contentType,
+		})
+	}
+	if len(parts) == 0 {
+		return wsServerFrame{}, false
+	}
+	return wsServerFrame{Type: "media", SessionID: sessionID, Parts: parts}, true
 }
 
 // buildSpawnIDsWithChildren scans all entries and returns the set of spawn
@@ -378,6 +486,7 @@ func emitNestedToolCalls(
 
 			startFrame := wsServerFrame{
 				Type:         "tool_call_start",
+				SessionID:    sessionID,
 				CallID:       tcID,
 				Tool:         tc.Tool,
 				Params:       tc.Parameters,
@@ -398,6 +507,7 @@ func emitNestedToolCalls(
 			status := resolveStatus(tc.Status)
 			resultFrame := wsServerFrame{
 				Type:         "tool_call_result",
+				SessionID:    sessionID,
 				CallID:       tcID,
 				Tool:         tc.Tool,
 				Result:       resultPayload,

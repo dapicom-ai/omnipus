@@ -172,10 +172,12 @@ func TestPolicyEngine_FullToolInvocation(t *testing.T) {
 		assert.Contains(t, result.PolicyRule, "not in tools.allow")
 	})
 
-	t.Run("system agent detection works", func(t *testing.T) {
+	t.Run("privileged agent type detection works", func(t *testing.T) {
 		// Traces to: wave2-security-layer-spec.md line 183 (IsSystemAgent exemption)
-		assert.True(t, policy.IsSystemAgent("omnipus-system"))
-		assert.False(t, policy.IsSystemAgent("researcher"))
+		// FR-045: privileges flow from agent type, not from a hardcoded ID.
+		assert.True(t, policy.IsSystemAgent("core"))
+		assert.True(t, policy.IsSystemAgent("system"))
+		assert.False(t, policy.IsSystemAgent("custom"))
 		assert.False(t, policy.IsSystemAgent(""))
 	})
 }

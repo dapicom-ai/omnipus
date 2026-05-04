@@ -69,6 +69,14 @@ func (c *webchatChannel) Send(_ context.Context, msg bus.OutboundMessage) error 
 
 	c.wsHandler.mu.Lock()
 	conn, ok := c.wsHandler.sessions[msg.ChatID]
+	// Backfill session_id from the handler's chat→session map when the
+	// upstream OutboundMessage didn't carry one. The SPA drops session-
+	// scoped frames that arrive without session_id, so every token/done
+	// must be tagged.
+	sid := msg.SessionID
+	if sid == "" {
+		sid = c.wsHandler.sessionIDs[msg.ChatID]
+	}
 	c.wsHandler.mu.Unlock()
 
 	if !ok {
@@ -76,9 +84,9 @@ func (c *webchatChannel) Send(_ context.Context, msg bus.OutboundMessage) error 
 	}
 
 	if msg.Content != "" {
-		sendConnFrame(conn, wsServerFrame{Type: "token", Content: msg.Content})
+		sendConnFrame(conn, wsServerFrame{Type: "token", Content: msg.Content, SessionID: sid})
 	}
-	sendConnFrame(conn, wsServerFrame{Type: "done", Stats: map[string]any{}})
+	sendConnFrame(conn, wsServerFrame{Type: "done", Stats: map[string]any{}, SessionID: sid})
 	return nil
 }
 
@@ -123,6 +131,6 @@ func (c *webchatChannel) SendMedia(_ context.Context, msg bus.OutboundMediaMessa
 	}
 
 	slog.Debug("webchat: sending media frame", "chat_id", msg.ChatID, "parts", len(parts))
-	sendConnFrame(conn, wsServerFrame{Type: "media", Parts: parts})
+	sendConnFrame(conn, wsServerFrame{Type: "media", SessionID: msg.SessionID, Parts: parts})
 	return nil
 }

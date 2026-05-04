@@ -44,6 +44,7 @@ describe('approval flow integration (test #30)', () => {
         command: 'git pull origin main',
         working_dir: '~/projects/omnipus',
         matched_policy: 'tools.exec.approval=ask',
+        session_id: 'sess_test',
       })
     })
 

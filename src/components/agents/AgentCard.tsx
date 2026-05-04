@@ -20,6 +20,7 @@ export function AgentCard({ agent }: AgentCardProps) {
   return (
     <button
       type="button"
+      data-testid={`agent-card-${agent.id}`}
       onClick={() => navigate({ to: '/agents/$agentId', params: { agentId: agent.id } })}
       className={cn(
         'group w-full text-left rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-1)] p-4',

@@ -10,7 +10,9 @@ import (
 )
 
 // I2CTool provides I2C bus interaction for reading sensors and controlling peripherals.
-type I2CTool struct{}
+type I2CTool struct {
+	BaseTool
+}
 
 func NewI2CTool() *I2CTool {
 	return &I2CTool{}

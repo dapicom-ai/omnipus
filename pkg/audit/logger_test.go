@@ -231,3 +231,41 @@ func TestAuditLogger_RedactionPipeline(t *testing.T) {
 	assert.Contains(t, logContent, "web_search",
 		"tool name should be preserved")
 }
+
+// TestLogger_Log_NilReceiver_DoesNotPanic asserts B1.2(a): calling Log on a
+// nil *Logger is a no-op and never panics. The audit logger is reached
+// through deeply-nested call chains — egress proxy denials, per-thread
+// restrict failures, web_serve fail-closed — where the logger may be nil
+// because boot continued without audit (sandbox.audit_log=false branch in
+// the gateway, or audit construction failed and the operator chose
+// log-and-continue). A panic here would crash the gateway on every denied
+// egress request.
+func TestLogger_Log_NilReceiver_DoesNotPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("nil *Logger.Log panicked: %v", r)
+		}
+	}()
+
+	var logger *audit.Logger // explicitly nil
+	err := logger.Log(&audit.Entry{
+		Event:    audit.EventToolCall,
+		Decision: audit.DecisionDeny,
+		AgentID:  "test-agent",
+		Tool:     "shell",
+	})
+	if err != nil {
+		t.Errorf("nil *Logger.Log returned error %v; want nil (silent no-op)", err)
+	}
+
+	// Also assert the documented type-conversion form behaves identically.
+	if err := (*audit.Logger)(nil).Log(&audit.Entry{Event: "any"}); err != nil {
+		t.Errorf("(*audit.Logger)(nil).Log returned error %v; want nil", err)
+	}
+
+	// Nil entry is also tolerated — defensive double-guard for the rare
+	// case where a caller forgets to check before passing.
+	if err := logger.Log(nil); err != nil {
+		t.Errorf("nil *Logger.Log(nil entry) returned error %v; want nil", err)
+	}
+}

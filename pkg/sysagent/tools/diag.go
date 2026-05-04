@@ -22,7 +22,7 @@ type DoctorRunTool struct{ deps *Deps }
 
 func NewDoctorRunTool(d *Deps) *DoctorRunTool   { return &DoctorRunTool{deps: d} }
 func (t *DoctorRunTool) Name() string           { return "system.doctor.run" }
-func (t *DoctorRunTool) Scope() tools.ToolScope { return tools.ScopeSystem }
+func (t *DoctorRunTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *DoctorRunTool) Description() string {
 	return "Run security diagnostics and return a risk score (0-100) with actionable recommendations. No parameters required."
 }
@@ -126,7 +126,7 @@ type BackupCreateTool struct{ deps *Deps }
 
 func NewBackupCreateTool(d *Deps) *BackupCreateTool { return &BackupCreateTool{deps: d} }
 func (t *BackupCreateTool) Name() string            { return "system.backup.create" }
-func (t *BackupCreateTool) Scope() tools.ToolScope  { return tools.ScopeSystem }
+func (t *BackupCreateTool) Scope() tools.ToolScope  { return tools.ScopeCore }
 func (t *BackupCreateTool) Description() string {
 	return "Create a backup of the Omnipus data directory. Parameters: encrypt (bool, default false)."
 }
@@ -167,7 +167,7 @@ type CostQueryTool struct{ deps *Deps }
 
 func NewCostQueryTool(d *Deps) *CostQueryTool   { return &CostQueryTool{deps: d} }
 func (t *CostQueryTool) Name() string           { return "system.cost.query" }
-func (t *CostQueryTool) Scope() tools.ToolScope { return tools.ScopeSystem }
+func (t *CostQueryTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *CostQueryTool) Description() string {
 	return "Query LLM cost data by period. Parameters: period (today/week/month/custom), start_date, end_date, agent_id, group_by."
 }

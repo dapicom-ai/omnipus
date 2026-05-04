@@ -165,6 +165,7 @@ CGO_ENABLED=0 go build -o omnipus ./cmd/omnipus/
 
 # 2. Run the gateway (binds 0.0.0.0:3000 by default)
 ./omnipus gateway
+# The gateway opens two ports: 5000 (SPA + API) and 5001 (preview iframes). Open both in your firewall.
 
 # 3. Open http://localhost:3000 and follow the onboarding wizard:
 #    Welcome → Provider → API Key → Model → Admin Account → Done

@@ -39,7 +39,9 @@ type mockSystemTool struct {
 func (m *mockSystemTool) Name() string               { return m.name }
 func (m *mockSystemTool) Description() string        { return m.description }
 func (m *mockSystemTool) Parameters() map[string]any { return m.params }
-func (m *mockSystemTool) Scope() tools.ToolScope     { return tools.ScopeSystem }
+func (m *mockSystemTool) Scope() tools.ToolScope     { return tools.ScopeCore }
+func (m *mockSystemTool) RequiresAdminAsk() bool     { return true }
+func (m *mockSystemTool) Category() tools.ToolCategory { return tools.CategorySystem }
 func (m *mockSystemTool) Execute(_ context.Context, _ map[string]any) *tools.ToolResult {
 	m.executed.Store(true)
 	return tools.NewToolResult(`{"success":true}`)
@@ -542,15 +544,16 @@ func TestConfirmationRequired(t *testing.T) {
 }
 
 // =====================================================================
-// Supplementary: SystemAgentID constant
+// Supplementary: SystemAgentName constant
 // =====================================================================
 
-// TestSystemAgentIDConstant verifies the system agent ID is the canonical value.
+// TestSystemAgentNameConstant verifies the system agent display name is set.
 //
-// Traces to: wave5b-system-agent-spec.md line 7 (FR-001)
-func TestSystemAgentIDConstant(t *testing.T) {
-	assert.Equal(t, "omnipus-system", sysagent.SystemAgentID,
-		"system agent ID must be 'omnipus-system' (canonical identifier)")
+// Traces to: wave5b-system-agent-spec.md line 7 (FR-001).
+// SystemAgentID was retired per FR-045; privileges now flow from agent type.
+func TestSystemAgentNameConstant(t *testing.T) {
+	assert.Equal(t, "Omnipus", sysagent.SystemAgentName,
+		"system agent display name must be 'Omnipus'")
 }
 
 // =====================================================================
@@ -903,14 +906,16 @@ func TestGuardedToolScope_DelegatesToInner(t *testing.T) {
 		expectedScope tools.ToolScope
 	}{
 		{
-			name:          "ScopeSystem_inner_returns_ScopeSystem",
-			innerScope:    tools.ScopeSystem,
-			expectedScope: tools.ScopeSystem,
-		},
-		{
-			name:          "ScopeCore_inner_returns_ScopeCore",
+			// ScopeSystem was removed (FR-045). Former system tools now use ScopeCore.
+			name:          "ScopeCore_inner_returns_ScopeCore_system_tools",
 			innerScope:    tools.ScopeCore,
 			expectedScope: tools.ScopeCore,
+		},
+		{
+			// ScopeGeneral inner scope is also delegated correctly.
+			name:          "ScopeGeneral_inner_returns_ScopeGeneral",
+			innerScope:    tools.ScopeGeneral,
+			expectedScope: tools.ScopeGeneral,
 		},
 	}
 

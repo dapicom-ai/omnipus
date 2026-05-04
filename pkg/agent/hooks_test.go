@@ -35,7 +35,7 @@ func newHookTestLoop(
 		},
 	}
 
-	al := NewAgentLoop(cfg, bus.NewMessageBus(), provider)
+	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), provider)
 	agent := al.registry.GetDefaultAgent()
 	if agent == nil {
 		t.Fatal("expected default agent")
@@ -240,7 +240,9 @@ func (t *echoTextTool) Parameters() map[string]any {
 	}
 }
 
-func (t *echoTextTool) Scope() tools.ToolScope { return tools.ScopeGeneral }
+func (t *echoTextTool) Scope() tools.ToolScope            { return tools.ScopeGeneral }
+func (t *echoTextTool) RequiresAdminAsk() bool             { return false }
+func (t *echoTextTool) Category() tools.ToolCategory       { return tools.CategoryCore }
 
 func (t *echoTextTool) Execute(ctx context.Context, args map[string]any) *tools.ToolResult {
 	text, _ := args["text"].(string)

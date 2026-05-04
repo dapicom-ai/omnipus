@@ -371,6 +371,22 @@ jobs:
         env:
           OPENROUTER_API_KEY_CI: ${{ secrets.OPENROUTER_API_KEY_CI }}
 
+      # T0.4: Preflight — fail fast if OPENROUTER_API_KEY_CI is unset.
+      # This catches mis-configured CI runs before any Playwright step executes,
+      # giving a clear error message instead of per-test LLM timeout failures.
+      - name: Verify OPENROUTER_API_KEY_CI is set
+        env:
+          OPENROUTER_API_KEY_CI: ${{ secrets.OPENROUTER_API_KEY_CI }}
+        run: |
+          set -euo pipefail
+          if [ -z "${OPENROUTER_API_KEY_CI:-}" ]; then
+            echo "ERROR: OPENROUTER_API_KEY_CI secret is not set in this repository." >&2
+            echo "This secret is required for the Playwright E2E suite." >&2
+            echo "Add it under Settings > Secrets and variables > Actions." >&2
+            exit 1
+          fi
+          echo "OPENROUTER_API_KEY_CI is set (${#OPENROUTER_API_KEY_CI} chars)."
+
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 

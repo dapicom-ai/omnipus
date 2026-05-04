@@ -307,12 +307,14 @@ test(
     const badges = page.locator('[data-testid="tool-call-badge"]')
     await expect(badges).toHaveCount(2, { timeout: 15_000 })
 
-    // SC-I-004(ii): tool attribute values — shell and fs.list in the badge set.
+    // SC-I-004(ii): tool attribute values — shell then fs.list, in that order.
     // Traces to: BDD Scenario 1, Scenario 2.
+    // T0.5: array-equality (not Set) — catches badge-order regressions where
+    // tool-call badges jump to the wrong turn. Set-equality cannot detect ordering bugs.
     const toolNames = await badges.evaluateAll((els) =>
       els.map((el) => el.getAttribute('data-tool') ?? el.getAttribute('tool') ?? el.textContent ?? ''),
     )
-    expect(new Set(toolNames)).toEqual(new Set(['shell', 'fs.list']))
+    expect(toolNames).toEqual(['shell', 'fs.list'])
 
     // SC-I-004(iii): status icons — both badges should show success status.
     // The ToolCallBadge renders a CheckCircle icon for success (aria-label or class-based).
@@ -536,15 +538,12 @@ test(
 
 // ── Test (e): send button disabled during replay ──────────────────────────────
 //
-// FIXME(#133): the `expect(input).toBeDisabled({ timeout: 500 })` assertion
-// observes `enabled` on all 4 polls in CI even though FR-I-014 is wired in
-// product code (ChatScreen line 647) and covered by a unit test for the 250ms
-// min-display window (chat.test.ts:890). Either React batches both setReplaying
-// calls away before the DOM update, or AssistantUI's ComposerPrimitive.Input
-// ignores the disabled prop under some state. See issue #133 for investigation
-// plan; do not re-enable without reproducing + fixing locally first.
+// T0.1: Promoted from test.fixme — issue #133 was previously used to suppress
+// this assertion. It is now required. If the input is not disabled during
+// replay, that is a confirmed product regression (FR-I-014) that must be fixed.
+// Do not re-suppress with test.fixme or test.skip.
 
-test.fixme(
+test(
   '(e) send button disabled during replay: input locked until done frame arrives',
   async ({ page }) => {
     // Traces to: sprint-i-historical-replay-fidelity-spec.md BDD Scenario 10; TDD row 27; FR-I-014.

@@ -200,7 +200,6 @@ func TestNewAgentInstance_AllowsMediaTempDirForReadListAndExec(t *testing.T) {
 			Exec: config.ExecConfig{
 				ToolConfig:         config.ToolConfig{Enabled: true},
 				EnableDenyPatterns: true,
-				AllowRemote:        true,
 			},
 		},
 	}
@@ -280,4 +279,53 @@ func TestNewAgentInstance_InvalidExecConfigDoesNotExit(t *testing.T) {
 	if _, ok := agent.Tools.Get("read_file"); !ok {
 		t.Fatal("read_file tool should still be registered")
 	}
+}
+
+// TestResolveAgentWorkspace_OMNIPUSHome verifies that resolveAgentWorkspace
+// places per-agent workspaces under $OMNIPUS_HOME/agents/ when OMNIPUS_HOME
+// is set, and falls back to ~/.omnipus/agents/ when it is not.
+func TestResolveAgentWorkspace_OMNIPUSHome(t *testing.T) {
+	defaults := &config.AgentDefaults{
+		Workspace: filepath.Join(t.TempDir(), ".omnipus", "workspace"),
+	}
+
+	t.Run("OMNIPUS_HOME_set", func(t *testing.T) {
+		tmpHome := t.TempDir()
+		t.Setenv("OMNIPUS_HOME", tmpHome)
+
+		agentCfg := &config.AgentConfig{ID: "jim"}
+		got := resolveAgentWorkspace(agentCfg, defaults)
+
+		want := filepath.Join(tmpHome, "agents", "jim")
+		if got != want {
+			t.Errorf("resolveAgentWorkspace with OMNIPUS_HOME=%q: got %q, want %q", tmpHome, got, want)
+		}
+	})
+
+	t.Run("OMNIPUS_HOME_unset_uses_user_home", func(t *testing.T) {
+		t.Setenv("OMNIPUS_HOME", "")
+		fakeHome := t.TempDir()
+		t.Setenv("HOME", fakeHome)
+
+		agentCfg := &config.AgentConfig{ID: "ava"}
+		got := resolveAgentWorkspace(agentCfg, defaults)
+
+		want := filepath.Join(fakeHome, ".omnipus", "agents", "ava")
+		if got != want {
+			t.Errorf("resolveAgentWorkspace without OMNIPUS_HOME: got %q, want %q", got, want)
+		}
+	})
+
+	t.Run("path_traversal_guarded", func(t *testing.T) {
+		tmpHome := t.TempDir()
+		t.Setenv("OMNIPUS_HOME", tmpHome)
+
+		agentCfg := &config.AgentConfig{ID: "../../etc/passwd"}
+		got := resolveAgentWorkspace(agentCfg, defaults)
+
+		safeBase := filepath.Join(tmpHome, "agents")
+		if !strings.HasPrefix(filepath.Clean(got), safeBase) {
+			t.Errorf("path traversal not guarded: got %q, expected prefix %q", got, safeBase)
+		}
+	})
 }

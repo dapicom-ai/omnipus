@@ -41,7 +41,7 @@ func newTestWSHandler(t *testing.T) (*WSHandler, *bus.MessageBus, *agent.AgentLo
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	handler := newWSHandler(msgBus, al, "")
 	return handler, msgBus, al
 }

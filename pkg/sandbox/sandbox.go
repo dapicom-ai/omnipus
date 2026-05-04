@@ -31,9 +31,31 @@ type PathRule struct {
 	Access uint64
 }
 
+// NetPortRule describes a single TCP port that the policy whitelists for the
+// sandboxed process. Landlock ABI v4 expresses bind rules per single port —
+// the kernel does not accept ranges — so callers expand any port range into
+// one NetPortRule per port. Used by SandboxPolicy.BindPortRules.
+type NetPortRule struct {
+	Port uint16
+}
+
 // SandboxPolicy describes sandbox restrictions to apply.
+//
+// BindPortRules are honored by the Landlock backend on kernels exposing ABI v4
+// (5.19+ for the syscalls, 6.7+ for the net access rights). They are
+// leave-empty-for-no-restriction: a nil/empty list means the kernel does NOT
+// install handled_access_net at all, so legacy ABI < 4 kernels retain
+// unrestricted networking. When non-empty, the kernel denies any bind() to a
+// TCP port not enumerated here.
+//
+// ConnectPortRules were removed in v0.1 (A1.3): the kernel Landlock
+// implementation only handles NET_BIND_TCP in handledAccessNet — connect-port
+// enforcement would require NET_CONNECT_TCP which is intentionally excluded
+// (see sandbox_linux.go computeRights). Outbound TCP filtering is delegated
+// to the egress proxy layer instead.
 type SandboxPolicy struct {
 	FilesystemRules   []PathRule
+	BindPortRules     []NetPortRule
 	InheritToChildren bool
 }
 
@@ -132,7 +154,16 @@ func isSystemRestricted(path string) bool {
 //
 // Duplicate paths are NOT deduplicated — Landlock silently accepts duplicates
 // and takes the union of access rights per path.
-func DefaultPolicy(homePath string, allowedPaths []string, warnFn func(msg string, path string)) SandboxPolicy {
+//
+// bindPorts populates SandboxPolicy.BindPortRules. Each uint16 entry becomes
+// one NetPortRule. Pass nil (the historical caller default) to leave network
+// rules empty, which preserves pre-ABI-v4 behavior of unrestricted networking.
+// The gateway expands cfg.Sandbox.DevServerPortRange into bindPorts so dev
+// servers can bind their assigned port.
+//
+// Connect-port rules were removed in v0.1 (A1.3): outbound TCP filtering is
+// delegated to the egress proxy layer. See SandboxPolicy for details.
+func DefaultPolicy(homePath string, allowedPaths []string, warnFn func(msg string, path string), bindPorts []uint16) SandboxPolicy {
 	rules := make([]PathRule, 0, 16+len(allowedPaths))
 
 	// Workspace: full RWX on $OMNIPUS_HOME. This is where agents write
@@ -155,18 +186,23 @@ func DefaultPolicy(homePath string, allowedPaths []string, warnFn func(msg strin
 	// Missing paths (e.g. /lib64 on ARM64) are silently skipped by
 	// Apply() with a warning log; the remaining rules still succeed.
 	readOnlySystem := []string{
+		"/proc", // Chromium needs /proc/sys/fs/inotify/* and /proc/<pid>/* across processes.
 		"/proc/self",
 		"/lib",
 		"/lib64",
 		"/usr/lib",
 		"/usr/lib64",
 		"/usr/bin",
+		"/opt", // Chromium and other vendor binaries (e.g. /opt/google/chrome) live here.
+		"/etc/alternatives", // /usr/bin/google-chrome resolves through /etc/alternatives.
 		"/etc/ssl",
 		"/etc/ca-certificates",
 		"/etc/resolv.conf",
 		"/etc/hosts",
 		"/etc/nsswitch.conf",
 		"/sys/devices/system/cpu",
+		"/dev/urandom", // RNG source used by libc, OpenSSL, Chromium, etc.
+		"/dev/random",
 	}
 	for _, p := range readOnlySystem {
 		rules = append(rules, PathRule{
@@ -174,6 +210,16 @@ func DefaultPolicy(homePath string, allowedPaths []string, warnFn func(msg strin
 			Access: AccessRead | AccessExecute, // exec bit lets dynamic loader mmap .so files
 		})
 	}
+
+	// Universally writable device files required by Chromium/headless tools
+	// and any process that redirects stdio. /dev/null and /dev/shm are safe
+	// to expose RW because they are well-known sinks/scratch areas, not real
+	// hardware. Without these, browser.* tools fail with
+	// "open /dev/null: permission denied" under the workspace+net profile.
+	rules = append(rules,
+		PathRule{Path: "/dev/null", Access: AccessRead | AccessWrite},
+		PathRule{Path: "/dev/shm", Access: AccessRead | AccessWrite},
+	)
 
 	// User-declared additional paths (FR-J-013).
 	for _, raw := range allowedPaths {
@@ -203,8 +249,17 @@ func DefaultPolicy(homePath string, allowedPaths []string, warnFn func(msg strin
 		})
 	}
 
+	var bindRules []NetPortRule
+	if len(bindPorts) > 0 {
+		bindRules = make([]NetPortRule, 0, len(bindPorts))
+		for _, p := range bindPorts {
+			bindRules = append(bindRules, NetPortRule{Port: p})
+		}
+	}
+
 	return SandboxPolicy{
 		FilesystemRules:   rules,
+		BindPortRules:     bindRules,
 		InheritToChildren: true,
 	}
 }

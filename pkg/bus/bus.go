@@ -18,8 +18,10 @@ const defaultBusBufferSize = 64
 // capabilities to the agent loop without tight coupling.
 type StreamDelegate interface {
 	// GetStreamer returns a Streamer for the given channel+chatID if the channel
-	// supports streaming. Returns nil, false if streaming is unavailable.
-	GetStreamer(ctx context.Context, channel, chatID string) (Streamer, bool)
+	// supports streaming. sessionID is the transcript-store session for the turn;
+	// implementations may bind it to the returned streamer for transcript recording.
+	// Returns nil, false if streaming is unavailable.
+	GetStreamer(ctx context.Context, channel, chatID, sessionID string) (Streamer, bool)
 }
 
 // Streamer pushes incremental content to a streaming-capable channel.
@@ -106,9 +108,9 @@ func (mb *MessageBus) SetStreamDelegate(d StreamDelegate) {
 }
 
 // GetStreamer returns a Streamer for the given channel+chatID via the delegate.
-func (mb *MessageBus) GetStreamer(ctx context.Context, channel, chatID string) (Streamer, bool) {
+func (mb *MessageBus) GetStreamer(ctx context.Context, channel, chatID, sessionID string) (Streamer, bool) {
 	if dp := mb.streamDelegate.Load(); dp != nil && *dp != nil {
-		return (*dp).GetStreamer(ctx, channel, chatID)
+		return (*dp).GetStreamer(ctx, channel, chatID, sessionID)
 	}
 	return nil, false
 }

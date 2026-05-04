@@ -112,7 +112,7 @@ func newTestAgentLoop(
 	}
 	msgBus = bus.NewMessageBus()
 	provider = &mockProvider{}
-	al = NewAgentLoop(cfg, msgBus, provider)
+	al = mustNewAgentLoop(t, cfg, msgBus, provider)
 	return al, cfg, msgBus, provider, func() { os.RemoveAll(tmpDir) }
 }
 
@@ -136,7 +136,7 @@ func TestProcessMessage_IncludesCurrentSenderInDynamicContext(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &recordingProvider{}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	response, _, err := al.processMessage(context.Background(), bus.InboundMessage{
 		Channel:  "discord",
@@ -195,7 +195,7 @@ func TestProcessMessage_UseCommandLoadsRequestedSkill(t *testing.T) {
 	}
 	msgBus := bus.NewMessageBus()
 	provider := &recordingProvider{}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	response, _, err := al.processMessage(context.Background(), bus.InboundMessage{
 		Channel:  "telegram",
@@ -241,7 +241,7 @@ func TestHandleCommand_UseCommandRejectsUnknownSkill(t *testing.T) {
 	}
 	msgBus := bus.NewMessageBus()
 	provider := &recordingProvider{}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 	agent := al.GetRegistry().GetDefaultAgent()
 
 	opts := processOptions{}
@@ -285,7 +285,7 @@ func TestProcessMessage_UseCommandArmsSkillForNextMessage(t *testing.T) {
 	}
 	msgBus := bus.NewMessageBus()
 	provider := &recordingProvider{}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	response, _, err := al.processMessage(context.Background(), bus.InboundMessage{
 		Channel:  "telegram",
@@ -417,7 +417,7 @@ func TestRecordLastChannel(t *testing.T) {
 	if got := al.state.GetLastChannel(); got != testChannel {
 		t.Errorf("Expected channel '%s', got '%s'", testChannel, got)
 	}
-	al2 := NewAgentLoop(cfg, msgBus, provider)
+	al2 := mustNewAgentLoop(t, cfg, msgBus, provider)
 	if got := al2.state.GetLastChannel(); got != testChannel {
 		t.Errorf("Expected persistent channel '%s', got '%s'", testChannel, got)
 	}
@@ -434,7 +434,7 @@ func TestRecordLastChatID(t *testing.T) {
 	if got := al.state.GetLastChatID(); got != testChatID {
 		t.Errorf("Expected chat ID '%s', got '%s'", testChatID, got)
 	}
-	al2 := NewAgentLoop(cfg, msgBus, provider)
+	al2 := mustNewAgentLoop(t, cfg, msgBus, provider)
 	if got := al2.state.GetLastChatID(); got != testChatID {
 		t.Errorf("Expected persistent chat ID '%s', got '%s'", testChatID, got)
 	}
@@ -463,7 +463,7 @@ func TestNewAgentLoop_StateInitialized(t *testing.T) {
 	// Create agent loop
 	msgBus := bus.NewMessageBus()
 	provider := &mockProvider{}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	// Verify state manager is initialized
 	if al.state == nil {
@@ -498,7 +498,7 @@ func TestToolRegistry_ToolRegistration(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &mockProvider{}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	// Register a custom tool
 	customTool := &mockCustomTool{}
@@ -555,7 +555,7 @@ func TestToolRegistry_GetDefinitions(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &mockProvider{}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	// Register a test tool and verify it shows up in startup info
 	testTool := &mockCustomTool{}
@@ -572,7 +572,7 @@ func TestToolRegistry_GetDefinitions(t *testing.T) {
 	}
 }
 
-func TestProcessMessage_MediaToolHandledSkipsFollowUpLLMAndFinalText(t *testing.T) {
+func TestProcessMessage_MediaToolDeliveryEmitsMediaAndCallsFollowUp(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := &config.Config{
 		Agents: config.AgentsConfig{
@@ -587,7 +587,7 @@ func TestProcessMessage_MediaToolHandledSkipsFollowUpLLMAndFinalText(t *testing.
 
 	msgBus := bus.NewMessageBus()
 	provider := &handledMediaProvider{}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	store := media.NewFileMediaStore()
 	al.SetMediaStore(store)
@@ -613,14 +613,14 @@ func TestProcessMessage_MediaToolHandledSkipsFollowUpLLMAndFinalText(t *testing.
 	if err != nil {
 		t.Fatalf("processMessage() error = %v", err)
 	}
-	if response != "" {
-		t.Fatalf("expected no final response when media tool already handled delivery, got %q", response)
+	if response != "Here is the screenshot." {
+		t.Fatalf("expected follow-up caption from second LLM call, got %q", response)
 	}
-	if provider.calls != 1 {
-		t.Fatalf("expected exactly 1 LLM call, got %d", provider.calls)
+	if provider.calls != 2 {
+		t.Fatalf("expected exactly 2 LLM calls (tool + follow-up), got %d", provider.calls)
 	}
-	if len(provider.toolCounts) != 1 {
-		t.Fatalf("expected tool counts for 1 provider call, got %d", len(provider.toolCounts))
+	if len(provider.toolCounts) != 2 {
+		t.Fatalf("expected tool counts for 2 provider calls, got %d", len(provider.toolCounts))
 	}
 	if provider.toolCounts[0] == 0 {
 		t.Fatal("expected tools to be available on the first LLM call")
@@ -661,8 +661,8 @@ func TestProcessMessage_MediaToolHandledSkipsFollowUpLLMAndFinalText(t *testing.
 		t.Fatal("expected session history to be saved")
 	}
 	last := history[len(history)-1]
-	if last.Role != "assistant" || last.Content != "Requested output delivered via tool attachment." {
-		t.Fatalf("expected handled assistant summary in history, got %+v", last)
+	if last.Role != "assistant" || last.Content != "Here is the screenshot." {
+		t.Fatalf("expected follow-up caption in history, got %+v", last)
 	}
 }
 
@@ -681,7 +681,7 @@ func TestProcessMessage_HandledToolProcessesQueuedSteeringBeforeReturning(t *tes
 
 	msgBus := bus.NewMessageBus()
 	provider := &handledMediaWithSteeringProvider{}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	store := media.NewFileMediaStore()
 	al.SetMediaStore(store)
@@ -729,7 +729,7 @@ func TestProcessMessage_MediaArtifactCanBeForwardedBySendFile(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &artifactThenSendProvider{}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	store := media.NewFileMediaStore()
 	al.SetMediaStore(store)
@@ -759,19 +759,15 @@ func TestProcessMessage_MediaArtifactCanBeForwardedBySendFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("processMessage() error = %v", err)
 	}
-	if response != "" {
-		t.Fatalf("expected no final response after send_file handled delivery, got %q", response)
+	if response != "Sent." {
+		t.Fatalf("expected final caption after send_file follow-up, got %q", response)
 	}
-	// The media artifact tool returns both ForLLM content AND media refs.
-	// Normalization only auto-handles (ResponseHandled=true) when ForLLM is
-	// fully consumed by the placeholder. Since this tool has meaningful ForLLM,
-	// the agent continues to a second LLM call where it calls send_file.
-	if provider.calls != 2 {
-		t.Fatalf("expected 2 LLM calls (artifact + send_file), got %d", provider.calls)
+	if provider.calls != 3 {
+		t.Fatalf("expected 3 LLM calls (artifact + send_file + caption), got %d", provider.calls)
 	}
 
-	if len(telegramChannel.sentMedia) != 1 {
-		t.Fatalf("expected exactly 1 synchronously sent media message, got %d", len(telegramChannel.sentMedia))
+	if len(telegramChannel.sentMedia) != 2 {
+		t.Fatalf("expected 2 synchronously sent media messages (artifact tool + send_file), got %d", len(telegramChannel.sentMedia))
 	}
 	if telegramChannel.sentMedia[0].Channel != "telegram" || telegramChannel.sentMedia[0].ChatID != "chat1" {
 		t.Fatalf("unexpected sent media target: %+v", telegramChannel.sentMedia[0])
@@ -803,7 +799,7 @@ func TestAgentLoop_GetStartupInfo(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &mockProvider{}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	info := al.GetStartupInfo()
 
@@ -850,7 +846,7 @@ func TestAgentLoop_Stop(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &mockProvider{}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	// Note: running is only set to true when Run() is called
 	// We can't test that without starting the event loop
@@ -957,7 +953,7 @@ func (m *handledMediaProvider) Chat(
 			}},
 		}, nil
 	}
-	return &providers.LLMResponse{}, nil
+	return &providers.LLMResponse{Content: "Here is the screenshot."}, nil
 }
 
 func (m *handledMediaProvider) GetDefaultModel() string {
@@ -986,6 +982,9 @@ func (m *artifactThenSendProvider) Chat(
 				Arguments: map[string]any{},
 			}},
 		}, nil
+	}
+	if m.calls > 2 {
+		return &providers.LLMResponse{Content: "Sent."}, nil
 	}
 
 	var artifactPath string
@@ -1100,7 +1099,9 @@ func (m *mockCustomTool) Parameters() map[string]any {
 	}
 }
 
-func (m *mockCustomTool) Scope() tools.ToolScope { return tools.ScopeGeneral }
+func (m *mockCustomTool) Scope() tools.ToolScope              { return tools.ScopeGeneral }
+func (m *mockCustomTool) RequiresAdminAsk() bool               { return false }
+func (m *mockCustomTool) Category() tools.ToolCategory         { return tools.CategoryCore }
 
 func (m *mockCustomTool) Execute(ctx context.Context, args map[string]any) *tools.ToolResult {
 	return tools.SilentResult("Custom tool executed")
@@ -1111,8 +1112,10 @@ type handledMediaTool struct {
 	path  string
 }
 
-func (m *handledMediaTool) Name() string           { return "handled_media_tool" }
-func (m *handledMediaTool) Scope() tools.ToolScope { return tools.ScopeGeneral }
+func (m *handledMediaTool) Name() string                      { return "handled_media_tool" }
+func (m *handledMediaTool) Scope() tools.ToolScope            { return tools.ScopeGeneral }
+func (m *handledMediaTool) RequiresAdminAsk() bool            { return false }
+func (m *handledMediaTool) Category() tools.ToolCategory      { return tools.CategoryCore }
 func (m *handledMediaTool) Description() string {
 	return "Returns a media attachment and fully handles the user response"
 }
@@ -1133,7 +1136,7 @@ func (m *handledMediaTool) Execute(ctx context.Context, args map[string]any) *to
 	if err != nil {
 		return tools.ErrorResult(err.Error()).WithError(err)
 	}
-	return tools.MediaResult("Attachment delivered by tool.", []string{ref}).WithResponseHandled()
+	return tools.MediaResult("Attachment delivered by tool.", []string{ref})
 }
 
 type handledMediaWithSteeringProvider struct {
@@ -1179,8 +1182,10 @@ type handledMediaWithSteeringTool struct {
 	loop  *AgentLoop
 }
 
-func (m *handledMediaWithSteeringTool) Name() string           { return "handled_media_with_steering_tool" }
-func (m *handledMediaWithSteeringTool) Scope() tools.ToolScope { return tools.ScopeGeneral }
+func (m *handledMediaWithSteeringTool) Name() string                      { return "handled_media_with_steering_tool" }
+func (m *handledMediaWithSteeringTool) Scope() tools.ToolScope            { return tools.ScopeGeneral }
+func (m *handledMediaWithSteeringTool) RequiresAdminAsk() bool            { return false }
+func (m *handledMediaWithSteeringTool) Category() tools.ToolCategory      { return tools.CategoryCore }
 func (m *handledMediaWithSteeringTool) Description() string {
 	return "Returns handled media and enqueues a steering message during execution"
 }
@@ -1205,7 +1210,7 @@ func (m *handledMediaWithSteeringTool) Execute(ctx context.Context, args map[str
 	if err != nil {
 		return tools.ErrorResult(err.Error()).WithError(err)
 	}
-	return tools.MediaResult("Attachment delivered by tool.", []string{ref}).WithResponseHandled()
+	return tools.MediaResult("Attachment delivered by tool.", []string{ref})
 }
 
 type mediaArtifactTool struct {
@@ -1213,8 +1218,10 @@ type mediaArtifactTool struct {
 	path  string
 }
 
-func (m *mediaArtifactTool) Name() string           { return "media_artifact_tool" }
-func (m *mediaArtifactTool) Scope() tools.ToolScope { return tools.ScopeGeneral }
+func (m *mediaArtifactTool) Name() string                    { return "media_artifact_tool" }
+func (m *mediaArtifactTool) Scope() tools.ToolScope          { return tools.ScopeGeneral }
+func (m *mediaArtifactTool) RequiresAdminAsk() bool          { return false }
+func (m *mediaArtifactTool) Category() tools.ToolCategory    { return tools.CategoryCore }
 func (m *mediaArtifactTool) Description() string {
 	return "Returns a media artifact that the agent can forward or save later"
 }
@@ -1240,8 +1247,10 @@ func (m *mediaArtifactTool) Execute(ctx context.Context, args map[string]any) *t
 
 type toolLimitTestTool struct{}
 
-func (m *toolLimitTestTool) Name() string           { return "tool_limit_test_tool" }
-func (m *toolLimitTestTool) Scope() tools.ToolScope { return tools.ScopeGeneral }
+func (m *toolLimitTestTool) Name() string                   { return "tool_limit_test_tool" }
+func (m *toolLimitTestTool) Scope() tools.ToolScope         { return tools.ScopeGeneral }
+func (m *toolLimitTestTool) RequiresAdminAsk() bool         { return false }
+func (m *toolLimitTestTool) Category() tools.ToolCategory   { return tools.CategoryCore }
 func (m *toolLimitTestTool) Description() string {
 	return "Tool used to exhaust the iteration budget in tests"
 }
@@ -1378,7 +1387,7 @@ func TestProcessMessage_UsesRouteSessionKey(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &simpleMockProvider{response: "ok"}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	msg := bus.InboundMessage{
 		Channel:  "telegram",
@@ -1437,7 +1446,7 @@ func TestProcessMessage_CommandOutcomes(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &countingMockProvider{response: "LLM reply"}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 	helper := testHelper{al: al}
 
 	baseMsg := bus.InboundMessage{
@@ -1528,7 +1537,7 @@ func TestProcessMessage_SwitchModelShowModelConsistency(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &countingMockProvider{response: "LLM reply"}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 	helper := testHelper{al: al}
 
 	switchResp := helper.executeAndGetResponse(t, context.Background(), bus.InboundMessage{
@@ -1593,7 +1602,7 @@ func TestProcessMessage_SwitchModelRejectsUnknownAlias(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &countingMockProvider{response: "LLM reply"}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 	helper := testHelper{al: al}
 
 	switchResp := helper.executeAndGetResponse(t, context.Background(), bus.InboundMessage{
@@ -1682,7 +1691,7 @@ func TestProcessMessage_SwitchModelRoutesSubsequentRequestsToSelectedProvider(t 
 	if err != nil {
 		t.Fatalf("CreateProvider() error = %v", err)
 	}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 	helper := testHelper{al: al}
 
 	firstResp := helper.executeAndGetResponse(t, context.Background(), bus.InboundMessage{
@@ -1817,7 +1826,7 @@ func TestProcessMessage_ModelRoutingUsesLightProvider(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProvider() error = %v", err)
 	}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 	helper := testHelper{al: al}
 
 	resp := helper.executeAndGetResponse(t, context.Background(), bus.InboundMessage{
@@ -1862,7 +1871,7 @@ func TestToolResult_SilentToolDoesNotSendUserMessage(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &simpleMockProvider{response: "File operation complete"}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 	helper := testHelper{al: al}
 
 	// ReadFileTool returns SilentResult, which should not send user message
@@ -1904,7 +1913,7 @@ func TestToolResult_UserFacingToolDoesSendMessage(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &simpleMockProvider{response: "Command output: hello world"}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 	helper := testHelper{al: al}
 
 	// ExecTool returns UserResult, which should send user message
@@ -1983,7 +1992,7 @@ func TestAgentLoop_ContextExhaustionRetry(t *testing.T) {
 		successResp: "Recovered from context error",
 	}
 
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	// Inject some history to simulate a full context.
 	// Session history only stores user/assistant/tool messages — the system
@@ -2055,7 +2064,7 @@ func TestAgentLoop_EmptyModelResponseUsesAccurateFallback(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &simpleMockProvider{response: ""}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	response, err := al.ProcessDirectWithChannel(context.Background(), "hello", "empty-response", "test", "chat1")
 	if err != nil {
@@ -2086,7 +2095,7 @@ func TestAgentLoop_ToolLimitUsesDedicatedFallback(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &toolLimitOnlyProvider{}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 	al.RegisterTool(&toolLimitTestTool{})
 
 	response, err := al.ProcessDirectWithChannel(context.Background(), "hello", "tool-limit", "test", "chat1")
@@ -2151,7 +2160,7 @@ func TestProcessDirectWithChannel_TriggersMCPInitialization(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &mockProvider{}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 	defer al.Close()
 
 	if al.mcp.hasManager() {
@@ -2193,7 +2202,7 @@ func TestTargetReasoningChannelID_AllChannels(t *testing.T) {
 		},
 	}
 
-	al := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{})
+	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{})
 	chManager, err := channels.NewManager(&config.Config{}, credentials.SecretBundle{}, bus.NewMessageBus(), nil)
 	if err != nil {
 		t.Fatalf("Failed to create channel manager: %v", err)
@@ -2261,7 +2270,7 @@ func TestHandleReasoning(t *testing.T) {
 			},
 		}
 		msgBus := bus.NewMessageBus()
-		return NewAgentLoop(cfg, msgBus, &mockProvider{}), msgBus
+		return mustNewAgentLoop(t, cfg, msgBus, &mockProvider{}), msgBus
 	}
 
 	t.Run("skips when any required field is empty", func(t *testing.T) {
@@ -2432,7 +2441,7 @@ func TestProcessMessage_PublishesReasoningContentToReasoningChannel(t *testing.T
 		response:         "final answer",
 		reasoningContent: "thinking trace",
 	}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	chManager, err := channels.NewManager(&config.Config{}, credentials.SecretBundle{}, msgBus, nil)
 	if err != nil {
@@ -2499,7 +2508,7 @@ func TestProcessHeartbeat_DoesNotPublishToolFeedback(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &toolFeedbackProvider{filePath: heartbeatFile}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	response, err := al.ProcessHeartbeat(context.Background(), "check heartbeat tasks", "telegram", "chat-1")
 	if err != nil {
@@ -2545,7 +2554,7 @@ func TestProcessMessage_PublishesToolFeedbackWhenEnabled(t *testing.T) {
 
 	msgBus := bus.NewMessageBus()
 	provider := &toolFeedbackProvider{filePath: heartbeatFile}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	response, _, err := al.processMessage(context.Background(), bus.InboundMessage{
 		Channel:  "telegram",

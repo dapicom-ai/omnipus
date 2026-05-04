@@ -6,6 +6,14 @@
 // /onboarding/complete. State-changing calls made before the cookie exists
 // fail fast client-side so the UI surfaces an actionable error instead of
 // waiting for the server's 403.
+//
+// Errors: request() throws ApiError on non-2xx responses and on transport
+// failures (network down, fetch threw). Callers should branch on err.status
+// (or err.isAuthError() / err.isNotFound() / err.isRateLimited() / etc)
+// rather than regex-matching err.message — see src/lib/api-error.ts.
+
+import { ApiError } from './api-error'
+export { ApiError, isApiError } from './api-error'
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? ''
 
@@ -98,33 +106,51 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // instead of a cryptic "403 csrf cookie missing" from the network tab
   // and also prevents a cascade of dependent requests firing during a
   // broken auth state.
+  //
+  // We synthesize an ApiError with status 403 + a CSRF-specific code so
+  // callers can branch on `err.code === 'csrf_missing'` without having to
+  // string-match the message. The message text is preserved verbatim from
+  // the previous implementation for any caller that hasn't migrated yet.
   const method = (init?.method ?? 'GET').toUpperCase()
   if (
     STATE_CHANGING_METHODS.has(method) &&
     !isPathCSRFExempt(path) &&
     readCSRFCookie() === null
   ) {
-    throw new Error(
+    throw new ApiError(
+      403,
       `CSRF cookie missing — cannot ${method} ${path}. ` +
         `Log in or complete onboarding first so the server can issue the CSRF cookie.`,
+      { code: 'csrf_missing' },
     )
   }
 
-  const res = await fetch(`${BASE_URL}/api/v1${path}`, {
-    ...init,
-    headers: buildHeaders(init?.headers),
-  })
-  if (!res.ok) {
-    const text = await res.text().catch((e) => {
-      console.warn('[api] Could not read response body:', e)
-      return res.statusText
+  let res: Response
+  try {
+    res = await fetch(`${BASE_URL}/api/v1${path}`, {
+      ...init,
+      headers: buildHeaders(init?.headers),
     })
-    throw new Error(`${res.status}: ${text}`)
+  } catch (cause) {
+    // Transport-level failure — DNS, TCP, TLS, AbortController, or fetch threw
+    // for any other reason. Surface as a status-0 ApiError so callers can
+    // distinguish "browser couldn't reach the server" from "server said no".
+    throw new ApiError(0, 'Network unavailable. Check your connection.', { cause })
+  }
+  if (!res.ok) {
+    throw await ApiError.fromResponse(res)
   }
   return res.json() as Promise<T>
 }
 
 // ── Agents ────────────────────────────────────────────────────────────────────
+
+export type SandboxProfile = 'none' | 'workspace' | 'workspace+net' | 'host' | 'off'
+
+export interface AgentShellPolicy {
+  enable_deny_patterns?: boolean
+  custom_deny_patterns?: string[]
+}
 
 export interface Agent {
   id: string
@@ -159,6 +185,8 @@ export interface Agent {
     max_tool_calls_per_minute?: number
     max_cost_per_day?: number
   }
+  sandbox_profile?: SandboxProfile
+  shell_policy?: AgentShellPolicy
   stats?: {
     total_sessions: number
     total_tokens: number
@@ -275,6 +303,77 @@ export interface ToolCall {
   status: 'running' | 'success' | 'error' | 'cancelled'
   duration_ms?: number
   error?: string
+}
+
+// ── Tool Results ──────────────────────────────────────────────────────────────
+//
+// Typed shapes for the JSON result payloads emitted by specific tools.
+// These are parsed from ToolCall.result (which is `unknown` on the wire) by
+// the tool-UI components in src/components/chat/tools/.
+//
+// Pre-unification result shapes: ServeWorkspaceResult, RunInWorkspaceResult.
+// New tool-result code on the agent side emits `WebServeResult` (defined in
+// WebServeUI.tsx); the two shapes here remain the iframe prop carriers that
+// `WebServeBlock` casts into and that `IframePreview` consumes — so they
+// are NOT dead. Replay paths (chat transcripts saved before unification)
+// also rely on these shapes when rendering historical sessions.
+
+/**
+ * Result shape originally emitted by the legacy `serve_workspace` tool.
+ *
+ * Used as the static-mode iframe prop carrier on the canonical `web_serve`
+ * code path: `WebServeBlock` casts the static-mode result of `web_serve`
+ * into this shape and feeds it to `IframePreview` (kind=`'web_serve'`).
+ * Also produced by the legacy `serve_workspace` tool in pre-unification
+ * chat transcripts so the SPA can render historical sessions.
+ *
+ * Tool-result authors should produce `WebServeResult`; only this shape is
+ * exposed to the iframe layer.
+ *
+ * `path` is the relative preview path (e.g. `"/preview/<agent>/<token>/"`
+ * or the legacy `"/serve/<agent>/<token>/"`).
+ * `url` is the absolute URL preserved for transcript replay safety — old
+ * transcripts may contain legacy `0.0.0.0` URLs that the SPA rewrites via
+ * `rewriteLegacyURL` in `src/lib/preview-url.ts`.
+ */
+export interface ServeWorkspaceResult {
+  /** Relative preview path, e.g. `"/preview/<agent>/<token>/"`. */
+  path: string
+  /** Absolute URL — preserved for replay safety; may contain legacy hosts. */
+  url: string
+  /** ISO-8601 token expiry timestamp. */
+  expires_at: string
+}
+
+/**
+ * Result shape originally emitted by the legacy `run_in_workspace` tool.
+ *
+ * Used as the dev-mode iframe prop carrier on the canonical `web_serve`
+ * code path: `WebServeBlock` casts the dev-mode result of `web_serve`
+ * into this shape and feeds it to `IframePreview` (kind=`'run_in_workspace'`,
+ * which is a mode discriminator, not a current tool name). Also produced
+ * by the legacy `run_in_workspace` tool in pre-unification chat transcripts.
+ *
+ * Tool-result authors should produce `WebServeResult`; only this shape is
+ * exposed to the iframe layer.
+ *
+ * `path` is the relative dev preview path (e.g. `"/preview/<agent>/<token>/"`
+ * or the legacy `"/dev/<agent>/<token>/"`).
+ * `url` is the absolute URL preserved for transcript replay safety.
+ * `command` is the command string that was executed.
+ * `port` is the local port the dev server is listening on (inside the workspace).
+ */
+export interface RunInWorkspaceResult {
+  /** Relative dev path, e.g. `"/preview/<agent>/<token>/"`. */
+  path: string
+  /** Absolute URL — preserved for replay safety; may contain legacy hosts. */
+  url: string
+  /** ISO-8601 token expiry timestamp. */
+  expires_at: string
+  /** The command string that was executed (e.g. `"npm run dev"`). */
+  command: string
+  /** Local port the dev server is listening on inside the workspace. */
+  port: number
 }
 
 export async function fetchSessions(agentId?: string, type?: Session['type']): Promise<Session[]> {
@@ -636,6 +735,8 @@ export interface AppState {
   onboarding_complete: boolean
   last_doctor_run?: string
   last_doctor_score?: number
+  god_mode_available?: boolean
+  god_mode_opted_in?: boolean
 }
 
 export function fetchAppState(): Promise<AppState> {
@@ -858,10 +959,38 @@ export interface AboutInfo {
   os: string
   arch: string
   uptime_seconds: number
+  // Preview listener fields — added by FR-009 / iframe-preview feature.
+  // preview_port is the port the preview listener is bound on (default:
+  // gateway.port + 1). Absent when preview_listener_enabled is false.
+  preview_port?: number
+  // preview_origin is the fully-qualified origin operators set via
+  // gateway.preview_origin (e.g. "https://preview.acme.com"). Absent when
+  // not configured — the SPA constructs the iframe URL from hostname +
+  // preview_port in that case.
+  preview_origin?: string
+  // preview_listener_enabled reflects whether the preview listener is bound.
+  // Absent on old gateway versions that predate this feature (treat as true).
+  preview_listener_enabled?: boolean
+  // warmup_timeout_seconds is sourced from
+  // cfg.Tools.RunInWorkspace.WarmupTimeoutSeconds (default 60). Used by
+  // RunInWorkspaceUI to cap the warmup polling loop.
+  warmup_timeout_seconds?: number
 }
 
 export function fetchAboutInfo(): Promise<AboutInfo> {
   return request<AboutInfo>('/about')
+}
+
+/**
+ * Returns whether the preview listener is enabled.
+ *
+ * `preview_listener_enabled` is an optional bool where `undefined` means "true"
+ * — old gateway versions that predate the field did not include it, and those
+ * versions always ran the preview listener. Reading the field directly risks
+ * treating `undefined` as falsy; use this accessor instead.
+ */
+export function isPreviewListenerEnabled(info: AboutInfo | undefined): boolean {
+  return info?.preview_listener_enabled !== false
 }
 
 // ── Audit Log ─────────────────────────────────────────────────────────────────
@@ -932,8 +1061,10 @@ export async function uploadFiles(sessionId: string, files: File[]): Promise<{ f
   // (see request() for the same pattern). We still send the header on the
   // off chance the user explicitly set the cookie externally.
   if (csrf === null) {
-    throw new Error(
+    throw new ApiError(
+      403,
       'CSRF cookie missing — cannot upload files. Log in first so the server can issue the CSRF cookie.',
+      { code: 'csrf_missing' },
     )
   }
   // Build headers by hand because FormData must NOT have a Content-Type
@@ -944,14 +1075,18 @@ export async function uploadFiles(sessionId: string, files: File[]): Promise<{ f
   if (token) {
     headers.Authorization = `Bearer ${token}`
   }
-  const res = await fetch(`${BASE_URL}/api/v1/upload`, {
-    method: 'POST',
-    headers,
-    body: formData,
-  })
+  let res: Response
+  try {
+    res = await fetch(`${BASE_URL}/api/v1/upload`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    })
+  } catch (cause) {
+    throw new ApiError(0, 'Network unavailable. Check your connection.', { cause })
+  }
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(err.error || `Upload failed: ${res.status}`)
+    throw await ApiError.fromResponse(res)
   }
   return res.json()
 }
@@ -1108,7 +1243,8 @@ export function updateRateLimits(body: RateLimitsUpdateBody): Promise<RateLimits
   })
 }
 
-// Sandbox config — mode, allowed paths, and SSRF controls.
+// Sandbox config — mode, allowed paths, SSRF controls, and the global
+// agent defaults (default_profile, shell_deny_patterns).
 // allow_internal is []string matching OmnipusSSRFConfig.AllowInternal in pkg/config/sandbox.go.
 // Entries may be hostname, exact IP, or CIDR range. Empty slice means "block all".
 export interface SandboxConfigResponse {
@@ -1116,21 +1252,35 @@ export interface SandboxConfigResponse {
   // applied_mode is the value the gateway is currently enforcing. It differs
   // from `mode` when the operator saved a change but hasn't restarted.
   applied_mode?: string
+  allow_network_outbound?: boolean
   allowed_paths?: string[]
+  ssrf_enabled?: boolean
+  ssrf_allow_internal?: string[]
   ssrf?: {
     enabled?: boolean
     allow_internal?: string[]
   }
+  // default_profile is the global fallback applied to NEW custom agents
+  // that do not pick their own SandboxProfile. Empty = inherit hardcoded.
+  default_profile?: SandboxProfile | ''
+  // shell_deny_patterns is the global fallback shell-deny regex list
+  // applied on top of any per-agent custom patterns.
+  shell_deny_patterns?: string[]
   requires_restart?: boolean
 }
 
 export interface SandboxConfigUpdateBody {
   mode?: string
+  allow_network_outbound?: boolean
   allowed_paths?: string[]
+  ssrf_enabled?: boolean
+  ssrf_allow_internal?: string[]
   ssrf?: {
     enabled?: boolean
     allow_internal?: string[]
   }
+  default_profile?: SandboxProfile | ''
+  shell_deny_patterns?: string[]
 }
 
 export function fetchSandboxConfig(): Promise<SandboxConfigResponse> {
@@ -1326,40 +1476,77 @@ export function fetchExecProxyStatus(): Promise<ExecProxyStatus> {
 
 // ── Agent Tools ───────────────────────────────────────────────────────────────
 
-export interface BuiltinTool {
+/**
+ * Central registry tool entry (FR-027, FR-029).
+ * Replaces the narrower BuiltinTool shape — includes a source discriminator
+ * so the UI can badge MCP tools differently from builtin ones.
+ */
+export interface RegistryTool {
   name: string
   scope: 'system' | 'core' | 'general'
   category: string
   description: string
+  /** Origin of the tool. 'builtin' = compiled-in Go tool; 'mcp' = MCP server tool. */
+  source: 'builtin' | 'mcp'
 }
+
+/** Backward-compat alias — existing callers that reference BuiltinTool still work. */
+export type BuiltinTool = RegistryTool
 
 export interface AgentToolsCfg {
   builtin: {
     default_policy?: 'allow' | 'ask' | 'deny'
     policies?: Record<string, 'allow' | 'ask' | 'deny'>
-    // Legacy fields (backward compat)
-    mode?: 'explicit' | 'inherit'
-    visible?: string[]
   }
   mcp?: { servers: { id: string; tools?: string[] }[] }
 }
 
-export function fetchBuiltinTools(): Promise<BuiltinTool[]> {
-  return request<BuiltinTool[]>('/tools/builtin')
+/**
+ * Per-tool entry returned by GET /agents/{id}/tools (FR-086, MAJ-008).
+ * Exposes both the configured policy and the effective (post-fence) policy
+ * so the UI can display policy downgrades.
+ */
+export interface AgentToolEntry {
+  name: string
+  configured_policy: 'allow' | 'ask' | 'deny'
+  effective_policy: 'allow' | 'ask' | 'deny'
+  /** True when the tool is admin-required and the agent type is 'custom' — policy was downgraded to 'ask'. */
+  fence_applied: boolean
+  /** True when the tool requires admin approval regardless of configured policy. */
+  requires_admin_ask: boolean
 }
+
+/** Fetch all tools from the central registry (FR-027). Includes both builtin and MCP tools. */
+export function fetchRegistryTools(): Promise<RegistryTool[]> {
+  return request<RegistryTool[]>('/tools')
+}
+
+/** Backward-compat alias — callers that used fetchBuiltinTools() still work. */
+export const fetchBuiltinTools = fetchRegistryTools
 
 export function fetchMcpServersForAgent(): Promise<McpServer[]> {
   return request<McpServer[]>('/mcp-servers')
 }
 
-export function fetchAgentTools(agentId: string): Promise<{ config: AgentToolsCfg; effective_tools: BuiltinTool[] }> {
-  return request<{ config: AgentToolsCfg; effective_tools: BuiltinTool[] }>(`/agents/${encodeURIComponent(agentId)}/tools`)
+export function fetchAgentTools(agentId: string): Promise<{ config: AgentToolsCfg; tools: AgentToolEntry[] }> {
+  return request<{ config: AgentToolsCfg; tools: AgentToolEntry[] }>(`/agents/${encodeURIComponent(agentId)}/tools`)
 }
 
-export function updateAgentTools(agentId: string, cfg: AgentToolsCfg): Promise<{ config: AgentToolsCfg; effective_tools: BuiltinTool[] }> {
-  return request<{ config: AgentToolsCfg; effective_tools: BuiltinTool[] }>(`/agents/${encodeURIComponent(agentId)}/tools`, {
+export function updateAgentTools(agentId: string, cfg: AgentToolsCfg): Promise<{ config: AgentToolsCfg; tools: AgentToolEntry[] }> {
+  return request<{ config: AgentToolsCfg; tools: AgentToolEntry[] }>(`/agents/${encodeURIComponent(agentId)}/tools`, {
     method: 'PUT',
     body: JSON.stringify(cfg),
+  })
+}
+
+/**
+ * POST /api/v1/tool-approvals/{approvalId} — resolve a pending tool approval.
+ * FR-011, FR-082. Throws with status code prefix on non-2xx (e.g. "403: ...").
+ */
+export function postToolApproval(approvalId: string, action: 'approve' | 'deny' | 'cancel'): Promise<void> {
+  return request<void>(`/tool-approvals/${encodeURIComponent(approvalId)}`, {
+    method: 'POST',
+    body: JSON.stringify({ action }),
   })
 }
 

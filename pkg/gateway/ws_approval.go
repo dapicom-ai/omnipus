@@ -18,35 +18,57 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/agent"
 )
 
+// wsApprovalEntry holds the in-flight decision channel and the session that made the request.
+type wsApprovalEntry struct {
+	ch        chan agent.ApprovalDecision
+	SessionID string // session_id at request time; validated on response
+}
+
 // wsApprovalRegistry tracks in-flight tool-approval requests awaiting browser decisions.
 // Each entry maps a request UUID to a channel on which the approval decision will be sent.
 // Entries are inserted by wsApprovalHook.ApproveTool and resolved (or expired) by the
 // WSHandler readLoop when it processes "exec_approval_response" frames.
 type wsApprovalRegistry struct {
 	mu      sync.Mutex
-	pending map[string]chan agent.ApprovalDecision
+	pending map[string]*wsApprovalEntry
 }
 
 func newWSApprovalRegistry() *wsApprovalRegistry {
 	return &wsApprovalRegistry{
-		pending: make(map[string]chan agent.ApprovalDecision),
+		pending: make(map[string]*wsApprovalEntry),
 	}
 }
 
 // register creates a buffered decision channel for the given request ID and returns it.
+// sessionID is recorded for validation when the response arrives.
 // If a channel for this ID already exists (UUID collision or duplicate call), it logs a
 // warning and returns the existing channel — the caller must still call unregister.
 // The caller must call unregister when done (whether the decision arrived or not).
-func (r *wsApprovalRegistry) register(id string) chan agent.ApprovalDecision {
+func (r *wsApprovalRegistry) register(id, sessionID string) chan agent.ApprovalDecision {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if existing, ok := r.pending[id]; ok {
 		slog.Warn("ws: approval registry: duplicate request ID", "id", id)
-		return existing
+		return existing.ch
 	}
-	ch := make(chan agent.ApprovalDecision, 1)
-	r.pending[id] = ch
-	return ch
+	entry := &wsApprovalEntry{
+		ch:        make(chan agent.ApprovalDecision, 1),
+		SessionID: sessionID,
+	}
+	r.pending[id] = entry
+	return entry.ch
+}
+
+// getSessionID returns the session_id recorded for the given request ID.
+// Returns ("", false) if no pending request with that ID exists.
+func (r *wsApprovalRegistry) getSessionID(id string) (string, bool) {
+	r.mu.Lock()
+	entry, ok := r.pending[id]
+	r.mu.Unlock()
+	if !ok {
+		return "", false
+	}
+	return entry.SessionID, true
 }
 
 // unregister removes the pending entry for the given request ID.
@@ -60,13 +82,13 @@ func (r *wsApprovalRegistry) unregister(id string) {
 // Returns false if no pending request with that ID exists (e.g. it already timed out).
 func (r *wsApprovalRegistry) resolve(id string, decision agent.ApprovalDecision) bool {
 	r.mu.Lock()
-	ch, ok := r.pending[id]
+	entry, ok := r.pending[id]
 	r.mu.Unlock()
 	if !ok {
 		return false
 	}
 	select {
-	case ch <- decision:
+	case entry.ch <- decision:
 		return true
 	default:
 		// Channel already has a value — possible duplicate response from the browser.
@@ -74,6 +96,9 @@ func (r *wsApprovalRegistry) resolve(id string, decision agent.ApprovalDecision)
 		return false
 	}
 }
+
+
+
 
 // wsApprovalHook implements agent.ToolApprover for a single WebSocket connection.
 // When ApproveTool is called by the agent loop, it:
@@ -154,16 +179,17 @@ func (h *wsApprovalHook) ApproveTool(
 	}
 
 	id := uuid.New().String()
-	ch := h.registry.register(id)
+	ch := h.registry.register(id, req.SessionID)
 	defer h.registry.unregister(id)
 
 	// Send the approval-request frame to the browser.
 	sendConnFrame(h.conn, wsServerFrame{
-		Type:    "exec_approval_request",
-		ID:      id,
-		Tool:    req.Tool,
-		Params:  req.Arguments,
-		Message: fmt.Sprintf("Agent wants to call tool %q. Allow?", req.Tool),
+		Type:      "exec_approval_request",
+		ID:        id,
+		SessionID: req.SessionID,
+		Tool:      req.Tool,
+		Params:    req.Arguments,
+		Message:   fmt.Sprintf("Agent wants to call tool %q. Allow?", req.Tool),
 	})
 
 	slog.Info("ws: sent exec_approval_request to browser", "id", id, "tool", req.Tool)
@@ -192,8 +218,9 @@ func (h *wsApprovalHook) ApproveTool(
 		slog.Warn("ws: exec_approval_request timed out — denying tool execution", "id", id, "tool", req.Tool)
 		// Inform the browser the request expired.
 		sendConnFrame(h.conn, wsServerFrame{
-			Type: "exec_approval_expired",
-			ID:   id,
+			Type:      "exec_approval_expired",
+			ID:        id,
+			SessionID: req.SessionID,
 			Message: fmt.Sprintf(
 				"Approval request for %q timed out after %s — tool execution denied.",
 				req.Tool,

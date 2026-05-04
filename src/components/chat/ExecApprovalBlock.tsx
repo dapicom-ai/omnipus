@@ -105,6 +105,7 @@ export function ExecApprovalBlock({
 
   return (
     <div
+      data-testid="approval-modal"
       className={cn(
         'mt-3 rounded-lg border p-4 space-y-3',
         isPending
@@ -191,6 +192,7 @@ export function ExecApprovalBlock({
               <XCircle size={13} weight="bold" /> Deny
             </Button>
             <Button
+              data-testid="always-allow-toggle"
               size="sm"
               variant="ghost"
               onClick={() => handleDecision('always')}

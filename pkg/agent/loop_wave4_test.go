@@ -49,7 +49,7 @@ func makeRateLimitCfg(t *testing.T) (*config.Config, *bus.MessageBus) {
 // a non-nil RateLimiterRegistry and applies the configured daily cost cap.
 func TestRateLimiter_InitializedFromConfig(t *testing.T) {
 	cfg, msgBus := makeRateLimitCfg(t)
-	al := NewAgentLoop(cfg, msgBus, &mockProvider{})
+	al := mustNewAgentLoop(t, cfg, msgBus, &mockProvider{})
 	defer al.Close()
 
 	registry := al.RateLimiter()
@@ -89,7 +89,7 @@ func TestRateLimiter_ZeroCapMeansNoCap(t *testing.T) {
 		// Sandbox.RateLimits left at zero — no limits.
 	}
 	msgBus := bus.NewMessageBus()
-	al := NewAgentLoop(cfg, msgBus, &mockProvider{})
+	al := mustNewAgentLoop(t, cfg, msgBus, &mockProvider{})
 	defer al.Close()
 
 	registry := al.RateLimiter()
@@ -104,22 +104,24 @@ func TestRateLimiter_ZeroCapMeansNoCap(t *testing.T) {
 	}
 }
 
-// TestIsSystemAgent verifies that IsSystemAgent identifies the correct agent.
-func TestIsSystemAgent(t *testing.T) {
+// TestIsPrivilegedAgent verifies that IsPrivilegedAgent identifies privileged agent types.
+// Privileges flow from agent type (FR-045), not from a hardcoded agent ID.
+func TestIsPrivilegedAgent(t *testing.T) {
 	cases := []struct {
-		agentID string
-		want    bool
+		agentType string
+		want      bool
 	}{
-		{"omnipus-system", true},
-		{"my-agent", false},
+		{"core", true},
+		{"system", true},
+		{"custom", false},
 		{"", false},
-		{"OMNIPUS-SYSTEM", false}, // must be case-sensitive
-		{"omnipus-system-extra", false},
+		{"CORE", false}, // must be case-sensitive
+		{"core-extra", false},
 	}
 	for _, tc := range cases {
-		got := security.IsSystemAgent(tc.agentID)
+		got := security.IsPrivilegedAgent(tc.agentType)
 		if got != tc.want {
-			t.Errorf("IsSystemAgent(%q) = %v, want %v", tc.agentID, got, tc.want)
+			t.Errorf("IsPrivilegedAgent(%q) = %v, want %v", tc.agentType, got, tc.want)
 		}
 	}
 }
@@ -217,16 +219,16 @@ func TestRateLimiter_RecordSpend_AccumulatesEvenWhenOverCap(t *testing.T) {
 	}
 }
 
-// TestRateLimiter_RecordSpend_SystemAgentExempt verifies the system agent's
-// spend is not counted in the daily accumulator.
-func TestRateLimiter_RecordSpend_SystemAgentExempt(t *testing.T) {
+// TestRateLimiter_RecordSpend_PrivilegedAgentExempt verifies that privileged agent
+// types (core/system) spend is not counted in the daily accumulator (FR-045).
+func TestRateLimiter_RecordSpend_PrivilegedAgentExempt(t *testing.T) {
 	reg := security.NewRateLimiterRegistry()
 	reg.SetDailyCostCap(5.0)
 
-	reg.RecordSpend(100.0, "omnipus-system")
+	reg.RecordSpend(100.0, "core")
 
 	if got := reg.GetDailyCost(); got != 0 {
-		t.Errorf("system agent spend should not be recorded, got $%.2f, want $0.00", got)
+		t.Errorf("privileged agent spend should not be recorded, got $%.2f, want $0.00", got)
 	}
 }
 

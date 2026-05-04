@@ -13,7 +13,7 @@ import (
 // root ($OMNIPUS_HOME) gets Read+Write+Execute access in the computed
 // policy, so agents can freely read/write under the home directory.
 func TestDefaultPolicy_IncludesHomeAsRWX(t *testing.T) {
-	policy := DefaultPolicy("/opt/omnipus", nil, nil)
+	policy := DefaultPolicy("/opt/omnipus", nil, nil, nil)
 	if len(policy.FilesystemRules) == 0 {
 		t.Fatal("DefaultPolicy returned no rules")
 	}
@@ -49,14 +49,17 @@ func TestDefaultPolicy_SystemRestrictedReadOnly(t *testing.T) {
 		{"proc_child", "/proc/cpuinfo"},
 		{"sys_child", "/sys/class/net"},
 		{"root_ssh", "/root/.ssh"},
-		{"dev_child", "/dev/null"},
+		// /dev/null is universally RW in the baseline policy (browser/Chromium
+		// needs it). Pick a device that is NOT in the baseline allowlist so the
+		// strip-write contract for user-declared /dev paths is still verified.
+		{"dev_child", "/dev/sda1"},
 		{"boot_child", "/boot/grub"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var warnedPath string
 			warnFn := func(_, path string) { warnedPath = path }
-			policy := DefaultPolicy("/tmp/home", []string{tc.path}, warnFn)
+			policy := DefaultPolicy("/tmp/home", []string{tc.path}, warnFn, nil)
 
 			var userRule *PathRule
 			for i := range policy.FilesystemRules {
@@ -89,7 +92,7 @@ func TestDefaultPolicy_SystemRestrictedReadOnly(t *testing.T) {
 func TestDefaultPolicy_NonSystemPathKeepsWrite(t *testing.T) {
 	warnCount := 0
 	warnFn := func(_, _ string) { warnCount++ }
-	policy := DefaultPolicy("/tmp/home", []string{"/opt/shared"}, warnFn)
+	policy := DefaultPolicy("/tmp/home", []string{"/opt/shared"}, warnFn, nil)
 
 	var userRule *PathRule
 	for i := range policy.FilesystemRules {
@@ -115,7 +118,7 @@ func TestDefaultPolicy_NonSystemPathKeepsWrite(t *testing.T) {
 func TestDefaultPolicy_TraversalIsCleaned(t *testing.T) {
 	var warnedPath string
 	warnFn := func(_, path string) { warnedPath = path }
-	policy := DefaultPolicy("/tmp/home", []string{"../../../etc"}, warnFn)
+	policy := DefaultPolicy("/tmp/home", []string{"../../../etc"}, warnFn, nil)
 
 	// Clean should produce "/etc" (absolute) or "../etc" (relative)?
 	// With our current impl, filepath.Clean on "../../../etc" leaves it
@@ -147,7 +150,7 @@ func TestDefaultPolicy_TraversalIsCleaned(t *testing.T) {
 // row 1: with no user-declared AllowedPaths, the policy contains only
 // the baseline rules (home, /tmp, /proc/self, system libs, CA certs).
 func TestDefaultPolicy_EmptyAllowedPathsReturnsDefaults(t *testing.T) {
-	policy := DefaultPolicy("/tmp/home", nil, nil)
+	policy := DefaultPolicy("/tmp/home", nil, nil, nil)
 	if len(policy.FilesystemRules) == 0 {
 		t.Fatal("DefaultPolicy: empty rule set")
 	}

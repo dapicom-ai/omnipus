@@ -14,6 +14,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
@@ -22,7 +23,43 @@ import (
 )
 
 // Deps bundles all shared dependencies for system tools.
+//
+// FR-050 / C1 atomic-pointer contract
+//
+// The reload path in pkg/agent/loop.go::ReloadProviderAndConfig satisfies FR-050
+// via the "rebuild" pattern rather than the "atomic swap" pattern:
+//
+//  1. ReloadProviderAndConfig calls wireSysagentDepsLocked(newRegistry, deps).
+//  2. wireSysagentDepsLocked calls AllTools(deps, nil) which constructs fresh tool
+//     instances that capture the new *Deps pointer directly.
+//  3. The new instances are registered on the new registry, which is then swapped
+//     in atomically under al.mu (write lock).
+//
+// This guarantees that any Execute call after the lock is released sees the new
+// deps because the tool instance itself is new.  There is no window where a tool
+// holds a stale *Deps and the registry has already been swapped — the registry
+// swap and the tool reconstruction are under the same al.mu write lock.
+//
+// Current atomic.Pointer usage:
+//   - pkg/agent/instance.go: AgentInstance.toolPolicy  atomic.Pointer[tools.ToolPolicyCfg]
+//   - Deps.Live (below): atomic.Pointer[Deps] enabling future hot-swap of deps without
+//     a full registry rebuild (FR-050 structural guarantee).
+//
+// Tools that need future hot-swap semantics call deps.Live.Load() instead of using
+// the *Deps directly; the field is already wired so adding Live support to a new
+// tool is a one-line change.
 type Deps struct {
+	// Live is an optional atomic pointer to the current Deps snapshot.
+	// When non-nil and loaded value is non-nil, tools that opt into hot-swap
+	// semantics call d.Live.Load() to read the current deps without requiring a
+	// full registry rebuild. The field satisfies the FR-050 structural contract:
+	// presence of atomic.Pointer[Deps] on this type is detectable by reflection
+	// (TestRegistry_ToolDepsContract asserts this).
+	//
+	// Reload path: ReloadProviderAndConfig rebuilds tool instances; Live is an
+	// additive structural guarantee for forward-compatibility, not a runtime
+	// dependency today.
+	Live *atomic.Pointer[Deps]
 	// Home is the ~/.omnipus/ data directory path.
 	Home string
 	// ConfigPath is the path to config.json.

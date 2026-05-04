@@ -61,7 +61,7 @@ func TestPromptGuard_InitializedFromConfig(t *testing.T) {
 					PromptInjectionLevel: config.PromptInjectionLevel(tc.configLevel),
 				},
 			}
-			al := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{})
+			al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{})
 			defer al.Close()
 
 			guard := al.PromptGuard()
@@ -181,7 +181,7 @@ func TestExecProxy_StartedWhenEnabled(t *testing.T) {
 	}
 	cfg.Tools.Exec.EnableProxy = true
 
-	al := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{})
+	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{})
 	defer al.Close()
 
 	proxy := al.ExecProxy()
@@ -210,7 +210,7 @@ func TestExecProxy_NilWhenDisabled(t *testing.T) {
 	}
 	// EnableProxy defaults to false — do not set it.
 
-	al := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{})
+	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{})
 	defer al.Close()
 
 	if al.ExecProxy() != nil {
@@ -243,7 +243,6 @@ func TestExecProxy_InjectsEnvVarsIntoChild(t *testing.T) {
 			Tools: config.ToolsConfig{
 				Exec: config.ExecConfig{
 					EnableDenyPatterns: false, // allow our simple `env` command
-					AllowRemote:        true,  // bypass internal-channel check in tests
 				},
 			},
 		},
@@ -303,7 +302,6 @@ func TestExecProxy_NotInjectedWhenNil(t *testing.T) {
 			Tools: config.ToolsConfig{
 				Exec: config.ExecConfig{
 					EnableDenyPatterns: false,
-					AllowRemote:        true,
 				},
 			},
 		},
@@ -345,7 +343,7 @@ func TestAgentLoopClose_StopsExecProxy(t *testing.T) {
 	}
 	cfg.Tools.Exec.EnableProxy = true
 
-	al := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{})
+	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{})
 	proxy := al.ExecProxy()
 	if proxy == nil {
 		t.Fatal("proxy not started")
@@ -398,7 +396,7 @@ func TestAgentLoop_PromptGuardAuditTrail(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	al := NewAgentLoop(cfg, bus.NewMessageBus(), &mockProvider{})
+	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), &mockProvider{})
 	defer al.Close()
 
 	if al.AuditLogger() == nil {

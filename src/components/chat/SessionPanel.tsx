@@ -6,7 +6,8 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sh
 import { Badge } from '@/components/ui/badge'
 import { useUiStore } from '@/store/ui'
 import { useSessionStore } from '@/store/session'
-import { fetchAgents, fetchSessions, renameSession, deleteSession } from '@/lib/api'
+import { useChatStore } from '@/store/chat'
+import { fetchAgents, fetchSessions, renameSession, deleteSession, isApiError } from '@/lib/api'
 import type { Agent, Session } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
@@ -56,6 +57,7 @@ interface SessionItemProps {
   session: Session
   agents: Agent[]
   isActive: boolean
+  isStreaming: boolean
   onSelect: () => void
   onDeleted: (sessionId: string) => void
 }
@@ -85,7 +87,7 @@ function formatRelativeTime(dateStr: string): string {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
 }
 
-function SessionItem({ session, agents, isActive, onSelect, onDeleted }: SessionItemProps) {
+function SessionItem({ session, agents, isActive, isStreaming, onSelect, onDeleted }: SessionItemProps) {
   const { addToast } = useUiStore()
   const queryClient = useQueryClient()
 
@@ -113,8 +115,9 @@ function SessionItem({ session, agents, isActive, onSelect, onDeleted }: Session
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
     },
-    onError: (err: Error) => {
-      addToast({ message: `Could not rename session: ${err.message}`, variant: 'error' })
+    onError: (err: unknown) => {
+      const msg = isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Rename failed'
+      addToast({ message: `Could not rename session: ${msg}`, variant: 'error' })
       setEditValue(session.title || UNTITLED_SESSION)
     },
     onSettled: () => setIsEditing(false),
@@ -125,8 +128,9 @@ function SessionItem({ session, agents, isActive, onSelect, onDeleted }: Session
     onSuccess: () => {
       onDeleted(session.id)
     },
-    onError: (err: Error) => {
-      addToast({ message: `Could not delete session: ${err.message}`, variant: 'error' })
+    onError: (err: unknown) => {
+      const msg = isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Delete failed'
+      addToast({ message: `Could not delete session: ${msg}`, variant: 'error' })
       setConfirmDelete(false)
     },
   })
@@ -227,6 +231,10 @@ function SessionItem({ session, agents, isActive, onSelect, onDeleted }: Session
                 <ListChecks size={10} className="text-[var(--color-accent)] shrink-0" />
               )}
               <span className="truncate text-xs">{session.title || UNTITLED_SESSION}</span>
+              {isStreaming && !isActive && (
+                // Background session is generating — pulse dot so the user knows work is in progress.
+                <span className="ml-auto shrink-0 w-1.5 h-1.5 rounded-full bg-[var(--color-accent)] animate-pulse" aria-label="Generating" />
+              )}
             </div>
           </button>
         )}
@@ -269,6 +277,7 @@ function SessionItem({ session, agents, isActive, onSelect, onDeleted }: Session
 export function SessionPanel() {
   const { sessionPanelOpen, closeSessionPanel } = useUiStore()
   const { activeSessionId, activeAgentId, setActiveSession, attachToSession, setActiveAgentType } = useSessionStore()
+  const sessionsById = useChatStore((s) => s.sessionsById)
   const queryClient = useQueryClient()
 
   const [searchValue, setSearchValue] = useState('')
@@ -415,6 +424,7 @@ export function SessionPanel() {
                   session={session}
                   agents={agents}
                   isActive={session.id === activeSessionId}
+                  isStreaming={sessionsById[session.id]?.isStreaming ?? false}
                   onSelect={() => handleSelectSession(session)}
                   onDeleted={handleSessionDeleted}
                 />

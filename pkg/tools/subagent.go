@@ -307,6 +307,7 @@ func (sm *SubagentManager) ListTaskCopies() []SubagentTask {
 // SubagentTool executes a subagent task synchronously and returns the result.
 // It directly calls SubTurnSpawner with Async=false for synchronous execution.
 type SubagentTool struct {
+	BaseTool
 	spawner      SubTurnSpawner
 	defaultModel string
 	maxTokens    int

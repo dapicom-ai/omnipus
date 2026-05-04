@@ -13,7 +13,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
-import { fetchConfig, updateConfig, fetchStorageStats, createBackup, fetchBackups, restoreBackup, clearAllSessions } from '@/lib/api'
+import { fetchConfig, updateConfig, fetchStorageStats, createBackup, fetchBackups, restoreBackup, clearAllSessions, isApiError } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 
 function formatBytes(bytes: number): string {
@@ -76,7 +76,7 @@ export function DataSection() {
       queryClient.invalidateQueries({ queryKey: ['backups'] })
       addToast({ message: `Backup created: ${res.filename}`, variant: 'success' })
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: unknown) => addToast({ message: isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Backup failed', variant: 'error' }),
   })
 
   const { mutate: doRestore, isPending: isRestoring } = useMutation({
@@ -85,7 +85,7 @@ export function DataSection() {
       addToast({ message: 'Restore complete. Restart gateway to apply.', variant: 'success' })
       setRestoreTarget(null)
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: unknown) => addToast({ message: isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Restore failed', variant: 'error' }),
   })
 
   const { mutate: doClearSessions, isPending: isClearing } = useMutation({
@@ -95,7 +95,7 @@ export function DataSection() {
       addToast({ message: 'All sessions cleared', variant: 'success' })
       setClearConfirmOpen(false)
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: unknown) => addToast({ message: isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Clear failed', variant: 'error' }),
   })
 
   const isLoading = configLoading || statsLoading

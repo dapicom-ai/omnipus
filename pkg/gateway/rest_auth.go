@@ -221,7 +221,15 @@ func withRateLimit(limiter *apiRateLimiter, handler http.HandlerFunc) http.Handl
 // withOptionalAuth is like withAuth but allows unauthenticated requests to pass through.
 // Authenticated requests get role injected into context; anonymous requests get a context
 // without any role so downstream handlers can distinguish.
+//
+// B1.1 backend half: every route wrapped here gets a 1 MiB body cap so an
+// anonymous client cannot pin the gateway with an unbounded POST body. All
+// routes registered with withOptionalAuth are JSON or GET-only (state,
+// providers, media-serve, uploads-serve, onboarding, login, register-admin)
+// — none legitimately exceed 1 MiB. Routes that need a larger body (binary
+// uploads) use withUploadAuth instead.
 func (a *restAPI) withOptionalAuth(handler http.HandlerFunc) http.HandlerFunc {
+	const optionalAuthBodyLimit int64 = 1 << 20 // 1 MiB
 	return func(w http.ResponseWriter, r *http.Request) {
 		if a.handlePreflight(w, r) {
 			return
@@ -233,6 +241,7 @@ func (a *restAPI) withOptionalAuth(handler http.HandlerFunc) http.HandlerFunc {
 			slog.Warn("configFromContext returned nil — configSnapshotMiddleware may not be applied")
 			cfg = a.agentLoop.GetConfig()
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, optionalAuthBodyLimit)
 		authHeader := r.Header.Get("Authorization")
 		prefix := "Bearer "
 		if strings.HasPrefix(authHeader, prefix) {
@@ -240,7 +249,7 @@ func (a *restAPI) withOptionalAuth(handler http.HandlerFunc) http.HandlerFunc {
 			// Check per-user list (token hash via bcrypt)
 			if len(cfg.Gateway.Users) > 0 {
 				for _, user := range cfg.Gateway.Users {
-					if bcrypt.CompareHashAndPassword([]byte(user.TokenHash), []byte(rawToken)) == nil {
+					if user.TokenHash.Verify(rawToken) == nil {
 						ctx := context.WithValue(r.Context(), RoleContextKey{}, user.Role)
 						ctx = context.WithValue(ctx, UserContextKey{}, &user)
 						a.setCORSHeaders(w, r)
@@ -293,10 +302,20 @@ func (a *restAPI) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate token before the atomic update so we can return it in the response.
+	// Generate bearer token and session token before the atomic update so we
+	// can return the bearer token in the response and issue the session cookie
+	// after the disk write succeeds.
 	token, err := generateUserToken(body.Username)
 	if err != nil {
 		slog.Error("auth: generate token failed", "error", err)
+		jsonErr(w, http.StatusInternalServerError, "login failed")
+		return
+	}
+	// Mint session token + bcrypt hash outside the config lock — bcrypt is
+	// intentionally slow and must not hold configMu for its duration.
+	sessionToken, sessionHash, err := middleware.MintSessionToken()
+	if err != nil {
+		slog.Error("auth: mint session token failed", "error", err)
 		jsonErr(w, http.StatusInternalServerError, "login failed")
 		return
 	}
@@ -330,12 +349,13 @@ func (a *restAPI) HandleLogin(w http.ResponseWriter, r *http.Request) {
 			if bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(body.Password)) != nil {
 				return ErrInvalidCredentials
 			}
-			// Update token hash in the raw JSON atomically via safeUpdateConfigJSON.
+			// Update both token hashes atomically via safeUpdateConfigJSON.
 			tokenHash, err := bcrypt.GenerateFromPassword([]byte(token), bcrypt.DefaultCost)
 			if err != nil {
 				return fmt.Errorf("token hash failed: %w", err)
 			}
 			userMap["token_hash"] = string(tokenHash)
+			userMap["session_token_hash"] = string(sessionHash)
 			foundRole, _ = userMap["role"].(string)
 			return nil
 		}
@@ -366,6 +386,9 @@ func (a *restAPI) HandleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Reset rate limit counter on successful login.
 	globalLoginLimiter.recordSuccess(ip, body.Username)
+
+	// Issue the omnipus-session HttpOnly cookie (session-cookie auth path).
+	middleware.WriteSessionCookie(w, r, sessionToken)
 
 	// Issue a fresh __Host-csrf cookie so the SPA can echo it on subsequent
 	// state-changing requests (issue #97). Login is the canonical moment to
@@ -432,8 +455,8 @@ func (a *restAPI) HandleRegisterAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate bcrypt hashes outside the config lock — bcrypt is intentionally
-	// slow and must not hold configMu for its duration.
+	// Generate all bcrypt hashes outside the config lock — bcrypt is
+	// intentionally slow and must not hold configMu for its duration.
 	passwordHash, err := bcrypt.GenerateFromPassword([]byte(body.Password), bcrypt.DefaultCost)
 	if err != nil {
 		slog.Error("auth: hash password failed", "error", err)
@@ -449,6 +472,14 @@ func (a *restAPI) HandleRegisterAdmin(w http.ResponseWriter, r *http.Request) {
 	tokenHash, err := bcrypt.GenerateFromPassword([]byte(token), bcrypt.DefaultCost)
 	if err != nil {
 		slog.Error("auth: hash token failed", "error", err)
+		jsonErr(w, http.StatusInternalServerError, "could not register admin")
+		return
+	}
+	// Mint a session token so the newly-registered admin is immediately logged
+	// in via the session-cookie auth path (no second round-trip required).
+	sessionToken, sessionHash, err := middleware.MintSessionToken()
+	if err != nil {
+		slog.Error("auth: mint session token failed", "error", err)
 		jsonErr(w, http.StatusInternalServerError, "could not register admin")
 		return
 	}
@@ -484,10 +515,11 @@ func (a *restAPI) HandleRegisterAdmin(w http.ResponseWriter, r *http.Request) {
 
 		// Append the new admin entry (all hashes already computed above).
 		newUser := map[string]any{
-			"username":      body.Username,
-			"password_hash": string(passwordHash),
-			"token_hash":    string(tokenHash),
-			"role":          string(config.UserRoleAdmin),
+			"username":           body.Username,
+			"password_hash":      string(passwordHash),
+			"token_hash":         string(tokenHash),
+			"session_token_hash": string(sessionHash),
+			"role":               string(config.UserRoleAdmin),
 		}
 		gw["users"] = append(users, newUser)
 		return nil
@@ -506,6 +538,9 @@ func (a *restAPI) HandleRegisterAdmin(w http.ResponseWriter, r *http.Request) {
 	if err := a.awaitReload(); err != nil {
 		slog.Warn("auth: hot-reload after register-admin failed; token active after next restart", "error", err)
 	}
+
+	// Issue the omnipus-session HttpOnly cookie (session-cookie auth path).
+	middleware.WriteSessionCookie(w, r, sessionToken)
 
 	// Issue a __Host-csrf cookie so the newly-registered admin can
 	// immediately make state-changing requests without being blocked by the
@@ -526,7 +561,8 @@ func (a *restAPI) HandleRegisterAdmin(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleLogout handles POST /api/v1/auth/logout.
-// Invalidates the authenticated user's token by clearing token_hash in config.json.
+// Invalidates the authenticated user's token by clearing token_hash and
+// session_token_hash in config.json, then revokes both browser-side cookies.
 func (a *restAPI) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -553,6 +589,7 @@ func (a *restAPI) HandleLogout(w http.ResponseWriter, r *http.Request) {
 			}
 			if um["username"] == user.Username {
 				um["token_hash"] = ""
+				um["session_token_hash"] = ""
 				return nil
 			}
 		}
@@ -565,7 +602,11 @@ func (a *restAPI) HandleLogout(w http.ResponseWriter, r *http.Request) {
 	if err := a.awaitReload(); err != nil {
 		slog.Warn("auth: hot-reload after logout failed", "error", err)
 	}
-	jsonOK(w, map[string]any{"success": true})
+	// Revoke both browser-side cookies (session + CSRF). Defense-in-depth:
+	// the server-side hashes were already cleared above.
+	middleware.ClearSessionCookie(w, r)
+	middleware.ClearCSRFCookie(w, r)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // HandleChangePassword handles POST /api/v1/auth/change-password.

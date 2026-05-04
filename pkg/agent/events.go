@@ -149,6 +149,9 @@ type TurnEndPayload struct {
 	// ChatID is the chat session this turn belongs to.
 	// Populated so the WS watchdog can scope orphan detection to the correct connection.
 	ChatID string
+	// SessionID is the transcript-store session ID for this turn.
+	// Carried end-to-end so the WS forwarder can avoid the sessionIDs reverse-lookup.
+	SessionID string
 	// IsRoot is true when this turn has no parent (parentTurnID == "").
 	// The orphan watchdog only arms on root turn-end to avoid spurious interrupts
 	// from sibling sub-turn completions.
@@ -215,6 +218,8 @@ type SessionSummarizePayload struct {
 type ToolExecStartPayload struct {
 	ToolCallID session.ToolCallID
 	ChatID     string
+	// SessionID is the transcript-store session ID for this turn.
+	SessionID string
 	Tool       string
 	Arguments  map[string]any
 	// ParentSpawnCallID is non-empty when this tool call fires inside a sub-turn.
@@ -230,6 +235,8 @@ type ToolExecStartPayload struct {
 type ToolExecEndPayload struct {
 	ToolCallID session.ToolCallID
 	ChatID     string
+	// SessionID is the transcript-store session ID for this turn.
+	SessionID string
 	Tool       string
 	Duration   time.Duration
 	ForLLMLen  int
@@ -320,6 +327,8 @@ type SubTurnSpawnPayload struct {
 	TaskLabel string
 	// ChatID is needed so the WS forwarder can route this event to the right connection.
 	ChatID string
+	// SessionID is the transcript-store session ID for this turn.
+	SessionID string
 }
 
 // SubTurnEndPayload describes the completion of a child turn.
@@ -335,6 +344,8 @@ type SubTurnEndPayload struct {
 	DurationMS int64
 	// ChatID is needed so the WS forwarder can route this event to the right connection.
 	ChatID string
+	// SessionID is the transcript-store session ID for this turn.
+	SessionID string
 }
 
 // SubTurnResultDeliveredPayload describes delivery of a sub-turn result.

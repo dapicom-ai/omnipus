@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,12 +15,13 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/creack/pty"
 
+	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/config"
-	"github.com/dapicom-ai/omnipus/pkg/constants"
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/policy"
 	"github.com/dapicom-ai/omnipus/pkg/sandbox"
@@ -83,6 +85,33 @@ type ExecToolDeps struct {
 	// loopback SSRF proxy (SEC-28). Nil disables proxy injection — the child
 	// receives no HTTP_PROXY env vars and traffic flows directly to the network.
 	ExecProxy ExecChildProxy
+
+	// SandboxMode is the applied sandbox mode from al.appliedSandboxMode
+	// (set via AgentLoop.SetAppliedSandboxMode after boot). The value flows
+	// from SandboxApplyResult.Mode — the post-Apply truth — rather than from
+	// cfg.Sandbox.ResolvedMode(), which only reports what the config file says
+	// and would disagree when the CLI --sandbox flag overrides config.
+	//
+	// "enforce" and "permissive" route the child process through sandbox.Run
+	// (foreground) or ApplyChildHardening (background) so it inherits the
+	// gateway's Landlock + seccomp + egress-proxy policy.
+	// "off" and the empty string both map to sandbox disabled: a plain
+	// `sh -c <cmd>` with no proxy and full user latitude. See sandboxOn().
+	SandboxMode string
+
+	// EgressProxy is the kernel-sandbox HTTP/HTTPS egress proxy. When non-nil
+	// AND SandboxMode != "off", the child's HTTP_PROXY/HTTPS_PROXY env vars
+	// are pointed at it via sandbox.Limits.EgressProxyAddr. Nil disables the
+	// proxy injection on the sandboxed path; the SEC-28 ExecProxy above is a
+	// separate, complementary mechanism kept for the sandbox-off / fallback
+	// platform paths.
+	EgressProxy *sandbox.EgressProxy
+
+	// ExecTimeoutSeconds is the wall-clock timeout passed to sandbox.Run when
+	// the sandbox-on path is taken. 0 disables the per-call timeout (the
+	// caller's context governs cancellation). Sourced from
+	// cfg.Tools.Exec.TimeoutSeconds.
+	ExecTimeoutSeconds int32
 }
 
 var (
@@ -97,6 +126,7 @@ func getSessionManager() *SessionManager {
 }
 
 type ExecTool struct {
+	BaseTool
 	workingDir           string
 	timeout              time.Duration
 	maxBackgroundSeconds int // hard-kill timeout for background sessions; 0 = disabled
@@ -105,7 +135,6 @@ type ExecTool struct {
 	customAllowPatterns  []*regexp.Regexp
 	allowedPathPatterns  []*regexp.Regexp
 	restrictToWorkspace  bool
-	allowRemote          bool
 	sessionManager       *SessionManager
 
 	// Wave 2: Security wiring (SEC-01/02/03/05).
@@ -122,6 +151,62 @@ type ExecTool struct {
 	// When non-nil, PrepareCmd injects HTTP_PROXY/HTTPS_PROXY env vars before
 	// Start() and CmdDone() is called exactly once after cmd.Wait() returns.
 	execProxy ExecChildProxy
+	// auditLogger receives path.access_denied events for workspace-guard
+	// rejections. Nil means audit logging is disabled (best-effort).
+	auditLogger *audit.Logger
+
+	// sandboxMode is the resolved sandbox mode; "off" → legacy `sh -c` path;
+	// any other value (including "" which defaults to enforce in the policy
+	// engine) → hardened-exec path via sandbox.Run / ApplyChildHardening.
+	sandboxMode string
+	// sandboxEgressProxy is the *sandbox.EgressProxy plumbed into the
+	// hardened-exec Limits. Nil disables proxy injection on the sandbox-on
+	// path (children make HTTP requests directly).
+	sandboxEgressProxy *sandbox.EgressProxy
+	// execTimeoutSeconds is the timeout passed to sandbox.Run (sandbox-on
+	// foreground path). 0 = no timeout.
+	execTimeoutSeconds int32
+
+	// killAuditFn is a pre-built audit callback for process-kill failures.
+	// H5-BK: constructed once at SetAuditLogger time so all kill sites
+	// (runSync's terminateProcessTree, runSync's fallback kill, background
+	// session hard-kill, and kill_session tool path) share one closure rather
+	// than each rebuilding it inline. Nil when auditLogger is nil.
+	killAuditFn func(pid int, killErr error, caller string)
+}
+
+// SetAuditLogger injects an audit.Logger into the ExecTool so that
+// path.access_denied events are emitted on workspace-guard rejections.
+// Satisfies the auditLoggerAware contract used by the ToolRegistry.
+// Calling this on a nil ExecTool is a no-op.
+//
+// H5-BK: also pre-builds killAuditFn once so all kill sites (runSync's
+// terminateProcessTree, runSync's fallback kill, background session hard-kill,
+// and kill_session tool path) share one closure rather than each rebuilding it.
+func (t *ExecTool) SetAuditLogger(l *audit.Logger) {
+	if t == nil {
+		return
+	}
+	t.auditLogger = l
+	if l != nil {
+		al := l
+		t.killAuditFn = func(pid int, killErr error, caller string) {
+			// CRIT-6 + typed-Event migration: route through audit.EmitEntry so
+			// Log failure bumps the audit-skipped counter; use the typed
+			// EventProcessKillFailed constant in place of the raw literal.
+			audit.EmitEntry(al, &audit.Entry{
+				Event:    audit.EventProcessKillFailed,
+				Decision: audit.DecisionError,
+				Details: map[string]any{
+					"pid":    pid,
+					"error":  killErr.Error(),
+					"caller": caller,
+				},
+			})
+		}
+	} else {
+		t.killAuditFn = nil
+	}
 }
 
 var (
@@ -216,7 +301,33 @@ func NewExecToolWithDeps(
 	tool.sandboxBackend = deps.SandboxBackend
 	tool.sandboxPolicy = deps.SandboxPolicy
 	tool.execProxy = deps.ExecProxy
+	tool.sandboxMode = deps.SandboxMode
+	tool.sandboxEgressProxy = deps.EgressProxy
+	tool.execTimeoutSeconds = deps.ExecTimeoutSeconds
 	return tool, nil
+}
+
+// sandboxOn reports whether the exec tool should route children through the
+// hardened-exec path (sandbox.Run / ApplyChildHardening). The decision is
+// explicit-opt-in: only "enforce" and "permissive" turn it on. Any other
+// value — including "off" and the empty string — preserves today's behaviour
+// (`sh -c <cmd>`, no proxy, no workspace cwd unless the caller passes one).
+//
+// Empty string explicitly maps to OFF so the many test paths that construct
+// an ExecTool via NewExecTool / NewExecToolWithConfig (no deps) continue to
+// behave exactly as before. Production boot routes through
+// NewExecToolWithDeps which sets SandboxMode from cfg.Sandbox.ResolvedMode(),
+// so production is unaffected by this default.
+func (t *ExecTool) sandboxOn() bool {
+	if t == nil {
+		return false
+	}
+	switch t.sandboxMode {
+	case string(sandbox.ModeEnforce), string(sandbox.ModePermissive):
+		return true
+	default:
+		return false
+	}
 }
 
 // applySandboxToCmd applies the configured sandbox policy to a child process
@@ -249,7 +360,6 @@ func NewExecToolWithConfig(
 	denyPatterns := make([]*regexp.Regexp, 0)
 	customAllowPatterns := make([]*regexp.Regexp, 0)
 	var allowedPathPatterns []*regexp.Regexp
-	allowRemote := false
 	if len(allowPaths) > 0 {
 		allowedPathPatterns = allowPaths[0]
 	}
@@ -257,7 +367,6 @@ func NewExecToolWithConfig(
 	if config != nil {
 		execConfig := config.Tools.Exec
 		enableDenyPatterns := execConfig.EnableDenyPatterns
-		allowRemote = execConfig.AllowRemote
 		if enableDenyPatterns {
 			denyPatterns = append(denyPatterns, defaultDenyPatterns...)
 			if len(execConfig.CustomDenyPatterns) > 0 {
@@ -308,7 +417,6 @@ func NewExecToolWithConfig(
 		customAllowPatterns:  customAllowPatterns,
 		allowedPathPatterns:  allowedPathPatterns,
 		restrictToWorkspace:  restrict,
-		allowRemote:          allowRemote,
 		sessionManager:       getSessionManager(),
 	}, nil
 }
@@ -401,18 +509,9 @@ func (t *ExecTool) executeRun(ctx context.Context, args map[string]any) *ToolRes
 		return ErrorResult("command is required")
 	}
 
-	// GHSA-pv8c-p6jf-3fpp: block exec from remote channels (e.g. Telegram webhooks)
-	// unless explicitly opted-in via config. Fail-closed: empty channel = blocked.
-	if !t.allowRemote {
-		channel := ToolChannel(ctx)
-		if channel == "" {
-			channel, _ = args["__channel"].(string)
-		}
-		channel = strings.TrimSpace(channel)
-		if channel == "" || !constants.IsInternalChannel(channel) {
-			return ErrorResult("exec is restricted to internal channels")
-		}
-	}
+	// GHSA-pv8c-p6jf-3fpp channel block removed. exec is now governed
+	// purely by per-agent ToolPolicyCfg. Agents that should not use exec on
+	// remote channels must have exec: deny in their tool policy.
 
 	getBoolArg := func(key string) bool {
 		switch v := args[key].(type) {
@@ -522,6 +621,27 @@ func (t *ExecTool) executeRun(ctx context.Context, args map[string]any) *ToolRes
 }
 
 func (t *ExecTool) runSync(ctx context.Context, command, cwd string) *ToolResult {
+	// Sandbox-on path: route the child through sandbox.Run so it picks up
+	// workspace cwd, the egress proxy, RLIMITs, npm cache, scrubbed env, and
+	// inherits the gateway's kernel Landlock + seccomp policy (FS rules + the
+	// new bind port allow-list). The kernel layer is the load-bearing
+	// piece — without it, the agent could still bind 5173 and serve the
+	// internet directly, defeating the purpose of web_serve.
+	if t.sandboxOn() {
+		return t.runSyncHardened(ctx, command, cwd)
+	}
+
+	// Legacy path (sandbox=off): trust mode. Operator opted out of the
+	// sandbox; exec runs as the user with full host latitude (sudo if the
+	// user has it, any port, any path the user can reach). This is the
+	// documented contract for ModeOff.
+	//
+	// Security: even on the legacy path, scrub gateway secrets from the
+	// inherited environment unconditionally. This prevents a prompt-injected
+	// LLM from reading OMNIPUS_MASTER_KEY, OMNIPUS_KEY_FILE, or
+	// OMNIPUS_BEARER_TOKEN via `exec env`. The master-key leak is a total
+	// credential-store compromise regardless of sandbox mode.
+
 	// timeout == 0 means no timeout
 	var cmdCtx context.Context
 	var cancel context.CancelFunc
@@ -541,6 +661,11 @@ func (t *ExecTool) runSync(ctx context.Context, command, cwd string) *ToolResult
 	if cwd != "" {
 		cmd.Dir = cwd
 	}
+	// Unconditionally scrub sensitive gateway env vars so children never see
+	// OMNIPUS_MASTER_KEY/OMNIPUS_KEY_FILE/OMNIPUS_BEARER_TOKEN regardless of
+	// sandbox mode. This replaces the nil Env (which would inherit the full
+	// process environment including secrets) with a scrubbed copy.
+	cmd.Env = sandbox.ScrubGatewayEnv()
 
 	prepareCommandForTermination(cmd)
 
@@ -577,14 +702,30 @@ func (t *ExecTool) runSync(ctx context.Context, command, cwd string) *ToolResult
 	select {
 	case err = <-done:
 	case <-cmdCtx.Done():
-		if termErr := terminateProcessTree(cmd); termErr != nil {
+		// H5-BK: use the pre-built killAuditFn stored on the ExecTool so all
+		// kill sites share one closure. Nil-safe: terminateProcessTree and the
+		// fallback both guard on killAuditFn != nil before calling.
+		if termErr := terminateProcessTree(cmd, t.killAuditFn); termErr != nil {
 			logger.WarnCF("shell", "terminateProcessTree error", map[string]any{"error": termErr.Error()})
 		}
 		select {
 		case err = <-done:
 		case <-time.After(2 * time.Second):
+			// H2-BK: the 2-second graceful-exit window elapsed. This is the
+			// absolute last-resort kill. Failure here means the shell child is
+			// permanently loose — surface it through the same audit hook used by
+			// terminateProcessTree so operators see the event in the audit log.
 			if cmd.Process != nil {
-				_ = cmd.Process.Kill()
+				if killErr := cmd.Process.Kill(); killErr != nil {
+					// Use errors.Is instead of string comparison (quick sweep 1).
+					if !errors.Is(killErr, os.ErrProcessDone) && !errors.Is(killErr, syscall.ESRCH) {
+						slog.Error("shell: runSync fallback Kill failed; child PID may be loose",
+							"pid", cmd.Process.Pid, "error", killErr)
+						if t.killAuditFn != nil {
+							t.killAuditFn(cmd.Process.Pid, killErr, "runSync_fallback_kill")
+						}
+					}
+				}
 			}
 			err = <-done
 		}
@@ -649,6 +790,110 @@ func (t *ExecTool) runSync(ctx context.Context, command, cwd string) *ToolResult
 	}
 }
 
+// runSyncHardened runs the command via sandbox.Run so it inherits the
+// gateway's Landlock + seccomp policy and gets workspace cwd, scrubbed env,
+// and the egress proxy injected. Output shape mirrors the legacy runSync
+// path so the agent UX does not change.
+func (t *ExecTool) runSyncHardened(ctx context.Context, command, cwd string) *ToolResult {
+	argv := buildShellArgv(command)
+
+	wsDir := cwd
+	if wsDir == "" {
+		wsDir = t.workingDir
+	}
+
+	lim := sandbox.Limits{
+		TimeoutSeconds: t.execTimeoutSeconds,
+		WorkspaceDir:   wsDir,
+	}
+	if t.sandboxEgressProxy != nil {
+		lim.EgressProxyAddr = t.sandboxEgressProxy.Addr()
+	}
+
+	res, err := sandbox.Run(ctx, argv, nil, lim)
+	if err != nil {
+		return ErrorResult(fmt.Sprintf("sandbox.Run failed: %v", err))
+	}
+
+	output := string(res.Stdout)
+	if len(res.Stderr) > 0 {
+		if output != "" {
+			output += "\n"
+		}
+		output += "STDERR:\n" + string(res.Stderr)
+	}
+
+	if res.TimedOut {
+		msg := fmt.Sprintf("Command timed out after %d seconds", t.execTimeoutSeconds)
+		if output != "" {
+			msg += "\n\nPartial output before timeout:\n" + output
+		}
+		return &ToolResult{
+			ForLLM:  msg,
+			ForUser: msg,
+			IsError: true,
+			Err:     errors.New("command timeout"),
+		}
+	}
+
+	if res.ExitCode != 0 {
+		output += fmt.Sprintf("\n\n[Command exited with code %d]", res.ExitCode)
+		if res.ExitCode == -1 {
+			output += " (killed by signal)"
+		}
+	}
+
+	if output == "" {
+		output = "(no output)"
+	}
+
+	const maxLen = 10000
+	if len(output) > maxLen {
+		totalLen := len(output)
+		output = output[:maxLen] + fmt.Sprintf("\n... (truncated, %d more chars)", totalLen-maxLen)
+	}
+
+	return &ToolResult{
+		ForLLM:  output,
+		ForUser: output,
+		IsError: res.ExitCode != 0,
+	}
+}
+
+// sandboxLimitsEnv builds the environment for background sessions on the
+// sandbox-on path. It starts from sandbox.ScrubGatewayEnv() (which strips
+// OMNIPUS_MASTER_KEY / OMNIPUS_KEY_FILE / OMNIPUS_BEARER_TOKEN) and then
+// layers the Limits-derived injections (HTTP_PROXY, npm_config_cache) on top
+// so they take precedence on duplicate keys (POSIX exec(3) semantics).
+func sandboxLimitsEnv(lim sandbox.Limits) []string {
+	scrubbed := sandbox.ScrubGatewayEnv()
+	if lim.EgressProxyAddr != "" {
+		proxyURL := "http://" + lim.EgressProxyAddr
+		scrubbed = append(scrubbed,
+			"HTTP_PROXY="+proxyURL,
+			"HTTPS_PROXY="+proxyURL,
+			"http_proxy="+proxyURL,
+			"https_proxy="+proxyURL,
+			"NO_PROXY=127.0.0.1,localhost,::1",
+			"no_proxy=127.0.0.1,localhost,::1",
+		)
+	}
+	if lim.WorkspaceDir != "" {
+		scrubbed = append(scrubbed, "npm_config_cache="+lim.WorkspaceDir+"/.npm-cache")
+	}
+	return scrubbed
+}
+
+// buildShellArgv returns the platform-appropriate shell argv to execute a
+// free-form command. Mirrors the legacy runSync / runBackground branches so
+// shell features (pipes, &&, redirects) keep working on the sandbox-on path.
+func buildShellArgv(command string) []string {
+	if runtime.GOOS == "windows" {
+		return []string{"powershell", "-NoProfile", "-NonInteractive", "-Command", command}
+	}
+	return []string{"sh", "-c", command}
+}
+
 func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEnabled bool) *ToolResult {
 	sessionID := generateSessionID()
 	session := &ProcessSession{
@@ -670,6 +915,13 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 	if cwd != "" {
 		cmd.Dir = cwd
 	}
+
+	// Unconditionally scrub sensitive gateway env vars so background children
+	// never see OMNIPUS_MASTER_KEY/OMNIPUS_KEY_FILE/OMNIPUS_BEARER_TOKEN
+	// regardless of sandbox mode. The sandbox-on path below will override
+	// cmd.Env with sandboxLimitsEnv (which also scrubs), but we set the
+	// scrubbed base here so the sandbox-off legacy path is covered too.
+	cmd.Env = sandbox.ScrubGatewayEnv()
 
 	prepareCommandForTermination(cmd)
 
@@ -724,6 +976,41 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 		return ErrorResult(err.Error())
 	}
 
+	// Sandbox-on path for background sessions: inject the same Limits-derived
+	// env (HTTP_PROXY/HTTPS_PROXY, NO_PROXY, npm_config_cache) that
+	// sandbox.Run applies on the foreground path, and apply Setpgid + Pdeathsig
+	// process-group hardening via ApplyChildHardening when not in PTY mode.
+	// PTY sessions require Setsid (set by setSysProcAttrForPty above), which
+	// conflicts with Setpgid; skip the SysProcAttr step for PTY. Kernel
+	// Landlock + seccomp + the bind/connect port allow-list are process-wide
+	// and inherit to the child regardless, so the security-critical pieces
+	// are still in force on the PTY path.
+	var hardenedLim sandbox.Limits
+	if t.sandboxOn() {
+		hardenedLim = sandbox.Limits{
+			TimeoutSeconds: 0, // background sessions are governed by maxBackgroundSeconds
+			WorkspaceDir:   cwd,
+		}
+		if t.sandboxEgressProxy != nil {
+			hardenedLim.EgressProxyAddr = t.sandboxEgressProxy.Addr()
+		}
+		// Build env: scrub gateway secrets, then layer the Limits injections.
+		// We let mergeEnv do the work by handing its output back via cmd.Env.
+		cmd.Env = sandboxLimitsEnv(hardenedLim)
+
+		if !ptyEnabled {
+			if err := sandbox.ApplyChildHardening(cmd, hardenedLim); err != nil {
+				if session.ptyMaster != nil {
+					session.ptyMaster.Close()
+				}
+				if ptySlaveToClose != nil {
+					ptySlaveToClose.Close()
+				}
+				return ErrorResult(fmt.Sprintf("sandbox hardening failed: %v", err))
+			}
+		}
+	}
+
 	// SEC-28: Route child-process HTTP(S) traffic through the loopback SSRF
 	// proxy. Unlike runSync we cannot defer CmdDone() here because the command
 	// runs asynchronously; the paired CmdDone() call is made from the wait
@@ -737,7 +1024,21 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 		proxyActive = true
 	}
 
-	if err := cmd.Start(); err != nil {
+	// When the sandbox is on, the spawn must happen on a thread that has
+	// Landlock re-applied so the child inherits the kernel domain. Without
+	// this hop, Go's M:N scheduler routes the fork through whichever worker
+	// thread is currently running this goroutine, and that thread is almost
+	// never the boot thread that received restrict_self at gateway start —
+	// so the child silently escapes the sandbox. PTY mode skips Setpgid but
+	// still needs the per-thread re-apply for the Landlock inheritance to
+	// kick in.
+	startErr := func() error {
+		if t.sandboxOn() {
+			return sandbox.StartLocked(cmd)
+		}
+		return cmd.Start()
+	}()
+	if startErr != nil {
 		// Start failed after PrepareCmd: balance the counter immediately so
 		// the proxy's idle watcher can still shut it down.
 		if proxyActive {
@@ -750,7 +1051,7 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 		if ptySlaveToClose != nil {
 			ptySlaveToClose.Close()
 		}
-		return ErrorResult(fmt.Sprintf("failed to start command: %v", err))
+		return ErrorResult(fmt.Sprintf("failed to start command: %v", startErr))
 	}
 	if ptySlaveToClose != nil {
 		ptySlaveToClose.Close()
@@ -908,8 +1209,20 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 			// then fall back to SIGKILL via the OS handle.
 			gracefulKillProcessGroup(pid, 5*time.Second)
 			// Ensure the process is gone via the safe OS handle (no PID reuse risk).
+			// H5-BK: surface kill failures through the stored audit callback so
+			// operators see a process_kill_failed event in the audit log, not just
+			// a silent discard.
 			if proc != nil {
-				_ = proc.Kill()
+				if killErr := proc.Kill(); killErr != nil {
+					// Use errors.Is instead of string comparison (quick sweep 1).
+					if !errors.Is(killErr, os.ErrProcessDone) && !errors.Is(killErr, syscall.ESRCH) {
+						slog.Error("shell: background session hard-kill failed; child PID may be loose",
+							"session_id", sid, "pid", pid, "error", killErr)
+						if t.killAuditFn != nil {
+							t.killAuditFn(pid, killErr, "bg_session_hard_kill")
+						}
+					}
+				}
 			}
 
 			// Mark session done under lock only if still running (the wait goroutine
@@ -1084,6 +1397,13 @@ func (t *ExecTool) executeKill(args map[string]any) *ToolResult {
 	}
 
 	if err := session.Kill(); err != nil {
+		// H5-BK: emit an audit entry when kill_session fails so operators
+		// can detect loose processes via the audit log, not just the tool
+		// error response. Use the stored killAuditFn built at SetAuditLogger
+		// time — nil when auditLogger is not wired (god-mode / tests).
+		if t.killAuditFn != nil {
+			t.killAuditFn(session.PID, err, "kill_session_tool")
+		}
 		return ErrorResult(fmt.Sprintf("failed to kill session: %v", err))
 	}
 

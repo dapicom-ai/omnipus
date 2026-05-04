@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
-import { fetchAgents, fetchSubtasks, updateTask, startTask } from '@/lib/api'
+import { fetchAgents, fetchSubtasks, updateTask, startTask, isApiError } from '@/lib/api'
 import type { Task } from '@/lib/api'
 import {
   Sheet,
@@ -96,7 +96,7 @@ export function TaskDetailPanel({ task, onClose, onTaskSelect }: TaskDetailPanel
       return updateTask(task.id, data)
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tasks'] }),
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: unknown) => addToast({ message: isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Failed to update task', variant: 'error' }),
   })
 
   const { mutate: doStart, isPending: isStarting } = useMutation({
@@ -108,7 +108,7 @@ export function TaskDetailPanel({ task, onClose, onTaskSelect }: TaskDetailPanel
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
       addToast({ message: 'Task started.', variant: 'success' })
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: unknown) => addToast({ message: isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Failed to start task', variant: 'error' }),
   })
 
   const handleSavePrompt = () => {

@@ -79,8 +79,23 @@ func TestWSReadLimit_RejectsOversizedFrame(t *testing.T) {
 	_ = conn.WriteMessage(websocket.TextMessage, payload)
 
 	// The server must close the connection after receiving the oversized frame.
+	// Drain any legitimate server-initiated frames (e.g. session_state emitted on
+	// connect — FR-052, FR-081) before asserting the close error.  The connection
+	// must eventually close with an error.
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second)) //nolint:errcheck
-	_, _, err := conn.ReadMessage()
+	var err error
+	for {
+		var msgType int
+		msgType, _, err = conn.ReadMessage()
+		if err != nil {
+			// Connection closed — expected outcome.
+			break
+		}
+		// Received a legitimate server frame (session_state, error notice, etc.).
+		// Ignore it and keep reading; the server will close after processing the
+		// oversized frame.
+		_ = msgType
+	}
 	assert.Error(t, err,
 		"connection must be closed by the server after receiving a frame larger than 5 MB")
 }

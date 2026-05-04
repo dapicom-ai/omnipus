@@ -26,6 +26,7 @@ type MCPManager interface {
 
 // MCPTool wraps an MCP tool to implement the Tool interface
 type MCPTool struct {
+	BaseTool
 	manager    MCPManager
 	serverName string
 	tool       *mcp.Tool

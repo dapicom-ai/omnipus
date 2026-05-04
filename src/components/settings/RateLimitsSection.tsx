@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Gauge } from '@phosphor-icons/react'
-import { fetchRateLimits, updateRateLimits } from '@/lib/api'
+import { fetchRateLimits, updateRateLimits, isApiError } from '@/lib/api'
 import type { RateLimitsUpdateBody } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { useAuthStore } from '@/store/auth'
@@ -181,10 +181,11 @@ export function RateLimitsSection(): React.ReactElement {
       setServerLlmPerHour(lph)
       setServerToolPerMin(tpm)
     },
-    onError: (err: Error) => {
+    onError: (err: unknown) => {
+      const msg = isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Save failed'
       setSaveState('error')
-      setErrorMessage(err.message)
-      addToast({ message: err.message, variant: 'error' })
+      setErrorMessage(msg)
+      addToast({ message: msg, variant: 'error' })
     },
   })
 

@@ -27,11 +27,15 @@ import {
   fetchSandboxStatus,
   fetchSandboxConfig,
   updateSandboxConfig,
+  fetchAppState,
+  isApiError,
 } from '@/lib/api'
-import type { SandboxStatus } from '@/lib/api'
+import type { SandboxStatus, SandboxProfile } from '@/lib/api'
 import { useAuthStore } from '@/store/auth'
 import { useUiStore } from '@/store/ui'
 import { SaveStatus, useSaveStatus } from './SaveStatus'
+import { SandboxProfileSelector } from '@/components/agents/SandboxProfileSelector'
+import { ShellDenyPatternsEditor } from '@/components/agents/ShellDenyPatternsEditor'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -505,6 +509,74 @@ export function SandboxSection(): React.ReactElement {
     queryFn: fetchSandboxConfig,
   })
 
+  // ── App state (god mode availability) ─────────────────────────────────────
+  const { data: appState } = useQuery({
+    queryKey: ['app-state'],
+    queryFn: fetchAppState,
+    staleTime: 60_000,
+  })
+
+  // ── Agents query (for default profile selector — we pick the first/system agent) ─
+  // The "default for new agents" profile is a global concept; we store it via
+  // a special placeholder. Since the backend does not yet expose a dedicated
+  // endpoint for this, we use the config.agents.defaults pathway. For now the
+  // UI controls are rendered and the save wires through updateConfig.
+  const [defaultProfile, setDefaultProfile] = useState<SandboxProfile | undefined>(undefined)
+  const [globalDenyPatterns, setGlobalDenyPatterns] = useState<string[]>([])
+  const [agentDefaultsSaving, setAgentDefaultsSaving] = useState(false)
+
+  const { mutate: saveAgentDefaults } = useMutation({
+    mutationFn: async (data: { sandbox_profile?: SandboxProfile; shell_deny_patterns?: string[] }) => {
+      // Persist via PUT /api/v1/security/sandbox-config under the canonical
+      // backend keys (default_profile, shell_deny_patterns) defined in
+      // pkg/gateway/rest_sandbox_config.go::sandboxConfigPutBody.
+      await updateSandboxConfig({
+        default_profile: data.sandbox_profile,
+        shell_deny_patterns: data.shell_deny_patterns,
+      })
+    },
+    onMutate: () => setAgentDefaultsSaving(true),
+    onSuccess: () => {
+      setAgentDefaultsSaving(false)
+      void queryClient.invalidateQueries({ queryKey: ['sandbox-config'] })
+    },
+    onError: (err: Error) => {
+      setAgentDefaultsSaving(false)
+      addToast({ message: isApiError(err) ? err.userMessage : err.message, variant: 'error' })
+    },
+  })
+
+  // Sync defaultProfile + globalDenyPatterns from configData. Reads the
+  // canonical backend keys (default_profile, shell_deny_patterns) — see
+  // pkg/gateway/rest_sandbox_config.go GET response.
+  useEffect(() => {
+    if (!configData) return
+    const raw = configData as Record<string, unknown>
+    if (typeof raw.default_profile === 'string' && raw.default_profile !== '') {
+      setDefaultProfile(raw.default_profile as SandboxProfile)
+    }
+    if (Array.isArray(raw.shell_deny_patterns)) {
+      setGlobalDenyPatterns(raw.shell_deny_patterns as string[])
+    }
+  }, [configData])
+
+  // Debounced autosave for default profile + global deny patterns. The flag
+  // distinguishes hydration writes (where the effect should NOT fire a PUT)
+  // from user edits. Without the debounce, ShellDenyPatternsEditor's per-
+  // keystroke onChange would issue one PUT per character.
+  const agentDefaultsTouched = useRef(false)
+  const markAgentDefaultsTouched = () => { agentDefaultsTouched.current = true }
+  useEffect(() => {
+    if (!agentDefaultsTouched.current) return
+    const handle = setTimeout(() => {
+      saveAgentDefaults({
+        sandbox_profile: defaultProfile,
+        shell_deny_patterns: globalDenyPatterns.filter((x) => x.trim() !== ''),
+      })
+    }, 400)
+    return () => clearTimeout(handle)
+  }, [defaultProfile, globalDenyPatterns, saveAgentDefaults])
+
   // ── Mode state ─────────────────────────────────────────────────────────────
   const [currentMode, setCurrentMode] = useState<'enforce' | 'permissive' | 'off' | undefined>()
   const savedMode = configData?.mode as 'enforce' | 'permissive' | 'off' | undefined
@@ -590,8 +662,9 @@ export function SandboxSection(): React.ReactElement {
     },
     onError: (err: Error) => {
       setSaveState('error')
-      setErrorMessage(err.message)
-      addToast({ message: err.message, variant: 'error' })
+      const msg = isApiError(err) ? err.userMessage : err.message
+      setErrorMessage(msg)
+      addToast({ message: msg, variant: 'error' })
       // Revert to server mode
       setCurrentMode(savedMode)
     },
@@ -614,18 +687,18 @@ export function SandboxSection(): React.ReactElement {
     },
     onError: (err: Error) => {
       setSaveState('error')
-      setErrorMessage(err.message)
-      const msg = err.message.replace(/^\d+:\s*/, '')
+      const msg = isApiError(err) ? err.userMessage : String(err)
+      setErrorMessage(msg)
       const pathRowMatch = /allowed_paths\[(\d+)\]:\s*(.+)/.exec(msg)
       if (pathRowMatch) {
         const rowIdx = parseInt(pathRowMatch[1], 10)
-        setPathRowErrors({ [rowIdx]: pathRowMatch[2] })
+        setPathRowErrors((prev) => ({ ...prev, [rowIdx]: pathRowMatch[2] }))
         return
       }
       const ssrfRowMatch = /ssrf\.allow_internal\[(\d+)\]:\s*(.+)/.exec(msg)
       if (ssrfRowMatch) {
         const rowIdx = parseInt(ssrfRowMatch[1], 10)
-        setSsrfAdvancedErrors({ [rowIdx]: ssrfRowMatch[2] })
+        setSsrfAdvancedErrors((prev) => ({ ...prev, [rowIdx]: ssrfRowMatch[2] }))
         return
       }
       setPathAddError(msg)
@@ -1054,12 +1127,63 @@ export function SandboxSection(): React.ReactElement {
 
                 {saveMutation.isError && (
                   <p className="text-xs text-[var(--color-error)]">
-                    {saveMutation.error instanceof Error
-                      ? saveMutation.error.message.replace(/^\d+:\s*/, '')
-                      : 'Save failed'}
+                    {isApiError(saveMutation.error)
+                      ? saveMutation.error.userMessage
+                      : saveMutation.error instanceof Error
+                        ? saveMutation.error.message
+                        : 'Save failed'}
                   </p>
                 )}
               </>
+            )}
+          </div>
+
+          {/* ── Default profile for new agents ── */}
+          <div className="space-y-3 border-t border-[var(--color-border)] pt-4">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold text-[var(--color-secondary)]">Default profile for new agents</p>
+              {agentDefaultsSaving && (
+                <span className="text-[10px] text-[var(--color-muted)]">Saving...</span>
+              )}
+            </div>
+            <p className="text-[10px] text-[var(--color-muted)]">
+              Applied to newly created custom agents that do not pick their own sandbox profile.
+              Existing agents keep whatever profile they were configured with; the locked
+              core agents (Mia, Jim, Ava, Ray, Max) always use their built-in profiles.
+              Restart required to take effect.
+            </p>
+            {configLoading ? (
+              <div className="h-3 w-2/3 rounded bg-[var(--color-border)] animate-pulse" />
+            ) : (
+              <SandboxProfileSelector
+                value={defaultProfile}
+                agentName="new agents"
+                godModeAvailable={appState?.god_mode_available ?? false}
+                godModeOptedIn={appState?.god_mode_opted_in ?? false}
+                onChange={(p) => {
+                  markAgentDefaultsTouched()
+                  setDefaultProfile(p)
+                }}
+              />
+            )}
+          </div>
+
+          {/* ── Global shell deny patterns ── */}
+          <div className="space-y-3 border-t border-[var(--color-border)] pt-4">
+            <p className="text-xs font-semibold text-[var(--color-secondary)]">Global shell deny patterns</p>
+            <p className="text-[10px] text-[var(--color-muted)]">
+              Fallback patterns applied to all agents that do not override them. One regex per line.
+            </p>
+            {configLoading ? (
+              <div className="h-3 w-2/3 rounded bg-[var(--color-border)] animate-pulse" />
+            ) : (
+              <ShellDenyPatternsEditor
+                value={globalDenyPatterns}
+                onChange={(patterns) => {
+                  markAgentDefaultsTouched()
+                  setGlobalDenyPatterns(patterns)
+                }}
+              />
             )}
           </div>
         </div>

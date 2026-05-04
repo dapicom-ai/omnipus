@@ -12,7 +12,7 @@ import {
 } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
-import { fetchDoctorResults, runDoctor } from '@/lib/api'
+import { fetchDoctorResults, runDoctor, isApiError } from '@/lib/api'
 import type { DoctorResult, DoctorIssue } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 
@@ -73,16 +73,17 @@ export function DiagnosticsSection() {
         variant: result.score >= 67 ? 'success' : 'error',
       })
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: Error) => addToast({ message: isApiError(err) ? err.userMessage : err.message, variant: 'error' }),
   })
 
   const result = lastResult as DoctorResult | null
 
+  const issues = result?.issues ?? []
   const issuesByGroup = result
     ? ({
-        high: result.issues.filter((i) => i.severity === 'high'),
-        medium: result.issues.filter((i) => i.severity === 'medium'),
-        low: result.issues.filter((i) => i.severity === 'low'),
+        high: issues.filter((i) => i.severity === 'high'),
+        medium: issues.filter((i) => i.severity === 'medium'),
+        low: issues.filter((i) => i.severity === 'low'),
       } as const)
     : null
 

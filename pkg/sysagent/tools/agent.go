@@ -19,11 +19,6 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 )
 
-// SystemAgentID is the canonical identifier for the built-in system agent.
-// It is duplicated here (from pkg/sysagent) to avoid an import cycle; both
-// declarations must be kept in sync.
-const systemAgentID = "omnipus-system"
-
 // slugRegexp matches characters that should be replaced in agent name → ID conversion.
 var slugRegexp = regexp.MustCompile(`[^a-z0-9]+`)
 
@@ -72,19 +67,18 @@ func validateAgentIcon(s string) error {
 }
 
 // setAgentEnabled is the shared implementation for activate and deactivate.
-// id must not be empty or equal to the system agent ID.
+// id must not be empty. Locked (core) agents cannot be toggled.
 func setAgentEnabled(deps *Deps, id string, enabled bool) *tools.ToolResult {
 	if id == "" {
 		return tools.ErrorResult(errorJSON("INVALID_INPUT", "id is required", ""))
-	}
-	if id == systemAgentID {
-		return tools.ErrorResult(errorJSON("INVALID_OPERATION",
-			"cannot change the enabled state of the system agent", ""))
 	}
 	var found bool
 	err := deps.WithConfig(func(cfg *config.Config) error {
 		for i, a := range cfg.Agents.List {
 			if a.ID == id {
+				if a.Locked {
+					return fmt.Errorf("agent %q is a locked core agent and cannot be enabled/disabled", id)
+				}
 				found = true
 				cfg.Agents.List[i].Enabled = &enabled
 				return nil
@@ -116,7 +110,7 @@ type AgentCreateTool struct{ deps *Deps }
 func NewAgentCreateTool(d *Deps) *AgentCreateTool { return &AgentCreateTool{deps: d} }
 
 func (t *AgentCreateTool) Name() string           { return "system.agent.create" }
-func (t *AgentCreateTool) Scope() tools.ToolScope { return tools.ScopeSystem }
+func (t *AgentCreateTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *AgentCreateTool) Description() string {
 	return "Create a new custom agent with personality, model, tools, and configuration."
 }
@@ -162,16 +156,6 @@ func (t *AgentCreateTool) Parameters() map[string]any {
 				"type":        "array",
 				"items":       map[string]any{"type": "string"},
 				"description": "Agent IDs this agent can delegate tasks to. Use ['*'] for all.",
-			},
-			"tools_mode": map[string]any{
-				"type":        "string",
-				"enum":        []string{"inherit", "explicit"},
-				"description": "Tool visibility: 'inherit' = all scope-appropriate tools, 'explicit' = only named tools",
-			},
-			"tools_visible": map[string]any{
-				"type":        "array",
-				"items":       map[string]any{"type": "string"},
-				"description": "Tool names to enable when tools_mode='explicit'",
 			},
 			"max_tool_iterations": map[string]any{
 				"type":        "integer",
@@ -263,21 +247,23 @@ func (t *AgentCreateTool) Execute(_ context.Context, args map[string]any) *tools
 				}
 			}
 		}
-		// Optional: tool visibility.
-		if mode, ok := args["tools_mode"].(string); ok && (mode == "inherit" || mode == "explicit") {
-			toolsCfg := &config.AgentToolsCfg{
-				Builtin: config.AgentBuiltinToolsCfg{
-					Mode: config.VisibilityMode(mode),
-				},
-			}
-			if vis, ok := args["tools_visible"].([]any); ok {
-				for _, v := range vis {
-					if s, ok := v.(string); ok && s != "" {
-						toolsCfg.Builtin.Visible = append(toolsCfg.Builtin.Visible, s)
-					}
-				}
-			}
-			newAgent.Tools = toolsCfg
+		// Seed the privilege rail (FR-008/FR-022): custom agents default to
+		// system.*: deny so no system tool is reachable without an explicit
+		// per-agent allow. The caller's tools config (if any) overrides only
+		// the entries it explicitly names — the system.* seed is preserved
+		// unless the caller explicitly sets system.* to something else.
+		if newAgent.Tools == nil {
+			newAgent.Tools = &config.AgentToolsCfg{}
+		}
+		if newAgent.Tools.Builtin.DefaultPolicy == "" {
+			newAgent.Tools.Builtin.DefaultPolicy = config.ToolPolicyAllow
+		}
+		if newAgent.Tools.Builtin.Policies == nil {
+			newAgent.Tools.Builtin.Policies = make(map[string]config.ToolPolicy)
+		}
+		// Only seed system.*: deny if the caller did not provide an explicit entry.
+		if _, hasSystemWildcard := newAgent.Tools.Builtin.Policies["system.*"]; !hasSystemWildcard {
+			newAgent.Tools.Builtin.Policies["system.*"] = config.ToolPolicyDeny
 		}
 		cfg.Agents.List = append(cfg.Agents.List, newAgent)
 		finalID = id
@@ -352,7 +338,7 @@ type AgentUpdateTool struct{ deps *Deps }
 func NewAgentUpdateTool(d *Deps) *AgentUpdateTool { return &AgentUpdateTool{deps: d} }
 
 func (t *AgentUpdateTool) Name() string           { return "system.agent.update" }
-func (t *AgentUpdateTool) Scope() tools.ToolScope { return tools.ScopeSystem }
+func (t *AgentUpdateTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *AgentUpdateTool) Description() string {
 	return "Update an existing agent's configuration. Only provided fields are changed; omitted fields are left as-is."
 }
@@ -375,8 +361,6 @@ func (t *AgentUpdateTool) Parameters() map[string]any {
 			"icon":                  map[string]any{"type": "string"},
 			"heartbeat":             map[string]any{"type": "string", "description": "New HEARTBEAT.md content"},
 			"can_delegate_to":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-			"tools_mode":            map[string]any{"type": "string", "enum": []string{"inherit", "explicit"}},
-			"tools_visible":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			"max_tool_iterations":   map[string]any{"type": "integer"},
 			"timeout_seconds":       map[string]any{"type": "integer"},
 			"restrict_to_workspace": map[string]any{"type": "boolean"},
@@ -467,26 +451,6 @@ func (t *AgentUpdateTool) Execute(_ context.Context, args map[string]any) *tools
 				}
 				updated = append(updated, "can_delegate_to")
 			}
-			// Tool visibility.
-			if mode, ok := args["tools_mode"].(string); ok && (mode == "inherit" || mode == "explicit") {
-				if a.Tools == nil {
-					a.Tools = &config.AgentToolsCfg{}
-				}
-				a.Tools.Builtin.Mode = config.VisibilityMode(mode)
-				updated = append(updated, "tools_mode")
-			}
-			if vis, ok := args["tools_visible"].([]any); ok {
-				if a.Tools == nil {
-					a.Tools = &config.AgentToolsCfg{}
-				}
-				a.Tools.Builtin.Visible = nil
-				for _, v := range vis {
-					if s, ok := v.(string); ok && s != "" {
-						a.Tools.Builtin.Visible = append(a.Tools.Builtin.Visible, s)
-					}
-				}
-				updated = append(updated, "tools_visible")
-			}
 			return nil
 		}
 		return nil
@@ -542,7 +506,7 @@ type AgentDeleteTool struct{ deps *Deps }
 func NewAgentDeleteTool(d *Deps) *AgentDeleteTool { return &AgentDeleteTool{deps: d} }
 
 func (t *AgentDeleteTool) Name() string           { return "system.agent.delete" }
-func (t *AgentDeleteTool) Scope() tools.ToolScope { return tools.ScopeSystem }
+func (t *AgentDeleteTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *AgentDeleteTool) Description() string {
 	return "Delete an agent and all its data (sessions, memory, workspace).\nParameters: id (required), confirm (bool, must be true)."
 }
@@ -563,10 +527,6 @@ func (t *AgentDeleteTool) Execute(_ context.Context, args map[string]any) *tools
 	confirm, _ := args["confirm"].(bool)
 	if id == "" {
 		return tools.ErrorResult(errorJSON("INVALID_INPUT", "id is required", ""))
-	}
-	if id == systemAgentID {
-		return tools.ErrorResult(errorJSON("INVALID_OPERATION",
-			"cannot delete the system agent", ""))
 	}
 	if !confirm {
 		return tools.ErrorResult(errorJSON("CONFIRMATION_REQUIRED",
@@ -620,7 +580,7 @@ type AgentListTool struct{ deps *Deps }
 func NewAgentListTool(d *Deps) *AgentListTool { return &AgentListTool{deps: d} }
 
 func (t *AgentListTool) Name() string           { return "system.agent.list" }
-func (t *AgentListTool) Scope() tools.ToolScope { return tools.ScopeSystem }
+func (t *AgentListTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *AgentListTool) Description() string {
 	return "List all agents with their status, model, and task count.\nParameters: status (optional: active/inactive/all, default all)."
 }
@@ -684,7 +644,7 @@ type AgentActivateTool struct{ deps *Deps }
 func NewAgentActivateTool(d *Deps) *AgentActivateTool { return &AgentActivateTool{deps: d} }
 
 func (t *AgentActivateTool) Name() string           { return "system.agent.activate" }
-func (t *AgentActivateTool) Scope() tools.ToolScope { return tools.ScopeSystem }
+func (t *AgentActivateTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *AgentActivateTool) Description() string {
 	return "Activate a core or custom agent, persisting the enabled state.\nParameters: id (required)."
 }
@@ -711,7 +671,7 @@ type AgentDeactivateTool struct{ deps *Deps }
 func NewAgentDeactivateTool(d *Deps) *AgentDeactivateTool { return &AgentDeactivateTool{deps: d} }
 
 func (t *AgentDeactivateTool) Name() string           { return "system.agent.deactivate" }
-func (t *AgentDeactivateTool) Scope() tools.ToolScope { return tools.ScopeSystem }
+func (t *AgentDeactivateTool) Scope() tools.ToolScope { return tools.ScopeCore }
 func (t *AgentDeactivateTool) Description() string {
 	return "Deactivate an agent (makes it unavailable for new sessions), persisting the disabled state.\nParameters: id (required)."
 }

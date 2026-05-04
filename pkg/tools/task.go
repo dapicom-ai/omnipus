@@ -12,6 +12,7 @@ import (
 
 // TaskListTool lists tasks for the calling agent.
 type TaskListTool struct {
+	BaseTool
 	store *taskstore.TaskStore
 }
 
@@ -75,6 +76,7 @@ func (t *TaskListTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 
 // TaskCreateTool creates a task and delegates it to another agent.
 type TaskCreateTool struct {
+	BaseTool
 	store         *taskstore.TaskStore
 	delegateCheck func(targetAgentID string) bool
 }
@@ -204,6 +206,7 @@ func (t *TaskCreateTool) checkDepth(parentID string, depth int) error {
 
 // TaskUpdateTool allows an agent to update status of its own task.
 type TaskUpdateTool struct {
+	BaseTool
 	store      *taskstore.TaskStore
 	onComplete func(*taskstore.TaskEntity)
 }
@@ -317,6 +320,7 @@ func (t *TaskUpdateTool) Execute(ctx context.Context, args map[string]any) *Tool
 // --- TaskDeleteTool ---
 
 type TaskDeleteTool struct {
+	BaseTool
 	store *taskstore.TaskStore
 }
 
@@ -357,6 +361,7 @@ func (t *TaskDeleteTool) Execute(ctx context.Context, args map[string]any) *Tool
 // --- AgentListTool ---
 
 type AgentListTool struct {
+	BaseTool
 	listAgents func() []AgentInfo
 }
 

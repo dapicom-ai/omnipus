@@ -41,7 +41,7 @@ vi.mock('@assistant-ui/react', () => {
           type: 'button',
           disabled,
           className,
-          'data-testid': testId ?? 'send-button',
+          'data-testid': testId ?? 'chat-send',
           'aria-label': ariaLabel,
           'aria-disabled': ariaDisabled,
         }, children),
@@ -148,7 +148,7 @@ describe('ChatScreen_Replay_SendDisabled (TDD row 22)', () => {
     const { OmnipusComposer } = await import('./ChatScreen')
     render(<OmnipusComposer />)
 
-    const sendButton = screen.getByTestId('send-button')
+    const sendButton = screen.getByTestId('chat-send')
     expect(sendButton).toBeDisabled()
   })
 
@@ -162,7 +162,7 @@ describe('ChatScreen_Replay_SendDisabled (TDD row 22)', () => {
     const { OmnipusComposer } = await import('./ChatScreen')
     render(<OmnipusComposer />)
 
-    const sendButton = screen.getByTestId('send-button')
+    const sendButton = screen.getByTestId('chat-send')
     expect(sendButton).not.toBeDisabled()
   })
 
@@ -186,12 +186,12 @@ describe('ChatScreen_Replay_SendDisabled (TDD row 22)', () => {
     const { OmnipusComposer } = await import('./ChatScreen')
     render(<OmnipusComposer />)
 
-    expect(screen.getByTestId('send-button')).toBeDisabled()
+    expect(screen.getByTestId('chat-send')).toBeDisabled()
 
     act(() => {
       useChatStore.setState({ isReplaying: false })
     })
 
-    expect(screen.getByTestId('send-button')).not.toBeDisabled()
+    expect(screen.getByTestId('chat-send')).not.toBeDisabled()
   })
 })

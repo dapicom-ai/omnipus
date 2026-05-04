@@ -15,8 +15,6 @@ import (
 	"strings"
 	"sync"
 
-	"golang.org/x/crypto/bcrypt"
-
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/gateway/ctxkey"
 )
@@ -67,7 +65,7 @@ func checkBearerAuth(ctx context.Context, w http.ResponseWriter, r *http.Request
 	// 1. Check per-user list (RBAC — token hash lookup with bcrypt).
 	if len(cfg.Gateway.Users) > 0 {
 		for _, user := range cfg.Gateway.Users {
-			if err := bcrypt.CompareHashAndPassword([]byte(user.TokenHash), []byte(rawToken)); err == nil {
+			if user.TokenHash.Verify(rawToken) == nil {
 				// Token matches this user.
 				return AuthResult{Authenticated: true, Role: user.Role, User: &user}
 			}

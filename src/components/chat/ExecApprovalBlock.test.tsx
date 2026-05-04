@@ -108,6 +108,7 @@ describe('ExecApprovalBlock — user actions (test #10)', () => {
         type: 'exec_approval_request',
         id: 'appr_action_1',
         command: 'git pull origin main',
+        session_id: 'sess_test',
       })
     })
 

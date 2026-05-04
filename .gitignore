@@ -19,6 +19,7 @@ sessions/
 # Coverage
 coverage.txt
 coverage.html
+coverage/
 
 # Secrets & Config
 .env
@@ -85,3 +86,4 @@ tests/e2e/fixtures/.auth/
 !tests/perf/results/**
 gateway.pid
 .claude/scheduled_tasks.lock
+.claude/worktrees/

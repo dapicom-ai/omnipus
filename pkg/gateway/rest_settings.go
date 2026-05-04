@@ -485,14 +485,26 @@ func (a *restAPI) HandleClearSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleAbout handles GET /api/v1/about.
-// Returns version, go_version, os, arch, uptime, and pid.
+// Returns version, go_version, os, arch, uptime, pid, and preview listener fields.
+//
+// Preview fields added per FR-009:
+//   - preview_port: effective preview listener port (int)
+//   - preview_listener_enabled: whether the preview listener is running (bool)
+//   - warmup_timeout_seconds: dev-server warmup timeout from config (int)
+//   - preview_origin: omitted when not set in config (string, omitempty)
 func (a *restAPI) HandleAbout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+	cfg := a.agentLoop.GetConfig()
 	uptime := time.Since(startTime).Round(time.Second)
-	jsonOK(w, map[string]any{
+	// F-8: determine whether frame-ancestors is in fallback ('*') mode.
+	// This happens when host=0.0.0.0/[::] AND public_url is not set, meaning
+	// strict embedding control (T-04) is degraded. The SPA can show a banner.
+	mainOrigin := resolveMainOrigin(cfg)
+	frameAncestorsFallback := mainOrigin == ""
+	resp := map[string]any{
 		"version":        Version,
 		"go_version":     runtime.Version(),
 		"os":             runtime.GOOS,
@@ -500,5 +512,16 @@ func (a *restAPI) HandleAbout(w http.ResponseWriter, r *http.Request) {
 		"uptime":         uptime.String(),
 		"uptime_seconds": int(uptime.Seconds()),
 		"pid":            os.Getpid(),
-	})
+		// FR-009: preview listener fields for SPA iframe URL construction.
+		"preview_port":             cfg.Gateway.PreviewPort,
+		"preview_listener_enabled": cfg.Gateway.IsPreviewListenerEnabled(),
+		"warmup_timeout_seconds":   cfg.Tools.RunInWorkspace.WarmupTimeoutSeconds,
+		// F-8: signals to the SPA that frame-ancestors is '*' (degraded T-04 defence).
+		"frame_ancestors_fallback": frameAncestorsFallback,
+	}
+	// preview_origin is optional — only include when the operator set it.
+	if cfg.Gateway.PreviewOrigin != "" {
+		resp["preview_origin"] = cfg.Gateway.PreviewOrigin
+	}
+	jsonOK(w, resp)
 }

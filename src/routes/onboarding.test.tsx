@@ -17,6 +17,8 @@ const mockNavigate = vi.fn()
 vi.mock('@tanstack/react-router', () => ({
   createFileRoute: (_path: string) => (opts: { component: React.ComponentType }) => opts,
   useNavigate: () => mockNavigate,
+  redirect: (opts: unknown) => opts,
+  useRouteContext: () => ({ appStateBannerMessage: null }),
 }))
 
 // Mock Framer Motion — strip all animations so AnimatePresence doesn't keep
@@ -39,14 +41,14 @@ vi.mock('framer-motion', () => {
   }
 })
 
-// Mock API calls — includes completeOnboardingTransaction and fetchProviders
+// Mock API calls — includes completeOnboardingTransaction and probeProvider
 // which are called during the 4-step flow.
 vi.mock('@/lib/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/api')>()
   return {
     ...actual,
     configureProvider: vi.fn(),
-    testProvider: vi.fn(),
+    probeProvider: vi.fn(),
     completeOnboarding: vi.fn(),
     completeOnboardingTransaction: vi.fn(),
     // fetchProviders is called after a successful test to populate the model list.
@@ -58,7 +60,7 @@ vi.mock('@/lib/api', async (importOriginal) => {
 // Mock SVG import
 vi.mock('@/assets/logo/omnipus-avatar.svg?url', () => ({ default: '/test-avatar.svg' }))
 
-import { configureProvider, testProvider, completeOnboarding, completeOnboardingTransaction } from '@/lib/api'
+import { configureProvider, probeProvider, completeOnboarding, completeOnboardingTransaction } from '@/lib/api'
 
 // Cache the dynamically imported component across all tests so the first import's
 // transform cost (~20s) only pays once and doesn't time out individual tests.
@@ -251,7 +253,7 @@ describe('OnboardingWizard — test connection', () => {
     // Traces to: wave5b-system-agent-spec.md — Scenario: Test connection success (US-8 AC4)
     // BDD: Given API key entered, When test succeeds, Then "Connected successfully" shown
     vi.mocked(configureProvider).mockResolvedValue({} as never)
-    vi.mocked(testProvider).mockResolvedValue({ success: true })
+    vi.mocked(probeProvider).mockResolvedValue({ success: true })
 
     await goToProviderStep()
 
@@ -266,7 +268,7 @@ describe('OnboardingWizard — test connection', () => {
     // Traces to: wave5b-system-agent-spec.md — Scenario: Test connection failure (US-8 AC5)
     // BDD: Given API key entered, When test fails, Then error message shown
     vi.mocked(configureProvider).mockResolvedValue({} as never)
-    vi.mocked(testProvider).mockResolvedValue({ success: false, error: 'Invalid API key' })
+    vi.mocked(probeProvider).mockResolvedValue({ success: false, error: 'Invalid API key' })
 
     await goToProviderStep()
 
@@ -281,7 +283,7 @@ describe('OnboardingWizard — test connection', () => {
     // Traces to: wave5b-system-agent-spec.md — Scenario: Continue gated on successful test
     // BDD: Given step 2, Until connection succeeds AND model is chosen, Continue is disabled.
     vi.mocked(configureProvider).mockResolvedValue({} as never)
-    vi.mocked(testProvider).mockResolvedValue({ success: false, error: 'Bad key' })
+    vi.mocked(probeProvider).mockResolvedValue({ success: false, error: 'Bad key' })
 
     await goToProviderStep()
 
@@ -299,7 +301,7 @@ describe('OnboardingWizard — test connection', () => {
     // Traces to: wave5b-system-agent-spec.md — Scenario: Continue enabled after success
     // Continue requires both testStatus === 'success' AND selectedModel.trim() non-empty.
     vi.mocked(configureProvider).mockResolvedValue({} as never)
-    vi.mocked(testProvider).mockResolvedValue({ success: true })
+    vi.mocked(probeProvider).mockResolvedValue({ success: true })
 
     await goToProviderStep()
     fireEvent.click(screen.getByRole('button', { name: /connect & load models/i }))
@@ -391,7 +393,7 @@ describe('OnboardingWizard — finish', () => {
     // BDD: Given step 4, When Start Exploring clicked, Then completeOnboardingTransaction
     //      called with provider + admin data, then navigate to /.
     vi.mocked(configureProvider).mockResolvedValue({} as never)
-    vi.mocked(testProvider).mockResolvedValue({ success: true })
+    vi.mocked(probeProvider).mockResolvedValue({ success: true })
 
     await goToFinishStep()
 
@@ -407,7 +409,7 @@ describe('OnboardingWizard — finish', () => {
   it('displays provider name on completion step', async () => {
     // Traces to: wave5b-system-agent-spec.md — Scenario: Step 4 shows provider name
     vi.mocked(configureProvider).mockResolvedValue({} as never)
-    vi.mocked(testProvider).mockResolvedValue({ success: true })
+    vi.mocked(probeProvider).mockResolvedValue({ success: true })
 
     await goToFinishStep()
 

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute, redirect, useNavigate, useRouteContext } from '@tanstack/react-router'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   ArrowRight,
@@ -18,7 +18,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ModelSelector } from '@/components/ui/model-selector'
-import { probeProvider, completeOnboardingTransaction, completeOnboarding } from '@/lib/api'
+import { probeProvider, completeOnboardingTransaction, completeOnboarding, fetchAppState, isApiError } from '@/lib/api'
 import OmnipusAvatar from '@/assets/logo/omnipus-avatar.svg?url'
 import { PROVIDER_HINTS } from '@/lib/constants'
 import { useUiStore } from '@/store/ui'
@@ -71,6 +71,7 @@ const stepVariants = {
 function OnboardingWizard() {
   const navigate = useNavigate()
   const { addToast } = useUiStore()
+  const { appStateBannerMessage } = useRouteContext({ from: '/onboarding' })
 
   // Fetch provider list from API for model info; use built-in provider list for onboarding UI
 
@@ -233,6 +234,16 @@ function OnboardingWizard() {
             'linear-gradient(90deg, transparent 0%, rgba(212,175,55,0.35) 50%, transparent 100%)',
         }}
       />
+
+      {/* Server error banner — surfaces when /api/v1/state returned 5xx during beforeLoad */}
+      {appStateBannerMessage && (
+        <div
+          role="alert"
+          className="absolute top-4 left-1/2 -translate-x-1/2 w-full max-w-md z-20 rounded-md border border-red-500/40 bg-red-500/10 px-4 py-2.5 text-sm text-red-400"
+        >
+          {appStateBannerMessage}
+        </div>
+      )}
 
       {/* Step indicator */}
       <div className="flex items-center gap-2 mb-12 z-10" role="progressbar" aria-valuenow={step} aria-valuemin={1} aria-valuemax={4}>
@@ -573,7 +584,7 @@ function ProviderStep({
 
               {/* Connection feedback */}
               {testStatus === 'error' && (
-                <div className="flex items-start gap-2 text-sm" style={{ color: 'var(--color-error)' }}>
+                <div data-testid="onboarding-error" className="flex items-start gap-2 text-sm" style={{ color: 'var(--color-error)' }}>
                   <XCircle size={14} weight="fill" className="shrink-0 mt-0.5" />
                   <span>{testError || 'Connection failed — check your key and try again'}</span>
                 </div>
@@ -802,7 +813,7 @@ function AdminCredentialsStep({
 
         {/* Error feedback */}
         {status === 'error' && error && (
-          <div className="flex items-start gap-2 text-sm" style={{ color: 'var(--color-error)' }}>
+          <div data-testid="onboarding-error" className="flex items-start gap-2 text-sm" style={{ color: 'var(--color-error)' }}>
             <XCircle size={14} weight="fill" className="shrink-0 mt-0.5" />
             <span>{error}</span>
           </div>
@@ -904,5 +915,26 @@ function DoneStep({
 }
 
 export const Route = createFileRoute('/onboarding')({
+  beforeLoad: async () => {
+    try {
+      const state = await fetchAppState()
+      if (state?.onboarding_complete) {
+        throw redirect({ to: '/' })
+      }
+      return { appStateBannerMessage: null as string | null }
+    } catch (err) {
+      // Re-throw redirect so we don't swallow navigation errors.
+      if (err && typeof err === 'object' && 'to' in err) throw err
+      // Log non-redirect errors so operators can diagnose fetch failures.
+      console.error('onboarding.app_state_fetch_failed', err)
+      // Surface a visible banner for 5xx server errors. Network failures still
+      // allow the wizard to proceed (fresh install with broken /about endpoint).
+      const bannerMessage =
+        isApiError(err) && err.status >= 500
+          ? `Could not load setup state — server returned ${err.status}`
+          : null
+      return { appStateBannerMessage: bannerMessage }
+    }
+  },
   component: OnboardingWizard,
 })

@@ -106,35 +106,16 @@ describe('MessageItem — thinking indicator (test #4)', () => {
 })
 
 describe('MessageItem — streaming cursor (test #5)', () => {
-  it('renders cursor element when streamCursor is true', () => {
-    // Traces to: wave5a-wire-ui-spec.md — Scenario: token frame arrives → cursor at end
+  it('does not render a pulsing cursor (removed in favor of the rotating thinking indicator)', () => {
     const { container } = render(
       <MessageItem
         message={makeMsg({
           role: 'assistant',
           content: 'Hello world',
-          streamCursor: true,
           isStreaming: true,
         })}
       />
     )
-    // The cursor is an inline-block span with animate-pulse
-    const cursor = container.querySelector('span.animate-pulse, [data-testid="streaming-cursor"]')
-    expect(cursor).toBeTruthy()
-  })
-
-  it('does not render cursor when streamCursor is false', () => {
-    const { container } = render(
-      <MessageItem
-        message={makeMsg({
-          role: 'assistant',
-          content: 'Hello world',
-          streamCursor: false,
-          status: 'done',
-        })}
-      />
-    )
-    // No animate-pulse span in main content area
     const cursor = container.querySelector('.animate-pulse')
     expect(cursor).toBeFalsy()
   })

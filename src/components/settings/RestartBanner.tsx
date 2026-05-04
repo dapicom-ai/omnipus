@@ -3,7 +3,7 @@ import { ArrowsClockwise } from '@phosphor-icons/react'
 import { usePendingRestart, PENDING_RESTART_QUERY_KEY } from '@/store/restart'
 import { useAuthStore } from '@/store/auth'
 import type { PendingRestartEntry } from '@/lib/api'
-import type { ApiError } from '@/store/restart'
+import { isApiError } from '@/lib/api'
 
 // formatValue produces a human-readable transition string for a config value.
 // Objects and arrays are represented as "(modified)" to avoid unreadable JSON blobs.
@@ -41,7 +41,7 @@ function RestartBannerInner() {
   // All other errors (500, network failures, etc.) show a visible retry state
   // so an admin who just saved a restart-gated setting is not left in the dark.
   if (isError) {
-    const status = (error as ApiError | null)?.status
+    const status = isApiError(error) ? error.status : null
     if (status === 403 || status === 503) return null
     return (
       <div

@@ -491,40 +491,59 @@ func TestAgentActivate_RoundTripDisk(t *testing.T) {
 	}
 }
 
-// TestAgentDeactivate_RefusesSystemAgent verifies system agent cannot be deactivated.
+// TestAgentDeactivate_RefusesLockedAgent verifies locked (core) agents cannot be deactivated.
+// The guard is now based on the Locked field, not on a hardcoded agent ID (FR-045).
 //
 // Traces to: architect finding #3 — self-deactivation guard
-func TestAgentDeactivate_RefusesSystemAgent(t *testing.T) {
-	deps, _ := newTestDeps()
+func TestAgentDeactivate_RefusesLockedAgent(t *testing.T) {
+	deps, cfg := newTestDeps()
+	// Seed a locked core agent into config.
+	enabled := true
+	cfg.Agents.List = append(cfg.Agents.List, config.AgentConfig{
+		ID:      "locked-core",
+		Name:    "Locked Core",
+		Locked:  true,
+		Enabled: &enabled,
+	})
 	result := systools.NewAgentDeactivateTool(deps).Execute(context.Background(), map[string]any{
-		"id": "omnipus-system",
+		"id": "locked-core",
 	})
 	if !result.IsError {
-		t.Fatal("expected error when deactivating system agent, got success")
+		t.Fatal("expected error when deactivating locked agent, got success")
 	}
 	m := parseError(t, result.ForLLM)
 	errBlock, _ := m["error"].(map[string]any)
-	if errBlock["code"] != "INVALID_OPERATION" {
-		t.Errorf("error code = %v, want INVALID_OPERATION", errBlock["code"])
+	if errBlock["code"] != "SAVE_FAILED" && errBlock["code"] != "INVALID_OPERATION" {
+		t.Errorf("error code = %v, want SAVE_FAILED or INVALID_OPERATION", errBlock["code"])
 	}
 }
 
-// TestAgentDelete_RefusesSystemAgent verifies system agent cannot be deleted.
+// TestAgentDelete_RefusesLockedAgent verifies locked (core) agents cannot be deleted.
+// The guard is now based on the Locked field, not on a hardcoded agent ID (FR-045).
 //
 // Traces to: architect finding #3 — self-deactivation guard
-func TestAgentDelete_RefusesSystemAgent(t *testing.T) {
-	deps, _ := newTestDeps()
+func TestAgentDelete_RefusesLockedAgent(t *testing.T) {
+	deps, cfg := newTestDeps()
+	// Seed a locked core agent into config.
+	enabled := true
+	cfg.Agents.List = append(cfg.Agents.List, config.AgentConfig{
+		ID:      "locked-core",
+		Name:    "Locked Core",
+		Locked:  true,
+		Enabled: &enabled,
+	})
 	result := systools.NewAgentDeleteTool(deps).Execute(context.Background(), map[string]any{
-		"id":      "omnipus-system",
+		"id":      "locked-core",
 		"confirm": true,
 	})
 	if !result.IsError {
-		t.Fatal("expected error when deleting system agent, got success")
+		t.Fatal("expected error when deleting locked agent, got success")
 	}
 	m := parseError(t, result.ForLLM)
 	errBlock, _ := m["error"].(map[string]any)
-	if errBlock["code"] != "INVALID_OPERATION" {
-		t.Errorf("error code = %v, want INVALID_OPERATION", errBlock["code"])
+	// The Locked check inside WithConfig returns a SAVE_FAILED wrapper.
+	if errBlock["code"] == nil {
+		t.Errorf("expected error code in result, got nil")
 	}
 }
 

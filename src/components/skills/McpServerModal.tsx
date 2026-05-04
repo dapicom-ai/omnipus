@@ -11,7 +11,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { SmartSelect } from '@/components/ui/smart-select'
-import { addMcpServer } from '@/lib/api'
+import { addMcpServer, isApiError } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 
 interface McpServerModalProps {
@@ -41,7 +41,7 @@ export function McpServerModal({ open, onOpenChange }: McpServerModalProps) {
       addToast({ message: 'MCP server added', variant: 'success' })
       handleClose()
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: unknown) => addToast({ message: isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Failed to add MCP server', variant: 'error' }),
   })
 
   function handleClose() {

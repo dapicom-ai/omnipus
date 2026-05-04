@@ -24,7 +24,7 @@ const defaultSessionID = "default"
 
 // --- browser.navigate (US-5) ---
 
-type NavigateTool struct{ mgr *BrowserManager }
+type NavigateTool struct { tools.BaseTool;  mgr *BrowserManager }
 
 func (t *NavigateTool) Name() string           { return "browser.navigate" }
 func (t *NavigateTool) Scope() tools.ToolScope { return tools.ScopeCore }
@@ -102,7 +102,7 @@ func (t *NavigateTool) Execute(ctx context.Context, args map[string]any) *tools.
 
 // --- browser.click (US-5) ---
 
-type ClickTool struct{ mgr *BrowserManager }
+type ClickTool struct { tools.BaseTool;  mgr *BrowserManager }
 
 func (t *ClickTool) Name() string           { return "browser.click" }
 func (t *ClickTool) Scope() tools.ToolScope { return tools.ScopeCore }
@@ -144,7 +144,7 @@ func (t *ClickTool) Execute(ctx context.Context, args map[string]any) *tools.Too
 
 // --- browser.type (US-5) ---
 
-type TypeTool struct{ mgr *BrowserManager }
+type TypeTool struct { tools.BaseTool;  mgr *BrowserManager }
 
 func (t *TypeTool) Name() string           { return "browser.type" }
 func (t *TypeTool) Scope() tools.ToolScope { return tools.ScopeCore }
@@ -192,6 +192,8 @@ func (t *TypeTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 // --- browser.screenshot (US-5) ---
 
 type ScreenshotTool struct {
+	tools.BaseTool
+
 	mgr *BrowserManager
 }
 
@@ -266,7 +268,7 @@ func (t *ScreenshotTool) Execute(ctx context.Context, args map[string]any) *tool
 
 // --- browser.get_text (US-5) ---
 
-type GetTextTool struct{ mgr *BrowserManager }
+type GetTextTool struct { tools.BaseTool;  mgr *BrowserManager }
 
 func (t *GetTextTool) Name() string           { return "browser.get_text" }
 func (t *GetTextTool) Scope() tools.ToolScope { return tools.ScopeCore }
@@ -316,7 +318,7 @@ func (t *GetTextTool) Execute(ctx context.Context, args map[string]any) *tools.T
 
 // --- browser.wait (US-5) ---
 
-type WaitTool struct{ mgr *BrowserManager }
+type WaitTool struct { tools.BaseTool;  mgr *BrowserManager }
 
 func (t *WaitTool) Name() string           { return "browser.wait" }
 func (t *WaitTool) Scope() tools.ToolScope { return tools.ScopeCore }
@@ -359,7 +361,23 @@ func (t *WaitTool) Execute(ctx context.Context, args map[string]any) *tools.Tool
 // --- browser.evaluate (US-5) ---
 // Denied by default in deny-by-default policy mode (SEC-04/SEC-06).
 
-type EvaluateTool struct{ mgr *BrowserManager }
+// EvaluateTool executes arbitrary JavaScript in the browser page context.
+// It is always registered in the tool catalog; two independent gates control
+// whether execution is permitted:
+//
+//  1. executeEnabled (set at construction time from cfg.Sandbox.BrowserEvaluateEnabled)
+//     — the operator must explicitly opt in to JS execution.
+//  2. The policy engine (pkg/policy.builtinToolPolicies["browser.evaluate"] = deny)
+//     — the policy must be overridden to "ask"/"allow" in sandbox.tool_policies.
+//
+// Registration is unconditional so the LLM always sees the tool. The deny-by-
+// default builtin policy and the executeEnabled execution gate together enforce
+// SEC-04 / SEC-06 without hiding the tool from the model.
+type EvaluateTool struct {
+	tools.BaseTool
+	mgr            *BrowserManager
+	executeEnabled bool
+}
 
 func (t *EvaluateTool) Name() string           { return "browser.evaluate" }
 func (t *EvaluateTool) Scope() tools.ToolScope { return tools.ScopeCore }
@@ -378,6 +396,15 @@ func (t *EvaluateTool) Parameters() map[string]any {
 }
 
 func (t *EvaluateTool) Execute(ctx context.Context, args map[string]any) *tools.ToolResult {
+	// Execution gate: operator must opt in via cfg.Sandbox.BrowserEvaluateEnabled.
+	// This is separate from the policy gate (which operates at the dispatch layer).
+	if !t.executeEnabled {
+		return tools.ErrorResult(
+			"browser.evaluate: disabled — set sandbox.browser_evaluate_enabled=true and " +
+				"sandbox.tool_policies[\"browser.evaluate\"]=\"allow\" in config to enable",
+		)
+	}
+
 	js, _ := args["js"].(string)
 	if js == "" {
 		return tools.ErrorResult("browser.evaluate: 'js' parameter is required")

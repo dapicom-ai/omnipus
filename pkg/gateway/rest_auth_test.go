@@ -19,7 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/credentials"
@@ -73,7 +72,7 @@ func newTestRestAPIWithHomeAuth(t *testing.T) *restAPI {
 	require.NoError(t, os.WriteFile(tmpDir+"/config.json", minimalCfg, 0o600))
 
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	return &restAPI{
 		agentLoop:     al,
 		allowedOrigin: "http://localhost:3000",
@@ -107,7 +106,7 @@ func TestHandleLogin_Success(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := &restAPI{
 		agentLoop:     al,
 		homePath:      tmpDir,
@@ -161,7 +160,7 @@ func newRestAPIWithSingleUser(t *testing.T, username, passwordHash string) *rest
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	return &restAPI{
 		agentLoop:     al,
 		homePath:      tmpDir,
@@ -301,7 +300,7 @@ func TestHandleLogin_DifferentInputProducesDifferentToken(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(configObj, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, configObj, msgBus, &restMockProvider{})
 	api := &restAPI{
 		agentLoop:     al,
 		homePath:      tmpDir,
@@ -360,7 +359,7 @@ func TestHandleLogin_ConcurrentRequests(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := &restAPI{
 		agentLoop:     al,
 		homePath:      tmpDir,
@@ -415,7 +414,7 @@ func TestHandleValidateToken_ValidToken(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := &restAPI{
 		agentLoop:     al,
 		homePath:      tmpDir,
@@ -677,7 +676,7 @@ func TestHandleLogin_RateLimitBlocksAtLimit(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := &restAPI{
 		agentLoop:     al,
 		homePath:      tmpDir,
@@ -750,7 +749,7 @@ func TestHandleLogin_DevModeBypass_DenyByDefault(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(testCfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, testCfg, msgBus, &restMockProvider{})
 	api := &restAPI{
 		agentLoop:     al,
 		homePath:      tmpDir,
@@ -798,7 +797,7 @@ func newTestRestAPIWithUser(t *testing.T, username, password string) (*restAPI, 
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := &restAPI{
 		agentLoop:     al,
 		homePath:      tmpDir,
@@ -833,10 +832,7 @@ func TestHandleLogout_Success(t *testing.T) {
 
 	api.HandleLogout(w, req)
 
-	require.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, true, resp["success"], "logout must return {success:true}")
+	require.Equal(t, http.StatusNoContent, w.Code, "logout must return 204 No Content")
 
 	// Verify persistence: token_hash is cleared in config.json on disk.
 	diskData, err := os.ReadFile(filepath.Join(tmpDir, "config.json"))
@@ -1474,7 +1470,7 @@ func TestLogin_AfterOnboardingWithoutRestart(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 
 	t.Setenv("OMNIPUS_MASTER_KEY", testMasterKey)
 	credStore, credErr := func() (*credentials.Store, error) {
@@ -1549,7 +1545,7 @@ func TestHandleValidateToken_TriggerReloadNotConfigured(t *testing.T) {
 		},
 	}
 	msgBus := bus.NewMessageBus()
-	al := agent.NewAgentLoop(cfg, msgBus, &restMockProvider{})
+	al := mustAgentLoop(t, cfg, msgBus, &restMockProvider{})
 	api := &restAPI{
 		agentLoop:     al,
 		homePath:      tmpDir,

@@ -376,6 +376,39 @@ func (al *AgentLoop) InterruptGraceful(hint string) error {
 	return nil
 }
 
+// InterruptSession gracefully cancels the turn that belongs to the given sessionID.
+// Unlike InterruptGraceful, this targets only the one session rather than the first
+// active turn found, preventing two parallel sessions from being cancelled together.
+func (al *AgentLoop) InterruptSession(sessionID, hint string) error {
+	if sessionID == "" {
+		return fmt.Errorf("empty session_id")
+	}
+	var target *turnState
+	al.activeTurnStates.Range(func(_, value any) bool {
+		ts := value.(*turnState)
+		if ts.transcriptSessionID == sessionID {
+			target = ts
+			return false // stop
+		}
+		return true
+	})
+	if target == nil {
+		return fmt.Errorf("no active turn for session %s", sessionID)
+	}
+	if !target.requestGracefulInterrupt(hint) {
+		return fmt.Errorf("turn %s cannot accept graceful interrupt", target.turnID)
+	}
+	al.emitEvent(
+		EventKindInterruptReceived,
+		target.eventMeta("InterruptSession", "turn.interrupt.received"),
+		InterruptReceivedPayload{
+			Kind:    InterruptKindGraceful,
+			HintLen: len(hint),
+		},
+	)
+	return nil
+}
+
 func (al *AgentLoop) InterruptHard() error {
 	ts := al.getAnyActiveTurnState()
 	if ts == nil {

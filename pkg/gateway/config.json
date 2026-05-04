@@ -228,7 +228,6 @@
       "enabled": false
     },
     "exec": {
-      "allow_remote": false,
       "custom_allow_patterns": null,
       "custom_deny_patterns": null,
       "enable_deny_patterns": false,

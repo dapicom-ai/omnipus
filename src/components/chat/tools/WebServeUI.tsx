@@ -1,0 +1,268 @@
+/**
+ * WebServeUI — AssistantUI tool component for the `web_serve` tool.
+ *
+ * Handles both static-serve and dev-server modes based on the `kind` field
+ * in the tool result. Also used as the canonical implementation backing the
+ * back-compat replay aliases ServeWorkspaceUI (serve_workspace) and
+ * RunInWorkspaceUI (run_in_workspace) — those components are kept only so
+ * old transcripts replay correctly; all new sessions use WebServeUI directly.
+ *
+ * Spec: FR-008 / FR-008a / FR-010 / FR-011 / FR-012 / FR-013 / FR-014 / FR-015 / FR-019.
+ *
+ * kind="static": Globe icon + path label, iframe mounts immediately (no warmup).
+ * kind="dev":    Terminal icon + command + port label, warmup state machine.
+ *                Default grace period is 60 s (tools.run_in_workspace
+ *                .warmup_timeout_seconds in config.json). The config key retains
+ *                the pre-unification name for back-compat with deployed configs.
+ *
+ * The toolName passed to makeWebServeUI selects which tool name the component
+ * registers under, allowing the same component factory to cover:
+ *   web_serve        (canonical)
+ *   serve_workspace  (back-compat replay alias)
+ *   run_in_workspace (back-compat replay alias)
+ */
+
+import { makeAssistantToolUI } from '@assistant-ui/react'
+import { Globe, Terminal, CheckCircle, ArrowsClockwise, XCircle } from '@phosphor-icons/react'
+import { type ServeWorkspaceResult as ServeWorkspaceIframeResult, type RunInWorkspaceResult as RunInWorkspaceIframeResult } from '@/lib/api'
+import { hasPreviewShape } from '@/lib/preview-url'
+import { IframePreview } from '../IframePreview'
+import { PreviewToolHeader } from './PreviewToolHeader'
+import { cn } from '@/lib/utils'
+
+// ── Result types ──────────────────────────────────────────────────────────────
+
+/**
+ * The result shape emitted by the `web_serve` tool.
+ *
+ * `kind` discriminates between the two modes. Back-compat: when replaying a
+ * legacy `serve_workspace` or `run_in_workspace` transcript, `kind` may be
+ * absent; we infer mode from the presence of `command` / `port` fields.
+ */
+export interface WebServeResult {
+  /** Discriminator for the two modes. */
+  kind?: 'static' | 'dev'
+  /** Relative preview path, e.g. "/preview/<agent>/<token>/". */
+  url: string
+  /** ISO-8601 token expiry timestamp. */
+  expires_at: string
+  /** Dev-mode: the command that was executed (e.g. "vite dev"). */
+  command?: string
+  /** Dev-mode: the local port the dev server is listening on. */
+  port?: number
+  /** Static-mode: the workspace path that was served. */
+  path?: string
+}
+
+interface WebServeArgs {
+  path?: string
+  command?: string
+  port?: number
+  duration_seconds?: number
+}
+
+/**
+ * Infer effective kind from result, falling back to presence of command/port
+ * for legacy transcript replay where `kind` was not emitted.
+ */
+function inferKind(result: WebServeResult): 'static' | 'dev' {
+  if (result.kind === 'static' || result.kind === 'dev') return result.kind
+  // Legacy back-compat: run_in_workspace results have command + port
+  if (typeof result.command === 'string' && typeof result.port === 'number') return 'dev'
+  return 'static'
+}
+
+function isWebServeResult(value: unknown): value is WebServeResult {
+  if (!value || typeof value !== 'object') return false
+  const v = value as Record<string, unknown>
+  // New web_serve shape: has url + expires_at
+  if (typeof v.url === 'string' && typeof v.expires_at === 'string') return true
+  // Legacy serve_workspace / run_in_workspace shape: hasPreviewShape checks path + url
+  return (
+    hasPreviewShape(value) &&
+    typeof (value as Record<string, unknown>).expires_at === 'string'
+  )
+}
+
+// ── Block component ───────────────────────────────────────────────────────────
+
+// ── Malformed result block (B1.3e) ────────────────────────────────────────────
+
+/**
+ * Rendered when `isWebServeResult` rejects the tool result. Shows the raw JSON
+ * in a collapsible details element so power users can debug without crashing the
+ * rest of the chat. Does NOT throw — the ErrorBoundary wrapping ChatScreen is
+ * not invoked.
+ */
+function MalformedResultBlock({ raw }: { raw: unknown }) {
+  let rawJson: string
+  try {
+    rawJson = JSON.stringify(raw, null, 2)
+  } catch {
+    rawJson = String(raw)
+  }
+  return (
+    <div data-testid="webserve-malformed-block" className="mt-2 rounded-md border border-[var(--color-error)]/30 bg-[var(--color-error)]/5 px-3 py-2 text-xs space-y-1.5">
+      <p className="text-[var(--color-error)]">
+        web_serve tool returned a malformed result — cannot render preview.
+      </p>
+      <details className="mt-1">
+        <summary className="cursor-pointer text-[var(--color-muted)] hover:text-[var(--color-secondary)] transition-colors">
+          Show raw result
+        </summary>
+        <pre className="mt-1.5 p-2 rounded bg-[var(--color-surface-2)] text-[var(--color-muted)] font-mono text-[10px] overflow-auto max-h-40 whitespace-pre-wrap break-all">
+          {rawJson}
+        </pre>
+      </details>
+    </div>
+  )
+}
+
+export function WebServeBlock({
+  args,
+  result,
+  isRunning,
+  toolName,
+}: {
+  args: WebServeArgs
+  result: unknown
+  isRunning: boolean
+  toolName: string
+}) {
+  // B1.3e: when the type guard rejects the result and the tool is no longer
+  // running, render the malformed block instead of crashing or rendering nothing.
+  // We allow null result while running (tool not done yet — normal state).
+  if (result !== null && result !== undefined && !isRunning && !isWebServeResult(result)) {
+    return <MalformedResultBlock raw={result} />
+  }
+
+  const typedResult = isWebServeResult(result) ? result : null
+  const effectiveKind = typedResult ? inferKind(typedResult) : null
+
+  // For dev mode: derive command and port from result or args
+  const command = typedResult?.command ?? args.command ?? ''
+  const port = typedResult?.port ?? args.port
+
+  // For static mode: derive path label from result or args
+  const pathLabel = typedResult?.path ?? args.path
+
+  const isDevMode = effectiveKind === 'dev' ||
+    (effectiveKind === null && (typeof args.command === 'string' || typeof args.port === 'number'))
+
+  const statusIcon = isRunning ? (
+    <ArrowsClockwise size={12} className="animate-spin text-[var(--color-accent)]" />
+  ) : typedResult ? (
+    <CheckCircle size={12} weight="fill" className="text-[var(--color-success)]" />
+  ) : (
+    <XCircle size={12} weight="fill" className="text-[var(--color-error)]" />
+  )
+
+  const portChip =
+    isDevMode && port !== undefined ? (
+      <span className="text-[var(--color-muted)] font-mono">:{port}</span>
+    ) : undefined
+
+  // IframePreview kind: map to the existing discriminated union.
+  // The string literals 'serve_workspace' / 'run_in_workspace' are
+  // IframePreviewProps.kind discriminators — mode tags, NOT current tool
+  // names. Static mode → 'serve_workspace'; dev mode → 'run_in_workspace'.
+  // `toolName` only feeds the header label; `iframeKind` is derived from
+  // the result shape (effectiveKind / isDevMode), not from toolName.
+  const iframeKind =
+    isDevMode ? 'run_in_workspace' : 'serve_workspace'
+
+  // Build the result shape expected by IframePreview — it uses path + url.
+  // Pass path directly; IframePreview.extractPath falls back to url when
+  // path is absent, so there is no need to duplicate the fallback logic here.
+  const iframeResult = typedResult
+    ? iframeKind === 'run_in_workspace'
+      ? {
+          path: typedResult.path,
+          url: typedResult.url,
+          expires_at: typedResult.expires_at,
+          command: typedResult.command ?? command,
+          port: typedResult.port ?? port ?? 0,
+        }
+      : {
+          path: typedResult.path,
+          url: typedResult.url,
+          expires_at: typedResult.expires_at,
+        }
+    : null
+
+  return (
+    <div className="mt-2 text-xs">
+      <PreviewToolHeader
+        data-testid="webserve-tool-header"
+        icon={
+          isDevMode ? (
+            <Terminal
+              size={13}
+              className={cn(
+                isRunning
+                  ? 'text-[var(--color-accent)] animate-pulse'
+                  : typedResult
+                  ? 'text-[var(--color-success)]'
+                  : 'text-[var(--color-error)]',
+              )}
+            />
+          ) : (
+            <Globe
+              size={13}
+              weight="duotone"
+              className={cn(
+                isRunning
+                  ? 'text-[var(--color-accent)]'
+                  : typedResult
+                  ? 'text-[var(--color-success)]'
+                  : 'text-[var(--color-error)]',
+              )}
+            />
+          )
+        }
+        toolName={toolName}
+        label={isDevMode ? (command || undefined) : (pathLabel || undefined)}
+        trailing={isDevMode ? portChip : statusIcon}
+        isRunning={isRunning}
+        hasResult={typedResult !== null}
+      />
+
+      {isDevMode ? (
+        <IframePreview
+          kind="run_in_workspace"
+          result={iframeResult as RunInWorkspaceIframeResult | null}
+        />
+      ) : (
+        <IframePreview
+          kind="serve_workspace"
+          result={iframeResult as ServeWorkspaceIframeResult | null}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── Factory ───────────────────────────────────────────────────────────────────
+
+/**
+ * Creates a registered AssistantUI tool component for the given tool name.
+ * The toolName is threaded into WebServeBlock so the header displays the
+ * correct name for each alias.
+ */
+export function makeWebServeUI(toolName: string) {
+  return makeAssistantToolUI<WebServeArgs, unknown>({
+    toolName,
+    render: ({ args, result, status }) => (
+      <WebServeBlock
+        args={args ?? {}}
+        result={result}
+        isRunning={status.type === 'running'}
+        toolName={toolName}
+      />
+    ),
+  })
+}
+
+// ── Canonical registration ────────────────────────────────────────────────────
+
+export const WebServeUI = makeWebServeUI('web_serve')

@@ -25,7 +25,7 @@ function formatTokens(tokens: number): string {
 }
 
 export function SessionBar() {
-  const { activeAgentId, setActiveSession } = useSessionStore()
+  const { activeAgentId, setActiveSession, startNewSession } = useSessionStore()
   const { sessionTokens, sessionCost, isStreaming } = useChatStore()
 
   const { data: agents = [], isError: agentsError } = useQuery({
@@ -142,7 +142,7 @@ export function SessionBar() {
       {/* New Chat — icon-only on mobile, icon+text on desktop */}
       <button
         type="button"
-        onClick={() => setActiveSession(null, effectiveAgentId ?? undefined)}
+        onClick={() => startNewSession(effectiveAgentId ?? undefined, activeAgent?.type ?? null)}
         title="New chat"
         className="sm:hidden w-7 h-7 rounded-md flex items-center justify-center text-[var(--color-muted)] hover:text-[var(--color-accent)] hover:bg-[var(--color-surface-2)] transition-colors"
       >
@@ -154,7 +154,7 @@ export function SessionBar() {
         variant="ghost"
         size="sm"
         className="hidden sm:flex h-7 px-2 text-xs text-[var(--color-muted)] hover:text-[var(--color-secondary)] gap-1"
-        onClick={() => setActiveSession(null, effectiveAgentId ?? undefined)}
+        onClick={() => startNewSession(effectiveAgentId ?? undefined, activeAgent?.type ?? null)}
         title="New chat"
       >
         <PencilSimpleLine size={13} />

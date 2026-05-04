@@ -860,7 +860,7 @@ func TestSpawnSubTurn_PanicRecovery(t *testing.T) {
 			},
 		},
 	}
-	al := NewAgentLoop(cfg, bus.NewMessageBus(), panicProvider)
+	al := mustNewAgentLoop(t, cfg, bus.NewMessageBus(), panicProvider)
 
 	parent := &turnState{
 		ctx:            context.Background(),
@@ -955,7 +955,7 @@ func TestGetActiveTurn(t *testing.T) {
 			},
 		},
 	}
-	al := NewAgentLoop(cfg, nil, &simpleMockProviderAPI{response: "ok"})
+	al := mustNewAgentLoop(t, cfg, nil, &simpleMockProviderAPI{response: "ok"})
 
 	// Create a root turn state
 	rootCtx := context.Background()
@@ -1013,7 +1013,7 @@ func TestGetActiveTurn_WithChildren(t *testing.T) {
 			},
 		},
 	}
-	al := NewAgentLoop(cfg, nil, &simpleMockProviderAPI{response: "ok"})
+	al := mustNewAgentLoop(t, cfg, nil, &simpleMockProviderAPI{response: "ok"})
 
 	rootCtx := context.Background()
 	rootTS := &turnState{
@@ -1095,7 +1095,7 @@ func TestInjectFollowUp(t *testing.T) {
 		},
 	}
 
-	al := NewAgentLoop(cfg, nil, &simpleMockProviderAPI{response: "ok"})
+	al := mustNewAgentLoop(t, cfg, nil, &simpleMockProviderAPI{response: "ok"})
 
 	msg := providers.Message{
 		Role:    "user",
@@ -1124,7 +1124,7 @@ func TestAPIAliases(t *testing.T) {
 		},
 	}
 
-	al := NewAgentLoop(cfg, nil, &simpleMockProviderAPI{response: "ok"})
+	al := mustNewAgentLoop(t, cfg, nil, &simpleMockProviderAPI{response: "ok"})
 
 	msg := providers.Message{
 		Role:    "user",
@@ -1162,7 +1162,7 @@ func TestInterruptHard_Alias(t *testing.T) {
 			},
 		},
 	}
-	al := NewAgentLoop(cfg, nil, &simpleMockProviderAPI{response: "ok"})
+	al := mustNewAgentLoop(t, cfg, nil, &simpleMockProviderAPI{response: "ok"})
 
 	rootCtx := context.Background()
 	rootTS := &turnState{
@@ -1339,7 +1339,7 @@ func TestConcurrencySemaphore_Timeout(t *testing.T) {
 	}
 	msgBus := bus.NewMessageBus()
 	provider := &simpleMockProviderAPI{}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	ctx := context.Background()
 	parentTS := &turnState{
@@ -1439,7 +1439,7 @@ func TestContextWrapping_SingleLayer(t *testing.T) {
 	}
 	msgBus := bus.NewMessageBus()
 	provider := &simpleMockProviderAPI{}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	ctx := context.Background()
 	parentTS := &turnState{
@@ -1485,7 +1485,7 @@ func TestSyncSubTurn_NoChannelDelivery(t *testing.T) {
 	}
 	msgBus := bus.NewMessageBus()
 	provider := &simpleMockProviderAPI{}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	ctx := context.Background()
 	parentTS := &turnState{
@@ -1542,7 +1542,7 @@ func TestAsyncSubTurn_ChannelDelivery(t *testing.T) {
 	}
 	msgBus := bus.NewMessageBus()
 	provider := &simpleMockProviderAPI{}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	ctx := context.Background()
 	parentTS := &turnState{
@@ -1674,7 +1674,7 @@ func TestSpawnDuringAbort_RaceCondition(t *testing.T) {
 	}
 	msgBus := bus.NewMessageBus()
 	provider := &simpleMockProviderAPI{}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	ctx := context.Background()
 	parentTS := &turnState{
@@ -1773,7 +1773,7 @@ func TestAsyncSubTurn_ParentFinishesEarly(t *testing.T) {
 	}
 	msgBus := bus.NewMessageBus()
 	provider := &slowMockProvider{delay: 5 * time.Second} // SubTurn takes 5 seconds
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	// Capture events via real EventBus
 	var mu sync.Mutex
@@ -1859,7 +1859,7 @@ func TestAsyncSubTurn_ParentWaitsForChild(t *testing.T) {
 	}
 	msgBus := bus.NewMessageBus()
 	provider := &slowMockProvider{delay: 200 * time.Millisecond} // SubTurn takes 200ms
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	ctx := context.Background()
 	parentTS := &turnState{
@@ -2026,7 +2026,7 @@ func TestSubTurn_IndependentContext(t *testing.T) {
 	}
 	msgBus := bus.NewMessageBus()
 	provider := &slowMockProvider{delay: 500 * time.Millisecond}
-	al := NewAgentLoop(cfg, msgBus, provider)
+	al := mustNewAgentLoop(t, cfg, msgBus, provider)
 
 	ctx := context.Background()
 	parentTS := &turnState{

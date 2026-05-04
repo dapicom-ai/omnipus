@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -30,21 +31,32 @@ type BrowserConfig struct {
 	MaxTabs        int           `json:"max_tabs"`        // Max concurrent tabs (US-7, default 5)
 	PersistSession bool          `json:"persist_session"` // Persist cookies/localStorage across restarts
 	ProfileDir     string        `json:"profile_dir"`     // User data dir (default ~/.omnipus/browser/profiles/default/)
+	// ExecPath overrides Chromium discovery. When empty the manager prefers
+	// a system chromium/google-chrome on PATH and falls back to a managed
+	// install under <ProfileDir>/../chromium/ (downloaded on first use).
+	ExecPath string `json:"exec_path,omitempty"`
 }
 
 // DefaultConfig returns a BrowserConfig with spec-defined defaults.
-// Returns an error if the user home directory cannot be determined.
+// Returns an error if no home directory (OMNIPUS_HOME or user home) can
+// be determined. Prefers $OMNIPUS_HOME so the profile lands inside the
+// gateway's Landlock-allowed workspace; falls back to the user's home
+// directory only when OMNIPUS_HOME is unset.
 func DefaultConfig() (BrowserConfig, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return BrowserConfig{}, fmt.Errorf("browser: cannot determine home directory: %w", err)
+	base := os.Getenv("OMNIPUS_HOME")
+	if base == "" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return BrowserConfig{}, fmt.Errorf("browser: cannot determine home directory: %w", err)
+		}
+		base = filepath.Join(homeDir, ".omnipus")
 	}
 	return BrowserConfig{
 		Enabled:     false,
 		Headless:    true,
 		PageTimeout: 30 * time.Second,
 		MaxTabs:     5,
-		ProfileDir:  filepath.Join(homeDir, ".omnipus", "browser", "profiles", "default"),
+		ProfileDir:  filepath.Join(base, "browser", "profiles", "default"),
 	}, nil
 }
 
@@ -146,11 +158,35 @@ func (m *BrowserManager) ensureStarted() error {
 		return fmt.Errorf("browser: cannot create profile directory %s: %w", m.cfg.ProfileDir, err)
 	}
 
+	execPath, err := m.resolveExecPath(context.Background())
+	if err != nil {
+		return fmt.Errorf("browser: cannot locate chromium: %w", err)
+	}
+
+	// Point Chrome's HOME and XDG dirs at the profile directory so any stray
+	// writes (Crash Reports, GPUCache, Singleton locks, etc.) land inside
+	// the Landlock-allowed workspace instead of $HOME/.config/google-chrome.
+	// Use the profile directory itself as a self-contained jail so this
+	// stays correct regardless of the configured layout (test tempdirs,
+	// custom paths, $OMNIPUS_HOME, etc.).
+	chromeHome := m.cfg.ProfileDir
+
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.ExecPath(execPath),
 		chromedp.UserDataDir(m.cfg.ProfileDir),
 		chromedp.DisableGPU,
 		chromedp.Flag("no-first-run", true),
 		chromedp.Flag("no-default-browser-check", true),
+		// Crash reporting writes to ~/.config/google-chrome/Crash Reports
+		// which is outside the Landlock-allowed paths. Disable it to avoid
+		// "Permission denied" spam during browser startup.
+		chromedp.Flag("disable-crash-reporter", true),
+		chromedp.Flag("disable-breakpad", true),
+		chromedp.Env(
+			"HOME="+chromeHome,
+			"XDG_CONFIG_HOME="+filepath.Join(chromeHome, "config"),
+			"XDG_CACHE_HOME="+filepath.Join(chromeHome, "cache"),
+		),
 		chromedp.WindowSize(1280, 720),
 	)
 
@@ -158,11 +194,13 @@ func (m *BrowserManager) ensureStarted() error {
 		opts = append(opts, chromedp.Headless)
 	}
 
-	// GitHub Actions runners restrict unprivileged user namespaces via AppArmor,
-	// which breaks Chromium's zygote sandbox. Opt into --no-sandbox when CI=true
-	// or OMNIPUS_BROWSER_NO_SANDBOX=1 is set explicitly. Not enabled by default
-	// because --no-sandbox reduces isolation for code the browser loads.
-	if os.Getenv("CI") == "true" || os.Getenv("OMNIPUS_BROWSER_NO_SANDBOX") == "1" {
+	// Chromium's zygote sandbox depends on creating new user namespaces, which
+	// the gateway's Landlock+PR_SET_NO_NEW_PRIVS policy blocks. The gateway
+	// already enforces an outer filesystem and network sandbox, so Chrome's
+	// inner sandbox is redundant — disable it by default to avoid the
+	// permission-denied init failures. Operators can opt out by setting
+	// OMNIPUS_BROWSER_NO_SANDBOX=0 if they run the gateway without Landlock.
+	if os.Getenv("OMNIPUS_BROWSER_NO_SANDBOX") != "0" {
 		opts = append(opts, chromedp.NoSandbox)
 	}
 
@@ -174,8 +212,42 @@ func (m *BrowserManager) ensureStarted() error {
 	logger.InfoCF("browser", "Browser allocator ready (managed mode)", map[string]any{
 		"headless":    m.cfg.Headless,
 		"profile_dir": m.cfg.ProfileDir,
+		"exec_path":   execPath,
 	})
 	return nil
+}
+
+// resolveExecPath returns the path to the Chromium binary chromedp should
+// launch. Resolution order:
+//
+//  1. cfg.ExecPath (operator override) — used as-is.
+//  2. System chromium/google-chrome on $PATH — preferred when present.
+//  3. Managed install under <ProfileDir>/../chromium/ — downloaded from
+//     Chrome for Testing on first call. Cached across restarts so the
+//     download cost is amortized once per host.
+func (m *BrowserManager) resolveExecPath(ctx context.Context) (string, error) {
+	if m.cfg.ExecPath != "" {
+		if _, err := os.Stat(m.cfg.ExecPath); err != nil {
+			return "", fmt.Errorf("configured exec_path %s: %w", m.cfg.ExecPath, err)
+		}
+		return m.cfg.ExecPath, nil
+	}
+	// Operators can force the managed install path (skipping the $PATH
+	// lookup) by setting OMNIPUS_BROWSER_FORCE_MANAGED=1. Useful for
+	// pinning a deterministic Chromium version even when a system
+	// google-chrome is present, and for exercising the install flow in
+	// CI / staging hosts that already have Chrome installed.
+	forceManaged := os.Getenv("OMNIPUS_BROWSER_FORCE_MANAGED") == "1"
+	if !forceManaged {
+		for _, name := range []string{"google-chrome", "google-chrome-stable", "chromium", "chromium-browser"} {
+			if path, err := exec.LookPath(name); err == nil {
+				return path, nil
+			}
+		}
+	}
+	installRoot := filepath.Join(filepath.Dir(filepath.Clean(m.cfg.ProfileDir)), "..", "chromium")
+	installRoot = filepath.Clean(installRoot)
+	return EnsureChromium(ctx, installRoot)
 }
 
 // Session returns a persistent tab context for the given session ID.

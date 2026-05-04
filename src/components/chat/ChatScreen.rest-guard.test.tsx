@@ -24,7 +24,9 @@ import { useSessionStore } from '@/store/session'
 
 function resetStores() {
   act(() => {
+    // Clear sessionsById so per-session buckets don't leak across tests.
     useChatStore.setState({
+      sessionsById: {},
       messages: [],
       isStreaming: false,
       isReplaying: false,

@@ -180,6 +180,9 @@ type ToolApprovalRequest struct {
 	Arguments map[string]any `json:"arguments,omitempty"`
 	Channel   string         `json:"channel,omitempty"`
 	ChatID    string         `json:"chat_id,omitempty"`
+	// SessionID is the transcript-store session for the turn requesting approval.
+	// Carried on exec_approval_request/expired frames so the SPA can scope them.
+	SessionID string `json:"session_id,omitempty"`
 }
 
 func (r *ToolApprovalRequest) Clone() *ToolApprovalRequest {

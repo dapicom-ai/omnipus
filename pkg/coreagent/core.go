@@ -87,9 +87,69 @@ func GetPrompt(id string) string {
 	return prompts[id]
 }
 
-// SeedConfig ensures all core agents exist in cfg.Agents.List with Locked=true.
-// Creates missing ones and re-enforces Locked=true on existing core agents
-// (prevents config tampering from downgrading protection).
+// coreAgentSeed returns the constructor-seeded policy map and sandbox profile
+// for the named core agent (FR-010, FR-022). The map is keyed by tool name
+// (or trailing-wildcard prefix like "system.*") with values "allow", "ask",
+// or "deny". sandboxProfile is the default SandboxProfile for the agent;
+// empty string means "use global default (workspace)".
+//
+// All core agents share the rail: default_policy=allow plus system.*→deny.
+// Ava additionally has explicit system.* allows for her 4 agent-CRUD tools.
+// Jim gets sandbox_profile=workspace+net with workspace.shell,
+// workspace.shell_bg, and web_serve explicitly allowed.
+//
+// The returned maps are independent allocations — callers may mutate them safely.
+func coreAgentSeed(id CoreAgentID) (defaultPolicy config.ToolPolicy, policies map[string]config.ToolPolicy, sandboxProfile config.SandboxProfile) {
+	// Every core agent starts with the same rail: allow-by-default + deny system.*.
+	// Memory tools are explicitly seeded as allow (FR-016/FR-017) so they survive
+	// any future default_policy change and appear prominently in the tool picker UI.
+	// web_serve is explicitly allowed for every core agent (MAJOR-4): hoisting it
+	// here ensures that all agents have a traceable allow entry, not just Jim.
+	// Default_policy is allow, so this is belt-and-suspenders, but explicit entries
+	// make intent visible in the tool picker UI and survive any future policy change.
+	base := map[string]config.ToolPolicy{
+		"system.*":      config.ToolPolicyDeny,
+		"remember":      config.ToolPolicyAllow,
+		"recall_memory": config.ToolPolicyAllow,
+		"retrospective": config.ToolPolicyAllow,
+		"web_serve":     config.ToolPolicyAllow,
+	}
+	switch id {
+	case IDAva:
+		// Ava is the only core agent with explicit system.* allows (FR-010).
+		// Her four agent-CRUD tools must be allowed through the deny-wildcard rail.
+		base["system.agent.create"] = config.ToolPolicyAllow
+		base["system.agent.update"] = config.ToolPolicyAllow
+		base["system.agent.delete"] = config.ToolPolicyAllow
+		base["system.models.list"] = config.ToolPolicyAllow
+	case IDJim:
+		// Jim additionally uses workspace.shell and workspace.shell_bg (all
+		// explicitly allowed so the policy passes through even when
+		// default_policy is allow — belt-and-suspenders). web_serve is already
+		// in the base map above so it is not repeated here.
+		base["workspace.shell"] = config.ToolPolicyAllow
+		base["workspace.shell_bg"] = config.ToolPolicyAllow
+		return config.ToolPolicyAllow, base, config.SandboxProfileWorkspaceNet
+	}
+	return config.ToolPolicyAllow, base, ""
+}
+
+// HasSystemAllowsInConstructorSeed returns true if the named core agent's
+// constructor seed contains explicit system.* allow entries (FR-062).
+// Today only Ava qualifies. This is the predicate for the boot-time
+// "critical abort on corrupt config" path.
+func HasSystemAllowsInConstructorSeed(agentID string) bool {
+	return CoreAgentID(agentID) == IDAva
+}
+
+// SeedConfig ensures all core agents exist in cfg.Agents.List with Locked=true
+// and with the correct constructor-seeded tool policy (FR-010, FR-022).
+//
+// Creates missing agents and re-enforces Locked=true + identity fields on
+// existing core agents (prevents config tampering from downgrading protection).
+// Policy seeds are applied to agents that have no existing Tools config — agents
+// that were manually configured via the SPA keep their existing policy entries.
+//
 // Returns true if config was modified (caller should save).
 func SeedConfig(cfg *config.Config) bool {
 	existing := make(map[string]bool, len(cfg.Agents.List))
@@ -100,6 +160,11 @@ func SeedConfig(cfg *config.Config) bool {
 	modified := false
 
 	// Re-enforce identity fields on existing core agents (tamper protection + rename).
+	// Also apply idempotent profile migrations: if an existing core agent's
+	// SandboxProfile is empty, fill it with the seed value. This covers the case
+	// where a user upgrades from an older release — their Jim entry already
+	// exists so the "new agent" branch below won't fire, but the profile is blank.
+	// Operator-set profiles (non-empty) are left unchanged — operator's choice wins.
 	for i := range cfg.Agents.List {
 		ca := ByID(CoreAgentID(cfg.Agents.List[i].ID))
 		if ca == nil {
@@ -126,6 +191,24 @@ func SeedConfig(cfg *config.Config) bool {
 			a.Icon = ca.Icon
 			modified = true
 		}
+		// Idempotent sandbox_profile migration.
+		// Apply the seeded profile only when the existing entry has no profile set.
+		_, _, seedProfile := coreAgentSeed(ca.ID)
+		if seedProfile != "" && a.SandboxProfile == "" {
+			a.SandboxProfile = seedProfile
+			modified = true
+		}
+
+		// Jim is the operator-blessed agent for workspace.shell / workspace.shell_bg.
+		// Ensure workspace_shell_enabled=true for Jim so he gets the tools even
+		// when the global default is false (deny-by-default). Applied idempotently —
+		// only flips when the pointer is currently nil (unset). Operator explicit
+		// false is left unchanged.
+		if ca.ID == IDJim && cfg.Sandbox.Experimental.WorkspaceShellEnabled == nil {
+			t := true
+			cfg.Sandbox.Experimental.WorkspaceShellEnabled = &t
+			modified = true
+		}
 	}
 
 	for _, ca := range All() {
@@ -133,19 +216,55 @@ func SeedConfig(cfg *config.Config) bool {
 			continue
 		}
 		enabled := true
+		dp, policies, seedProfile := coreAgentSeed(ca.ID)
 		cfg.Agents.List = append(cfg.Agents.List, config.AgentConfig{
-			ID:          string(ca.ID),
-			Name:        ca.Name,
-			Description: ca.Description,
-			Color:       ca.Color,
-			Icon:        ca.Icon,
-			Type:        config.AgentTypeCore,
-			Locked:      true,
-			Enabled:     &enabled,
+			ID:             string(ca.ID),
+			Name:           ca.Name,
+			Description:    ca.Description,
+			Color:          ca.Color,
+			Icon:           ca.Icon,
+			Type:           config.AgentTypeCore,
+			Locked:         true,
+			Enabled:        &enabled,
+			SandboxProfile: seedProfile,
+			Tools: &config.AgentToolsCfg{
+				Builtin: config.AgentBuiltinToolsCfg{
+					DefaultPolicy: dp,
+					Policies:      policies,
+				},
+			},
 		})
+		// Jim is the operator-blessed agent for workspace.shell / workspace.shell_bg.
+		// Flip workspace_shell_enabled=true when seeding Jim for the first time so
+		// he gets the tools even when the global default is false (deny-by-default).
+		// Applied once at creation time so the re-enforcement loop on subsequent
+		// calls sees a non-nil value and skips.
+		if ca.ID == IDJim && cfg.Sandbox.Experimental.WorkspaceShellEnabled == nil {
+			t := true
+			cfg.Sandbox.Experimental.WorkspaceShellEnabled = &t
+		}
 		modified = true
 	}
 	return modified
+}
+
+// NewCustomAgentToolsCfg returns the default AgentToolsCfg for a newly created
+// custom agent (FR-008, FR-022). Every custom agent starts with:
+//
+//   - default_policy: allow  (per FR-008: explicit allow-by-default)
+//   - policies: {"system.*": "deny"}  (privilege rail — no system.* by default)
+//
+// Callers should embed this into config.AgentConfig.Tools when constructing a
+// new custom agent via the REST API or system.agent.create tool.
+func NewCustomAgentToolsCfg() *config.AgentToolsCfg {
+	return &config.AgentToolsCfg{
+		Builtin: config.AgentBuiltinToolsCfg{
+			DefaultPolicy: config.ToolPolicyAllow,
+			Policies: map[string]config.ToolPolicy{
+				"system.*": config.ToolPolicyDeny,
+			},
+		},
+	}
 }
 
 // --- Agent definitions ---
@@ -267,33 +386,56 @@ func Max() *CoreAgent {
 // - Token-efficient — no redundancy with ContextBuilder's injected content
 
 var prompts = map[string]string{
-	"jim": `You are Jim — your user's everyday assistant.
-
-You're the colleague everyone wishes they had: warm, quick, reliable. You handle whatever comes your way — writing, research, analysis, code, planning — and you do it efficiently without unnecessary preamble.
-
-## How you work
-
-- **Concise by default.** Give the answer, not a lecture. Expand only when asked or when the topic genuinely requires it.
-- **Action over discussion.** When someone asks you to write something, write it. When they ask to find something, search for it. Don't ask "would you like me to…" — just do it.
-- **Honest about limits.** Say "I'm not sure" rather than guessing. Indicate confidence levels when sharing factual claims.
-- **Proactive follow-ups.** After completing a task, suggest one natural next step — but keep it brief.
-
-## When to delegate
-
-You can handle most things yourself. Only delegate when the task genuinely requires a specialist:
-
-- **"Build me a custom agent"** → Create a task for Ava. You cannot create agents.
-- **"Automate this multi-step workflow" / "Scrape this site daily"** → Create a task for Max. Complex automation with browser tools or cron scheduling is his specialty.
-- For research questions, handle them yourself unless the user explicitly wants a deep multi-source investigation with citations — then create a task for Ray.
-
-NEVER deflect simple requests to other agents. If someone asks "what's the capital of France?" just answer it.
-
-## What you never do
-
-- NEVER add unnecessary caveats, disclaimers, or "as an AI" hedges
-- NEVER refuse a reasonable request by suggesting another agent when you can handle it yourself
-- NEVER produce walls of text when a few sentences suffice
-`,
+	"jim": "You are Jim — your user's everyday assistant.\n" +
+		"\n" +
+		"You're the colleague everyone wishes they had: warm, quick, reliable. You handle whatever comes your way — writing, research, analysis, code, planning — and you do it efficiently without unnecessary preamble.\n" +
+		"\n" +
+		"## How you work\n" +
+		"\n" +
+		"- **Concise by default.** Give the answer, not a lecture. Expand only when asked or when the topic genuinely requires it.\n" +
+		"- **Action over discussion.** When someone asks you to write something, write it. When they ask to find something, search for it. Don't ask \"would you like me to…\" — just do it.\n" +
+		"- **Honest about limits.** Say \"I'm not sure\" rather than guessing. Indicate confidence levels when sharing factual claims.\n" +
+		"- **Proactive follow-ups.** After completing a task, suggest one natural next step — but keep it brief.\n" +
+		"\n" +
+		"## When to delegate\n" +
+		"\n" +
+		"You can handle most things yourself. Only delegate when the task genuinely requires a specialist:\n" +
+		"\n" +
+		"- **\"Build me a custom agent\"** → Create a task for Ava. You cannot create agents.\n" +
+		"- **\"Automate this multi-step workflow\" / \"Scrape this site daily\"** → Create a task for Max. Complex automation with browser tools or cron scheduling is his specialty.\n" +
+		"- For research questions, handle them yourself unless the user explicitly wants a deep multi-source investigation with citations — then create a task for Ray.\n" +
+		"\n" +
+		"NEVER deflect simple requests to other agents. If someone asks \"what's the capital of France?\" just answer it.\n" +
+		"\n" +
+		"## Serving web apps\n" +
+		"\n" +
+		"You can scaffold and serve web applications inside your sandboxed workspace.\n" +
+		"\n" +
+		"Use workspace.shell to run any command (foreground, captures output):\n" +
+		"\n" +
+		"  workspace.shell { command: \"npm create next-app@latest hello-world --typescript --app --no-eslint --no-tailwind --no-src-dir\", cwd: \"\" }\n" +
+		"  workspace.shell { command: \"npm install\", cwd: \"hello-world\" }\n" +
+		"\n" +
+		"Use workspace.shell_bg to start long-running processes like dev servers\n" +
+		"(returns a clickable preview URL):\n" +
+		"\n" +
+		"  workspace.shell_bg { command: \"npm run dev\", cwd: \"hello-world\", expose_port: 18000 }\n" +
+		"\n" +
+		"The result includes a \"url\" field — share that URL with the user as a clickable link.\n" +
+		"The user can click \"Open in new tab\" in the rendered preview to view the running app.\n" +
+		"\n" +
+		"Both tools run inside your kernel sandbox: filesystem writes are confined to your\n" +
+		"workspace, network access goes through an audited egress proxy. You can run any\n" +
+		"command — npm, pip, go, cargo — without further restrictions inside that boundary.\n" +
+		"\n" +
+		"Prefer workspace.shell over the generic exec tool — workspace.shell is\n" +
+		"sandbox-aware end-to-end and gives clearer error messages on policy denial.\n" +
+		"\n" +
+		"## What you never do\n" +
+		"\n" +
+		"- NEVER add unnecessary caveats, disclaimers, or \"as an AI\" hedges\n" +
+		"- NEVER refuse a reasonable request by suggesting another agent when you can handle it yourself\n" +
+		"- NEVER produce walls of text when a few sentences suffice\n",
 
 	"ava": `You are Ava — the agent architect.
 

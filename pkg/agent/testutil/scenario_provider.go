@@ -30,11 +30,12 @@ type scenarioStep struct {
 //	    WithToolCall("bash", `{"cmd":"ls"}`).
 //	    WithText("Done.")
 type ScenarioProvider struct {
-	mu        sync.Mutex
-	steps     []scenarioStep
-	idx       int
-	callCount int
-	modelName string
+	mu           sync.Mutex
+	steps        []scenarioStep
+	idx          int
+	callCount    int
+	modelName    string
+	lastMessages []providers.Message
 }
 
 // NewScenario returns an empty ScenarioProvider. Default model name is "scripted-model".
@@ -95,7 +96,7 @@ func (s *ScenarioProvider) WithModelName(name string) *ScenarioProvider {
 // Implements providers.LLMProvider.
 func (s *ScenarioProvider) Chat(
 	ctx context.Context,
-	_ []providers.Message,
+	messages []providers.Message,
 	_ []providers.ToolDefinition,
 	_ string,
 	_ map[string]any,
@@ -108,6 +109,8 @@ func (s *ScenarioProvider) Chat(
 	}
 
 	s.mu.Lock()
+	// Record the messages passed to this Chat call for inspection by tests.
+	s.lastMessages = append([]providers.Message(nil), messages...)
 	if s.idx >= len(s.steps) {
 		s.mu.Unlock()
 		return nil, ErrNoMoreResponses
@@ -118,6 +121,21 @@ func (s *ScenarioProvider) Chat(
 	s.mu.Unlock()
 
 	return step.resp, step.err
+}
+
+// LastMessages returns a snapshot of the messages passed to the most recent
+// Chat call. Returns nil if Chat has never been called. Thread-safe.
+// Used by V2.D integration tests to verify the LLM prompt does not contain
+// orphaned tool_call entries after SIGKILL recovery.
+func (s *ScenarioProvider) LastMessages() []providers.Message {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lastMessages == nil {
+		return nil
+	}
+	cp := make([]providers.Message, len(s.lastMessages))
+	copy(cp, s.lastMessages)
+	return cp
 }
 
 // GetDefaultModel returns the configured model name.

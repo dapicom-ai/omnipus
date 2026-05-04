@@ -17,7 +17,7 @@ import {
   TableHead,
   TableCell,
 } from '@/components/ui/table'
-import { fetchAuditLog } from '@/lib/api'
+import { fetchAuditLog, isApiError } from '@/lib/api'
 import type { AuditEntry } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 
@@ -208,8 +208,8 @@ export function AuditLogViewer({ open, onOpenChange }: AuditLogViewerProps) {
   }, [entries, eventFilter, decisionFilter])
 
   function handleRefresh() {
-    refetch().catch((err: Error) => {
-      addToast({ message: err.message, variant: 'error' })
+    refetch().catch((err: unknown) => {
+      addToast({ message: isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Refresh failed', variant: 'error' })
     })
   }
 

@@ -12,6 +12,7 @@ import (
 // EditFileTool edits a file by replacing old_text with new_text.
 // The old_text must exist exactly in the file.
 type EditFileTool struct {
+	BaseTool
 	fs fileSystem
 }
 
@@ -78,6 +79,7 @@ func (t *EditFileTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 }
 
 type AppendFileTool struct {
+	BaseTool
 	fs fileSystem
 }
 

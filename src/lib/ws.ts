@@ -16,12 +16,12 @@ export interface WsAuthFrame {
   token: string
 }
 
-export interface WsMessageFrame {
-  type: 'message'
-  content: string
-  session_id?: string
-  agent_id?: string
-}
+// F-S6: discriminated union separates "mint new session" (no session_id) from
+// "continue existing session" (session_id present). Callers narrow via
+// `'session_id' in frame` to determine which path applies.
+export type WsMessageFrame =
+  | { type: 'message'; content: string; agent_id?: string }
+  | { type: 'message'; content: string; session_id: string; agent_id?: string }
 
 export interface WsCancelFrame {
   type: 'cancel'
@@ -49,33 +49,55 @@ export interface WsDevicePairingResponseFrame {
   decision: 'approve' | 'reject'
 }
 
+// F-S9: append session_close to the WsClientFrame.SessionID usage list (it mirrors cancel)
+
 export type WsSendFrame = WsAuthFrame | WsMessageFrame | WsCancelFrame | WsExecApprovalResponseFrame | WsPingFrame | WsAttachSessionFrame | WsDevicePairingResponseFrame
+
+// Emitted by the server immediately after it mints a new session_id
+// (i.e. when the SPA sent a message frame without a session_id).
+// The SPA stores this id as the new activeSessionId.
+export interface WsSessionStartedFrame {
+  type: 'session_started'
+  session_id: string
+  agent_id?: string
+}
+
+// F-S5: session-scoped frames require session_id (non-optional).
+// The compile-time requirement prevents future frames from accidentally omitting it.
+// Global frames (error, pong, session_state, device_pairing_*) keep session_id optional.
 
 export interface WsTokenFrame {
   type: 'token'
+  session_id: string
   content: string
 }
 
 export interface WsDoneFrame {
   type: 'done'
+  session_id: string
   stats?: { tokens: number; cost: number; duration_ms: number; tokens_dropped?: number }
 }
 
 export interface WsErrorFrame {
   type: 'error'
+  // Global error frames need not be session-scoped; session_id optional.
+  session_id?: string
   message: string
 }
 
 export interface WsToolCallStartFrame {
   type: 'tool_call_start'
+  session_id: string
   tool: string
   call_id: string
   params: Record<string, unknown>
   parent_call_id?: string
+  agent_id?: string
 }
 
 export interface WsToolCallResultFrame {
   type: 'tool_call_result'
+  session_id: string
   tool: string
   call_id: string
   result: unknown
@@ -83,11 +105,13 @@ export interface WsToolCallResultFrame {
   duration_ms?: number
   error?: string
   parent_call_id?: string
+  agent_id?: string
 }
 
 // FR-H-004: subagent span bracket frames
 export interface WsSubagentStartFrame {
   type: 'subagent_start'
+  session_id: string
   span_id: string
   parent_call_id: string
   task_label: string
@@ -96,6 +120,7 @@ export interface WsSubagentStartFrame {
 
 export interface WsSubagentEndFrame {
   type: 'subagent_end'
+  session_id: string
   span_id: string
   status: 'success' | 'error' | 'cancelled' | 'interrupted' | 'timeout'
   duration_ms?: number
@@ -130,6 +155,7 @@ export interface MarshalErrorResult {
 
 export interface WsExecApprovalRequestFrame {
   type: 'exec_approval_request'
+  session_id: string
   id: string
   command: string
   working_dir?: string
@@ -138,6 +164,7 @@ export interface WsExecApprovalRequestFrame {
 
 export interface WsTaskStatusChangedFrame {
   type: 'task_status_changed'
+  session_id: string
   task_id: string
   status: string
   agent_id?: string
@@ -145,12 +172,17 @@ export interface WsTaskStatusChangedFrame {
 
 export interface WsReplayMessageFrame {
   type: 'replay_message'
+  session_id: string
   content: string
   role: string
+  /** Server-assigned message id, used for dedup on reconnect (optional for back-compat). */
+  id?: string
+  timestamp?: string
 }
 
 export interface WsRateLimitFrame {
   type: 'rate_limit'
+  session_id: string
   scope: 'agent' | 'channel' | 'global'
   resource: string
   policy_rule: string
@@ -169,17 +201,73 @@ export interface WsMediaPart {
 
 export interface WsMediaFrame {
   type: 'media'
+  session_id: string
   parts: WsMediaPart[]
 }
 
 export interface WsAgentSwitchedFrame {
   type: 'agent_switched'
+  session_id: string
   agent_id: string
   agent_name?: string  // included by backend for display without an extra lookup
 }
 
+// FR-011, FR-082: tool-policy approval request
+export interface WsToolApprovalRequiredFrame {
+  type: 'tool_approval_required'
+  approval_id: string
+  tool_call_id: string
+  tool_name: string
+  args: Record<string, unknown>
+  agent_id: string
+  session_id: string
+  turn_id: string
+  /** Relative expiry in milliseconds from receipt. Client computes expiresAt = Date.now() + expires_in_ms. */
+  expires_in_ms: number
+}
 
+// FR-052, FR-073, FR-081: session state reset on WS reconnect
+export interface WsSessionStatePendingApproval {
+  approval_id: string
+  session_id: string
+  tool_name: string
+  agent_id: string
+  expires_in_ms: number
+}
+
+export interface WsSessionStateFrame {
+  type: 'session_state'
+  user_id: string
+  pending_approvals: WsSessionStatePendingApproval[]
+  emitted_at: string
+}
+
+// FR-016, MAJ-009: system overload notification
+export interface WsSystemOverloadFrame {
+  type: 'system_overload'
+  session_id: string
+  message?: string
+}
+
+// V1.B: emitted by replay.go just before `done` when the transcript contained
+// duplicate tool_call_ids (older copies are silently overwritten on disk;
+// only the latest one is replayed). Surfacing the count as a one-shot toast
+// gives the operator visible feedback that something irregular was detected
+// — server-only `slog.Warn` was invisible before this frame existed.
+export interface WsReplayWarningFrame {
+  type: 'replay_warning'
+  session_id: string
+  message: string
+  stats?: {
+    duplicate_tool_call_id_count?: number
+  }
+}
+
+// F-S5: session_id contract — session-scoped frames have session_id: string (required);
+// global frames (error, session_state, device_pairing_*) may omit it.
+// WsSessionStartedFrame carries session_id as the minted id, not as routing context.
 export type WsReceiveFrame =
+  | WsSessionStartedFrame
   | WsTokenFrame
   | WsDoneFrame
   | WsErrorFrame
@@ -193,6 +281,10 @@ export type WsReceiveFrame =
   | WsAgentSwitchedFrame
   | WsSubagentStartFrame
   | WsSubagentEndFrame
+  | WsToolApprovalRequiredFrame
+  | WsSessionStateFrame
+  | WsSystemOverloadFrame
+  | WsReplayWarningFrame
 
 /** Allowed status values for subagent_end frames. */
 const SUBAGENT_END_STATUSES = new Set<string>(['success', 'error', 'cancelled', 'interrupted', 'timeout'])
@@ -231,6 +323,10 @@ export class WsConnection {
   private droppedFrameCount = 0
   private readonly droppedFrameThreshold = 5
 
+  // B1.3c: bound event handler references so they can be removed on disconnect.
+  private _onVisibilityChange: (() => void) | null = null
+  private _onOnline: (() => void) | null = null
+
   constructor(callbacks: WsConnectionCallbacks) {
     this.callbacks = callbacks
   }
@@ -238,6 +334,7 @@ export class WsConnection {
   connect(): void {
     this.intentionalClose = false
     this.reconnectAttempts = 0
+    this._attachWindowListeners()
     this._createSocket()
   }
 
@@ -245,6 +342,7 @@ export class WsConnection {
     this.intentionalClose = true
     this._clearReconnectTimer()
     this._stopHeartbeat()
+    this._detachWindowListeners()
     this.ws?.close(1000, 'User disconnected')
     this.ws = null
   }
@@ -316,14 +414,30 @@ export class WsConnection {
     }
 
     this.ws.onerror = () => {
-      this.callbacks.onError('WebSocket connection error')
+      // onerror fires before onclose; onclose produces a richer message with
+      // close code and reason. We emit a minimal diagnostic here so the
+      // connection-error banner has a message, but avoid duplicating the
+      // onclose banner message.
+      this.callbacks.onError(`Connection error reaching ${getWsUrl()} — will retry`)
     }
 
     this.ws.onclose = (event: CloseEvent) => {
       this.ws = null
       this._stopHeartbeat()
       this.callbacks.onDisconnected()
-      if (!this.intentionalClose && event.code !== 1000) {
+      // B1.3c: surface non-1000/1001 close codes through the persistent connection
+      // error banner (via onError → connectionStore.setConnectionError). The banner
+      // in AppShell.tsx will remain visible until reconnect succeeds (onConnected
+      // clears connectionError via setConnected(true)).
+      if (!this.intentionalClose && event.code !== 1000 && event.code !== 1001) {
+        const codeLabel = event.code ? ` code ${event.code}` : ''
+        const reasonLabel = event.reason ? `: ${event.reason}` : ''
+        this.callbacks.onError(
+          `Disconnected from gateway —${codeLabel}${reasonLabel || ' connection lost'}. Reconnecting…`
+        )
+        this._scheduleReconnect()
+      } else if (!this.intentionalClose) {
+        // Normal close (1000/1001) that wasn't intentional — still reconnect but no banner.
         this._scheduleReconnect()
       }
     }
@@ -347,6 +461,50 @@ export class WsConnection {
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = null
+    }
+  }
+
+  // B1.3c: attach window-level listeners that trigger reconnect on
+  // visibilitychange (tab re-focused after backgrounding) and online (network
+  // recovered). Both fire a reconnect immediately if in disconnected state,
+  // resetting the backoff counter so the next attempt is fast.
+  private _attachWindowListeners(): void {
+    if (this._onVisibilityChange) return // already attached
+
+    this._onVisibilityChange = () => {
+      if (
+        document.visibilityState === 'visible' &&
+        !this.intentionalClose &&
+        this.ws === null
+      ) {
+        // Reset backoff — user is actively looking at the page.
+        this.reconnectAttempts = 0
+        this._clearReconnectTimer()
+        this._createSocket()
+      }
+    }
+
+    this._onOnline = () => {
+      if (!this.intentionalClose && this.ws === null) {
+        // Network recovered — reset backoff and reconnect immediately.
+        this.reconnectAttempts = 0
+        this._clearReconnectTimer()
+        this._createSocket()
+      }
+    }
+
+    window.addEventListener('visibilitychange', this._onVisibilityChange)
+    window.addEventListener('online', this._onOnline)
+  }
+
+  private _detachWindowListeners(): void {
+    if (this._onVisibilityChange) {
+      window.removeEventListener('visibilitychange', this._onVisibilityChange)
+      this._onVisibilityChange = null
+    }
+    if (this._onOnline) {
+      window.removeEventListener('online', this._onOnline)
+      this._onOnline = null
     }
   }
 

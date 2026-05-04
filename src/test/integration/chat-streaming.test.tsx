@@ -27,7 +27,9 @@ function wrapper({ children }: { children: React.ReactNode }) {
 
 beforeEach(() => {
   act(() => {
+    // Clear sessionsById so per-session buckets don't leak across tests.
     useChatStore.setState({
+      sessionsById: {},
       messages: [],
       isStreaming: false,
       toolCalls: {},
@@ -44,6 +46,11 @@ describe('chat streaming integration (test #24) — token rendering', () => {
     render(<ChatThread />, { wrapper })
 
     act(() => {
+      // appendMessage routes to the active session; handleFrame routes by
+      // frame.session_id. The test wires both to sess_test so they meet in
+      // the same bucket, otherwise tokens land in a different bucket from
+      // the assistant placeholder and the rendered DOM stays empty.
+      useSessionStore.setState({ activeSessionId: 'sess_test' })
       useChatStore.getState().appendMessage({
         id: 'user_1',
         session_id: 'sess_test',
@@ -60,11 +67,10 @@ describe('chat streaming integration (test #24) — token rendering', () => {
         timestamp: new Date().toISOString(),
         status: 'streaming',
         isStreaming: true,
-        streamCursor: true,
       })
       useChatStore.setState({ isStreaming: true })
-      useChatStore.getState().handleFrame({ type: 'token', content: 'Hello' })
-      useChatStore.getState().handleFrame({ type: 'token', content: ' world' })
+      useChatStore.getState().handleFrame({ type: 'token', session_id: 'sess_test', content: 'Hello' })
+      useChatStore.getState().handleFrame({ type: 'token', session_id: 'sess_test', content: ' world' })
     })
 
     await waitFor(() => {
@@ -77,6 +83,7 @@ describe('chat streaming integration (test #24) — token rendering', () => {
     render(<ChatThread />, { wrapper })
 
     act(() => {
+      useSessionStore.setState({ activeSessionId: 'sess_test' })
       useChatStore.getState().appendMessage({
         id: 'asst_2',
         session_id: 'sess_test',
@@ -85,10 +92,9 @@ describe('chat streaming integration (test #24) — token rendering', () => {
         timestamp: new Date().toISOString(),
         status: 'streaming',
         isStreaming: true,
-        streamCursor: true,
       })
       useChatStore.setState({ isStreaming: true })
-      useChatStore.getState().handleFrame({ type: 'done', stats: { tokens: 150, cost: 0.02, duration_ms: 0 } })
+      useChatStore.getState().handleFrame({ type: 'done', session_id: 'sess_test', stats: { tokens: 150, cost: 0.02, duration_ms: 0 } })
     })
 
     await waitFor(() => {
@@ -96,7 +102,6 @@ describe('chat streaming integration (test #24) — token rendering', () => {
     })
     const msg = useChatStore.getState().messages.find((m) => m.id === 'asst_2')
     expect(msg?.status).toBe('done')
-    expect(msg?.streamCursor).toBe(false)
   })
 
   it('records connectionError on error frame when no assistant message exists', async () => {
@@ -152,16 +157,44 @@ describe('cancel integration (test #40)', () => {
     render(<ChatThread />, { wrapper })
 
     act(() => {
-      useChatStore.getState().appendMessage({
-        id: 'asst_cancel',
-        session_id: 'sess_cancel',
-        role: 'assistant',
-        content: 'Here is the analysis of...',
-        timestamp: new Date().toISOString(),
-        status: 'streaming',
+      // Seed the session bucket directly so the message lands in the right session.
+      useSessionStore.setState({ activeSessionId: 'sess_cancel' })
+      useChatStore.setState({
+        sessionsById: {
+          'sess_cancel': {
+            messages: [{
+              id: 'asst_cancel',
+              session_id: 'sess_cancel',
+              role: 'assistant',
+              content: 'Here is the analysis of...',
+              timestamp: new Date().toISOString(),
+              status: 'streaming',
+              isStreaming: true,
+            }],
+            toolCalls: {},
+            toolCallOrder: [],
+            textAtToolCallStart: {},
+            pendingApprovals: [],
+            isStreaming: true,
+            isReplaying: false,
+            replayCompletedForSession: null,
+            sessionTokens: 0,
+            sessionCost: 0,
+            rateLimitEvent: null,
+            lastUserMessageAt: null,
+          },
+        },
         isStreaming: true,
+        messages: [{
+          id: 'asst_cancel',
+          session_id: 'sess_cancel',
+          role: 'assistant',
+          content: 'Here is the analysis of...',
+          timestamp: new Date().toISOString(),
+          status: 'streaming',
+          isStreaming: true,
+        }],
       })
-      useChatStore.setState({ isStreaming: true })
       useConnectionStore.setState({
         connection: {
           send: mockSend,
@@ -171,7 +204,6 @@ describe('cancel integration (test #40)', () => {
         } as any,
         isConnected: true,
       })
-      useSessionStore.setState({ activeSessionId: 'sess_cancel' })
       useChatStore.getState().cancelStream()
     })
 

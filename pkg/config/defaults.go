@@ -379,6 +379,9 @@ func DefaultConfig() *Config {
 		Tools: ToolsConfig{
 			FilterSensitiveData: true,
 			FilterMinLength:     8,
+			RunInWorkspace: RunInWorkspaceConfig{
+				WarmupTimeoutSeconds: 60,
+			},
 			MediaCleanup: MediaCleanupConfig{
 				ToolConfig: ToolConfig{
 					Enabled: true,
@@ -439,7 +442,6 @@ func DefaultConfig() *Config {
 					Enabled: true,
 				},
 				EnableDenyPatterns:   true,
-				AllowRemote:          true,
 				TimeoutSeconds:       60,
 				MaxBackgroundSeconds: 300, // 5 minutes; 0 = disabled
 			},

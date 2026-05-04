@@ -44,7 +44,7 @@ func TestListAllSessions_PartialErrors(t *testing.T) {
 	}
 
 	msgBus := bus.NewMessageBus()
-	al := NewAgentLoop(cfg, msgBus, &mockProvider{})
+	al := mustNewAgentLoop(t, cfg, msgBus, &mockProvider{})
 
 	// Wire a valid UnifiedStore for the "main" agent and create one session.
 	goodStore, err := session.NewUnifiedStore(t.TempDir())

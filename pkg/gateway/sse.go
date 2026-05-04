@@ -85,7 +85,7 @@ func newSSEHandler(
 
 // GetStreamer implements bus.StreamDelegate.
 // Returns a token-streaming Streamer for webchat SSE sessions.
-func (h *SSEHandler) GetStreamer(ctx context.Context, channel, chatID string) (bus.Streamer, bool) {
+func (h *SSEHandler) GetStreamer(ctx context.Context, channel, chatID, _ string) (bus.Streamer, bool) {
 	if channel != "webchat" {
 		return nil, false
 	}

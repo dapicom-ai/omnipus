@@ -1,22 +1,22 @@
 //go:build !cgo && !test_harness
 
-// Package gateway — production build of the test provider hook.
+// Package gateway — true no-op stubs for the test provider hook.
 //
 // This file is compiled in all builds that do NOT set the test_harness tag —
-// i.e., every normal `go build` and `go test` invocation without
-// -tags=test_harness. It provides the exact same atomic.Pointer var and
-// Set/Clear functions as testhook.go so that:
+// i.e., every normal `go build` and production `go test` invocation without
+// -tags=test_harness.
 //
-//   - `go build` (production binary): the functions exist but are never called.
-//     The atomic.Pointer is always nil, adding zero overhead to the hot path.
-//   - `go test` (without test_harness): RegisterProviderOverrideFuncs in
-//     pkg/agent/testutil/gateway_harness.go can still install the functions as
-//     hooks, making the harness fully functional even without the tag.
+// H2 defense-in-depth: the variable exists for compilation but
+// SetTestProviderOverride is a genuine no-op — it never calls Store.
+// Because nobody calls SetTestProviderOverride in production code, the
+// pointer stays nil at all times and gateway.go:420's Load() always returns
+// nil (the production createStartupProvider path is always taken).
 //
-// In a future hardening pass, the production binary can be stripped of these
-// symbols by building with `-tags=test_harness` only in CI test steps and
-// keeping the stub as a true no-op. For now, keeping the functions functional
-// ensures the test suite passes under the standard build tags (goolm,stdjson).
+// The live atomic.Pointer + Store in the old stub was a defense-in-depth
+// gap: it allowed a test that linked against the production binary to
+// install an override without the test_harness tag. With this stub, only
+// builds tagged test_harness (via testhook.go) can actually install an
+// override.
 
 package gateway
 
@@ -26,20 +26,13 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 )
 
-// testProviderOverride holds a pointer to a provider factory function.
-// Nil in production (nobody calls SetTestProviderOverride outside tests).
+// testProviderOverride is always nil in non-test_harness builds. Declared
+// here so gateway.go:420 compiles in all !cgo builds.
 var testProviderOverride atomic.Pointer[func() providers.LLMProvider]
 
-// SetTestProviderOverride installs a provider factory for RunContext to use
-// instead of the real createStartupProvider. Exported so testutil can install
-// it via RegisterProviderOverrideFuncs without importing pkg/gateway.
-// Safe to call concurrently (atomic.Pointer).
-func SetTestProviderOverride(fn func() providers.LLMProvider) {
-	testProviderOverride.Store(&fn)
-}
+// SetTestProviderOverride is a no-op in production builds (non-test_harness).
+// The argument is intentionally discarded — no Store is called.
+func SetTestProviderOverride(_ func() providers.LLMProvider) {}
 
-// ClearTestProviderOverride removes the test provider override.
-// Safe to call concurrently (atomic.Pointer).
-func ClearTestProviderOverride() {
-	testProviderOverride.Store(nil)
-}
+// ClearTestProviderOverride is a no-op in production builds (non-test_harness).
+func ClearTestProviderOverride() {}

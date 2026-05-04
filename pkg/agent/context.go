@@ -53,6 +53,11 @@ type ContextBuilder struct {
 	// to inject into the system prompt. Used by Ava (Agent Builder) to inject
 	// available tools, skills, providers, and system defaults.
 	resourcesInjector func() string
+
+	// env carries the environment provider + any per-builder env state. Split
+	// into a nested struct so context_env.go owns the mutation surface without
+	// touching the core ContextBuilder definition.
+	env contextBuilderEnv
 }
 
 // WithResourcesInjector sets a callback that provides additional context sections
@@ -77,6 +82,12 @@ func (cb *ContextBuilder) WithAgentInfo(id, name string) *ContextBuilder {
 	cb.agentID = id
 	cb.agentName = name
 	return cb
+}
+
+// Memory returns the MemoryStore backing this ContextBuilder.
+// Used by NewAgentInstance to wire memory tools with the same store instance.
+func (cb *ContextBuilder) Memory() *MemoryStore {
+	return cb.memory
 }
 
 func getGlobalConfigDir() string {
@@ -174,7 +185,11 @@ Your workspace is at: %s
 
 3. **Be helpful and accurate** - When using tools, briefly explain what you're doing.
 
-4. **Memory** - Use %s/memory/MEMORY.md to persist important information across conversations. Write facts, preferences, and context you want to remember.
+4. **Memory** — Use three dedicated tools:
+   - remember(content, category) to persist a fact, decision, reference, or lesson to %s/memory/MEMORY.md.
+   - recall_memory(query) to search your durable memory + recent session recaps + structured retrospectives.
+   - retrospective(went_well, needs_improvement) to record a reviewed retrospective after confirming its contents with the user.
+   Do NOT use write_file on memory/MEMORY.md — that overwrites. The remember tool appends.
 
 5. **Daily notes** - Use %s/memory/YYYYMM/YYYYMMDD.md for day-specific observations and scratch notes.
 
@@ -207,6 +222,12 @@ func (cb *ContextBuilder) getDiscoveryRule() string {
 
 func (cb *ContextBuilder) BuildSystemPrompt() string {
 	parts := []string{}
+
+	// FR-053: prepend env preamble at parts[0] when a provider is wired.
+	// Empty string (no provider) is omitted so legacy callers see no change.
+	if envCtx := cb.GetEnvironmentContext(); envCtx != "" {
+		parts = append(parts, envCtx)
+	}
 
 	// Load agent definition once to avoid a TOCTOU race: previously this was
 	// called once here and again inside LoadBootstrapFiles, which could observe
@@ -336,6 +357,9 @@ func (cb *ContextBuilder) sourcePaths() []string {
 	agentDefinition := cb.LoadAgentDefinition()
 	paths := agentDefinition.trackedPaths(cb.workspace)
 	paths = append(paths, filepath.Join(cb.workspace, "memory", "MEMORY.md"))
+	// Fix C (FR-021): LAST_SESSION.md feeds into GetMemoryContext, so its
+	// mtime must trigger a cache rebuild when written by the recap pipeline.
+	paths = append(paths, filepath.Join(cb.workspace, "memory", "sessions", "LAST_SESSION.md"))
 	return uniquePaths(paths)
 }
 

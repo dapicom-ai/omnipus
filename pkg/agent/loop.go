@@ -8,6 +8,7 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
+	systools "github.com/dapicom-ai/omnipus/pkg/sysagent/tools"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/commands"
 	"github.com/dapicom-ai/omnipus/pkg/config"
@@ -37,8 +39,6 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/skills"
 	"github.com/dapicom-ai/omnipus/pkg/state"
-	"github.com/dapicom-ai/omnipus/pkg/sysagent"
-	systools "github.com/dapicom-ai/omnipus/pkg/sysagent/tools"
 	"github.com/dapicom-ai/omnipus/pkg/taskstore"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 	"github.com/dapicom-ai/omnipus/pkg/tools/browser"
@@ -74,7 +74,7 @@ type AgentLoop struct {
 	// Concurrent turn management
 	activeTurnStates   sync.Map     // key: sessionKey (string), value: *turnState
 	subTurnCounter     atomic.Int64 // Counter for generating unique SubTurn IDs
-	sessionActiveAgent sync.Map     // key: sessionKey (string), value: agentID (string); "" clears override
+	sessionActiveAgent sync.Map     // key: "session:"+sessionID (string), value: agentID (string); set by handoff, cleared on agent deletion
 
 	// Turn tracking
 	turnSeq        atomic.Uint64
@@ -123,8 +123,40 @@ type AgentLoop struct {
 	// tools are disabled. Shutdown() is called in AgentLoop.Close().
 	browserMgr *browser.BrowserManager
 
-	// Ava agent CRUD deps — stored so WireAvaAgentTools can re-run on hot reload.
-	avaDeps *systools.Deps
+	// Tier 1/3 deps — stored so WireTier13Deps can re-run on hot reload.
+	// Without this, hot-reload would drop web_serve, workspace.shell, and
+	// workspace.shell_bg from every agent because ReloadProviderAndConfig
+	// builds a fresh registry.
+	tier13Deps *Tier13Deps
+
+	// sandboxEgressProxy is the kernel-sandbox HTTP/HTTPS egress proxy that
+	// is created once at gateway boot and shared by web_serve, the workspace
+	// shell tools, and (when sandbox is on) the exec tool. Stashed here so
+	// wireExecToolDeps can plumb it into ExecToolDeps.EgressProxy after
+	// WireTier13Deps has handed us the singleton. Nil when sandbox.NewEgressProxy
+	// failed at boot or sandbox is off — in either case the exec tool falls
+	// back to running children without HTTP_PROXY env vars on the
+	// hardened-exec path.
+	sandboxEgressProxy *sandbox.EgressProxy
+
+	// appliedSandboxMode is the mode actually applied by the kernel sandbox at
+	// boot (from SandboxApplyResult.Mode), set via SetAppliedSandboxMode. This
+	// is the authoritative source for ExecToolDeps.SandboxMode — using the boot
+	// result rather than cfg.Sandbox.ResolvedMode() prevents the two from
+	// disagreeing when the CLI --sandbox flag overrides the config file (MAJOR-1).
+	// Zero value (empty string) maps to ModeOff in wireExecToolDepsOn.
+	appliedSandboxMode sandbox.Mode
+
+	// sysagentDeps holds the dependencies for system.* tool registration (FR-001, FR-002).
+	// Wired by the gateway after boot via SetSysagentDeps. Nil until wired; if nil,
+	// system tools are not registered (graceful degradation in tests without a store).
+	sysagentDeps *systools.Deps
+
+	// contextBuilderRegistry is a broadcast channel for config-change
+	// invalidation (FR-061). REST config-write handlers call
+	// InvalidateAllContextBuilders so every agent's next turn rebuilds the
+	// env preamble with the new values.
+	contextBuilderRegistry *ContextBuilderRegistry
 
 	// Wave 4: Per-agent rate limiting and global daily cost cap (SEC-26).
 	// rateLimiter manages sliding-window counters; costTracker persists the
@@ -139,6 +171,41 @@ type AgentLoop struct {
 	// used for all new sessions (joined session model). Legacy per-agent stores
 	// remain accessible via GetAgentStore for read-only access to old sessions.
 	sharedSessionStore *session.UnifiedStore
+
+	// toolApprover is the gateway-injected implementation of the human-in-the-loop
+	// approval gate (FR-011, FR-082). Nil until SetToolApprover is called; when nil,
+	// ask-policy tools are treated as allow (open gate, no WS event).
+	toolApprover PolicyApprover
+
+	// allowGodMode is set when the gateway was started with --allow-god-mode.
+	// When false, sandbox_profile=off is coerced to workspace at tool-wiring time.
+	// Latch (2) — runtime coercion.
+	allowGodMode bool
+
+	// coercionLogged tracks which agent IDs have already emitted a coercion WARN
+	// so the log fires at most once per process lifetime per agent (not on every
+	// hot reload).
+	coercionLogged sync.Map
+
+	// Lane S: session-end recap pipeline (FR-023..FR-030).
+
+	// idleTickers maps sessionID → context.CancelFunc for the idle timeout ticker.
+	// Populated by RegisterIdleTicker; cancelled by cancelIdleTicker.
+	idleTickers sync.Map // sessionID (string) → context.CancelFunc
+
+	// agentCurrentSession maps agentID → sessionID (atomic CAS).
+	// Used by the lazy-CAS logic to detect session switches and trigger recap.
+	agentCurrentSession sync.Map // agentID (string) → sessionID (string)
+
+	// claimedCloseSessions is the idempotency gate for CloseSession (FR-027).
+	// LoadOrStore ensures only one goroutine triggers recap per session.
+	claimedCloseSessions sync.Map // sessionID (string) → true
+
+	// stopCancel is the CancelFunc created by Run to support Stop(). When
+	// Stop() is called it cancels this func so the Run select wakes
+	// immediately without waiting for the next message or ticker. Stored
+	// atomically via the atomic.Pointer so Stop() can be called before Run.
+	stopCancel atomic.Pointer[context.CancelFunc]
 }
 
 // processOptions configures how a message is processed
@@ -170,10 +237,9 @@ type continuationTarget struct {
 }
 
 const (
-	defaultResponse            = "The model returned an empty response. This may indicate a provider error or token limit."
-	toolLimitResponse          = "I've reached `max_tool_iterations` without a final response. Increase `max_tool_iterations` in config.json if this task needs more tool steps."
-	handledToolResponseSummary = "Requested output delivered via tool attachment."
-	sessionKeyAgentPrefix      = "agent:"
+	defaultResponse       = "The model returned an empty response. This may indicate a provider error or token limit."
+	toolLimitResponse     = "I've reached `max_tool_iterations` without a final response. Increase `max_tool_iterations` in config.json if this task needs more tool steps."
+	sessionKeyAgentPrefix = "agent:"
 	metadataKeyAccountID       = "account_id"
 	metadataKeyGuildID         = "guild_id"
 	metadataKeyTeamID          = "team_id"
@@ -188,11 +254,31 @@ const (
 // unexpected and log accordingly.
 var ErrReloadNotConfigured = errors.New("reload not configured")
 
+// RecapModelBootError is returned by NewAgentLoop when AutoRecapEnabled is true
+// and the resolved recap model is not in the cheap-model allow-list (FR-029a).
+// Callers should map this to a non-zero exit code and log the message.
+type RecapModelBootError struct {
+	Model     string
+	AllowList []string
+}
+
+func (e *RecapModelBootError) Error() string {
+	return fmt.Sprintf(
+		"config error: recap_model %q is not in the cheap-model allow-list %v; "+
+			"set cfg.Routing.LightModel to a supported model or set AutoRecapEnabled=false",
+		e.Model, e.AllowList,
+	)
+}
+
+// NewAgentLoop constructs an AgentLoop from the given config, message bus, and LLM provider.
+// Returns (*AgentLoop, nil) on success. Returns (nil, *RecapModelBootError) when
+// AutoRecapEnabled is true and the recap model fails the allow-list gate (FR-029a) —
+// callers should treat this as a fatal configuration error and abort boot.
 func NewAgentLoop(
 	cfg *config.Config,
 	msgBus *bus.MessageBus,
 	provider providers.LLMProvider,
-) *AgentLoop {
+) (*AgentLoop, error) {
 	registry := NewAgentRegistry(cfg, provider)
 
 	// Apply configurable default agent override.
@@ -213,15 +299,16 @@ func NewAgentLoop(
 
 	eventBus := NewEventBus()
 	al := &AgentLoop{
-		bus:         msgBus,
-		cfg:         cfg,
-		registry:    registry,
-		state:       stateManager,
-		eventBus:    eventBus,
-		summarizing: sync.Map{},
-		fallback:    fallbackChain,
-		cmdRegistry: commands.NewRegistry(commands.BuiltinDefinitions()),
-		steering:    newSteeringQueue(parseSteeringMode(cfg.Agents.Defaults.SteeringMode)),
+		bus:                    msgBus,
+		cfg:                    cfg,
+		registry:               registry,
+		state:                  stateManager,
+		eventBus:               eventBus,
+		summarizing:            sync.Map{},
+		fallback:               fallbackChain,
+		cmdRegistry:            commands.NewRegistry(commands.BuiltinDefinitions()),
+		steering:               newSteeringQueue(parseSteeringMode(cfg.Agents.Defaults.SteeringMode)),
+		contextBuilderRegistry: NewContextBuilderRegistry(),
 	}
 	al.hooks = NewHookManager(eventBus)
 	configureHookManagerFromConfig(al.hooks, cfg)
@@ -256,29 +343,75 @@ func NewAgentLoop(
 		auditLogger, auditErr := audit.NewLogger(audit.LoggerConfig{
 			Dir:           auditDir,
 			RetentionDays: 90,
+			// CRIT-2: signal to NewLogger that the operator explicitly enabled
+			// audit. Without this, NewLogger would swallow openCurrentFile
+			// errors and return a degraded logger + nil error — the gateway
+			// would think audit_logger=ok at startup while every subsequent
+			// write rejects in degraded mode. Setting AuditLogRequested makes
+			// openCurrentFile failure surface as a *LoggerConstructionError so
+			// the gateway boot path can fail closed.
+			AuditLogRequested: true,
 		})
 		if auditErr != nil {
-			logger.ErrorCF("agent", "Failed to initialize audit logger; audit logging disabled",
+			// B1.2(b): when sandbox.audit_log is explicitly enabled,
+			// audit construction failure is a fail-closed boot abort.
+			// CLAUDE.md "audit-everything stance is non-negotiable" —
+			// silently dropping audit while the operator asked for it would
+			// be a security regression. The gateway maps the returned typed
+			// error to a SandboxBootError + EX_CONFIG (78) exit code; see
+			// pkg/gateway/gateway.go around the agent.NewAgentLoop call.
+			logger.ErrorCF("agent",
+				"Audit logger construction failed; aborting boot because sandbox.audit_log=true",
 				map[string]any{"error": auditErr.Error(), "dir": auditDir})
-		} else {
+			return nil, &audit.LoggerConstructionError{Dir: auditDir, Err: auditErr}
+		}
+		{
 			al.auditLogger = auditLogger
 
-			// Log startup event.
-			if err := auditLogger.Log(&audit.Entry{
+			// Log startup event. CRIT-6: route through audit.EmitEntry so a
+			// Log failure bumps the audit-skipped counter (/health audit_degraded).
+			audit.EmitEntry(auditLogger, &audit.Entry{
 				Event:    audit.EventStartup,
 				Decision: audit.DecisionAllow,
 				Details: map[string]any{
 					"audit_dir": auditDir,
 				},
-			}); err != nil {
-				logger.ErrorCF("agent", "Failed to write audit startup entry — audit logging may be non-functional",
-					map[string]any{"error": err.Error()})
-			}
+			})
 
 			// Wire audit logger into all agent tool registries.
 			for _, agentID := range registry.ListAgentIDs() {
 				if agent, ok := registry.GetAgent(agentID); ok {
 					agent.Tools.SetAuditLogger(auditLogger)
+					// Memory tools carry their own audit-logger reference for
+					// structured per-entry events (content_sha256 etc.).
+					// SetAuditLogger on the registry propagates via auditLoggerAware,
+					// but the explicit cast below documents the dependency clearly.
+					if t, ok := agent.Tools.Get("remember"); ok {
+						if rt, ok := t.(*tools.RememberTool); ok {
+							rt.SetAuditLogger(auditLogger)
+						} else {
+							// SF4: wrong type registered for "remember" — surface the
+							// registration-order bug so it doesn't silently skip audit wiring.
+							logger.WarnCF("agent",
+								"'remember' tool is not a *tools.RememberTool; audit wiring skipped",
+								map[string]any{
+									"agent_id":  agentID,
+									"tool_type": fmt.Sprintf("%T", t),
+								})
+						}
+					}
+					if t, ok := agent.Tools.Get("retrospective"); ok {
+						if rt, ok := t.(*tools.RetrospectiveTool); ok {
+							rt.SetAuditLogger(auditLogger)
+						} else {
+							logger.WarnCF("agent",
+								"'retrospective' tool is not a *tools.RetrospectiveTool; audit wiring skipped",
+								map[string]any{
+									"agent_id":  agentID,
+									"tool_type": fmt.Sprintf("%T", t),
+								})
+						}
+					}
 				}
 			}
 		}
@@ -405,7 +538,118 @@ func NewAgentLoop(
 	// the same tool name overwrites the previous entry (see ToolRegistry.Register).
 	al.wireExecToolDeps()
 
-	return al
+	// FR-029a: Validate the recap model allow-list at boot.
+	// If AutoRecapEnabled is true and the resolved recap model doesn't match any
+	// pattern in the allow-list, log an error and exit — misconfigured recap model
+	// must not allow silent fallback to an expensive model at runtime.
+	if cfg.Agents.Defaults.AutoRecapEnabled {
+		var recapModel string
+		if cfg.Agents.Defaults.Routing != nil {
+			recapModel = cfg.Agents.Defaults.Routing.LightModel
+		}
+		if recapModel == "" {
+			// Use the default agent's primary model.
+			if defaultAgent := registry.GetDefaultAgent(); defaultAgent != nil {
+				recapModel = defaultAgent.Model
+			}
+		}
+		if recapModel != "" {
+			allowList := cfg.Agents.Defaults.ResolveRecapModelAllowList()
+			matched := false
+			for _, pattern := range allowList {
+				if strings.HasPrefix(recapModel, pattern) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return nil, &RecapModelBootError{
+					Model:     recapModel,
+					AllowList: allowList,
+				}
+			}
+		}
+	}
+
+	// Fix A (FR-057): wire the environment provider into every agent's
+	// ContextBuilder now that the sandbox backend is known. Also register each
+	// ContextBuilder into the registry so config-change invalidation (FR-061)
+	// can broadcast across all agents.
+	al.wireEnvProviders(cfg, registry)
+
+	return al, nil
+}
+
+// ContextBuilderRegistry returns the registry used to broadcast system-prompt
+// cache invalidation when operator config changes (FR-061). Always non-nil
+// after NewAgentLoop.
+func (al *AgentLoop) ContextBuilderRegistry() *ContextBuilderRegistry {
+	if al == nil {
+		return nil
+	}
+	return al.contextBuilderRegistry
+}
+
+// GetCurrentSession returns the active session ID for the given agent, and whether
+// one was found. Used by the WebSocket lazy-CAS logic (FR-024).
+func (al *AgentLoop) GetCurrentSession(agentID string) (string, bool) {
+	if v, ok := al.agentCurrentSession.Load(agentID); ok {
+		return v.(string), true
+	}
+	return "", false
+}
+
+// SetCurrentSession records the active session ID for the given agent.
+// Used by the WebSocket lazy-CAS logic (FR-024).
+func (al *AgentLoop) SetCurrentSession(agentID, sessionID string) {
+	al.agentCurrentSession.Store(agentID, sessionID)
+}
+
+// RegisterIdleTicker stores a cancel function for the idle ticker of a session.
+// Calling it again for the same session replaces the previous cancel without
+// cancelling it — use resetIdleTicker for the reset path.
+func (al *AgentLoop) RegisterIdleTicker(sessionID string, cancel context.CancelFunc) {
+	al.idleTickers.Store(sessionID, cancel)
+}
+
+// cancelIdleTicker cancels and removes the idle ticker for a session.
+// No-op if no ticker is registered.
+func (al *AgentLoop) cancelIdleTicker(sessionID string) {
+	if v, ok := al.idleTickers.LoadAndDelete(sessionID); ok {
+		v.(context.CancelFunc)()
+	}
+}
+
+// resetIdleTicker cancels any existing idle ticker for sessionID and starts a
+// new one. On timeout, CloseSession is called with trigger="idle". The timer
+// is driven by cfg.Agents.Defaults.GetIdleTimeoutMinutes(). If AutoRecapEnabled
+// is false the ticker is still started but CloseSession will return immediately.
+func (al *AgentLoop) resetIdleTicker(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	// Cancel the previous ticker (if any).
+	al.cancelIdleTicker(sessionID)
+
+	cfg := al.GetConfig()
+	timeoutMinutes := cfg.Agents.Defaults.GetIdleTimeoutMinutes()
+	ctx, cancel := context.WithCancel(context.Background())
+	al.RegisterIdleTicker(sessionID, cancel)
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.ErrorCF("agent", "Idle ticker goroutine panic recovered",
+					map[string]any{"session_id": sessionID, "panic": fmt.Sprintf("%v", r)})
+			}
+		}()
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Duration(timeoutMinutes) * time.Minute):
+			al.CloseSession(sessionID, "idle")
+		}
+	}()
 }
 
 // AuditLogger returns the audit logger, or nil if audit logging is disabled.
@@ -456,6 +700,18 @@ func (al *AgentLoop) SandboxBackend() sandbox.SandboxBackend {
 	return al.sandboxBackend
 }
 
+// SetAppliedSandboxMode stores the mode that the kernel sandbox actually applied
+// at boot (from SandboxApplyResult.Mode). Must be called from the gateway boot
+// path after applySandbox returns successfully, before WireTier13Deps and
+// wireExecToolDeps run, so that ExecToolDeps.SandboxMode reflects the true
+// runtime enforcement level rather than the config file value.
+func (al *AgentLoop) SetAppliedSandboxMode(mode sandbox.Mode) {
+	if al == nil {
+		return
+	}
+	al.appliedSandboxMode = mode
+}
+
 // recordRateLimitDenial writes an audit entry and emits a RateLimit event for
 // a denied rate-limit or cost-cap check (SEC-26). Centralizing this avoids
 // repeating the same audit + emit boilerplate for each of the three checks
@@ -475,17 +731,16 @@ func (al *AgentLoop) recordRateLimitDenial(
 		for k, v := range extraDetails {
 			details[k] = v
 		}
-		if err := al.auditLogger.Log(&audit.Entry{
+		// CRIT-6: route through audit.EmitEntry — Log failure bumps the
+		// audit-skipped counter (/health audit_degraded).
+		audit.EmitEntry(al.auditLogger, &audit.Entry{
 			Event:      audit.EventRateLimit,
 			Decision:   audit.DecisionDeny,
 			AgentID:    ts.agent.ID,
 			Tool:       payload.Tool,
 			PolicyRule: payload.PolicyRule,
 			Details:    details,
-		}); err != nil {
-			logger.WarnCF("agent", "failed to write rate-limit audit entry",
-				map[string]any{"limit_type": limitType, "error": err.Error()})
-		}
+		})
 	}
 	al.emitEvent(
 		EventKindRateLimit,
@@ -502,7 +757,13 @@ func (al *AgentLoop) recordRateLimitDenial(
 //
 // No-op when the agent has exec disabled or when the registry lookup fails.
 func (al *AgentLoop) wireExecToolDeps() {
-	if al.registry == nil {
+	al.wireExecToolDepsOn(al.registry)
+}
+
+// wireExecToolDepsOn is the registry-parameterized form of wireExecToolDeps,
+// used by hot-reload to wire the new registry before the atomic swap.
+func (al *AgentLoop) wireExecToolDepsOn(registry *AgentRegistry) {
+	if registry == nil {
 		return
 	}
 	cfg := al.cfg
@@ -511,8 +772,8 @@ func (al *AgentLoop) wireExecToolDeps() {
 	}
 	allowReadPaths := buildAllowReadPatterns(cfg)
 
-	for _, agentID := range al.registry.ListAgentIDs() {
-		agent, ok := al.registry.GetAgent(agentID)
+	for _, agentID := range registry.ListAgentIDs() {
+		agent, ok := registry.GetAgent(agentID)
 		if !ok || agent == nil || agent.Tools == nil {
 			continue
 		}
@@ -522,6 +783,37 @@ func (al *AgentLoop) wireExecToolDeps() {
 		// Linux 5.13+, so no per-child application is actually required
 		// there — the fallback backend still uses this to emit
 		// OMNIPUS_SANDBOX_PATHS for cooperative scripts.
+		//
+		// Bind-port rules: kernel-level enforcement is installed once at
+		// gateway boot (see pkg/gateway/sandbox_apply.go) and inherited by
+		// all child processes via Landlock's restrict_self ratchet — there
+		// is no need to re-add the rules on each exec child. We still
+		// populate BindPortRules here so cooperative children that read
+		// OMNIPUS_SANDBOX_* env vars get the full picture of what they may
+		// bind, and the rules are visible in tooling that introspects
+		// ExecToolDeps.
+		//
+		// ConnectPortRules were removed in v0.1 (A1.3): the kernel only
+		// handles NET_BIND_TCP in handledAccessNet. Outbound TCP filtering
+		// is delegated to the egress proxy.
+		var bindPorts []sandbox.NetPortRule
+		if al.sandboxBackend != nil {
+			abi := 0
+			if rep, ok := al.sandboxBackend.(interface{ ABIVersion() int }); ok {
+				abi = rep.ABIVersion()
+			}
+			if abi >= 4 {
+				pr := cfg.Sandbox.DevServerPortRange
+				if !pr.IsZero() {
+					for p := pr.Min(); p <= pr.Max(); p++ {
+						if p < 1 || p > 65535 {
+							continue
+						}
+						bindPorts = append(bindPorts, sandbox.NetPortRule{Port: uint16(p)})
+					}
+				}
+			}
+		}
 		policy := sandbox.SandboxPolicy{
 			FilesystemRules: []sandbox.PathRule{
 				{
@@ -529,11 +821,28 @@ func (al *AgentLoop) wireExecToolDeps() {
 					Access: sandbox.AccessRead | sandbox.AccessWrite | sandbox.AccessExecute,
 				},
 			},
+			BindPortRules:     bindPorts,
 			InheritToChildren: true,
 		}
 
+		// Use the mode that the kernel sandbox actually applied at boot
+		// (SetAppliedSandboxMode sets this from SandboxApplyResult.Mode).
+		// Zero value maps to ModeOff in ExecTool.sandboxOn(), which is the
+		// correct default when the gateway did not wire the applied mode
+		// (headless tests, legacy callers).
 		deps := tools.ExecToolDeps{
-			SandboxPolicy: policy,
+			SandboxPolicy:      policy,
+			SandboxMode:        string(al.appliedSandboxMode),
+			ExecTimeoutSeconds: int32(cfg.Tools.Exec.TimeoutSeconds),
+		}
+		// Plumb the kernel-sandbox egress proxy into the exec tool so the
+		// hardened-exec path (sandbox=enforce / permissive) injects
+		// HTTP_PROXY pointing at the allow-listed proxy. Nil-guarded to
+		// avoid the typed-nil-in-interface trap and so the exec tool
+		// gracefully degrades to no-proxy when the boot-time
+		// NewEgressProxy call failed.
+		if al.sandboxEgressProxy != nil {
+			deps.EgressProxy = al.sandboxEgressProxy
 		}
 		// Both dependency fields use interfaces, so we must nil-guard at
 		// assignment time to avoid typed-nil traps: storing a nil
@@ -566,6 +875,196 @@ func (al *AgentLoop) wireExecToolDeps() {
 		}
 		agent.Tools.Register(execTool)
 	}
+}
+
+// WireTier13Deps registers the web_serve, workspace.shell, and
+// workspace.shell_bg tools into every non-system agent's tool registry using
+// the shared infrastructure instances created once at gateway boot. Called
+// from gateway.go after NewAgentLoop and after the Tier13Deps registries
+// (DevServerRegistry, ServedSubdirs, EgressProxy) are constructed. The
+// "Tier13" name is historical — Tier 1 (static serve) and Tier 3 (dev-server
+// proxy) used to live in two separate tools (serve_workspace and
+// run_in_workspace); both are now subsumed by web_serve, but the deps struct
+// keeps the legacy name for cross-package callers.
+//
+// Mirrors the wireExecToolDeps pattern: post-creation injection so the heavy
+// singleton objects (EgressProxy, DevServerRegistry) are not re-created per
+// agent. Nil fields in deps skip the corresponding tool registration
+// (graceful degradation when preview is disabled or Tier 3 unsupported).
+func (al *AgentLoop) WireTier13Deps(deps Tier13Deps) {
+	// Stash a copy so hot-reload can re-apply the wiring on the rebuilt registry.
+	depsCopy := deps
+	al.tier13Deps = &depsCopy
+
+	// Stash the sandbox egress proxy for the exec tool. wireExecToolDeps
+	// (which originally ran during NewAgentLoop, before the gateway had
+	// constructed the proxy) is re-run below so each agent's exec tool now
+	// picks up the proxy address on the sandbox-on path.
+	if deps.EgressProxy != nil {
+		al.sandboxEgressProxy = deps.EgressProxy
+	}
+
+	al.wireTier13DepsLocked(al.registry, deps)
+
+	// Re-wire exec deps now that we have the egress proxy. Without this,
+	// the exec tool's hardened path runs without HTTP_PROXY env vars.
+	al.wireExecToolDeps()
+}
+
+// wireTier13DepsLocked is the actual wiring logic, factored out so hot-reload
+// can re-apply it against a freshly-built registry without re-stashing.
+func (al *AgentLoop) wireTier13DepsLocked(registry *AgentRegistry, deps Tier13Deps) {
+	if registry == nil {
+		return
+	}
+	cfg := al.cfg
+	if cfg == nil {
+		return
+	}
+
+	minDurSec := cfg.Tools.ServeWorkspace.MinDurationSeconds
+	maxDurSec := cfg.Tools.ServeWorkspace.MaxDurationSeconds
+
+	for _, agentID := range registry.ListAgentIDs() {
+		ag, ok := registry.GetAgent(agentID)
+		if !ok || ag == nil || ag.Tools == nil {
+			continue
+		}
+
+		// web_serve — unified Tier 1 (static) + Tier 3 (dev server) tool.
+		// Registered whenever ServedSubdirs is available; dev mode is gated to
+		// Linux at runtime inside the tool itself (Tier3UnsupportedMessage).
+		if deps.ServedSubdirs != nil {
+			previewURL := deps.GatewayPreviewBaseURL
+			if previewURL == "" {
+				previewURL = deps.GatewayBaseURL
+			}
+			portRange := cfg.Sandbox.DevServerPortRange
+			webServeCfg := tools.WebServeDevConfig{
+				Tier3Commands:   cfg.Sandbox.Tier3Commands,
+				PortRange:       [2]int32{portRange[0], portRange[1]},
+				MaxConcurrent:   cfg.Sandbox.MaxConcurrentDevServers,
+				EgressAllowList: cfg.Sandbox.EgressAllowList,
+				AuditFailClosed: resolveBoolWithDefault(cfg.Sandbox.PathGuardAuditFailClosed, true),
+			}
+			webServeTool := tools.NewWebServeTool(
+				ag.Workspace,
+				ag.ID,
+				previewURL,
+				deps.ServedSubdirs,
+				deps.DevServerRegistry, // nil on non-Linux; tool guards internally
+				webServeCfg,
+				deps.EgressProxy,
+				al.auditLogger,
+				minDurSec,
+				maxDurSec,
+			)
+			ag.Tools.Register(webServeTool)
+		}
+
+		// workspace.shell (experimental foreground shell).
+		// Only registered when experimental.workspace_shell_enabled=true.
+		// The tool is per-agent because it needs the agent's workspace path,
+		// sandbox profile, and shell policy — the same reason web_serve dev
+		// mode is wired here rather than in the process-level BuiltinRegistry.
+		if resolveBoolWithDefault(cfg.Sandbox.Experimental.WorkspaceShellEnabled, true) {
+			// Resolve SandboxProfile for this agent from the global config.
+			// We scan cfg.Agents.List for a matching entry; if not found we
+			// use the global DefaultProfile (which itself defaults to workspace).
+			agentProfile := cfg.Sandbox.DefaultProfile
+			var agentShellPolicy *config.AgentShellPolicy
+			for i := range cfg.Agents.List {
+				entry := &cfg.Agents.List[i]
+				if entry.ID == ag.ID {
+					if entry.SandboxProfile != "" {
+						agentProfile = entry.SandboxProfile
+					}
+					agentShellPolicy = entry.ShellPolicy
+					break
+				}
+			}
+			// Coerce off → workspace when god mode is unavailable or not opted in.
+			// This is the runtime-side enforcement of latches (1) and (2). The REST
+			// handler enforces the same at write time so persisted config never has
+			// off without the latches; this is defense-in-depth.
+			if agentProfile == config.SandboxProfileOff {
+				al.mu.RLock()
+				godModeOptedIn := al.allowGodMode
+				al.mu.RUnlock()
+				if !sandbox.GodModeAvailable || !godModeOptedIn {
+					// Log at most once per process lifetime per agent to prevent
+					// the WARN from flooding on hot reloads.
+					if _, alreadyLogged := al.coercionLogged.LoadOrStore(ag.ID, true); !alreadyLogged {
+						logger.WarnCF("agent", "sandbox_profile=off coerced to workspace; --allow-god-mode not set",
+							map[string]any{"agent_id": ag.ID})
+						// CRIT-6: route through audit.EmitEntry so a Log failure
+						// bumps the audit-skipped counter (/health audit_degraded).
+						audit.EmitEntry(al.auditLogger, &audit.Entry{
+							Event:    audit.EventPolicyEval,
+							Decision: audit.DecisionDeny,
+							AgentID:  ag.ID,
+							Tool:     "sandbox_profile",
+							Details: map[string]any{
+								"reason":       "god_mode_unavailable",
+								"coerced_from": "off",
+								"coerced_to":   "workspace",
+							},
+						})
+					}
+					agentProfile = config.SandboxProfileWorkspace
+				}
+			}
+			shellTool := tools.NewWorkspaceShellTool(tools.WorkspaceShellDeps{
+				WorkspaceDir:            ag.Workspace,
+				Profile:                 agentProfile,
+				Proxy:                   deps.EgressProxy,
+				AuditLogger:             al.auditLogger,
+				AuditFailClosed:         resolveBoolWithDefault(cfg.Sandbox.PathGuardAuditFailClosed, true),
+				GlobalShellDenyPatterns: cfg.Sandbox.ShellDenyPatterns,
+				AgentShellPolicy:        agentShellPolicy,
+			})
+			ag.Tools.Register(shellTool)
+
+			// workspace.shell_bg (experimental background tool).
+			// Registered under the same workspace_shell_enabled flag as
+			// workspace.shell — same trust level, same governance.
+			if deps.DevServerRegistry != nil {
+				portRange := cfg.Sandbox.DevServerPortRange
+				shellBgTool := tools.NewWorkspaceShellBgTool(tools.WorkspaceShellBgDeps{
+					WorkspaceDir:            ag.Workspace,
+					Profile:                 agentProfile,
+					Proxy:                   deps.EgressProxy,
+					AuditLogger:             al.auditLogger,
+					AuditFailClosed:         resolveBoolWithDefault(cfg.Sandbox.PathGuardAuditFailClosed, true),
+					Registry:                deps.DevServerRegistry,
+					MaxConcurrent:           cfg.Sandbox.MaxConcurrentDevServers,
+					PortRange:               [2]int32{portRange[0], portRange[1]},
+					GatewayHost:             deps.GatewayPreviewBaseURL,
+					GlobalShellDenyPatterns: cfg.Sandbox.ShellDenyPatterns,
+					AgentShellPolicy:        agentShellPolicy,
+				})
+				ag.Tools.Register(shellBgTool)
+			}
+		}
+	}
+
+	logger.InfoCF("agent", "Tier 1/2/3 tools wired into agent registry", map[string]any{
+		"preview_base_url":            deps.GatewayPreviewBaseURL,
+		"served_subdirs_ready":        deps.ServedSubdirs != nil,
+		"dev_server_registry_ready":   deps.DevServerRegistry != nil,
+		"egress_proxy_ready":          deps.EgressProxy != nil,
+		"workspace_shell_enabled":     resolveBoolWithDefault(cfg.Sandbox.Experimental.WorkspaceShellEnabled, true),
+	})
+}
+
+// resolveBoolWithDefault returns the bool value from a *bool, falling back to
+// defaultVal when the pointer is nil. Used by WireTier13Deps for config fields
+// that default true when absent.
+func resolveBoolWithDefault(p *bool, defaultVal bool) bool {
+	if p == nil {
+		return defaultVal
+	}
+	return *p
 }
 
 // registerSharedTools registers tools that are shared across all agents.
@@ -655,14 +1154,16 @@ func registerSharedTools(
 		getRegistryReader := func() tools.AgentRegistryReader {
 			return al.GetRegistry()
 		}
-		onHandoffFrontend := func(chatID, newAgentID, agentName string) {
-			// Store both chatID and agentID keys so GetSessionActiveAgent can look up
-			// by either key. Also clear when newAgentID is empty.
-			if newAgentID == "" {
-				al.sessionActiveAgent.Delete("chat:" + chatID)
+		onHandoffFrontend := func(evt tools.HandoffEvent) {
+			// Override is keyed by session_id so each session carries its own
+			// handoff state. Switching to another session never inherits this.
+			if evt.SessionID == "" {
+				return
+			}
+			if evt.AgentID == "" {
+				al.sessionActiveAgent.Delete("session:" + evt.SessionID)
 			} else {
-				al.sessionActiveAgent.Store("chat:"+newAgentID, newAgentID)
-				al.sessionActiveAgent.Store("chat:"+chatID, newAgentID)
+				al.sessionActiveAgent.Store("session:"+evt.SessionID, evt.AgentID)
 			}
 		}
 		getContextWindow := func(targetAgentID string) int {
@@ -879,10 +1380,14 @@ func registerSharedTools(
 				if browserSSRF == nil {
 					browserSSRF = security.NewSSRFChecker(nil)
 				}
-				mgr, regErr := browser.RegisterTools(agent.Tools, browserCfg, browserSSRF)
-				// Note: browser.evaluate stays registered. Policy (see pkg/policy
-				// builtinToolPolicies) denies it by default; operators who need
-				// it set security.tool_policies["browser.evaluate"] = "ask".
+				// browser.evaluate registration: always register the tool so the
+				// LLM sees it in its tool list. The safety floor (deny by default)
+				// is enforced at dispatch time by pkg/policy.builtinToolPolicies
+				// (SEC-04/SEC-06). BrowserEvaluateEnabled=true is still required
+				// as an explicit operator opt-in for the tool to actually execute;
+				// the policy gate provides a second, independent deny layer.
+				evaluateEnabled := cfg.Sandbox.BrowserEvaluateEnabled
+				mgr, regErr := browser.RegisterTools(agent.Tools, browserCfg, browserSSRF, evaluateEnabled)
 				if regErr != nil {
 					logger.ErrorCF("agent", "Failed to register browser tools — "+
 						"ensure Chromium/Chrome is installed or set tools.browser.cdp_url",
@@ -898,6 +1403,7 @@ func registerSharedTools(
 			}
 		}
 	}
+
 }
 
 // findAgentConfig returns the AgentConfig for the given agent ID, or nil if not found.
@@ -933,24 +1439,25 @@ func buildDelegateChecker(agentCfg *config.AgentConfig, defaults config.AgentDef
 func (al *AgentLoop) Run(ctx context.Context) error {
 	al.running.Store(true)
 
-	if err := al.ensureHooksInitialized(ctx); err != nil {
-		return err
-	}
-	if err := al.ensureMCPInitialized(ctx); err != nil {
-		return err
-	}
+	// Wrap the caller's context with a cancel so Stop() can unblock the
+	// select without requiring the outer context to be cancelled. This
+	// replaces the previous 100 ms idle ticker (H4: each wakeup was wasted
+	// CPU polling a bool that almost always returns true).
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
+	al.stopCancel.Store(&runCancel)
 
-	idleTicker := time.NewTicker(100 * time.Millisecond)
-	defer idleTicker.Stop()
+	if err := al.ensureHooksInitialized(runCtx); err != nil {
+		return err
+	}
+	if err := al.ensureMCPInitialized(runCtx); err != nil {
+		return err
+	}
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-runCtx.Done():
 			return nil
-		case <-idleTicker.C:
-			if !al.running.Load() {
-				return nil
-			}
 		case msg, ok := <-al.bus.InboundChan():
 			if !ok {
 				return nil
@@ -961,7 +1468,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 			// redirected into steering; other inbound messages are requeued.
 			drainCancel := func() {}
 			if activeScope, activeAgentID, ok := al.resolveSteeringTarget(msg); ok {
-				drainCtx, cancel := context.WithCancel(ctx)
+				drainCtx, cancel := context.WithCancel(runCtx)
 				drainCancel = cancel
 				go al.drainBusToSteering(drainCtx, activeScope, activeAgentID)
 			}
@@ -1003,11 +1510,11 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 						}
 					}()
 					if finalResponse != "" && !published {
-						al.publishResponseIfNeeded(ctx, activeAgent, publishChannel, publishChatID, finalResponse)
+						al.publishResponseIfNeeded(runCtx, activeAgent, publishChannel, publishChatID, finalResponse)
 					}
 				}()
 
-				response, activeAgent, err := al.processMessage(ctx, msg)
+				response, activeAgent, err := al.processMessage(runCtx, msg)
 				if err != nil {
 					response = fmt.Sprintf("Error processing message: %v", err)
 				}
@@ -1027,7 +1534,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 					cancelDrain()
 					if finalResponse != "" {
 						published = true
-						al.publishResponseIfNeeded(ctx, activeAgent, msg.Channel, msg.ChatID, finalResponse)
+						al.publishResponseIfNeeded(runCtx, activeAgent, msg.Channel, msg.ChatID, finalResponse)
 					}
 					return
 				}
@@ -1045,7 +1552,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 							"queue_depth": al.pendingSteeringCountForScope(target.SessionKey),
 						})
 
-					continued, continueErr := al.Continue(ctx, target.SessionKey, target.Channel, target.ChatID)
+					continued, continueErr := al.Continue(runCtx, target.SessionKey, target.Channel, target.ChatID)
 					if continueErr != nil {
 						logger.WarnCF("agent", "Failed to continue queued steering",
 							map[string]any{
@@ -1076,7 +1583,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 							"queue_depth": al.pendingSteeringCountForScope(target.SessionKey),
 						})
 
-					continued, continueErr := al.Continue(ctx, target.SessionKey, target.Channel, target.ChatID)
+					continued, continueErr := al.Continue(runCtx, target.SessionKey, target.Channel, target.ChatID)
 					if continueErr != nil {
 						logger.WarnCF("agent", "Failed to continue queued steering after shutdown drain",
 							map[string]any{
@@ -1096,7 +1603,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 
 				if finalResponse != "" {
 					published = true
-					al.publishResponseIfNeeded(ctx, activeAgent, target.Channel, target.ChatID, finalResponse)
+					al.publishResponseIfNeeded(runCtx, activeAgent, target.Channel, target.ChatID, finalResponse)
 				}
 			}()
 		}
@@ -1202,6 +1709,12 @@ func (al *AgentLoop) drainBusToSteering(ctx context.Context, activeScope, active
 
 func (al *AgentLoop) Stop() {
 	al.running.Store(false)
+	// Cancel the Run context so the select wakes immediately rather than
+	// waiting for the next inbound message. Safe to call before Run (the
+	// atomic.Pointer is nil until Run stores a cancel func).
+	if fn := al.stopCancel.Load(); fn != nil {
+		(*fn)()
+	}
 }
 
 func (al *AgentLoop) publishResponseIfNeeded(ctx context.Context, ag *AgentInstance, channel, chatID, response string) {
@@ -1306,6 +1819,13 @@ func (al *AgentLoop) Close() {
 		al.execProxy.Stop()
 	}
 
+	// Lane S (FR-025): cancel all outstanding idle tickers on shutdown.
+	al.idleTickers.Range(func(k, v any) bool {
+		v.(context.CancelFunc)()
+		al.idleTickers.Delete(k)
+		return true
+	})
+
 	// SEC-26: Persist the accumulated daily cost so the next startup can
 	// restore it via LoadIntoRegistry, preventing double-counting on restarts.
 	// A save failure here means the cap will under-count after the next
@@ -1324,20 +1844,72 @@ func (al *AgentLoop) Close() {
 		}
 	}
 
+	// FR-048: On graceful shutdown, write turn_cancelled_restart synthetic entries
+	// to any sessions that have active turns paused awaiting approval. This makes
+	// the restart visible to the session on next load, preventing the user from
+	// seeing a dangling tool_call with no result.
+	al.writeTurnCancelledRestartForActiveTurns()
+
 	// SEC-15: Log shutdown event and close audit logger.
 	if al.auditLogger != nil {
-		if err := al.auditLogger.Log(&audit.Entry{
+		// CRIT-6 + typed-Decision migration: route through audit.EmitEntry so
+		// a Log failure bumps the audit-skipped counter, and use the typed
+		// Decision constant in place of the raw "allow" literal.
+		audit.EmitEntry(al.auditLogger, &audit.Entry{
 			Event:    audit.EventShutdown,
-			Decision: "allow",
-		}); err != nil {
-			logger.WarnCF("agent", "Failed to write audit shutdown entry",
-				map[string]any{"error": err.Error()})
-		}
+			Decision: audit.DecisionAllow,
+		})
 		if err := al.auditLogger.Close(); err != nil {
 			logger.ErrorCF("agent", "Failed to close audit logger",
 				map[string]any{"error": err.Error()})
 		}
 	}
+}
+
+// writeTurnCancelledRestartForActiveTurns writes a synthetic turn_cancelled_restart
+// system message to every session that has an active (in-progress) turn at the time
+// of graceful shutdown (FR-048). This ensures the session transcript is clean on
+// next load: the SIGKILL recovery path (FR-069) will detect the synthetic entry
+// and not attempt to resume the cancelled turn.
+func (al *AgentLoop) writeTurnCancelledRestartForActiveTurns() {
+	al.activeTurnStates.Range(func(key, value any) bool {
+		sessionKey, _ := key.(string)
+		ts, _ := value.(*turnState)
+		if ts == nil || ts.agent == nil || ts.agent.Sessions == nil {
+			return true
+		}
+
+		// Append a synthetic system message documenting the shutdown.
+		syntheticContent := fmt.Sprintf(
+			`{"type":"turn_cancelled_restart","session_key":%q,"reason":"graceful_shutdown"}`,
+			sessionKey,
+		)
+		ts.agent.Sessions.AddMessage(sessionKey, "system", syntheticContent)
+		if err := ts.agent.Sessions.Save(sessionKey); err != nil {
+			logger.WarnCF("agent", "FR-048: failed to persist turn_cancelled_restart on shutdown",
+				map[string]any{"session_key": sessionKey, "error": err.Error()})
+		} else {
+			logger.InfoCF("agent", "FR-048: turn_cancelled_restart written on graceful shutdown",
+				map[string]any{"session_key": sessionKey})
+		}
+
+		// Emit audit event (FR-048).
+		// CRIT-6 + typed-Decision/Event migration: route through audit.EmitEntry
+		// so Log failure bumps the audit-skipped counter; use typed Event +
+		// Decision constants in place of raw string literals.
+		audit.EmitEntry(al.auditLogger, &audit.Entry{
+			Event:     audit.EventToolPolicyAskDenied,
+			Decision:  audit.DecisionDeny,
+			SessionID: sessionKey,
+			Details: map[string]any{
+				"reason":   "restart",
+				"turn_id":  ts.turnID,
+				"agent_id": ts.agentID,
+				"shutdown": "graceful",
+			},
+		})
+		return true
+	})
 }
 
 // MountHook registers an in-process hook on the agent loop.
@@ -1634,15 +2206,22 @@ func (al *AgentLoop) ReloadProviderAndConfig(
 	// Ensure shared tools are re-registered on the new registry
 	registerSharedTools(al, cfg, al.bus, registry, provider)
 
-	// Re-wire Ava's agent CRUD tools on the new registry.
-	if al.avaDeps != nil {
-		if err := al.WireAvaAgentTools(al.avaDeps, registry); err != nil {
-			logger.WarnCF(
-				"agent",
-				"hot-reload: failed to re-wire Ava agent tools",
-				map[string]any{"error": err.Error()},
-			)
-		}
+	// Re-wire Tier 1/3 tools (web_serve + workspace.shell*) on the new registry.
+	// Without this, hot-reload silently drops them because NewAgentRegistry creates
+	// fresh AgentInstances whose Tools registries don't know about the shared
+	// ServedSubdirs / DevServerRegistry / EgressProxy singletons.
+	if al.tier13Deps != nil {
+		al.wireTier13DepsLocked(registry, *al.tier13Deps)
+	}
+
+	// Re-wire exec tool deps (sandbox mode + egress proxy) on the new
+	// registry. Without this, the rebuilt exec tool would lose the kernel
+	// sandbox routing and revert to the legacy `sh -c` path on a hot reload.
+	al.wireExecToolDepsOn(registry)
+
+	// Re-wire system.* tools on the new registry (FR-001, FR-002).
+	if al.sysagentDeps != nil {
+		al.wireSysagentDepsLocked(registry, al.sysagentDeps)
 	}
 
 	// Atomically swap the config and registry under write lock
@@ -1708,10 +2287,14 @@ func (al *AgentLoop) GetConfig() *config.Config {
 	return al.cfg
 }
 
-// GetSessionActiveAgent returns the active agent ID for a chat session (set by handoff tool).
-// Returns ("", false) if no handoff override is active.
-func (al *AgentLoop) GetSessionActiveAgent(chatID string) (string, bool) {
-	if v, ok := al.sessionActiveAgent.Load("chat:" + chatID); ok {
+// GetSessionActiveAgent returns the agent that the handoff tool last switched
+// the given session to. Returns ("", false) if no handoff override is active
+// for this session_id.
+func (al *AgentLoop) GetSessionActiveAgent(sessionID string) (string, bool) {
+	if sessionID == "" {
+		return "", false
+	}
+	if v, ok := al.sessionActiveAgent.Load("session:" + sessionID); ok {
 		return v.(string), true
 	}
 	return "", false
@@ -1959,6 +2542,64 @@ func (al *AgentLoop) SetReloadFunc(fn func() error) {
 	al.reloadFunc = fn
 }
 
+// SetSysagentDeps stores the system.* tool dependencies for use by hot-reload.
+// Call WireSysagentDeps after this to immediately register the tools.
+func (al *AgentLoop) SetSysagentDeps(deps *systools.Deps) {
+	al.sysagentDeps = deps
+}
+
+// SetToolApprover injects the gateway's policy-level approval implementation into
+// the loop (FR-011). Must be called before any turns start; safe from any goroutine.
+// Passing nil clears the approver (ask-policy tools treated as allow — open gate).
+func (al *AgentLoop) SetToolApprover(a PolicyApprover) {
+	al.mu.Lock()
+	al.toolApprover = a
+	al.mu.Unlock()
+}
+
+// SetAllowGodMode sets the god-mode opt-in flag (latch 2). Must be called
+// before WireTier13Deps so the coercion logic picks up the correct value. If
+// called after WireTier13Deps, the change takes effect on the next hot-reload.
+func (al *AgentLoop) SetAllowGodMode(allow bool) {
+	al.mu.Lock()
+	al.allowGodMode = allow
+	al.mu.Unlock()
+}
+
+// WireSysagentDeps registers all 35 system.* tools on every agent in the
+// current registry (FR-001, FR-002). Mirrors the WireTier13Deps pattern:
+// called once at boot after NewAgentLoop, and again on hot-reload. The deps
+// pointer is stashed so hot-reload can re-apply the wiring on the rebuilt registry.
+//
+// Per-agent policy (seeded via coreagent.SeedConfig) governs which agents may
+// actually invoke these tools at LLM-call time — this registration is the
+// supply side; policy is the demand filter.
+func (al *AgentLoop) WireSysagentDeps(deps *systools.Deps) {
+	depsCopy := *deps
+	al.sysagentDeps = &depsCopy
+	al.wireSysagentDepsLocked(al.registry, &depsCopy)
+}
+
+// wireSysagentDepsLocked registers system.* tools on all agents in registry.
+// Factored out so hot-reload can re-apply against a freshly-built registry.
+func (al *AgentLoop) wireSysagentDepsLocked(registry *AgentRegistry, deps *systools.Deps) {
+	if registry == nil || deps == nil {
+		return
+	}
+	sysToolList := systools.AllTools(deps, nil)
+	for _, agentID := range registry.ListAgentIDs() {
+		ag, ok := registry.GetAgent(agentID)
+		if !ok || ag == nil || ag.Tools == nil {
+			continue
+		}
+		for _, t := range sysToolList {
+			ag.Tools.Register(t)
+		}
+	}
+	logger.InfoCF("agent", "system.* tools wired into agent registry",
+		map[string]any{"tool_count": len(sysToolList)})
+}
+
 // TriggerReload triggers a config reload so the in-memory config picks up
 // changes written to disk by safeUpdateConfigJSON. Called by REST handlers
 // after persisting config changes (agent create/update, token rotate, etc.).
@@ -2039,7 +2680,8 @@ func (al *AgentLoop) sendTranscriptionFeedback(
 	channel, chatID, messageID string,
 	validTexts []string,
 ) {
-	if !al.cfg.Voice.EchoTranscription {
+	cfg := al.GetConfig()
+	if !cfg.Voice.EchoTranscription {
 		return
 	}
 	if al.channelManager == nil {
@@ -2239,17 +2881,18 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 			"route_channel": route.Channel,
 		})
 
-	// Resolve transcript store for tool call recording (forwarded via message metadata).
+	// Resolve transcript store for tool call recording. SessionID is now
+	// authoritative — populated directly by the gateway from frame.SessionID.
 	var transcriptSessionID string
 	var transcriptStore *session.UnifiedStore
-	if tsid := inboundMetadata(msg, "transcript_session_id"); tsid != "" {
-		transcriptSessionID = tsid
-		transcriptStore = al.ResolveSessionStore(tsid)
+	if msg.SessionID != "" {
+		transcriptSessionID = msg.SessionID
+		transcriptStore = al.ResolveSessionStore(msg.SessionID)
 		if transcriptStore == nil {
 			logger.WarnCF(
 				"agent",
-				"transcript_session_id present but store not found — tool calls will not be recorded",
-				map[string]any{"transcript_session_id": tsid},
+				"session_id present but store not found — tool calls will not be recorded",
+				map[string]any{"session_id": msg.SessionID},
 			)
 		}
 	}
@@ -2267,6 +2910,60 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 		SendResponse:        false,
 		TranscriptSessionID: transcriptSessionID,
 		TranscriptStore:     transcriptStore,
+	}
+
+	// FR-025: reset idle ticker on every user turn, using transcript session ID
+	// when available (web-chat sessions). This starts the ticker on the first
+	// turn and resets it on every subsequent turn.
+	if transcriptSessionID != "" {
+		al.resetIdleTicker(transcriptSessionID)
+		// FR-024: track current session per agent for lazy CAS on switch.
+		al.agentCurrentSession.Store(agent.ID, transcriptSessionID)
+
+		// Self-heal: rebuild the agent's per-session history from the shared
+		// transcript when the in-memory copy is missing or stale. We rehydrate
+		// not only when the bucket is empty (handoff, fresh process, etc.) but
+		// also when the bucket has *no* assistant/tool entries while the
+		// transcript carries tool_calls owned by this agent — the symptom of
+		// the prior wsStreamer bug that wrote assistant text with empty AgentID
+		// and left the per-agent bucket stuck on user messages only. Without
+		// this stronger trigger, an old session keeps starting from scratch
+		// every turn because GetHistory returns the broken cached state and
+		// the empty-only check above is satisfied.
+		if agent.Sessions != nil {
+			cur := agent.Sessions.GetHistory(sessionKey)
+			needsHydrate := len(cur) == 0
+			if !needsHydrate && transcriptStore != nil {
+				hasAssistantOrTool := false
+				for _, m := range cur {
+					if m.Role == "assistant" || m.Role == "tool" {
+						hasAssistantOrTool = true
+						break
+					}
+				}
+				if !hasAssistantOrTool {
+					if entries, err := transcriptStore.ReadTranscript(transcriptSessionID); err == nil {
+						for i := range entries {
+							e := &entries[i]
+							if (e.AgentID == agent.ID || e.AgentID == "") &&
+								(e.Type == session.EntryTypeToolCall || e.Role == "assistant") {
+								needsHydrate = true
+								break
+							}
+						}
+					}
+				}
+			}
+			if needsHydrate {
+				if err := al.HydrateAgentHistoryFromTranscript(transcriptSessionID); err != nil {
+					logger.WarnCF("agent", "self-heal hydrate failed", map[string]any{
+						"agent_id":   agent.ID,
+						"session_id": transcriptSessionID,
+						"error":      err.Error(),
+					})
+				}
+			}
+		}
 	}
 
 	// context-dependent commands check their own Runtime fields and report
@@ -2291,58 +2988,56 @@ func (al *AgentLoop) processMessage(ctx context.Context, msg bus.InboundMessage)
 func (al *AgentLoop) resolveMessageRoute(msg bus.InboundMessage) (routing.ResolvedRoute, *AgentInstance, error) {
 	registry := al.GetRegistry()
 
-	// Check session-level agent override set by the handoff tool.
-	// Check by both sessionKey and chatID ("chat:"+chatID) since webchat
-	// messages don't carry a SessionKey, but handoff stores by chatID.
-	// This takes PRIORITY over the explicit agent_id from the webchat dropdown
-	// because the handoff already updated the dropdown via the agent_switched frame.
-	for _, lookupKey := range []string{msg.SessionKey, "chat:" + msg.ChatID} {
-		if lookupKey == "" || lookupKey == "chat:" {
-			continue
-		}
-		if activeAgent, ok := al.sessionActiveAgent.Load(lookupKey); ok {
-			agentID := activeAgent.(string)
-			if agentID != "" {
-				if agent, ok := registry.GetAgent(agentID); ok {
-					logger.InfoCF("agent", "Session handoff override active", map[string]any{
-						"lookup_key": lookupKey,
-						"agent_id":   agentID,
-					})
-					sk := msg.SessionKey
-					if sk == "" {
-						sk = lookupKey
-					}
-					return routing.ResolvedRoute{AgentID: agentID, SessionKey: sk}, agent, nil
-				}
-				al.sessionActiveAgent.Delete(lookupKey)
-			}
-		}
-	}
-
-	// If the message carries an explicit agent_id (e.g., webchat agent selector),
-	// use it directly instead of going through routing rules.
+	// Explicit agent_id in message metadata takes top priority. The user
+	// switching the SPA dropdown to a different agent is an authoritative
+	// re-targeting that must win over any prior handoff routing override —
+	// otherwise a Mia → Ray handoff persists silently after the user
+	// explicitly switches back to Jim, and Jim's UI receives Ray's replies.
+	// The override is still consulted below for messages without an
+	// explicit agent_id (e.g. channel inputs that don't track agent state).
 	if explicitID := inboundMetadata(msg, "agent_id"); explicitID != "" {
-		agent, ok := registry.GetAgent(explicitID)
-		if ok {
-			logger.InfoCF("agent", "Routed to explicit agent", map[string]any{
-				"agent_id":  explicitID,
-				"workspace": agent.Workspace,
+		if agent, ok := registry.GetAgent(explicitID); ok {
+			// Clear stale handoff override only when the explicit target differs from
+			// the current override. If the user selects the same agent that the handoff
+			// already set, clearing the override would incorrectly reset routing state.
+			if cur, ok := al.sessionActiveAgent.Load(sessionScopeKey(msg)); !ok || cur.(string) != explicitID {
+				al.sessionActiveAgent.Delete(sessionScopeKey(msg))
+			}
+			logger.InfoCF("agent", "Routed to explicit agent (dropdown)", map[string]any{
+				"agent_id":   explicitID,
+				"session_id": msg.SessionID,
+				"workspace":  agent.Workspace,
 			})
-			// Build a session key from the agent + channel + chatID so the
-			// handoff tool can address this session.
-			sk := fmt.Sprintf("agent:%s:webchat:%s", explicitID, msg.ChatID)
+			sk := agentSessionKey(explicitID, msg)
 			return routing.ResolvedRoute{AgentID: explicitID, SessionKey: sk}, agent, nil
 		}
-		// H12: An explicit agent_id was provided but no matching agent is registered.
-		// Return a hard error rather than silently falling through to default routing,
-		// which would confuse the caller about which agent is actually handling the message.
-		// Log internal details (including registered IDs) at Error level for operators,
-		// but return a sanitized error to the caller to avoid leaking registry state.
 		logger.ErrorCF("agent", "explicit agent_id not found in registry", map[string]any{
 			"agent_id":       explicitID,
 			"registered_ids": registry.ListAgentIDs(),
 		})
 		return routing.ResolvedRoute{}, nil, fmt.Errorf("the requested agent is not available")
+	}
+
+	// Check session/chat-scope handoff override. Only reached when the message
+	// carries no explicit agent_id. sessionScopeKey prevents non-webchat
+	// channels without a SessionID from collapsing into a single global bucket.
+	{
+		scopeKey := sessionScopeKey(msg)
+		if activeAgent, ok := al.sessionActiveAgent.Load(scopeKey); ok {
+			agentID := activeAgent.(string)
+			if agentID != "" {
+				if agent, ok := registry.GetAgent(agentID); ok {
+					logger.InfoCF("agent", "Session handoff override active", map[string]any{
+						"session_id": msg.SessionID,
+						"agent_id":   agentID,
+					})
+					sk := agentSessionKey(agentID, msg)
+					return routing.ResolvedRoute{AgentID: agentID, SessionKey: sk}, agent, nil
+				}
+				// Agent was deleted after the override was set — clean up and fall through.
+				al.sessionActiveAgent.Delete(scopeKey)
+			}
+		}
 	}
 
 	route := registry.ResolveRoute(routing.RouteInput{
@@ -2378,6 +3073,28 @@ func resolveScopeKey(route routing.ResolvedRoute, msgSessionKey string) string {
 		return msgSessionKey
 	}
 	return route.SessionKey
+}
+
+// sessionScopeKey returns a stable bucket key for a message.
+// When SessionID is set, returns "session:<sessionID>".
+// When SessionID is empty, returns "chat:<channel>:<chatID>" so that
+// messages from non-webchat channels that haven't been assigned a session yet
+// do not all collapse into a single "session:" bucket.
+func sessionScopeKey(msg bus.InboundMessage) string {
+	if msg.SessionID != "" {
+		return "session:" + msg.SessionID
+	}
+	return "chat:" + msg.Channel + ":" + msg.ChatID
+}
+
+// agentSessionKey builds the per-agent session key combining agentID with the
+// message's scope bucket. Uses session-scoped format when SessionID is known;
+// falls back to chat-scoped format for channels that haven't minted a session.
+func agentSessionKey(agentID string, msg bus.InboundMessage) string {
+	if msg.SessionID != "" {
+		return fmt.Sprintf("agent:%s:session:%s", agentID, msg.SessionID)
+	}
+	return fmt.Sprintf("agent:%s:chat:%s:%s", agentID, msg.Channel, msg.ChatID)
 }
 
 func (al *AgentLoop) resolveSteeringTarget(msg bus.InboundMessage) (string, string, bool) {
@@ -2638,6 +3355,7 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 				Duration:        time.Since(ts.startedAt),
 				FinalContentLen: ts.finalContentLen(),
 				ChatID:          ts.chatID,
+				SessionID:       ts.transcriptSessionID,
 				IsRoot:          ts.parentTurnID == "",
 			},
 		)
@@ -2658,6 +3376,13 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 	var summary string
 	if !ts.opts.NoHistory {
 		history = ts.agent.Sessions.GetHistory(ts.sessionKey)
+		// FR-069 / FR-088: recover orphaned tool calls left by a SIGKILL or OOM
+		// kill while the gateway was paused awaiting approval. The function is
+		// idempotent — it no-ops on clean sessions and on sessions where the
+		// synthetic turn_cancelled_restart entry already exists. The on-disk
+		// transcript is preserved; only the LLM-context slice (history) is
+		// cleaned so the LLM does not see dangling unanswered tool_call entries.
+		history = RecoverOrphanedToolCalls(ts.agent.Sessions, ts.sessionKey, al.auditLogger)
 		summary = ts.agent.Sessions.GetSummary(ts.sessionKey)
 	}
 	ts.captureRestorePoint(history, summary)
@@ -2767,7 +3492,7 @@ turnLoop:
 		// SEC-26: Per-agent LLM call rate limit check. Runs once per turn
 		// iteration, before the actual LLM call. The system agent is exempt.
 		if al.rateLimiter != nil && cfg.Sandbox.RateLimits.MaxAgentLLMCallsPerHour > 0 &&
-			!security.IsSystemAgent(ts.agent.ID) {
+			!security.IsPrivilegedAgent(ts.agent.AgentType) {
 			window := al.rateLimiter.GetOrCreate(
 				"agent:"+ts.agent.ID+":llm_call",
 				cfg.Sandbox.RateLimits.MaxAgentLLMCallsPerHour,
@@ -2799,7 +3524,7 @@ turnLoop:
 		// SEC-26: Global daily cost cap pre-check. Deny if the accumulated cost
 		// for today already meets or exceeds the cap. The system agent is exempt.
 		if al.rateLimiter != nil && cfg.Sandbox.RateLimits.DailyCostCapUSD > 0 &&
-			!security.IsSystemAgent(ts.agent.ID) {
+			!security.IsPrivilegedAgent(ts.agent.AgentType) {
 			if currentCost := al.rateLimiter.GetDailyCost(); currentCost >= cfg.Sandbox.RateLimits.DailyCostCapUSD {
 				capRule := fmt.Sprintf("global daily cost cap exceeded ($%.2f)", cfg.Sandbox.RateLimits.DailyCostCapUSD)
 				al.recordRateLimitDenial(
@@ -2854,7 +3579,7 @@ turnLoop:
 			select {
 			case result, ok := <-ts.pendingResults:
 				if ok && result != nil && result.ForLLM != "" {
-					content := al.cfg.FilterSensitiveData(result.ForLLM)
+					content := cfg.FilterSensitiveData(result.ForLLM)
 					msg := providers.Message{Role: "user", Content: fmt.Sprintf("[SubTurn Result] %s", content)}
 					pendingMessages = append(pendingMessages, msg)
 				}
@@ -2903,11 +3628,41 @@ turnLoop:
 			})
 
 		gracefulTerminal, _ := ts.gracefulInterruptRequested()
-		providerToolDefs := ts.agent.Tools.ToProviderDefs()
+
+		// FR-003, FR-041: Apply per-agent tool policy at LLM-call assembly time.
+		// FilterToolsByPolicy enforces global × agent deny>ask>allow resolution and
+		// the ScopeCore-on-custom-agent gate before the tool list reaches the LLM.
+		// Tools with effective policy "ask" are included — the mid-turn policy snapshot
+		// (FR-041) handles human-in-the-loop confirmation; see recordSyntheticDeny.
+		allAgentTools := ts.agent.Tools.GetAll()
+		policyFilteredTools, filterTimePolicyMap := tools.FilterToolsByPolicy(allAgentTools, ts.agent.AgentType, ts.agent.LoadToolPolicy())
+
+		// FR-066: dedup invariant — tools[] must be name-unique after filter+assembly.
+		// If a duplicate is detected, emit HIGH audit and return an error turn result
+		// so the loop does not feed a malformed tool list to the LLM.
+		if dedupErr := al.checkToolDedupInvariant(ts, policyFilteredTools); dedupErr != nil {
+			denyMsg := fmt.Sprintf(`{"error":"tool_assembly_duplicate","message":%q}`, dedupErr.Error())
+			syntheticDenyMsg := providers.Message{Role: "system", Content: denyMsg}
+			messages = append(messages, syntheticDenyMsg)
+			if !ts.opts.NoHistory {
+				ts.agent.Sessions.AddFullMessage(ts.sessionKey, syntheticDenyMsg)
+				ts.recordPersistedMessage(syntheticDenyMsg)
+			}
+			if shouldAbort, abortMsg := al.recordSyntheticDeny(ts); shouldAbort {
+				messages = append(messages, providers.Message{Role: "system", Content: abortMsg})
+				turnStatus = TurnEndStatusAborted
+				return al.abortTurn(ts)
+			}
+			// Fail the LLM call for this iteration by returning an error turn result.
+			turnStatus = TurnEndStatusError
+			return turnResult{status: TurnEndStatusError, finalContent: denyMsg}, dedupErr
+		}
+
+		providerToolDefs := tools.ToolsToProviderDefs(policyFilteredTools)
 
 		// Native web search support
 		_, hasWebSearch := ts.agent.Tools.Get("web_search")
-		useNativeSearch := al.cfg.Tools.Web.PreferNative &&
+		useNativeSearch := cfg.Tools.Web.PreferNative &&
 			hasWebSearch &&
 			func() bool {
 				// Check if provider supports native search
@@ -2928,9 +3683,20 @@ turnLoop:
 			providerToolDefs = filtered
 		}
 
-		callMessages := messages
+		// Transparent repair of orphan tool_use / tool_result pairs in the
+		// outbound history. OpenRouter's mid-stream provider rotation can leave
+		// the context jsonl desynced with its own transcript; we reconcile from
+		// the transcript before every LLM call so Anthropic never sees a broken
+		// pair. No-op fast path when there are no orphans (the common case).
+		repairedHistory := messages
+		if ts.opts.TranscriptStore != nil && ts.opts.TranscriptSessionID != "" && ts.agent != nil && ts.agent.Tools != nil {
+			repaired, _ := repairHistory(turnCtx, messages, ts.opts.TranscriptStore, ts.opts.TranscriptSessionID, ts.agent.Tools, ts.agent.ID, ts.agent.LoadToolPolicy())
+			repairedHistory = repaired
+		}
+
+		callMessages := repairedHistory
 		if gracefulTerminal {
-			callMessages = append(append([]providers.Message(nil), messages...), ts.interruptHintMessage())
+			callMessages = append(append([]providers.Message(nil), repairedHistory...), ts.interruptHintMessage())
 			providerToolDefs = nil
 			ts.markGracefulTerminalUsed()
 		}
@@ -3054,7 +3820,7 @@ turnLoop:
 			// Use streaming if the provider supports it and we have a streamer for this channel.
 			if sp, ok := activeProvider.(providers.StreamingProvider); ok && al.bus != nil {
 				logger.DebugCF("agent", "Provider supports streaming, checking for streamer", map[string]any{"channel": ts.channel, "chat_id": ts.chatID})
-				if streamer, hasStreamer := al.bus.GetStreamer(providerCtx, ts.channel, ts.chatID); hasStreamer {
+				if streamer, hasStreamer := al.bus.GetStreamer(providerCtx, ts.channel, ts.chatID, ts.transcriptSessionID); hasStreamer {
 					logger.InfoCF("agent", "Using streaming for response", map[string]any{"channel": ts.channel, "chat_id": ts.chatID})
 					var lastChunk string
 					resp, streamErr := sp.ChatStream(providerCtx, messagesForCall, toolDefsForCall, llmModel, llmOpts, func(accumulated string) {
@@ -3087,6 +3853,27 @@ turnLoop:
 			response, err = callLLM(callMessages, providerToolDefs)
 			if err == nil {
 				break
+			}
+			// If the provider rejected image input on a tool result, strip
+			// inline image data URLs from tool messages and retry once. This
+			// keeps text-only models working while still giving vision-capable
+			// models the picture.
+			if err != nil && strings.Contains(err.Error(), "image input") {
+				stripped := false
+				for i := range callMessages {
+					if callMessages[i].Role == "tool" && len(callMessages[i].Media) > 0 {
+						callMessages[i].Media = nil
+						stripped = true
+					}
+				}
+				if stripped {
+					logger.WarnCF("agent", "provider rejected image input — retrying without media",
+						map[string]any{"agent_id": ts.agent.ID, "model": llmModel})
+					response, err = callLLM(callMessages, providerToolDefs)
+					if err == nil {
+						break
+					}
+				}
 			}
 			if ts.hardAbortRequested() && errors.Is(err, context.Canceled) {
 				turnStatus = TurnEndStatusAborted
@@ -3426,7 +4213,7 @@ turnLoop:
 		// every subsequent call sneak through.
 		if al.rateLimiter != nil && response != nil && response.Usage != nil {
 			callCost := estimateLLMCallCost(llmModel, response.Usage)
-			al.rateLimiter.RecordSpend(callCost, ts.agent.ID)
+			al.rateLimiter.RecordSpend(callCost, ts.agent.AgentType)
 			// Accumulate turn-level stats so the "done" WS frame can surface
 			// real token counts and cost to the chat UI (issue #12).
 			ts.AddTurnStats(int64(response.Usage.TotalTokens), callCost)
@@ -3554,7 +4341,6 @@ turnLoop:
 				"iteration": iteration,
 			})
 
-		allResponsesHandled := len(normalizedToolCalls) > 0
 		assistantMsg := providers.Message{
 			Role:             "assistant",
 			Content:          response.Content,
@@ -3617,7 +4403,6 @@ turnLoop:
 						toolArgs = toolReq.Arguments
 					}
 				case HookActionDenyTool:
-					allResponsesHandled = false
 					denyContent := hookDeniedToolContent("Tool execution denied by hook", decision.Reason)
 					al.emitEvent(
 						EventKindToolExecSkipped,
@@ -3655,9 +4440,9 @@ turnLoop:
 					Arguments: toolArgs,
 					Channel:   ts.channel,
 					ChatID:    ts.chatID,
+					SessionID: ts.transcriptSessionID,
 				})
 				if !approval.IsApproved() {
-					allResponsesHandled = false
 					denyContent := hookDeniedToolContent("Tool execution denied by approval hook", approval.Reason)
 					al.emitEvent(
 						EventKindToolExecSkipped,
@@ -3681,6 +4466,82 @@ turnLoop:
 				}
 			}
 
+			// FR-079 (M2): TOCTOU re-check. Re-load the policy pointer and re-resolve
+			// the effective policy for this specific tool right before execution.
+			// This closes the window between filter-time tools[] assembly and execution.
+			toctouPolicy := al.resolveToolPolicyAtExec(ts, toolName, filterTimePolicyMap)
+			if toctouPolicy == "deny" {
+				// Policy flipped to deny between filter-time and exec-time.
+				denyMsg := fmt.Sprintf(`{"error":"permission_denied","message":"Tool execution denied by policy.","tool":%q}`, toolName)
+				al.emitPolicyDenyAudit(ts, toolName, "deny", "mid_turn_policy_change")
+				deniedMsg := providers.Message{
+					Role:       "tool",
+					Content:    denyMsg,
+					ToolCallID: tc.ID,
+				}
+				messages = append(messages, deniedMsg)
+				if !ts.opts.NoHistory {
+					ts.agent.Sessions.AddFullMessage(ts.sessionKey, deniedMsg)
+					ts.recordPersistedMessage(deniedMsg)
+				}
+				al.emitEvent(
+					EventKindToolExecSkipped,
+					ts.eventMeta("runTurn", "turn.tool.skipped"),
+					ToolExecSkippedPayload{
+						Tool:   toolName,
+						Reason: "permission_denied (mid-turn policy change)",
+					},
+				)
+				if shouldAbort, abortMsg := al.recordSyntheticDeny(ts); shouldAbort {
+					messages = append(messages, providers.Message{Role: "system", Content: abortMsg})
+					turnStatus = TurnEndStatusAborted
+					return al.abortTurn(ts)
+				}
+				continue
+			}
+			if toctouPolicy == "ask" {
+				// ask-policy: pause and request human approval (FR-011).
+				approver := al.loadToolApprover()
+				approved, denialReason := approver.RequestApproval(turnCtx, PolicyApprovalReq{
+					ToolCallID:    tc.ID,
+					ToolName:      toolName,
+					Args:          cloneStringAnyMap(toolArgs),
+					AgentID:       ts.agentID,
+					SessionID:     ts.sessionKey,
+					TurnID:        ts.turnID,
+					RequiresAdmin: al.toolRequiresAdmin(ts, toolName),
+				})
+				if !approved {
+					denyMsg := fmt.Sprintf(`{"error":"permission_denied","message":"User denied tool execution.","tool":%q,"reason":%q}`, toolName, denialReason)
+					al.emitPolicyDenyAudit(ts, toolName, "ask", denialReason)
+					deniedMsg := providers.Message{
+						Role:       "tool",
+						Content:    denyMsg,
+						ToolCallID: tc.ID,
+					}
+					messages = append(messages, deniedMsg)
+					if !ts.opts.NoHistory {
+						ts.agent.Sessions.AddFullMessage(ts.sessionKey, deniedMsg)
+						ts.recordPersistedMessage(deniedMsg)
+					}
+					al.emitEvent(
+						EventKindToolExecSkipped,
+						ts.eventMeta("runTurn", "turn.tool.skipped"),
+						ToolExecSkippedPayload{
+							Tool:   toolName,
+							Reason: fmt.Sprintf("permission_denied (ask denied: %s)", denialReason),
+						},
+					)
+					if shouldAbort, abortMsg := al.recordSyntheticDeny(ts); shouldAbort {
+						messages = append(messages, providers.Message{Role: "system", Content: abortMsg})
+						turnStatus = TurnEndStatusAborted
+						return al.abortTurn(ts)
+					}
+					continue
+				}
+				// Approved: fall through to execute.
+			}
+
 			argsJSON, marshalErr := json.Marshal(toolArgs)
 			if marshalErr != nil {
 				logger.WarnCF("agent", "failed to marshal tool args for preview", map[string]any{"tool": toolName, "error": marshalErr.Error()})
@@ -3699,6 +4560,7 @@ turnLoop:
 				ToolExecStartPayload{
 					ToolCallID:        session.ToolCallID(tc.ID),
 					ChatID:            ts.chatID,
+					SessionID:         ts.transcriptSessionID,
 					Tool:              toolName,
 					Arguments:         cloneEventArguments(toolArgs),
 					ParentSpawnCallID: session.ToolCallID(ts.parentSpawnCallID),
@@ -3707,14 +4569,14 @@ turnLoop:
 			)
 
 			// Send tool feedback to chat channel if enabled
-			if al.cfg.Agents.Defaults.IsToolFeedbackEnabled() &&
+			if cfg.Agents.Defaults.IsToolFeedbackEnabled() &&
 				ts.channel != "" &&
 				!ts.opts.SuppressToolFeedback {
 				feedbackPreview := utils.Truncate(
 					string(argsJSON),
-					al.cfg.Agents.Defaults.GetToolFeedbackMaxArgsLength(),
+					cfg.Agents.Defaults.GetToolFeedbackMaxArgsLength(),
 				)
-				feedbackMsg := fmt.Sprintf("\U0001f527 `%s`\n```\n%s\n```", tc.Name, feedbackPreview)
+				feedbackMsg := fmt.Sprintf("[tool] `%s`\n```\n%s\n```", tc.Name, feedbackPreview)
 				fbCtx, fbCancel := context.WithTimeout(turnCtx, 3*time.Second)
 				if fbErr := al.bus.PublishOutbound(fbCtx, bus.OutboundMessage{
 					Channel: ts.channel,
@@ -3758,7 +4620,7 @@ turnLoop:
 				}
 
 				// Filter sensitive data before publishing
-				content = al.cfg.FilterSensitiveData(content)
+				content = cfg.FilterSensitiveData(content)
 
 				logger.InfoCF("agent", "Async tool completed, publishing result",
 					map[string]any{
@@ -3792,7 +4654,7 @@ turnLoop:
 
 			// SEC-26: Per-agent tool call rate limit check. The system agent is exempt.
 			if al.rateLimiter != nil && cfg.Sandbox.RateLimits.MaxAgentToolCallsPerMinute > 0 &&
-				!security.IsSystemAgent(ts.agent.ID) {
+				!security.IsPrivilegedAgent(ts.agent.AgentType) {
 				toolWindow := al.rateLimiter.GetOrCreate(
 					"agent:"+ts.agent.ID+":tool_call",
 					cfg.Sandbox.RateLimits.MaxAgentToolCallsPerMinute,
@@ -3833,7 +4695,6 @@ turnLoop:
 						ts.agent.Sessions.AddFullMessage(ts.sessionKey, deniedMsg)
 						ts.recordPersistedMessage(deniedMsg)
 					}
-					allResponsesHandled = false
 					al.emitEvent(
 						EventKindToolExecSkipped,
 						ts.eventMeta("runTurn", "turn.tool.skipped"),
@@ -3899,7 +4760,12 @@ turnLoop:
 			if toolResult == nil {
 				toolResult = tools.ErrorResult("hook returned nil tool result")
 			}
-			if len(toolResult.Media) > 0 && toolResult.ResponseHandled {
+			// Always deliver any media the tool produced AND tag the result with
+			// artifact references so the LLM can reason about them in the
+			// follow-up call. The follow-up call itself is now unconditional —
+			// the model decides whether to add a caption, emit empty content,
+			// or run more tools.
+			if len(toolResult.Media) > 0 {
 				parts := make([]bus.MediaPart, 0, len(toolResult.Media))
 				for _, ref := range toolResult.Media {
 					part := bus.MediaPart{Ref: ref}
@@ -3913,13 +4779,14 @@ turnLoop:
 					parts = append(parts, part)
 				}
 				outboundMedia := bus.OutboundMediaMessage{
-					Channel: ts.channel,
-					ChatID:  ts.chatID,
-					Parts:   parts,
+					Channel:   ts.channel,
+					ChatID:    ts.chatID,
+					SessionID: ts.transcriptSessionID,
+					Parts:     parts,
 				}
 				if al.channelManager != nil && ts.channel != "" && !constants.IsInternalChannel(ts.channel) {
 					if err := al.channelManager.SendMedia(ctx, outboundMedia); err != nil {
-						logger.WarnCF("agent", "Failed to deliver handled tool media",
+						logger.WarnCF("agent", "Failed to deliver tool media",
 							map[string]any{
 								"agent_id": ts.agent.ID,
 								"tool":     toolName,
@@ -3931,17 +4798,8 @@ turnLoop:
 					}
 				} else if al.bus != nil {
 					al.bus.PublishOutboundMedia(ctx, outboundMedia)
-					// Queuing media is only best-effort; it has not been delivered yet.
-					toolResult.ResponseHandled = false
 				}
-			}
-
-			if len(toolResult.Media) > 0 && !toolResult.ResponseHandled {
 				toolResult.ArtifactTags = buildArtifactTags(al.mediaStore, toolResult.Media)
-			}
-
-			if !toolResult.ResponseHandled {
-				allResponsesHandled = false
 			}
 
 			if !toolResult.Silent && toolResult.ForUser != "" && ts.opts.SendResponse {
@@ -3995,24 +4853,21 @@ turnLoop:
 						"agent_id":        ts.agent.ID,
 					}
 					logger.InfoCF("agent", "prompt guard sanitized tool result", details)
-					if al.auditLogger != nil {
-						if err := al.auditLogger.Log(&audit.Entry{
-							Event:    audit.EventPolicyEval,
-							Decision: audit.DecisionAllow,
-							AgentID:  ts.agent.ID,
-							Tool:     toolName,
-							Details:  details,
-						}); err != nil {
-							logger.WarnCF("agent", "failed to write prompt_guard audit entry",
-								map[string]any{"error": err.Error(), "tool": toolName})
-						}
-					}
+					// CRIT-6: route through audit.EmitEntry — Log failure bumps the
+					// audit-skipped counter so /health audit_degraded surfaces gaps.
+					audit.EmitEntry(al.auditLogger, &audit.Entry{
+						Event:    audit.EventPolicyEval,
+						Decision: audit.DecisionAllow,
+						AgentID:  ts.agent.ID,
+						Tool:     toolName,
+						Details:  details,
+					})
 				}
 			}
 
 			// Filter sensitive data (API keys, tokens, secrets) before sending to LLM
-			if al.cfg.Tools.IsFilterSensitiveDataEnabled() {
-				contentForLLM = al.cfg.FilterSensitiveData(contentForLLM)
+			if cfg.Tools.IsFilterSensitiveDataEnabled() {
+				contentForLLM = cfg.FilterSensitiveData(contentForLLM)
 			}
 
 			toolResultMsg := providers.Message{
@@ -4020,12 +4875,30 @@ turnLoop:
 				Content:    contentForLLM,
 				ToolCallID: toolCallID,
 			}
+			// Attach inline image data URLs so vision-capable models can SEE the
+			// screenshot/image returned by the tool. Without this the LLM only
+			// gets the placeholder text and cannot reason about the picture.
+			if len(toolResult.Media) > 0 && al.mediaStore != nil {
+				for _, ref := range toolResult.Media {
+					localPath, meta, err := al.mediaStore.ResolveWithMeta(ref)
+					if err != nil || !strings.HasPrefix(meta.ContentType, "image/") {
+						continue
+					}
+					data, err := os.ReadFile(localPath)
+					if err != nil {
+						continue
+					}
+					dataURL := "data:" + meta.ContentType + ";base64," + base64.StdEncoding.EncodeToString(data)
+					toolResultMsg.Media = append(toolResultMsg.Media, dataURL)
+				}
+			}
 			al.emitEvent(
 				EventKindToolExecEnd,
 				ts.eventMeta("runTurn", "turn.tool.end"),
 				ToolExecEndPayload{
 					ToolCallID:        session.ToolCallID(toolCallID),
 					ChatID:            ts.chatID,
+					SessionID:         ts.transcriptSessionID,
 					Tool:              toolName,
 					Duration:          toolDuration,
 					ForLLMLen:         len(contentForLLM),
@@ -4041,14 +4914,39 @@ turnLoop:
 			if toolResult.IsError {
 				tcStatus = "error"
 			}
-			ts.appendToolCallTranscript(session.ToolCall{
+			tcRecord := session.ToolCall{
 				ID:               session.ToolCallID(toolCallID),
 				Tool:             toolName,
 				Status:           tcStatus,
 				DurationMS:       toolDuration.Milliseconds(),
 				Parameters:       cloneEventArguments(toolArgs),
 				ParentToolCallID: session.ToolCallID(ts.parentSpawnCallID),
-			})
+			}
+			// Persist media descriptors so replay can re-emit the `media`
+			// frame and reopened sessions show the attachments the user
+			// originally saw. We store enough metadata (ref + filename +
+			// content_type + type) for replay to reconstruct the wire frame
+			// without re-resolving against the MediaStore at replay time.
+			if len(toolResult.Media) > 0 {
+				descs := make([]map[string]any, 0, len(toolResult.Media))
+				for _, ref := range toolResult.Media {
+					d := map[string]any{"ref": ref}
+					if al.mediaStore != nil {
+						if _, meta, err := al.mediaStore.ResolveWithMeta(ref); err == nil {
+							if meta.Filename != "" {
+								d["filename"] = meta.Filename
+							}
+							if meta.ContentType != "" {
+								d["content_type"] = meta.ContentType
+							}
+							d["type"] = inferMediaType(meta.Filename, meta.ContentType)
+						}
+					}
+					descs = append(descs, d)
+				}
+				tcRecord.Result = map[string]any{"media": descs}
+			}
+			ts.appendToolCallTranscript(tcRecord)
 			messages = append(messages, toolResultMsg)
 			if !ts.opts.NoHistory {
 				ts.agent.Sessions.AddFullMessage(ts.sessionKey, toolResultMsg)
@@ -4109,7 +5007,7 @@ turnLoop:
 				select {
 				case result, ok := <-ts.pendingResults:
 					if ok && result != nil && result.ForLLM != "" {
-						content := al.cfg.FilterSensitiveData(result.ForLLM)
+						content := cfg.FilterSensitiveData(result.ForLLM)
 						msg := providers.Message{Role: "user", Content: fmt.Sprintf("[SubTurn Result] %s", content)}
 						messages = append(messages, msg)
 						if !ts.opts.NoHistory {
@@ -4120,78 +5018,6 @@ turnLoop:
 					// No results available
 				}
 			}
-		}
-
-		if allResponsesHandled {
-			if len(pendingMessages) > 0 {
-				logger.InfoCF("agent", "Pending steering exists after handled tool delivery; continuing turn before finalizing",
-					map[string]any{
-						"agent_id":       ts.agent.ID,
-						"steering_count": len(pendingMessages),
-						"session_key":    ts.sessionKey,
-					})
-				finalContent = ""
-				// I2: guard against bypassing the hard iteration ceiling via goto.
-				if ts.currentIteration() >= 2*ts.agent.MaxIterations {
-					break
-				}
-				goto turnLoop
-			}
-
-			if steerMsgs := al.dequeueSteeringMessagesForScope(ts.sessionKey); len(steerMsgs) > 0 {
-				logger.InfoCF("agent", "Steering arrived after handled tool delivery; continuing turn before finalizing",
-					map[string]any{
-						"agent_id":       ts.agent.ID,
-						"steering_count": len(steerMsgs),
-						"session_key":    ts.sessionKey,
-					})
-				pendingMessages = append(pendingMessages, steerMsgs...)
-				finalContent = ""
-				// I2: guard against bypassing the hard iteration ceiling via goto.
-				if ts.currentIteration() >= 2*ts.agent.MaxIterations {
-					break
-				}
-				goto turnLoop
-			}
-
-			summaryMsg := providers.Message{
-				Role:    "assistant",
-				Content: handledToolResponseSummary,
-			}
-
-			if !ts.opts.NoHistory {
-				ts.agent.Sessions.AddMessage(ts.sessionKey, summaryMsg.Role, summaryMsg.Content)
-				ts.recordPersistedMessage(summaryMsg)
-				if err := ts.agent.Sessions.Save(ts.sessionKey); err != nil {
-					turnStatus = TurnEndStatusError
-					al.emitEvent(
-						EventKindError,
-						ts.eventMeta("runTurn", "turn.error"),
-						ErrorPayload{
-							Stage:   "session_save",
-							Message: err.Error(),
-						},
-					)
-					return turnResult{}, err
-				}
-			}
-			if ts.opts.EnableSummary {
-				al.maybeSummarize(ts.agent, ts.sessionKey, ts.scope)
-			}
-
-			ts.setPhase(TurnPhaseCompleted)
-			ts.setFinalContent("")
-			logger.InfoCF("agent", "Tool output satisfied delivery; ending turn without follow-up LLM",
-				map[string]any{
-					"agent_id":   ts.agent.ID,
-					"iteration":  iteration,
-					"tool_count": len(normalizedToolCalls),
-				})
-			return turnResult{
-				finalContent: "",
-				status:       turnStatus,
-				followUps:    append([]bus.InboundMessage(nil), ts.followUps...),
-			}, nil
 		}
 
 		ts.agent.Tools.TickTTL()
@@ -4278,6 +5104,70 @@ func (al *AgentLoop) abortTurn(ts *turnState) (turnResult, error) {
 		}
 	}
 	return turnResult{status: TurnEndStatusAborted}, nil
+}
+
+// defaultSyntheticErrorFloor is the default value of
+// gateway.turn_synthetic_error_floor (FR-084). After this many consecutive
+// synthetic-deny tool results in a single turn, the turn is aborted.
+const defaultSyntheticErrorFloor = 8
+
+// syntheticErrorFloor returns the configured synthetic-error floor for the
+// current loop config. Negative values return the default. 0 means disabled.
+func (al *AgentLoop) syntheticErrorFloor() int {
+	cfg := al.GetConfig()
+	n := cfg.Gateway.TurnSyntheticErrorFloor
+	if n < 0 {
+		return defaultSyntheticErrorFloor
+	}
+	return n
+}
+
+// recordSyntheticDeny increments the turn's consecutive-synthetic-deny counter
+// and returns true when the turn should be aborted (FR-084). It also appends a
+// system message to the session documenting the abort reason so the LLM can
+// observe it on the next prompt.
+//
+// Returns (shouldAbort bool, abortMsg string). The caller is responsible for
+// appending abortMsg to messages and calling abortTurn if shouldAbort is true.
+func (al *AgentLoop) recordSyntheticDeny(ts *turnState) (shouldAbort bool, abortMsg string) {
+	ts.syntheticErrorCount++
+	floor := al.syntheticErrorFloor()
+	if floor <= 0 || ts.syntheticErrorCount < floor {
+		return false, ""
+	}
+	msg := fmt.Sprintf(
+		`{"role":"system","type":"turn_aborted","reason":"synthetic_error_loop","count":%d}`,
+		ts.syntheticErrorCount,
+	)
+	if !ts.opts.NoHistory {
+		ts.agent.Sessions.AddMessage(ts.sessionKey, "system", msg)
+		if err := ts.agent.Sessions.Save(ts.sessionKey); err != nil {
+			logger.WarnCF("agent", "FR-084: failed to persist turn_aborted message",
+				map[string]any{"session_key": ts.sessionKey, "error": err.Error()})
+		}
+	}
+	// CRIT-6 + typed-Decision/Event migration: route through audit.EmitEntry
+	// so Log failure bumps the audit-skipped counter; use the typed
+	// EventTurnAbortedSyntheticLoop and DecisionDeny constants.
+	audit.EmitEntry(al.auditLogger, &audit.Entry{
+		Event:     audit.EventTurnAbortedSyntheticLoop,
+		Decision:  audit.DecisionDeny,
+		AgentID:   ts.agentID,
+		SessionID: ts.sessionKey,
+		Details: map[string]any{
+			"turn_id":               ts.turnID,
+			"synthetic_error_count": ts.syntheticErrorCount,
+			"floor":                 floor,
+		},
+	})
+	logger.WarnCF("agent", "FR-084: synthetic-error floor reached — aborting turn",
+		map[string]any{
+			"agent_id":    ts.agentID,
+			"session_key": ts.sessionKey,
+			"count":       ts.syntheticErrorCount,
+			"floor":       floor,
+		})
+	return true, msg
 }
 
 func sleepWithContext(ctx context.Context, d time.Duration) error {
@@ -5237,165 +6127,158 @@ func perplexityKeys(key string) []string {
 	return []string{key}
 }
 
-// WireSystemTools registers the 35 system.* tools from BuildRegistry into the
-// system agent's tool registry (the "main"/"omnipus-system" agent). This must be
-// called by the gateway after NewAgentLoop for production use; non-system agents
-// do NOT receive system tools.
-//
-// WireSystemTools is deliberately separate from NewAgentLoop so that configPath
-// and credStore (gateway-level concerns) do not leak into the core agent constructor.
-// Callers that construct an AgentLoop in tests or non-gateway contexts can skip
-// this wiring.
-//
-// navCb may be nil in headless or test environments — the navigate tool
-// tolerates a nil callback and no-ops the navigation side-effect.
-//
-// WireSystemTools is idempotent: calling it multiple times overwrites any
-// previously registered system.* tools with the same names (ToolRegistry.Register
-// silently replaces existing entries).
-//
-// Returns an error if the system agent is not found in the registry — callers
-// should treat this as a fatal boot failure.
-func (al *AgentLoop) WireSystemTools(deps *systools.Deps, navCb systools.NavigateCallback) error {
-	reg := al.GetRegistry()
-	// The system agent is "omnipus-system", which the registry stores as "main".
-	agentInst, ok := reg.GetAgent(DefaultAgentID)
-	if !ok || agentInst == nil {
-		return fmt.Errorf(
-			"WireSystemTools: system agent %q not found in registry — agent loop may not have been initialized correctly",
-			DefaultAgentID,
-		)
-	}
-	sysRegistry := systools.BuildRegistry(deps, navCb)
-
-	// Build the handler that enforces BRD-required guards on every system.* tool call:
-	//   1. RBAC check (CheckRBAC) — SEC-19
-	//   2. Rate limit check (SystemRateLimiter.Check)
-	//   3. Confirmation requirement (RequiresConfirmation) — UI button gate
-	//   4. Audit log entry (audit.Logger.Log) — SEC-15
-	//
-	// In open-source single-user mode we use RoleSingleUser (bypasses RBAC checks)
-	// and a nil confirm func (destructive ops return CONFIRMATION_REQUIRED to the LLM,
-	// which is the correct headless posture until the WebSocket layer wires a real confirm).
-	handler := sysagent.NewSystemToolHandler(sysagent.HandlerConfig{
-		Registry: sysRegistry,
-		Audit:    al.auditLogger,
-		Confirm:  nil, // wired by gateway WebSocket handler when UI is available
-	})
-
-	for _, toolName := range sysRegistry.List() {
-		t, exists := sysRegistry.Get(toolName)
-		if !exists {
-			continue
+// checkToolDedupInvariant verifies that the assembled tool list has no duplicate
+// names (FR-066). Returns a non-nil error on the first duplicate found; also emits
+// a HIGH audit event "tool.assembly.duplicate_name" and logs a structured error.
+func (al *AgentLoop) checkToolDedupInvariant(ts *turnState, filtered []tools.Tool) error {
+	seen := make(map[string]string, len(filtered)) // name → first source tag
+	for _, t := range filtered {
+		name := t.Name()
+		var sourceTag string
+		if cat := t.Category(); cat == tools.CategoryMCP {
+			sourceTag = "mcp:unknown"
+		} else {
+			sourceTag = "builtin"
 		}
-		guarded := sysagent.NewGuardedTool(t, handler, sysagent.RoleSingleUser, "gateway")
-		agentInst.Tools.Register(guarded)
+		if firstSrc, exists := seen[name]; exists {
+			// Duplicate detected — audit + fail.
+			sources := []string{firstSrc, sourceTag}
+			details := map[string]any{
+				"tool_name": name,
+				"sources":   sources,
+				"kept":      firstSrc,
+				"agent_id":  ts.agentID,
+				"turn_id":   ts.turnID,
+			}
+			logger.ErrorCF("agent", "FR-066: tools[] dedup invariant violated",
+				map[string]any{"tool_name": name, "sources": sources, "agent_id": ts.agentID})
+			// CRIT-6 + typed-Decision/Event migration: route through audit.EmitEntry
+			// so Log failure bumps the audit-skipped counter; use the typed
+			// EventToolAssemblyDuplicateName and DecisionDeny constants.
+			audit.EmitEntry(al.auditLogger, &audit.Entry{
+				Event:     audit.EventToolAssemblyDuplicateName,
+				Decision:  audit.DecisionDeny,
+				AgentID:   ts.agentID,
+				Tool:      name,
+				SessionID: ts.sessionKey,
+				Details:   details,
+			})
+			return fmt.Errorf("tools[] dedup invariant violated: tool %q appears from sources %v", name, sources)
+		}
+		seen[name] = sourceTag
 	}
-	logger.InfoCF("agent", "System tools wired into system agent (guarded)",
-		map[string]any{"agent_id": DefaultAgentID, "tool_count": len(sysRegistry.List())})
 	return nil
 }
 
-// WireAvaAgentTools registers the 4 agent tools (system.agent.create,
-// system.agent.update, system.agent.delete, system.models.list) on the "ava"
-// core agent so she can create custom agents through her structured interview
-// flow. These are wrapped with GuardedTool for RBAC + rate limiting + audit.
-// If reg is nil, the current registry is used. Pass a specific registry
-// during hot-reload when the new registry hasn't been swapped yet.
-func (al *AgentLoop) WireAvaAgentTools(deps *systools.Deps, reg ...*AgentRegistry) error {
-	al.avaDeps = deps
-	var r *AgentRegistry
-	if len(reg) > 0 && reg[0] != nil {
-		r = reg[0]
-	} else {
-		r = al.GetRegistry()
-	}
-	avaInst, ok := r.GetAgent("ava")
-	if !ok || avaInst == nil {
-		return fmt.Errorf("WireAvaAgentTools: agent 'ava' not found in registry")
-	}
-
-	handler := sysagent.NewSystemToolHandler(sysagent.HandlerConfig{
-		Registry: systools.BuildRegistry(deps, nil),
-		Audit:    al.auditLogger,
-		Confirm:  nil,
-	})
-
-	// Wire agent CRUD tools + model lookup — Ava doesn't get the other system tools.
-	agentToolNames := []string{
-		"system.agent.create",
-		"system.agent.update",
-		"system.agent.delete",
-		"system.models.list",
+// resolveToolPolicyAtExec performs the FR-079 TOCTOU re-check: re-loads the
+// per-agent policy pointer and re-resolves the effective policy for toolName
+// immediately before Execute is called.
+//
+// Returns the live effective policy ("allow", "ask", "deny").
+// If the live policy matches the filter-time snapshot (filterTimePolicyMap) the
+// return value is the same and no audit is emitted; discrepancies are audited as
+// "mid_turn_policy_change" by the caller.
+//
+// A tool absent from filterTimePolicyMap was not in the filter-time allow set
+// (it was deny at filter time or not registered). If it is also deny at re-check
+// time we return "deny"; if it has become allow/ask we still return "deny" to be
+// conservative (the LLM was not given this tool's definition, so executing it is
+// unsound).
+func (al *AgentLoop) resolveToolPolicyAtExec(ts *turnState, toolName string, filterTimePolicyMap map[string]string) string {
+	filterTimePolicy, wasInFilterMap := filterTimePolicyMap[toolName]
+	if !wasInFilterMap {
+		// Tool was not included at filter time — treat as deny regardless of live policy.
+		return "deny"
 	}
 
-	wired := 0
-	var missing []string
-	fullRegistry := systools.BuildRegistry(deps, nil)
-	for _, name := range agentToolNames {
-		t, exists := fullRegistry.Get(name)
-		if !exists {
-			missing = append(missing, name)
-			continue
-		}
-		guarded := sysagent.NewGuardedTool(t, handler, sysagent.RoleSingleUser, "gateway").
-			WithScopeOverride(tools.ScopeCore)
-		avaInst.Tools.Register(guarded)
-		wired++
+	// Re-run FilterToolsByPolicy with the freshly loaded pointer to get the live
+	// effective policy for this one tool. We run on the full tool list but only
+	// care about our tool.
+	livePolicy := al.resolveSingleToolPolicy(ts, toolName)
+
+	// If policy flipped to deny mid-turn, the caller will audit "mid_turn_policy_change".
+	if livePolicy == "deny" && filterTimePolicy != "deny" {
+		return "deny"
 	}
-	if len(missing) > 0 {
-		return fmt.Errorf("WireAvaAgentTools: %d/%d tools not found in registry: %v",
-			len(missing), len(agentToolNames), missing)
+	// If policy is now ask but was allow at filter time — treat as ask (conservative).
+	if livePolicy == "ask" {
+		return "ask"
 	}
-
-	// Inject available resources (tools, providers, defaults) into Ava's context
-	// so she can recommend tools and models during the agent creation interview.
-	avaInst.ContextBuilder.WithResourcesInjector(func() string {
-		cfg := deps.GetCfg()
-		var sb strings.Builder
-		sb.WriteString("# Available Resources\n\n")
-
-		// System defaults.
-		sb.WriteString("## System Defaults\n")
-		sb.WriteString(fmt.Sprintf("- Default model: `%s`\n", cfg.Agents.Defaults.ModelName))
-		if len(cfg.Agents.Defaults.ModelFallbacks) > 0 {
-			sb.WriteString(
-				fmt.Sprintf("- Default fallbacks: %s\n", strings.Join(cfg.Agents.Defaults.ModelFallbacks, ", ")),
-			)
-		}
-		sb.WriteString("\n")
-
-		// Connected providers.
-		sb.WriteString("## Connected Providers\n")
-		providersSeen := map[string]bool{}
-		for _, p := range cfg.Providers {
-			if p == nil {
-				continue
-			}
-			name := p.Provider
-			if name == "" {
-				if idx := strings.IndexByte(p.Model, '/'); idx > 0 {
-					name = p.Model[:idx]
-				}
-			}
-			if name == "" || providersSeen[name] {
-				continue
-			}
-			providersSeen[name] = true
-			sb.WriteString(fmt.Sprintf("- %s\n", name))
-		}
-		if len(providersSeen) == 0 {
-			sb.WriteString("- (none configured)\n")
-		}
-		sb.WriteString("\nUse `system.models.list` to see all available models from these providers.\n\n")
-
-		// Builtin tools — from the centralized catalog (pkg/tools/catalog.go).
-		sb.WriteString(tools.CatalogMarkdown())
-
-		return sb.String()
-	})
-
-	logger.InfoCF("agent", "Agent CRUD tools wired into Ava (guarded)",
-		map[string]any{"agent_id": "ava", "tool_count": wired})
-	return nil
+	// Use filter-time policy as the authoritative effective policy when live==allow
+	// and filter-time was ask — preserves the ask gate from filter time.
+	if filterTimePolicy == "ask" {
+		return "ask"
+	}
+	return filterTimePolicy
 }
+
+// resolveSingleToolPolicy loads the current policy pointer and resolves the
+// effective policy for toolName using FilterToolsByPolicy. Returns "" if the
+// tool is not found in the agent's registered tools.
+func (al *AgentLoop) resolveSingleToolPolicy(ts *turnState, toolName string) string {
+	allTools := ts.agent.Tools.GetAll()
+	_, pmap := tools.FilterToolsByPolicy(allTools, ts.agent.AgentType, ts.agent.LoadToolPolicy())
+	p, ok := pmap[toolName]
+	if !ok {
+		return "deny"
+	}
+	return p
+}
+
+// loadToolApprover returns the wired PolicyApprover or, when none has been
+// set, a fail-closed nopPolicyApprover that denies every ask with reason
+// "no_approver_configured" and emits one `approver.fallback` audit row per
+// process (V2.B; closes silent-failure-hunter BE CRIT-1). The nop carries
+// al.auditLogger so the diagnostic emit lands in the operator's JSONL.
+//
+// The previous default returned `nopPolicyApprover{}` which auto-approved
+// every ask call — including admin-flagged tools — with zero log and zero
+// audit. Test code that needs the auto-approve behaviour now installs
+// `testAutoApproveApprover{}` explicitly via SetToolApprover (build tag
+// `test`; see `tool_approver_testonly.go`).
+func (al *AgentLoop) loadToolApprover() PolicyApprover {
+	al.mu.RLock()
+	a := al.toolApprover
+	logger := al.auditLogger
+	al.mu.RUnlock()
+	if a == nil {
+		return nopPolicyApprover{auditLogger: logger}
+	}
+	return a
+}
+
+// toolRequiresAdmin returns true when the named tool implements RequiresAdminAsk()
+// and that method returns true.
+func (al *AgentLoop) toolRequiresAdmin(ts *turnState, toolName string) bool {
+	t, ok := ts.agent.Tools.Get(toolName)
+	if !ok {
+		return false
+	}
+	if asker, ok := t.(interface{ RequiresAdminAsk() bool }); ok {
+		return asker.RequiresAdminAsk()
+	}
+	return false
+}
+
+// emitPolicyDenyAudit writes a tool.policy.deny.attempted audit entry.
+// context is a free-form note such as "mid_turn_policy_change" or the denial reason.
+//
+// CRIT-6 + typed-Decision/Event migration: routes through audit.EmitEntry so
+// Log failure bumps the audit-skipped counter (/health audit_degraded), and
+// uses the typed EventToolPolicyDenyAttempted + DecisionDeny constants in
+// place of raw string literals.
+func (al *AgentLoop) emitPolicyDenyAudit(ts *turnState, toolName, resolvedPolicy, context string) {
+	audit.EmitEntry(al.auditLogger, &audit.Entry{
+		Event:     audit.EventToolPolicyDenyAttempted,
+		Decision:  audit.DecisionDeny,
+		AgentID:   ts.agentID,
+		Tool:      toolName,
+		SessionID: ts.sessionKey,
+		Details: map[string]any{
+			"turn_id":         ts.turnID,
+			"resolved_policy": resolvedPolicy,
+			"context":         context,
+		},
+	})
+}
+

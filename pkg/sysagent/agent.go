@@ -15,11 +15,11 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 )
 
-// SystemAgent is the always-on Omnipus system agent (omnipus-system).
+// SystemAgent is the built-in Omnipus privileged agent.
 // It uses the user's configured LLM provider, has a hardcoded prompt compiled
 // into the binary, and dispatches all system.* tool calls through SystemToolHandler.
 //
-// The system agent does NOT have a workspace and consumes zero LLM calls when idle.
+// The agent does NOT have a workspace and consumes zero LLM calls when idle.
 type SystemAgent struct {
 	provider providers.LLMProvider
 	handler  *SystemToolHandler

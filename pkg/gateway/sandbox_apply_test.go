@@ -51,9 +51,9 @@ func TestResolveMode_ConfigDefault(t *testing.T) {
 }
 
 // TestResolveMode_FreshConfigDefaultsToEnforce verifies that a truly
-// empty config (neither Mode nor Enabled ever written) defaults to
-// enforce on capable kernels. cfgEnabledSet=false means neither field
-// was touched in the file.
+// empty config (Mode unset, no AllowedPaths) defaults to enforce on
+// capable kernels. configTouched=false means the operator has not
+// written anything to the sandbox section.
 func TestResolveMode_FreshConfigDefaultsToEnforce(t *testing.T) {
 	mode, src, err := resolveMode("", "", false)
 	if err != nil {
@@ -170,6 +170,94 @@ func TestApplySandbox_ProductionOffBanner(t *testing.T) {
 	}
 	if !strings.Contains(string(body), "SANDBOX DISABLED IN PRODUCTION") {
 		t.Errorf("stderr must contain production banner; got %q", string(body))
+	}
+}
+
+// TestApplySandbox_FreshInstall_Boots verifies CRIT-1 fix: a fresh install
+// with no sandbox section in config.json (Mode=="", configTouched==false)
+// resolves to enforce and boots without error. This exercises the
+// CLI > config > default precedence rule end-to-end with a real fresh-install
+// config snapshot and a FallbackBackend (so the test runs on any kernel).
+//
+// Before the CRIT-1 fix, this path triggered the boot-abort:
+//   applied=enforce, config-reported=off → mismatch → SandboxBootError
+func TestApplySandbox_FreshInstall_Boots(t *testing.T) {
+	// cfg with zero-value Sandbox section — simulates a first-run config
+	// that has no sandbox stanza at all. Mode is empty, AllowedPaths is nil,
+	// so configTouched=false and resolveMode returns (enforce, "", nil).
+	cfg := &config.Config{}
+	// Confirm both conditions that trigger the old mismatch.
+	if cfg.Sandbox.Mode != "" {
+		t.Fatalf("precondition: cfg.Sandbox.Mode must be empty; got %q", cfg.Sandbox.Mode)
+	}
+	if len(cfg.Sandbox.AllowedPaths) != 0 {
+		t.Fatalf("precondition: cfg.Sandbox.AllowedPaths must be nil; got %v", cfg.Sandbox.AllowedPaths)
+	}
+
+	result, err := applySandbox(SandboxApplyOptions{
+		CLIMode:  "", // no CLI override
+		Cfg:      cfg,
+		HomePath: t.TempDir(),
+		Backend:  sandbox.NewFallbackBackend(), // avoids kernel dependency
+		GetEnv:   func(string) string { return "" },
+	})
+	if err != nil {
+		t.Fatalf("applySandbox on fresh install must not return an error; got: %v", err)
+	}
+	// Fresh install with capable default resolves to enforce.
+	if result.Mode != sandbox.ModeEnforce {
+		t.Errorf("fresh install must resolve to enforce; got %q", result.Mode)
+	}
+}
+
+// TestApplySandbox_CLIEnforceEmptyConfig_Boots verifies the second broken
+// scenario from CRIT-1: --sandbox=enforce with an empty config must boot.
+// Before the fix: applied=enforce, config-reported=off → mismatch → abort.
+func TestApplySandbox_CLIEnforceEmptyConfig_Boots(t *testing.T) {
+	cfg := &config.Config{} // empty sandbox section
+
+	result, err := applySandbox(SandboxApplyOptions{
+		CLIMode:  "enforce", // explicit CLI flag
+		Cfg:      cfg,
+		HomePath: t.TempDir(),
+		Backend:  sandbox.NewFallbackBackend(),
+		GetEnv:   func(string) string { return "" },
+	})
+	if err != nil {
+		t.Fatalf("applySandbox with --sandbox=enforce and empty config must not error; got: %v", err)
+	}
+	if result.Mode != sandbox.ModeEnforce {
+		t.Errorf("mode: got %q, want enforce", result.Mode)
+	}
+}
+
+// TestApplySandbox_CLIOffEnforceConfig_Boots verifies the third broken
+// scenario from CRIT-1: --sandbox=off with config.Mode=enforce must boot
+// (e.g. operator debugging). Before the fix: applied=off,
+// config-reported=enforce → mismatch → abort.
+func TestApplySandbox_CLIOffEnforceConfig_Boots(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Sandbox.Mode = "enforce"
+
+	tmp, err := os.CreateTemp(t.TempDir(), "stderr-*.log")
+	if err != nil {
+		t.Fatalf("create temp stderr: %v", err)
+	}
+	defer tmp.Close()
+
+	result, err := applySandbox(SandboxApplyOptions{
+		CLIMode:  "off", // CLI override: operator debugging
+		Cfg:      cfg,
+		HomePath: t.TempDir(),
+		Backend:  sandbox.NewFallbackBackend(),
+		GetEnv:   func(string) string { return "" },
+		Stderr:   tmp,
+	})
+	if err != nil {
+		t.Fatalf("applySandbox with --sandbox=off over enforce config must not error; got: %v", err)
+	}
+	if result.Mode != sandbox.ModeOff {
+		t.Errorf("mode: got %q, want off", result.Mode)
 	}
 }
 

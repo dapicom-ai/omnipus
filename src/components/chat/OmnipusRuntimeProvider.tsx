@@ -6,6 +6,7 @@ import { AssistantRuntimeProvider } from "@assistant-ui/react";
 import { useOmnipusRuntime } from "@/lib/omnipus-runtime";
 import { useChatStore } from "@/store/chat";
 import { useConnectionStore } from "@/store/connection";
+import { useSessionStore, resetChatBucketForReplay } from "@/store/session";
 import { WsConnection } from "@/lib/ws";
 import { TerminalOutputUI } from "./tools/TerminalOutput";
 import { FileReadPreviewUI, FileReadAliasDotUI } from "./tools/FileReadPreview";
@@ -14,6 +15,10 @@ import { FileTreeViewUI, FileListAliasDotUI } from "./tools/FileTreeView";
 import { WebSearchResultUI } from "./tools/WebSearchResult";
 import { WebFetchPreviewUI } from "./tools/WebFetchPreview";
 import { BrowserNavigateUI, BrowserNavigateUnderscoreUI } from "./tools/BrowserNavigate";
+import { WebServeUI } from "./tools/WebServeUI";
+import { ServeWorkspaceUI } from "./tools/ServeWorkspaceUI";
+import { RunInWorkspaceUI } from "./tools/RunInWorkspaceUI";
+import { WorkspaceShellUI, WorkspaceShellBgUI } from "./tools/WorkspaceShellUI";
 import {
   BrowserClickUI, BrowserClickUnderscoreUI,
   BrowserTypeUI, BrowserTypeUnderscoreUI,
@@ -37,6 +42,30 @@ function WsLifecycle() {
       onConnected: async () => {
         setConnected(true);
         setConnectionError(null);
+        // Re-bind any in-flight session to the freshly-opened WS so the
+        // gateway's per-connection sessionID is restored. Without this, a
+        // browser-suspended WS that auto-reconnects on focus would cause the
+        // next user message to spawn a new session and the agent loses
+        // transcript context.
+        const activeSessionId = useSessionStore.getState().activeSessionId;
+        if (activeSessionId) {
+          // The gateway will replay the entire transcript. Mark the session
+          // as replaying symmetrically here (same as in attachToSession).
+          useChatStore.setState({ isReplaying: true });
+          // The gateway will replay the entire transcript. Clear the local
+          // bucket BEFORE replay starts so frames rebuild it from scratch
+          // rather than appending duplicates ("Browse to … / Browse to …"
+          // doubled bubbles after every reconnect).
+          const sent = conn.send({ type: "attach_session", session_id: activeSessionId });
+          if (!sent) {
+            // send() returned false — socket closed between onopen and here.
+            // Preserve local state (do not wipe bucket) and surface an error.
+            resetChatBucketForReplay(activeSessionId);
+            setConnectionError('Failed to reattach session — please reload');
+          } else {
+            resetChatBucketForReplay(activeSessionId);
+          }
+        }
       },
       onDisconnected: () => setConnected(false),
       onError: setConnectionError,
@@ -78,6 +107,11 @@ export function OmnipusRuntimeProvider({ children }: { children: React.ReactNode
        *   file.list         → FileListAliasDotUI        (BRD alias)
        *   web_search        → WebSearchResultUI         (search the web)
        *   web_fetch         → WebFetchPreviewUI         (fetch a URL)
+       *   web_serve         → WebServeUI                (new canonical: static or dev, kind field)
+       *   serve_workspace   → ServeWorkspaceUI          (back-compat alias → WebServeUI)
+       *   run_in_workspace  → RunInWorkspaceUI          (back-compat alias → WebServeUI)
+       *   workspace.shell   → WorkspaceShellUI          (foreground shell, captured output)
+       *   workspace.shell_bg → WorkspaceShellBgUI       (background shell, captured output)
        *   browser.navigate  → BrowserNavigateUI         (browser navigation + screenshot)
        *   browser_navigate  → BrowserNavigateUnderscoreUI (underscore variant)
        *   browser.click     → BrowserClickUI             (click element by selector)
@@ -104,6 +138,11 @@ export function OmnipusRuntimeProvider({ children }: { children: React.ReactNode
       <FileListAliasDotUI />
       <WebSearchResultUI />
       <WebFetchPreviewUI />
+      <WebServeUI />
+      <ServeWorkspaceUI />
+      <RunInWorkspaceUI />
+      <WorkspaceShellUI />
+      <WorkspaceShellBgUI />
       <BrowserNavigateUI />
       <BrowserNavigateUnderscoreUI />
       <BrowserClickUI />

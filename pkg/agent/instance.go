@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 
@@ -50,6 +51,19 @@ type AgentInstance struct {
 	// TimeoutSeconds is the per-turn hard timeout. 0 = disabled.
 	// Populated from AgentDefaults.TimeoutSeconds; per-agent override if available.
 	TimeoutSeconds int
+
+	// AgentType is the resolved type string ("core", "custom", "system") used by
+	// FilterToolsByPolicy at LLM-call assembly time (FR-003, FR-041). Set once at
+	// construction; never mutated after creation.
+	AgentType string
+
+	// toolPolicy holds the per-agent tool policy snapshot used by
+	// FilterToolsByPolicy at LLM-call assembly time (FR-003, FR-020, FR-041).
+	// Populated at construction from config.AgentConfig.Tools.
+	// Config PUT swaps the pointer via StoreToolPolicy; the turn assembly Load()s
+	// it on each call to ensure stale policies are never seen mid-turn.
+	// The zero value (nil pointer) defaults to allow-all.
+	toolPolicy atomic.Pointer[tools.ToolPolicyCfg]
 
 	// Router is non-nil when model routing is configured and the light model
 	// was successfully resolved. It scores each incoming message and decides
@@ -133,6 +147,19 @@ func NewAgentInstance(
 
 	if agentCfg != nil {
 		contextBuilder.WithAgentInfo(agentID, agentName)
+	}
+
+	// Memory tools (FR-016, FR-017): register remember, recall_memory, and
+	// retrospective for all agents except the main gateway agent.
+	// Subagents DO receive these tools — they are not in the ExcludedSpawn/
+	// ExcludedSubagent/ExcludedHandoff lists so CloneExcept leaves them intact.
+	// Note: there is no "omnipus-system" runtime agent (CLAUDE.md). The check
+	// below is intentionally main-only.
+	if agentID != "main" {
+		memAdapter := NewMemoryStoreAdapter(contextBuilder.Memory())
+		toolsRegistry.Register(tools.NewRememberTool(memAdapter, nil))
+		toolsRegistry.Register(tools.NewRecallMemoryTool(memAdapter))
+		toolsRegistry.Register(tools.NewRetrospectiveTool(memAdapter, nil))
 	}
 
 	maxIter := defaults.MaxToolIterations
@@ -220,7 +247,20 @@ func NewAgentInstance(
 		timeoutSeconds = 0
 	}
 
-	return &AgentInstance{
+	// Derive agent type and policy snapshot for LLM-call-time tool filtering (FR-003, FR-041).
+	// agentType uses the config-stored Type when present; falls back to "custom" for
+	// unrecognised types. The registry may upgrade this to "core" via SetAgentType()
+	// for runtime-seeded agents (FR-045).
+	resolvedAgentType := "custom"
+	if agentCfg != nil {
+		switch agentCfg.Type {
+		case config.AgentTypeCore, config.AgentTypeSystem:
+			resolvedAgentType = string(agentCfg.Type)
+		case config.AgentTypeCustom:
+			resolvedAgentType = "custom"
+		}
+	}
+	inst := &AgentInstance{
 		ID:                        agentID,
 		Name:                      agentName,
 		Model:                     model,
@@ -244,7 +284,54 @@ func NewAgentInstance(
 		LightCandidates:           lightCandidates,
 		LightProvider:             lightProvider,
 		TimeoutSeconds:            timeoutSeconds,
+		AgentType:                 resolvedAgentType,
 	}
+	if agentCfg != nil && agentCfg.Tools != nil {
+		inst.toolPolicy.Store(agentToolsCfgToPolicy(agentCfg.Tools))
+	}
+	return inst
+}
+
+// LoadToolPolicy returns the current tool policy snapshot for this agent.
+// Returns nil when no policy has been stored (defaults to allow-all at call sites).
+// Safe for concurrent access (atomic load, FR-020).
+func (a *AgentInstance) LoadToolPolicy() *tools.ToolPolicyCfg {
+	return a.toolPolicy.Load()
+}
+
+// StoreToolPolicy atomically replaces the agent's tool policy (FR-020).
+// Called by ReloadProviderAndConfig on config PUT to propagate the new policy
+// without rebuilding the agent registry. Passing nil resets to allow-all.
+// Safe for concurrent access with ongoing turn assembly.
+func (a *AgentInstance) StoreToolPolicy(p *tools.ToolPolicyCfg) {
+	a.toolPolicy.Store(p)
+}
+
+// agentToolsCfgToPolicy converts config.AgentToolsCfg to tools.ToolPolicyCfg for
+// use at LLM-call assembly time (FR-003, FR-041). Reads from cfg.Builtin which
+// holds the per-tool DefaultPolicy and Policies map.
+func agentToolsCfgToPolicy(cfg *config.AgentToolsCfg) *tools.ToolPolicyCfg {
+	if cfg == nil {
+		return &tools.ToolPolicyCfg{DefaultPolicy: "allow"}
+	}
+	dp := string(cfg.Builtin.DefaultPolicy)
+	if dp == "" {
+		dp = "allow"
+	}
+	policies := make(map[string]string, len(cfg.Builtin.Policies))
+	for k, v := range cfg.Builtin.Policies {
+		policies[k] = string(v)
+	}
+	return &tools.ToolPolicyCfg{
+		DefaultPolicy: dp,
+		Policies:      policies,
+	}
+}
+
+// SetAgentType updates the resolved agent type. Called by the registry to upgrade
+// runtime-seeded core agents (e.g., Ava, Main) that may not have Type set in config.
+func (a *AgentInstance) SetAgentType(agentType string) {
+	a.AgentType = agentType
 }
 
 // resolveAgentWorkspace determines the workspace directory for an agent.
@@ -257,38 +344,33 @@ func resolveAgentWorkspace(agentCfg *config.AgentConfig, defaults *config.AgentD
 		return expandHome(defaults.Workspace)
 	}
 	// Per-agent isolated workspace (FUNC-11). Each custom agent gets its own
-	// directory under ~/.omnipus/agents/{id}/, matching the REST API convention.
-	home, err := os.UserHomeDir()
-	if err == nil {
-		// H4: validate that the resolved path is actually under ~/.omnipus/agents/
-		// after cleaning, to guard against path traversal via crafted agent IDs.
-		safeBase := filepath.Join(home, ".omnipus", "agents")
-		// Strip any path separators or ".." from the agent ID.
-		sanitizedID := filepath.Base(filepath.Clean(agentCfg.ID))
-		if sanitizedID == "." || sanitizedID == ".." || sanitizedID == "" {
-			// The agent ID sanitized to an unusable value. Use a UUID-based directory
-			// name to avoid colliding with the reserved "main" workspace that
-			// routing.NormalizeAgentID would return for empty/dot inputs.
-			fallbackID := "agent-" + uuid.New().String()
-			logger.WarnCF("agent", "Suspicious agent ID after sanitization; using UUID fallback workspace",
-				map[string]any{"original_id": agentCfg.ID, "sanitized": sanitizedID, "fallback_id": fallbackID})
-			return filepath.Join(safeBase, fallbackID)
-		}
-		resolved := filepath.Join(safeBase, sanitizedID)
-		if !strings.HasPrefix(filepath.Clean(resolved), safeBase) {
-			logger.WarnCF("agent", "Agent workspace path escapes base directory; using fallback",
-				map[string]any{"agent_id": agentCfg.ID, "resolved": resolved})
-			return filepath.Join(
-				expandHome(defaults.Workspace),
-				"..",
-				"workspace-"+routing.NormalizeAgentID(agentCfg.ID),
-			)
-		}
-		return resolved
+	// directory under $OMNIPUS_HOME/agents/{id}/ (or ~/.omnipus/agents/{id}/ when
+	// OMNIPUS_HOME is unset), matching the REST API convention.
+	// H4: validate that the resolved path is actually under the agents base
+	// directory after cleaning, to guard against path traversal via crafted agent IDs.
+	safeBase := filepath.Join(omnipusHome(), "agents")
+	// Strip any path separators or ".." from the agent ID.
+	sanitizedID := filepath.Base(filepath.Clean(agentCfg.ID))
+	if sanitizedID == "." || sanitizedID == ".." || sanitizedID == "" {
+		// The agent ID sanitized to an unusable value. Use a UUID-based directory
+		// name to avoid colliding with the reserved "main" workspace that
+		// routing.NormalizeAgentID would return for empty/dot inputs.
+		fallbackID := "agent-" + uuid.New().String()
+		logger.WarnCF("agent", "Suspicious agent ID after sanitization; using UUID fallback workspace",
+			map[string]any{"original_id": agentCfg.ID, "sanitized": sanitizedID, "fallback_id": fallbackID})
+		return filepath.Join(safeBase, fallbackID)
 	}
-	// Fallback: sibling directory of default workspace.
-	id := routing.NormalizeAgentID(agentCfg.ID)
-	return filepath.Join(expandHome(defaults.Workspace), "..", "workspace-"+id)
+	resolved := filepath.Join(safeBase, sanitizedID)
+	if !strings.HasPrefix(filepath.Clean(resolved), safeBase) {
+		logger.WarnCF("agent", "Agent workspace path escapes base directory; using fallback",
+			map[string]any{"agent_id": agentCfg.ID, "resolved": resolved})
+		return filepath.Join(
+			expandHome(defaults.Workspace),
+			"..",
+			"workspace-"+routing.NormalizeAgentID(agentCfg.ID),
+		)
+	}
+	return resolved
 }
 
 // resolveAgentModel resolves the primary model for an agent.
@@ -376,23 +458,49 @@ func initSessionStore(dir, agentID string) session.SessionStore {
 	return us
 }
 
+// omnipusHome returns the Omnipus data directory.
+// Priority: $OMNIPUS_HOME > ~/.omnipus.
+// Falls back to /tmp/.omnipus when both os.UserHomeDir and OMNIPUS_HOME are unavailable.
+func omnipusHome() string {
+	if h := os.Getenv("OMNIPUS_HOME"); h != "" {
+		return h
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "/tmp/.omnipus"
+	}
+	return filepath.Join(home, ".omnipus")
+}
+
 func expandHome(path string) string {
 	if path == "" {
 		return path
 	}
 	if path[0] == '~' {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			logger.WarnCF("agent", "UserHomeDir failed in expandHome; attempting Getwd fallback",
-				map[string]any{"path": path, "error": err.Error()})
-			// M20: prefer an absolute path fallback — "." is relative and ambiguous.
-			if wd, wdErr := os.Getwd(); wdErr == nil {
-				home = wd
-			} else {
-				// Both UserHomeDir and Getwd failed; use /tmp as a last resort.
-				logger.WarnCF("agent", "Getwd also failed in expandHome; using /tmp fallback",
-					map[string]any{"path": path, "error": wdErr.Error()})
-				home = os.TempDir()
+		// When OMNIPUS_HOME is set, expand ~ to the parent of OMNIPUS_HOME so
+		// that paths like ~/.omnipus/sessions resolve under OMNIPUS_HOME.
+		// When OMNIPUS_HOME is not set, use os.UserHomeDir() for byte-identical
+		// behaviour to the pre-OMNIPUS_HOME code.
+		var home string
+		if h := os.Getenv("OMNIPUS_HOME"); h != "" {
+			// OMNIPUS_HOME is already the .omnipus directory; its parent is the
+			// effective ~ for paths of the form ~/.omnipus/...
+			home = filepath.Dir(h)
+		} else {
+			var err error
+			home, err = os.UserHomeDir()
+			if err != nil {
+				logger.WarnCF("agent", "UserHomeDir failed in expandHome; attempting Getwd fallback",
+					map[string]any{"path": path, "error": err.Error()})
+				// M20: prefer an absolute path fallback — "." is relative and ambiguous.
+				if wd, wdErr := os.Getwd(); wdErr == nil {
+					home = wd
+				} else {
+					// Both UserHomeDir and Getwd failed; use /tmp as a last resort.
+					logger.WarnCF("agent", "Getwd also failed in expandHome; using /tmp fallback",
+						map[string]any{"path": path, "error": wdErr.Error()})
+					home = os.TempDir()
+				}
 			}
 		}
 		if len(path) > 1 && (path[1] == '/' || path[1] == filepath.Separator) {

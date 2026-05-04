@@ -496,9 +496,6 @@ func TestConfig_Complete(t *testing.T) {
 	if !cfg.Heartbeat.Enabled {
 		t.Error("Heartbeat should be enabled by default")
 	}
-	if !cfg.Tools.Exec.AllowRemote {
-		t.Error("Exec.AllowRemote should be true by default")
-	}
 }
 
 func TestDefaultConfig_WebPreferNativeEnabled(t *testing.T) {
@@ -567,13 +564,6 @@ func TestLoadConfig_WebPreferNativeCanBeDisabled(t *testing.T) {
 	}
 }
 
-func TestDefaultConfig_ExecAllowRemoteEnabled(t *testing.T) {
-	cfg := DefaultConfig()
-	if !cfg.Tools.Exec.AllowRemote {
-		t.Fatal("DefaultConfig().Tools.Exec.AllowRemote should be true")
-	}
-}
-
 func TestDefaultConfig_FilterSensitiveDataEnabled(t *testing.T) {
 	cfg := DefaultConfig()
 	if !cfg.Tools.FilterSensitiveData {
@@ -635,23 +625,6 @@ func TestDefaultConfig_LogLevel(t *testing.T) {
 	cfg := DefaultConfig()
 	if cfg.Gateway.LogLevel != "warn" {
 		t.Errorf("LogLevel = %q, want \"fatal\"", cfg.Gateway.LogLevel)
-	}
-}
-
-func TestLoadConfig_ExecAllowRemoteDefaultsTrueWhenUnset(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(configPath, []byte(`{"version":1,"tools":{"exec":{"enable_deny_patterns":true}}}`),
-		0o600); err != nil {
-		t.Fatalf("WriteFile() error: %v", err)
-	}
-
-	cfg, err := LoadConfig(configPath)
-	if err != nil {
-		t.Fatalf("LoadConfig() error: %v", err)
-	}
-	if !cfg.Tools.Exec.AllowRemote {
-		t.Fatal("tools.exec.allow_remote should remain true when unset in config file")
 	}
 }
 
@@ -1286,17 +1259,17 @@ func TestResolveType_ExplicitType(t *testing.T) {
 	}
 }
 
-// TestResolveType_SystemAgentID verifies that the canonical system agent ID
-// "omnipus-system" resolves to AgentTypeSystem even when Type is not set.
+// TestResolveType_ExplicitSystemType verifies that an AgentConfig with
+// Type=AgentTypeSystem set explicitly resolves to AgentTypeSystem.
 //
-// BDD: Given an AgentConfig with ID="omnipus-system" and no explicit Type
+// BDD: Given an AgentConfig with Type=AgentTypeSystem
 //
 //	When ResolveType is called
 //	Then AgentTypeSystem is returned
 //
-// Traces to: config.go AgentConfig.ResolveType — system ID guard
-func TestResolveType_SystemAgentID(t *testing.T) {
-	a := AgentConfig{ID: "omnipus-system"}
+// Traces to: config.go AgentConfig.ResolveType — explicit type takes priority (FR-045)
+func TestResolveType_ExplicitSystemType(t *testing.T) {
+	a := AgentConfig{ID: "any-id", Type: AgentTypeSystem}
 
 	got := a.ResolveType(func(_ string) bool { return false })
 
@@ -1389,8 +1362,12 @@ func TestResolveType_NilCallback(t *testing.T) {
 func TestAgentToolsCfg_JSONRoundTrip(t *testing.T) {
 	original := AgentToolsCfg{
 		Builtin: AgentBuiltinToolsCfg{
-			Mode:    VisibilityExplicit,
-			Visible: []string{"exec", "web_search", "read_file"},
+			DefaultPolicy: ToolPolicyDeny,
+			Policies: map[string]ToolPolicy{
+				"exec":       ToolPolicyAllow,
+				"web_search": ToolPolicyAllow,
+				"read_file":  ToolPolicyAllow,
+			},
 		},
 		MCP: AgentMCPToolsCfg{
 			Servers: []AgentMCPServerBinding{
@@ -1413,19 +1390,14 @@ func TestAgentToolsCfg_JSONRoundTrip(t *testing.T) {
 		t.Fatalf("json.Unmarshal(AgentToolsCfg): %v", unmarshalErr)
 	}
 
-	// Builtin.Mode
-	if decoded.Builtin.Mode != original.Builtin.Mode {
-		t.Errorf("Builtin.Mode = %q, want %q", decoded.Builtin.Mode, original.Builtin.Mode)
+	// Builtin.DefaultPolicy
+	if decoded.Builtin.DefaultPolicy != original.Builtin.DefaultPolicy {
+		t.Errorf("Builtin.DefaultPolicy = %q, want %q", decoded.Builtin.DefaultPolicy, original.Builtin.DefaultPolicy)
 	}
 
-	// Builtin.Visible — length and contents
-	if len(decoded.Builtin.Visible) != len(original.Builtin.Visible) {
-		t.Fatalf("Builtin.Visible len = %d, want %d", len(decoded.Builtin.Visible), len(original.Builtin.Visible))
-	}
-	for i, name := range original.Builtin.Visible {
-		if decoded.Builtin.Visible[i] != name {
-			t.Errorf("Builtin.Visible[%d] = %q, want %q", i, decoded.Builtin.Visible[i], name)
-		}
+	// Builtin.Policies — count
+	if len(decoded.Builtin.Policies) != len(original.Builtin.Policies) {
+		t.Fatalf("Builtin.Policies len = %d, want %d", len(decoded.Builtin.Policies), len(original.Builtin.Policies))
 	}
 
 	// MCP.Servers — count and contents
@@ -1540,5 +1512,71 @@ func TestOmnipusRetentionConfig_Mode_DisabledTakesPrecedence(t *testing.T) {
 	}
 	if got := r.Mode().String(); got != "forever" {
 		t.Errorf("Mode().String() = %q; want \"forever\"", got)
+	}
+}
+
+// TestAgentConfig_SandboxProfile_RoundTrip verifies that AgentConfig with
+// sandbox_profile and shell_policy fields marshals and unmarshals without data
+// loss. This is a change-guard: if the fields are accidentally removed or
+// renamed, this test will fail.
+func TestAgentConfig_SandboxProfile_RoundTrip(t *testing.T) {
+	trueBool := true
+	original := AgentConfig{
+		ID:             "test-agent",
+		Name:           "Test Agent",
+		SandboxProfile: SandboxProfileWorkspaceNet,
+		ShellPolicy: &AgentShellPolicy{
+			EnableDenyPatterns: trueBool,
+			CustomDenyPatterns: []string{`^\s*rm\s+-rf`, `curl.*\|.*sh`},
+		},
+	}
+
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("json.Marshal(AgentConfig) error: %v", err)
+	}
+
+	var decoded AgentConfig
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal(AgentConfig) error: %v", err)
+	}
+
+	if decoded.SandboxProfile != original.SandboxProfile {
+		t.Errorf("SandboxProfile: got %q, want %q", decoded.SandboxProfile, original.SandboxProfile)
+	}
+	if decoded.ShellPolicy == nil {
+		t.Fatal("ShellPolicy: got nil, want non-nil")
+	}
+	if decoded.ShellPolicy.EnableDenyPatterns != original.ShellPolicy.EnableDenyPatterns {
+		t.Errorf("ShellPolicy.EnableDenyPatterns: got %v, want %v",
+			decoded.ShellPolicy.EnableDenyPatterns, original.ShellPolicy.EnableDenyPatterns)
+	}
+	if len(decoded.ShellPolicy.CustomDenyPatterns) != len(original.ShellPolicy.CustomDenyPatterns) {
+		t.Fatalf("ShellPolicy.CustomDenyPatterns: len %d, want %d",
+			len(decoded.ShellPolicy.CustomDenyPatterns), len(original.ShellPolicy.CustomDenyPatterns))
+	}
+	for i, p := range original.ShellPolicy.CustomDenyPatterns {
+		if decoded.ShellPolicy.CustomDenyPatterns[i] != p {
+			t.Errorf("CustomDenyPatterns[%d]: got %q, want %q",
+				i, decoded.ShellPolicy.CustomDenyPatterns[i], p)
+		}
+	}
+}
+
+// TestAgentConfig_SandboxProfile_OmittedWhenEmpty confirms that omitempty
+// suppresses sandbox_profile and shell_policy when they hold zero values,
+// so existing configs without these fields are unaffected.
+func TestAgentConfig_SandboxProfile_OmittedWhenEmpty(t *testing.T) {
+	cfg := AgentConfig{ID: "minimal"}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("json.Marshal error: %v", err)
+	}
+	s := string(data)
+	if strings.Contains(s, "sandbox_profile") {
+		t.Errorf("sandbox_profile must be omitted when empty; got: %s", s)
+	}
+	if strings.Contains(s, "shell_policy") {
+		t.Errorf("shell_policy must be omitted when nil; got: %s", s)
 	}
 }

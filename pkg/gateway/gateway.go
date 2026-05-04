@@ -17,8 +17,10 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	runtimedebug "runtime/debug"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -28,6 +30,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
+	"github.com/dapicom-ai/omnipus/pkg/sandbox"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/dingtalk"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/discord"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/feishu"
@@ -56,9 +59,10 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/media"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
+	"github.com/dapicom-ai/omnipus/pkg/policy"
 	"github.com/dapicom-ai/omnipus/pkg/state"
-	systools "github.com/dapicom-ai/omnipus/pkg/sysagent/tools"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
+	systools "github.com/dapicom-ai/omnipus/pkg/sysagent/tools"
 	"github.com/dapicom-ai/omnipus/pkg/voice"
 )
 
@@ -106,6 +110,15 @@ type services struct {
 	reloadMu       sync.Mutex
 	reloadDegraded bool
 	reloadError    error
+
+	// Tier 1/3 preview-tool registries. Created once at boot; closed on shutdown.
+	// servedSubdirs is always non-nil after a successful boot with preview enabled.
+	// devServers is non-nil on the same condition.
+	// egressProxy is non-nil when sandbox.EgressAllowList is non-empty or egress
+	// enforcement is enabled.
+	servedSubdirs *agent.ServedSubdirs
+	devServers    *sandbox.DevServerRegistry
+	egressProxy   *sandbox.EgressProxy
 }
 
 type startupBlockedProvider struct {
@@ -253,6 +266,12 @@ type RunOptions struct {
 	// "permissive", "off"). Empty means "no flag set, use config". See
 	// FR-J-006 for CLI > config > default precedence.
 	SandboxMode string
+	// AllowGodMode is set by the --allow-god-mode CLI flag. When true,
+	// agents may set sandbox_profile=off (god mode). Without this flag,
+	// off is silently coerced to workspace at runtime and rejected with 403
+	// at the REST layer. Has no effect when sandbox.GodModeAvailable is false
+	// (nogodmode build tag).
+	AllowGodMode bool
 }
 
 // SandboxBootError wraps a sandbox Apply/Install failure so the CLI entry
@@ -345,6 +364,7 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 	homePath := opts.HomePath
 	configPath := opts.ConfigPath
 	allowEmptyStartup := opts.AllowEmptyStartup
+	allowGodMode := opts.AllowGodMode
 	// Bootstrap ~/.omnipus/ directory tree on every start (idempotent, US-1).
 	if err := datamodel.Init(homePath); err != nil {
 		return fmt.Errorf("directory initialization failed: %w", err)
@@ -375,6 +395,20 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 	if debug {
 		logger.SetLevel(logger.DEBUG)
 		fmt.Println("🔍 Debug mode enabled")
+	}
+
+	// Enforce god-mode latches: abort boot if --allow-god-mode was passed but
+	// the build does not support it (nogodmode tag compiles GodModeAvailable=false).
+	if allowGodMode && !sandbox.GodModeAvailable {
+		return fmt.Errorf(
+			"gateway: god mode unavailable in this build (compiled with nogodmode); " +
+				"remove --allow-god-mode and restart")
+	}
+	// Emit a persistent WARN so operators cannot claim they were not warned.
+	if allowGodMode {
+		fmt.Fprintln(os.Stderr,
+			"WARN: gateway started with --allow-god-mode — agents may have sandbox disabled")
+		slog.Warn("gateway started with --allow-god-mode — agents may have sandbox disabled")
 	}
 
 	// Check for a test provider override BEFORE calling createStartupProvider.
@@ -410,7 +444,77 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 	}
 
 	msgBus := bus.NewMessageBus()
-	agentLoop := agent.NewAgentLoop(cfg, msgBus, provider)
+	var agentLoop *agent.AgentLoop
+	agentLoop, err = agent.NewAgentLoop(cfg, msgBus, provider)
+	if err != nil {
+		// B1.2(b): when the failure is an audit logger construction error and
+		// the operator explicitly requested audit logging (cfg.Sandbox.AuditLog
+		// = true), this is a fail-closed boot abort. CLAUDE.md "audit-everything
+		// stance is non-negotiable" — silently disabling audit while it's
+		// requested would be a security regression. Map to SandboxBootError so
+		// cmd/omnipus exits with EX_CONFIG (78) per FR-J-004 and surfaces the
+		// remediation message ("either disable `sandbox.audit_log` or fix
+		// <error>") to the operator.
+		var auditConstructErr *audit.LoggerConstructionError
+		if errors.As(err, &auditConstructErr) && cfg.Sandbox.AuditLog {
+			audit.EmitBootAbortStderr(
+				"gateway.audit.construction_failed",
+				"-",
+				auditConstructErr.Dir,
+				auditConstructErr,
+				nil,
+			)
+			return &SandboxBootError{Err: auditConstructErr}
+		}
+		return fmt.Errorf("gateway: agent loop boot failed: %w", err)
+	}
+
+	// B1.2(d): wire the per-thread restrict-failure audit emitter into the
+	// sandbox package now that the agent loop (and thus the audit logger) is
+	// constructed. The hook bridges sandbox → audit without an import cycle —
+	// sandbox only knows about the *audit.Entry type, not the agent loop.
+	// SetRestrictAuditHook is idempotent so this is safe across hot reloads
+	// and the test gateway helpers that re-boot in-process.
+	{
+		al := agentLoop
+		sandbox.SetRestrictAuditHook(func(entry *audit.Entry) {
+			if al == nil {
+				return
+			}
+			logger := al.AuditLogger()
+			if logger == nil {
+				slog.Error("sandbox: per-thread restrict failed (audit logger disabled)",
+					"event", entry.Event, "details", entry.Details)
+				return
+			}
+			// B1.2(a): logger.Log is nil-safe; no further guard needed.
+			if err := logger.Log(entry); err != nil {
+				slog.Error("sandbox: restrict-failure audit write failed",
+					"event", entry.Event, "error", err)
+			}
+		})
+	}
+
+	// Boot Order step 4 (FR-062 / M7): validate per-agent tool policies before
+	// the sandbox applies. Ava-equivalent core agents abort boot on violation;
+	// custom agents log and continue.
+	{
+		agentsDir := filepath.Join(homePath, "agents")
+		valResults, abortBoot := config.ValidateAgentConfigs(
+			agentsDir,
+			coreagent.HasSystemAllowsInConstructorSeed,
+			nil, // knownTools: central registry not yet fully populated at this stage
+			nil, // auditLog: audit subsystem not yet available; falls back to stderr
+		)
+		for _, r := range valResults {
+			for _, e := range r.PolicyErrors {
+				slog.Warn("gateway: agent policy validation error", "agent_id", r.AgentID, "error", e)
+			}
+		}
+		if abortBoot {
+			return fmt.Errorf("gateway: agent config validation failed — aborting boot (FR-062)")
+		}
+	}
 
 	// Apply the kernel sandbox to the gateway process BEFORE any HTTP listener
 	// binds. Strict ordering:
@@ -436,35 +540,29 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 		return &SandboxBootError{Err: sandboxErr}
 	}
 
+	// Log the applied sandbox mode and degradation state so operators can
+	// verify the runtime posture from logs without hitting the authenticated
+	// /api/v1/security/sandbox-status endpoint. applySandbox is the single
+	// source of truth for mode resolution (CLI > config > default); any
+	// discrepancy between the applied mode and the config file is already
+	// visible via result.ApplyState in /api/v1/security/sandbox-status.
+	slog.Info("gateway: sandbox applied",
+		"applied_mode", string(sandboxResult.Mode),
+		"backend", sandboxResult.BackendName,
+		"landlock_enforced", sandboxResult.ApplyState.LandlockEnforced,
+		"seccomp_enforced", sandboxResult.ApplyState.SeccompEnforced,
+		"audit_only", sandboxResult.ApplyState.AuditOnly,
+		"disabled_by", sandboxResult.DisabledBy,
+	)
+
+	// Thread the actually-applied mode into the agent loop so exec tool
+	// deps use the true runtime enforcement level (not the config file value).
+	agentLoop.SetAppliedSandboxMode(sandboxResult.Mode)
+
 	// Arm the permissive / production-off nag banner BEFORE the listener
 	// binds so operators see the warning even during a fast crash-loop.
 	stopNag := StartNagBanner(sandboxResult.NagReason, nil)
 
-	// Wire agent CRUD tools (system.agent.create/update/delete) to Ava so she
-	// can create custom agents through her structured interview flow.
-	// reloadFuncRef is set after services start; the closure captures the pointer
-	// so avaDeps.ReloadFunc is safe to call even if invoked before assignment
-	// (returns "reload not yet available" instead of nil panic).
-	var reloadFuncRef func() error
-	avaDeps := &systools.Deps{
-		Home:         homePath,
-		ConfigPath:   configPath,
-		GetCfg:       agentLoop.GetConfig,
-		MutateConfig: agentLoop.MutateConfig,
-		SaveConfigLocked: func(cfg *config.Config) error {
-			return config.SaveConfig(configPath, cfg)
-		},
-		CredStore: credStore,
-		ReloadFunc: func() error {
-			if reloadFuncRef == nil {
-				return fmt.Errorf("reload not yet available — gateway still starting")
-			}
-			return reloadFuncRef()
-		},
-	}
-	if wireErr := agentLoop.WireAvaAgentTools(avaDeps); wireErr != nil {
-		slog.Error("gateway: failed to wire Ava agent tools — Ava cannot create agents", "error", wireErr)
-	}
 
 	fmt.Println("\n📦 Agent Status:")
 	startupInfo := agentLoop.GetStartupInfo()
@@ -486,7 +584,20 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 			"skills_available": skillsInfo["available"],
 		})
 
-	runningServices, err := setupAndStartServices(cfg, bundle, agentLoop, msgBus, homePath, credStore, sandboxResult)
+	// M16 (FR-001/FR-002): pre-instantiate central registries.
+	// BuiltinRegistry is populated here with nil deps (for name/description metadata only).
+	// After sysAgentDeps is wired (below), the registry is re-populated with live deps.
+	// MCPRegistry starts empty; MCP servers populate it at connection time.
+	centralBuiltinReg := tools.NewBuiltinRegistry()
+	for _, t := range systools.AllTools(nil, nil) {
+		if err := centralBuiltinReg.RegisterBuiltin(t); err != nil {
+			slog.Warn("gateway: central builtin registry pre-population skipped duplicate",
+				"tool", t.Name(), "error", err)
+		}
+	}
+	centralMCPReg := tools.NewMCPRegistry()
+
+	runningServices, err := setupAndStartServices(cfg, bundle, agentLoop, msgBus, homePath, credStore, sandboxResult, centralBuiltinReg, centralMCPReg, allowGodMode)
 	if err != nil {
 		stopNag() // don't leak the nag goroutine if service setup fails.
 		return err
@@ -518,8 +629,39 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 	}
 	runningServices.HealthServer.SetReloadFunc(reloadTrigger)
 	agentLoop.SetReloadFunc(reloadTrigger)
-	// Wire reload trigger into Ava's deps so agent create triggers hot-reload.
-	reloadFuncRef = reloadTrigger
+
+	// Wire system.* tool dependencies into the agent loop (FR-001, FR-002).
+	// Called after SetReloadFunc so the reload trigger is available to system
+	// tools that trigger hot-reload (e.g., system.agent.create).
+	// WireSysagentDeps immediately registers all 35 system.* tools on every agent
+	// in the current registry and stashes deps for re-application on hot-reload.
+	sysAgentDeps := &systools.Deps{
+		Home:       homePath,
+		ConfigPath: configPath,
+		GetCfg:     agentLoop.GetConfig,
+		MutateConfig: agentLoop.MutateConfig,
+		SaveConfigLocked: func(c *config.Config) error {
+			return config.SaveConfig(configPath, c)
+		},
+		CredStore:  credStore,
+		ReloadFunc: reloadTrigger,
+	}
+	agentLoop.WireSysagentDeps(sysAgentDeps)
+
+	// M16: update the central BuiltinRegistry with fully-wired deps now that
+	// sysAgentDeps is available. Re-populate with real deps so Execute paths
+	// (if ever routed through the central registry) have valid deps.
+	// The registry created before setupAndStartServices used nil deps for
+	// the shape/name/description metadata only; swap to real deps here.
+	centralBuiltinReg = tools.NewBuiltinRegistry()
+	for _, t := range systools.AllTools(sysAgentDeps, nil) {
+		if err := centralBuiltinReg.RegisterBuiltin(t); err != nil {
+			slog.Warn("gateway: central builtin registry re-population skipped duplicate",
+				"tool", t.Name(), "error", err)
+		}
+	}
+	slog.Info("gateway: central BuiltinRegistry re-populated with live deps",
+		"count", centralBuiltinReg.Count())
 
 	fmt.Printf("✓ Gateway started on %s:%d\n", cfg.Gateway.Host, cfg.Gateway.Port)
 	fmt.Println("Press Ctrl+C to stop")
@@ -561,6 +703,14 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 		startRetentionSweepLoop(ctx, sharedStore, agentLoop.GetConfig, 24*time.Hour)
 	}
 
+	// FR-031: Launch the nightly retro sweep goroutine alongside the session sweep.
+	// Iterates all agents and calls SweepRetros per MemoryStore.
+	startRetentionRetroSweepLoop(ctx, agentLoop, agentLoop.GetConfig, 24*time.Hour)
+
+	// FR-032/FR-032a: Bootstrap recap pass — on gateway start, re-cap sessions
+	// that lack LAST_SESSION.md. Runs once in a goroutine.
+	go agentLoop.BootstrapRecapPass(ctx)
+
 	// Wire a second degraded check: report 503 when the agent loop has died.
 	runningServices.HealthServer.SetDegradedFunc(func() (bool, string) {
 		if agentLoopDead.Load() {
@@ -572,6 +722,13 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 			return true, fmt.Sprintf("config reload failed: %v", runningServices.reloadError)
 		}
 		return false, ""
+	})
+
+	// B1.2(f): /health surfaces audit-degraded mode. The closure reports
+	// whether the agent loop currently has a non-nil audit logger so /health
+	// can flag "audit_logger: unavailable" without exposing the pointer.
+	runningServices.HealthServer.SetAuditLoggerAvailableFunc(func() bool {
+		return agentLoop.AuditLogger() != nil
 	})
 
 	var configReloadChan <-chan *config.Config
@@ -759,6 +916,9 @@ func setupAndStartServices(
 	homePath string,
 	credStore *credentials.Store,
 	sandboxResult *SandboxApplyResult,
+	builtinReg *tools.BuiltinRegistry, // M16: central builtin registry (FR-001)
+	mcpReg *tools.MCPRegistry,          // M16: central MCP registry (FR-001)
+	allowGodMode bool,
 ) (*services, error) {
 	runningServices := &services{credStore: credStore, bundle: bundle, sandboxResult: sandboxResult}
 
@@ -801,6 +961,12 @@ func setupAndStartServices(
 		Interval: time.Duration(cfg.Tools.MediaCleanup.Interval) * time.Minute,
 	})
 	if fms, ok := runningServices.MediaStore.(*media.FileMediaStore); ok {
+		// Reload refs persisted by a previous gateway instance so
+		// /api/v1/media/<ref> URLs in old session transcripts still resolve.
+		// Best-effort — a load failure should not block boot.
+		if err := fms.LoadRegistry(); err != nil {
+			slog.Warn("media: failed to load persisted registry", "error", err)
+		}
 		fms.Start()
 	}
 
@@ -832,11 +998,162 @@ func setupAndStartServices(
 		fmt.Println("⚠ Warning: No channels enabled")
 	}
 
+	// Validate preview config and apply computed defaults (FR-001..FR-005, FR-027, FR-028).
+	// ValidateAndApplyPreviewDefaults mutates cfg.Gateway in-place.
+	if err = cfg.Gateway.ValidateAndApplyPreviewDefaults(); err != nil {
+		return nil, fmt.Errorf("gateway config: %w", err)
+	}
+	// Apply warmup timeout default (FR-013 / CR-04).
+	cfg.Tools.ApplyWarmupTimeoutDefault()
+
 	addr := fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
 	runningServices.HealthServer = health.NewServer(cfg.Gateway.Host, cfg.Gateway.Port)
 	runningServices.ChannelManager.SetupHTTPServer(addr, runningServices.HealthServer)
 
-	allowedOrigin := "http://" + net.JoinHostPort(cfg.Gateway.Host, strconv.Itoa(cfg.Gateway.Port))
+	// Compute the main gateway origin for CORS and CSP frame-ancestors.
+	// Use PublicURL when set (reverse-proxy deployment); otherwise derive from host:port.
+	// When host is a wildcard (0.0.0.0, ::), allowedOrigin is empty and the WARN
+	// is emitted below (FR-007e / MR-03).
+	allowedOrigin := middleware.CanonicalGatewayOrigin(cfg)
+	if allowedOrigin == "" {
+		// Wildcard bind host and no public_url → frame-ancestors must fall back to *.
+		// Log once at WARN so operators know to set gateway.public_url for strict control.
+		//
+		// NOTE: this WARN is emitted at boot only and is NOT re-evaluated on
+		// hot-reload of gateway.public_url. Operators changing the field at
+		// runtime must restart the gateway for the WARN to re-fire on the new
+		// value and for the new origin to take effect in CSP headers.
+		slog.Warn("frame-ancestors fallback to '*' — set gateway.public_url for strict embedding control",
+			"host", cfg.Gateway.Host)
+	}
+
+	// Set up the preview listener when enabled (FR-001, FR-020).
+	previewListenerEnabled := cfg.Gateway.IsPreviewListenerEnabled()
+	var gatewayPreviewBaseURL string
+	if previewListenerEnabled {
+		previewHost := cfg.Gateway.PreviewHost
+		previewPort := int(cfg.Gateway.PreviewPort)
+		previewAddr := fmt.Sprintf("%s:%d", previewHost, previewPort)
+		runningServices.ChannelManager.SetupPreviewServer(previewAddr)
+		// Warn when the preview listener is bound on a wildcard address but
+		// gateway.preview_origin is not configured. In that case the computed
+		// preview URL will contain "0.0.0.0" or "::" which is unreachable from
+		// a browser (R3 in the per-agent sandbox plan).
+		if shouldWarnPreviewOrigin(previewHost, cfg.Gateway.PreviewOrigin) {
+			slog.Warn("gateway listening on wildcard with empty gateway.preview_origin — " +
+				"preview URLs will use 0.0.0.0 and be unreachable from a browser. " +
+				"Set gateway.preview_origin to your public hostname or IP " +
+				"(e.g. https://your.host:6061).")
+		}
+		// Compute the preview base URL for tool result generation.
+		if cfg.Gateway.PreviewOrigin != "" {
+			gatewayPreviewBaseURL = cfg.Gateway.PreviewOrigin
+		} else {
+			scheme := "http"
+			if cfg.Gateway.PublicURL != "" {
+				// Inherit the scheme from PublicURL when preview_origin is not set.
+				if len(cfg.Gateway.PublicURL) >= 5 && cfg.Gateway.PublicURL[:5] == "https" {
+					scheme = "https"
+				}
+			}
+			gatewayPreviewBaseURL = fmt.Sprintf("%s://%s",
+				scheme,
+				net.JoinHostPort(previewHost, strconv.Itoa(previewPort)),
+			)
+		}
+	}
+	// Fix-5: warn when workspace.shell is enabled on a non-Linux host where the
+	// kernel sandbox (Landlock + seccomp) is unavailable. Single-shot at boot.
+	if runtime.GOOS != "linux" {
+		wsEnabled := cfg.Sandbox.Experimental.WorkspaceShellEnabled != nil &&
+			*cfg.Sandbox.Experimental.WorkspaceShellEnabled
+		if !wsEnabled {
+			// Also check per-agent overrides — future-proofing when per-agent flags land.
+			for _, ag := range cfg.Agents.List {
+				_ = ag // per-agent workspace_shell_enabled not yet per-config; global only
+			}
+		}
+		if wsEnabled {
+			fmt.Fprintf(os.Stderr,
+				"WARN: kernel sandbox unavailable on %s; workspace.shell runs with application-level path checks only — do not enable on multi-tenant systems\n",
+				runtime.GOOS)
+		}
+	}
+
+	// Fix-6: warn when any agent with remote channels has a non-deny exec policy.
+	// The GHSA-pv8c-p6jf-3fpp channel block was removed; operators must now
+	// configure per-agent ToolPolicyCfg or sandbox_profile to restrict exec.
+	emitGHSARemovalWarn(cfg)
+
+	// Construct the web_serve static-mode (Tier 1) and dev-mode (Tier 3)
+	// shared registries. These are created regardless of previewListenerEnabled so
+	// that operators who run on the single-port fallback still get static-mode serving.
+	// Dev mode requires the DevServerRegistry; the tool itself gates to Linux.
+	servedSubdirs := agent.NewServedSubdirs()
+	devServers := sandbox.NewDevServerRegistry()
+	runningServices.servedSubdirs = servedSubdirs
+	runningServices.devServers = devServers
+
+	// F-9: wire audit-set cleanup so evicted tokens don't re-emit serve.served
+	// / dev.proxied on the rare cap-reset path. The callbacks are injected here
+	// rather than in the registry constructors to avoid an import cycle
+	// (gateway → agent/sandbox is fine; agent/sandbox → gateway would cycle).
+	servedSubdirs.SetOnEvict(purgeFirstServedTokensBulk)
+	devServers.SetOnEvict(purgeFirstServedTokens)
+
+	// Start the egress proxy only when allow-list entries are configured.
+	// An empty allow-list means deny-all, which is enforced by the proxy itself;
+	// the proxy is still useful for audit logging even with an empty list.
+	//
+	// B1.2(c): wire the structured audit closure so every egress denial and
+	// upstream-error condition emits a real audit row instead of slog-only.
+	// agentLoop.AuditLogger() may be nil (when sandbox.audit_log=false); the
+	// closure handles the nil case by falling through to slog so denials are
+	// never silently swallowed. The B1.2(a) nil-receiver guard makes this
+	// safe even if the logger reference is nil at the moment of call.
+	egressAuditFn := func(entry *audit.Entry) {
+		al := agentLoop // captured by reference — may be wired up by reload
+		if al == nil {
+			slog.Warn("egress_proxy: audit fired before agent loop ready",
+				"event", entry.Event, "decision", entry.Decision)
+			return
+		}
+		logger := al.AuditLogger()
+		if logger == nil {
+			// audit_log disabled by config — fall through to slog so the
+			// denial is at least visible in operator logs. CLAUDE.md
+			// "audit-everything stance" still permits this fallback because
+			// the operator explicitly chose to disable structured audit
+			// (sandbox.audit_log=false). Loud-failure principle: log it.
+			slog.Warn("egress_proxy: audit denied (audit logger disabled)",
+				"event", entry.Event, "decision", entry.Decision,
+				"details", entry.Details)
+			return
+		}
+		// B1.2(a): logger.Log is nil-safe by contract; no extra guard.
+		if err := logger.Log(entry); err != nil {
+			slog.Error("egress_proxy: audit write failed",
+				"event", entry.Event, "error", err)
+		}
+	}
+
+	var egressProxy *sandbox.EgressProxy
+	if egressProx, epErr := sandbox.NewEgressProxy(cfg.Sandbox.EgressAllowList, egressAuditFn); epErr != nil {
+		slog.Warn("gateway: egress proxy failed to start; web_serve dev mode will run without egress enforcement",
+			"error", epErr)
+	} else {
+		egressProxy = egressProx
+		runningServices.egressProxy = egressProxy
+	}
+
+	// Build and wire Tier13Deps into every agent via the agent loop.
+	tier13 := agent.Tier13Deps{
+		ServedSubdirs:         servedSubdirs,
+		DevServerRegistry:     devServers,
+		EgressProxy:           egressProxy,
+		GatewayPreviewBaseURL: gatewayPreviewBaseURL,
+	}
+	agentLoop.WireTier13Deps(tier13)
 
 	// SSE chat endpoint — kept for backward compatibility; streaming tokens now route through WebSocket.
 	sseHandler := newSSEHandler(msgBus, nil, allowedOrigin, func() *config.Config { return cfg })
@@ -853,22 +1170,60 @@ func setupAndStartServices(
 	wsHandler.webchatCh = wch
 	runningServices.ChannelManager.RegisterChannel("webchat", wch)
 
+	// Build the in-process tool-approval registry (FR-016, FR-070, M10).
+	// policy.ValidateSaturationCap enforces FR-016 semantics:
+	//   cap < 0 → fatal (emit HIGH audit + abort)
+	//   cap == 0 → unlimited (emit WARN audit, ShouldSaturate always false)
+	//   cap > 0 → use as-is
+	approvalMaxPending := cfg.Gateway.ToolApprovalMaxPending
+	effectiveCap, capOK := policy.ValidateSaturationCap(context.Background(), nil, approvalMaxPending)
+	if !capOK {
+		return nil, fmt.Errorf("gateway: invalid tool_approval_max_pending=%d — boot aborted (FR-016)", approvalMaxPending)
+	}
+	approvalTimeout := cfg.Gateway.ToolApprovalTimeout
+	var approvalTimeoutDur time.Duration
+	if approvalTimeout > 0 {
+		approvalTimeoutDur = time.Duration(approvalTimeout) * time.Second
+	} else {
+		approvalTimeoutDur = 300 * time.Second
+	}
+	approvalReg := newApprovalRegistryV2(effectiveCap, approvalTimeoutDur)
+	wsHandler.approvalRegV2 = approvalReg
+
+	// Wire the policy approver into the agent loop (FR-011, C3).
+	// The adapter bridges agent.PolicyApprover → approvalRegistryV2 + WSHandler.
+	agentLoop.SetToolApprover(newPolicyApproverAdapter(approvalReg, wsHandler))
+
+	// Wire the filter-metrics recorder into pkg/tools so FilterToolsByPolicy
+	// can emit FR-039 omnipus_tool_filter_total counters. (C4)
+	tools.SetToolMetricsRecorder(globalToolMetrics)
+
 	// REST API endpoints for frontend data.
 	onboardingMgr := onboarding.NewManager(homePath)
 	tStore := agent.GetTaskStore(agentLoop)
 	tExecutor := agent.GetTaskExecutor(agentLoop)
+
+	// Wire god-mode opt-in into the agent loop for runtime coercion.
+	agentLoop.SetAllowGodMode(allowGodMode)
+
 	api := &restAPI{
-		agentLoop:     agentLoop,
-		allowedOrigin: allowedOrigin,
-		onboardingMgr: onboardingMgr,
-		homePath:      homePath,
-		taskStore:     tStore,
-		taskExecutor:  tExecutor,
-		credStore:     credStore,
-		mediaStore:    runningServices.MediaStore,
-		ssrfChecker:   agent.GetSSRFChecker(agentLoop), // SEC-24: nil when SSRF disabled
-		sandboxResult: sandboxResult,                   // immutable post-boot snapshot
-		appliedConfig: mustDeepCopyConfig(cfg),         // boot-time snapshot for pending-restart diff
+		agentLoop:       agentLoop,
+		allowedOrigin:   allowedOrigin,
+		onboardingMgr:   onboardingMgr,
+		homePath:        homePath,
+		taskStore:       tStore,
+		taskExecutor:    tExecutor,
+		credStore:       credStore,
+		mediaStore:      runningServices.MediaStore,
+		ssrfChecker:     agent.GetSSRFChecker(agentLoop), // SEC-24: nil when SSRF disabled
+		sandboxResult:   sandboxResult,                   // immutable post-boot snapshot
+		appliedConfig:   mustDeepCopyConfig(cfg),         // boot-time snapshot for pending-restart diff
+		servedSubdirs:   runningServices.servedSubdirs,   // web_serve static-mode token registry
+		devServers:      runningServices.devServers,      // web_serve dev-mode process registry
+		approvalReg:     approvalReg,                     // in-process tool-approval registry (FR-016)
+		builtinRegistry: builtinReg,                      // M16: central builtin registry (FR-001)
+		mcpRegistry:     mcpReg,                          // M16: central MCP registry (FR-001)
+		allowGodMode:    allowGodMode,                    // god-mode latch (2)
 	}
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions", api.withAuth(api.HandleSessions))
 	runningServices.ChannelManager.RegisterHTTPHandler("/api/v1/sessions/", api.withAuth(api.HandleSessions))
@@ -886,6 +1241,15 @@ func setupAndStartServices(
 	// These return proper JSON responses instead of letting the SPA catch-all
 	// serve HTML (which causes "Unexpected token '<'" JSON parse errors).
 	api.registerAdditionalEndpoints(runningServices.ChannelManager)
+
+	// Register /preview/ (canonical web_serve URL) plus back-compat /serve/ and /dev/
+	// shims on the preview mux (FR-005, FR-006). These paths are intentionally absent
+	// from the main mux — any hit on <main_host>:<port>/preview/... returns 404 from
+	// the catch-all handler. The preview mux has no auth middleware: the URL path
+	// token is the credential (FR-023). All handlers live in rest_preview.go.
+	if previewListenerEnabled {
+		api.registerPreviewEndpoints(runningServices.ChannelManager)
+	}
 
 	// Catch-all for any /api/ path not registered — returns JSON 404 instead of SPA HTML.
 	// Do not echo r.URL.Path in the response; that leaks internal routing details.
@@ -911,6 +1275,16 @@ func setupAndStartServices(
 	// request handlers see a consistent config even during hot-reload.
 	if err = runningServices.ChannelManager.WrapHTTPHandler(api.configSnapshotMiddleware); err != nil {
 		return nil, fmt.Errorf("wrapping HTTP handler: %w", err)
+	}
+	// F-13: wrap the preview server with the same middleware. Without this,
+	// handlers on the preview mux (HandleServeWorkspace, HandleDevProxy) call
+	// configFromContext(r.Context()) which returns nil and falls back to a
+	// live read of the config pointer — a torn read during hot-reload.
+	// WrapPreviewHandler is a no-op when the preview listener is disabled.
+	if previewListenerEnabled {
+		if err = runningServices.ChannelManager.WrapPreviewHandler(api.configSnapshotMiddleware); err != nil {
+			return nil, fmt.Errorf("wrapping preview handler: %w", err)
+		}
 	}
 
 	// Wrap with CSRF double-submit-cookie middleware (SEC / issue #97).
@@ -961,6 +1335,16 @@ func setupAndStartServices(
 
 	if err = runningServices.ChannelManager.StartAll(context.Background()); err != nil {
 		return nil, fmt.Errorf("error starting channels: %w", err)
+	}
+
+	// Boot logging (FR-020): main listener first, then preview (or disabled message).
+	mainAddr := fmt.Sprintf("%s:%d", cfg.Gateway.Host, cfg.Gateway.Port)
+	slog.Info("gateway listening on " + mainAddr)
+	if previewListenerEnabled {
+		previewAddr := fmt.Sprintf("%s:%d", cfg.Gateway.PreviewHost, int(cfg.Gateway.PreviewPort))
+		slog.Info("preview listening on " + previewAddr)
+	} else {
+		slog.Info("preview listener disabled by config")
 	}
 
 	// Write port file so external callers (e.g. eval-runner) can discover the bound port.
@@ -1133,6 +1517,12 @@ func restartServices(
 		Interval: time.Duration(cfg.Tools.MediaCleanup.Interval) * time.Minute,
 	})
 	if fms, ok := runningServices.MediaStore.(*media.FileMediaStore); ok {
+		// Reload refs persisted by a previous gateway instance so
+		// /api/v1/media/<ref> URLs in old session transcripts still resolve.
+		// Best-effort — a load failure should not block boot.
+		if err := fms.LoadRegistry(); err != nil {
+			slog.Warn("media: failed to load persisted registry", "error", err)
+		}
 		fms.Start()
 	}
 	al.SetMediaStore(runningServices.MediaStore)
@@ -1304,6 +1694,18 @@ func setupCronTool(
 	return cronService, nil
 }
 
+// shouldWarnPreviewOrigin returns true when the preview listener is bound on a
+// wildcard address (0.0.0.0 or "::") and gateway.preview_origin is empty.
+// In that situation the computed preview URL will contain the literal string
+// "0.0.0.0" which browsers cannot reach. Extracted as a pure function so it
+// can be unit-tested without starting a full gateway.
+func shouldWarnPreviewOrigin(previewHost, previewOrigin string) bool {
+	if previewOrigin != "" {
+		return false
+	}
+	return previewHost == "0.0.0.0" || previewHost == "::"
+}
+
 func createHeartbeatHandler(agentLoop *agent.AgentLoop) func(prompt, channel, chatID string) *tools.ToolResult {
 	return func(prompt, channel, chatID string) *tools.ToolResult {
 		if channel == "" || chatID == "" {
@@ -1319,4 +1721,78 @@ func createHeartbeatHandler(agentLoop *agent.AgentLoop) func(prompt, channel, ch
 		}
 		return tools.SilentResult(response)
 	}
+}
+
+// remoteChannelNames is the set of channel identifiers that route messages from
+// external networks. Used by emitGHSARemovalWarn to detect agents that face
+// remote traffic.
+var remoteChannelNames = []string{
+	"telegram", "discord", "slack", "matrix", "irc", "teams", "google-chat",
+	"whatsapp", "signal",
+}
+
+// emitGHSARemovalWarn logs a WARN when any agent that has a remote channel
+// mapping does NOT explicitly deny the exec tool. The GHSA-pv8c-p6jf-3fpp
+// per-channel exec block was removed; exec access is now governed entirely by
+// per-agent ToolPolicyCfg. This single-shot boot warning prompts operators to
+// review agent policies.
+func emitGHSARemovalWarn(cfg *config.Config) {
+	// Gather enabled remote channel IDs from config.
+	enabledRemoteChannels := make(map[string]bool)
+	if cfg.Channels.Telegram.Enabled {
+		enabledRemoteChannels["telegram"] = true
+	}
+	if cfg.Channels.Discord.Enabled {
+		enabledRemoteChannels["discord"] = true
+	}
+	if cfg.Channels.Slack.Enabled {
+		enabledRemoteChannels["slack"] = true
+	}
+	if cfg.Channels.Matrix.Enabled {
+		enabledRemoteChannels["matrix"] = true
+	}
+	if cfg.Channels.IRC.Enabled {
+		enabledRemoteChannels["irc"] = true
+	}
+	if cfg.Channels.Teams.Enabled {
+		enabledRemoteChannels["teams"] = true
+	}
+	if cfg.Channels.GoogleChat.Enabled {
+		enabledRemoteChannels["google-chat"] = true
+	}
+	if cfg.Channels.WhatsApp.Enabled {
+		enabledRemoteChannels["whatsapp"] = true
+	}
+	if len(enabledRemoteChannels) == 0 {
+		return
+	}
+
+	// Scan agents: flag any that do not explicitly deny exec.
+	var flagged []string
+	for _, ag := range cfg.Agents.List {
+		if ag.Tools == nil {
+			// No tools config → inherits default_policy (allow). Flagged.
+			flagged = append(flagged, ag.ID)
+			continue
+		}
+		policy := ag.Tools.Builtin.ResolvePolicy("exec")
+		if policy != config.ToolPolicyDeny {
+			flagged = append(flagged, ag.ID)
+		}
+	}
+
+	if len(flagged) == 0 {
+		return
+	}
+
+	channels := make([]string, 0, len(enabledRemoteChannels))
+	for ch := range enabledRemoteChannels {
+		channels = append(channels, ch)
+	}
+	slog.Warn("exec tool no longer blocked at the channel layer (was GHSA-pv8c-p6jf-3fpp). "+
+		"Agents with remote channels and non-deny exec policy: ["+strings.Join(flagged, ", ")+
+		"]. Review per-agent ToolPolicyCfg or set sandbox_profile.",
+		"remote_channels", channels,
+		"flagged_agents", flagged,
+	)
 }

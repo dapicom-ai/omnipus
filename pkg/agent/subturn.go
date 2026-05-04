@@ -528,6 +528,7 @@ func spawnSubTurn(
 				ParentSpawnCallID: session.ToolCallID(parentSpawnCallID),
 				TaskLabel:         taskLabel,
 				ChatID:            parentTS.chatID,
+				SessionID:         parentTS.transcriptSessionID,
 			},
 		)
 	}
@@ -573,6 +574,7 @@ func spawnSubTurn(
 					ParentSpawnCallID: session.ToolCallID(parentSpawnCallID),
 					DurationMS:        subTurnDurationMS,
 					ChatID:            parentTS.chatID,
+					SessionID:         parentTS.transcriptSessionID,
 				},
 			)
 		}

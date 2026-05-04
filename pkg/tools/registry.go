@@ -34,6 +34,14 @@ type mediaStoreAware interface {
 	SetMediaStore(store media.MediaStore)
 }
 
+// auditLoggerAware is implemented by tools that need direct access to the
+// audit logger for emitting their own specialised audit events (e.g. memory
+// tools that must log content_sha256 without relying on the registry's generic
+// tool_call entry). The registry propagates the logger on SetAuditLogger.
+type auditLoggerAware interface {
+	SetAuditLogger(logger *audit.Logger)
+}
+
 func NewToolRegistry() *ToolRegistry {
 	return &ToolRegistry{
 		tools: make(map[string]*ToolEntry),
@@ -56,6 +64,9 @@ func (r *ToolRegistry) Register(tool Tool) {
 	if aware, ok := tool.(mediaStoreAware); ok && r.mediaStore != nil {
 		aware.SetMediaStore(r.mediaStore)
 	}
+	if aware, ok := tool.(auditLoggerAware); ok && r.auditLogger != nil {
+		aware.SetAuditLogger(r.auditLogger)
+	}
 	r.version.Add(1)
 	logger.DebugCF("tools", "Registered core tool", map[string]any{"name": name})
 }
@@ -77,6 +88,9 @@ func (r *ToolRegistry) RegisterHidden(tool Tool) {
 	if aware, ok := tool.(mediaStoreAware); ok && r.mediaStore != nil {
 		aware.SetMediaStore(r.mediaStore)
 	}
+	if aware, ok := tool.(auditLoggerAware); ok && r.auditLogger != nil {
+		aware.SetAuditLogger(r.auditLogger)
+	}
 	r.version.Add(1)
 	logger.DebugCF("tools", "Registered hidden tool", map[string]any{"name": name})
 }
@@ -97,10 +111,17 @@ func (r *ToolRegistry) SetMediaStore(store media.MediaStore) {
 
 // SetAuditLogger injects an audit Logger into the registry for tool execution
 // audit logging (SEC-15). Following the SetMediaStore pattern for dependency injection.
+// Also propagates the logger to any registered tools that implement auditLoggerAware
+// so per-tool structured audit events (e.g. memory content_sha256) work immediately.
 func (r *ToolRegistry) SetAuditLogger(logger *audit.Logger) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.auditLogger = logger
+	for _, entry := range r.tools {
+		if aware, ok := entry.Tool.(auditLoggerAware); ok {
+			aware.SetAuditLogger(logger)
+		}
+	}
 }
 
 // Unregister removes a tool from the registry. Used by fail-closed paths where
@@ -411,6 +432,34 @@ func (r *ToolRegistry) ToProviderDefs() []providers.ToolDefinition {
 		desc, _ := fn["description"].(string)
 		params, _ := fn["parameters"].(map[string]any)
 
+		definitions = append(definitions, providers.ToolDefinition{
+			Type: "function",
+			Function: providers.ToolFunctionDefinition{
+				Name:        SanitizeToolName(name),
+				Description: desc,
+				Parameters:  params,
+			},
+		})
+	}
+	return definitions
+}
+
+// ToolsToProviderDefs converts a slice of Tool to providers.ToolDefinition without
+// requiring a ToolRegistry. Used by the LLM-call assembly path (FR-003, FR-041) to
+// convert the policy-filtered tool list to the format expected by LLM providers.
+func ToolsToProviderDefs(toolSlice []Tool) []providers.ToolDefinition {
+	definitions := make([]providers.ToolDefinition, 0, len(toolSlice))
+	for _, t := range toolSlice {
+		schema := ToolToSchema(t)
+		fn, ok := schema["function"].(map[string]any)
+		if !ok {
+			logger.WarnCF("tools", "skipping malformed tool schema in ToolsToProviderDefs",
+				map[string]any{"tool": t.Name()})
+			continue
+		}
+		name, _ := fn["name"].(string)
+		desc, _ := fn["description"].(string)
+		params, _ := fn["parameters"].(map[string]any)
 		definitions = append(definitions, providers.ToolDefinition{
 			Type: "function",
 			Function: providers.ToolFunctionDefinition{

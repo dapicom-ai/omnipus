@@ -2,7 +2,13 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Clock, Broom, Warning } from '@phosphor-icons/react'
 import { Button } from '@/components/ui/button'
-import { fetchRetention, updateRetention, triggerRetentionSweep, retentionMode } from '@/lib/api'
+import {
+  fetchRetention,
+  updateRetention,
+  triggerRetentionSweep,
+  retentionMode,
+  isApiError,
+} from '@/lib/api'
 import type { RetentionUpdateBody, RetentionMode } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { useAuthStore } from '@/store/auth'
@@ -116,8 +122,9 @@ export function RetentionSection(): React.ReactElement {
     },
     onError: (err: Error) => {
       setSaveState('error')
-      setErrorMessage(err.message)
-      addToast({ message: err.message, variant: 'error' })
+      const msg = isApiError(err) ? err.userMessage : err.message
+      setErrorMessage(msg)
+      addToast({ message: msg, variant: 'error' })
     },
   })
 
@@ -126,11 +133,18 @@ export function RetentionSection(): React.ReactElement {
     onSuccess: (resp) => {
       addToast({ message: `Sweep complete — ${resp.removed} session(s) removed`, variant: 'success' })
     },
-    onError: (err: Error) => {
-      if (err.message.includes('409') || err.message.toLowerCase().includes('sweep in progress')) {
-        addToast({ message: 'A sweep is already running — try again in a moment.', variant: 'error' })
+    onError: (err: unknown) => {
+      // Defensively match both the typed status (409 from MaxBytes / conflict)
+      // and the legacy "sweep in progress" body substring so the toast still
+      // works against pre-ApiError servers.
+      if (isApiError(err)) {
+        if (err.status === 409 || err.userMessage.toLowerCase().includes('sweep in progress')) {
+          addToast({ message: 'A sweep is already running — try again in a moment.', variant: 'error' })
+        } else {
+          addToast({ message: err.userMessage, variant: 'error' })
+        }
       } else {
-        addToast({ message: err.message, variant: 'error' })
+        addToast({ message: err instanceof Error ? err.message : 'Sweep failed', variant: 'error' })
       }
     },
   })

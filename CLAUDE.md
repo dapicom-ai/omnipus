@@ -16,17 +16,43 @@ All variants share a common Go agentic core with kernel-level sandboxing, RBAC, 
 
 ## Status
 
-Pre-implementation. The `docs/BRD/` directory contains the complete specification:
+Active development. Substantial parts of the system are implemented and running on `main`: the agent loop and turn engine (`pkg/agent/`), 5 core agents (`pkg/coreagent/`), 35 `system.*` tools defined in `pkg/sysagent/tools/`, the tool registry and MCP integration (`pkg/tools/`, `pkg/mcp/`), skills loader and ClawHub registry (`pkg/skills/`), session/memory storage (`pkg/session/`, `pkg/memory/`), the gateway with embedded SPA (`pkg/gateway/`), credential boot contract, audit/policy/sandbox wiring, and ~16 in-process Go channels (Telegram, Discord, Slack, Matrix, IRC, Teams, Google Chat, WhatsApp, …). Onboarding flow, REST + WebSocket APIs, and the React SPA are functional.
 
-- `Omnipus BRD.md` — Main BRD: 27 security + 18 functional requirements, 3 delivery phases
+> **Note on the historical "system agent" naming.** Earlier docs and the BRD describe an `omnipus-system` agent as a distinct always-on agent that holds the `system.*` tools. **There is no such runtime agent.** The 35 `system.*` tools are ordinary builtins; per-agent policy decides which agent can call which one (see `docs/specs/tool-registry-redesign-spec.md`). The `pkg/sysagent/` package name is preserved as a tool-grouping namespace only — it does not represent an agent. All references below have been updated to reflect this; the central tool registry redesign is complete.
+
+Work in progress includes a unified plugin system (issue #151), the Signal channel and a proto-installer for plugin-style channel install/uninstall (currently unpushed in a sibling clone), and various security/UX hardening sprints.
+
+Authoritative architecture references:
+- `docs/architecture/AS-IS-architecture.md` — evidence-based as-is, code-cited.
+- `docs/architecture/plugin-extensibility-assessment.md` — plugin/extension status across channels, tools, skills, MCP.
+- `docs/architecture/ADR-*.md` — accepted architectural decisions.
+
+Background specs in `docs/BRD/` describe original intent and remain useful for context, but where they disagree with the code or the as-is document, the code wins:
+
+- `Omnipus BRD.md` — Main BRD: security + functional requirements, delivery phases
 - `Omnipus Windows BRD appendic.md` — Appendix A: Windows kernel security (Job Objects, Restricted Tokens, DACL)
-- `Omnipus_BRD_AppendixB_Feature_Parity.md` — Appendix B: 38 feature parity requirements (ClawHub, browser, WhatsApp, channels)
-- `Omnipus_BRD_AppendixC_UI_Spec.md` — Appendix C: Full UI/UX spec (React 19, Vite 6, shadcn/ui, Phosphor Icons)
-- `Omnipus_BRD_AppendixD_System_Agent.md` — Appendix D: System agent with 35 system tools, 3 core agents
-- `Omnipus_BRD_AppendixE_DataModel.md` — Appendix E: File-based data model (JSON/JSONL), directory structure, entity schemas
-- `OpenClaw_vs_Omnipus_Comparison.md` — Competitive analysis informing UI/UX decisions
+- `Omnipus_BRD_AppendixB_Feature_Parity.md` — Appendix B: feature parity requirements
+- `Omnipus_BRD_AppendixC_UI_Spec.md` — Appendix C: UI/UX spec
+- `Omnipus_BRD_AppendixD_System_Agent.md` — Appendix D: system agent + 35 system tools
+- `Omnipus_BRD_AppendixE_DataModel.md` — Appendix E: file-based data model
+- `OpenClaw_vs_Omnipus_Comparison.md` — competitive analysis
 
-Always read the relevant BRD documents before implementing a feature. The specs are the source of truth.
+## Release Strategy (v0.1 → v0.2 → v0.3)
+
+Three-phase plan locked 2026-05-03 to resolve the dilemma of an unstable WIP branch + a pentest backlog + a large memory/projects redesign.
+
+**v0.1 — Stabilize current branch (`feature/iframe-preview-tier13`).** Ship the in-flight `web_serve` unification, kernel-enforced bind-port allow-list, sandbox-aware `exec`, and iframe preview as one focused PR. Plan: `/home/Daniel/.claude/plans/quizzical-marinating-frog.md`. No memory/projects scope creep — that is explicitly v0.3.
+
+**v0.2 — Security hardening (pentest quick wins).** GitHub issue [#155](https://github.com/dapicom-ai/omnipus/issues/155). Quick fixes only — no architectural changes. Items: env var allowlist switch (`pkg/sandbox/hardened_exec.go::sensitiveEnvKeys`), `master.key` 0600 verification, shell-guard hardening, internal-CIDR egress blocking, audit log integrity (HMAC chain), rate limiting on auth endpoints. Defers structural fixes (process isolation, capability-based RBAC) to v0.3.
+
+**v0.3 / 1.0 — "Rooms" redesign (memory + projects + tasks + sandbox topology).** GitHub issue [#156](https://github.com/dapicom-ai/omnipus/issues/156). Fresh-build, no backward compatibility. Five locked design docs:
+- `docs/design/sandbox-redesign-2026-05.md` — two-room workspace topology (private agent rooms + shared project rooms under `.omnipus/`).
+- `docs/design/memory-redesign-2026-05.md` — 4-tier memory (sessions / memories / learnings / last-session.md), three tools (`remember`/`recall`/`retrospective`), Dreamcatcher consolidation pass, bleve + JSONL + MinHash, MOCs, no embeddings.
+- `docs/design/tasks-redesign-2026-05.md` — tasks scoped per-room, cascade-delete with project, reassignment audit.
+- `docs/design/projects-ui-2026-05.md` — three SPA surfaces (session creation modal, Command Center pivoted to rooms, session history with grouping).
+- `docs/design/settings-notifications-2026-05.md` — Memory + Dreamcatcher settings tabs, tier-based retention notifications.
+
+**Routing rule:** when the user brings up new work, ask which release phase it belongs to before starting. Pentest findings → v0.2 unless they require structural changes (then → v0.3). Memory / projects / tasks / room-topology work → v0.3. Anything else that isn't completing v0.1 → flag the scope question explicitly.
 
 ## Hard Constraints
 
@@ -37,15 +63,15 @@ These are non-negotiable and apply to every decision:
 3. **Minimal footprint** — total RAM overhead for all security features must stay under 10MB beyond baseline.
 4. **Graceful degradation** — features requiring Linux 5.13+ (Landlock, seccomp) must fall back to application-level enforcement on older kernels, non-Linux platforms, and Android/Termux.
 5. **Ecosystem compatibility** — follows Omnipus/OpenClaw conventions (SKILL.md, HEARTBEAT.md, SOUL.md, AGENTS.md, JSON config patterns) for skill ecosystem and community compatibility. Omnipus has its own config format but adopts the same concepts.
-6. **Deny-by-default for security, opt-in for features** — security policies default to most restrictive; functional features default to disabled.
+6. **Deny-by-default for security, opt-in for features** — security policies default to most restrictive; functional features default to disabled. **Documented exception:** when a sandbox mode (`enforce` or `permissive`) is active, the workspace shell tools (`workspace.shell`, `workspace.shell_bg`) are enabled by default for Jim. Rationale: the kernel sandbox itself is the protective layer, and Jim's seed forces `experimental.workspace_shell_enabled = true` at config-creation time anyway — making the helper-default `false` only creates a test-vs-production behavioral gap, not real safety. Operators who want shell tools fully off must set `experimental.workspace_shell_enabled = false` explicitly. With sandbox `off` (god-mode), no implicit defaults apply — operator opt-in is required.
 
 ## Tech Stack
 
-**Backend:** Go (targeting Go 1.21+ for `slog`). Key packages: `golang.org/x/sys/unix` (Landlock, seccomp), `chromedp` (browser automation), `whatsmeow` (WhatsApp), `discordgo` (Discord), `telebot` (Telegram), `slack-go` (Slack), `go-nostr` (Nostr), `modernc.org/sqlite` (pure Go SQLite for whatsmeow — no CGo). Go channels are compiled into the single binary. Non-Go channels (Signal/Java, Teams/Node.js) and community channels use the bridge protocol as external processes.
+**Backend:** Go (targeting Go 1.21+ for `slog`). Key packages: `golang.org/x/sys/unix` (Landlock, seccomp), `chromedp` (browser automation), `whatsmeow` (WhatsApp), `discordgo` (Discord), `telebot` (Telegram), `slack-go` (Slack), `go-nostr` (Nostr), `modernc.org/sqlite` (pure Go SQLite for whatsmeow — no CGo). All channels currently in the codebase are compiled into the single binary as in-process Go implementations. Channels that depend on a non-Go runtime (e.g. Signal, which requires `signal-cli`/JRE) wrap the dependency by spawning a sidecar binary from inside their own `Start()` and communicating with it over local HTTP (Signal) or WebSocket (WhatsApp bridge). There is no generic stdio "bridge protocol"; HTTP-localhost is the de facto pattern.
 
 **Frontend:** TypeScript, React 19, Vite 6, shadcn/ui (Radix + Tailwind CSS v4), AssistantUI (chat), Phosphor Icons (`@phosphor-icons/react`), Zustand (UI state), TanStack Query (server state), TanStack Router, Framer Motion. Shared `@omnipus/ui` component library across three variants: web (go:embed in binary for open source, ships first), Electron desktop (ships second), npm package (for SaaS/embedded, ships third).
 
-**Storage:** File-based only (JSON/JSONL) for all Omnipus data. No PostgreSQL or Redis. Exception: WhatsApp session uses SQLite via whatsmeow with `modernc.org/sqlite` (pure Go, no CGo). SQLite is isolated to WhatsApp session storage only — never used for Omnipus's own data. Data directory: `~/.omnipus/`. Atomic writes (temp file + rename). Credentials in `credentials.json` (AES-256-GCM encrypted, Argon2id KDF), never in `config.json`. **Sessions:** Day-partitioned JSONL transcripts (`sessions/<id>/<YYYY-MM-DD>.jsonl`) with configurable retention (default 90 days). Two-layer context compression: tool result pruning (in-memory) + conversation compaction (persistent, with memory flush). **Concurrency:** Per-entity files for high-contention data (tasks, pins), single-writer goroutine for shared files (config, credentials), advisory `flock`/`LockFileEx` as defense-in-depth.
+**Storage:** File-based only (JSON/JSONL) for all Omnipus data. No PostgreSQL or Redis. Exception: WhatsApp session uses SQLite via whatsmeow with `modernc.org/sqlite` (pure Go, no CGo). SQLite is isolated to WhatsApp session storage only — never used for Omnipus's own data. Data directory: `~/.omnipus/`. Atomic writes (temp file + rename). Credentials in `credentials.json` (AES-256-GCM encrypted, Argon2id KDF), never in `config.json`. **Sessions:** Day-partitioned JSONL transcripts (`sessions/<id>/<YYYY-MM-DD>.jsonl`) with configurable retention (default 90 days). **Context compression** is single-layer: when the token budget is exceeded, `forceCompression` (`pkg/agent/loop.go:4473-4550`) drops ~50% of the oldest turns and writes a summary note via `SetHistory` + `Save`. The historical claim of a second "tool result pruning" pass is not implemented today. **Concurrency:** per-entity files for high-contention data (tasks, pins). Sessions and memory use a 64-shard mutex pool keyed by FNV hash of session ID (`pkg/memory/jsonl.go:21-77`), not a single-writer goroutine. Atomic writes via temp-file + rename (`fileutil.WriteFileAtomic`). Advisory `unix.Flock` on Linux/macOS (`pkg/fileutil/flock_unix.go:18-22`); on Windows, `LockFileEx` is **not** used — the code relies on the single-writer goroutine pattern instead (see `pkg/fileutil/flock_windows.go:15`).
 
 **Credential provisioning:** All secrets are stored in `credentials.json` (AES-256-GCM, Argon2id KDF). See [ADR-004](docs/architecture/ADR-004-credential-boot-contract.md) for the full boot contract.
 
@@ -75,13 +101,17 @@ export OMNIPUS_KEY_FILE=/var/lib/omnipus/master.key
 
 **Platform abstraction for sandboxing:** `SandboxBackend` interface with Linux (Landlock+seccomp), Windows (Job Objects+Restricted Tokens+DACL), and Fallback (app-level) backends. Policy engine and audit logging are cross-platform; only enforcement backend varies.
 
-**Channel provider model:** Hybrid in-process/bridge architecture inheriting Omnipus's design. Go channels are compiled into the binary and communicate via an internal `MessageBus` (zero IPC overhead, single process). Non-Go channels (Signal/Java, Teams/Node.js) and community channels run as external processes using a bridge protocol (JSON over stdin/stdout). All channels implement the same `ChannelProvider` Go interface — compiled-in channels implement it directly, external channels implement it via `BridgeAdapter`. Community channels are built with the Omnipus Channel SDK, installed locally at user's own risk.
+**Channel model:** All channels implement the same `Channel` Go interface (`pkg/channels/base.go:47-56`) plus opt-in capability interfaces (`TypingCapable`, `MessageEditor`, `MessageDeleter`, `ReactionCapable`, `PlaceholderCapable`, `StreamingCapable`, `CommandRegistrarCapable` — see `pkg/channels/interfaces.go:13-70`). Each channel registers a factory at compile time via `channels.RegisterFactory(name, factory)` from a `func init()` in its subpackage (`pkg/channels/registry.go`); activation is then a hardcoded if-ladder over typed config fields in `Manager.initChannels()` (`pkg/channels/manager.go:433-530`). Channels communicate with the agent loop only through the in-process `MessageBus` (`pkg/bus/bus.go`). Channels that wrap an external dependency embed the bridge directly inside their own implementation: WhatsApp uses a WebSocket to a separate bridge process (`pkg/channels/whatsapp/whatsapp.go:31-46`); the in-flight Signal channel spawns `signal-cli-rest-api` as a sidecar and talks to it over HTTP on localhost. There is **no** `BridgeAdapter` type, **no** stdio bridge protocol, and **no** Channel SDK in the codebase today. A generalized plugin/installer is in scoping — see issue #151 and the proto-installer in the unpushed `omnipus-channel-signal` clone (`pkg/channelmanager/`).
 
-**Agent types:** System (`omnipus-system`, hardcoded, always on, 35 exclusive `system.*` tools), Core (hardcoded prompts compiled into binary, user can toggle/configure), Custom (user-defined with SOUL.md + AGENTS.md).
+**Agent types:** Core (5 agents with prompts compiled into the binary via `pkg/coreagent/core.go:24-150`; identity locked, user can toggle/configure model and tools) and Custom (user-defined). There is **no separate "system" agent**. The 35 `system.*` tools defined in `pkg/sysagent/tools/` are ordinary builtins registered on the central tool registry; per-agent policy (allow/ask/deny, with `system.*: deny` seeded by default on custom agents) decides exposure. The post-redesign code retires the `omnipus-system` naming and removes `WireSystemTools` / `WireAvaAgentTools` as code paths — see `docs/specs/tool-registry-redesign-spec.md`. Note: `config.AgentTypeSystem` (`"system"`) survives in the config schema and the `/api/v1/agents` API contract for legacy/operator-supplied entries — production `SeedConfig` does NOT seed any such entry, but if a config.json contains one, the gateway will surface it. Handler tests in `pkg/gateway/rest_test.go` exercise this contract by injecting a synthetic `omnipus-system` config entry.
+
+The current custom-agent file format is structured: `AGENT.md` (singular) with frontmatter, plus `SOUL.md` for the prompt and `HEARTBEAT.md` for periodic instructions. The legacy `AGENTS.md` (plural) format is still loaded as a fallback (`pkg/agent/definition.go:21-22, 73, 104`) but should not be used for new agents.
 
 **Brand:** "The Sovereign Deep" — dark-first design. Colors: Deep Space Black (`#0A0A0B`), Liquid Silver (`#E2E8F0`), Forge Gold (`#D4AF37`). Fonts: Outfit (headlines), Inter (body), JetBrains Mono (code). Octopus mascot ("Master Tasker"). See `docs/brand/brand-guidelines.md`.
 
 **UI design rules:** Chat-first, dark-first. Sidebar defaults to overlay drawer but can be pinned for persistent navigation. No separate canvas (rich content renders inline, expands to fullscreen). No emoji in stored data or UI chrome (emoji-to-Phosphor-icon translator in chat output only). Tool calls visible by default with collapsible detail.
+
+**Doc/code drift to be aware of.** This file describes the system at the level of intent and has drifted from the implementation in places. The evidence-based as-is lives in `docs/architecture/AS-IS-architecture.md` and the plugin extension assessment in `docs/architecture/plugin-extensibility-assessment.md`. When this file (or anything under `docs/BRD/`) disagrees with those documents or with the code, the **code is the source of truth**. Known drift items already corrected above: there is no `ChannelProvider` interface (it's `Channel`), no `BridgeAdapter` type, no stdio bridge protocol, no Channel SDK, no two-layer compression, no `LockFileEx` on Windows, **no `omnipus-system` agent** (the system-agent concept is fictional; `system.*` tools are ordinary builtins governed by per-agent policy). Issue #151 tracks the unified plugin system that will eventually subsume the channel-installer prototype. The central tool registry redesign (`docs/specs/tool-registry-redesign-spec.md`) is **complete**: `WireSystemTools`, `WireAvaAgentTools`, `ScopeSystem`, `IsSystemAgent`, `ComposeAndRegister`, and the static `builtinCatalog` slice are all removed; policy-only governance via `BuiltinRegistry` + `MCPRegistry` + per-agent `ToolPolicyCfg` atomic pointer is in place.
 
 ## Spec-Driven Workflow
 
@@ -174,7 +204,25 @@ OMNIPUS_BEARER_TOKEN="" ./omnipus gateway --allow-empty &
 
 1. **Port conflict with other apps** — Port 3000 is the default. If another app (e.g., Next.js) is running on 3000, the gateway silently fails to bind. Check with `lsof -i :3000 | grep LISTEN`. Fix: set a different port in `$OMNIPUS_HOME/config.json` under `gateway.port` (e.g., 5000) before starting.
 
-2. **Onboarding requires auth bypass** — The onboarding flow calls API endpoints that require bearer auth before an admin account exists. Set `"dev_mode_bypass": true` in `config.json` under `gateway` after the first run creates the config, then restart the gateway. This is a pre-existing bug (the onboarding endpoints should use `withOptionalAuth`).
+2. **`gateway.dev_mode_bypass` — what it is and when to use it**
+
+   The auth decision tree in `pkg/gateway/auth.go:55-98` (`checkBearerAuth`, called by `withAuth`) is:
+
+   1. No `Authorization: Bearer …` header → 401 always. Bypass never fires.
+   2. `cfg.Gateway.Users` populated → token must match a registered user.
+   3. `OMNIPUS_BEARER_TOKEN` env set → token must constant-time-equal the env value.
+   4. No users **and** no env token → `dev_mode_bypass: true` lets the caller through as admin (one-time stderr WARN); `dev_mode_bypass: false` returns 401 "no users configured, complete onboarding first".
+
+   **Onboarding does NOT need bypass.** `/api/v1/state`, `/api/v1/onboarding/*`, `/api/v1/auth/login`, `/api/v1/auth/register-admin`, `/api/v1/providers`, `/api/v1/media/`, `/api/v1/uploads/` are wired with `withOptionalAuth` (see `pkg/gateway/rest.go` ~L2004-2098), which never calls `checkBearerAuth`. The SPA onboarding wizard works on a fresh install with `dev_mode_bypass: false` and zero users.
+
+   **When to set `dev_mode_bypass: true`:**
+   - Driving a `withAuth`-protected endpoint (e.g., `curl /api/v1/agents`, `/api/v1/sessions`, `/api/v1/config`) before onboarding has minted a real admin user.
+   - Go test scaffolding — `pkg/gateway/routes_admin_test.go`, `websocket_m4_test.go`, etc. flip the flag so admin-route tests don't have to register users + log in just to authenticate.
+   - Electron / local-dev shells where you intentionally don't want a login step.
+
+   **Defense-in-depth contract:** the paired `RequireNotBypass` middleware (see `TestSandboxConfigPUT_RealMux_DevModeBypass503`) explicitly returns **503** when `dev_mode_bypass=true` is set, on a hand-picked allow-list of high-blast-radius admin routes (e.g., sandbox-config PUT). The flag is loud and self-limiting by design — never set it in production, never remove the `RequireNotBypass` guard without an ADR.
+
+   **Default: `false`.** Only flip it on for the three use cases above. The previous CLAUDE.md note claiming bypass was *required* for onboarding was incorrect and has been removed.
 
 3. **Model must support tool use** — Omnipus sends tools with every LLM request. If the selected model doesn't support tool use (e.g., `google/gemma-2-9b-it` on OpenRouter), the LLM call returns a 404 with "No endpoints found that support tool use." Use a tool-capable model like `z-ai/glm-5-turbo`, `google/gemini-2.5-flash`, or `anthropic/claude-3.5-haiku`.
 
@@ -193,3 +241,11 @@ After frontend+backend changes, verify these flows on the embedded SPA:
 7. **Skills & Tools** — 4 tabs, empty states
 8. **Sidebar** — All nav items, active highlighting
 9. **Console errors** — Zero JS errors (WebSocket reconnect warnings are acceptable)
+
+### Operator configuration: two-port preview
+
+The gateway opens two listeners by default. `gateway.port` (default `5000`) serves the SPA and the authenticated API. `gateway.preview_port` (default `5001`) serves agent-generated HTML previews on a separate origin, providing browser-level isolation between the SPA's admin token and content produced by agents. Setting `gateway.preview_listener_enabled = false` **fully disables the iframe-preview feature**: the second listener is not started, and the `/preview/` path prefix is **not** registered on the main mux either, so requests to `<main-host>:<port>/preview/...` receive a 404 from the SPA catch-all. `web_serve` tool calls still mint tokens, but the URLs they hand back to the agent will not resolve. There is no fallback to single-port serving — disabling the preview listener is a full rollback of the iframe-preview feature. Re-enable and restart to restore functionality. See `docs/operations/reverse-proxy.md` for complete details.
+
+Reverse-proxy operators who terminate TLS at nginx or Caddy should set `gateway.public_url` and `gateway.preview_origin` to the fully-qualified HTTPS URLs that the browser reaches (e.g. `https://omnipus.example.com` and `https://preview.omnipus.example.com`). The gateway uses these values to build correct `Content-Security-Policy` and `frame-ancestors` headers. See `docs/operations/reverse-proxy.md` for complete nginx and Caddy configuration examples.
+
+On Android/Termux, `gateway.preview_listener_enabled` defaults to `false` because Termux processes typically cannot bind a second network port without additional permissions — iframe previews are unavailable in that environment. The gateway detects the Termux environment at boot and applies this default automatically.

@@ -23,6 +23,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
 import { SmartSelect } from '@/components/ui/smart-select'
 import { fetchTasks, fetchAgents, createTask, updateTask, startTask } from '@/lib/api'
+import { isApiError } from '@/lib/api-error'
 import type { Task } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
 import { cn } from '@/lib/utils'
@@ -219,14 +220,14 @@ export function TaskList({ statusFilter = 'all', onTaskSelect }: TaskListProps) 
       setStartImmediately(false)
       setShowCreate(false)
     },
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: unknown) => addToast({ message: isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Failed to create task', variant: 'error' }),
   })
 
   const { mutate: doUpdateStatus } = useMutation({
     mutationFn: ({ id, status }: { id: string; status: Task['status'] }) =>
       updateTask(id, { status }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tasks'] }),
-    onError: (err: Error) => addToast({ message: err.message, variant: 'error' }),
+    onError: (err: unknown) => addToast({ message: isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Failed to update task', variant: 'error' }),
   })
 
   const tasks = statusFilter === 'all'

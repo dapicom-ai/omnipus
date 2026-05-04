@@ -22,7 +22,7 @@ import { ModelSelector } from '@/components/ui/model-selector'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { useQuery } from '@tanstack/react-query'
 import { useUiStore } from '@/store/ui'
-import { createAgent, fetchProviders } from '@/lib/api'
+import { createAgent, fetchProviders, isApiError } from '@/lib/api'
 import type { Agent, AgentToolsCfg } from '@/lib/api'
 import { AVATAR_COLORS } from '@/lib/constants'
 import { ToolsAndPermissions } from './ToolsAndPermissions'
@@ -64,11 +64,12 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
   const isOpen = openProp !== undefined ? openProp : createAgentModalOpen
   const handleClose = onCloseProp ?? closeCreateAgentModal
 
-  const { data: providers = [], isError: providersError } = useQuery({
+  const { data: providersData, isError: providersError } = useQuery({
     queryKey: ['providers'],
     queryFn: fetchProviders,
     enabled: isOpen,
   })
+  const providers = Array.isArray(providersData) ? providersData : []
   const connectedModels = providers.filter((p) => p.status === 'connected').flatMap((p) => p.models ?? [])
   const availableModels = connectedModels
 
@@ -81,7 +82,7 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [nameError, setNameError] = useState('')
   const [toolsState, setToolsState] = useState<AgentToolsCfg>({
-    builtin: { mode: 'inherit' },
+    builtin: { default_policy: 'allow' },
   })
 
   const resetForm = () => {
@@ -93,7 +94,7 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
     setTemperature(1.0)
     setAdvancedOpen(false)
     setNameError('')
-    setToolsState({ builtin: { mode: 'inherit' } })
+    setToolsState({ builtin: { default_policy: 'allow' } })
   }
 
   // Reset form state whenever the modal opens so stale values are not shown
@@ -121,7 +122,7 @@ export function CreateAgentModal({ open: openProp, onClose: onCloseProp, onCreat
       resetForm()
     },
     onError: (err: Error) => {
-      useUiStore.getState().addToast({ message: err.message, variant: 'error' })
+      useUiStore.getState().addToast({ message: isApiError(err) ? err.userMessage : err instanceof Error ? err.message : 'Failed to create agent', variant: 'error' })
     },
   })
 

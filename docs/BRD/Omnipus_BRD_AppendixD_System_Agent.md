@@ -1,5 +1,15 @@
 # Omnipus System Agent Specification
 
+> **SUPERSEDED — Historical context only.**
+> This appendix describes the original design intent for an `omnipus-system` agent. That design was never implemented. The "system agent" fiction was formally retired by the **central tool registry redesign** (completed 2026-04-28).
+>
+> The 35 `system.*` tools described here are ordinary builtins registered on the central `BuiltinRegistry` at boot. There is no distinct `omnipus-system` agent at runtime. Per-agent `ToolPolicyCfg` (allow/ask/deny) governs which agents can call which tools.
+>
+> - Canonical contract: `docs/specs/tool-registry-redesign-spec.md`
+> - Current as-is state: `docs/architecture/AS-IS-architecture.md` (§§3, 9)
+>
+> **Do not use this appendix for implementation guidance.**
+
 ## Appendix D — The Omnipus Meta-Agent
 
 **Version:** 1.0 DRAFT  
