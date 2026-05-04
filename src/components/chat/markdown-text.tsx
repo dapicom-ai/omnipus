@@ -23,6 +23,7 @@ import { SyntaxHighlighter, CopyCodeHeader } from './shiki-highlighter'
 import { ImageLightbox } from './image-lightbox'
 import { rehypePhosphorEmoji } from '@/lib/rehype-phosphor-emoji'
 import { rewriteLegacyURL } from '@/lib/preview-url'
+import { isSafeHref } from '@/lib/url-safe'
 import { fetchAboutInfo } from '@/lib/api'
 import * as PhosphorIcons from '@phosphor-icons/react'
 import type { ComponentPropsWithoutRef } from 'react'
@@ -43,11 +44,21 @@ function PhosphorEmojiSpan({ 'data-phosphor-icon': iconName, children, ...props 
 function MarkdownImage({ src, alt }: ComponentPropsWithoutRef<'img'>) {
   const [open, setOpen] = useState(false)
   if (!src) return null
+  // Reject unsafe src schemes (javascript:, data:, etc.) — V2.C / FE H1
+  if (!isSafeHref(src)) {
+    if (alt) {
+      return (
+        <span className="text-xs text-[var(--color-muted)] italic">[image: {alt}]</span>
+      )
+    }
+    return null
+  }
   return (
     <>
       <img
         src={src}
         alt={alt || ''}
+        loading="lazy"
         className="max-w-full rounded-md cursor-zoom-in border border-[var(--color-border)] hover:border-[var(--color-accent)]/50 transition-colors"
         onClick={() => setOpen(true)}
         role="button"
@@ -172,12 +183,26 @@ function MarkdownTextImpl() {
       const rewritten = previewPort
         ? rewriteLegacyURL(href ?? '', window.location.hostname, previewPort)
         : (href ?? '')
+      // Scheme allow-list: reject javascript:, data:, vbscript:, etc. — V2.C / FE H1.
+      // Sanitized links render as plain text with a subtle visual cue; no href is set.
+      if (!isSafeHref(rewritten)) {
+        return (
+          <span
+            data-testid="markdown-link"
+            title="Link removed: unsafe URL scheme"
+            className="text-[var(--color-muted)] line-through decoration-dotted cursor-not-allowed"
+          >
+            {children}
+          </span>
+        )
+      }
       return (
         <a
           {...props}
           href={rewritten}
           target="_blank"
           rel="noopener noreferrer"
+          data-testid="markdown-link"
           className="text-[var(--color-accent)] underline underline-offset-2 hover:opacity-80 transition-opacity"
         >
           {children}

@@ -43,6 +43,7 @@ import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from 'r
 import { useQuery } from '@tanstack/react-query'
 import { ArrowsClockwise, ArrowSquareOut, Copy } from '@phosphor-icons/react'
 import { buildIframeURL } from '@/lib/preview-url'
+import { isSafeHref } from '@/lib/url-safe'
 import { fetchAboutInfo } from '@/lib/api'
 import type { ServeWorkspaceResult, RunInWorkspaceResult } from '@/lib/api'
 import { useUiStore } from '@/store/ui'
@@ -148,19 +149,7 @@ function isSameOriginAsApp(absoluteUrl: string): boolean {
 
 // ── Link-only fallback ────────────────────────────────────────────────────────
 
-/**
- * Validates that a URL string uses only http: or https: schemes.
- * Returns true only when the URL is parseable and its scheme is safe.
- * Rejects javascript:, data:, and any other non-http(s) scheme (F-10).
- */
-function isSafeHref(href: string): boolean {
-  try {
-    const parsed = new URL(href)
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
-  } catch {
-    return false
-  }
-}
+// isSafeHref is imported from @/lib/url-safe (shared with MarkdownText — V2.C).
 
 function LinkOnlyFallback({ href, label }: { href: string; label: string }) {
   const safe = isSafeHref(href)
