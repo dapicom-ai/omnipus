@@ -97,9 +97,6 @@ func (r *wsApprovalRegistry) resolve(id string, decision agent.ApprovalDecision)
 	}
 }
 
-
-
-
 // wsApprovalHook implements agent.ToolApprover for a single WebSocket connection.
 // When ApproveTool is called by the agent loop, it:
 //  1. Generates a unique request ID.

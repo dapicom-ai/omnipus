@@ -39,7 +39,7 @@ func TestOmnipusSandboxConfig_ResolvedMode_Precedence(t *testing.T) {
 
 // TestOmnipusSandboxConfig_EgressAllowCIDRs_RoundTrip pins the v0.2
 // (#155 item 4) field shape: cfg.Sandbox.EgressAllowCIDRs is a []string
-// of CIDR ranges marshalled under "egress_allow_cidrs". The field is the
+// of CIDR ranges marshaled under "egress_allow_cidrs". The field is the
 // operator's escape hatch for the default-deny outbound posture — entries
 // here are merged into the SSRFChecker's allow-list at boot so internal
 // services on RFC1918 addresses can be reached by the gateway-controlled
@@ -364,7 +364,7 @@ func TestAllowedPaths_ReadOnlySemanticDocumented(t *testing.T) {
 }
 
 // TestTier3Commands_LoadFromJSON verifies that OmnipusSandboxConfig.Tier3Commands
-// round-trips through JSON serialisation so operators can extend the baseline
+// round-trips through JSON serialization so operators can extend the baseline
 // Tier 3 allow-list via config.json under "sandbox.tier3_commands".
 func TestTier3Commands_LoadFromJSON(t *testing.T) {
 	raw := `{
@@ -411,7 +411,7 @@ func TestTier3Commands_MarshalRoundTrip(t *testing.T) {
 	}
 	jsonStr := string(b)
 	if !strings.Contains(jsonStr, `"tier3_commands"`) {
-		t.Errorf("marshalled JSON missing tier3_commands key: %s", jsonStr)
+		t.Errorf("marshaled JSON missing tier3_commands key: %s", jsonStr)
 	}
 
 	var cfg2 OmnipusSandboxConfig

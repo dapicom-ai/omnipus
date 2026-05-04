@@ -92,20 +92,20 @@ func (e *ChannelInitError) Error() string {
 func (e *ChannelInitError) Unwrap() error { return e.Err }
 
 type Manager struct {
-	channels       map[string]Channel
-	workers        map[string]*channelWorker
-	bus            *bus.MessageBus
-	config         *config.Config
-	secrets        credentials.SecretBundle // resolved plaintext secrets; never written to env
-	mediaStore     media.MediaStore
-	dispatchTask   *asyncTask
-	dispatchCtx    context.Context // stored so RegisterChannel can spin up workers after Start
-	mux            *dynamicServeMux
-	httpServer     *http.Server
+	channels     map[string]Channel
+	workers      map[string]*channelWorker
+	bus          *bus.MessageBus
+	config       *config.Config
+	secrets      credentials.SecretBundle // resolved plaintext secrets; never written to env
+	mediaStore   media.MediaStore
+	dispatchTask *asyncTask
+	dispatchCtx  context.Context // stored so RegisterChannel can spin up workers after Start
+	mux          *dynamicServeMux
+	httpServer   *http.Server
 	// previewMux and previewServer serve only /serve/ and /dev/ routes on the
 	// preview listener (FR-001, FR-005). Nil when preview is disabled.
-	previewMux    *dynamicServeMux
-	previewServer *http.Server
+	previewMux     *dynamicServeMux
+	previewServer  *http.Server
 	mu             sync.RWMutex
 	placeholders   sync.Map           // "channel:chatID" → placeholderID (string)
 	typingStops    sync.Map           // "channel:chatID" → func()

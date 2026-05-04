@@ -373,7 +373,9 @@ func TestVerify_PreChainThenChainedThenStrippedFails(t *testing.T) {
 	auditPath := filepath.Join(dir, "audit.jsonl")
 	f, err := os.OpenFile(auditPath, os.O_APPEND|os.O_WRONLY, 0o600)
 	require.NoError(t, err)
-	_, err = f.WriteString(`{"timestamp":"2099-01-01T00:00:00Z","event":"tool_call","decision":"allow","tool":"stripped"}` + "\n")
+	_, err = f.WriteString(
+		`{"timestamp":"2099-01-01T00:00:00Z","event":"tool_call","decision":"allow","tool":"stripped"}` + "\n",
+	)
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
 

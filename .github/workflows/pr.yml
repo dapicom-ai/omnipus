@@ -122,16 +122,25 @@ jobs:
         run: go generate ./...
 
       - name: Run go test
-        run: go test -tags goolm,stdjson ./...
+        # test_harness tag activates pkg/gateway/testhook.go (real
+        # SetTestProviderOverride). Without it the stub variant is compiled and
+        # testutil.StartTestGateway cannot inject the ScenarioProvider, so tests
+        # that boot a gateway in-process fall back to the seeded OpenRouter
+        # entry in pkg/agent/testutil/gateway_harness.go::buildConfig.
+        run: go test -tags goolm,stdjson,test_harness ./...
 
       - name: Run go test -race (concurrency-sensitive packages)
         # pkg/agent is excluded: it has 2 pre-existing races in unrelated tests
         # that predate this PR. The packages below cover the full concurrency
         # contract introduced by MutateConfig, WithConfig, SaveConfigLocked,
         # and the single-user bypass.
+        # pkg/gateway is excluded: every gateway file is //go:build !cgo, so
+        # under CGO_ENABLED=1 the package compiles to nothing and the test
+        # invocation fails. Race coverage for the gateway is provided by the
+        # CGO=0 test job above.
         env:
           CGO_ENABLED: "1"
-        run: go test -race -tags goolm,stdjson -count=1 -timeout 240s ./pkg/sysagent/... ./pkg/config/... ./pkg/credentials/... ./pkg/gateway/... ./pkg/channels/...
+        run: go test -race -tags goolm,stdjson,test_harness -count=1 -timeout 240s ./pkg/sysagent/... ./pkg/config/... ./pkg/credentials/... ./pkg/channels/...
 
   security:
     name: Security Tests

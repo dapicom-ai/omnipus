@@ -24,7 +24,6 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
-	systools "github.com/dapicom-ai/omnipus/pkg/sysagent/tools"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
 	"github.com/dapicom-ai/omnipus/pkg/commands"
 	"github.com/dapicom-ai/omnipus/pkg/config"
@@ -39,6 +38,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/skills"
 	"github.com/dapicom-ai/omnipus/pkg/state"
+	systools "github.com/dapicom-ai/omnipus/pkg/sysagent/tools"
 	"github.com/dapicom-ai/omnipus/pkg/taskstore"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 	"github.com/dapicom-ai/omnipus/pkg/tools/browser"
@@ -190,7 +190,7 @@ type AgentLoop struct {
 	// Lane S: session-end recap pipeline (FR-023..FR-030).
 
 	// idleTickers maps sessionID → context.CancelFunc for the idle timeout ticker.
-	// Populated by RegisterIdleTicker; cancelled by cancelIdleTicker.
+	// Populated by RegisterIdleTicker; canceled by cancelIdleTicker.
 	idleTickers sync.Map // sessionID (string) → context.CancelFunc
 
 	// agentCurrentSession maps agentID → sessionID (atomic CAS).
@@ -237,14 +237,14 @@ type continuationTarget struct {
 }
 
 const (
-	defaultResponse       = "The model returned an empty response. This may indicate a provider error or token limit."
-	toolLimitResponse     = "I've reached `max_tool_iterations` without a final response. Increase `max_tool_iterations` in config.json if this task needs more tool steps."
-	sessionKeyAgentPrefix = "agent:"
-	metadataKeyAccountID       = "account_id"
-	metadataKeyGuildID         = "guild_id"
-	metadataKeyTeamID          = "team_id"
-	metadataKeyParentPeerKind  = "parent_peer_kind"
-	metadataKeyParentPeerID    = "parent_peer_id"
+	defaultResponse           = "The model returned an empty response. This may indicate a provider error or token limit."
+	toolLimitResponse         = "I've reached `max_tool_iterations` without a final response. Increase `max_tool_iterations` in config.json if this task needs more tool steps."
+	sessionKeyAgentPrefix     = "agent:"
+	metadataKeyAccountID      = "account_id"
+	metadataKeyGuildID        = "guild_id"
+	metadataKeyTeamID         = "team_id"
+	metadataKeyParentPeerKind = "parent_peer_kind"
+	metadataKeyParentPeerID   = "parent_peer_id"
 )
 
 // ErrReloadNotConfigured is returned by TriggerReload when no reload function
@@ -648,7 +648,7 @@ func (al *AgentLoop) SetCurrentSession(agentID, sessionID string) {
 
 // RegisterIdleTicker stores a cancel function for the idle ticker of a session.
 // Calling it again for the same session replaces the previous cancel without
-// cancelling it — use resetIdleTicker for the reset path.
+// canceling it — use resetIdleTicker for the reset path.
 func (al *AgentLoop) RegisterIdleTicker(sessionID string, cancel context.CancelFunc) {
 	al.idleTickers.Store(sessionID, cancel)
 }
@@ -1096,11 +1096,11 @@ func (al *AgentLoop) wireTier13DepsLocked(registry *AgentRegistry, deps Tier13De
 	}
 
 	logger.InfoCF("agent", "Tier 1/2/3 tools wired into agent registry", map[string]any{
-		"preview_base_url":            deps.GatewayPreviewBaseURL,
-		"served_subdirs_ready":        deps.ServedSubdirs != nil,
-		"dev_server_registry_ready":   deps.DevServerRegistry != nil,
-		"egress_proxy_ready":          deps.EgressProxy != nil,
-		"workspace_shell_enabled":     resolveBoolWithDefault(cfg.Sandbox.Experimental.WorkspaceShellEnabled, true),
+		"preview_base_url":          deps.GatewayPreviewBaseURL,
+		"served_subdirs_ready":      deps.ServedSubdirs != nil,
+		"dev_server_registry_ready": deps.DevServerRegistry != nil,
+		"egress_proxy_ready":        deps.EgressProxy != nil,
+		"workspace_shell_enabled":   resolveBoolWithDefault(cfg.Sandbox.Experimental.WorkspaceShellEnabled, true),
 	})
 }
 
@@ -1450,7 +1450,6 @@ func registerSharedTools(
 			}
 		}
 	}
-
 }
 
 // findAgentConfig returns the AgentConfig for the given agent ID, or nil if not found.
@@ -1487,7 +1486,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 	al.running.Store(true)
 
 	// Wrap the caller's context with a cancel so Stop() can unblock the
-	// select without requiring the outer context to be cancelled. This
+	// select without requiring the outer context to be canceled. This
 	// replaces the previous 100 ms idle ticker (H4: each wakeup was wasted
 	// CPU polling a bool that almost always returns true).
 	runCtx, runCancel := context.WithCancel(ctx)
@@ -1891,7 +1890,7 @@ func (al *AgentLoop) Close() {
 		}
 	}
 
-	// FR-048: On graceful shutdown, write turn_cancelled_restart synthetic entries
+	// FR-048: On graceful shutdown, write turn_canceled_restart synthetic entries
 	// to any sessions that have active turns paused awaiting approval. This makes
 	// the restart visible to the session on next load, preventing the user from
 	// seeing a dangling tool_call with no result.
@@ -1913,11 +1912,11 @@ func (al *AgentLoop) Close() {
 	}
 }
 
-// writeTurnCancelledRestartForActiveTurns writes a synthetic turn_cancelled_restart
+// writeTurnCancelledRestartForActiveTurns writes a synthetic turn_canceled_restart
 // system message to every session that has an active (in-progress) turn at the time
 // of graceful shutdown (FR-048). This ensures the session transcript is clean on
 // next load: the SIGKILL recovery path (FR-069) will detect the synthetic entry
-// and not attempt to resume the cancelled turn.
+// and not attempt to resume the canceled turn.
 func (al *AgentLoop) writeTurnCancelledRestartForActiveTurns() {
 	al.activeTurnStates.Range(func(key, value any) bool {
 		sessionKey, _ := key.(string)
@@ -1928,15 +1927,15 @@ func (al *AgentLoop) writeTurnCancelledRestartForActiveTurns() {
 
 		// Append a synthetic system message documenting the shutdown.
 		syntheticContent := fmt.Sprintf(
-			`{"type":"turn_cancelled_restart","session_key":%q,"reason":"graceful_shutdown"}`,
+			`{"type":"turn_canceled_restart","session_key":%q,"reason":"graceful_shutdown"}`,
 			sessionKey,
 		)
 		ts.agent.Sessions.AddMessage(sessionKey, "system", syntheticContent)
 		if err := ts.agent.Sessions.Save(sessionKey); err != nil {
-			logger.WarnCF("agent", "FR-048: failed to persist turn_cancelled_restart on shutdown",
+			logger.WarnCF("agent", "FR-048: failed to persist turn_canceled_restart on shutdown",
 				map[string]any{"session_key": sessionKey, "error": err.Error()})
 		} else {
-			logger.InfoCF("agent", "FR-048: turn_cancelled_restart written on graceful shutdown",
+			logger.InfoCF("agent", "FR-048: turn_canceled_restart written on graceful shutdown",
 				map[string]any{"session_key": sessionKey})
 		}
 
@@ -3426,7 +3425,7 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 		// FR-069 / FR-088: recover orphaned tool calls left by a SIGKILL or OOM
 		// kill while the gateway was paused awaiting approval. The function is
 		// idempotent — it no-ops on clean sessions and on sessions where the
-		// synthetic turn_cancelled_restart entry already exists. The on-disk
+		// synthetic turn_canceled_restart entry already exists. The on-disk
 		// transcript is preserved; only the LLM-context slice (history) is
 		// cleaned so the LLM does not see dangling unanswered tool_call entries.
 		history = RecoverOrphanedToolCalls(ts.agent.Sessions, ts.sessionKey, al.auditLogger)
@@ -6231,7 +6230,11 @@ func (al *AgentLoop) checkToolDedupInvariant(ts *turnState, filtered []tools.Too
 // time we return "deny"; if it has become allow/ask we still return "deny" to be
 // conservative (the LLM was not given this tool's definition, so executing it is
 // unsound).
-func (al *AgentLoop) resolveToolPolicyAtExec(ts *turnState, toolName string, filterTimePolicyMap map[string]string) string {
+func (al *AgentLoop) resolveToolPolicyAtExec(
+	ts *turnState,
+	toolName string,
+	filterTimePolicyMap map[string]string,
+) string {
 	filterTimePolicy, wasInFilterMap := filterTimePolicyMap[toolName]
 	if !wasInFilterMap {
 		// Tool was not included at filter time — treat as deny regardless of live policy.
@@ -6280,7 +6283,7 @@ func (al *AgentLoop) resolveSingleToolPolicy(ts *turnState, toolName string) str
 //
 // The previous default returned `nopPolicyApprover{}` which auto-approved
 // every ask call — including admin-flagged tools — with zero log and zero
-// audit. Test code that needs the auto-approve behaviour now installs
+// audit. Test code that needs the auto-approve behavior now installs
 // `testAutoApproveApprover{}` explicitly via SetToolApprover (build tag
 // `test`; see `tool_approver_testonly.go`).
 func (al *AgentLoop) loadToolApprover() PolicyApprover {
@@ -6328,4 +6331,3 @@ func (al *AgentLoop) emitPolicyDenyAudit(ts *turnState, toolName, resolvedPolicy
 		},
 	})
 }
-

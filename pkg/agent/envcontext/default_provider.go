@@ -45,9 +45,9 @@ func NewDefaultProvider(cfg *config.Config, backend sandbox.SandboxBackend, work
 
 // procVersionOnce ensures /proc/version is read at most once per process lifetime.
 var (
-	procVersionOnce   sync.Once
-	cachedKernel      string
-	cachedKernelErr   error
+	procVersionOnce sync.Once
+	cachedKernel    string
+	cachedKernelErr error
 )
 
 // readKernelVersion reads /proc/version once and extracts the short release
@@ -162,8 +162,10 @@ func (p *DefaultProvider) ActiveWarnings() []string {
 	}
 
 	if runtime.GOOS == "windows" {
-		warnings = append(warnings,
-			"running on Windows — pkg/fileutil.WithFlock is a no-op; concurrent memory writes rely on single-writer discipline.")
+		warnings = append(
+			warnings,
+			"running on Windows — pkg/fileutil.WithFlock is a no-op; concurrent memory writes rely on single-writer discipline.",
+		)
 	}
 
 	// Emit sandbox-fallback-on-capable-kernel warning when the backend is
@@ -174,8 +176,10 @@ func (p *DefaultProvider) ActiveWarnings() []string {
 	if runtime.GOOS == "linux" {
 		status := sandbox.DescribeBackend(p.backend)
 		if !status.KernelLevel {
-			warnings = append(warnings,
-				"sandbox is running in application-level fallback mode despite a Landlock-capable kernel — this is typically an explicit operator downgrade.")
+			warnings = append(
+				warnings,
+				"sandbox is running in application-level fallback mode despite a Landlock-capable kernel — this is typically an explicit operator downgrade.",
+			)
 		}
 	}
 

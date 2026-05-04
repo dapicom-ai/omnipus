@@ -218,7 +218,11 @@ func TestWS_MessageWithEmptySessionID_MintsAndAcks(t *testing.T) {
 			break
 		}
 	}
-	assert.False(t, sawSecondStarted, "no second session_started should be emitted for a follow-up message with an existing session_id")
+	assert.False(
+		t,
+		sawSecondStarted,
+		"no second session_started should be emitted for a follow-up message with an existing session_id",
+	)
 	assert.True(t, sawFollowupDone, "follow-up message must produce a done/error frame tagged with the same session_id")
 
 	// Disk: both user turns must appear in the transcript.
@@ -530,7 +534,7 @@ func TestWS_FrameTaggingCompleteness_AllSessionScopedFramesCarrySessionID(t *tes
 	}
 
 	var taggedTypes []string
-	var taggedAll = true
+	taggedAll := true
 	for i := 0; i < 30; i++ {
 		conn.SetReadDeadline(time.Now().Add(3 * time.Second)) //nolint:errcheck
 		_, raw, err := conn.ReadMessage()
@@ -712,7 +716,7 @@ func TestWS_Cancel_OnlyInterruptsTargetSession(t *testing.T) {
 	require.NoError(t, conn.WriteMessage(websocket.TextMessage, data))
 	started := readFrameOfType(t, conn, "session_started", 5*time.Second)
 	sessionID := started.SessionID
-	require.NotEmpty(t, sessionID, "must mint a session before cancelling")
+	require.NotEmpty(t, sessionID, "must mint a session before canceling")
 
 	// Drain the done frame so the turn is finished.
 	drainUntilSessionDone(t, conn, sessionID, 5*time.Second)

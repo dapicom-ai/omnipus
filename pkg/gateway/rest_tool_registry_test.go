@@ -58,7 +58,12 @@ func newTestRestAPIWithApprovalReg(t *testing.T) (*restAPI, *approvalRegistryV2)
 }
 
 // postToolApproval sends a POST to HandleToolApprovals and returns the recorder.
-func postToolApproval(t *testing.T, api *restAPI, approvalID, action string, adminRole bool) *httptest.ResponseRecorder {
+func postToolApproval(
+	t *testing.T,
+	api *restAPI,
+	approvalID, action string,
+	adminRole bool,
+) *httptest.ResponseRecorder {
 	t.Helper()
 	body := `{"action":"` + action + `"}`
 	r := httptest.NewRequest(http.MethodPost, "/api/v1/tool-approvals/"+approvalID, strings.NewReader(body))
@@ -259,7 +264,6 @@ func TestREST_ApproveDenyCancel_StateTransitions(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.action, func(t *testing.T) {
 			api, reg := newTestRestAPIWithApprovalReg(t)
 
@@ -536,8 +540,8 @@ func TestApprovalRegistry_AllTransitions(t *testing.T) {
 		e1, _ := reg.requestApproval("tc-dr-1", "exec", map[string]any{}, "a", "s", "t", false)
 		e2, _ := reg.requestApproval("tc-dr-2", "read_file", map[string]any{}, "a", "s", "t", false)
 
-		cancelled := reg.cancelAllPendingForRestart()
-		require.Len(t, cancelled, 2)
+		canceled := reg.cancelAllPendingForRestart()
+		require.Len(t, canceled, 2)
 
 		// Both entries must have pre-delivered denied_restart outcomes.
 		for _, e := range []*approvalEntry{e1, e2} {
@@ -866,8 +870,8 @@ func TestApprovalRegistry_CancelAllPendingForRestart(t *testing.T) {
 		entries = append(entries, e)
 	}
 
-	cancelled := reg.cancelAllPendingForRestart()
-	assert.Len(t, cancelled, 3, "must have cancelled all 3 entries")
+	canceled := reg.cancelAllPendingForRestart()
+	assert.Len(t, canceled, 3, "must have canceled all 3 entries")
 
 	for i, e := range entries {
 		select {

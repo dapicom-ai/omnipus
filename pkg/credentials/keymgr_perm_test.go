@@ -33,7 +33,7 @@ import (
 // any decoding so a pattern of repeated bytes is fine.
 const validHexKey = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
 
-// permCheckSupported reports whether the host filesystem actually honours
+// permCheckSupported reports whether the host filesystem actually honors
 // the requested permission bits when WriteFile creates the file. WSL on
 // NTFS, FAT32-mounted dirs, and some CI containers mask perms. When the
 // stat-back result does not include the requested bit pattern, the test

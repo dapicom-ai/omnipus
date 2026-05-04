@@ -10,7 +10,7 @@
 //     Positive → use as the cap.
 //  2. A pure cap-evaluation function `ShouldSaturate` that the gateway
 //     calls per ask request. The caller owns the pending-approval
-//     counter; this function is the boundary that decides "synthesise
+//     counter; this function is the boundary that decides "synthesize
 //     a deny with reason=saturated, no WS event emitted, transcript
 //     system-message appended."
 //
@@ -48,7 +48,7 @@ const SaturationSentinelUnlimited = 0
 // returns the effective cap to use plus a boolean indicating whether the
 // gateway should continue booting.
 //
-// Behaviour matrix (FR-016):
+// Behavior matrix (FR-016):
 //
 //	cap < 0  → emit `gateway.config.invalid_value` HIGH audit, return
 //	            (0, false). The caller MUST exit non-zero. In addition,
@@ -85,7 +85,7 @@ func ValidateSaturationCap(ctx context.Context, logger *audit.Logger, cap int) (
 	return cap, true
 }
 
-// ShouldSaturate reports whether a new ask request must be synthesised
+// ShouldSaturate reports whether a new ask request must be synthesized
 // as `reason=saturated` (FR-016) given the current pending-approval count
 // and the effective cap.
 //
@@ -96,7 +96,7 @@ func ValidateSaturationCap(ctx context.Context, logger *audit.Logger, cap int) (
 // function returns false (i.e. AFTER the slot is reserved). Race-safe
 // usage requires the caller to hold a mutex around the
 // `ShouldSaturate(currentPending) → maybe-increment` window; this
-// function does not synchronise.
+// function does not synchronize.
 //
 // FR-016.
 func ShouldSaturate(cap, currentPending int) bool {

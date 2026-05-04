@@ -42,10 +42,10 @@ func TestMemoryRateLimiter_ConcurrentLoad_NoRace(t *testing.T) {
 	defer cancel()
 
 	var (
-		wg          sync.WaitGroup
-		allowed     int64
-		denied      int64
-		panicCount  int64
+		wg         sync.WaitGroup
+		allowed    int64
+		denied     int64
+		panicCount int64
 		// Each writer hits the SAME agentID so the per-agent bucket is the
 		// contention point. They use distinct callerIDs so the per-caller
 		// bucket is not the trip — we are validating the per-agent gate

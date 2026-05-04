@@ -113,7 +113,8 @@ func TestRedteam_AuditLog_TruncationDetected(t *testing.T) {
 			"C2-AUDIT (truncation) GAP CONFIRMED: no audit chain verifier exists (expected audit.VerifyFile or equivalent). "+
 				"Truncation of audit.jsonl from %d to %d bytes followed by a forged append is currently UNDETECTED. "+
 				"Fix: ship per-entry HMAC chain in v0.2 (#155).",
-			len(original), len(truncated),
+			len(original),
+			len(truncated),
 		)
 		return
 	}

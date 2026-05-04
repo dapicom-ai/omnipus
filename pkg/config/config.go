@@ -566,7 +566,6 @@ type AgentMCPServerBinding struct {
 	Tools []string `json:"tools,omitempty"` // empty or ["*"] = all tools from that server
 }
 
-
 // ResolveType returns the effective agent type. If the Type field is set, it is
 // returned directly. Otherwise the type is inferred: known core agent IDs →
 // AgentTypeCore; everything else → AgentTypeCustom. The caller must provide
@@ -636,9 +635,9 @@ type ToolFeedbackConfig struct {
 }
 
 type AgentDefaults struct {
-	Workspace                 string             `json:"workspace"                       env:"OMNIPUS_AGENTS_DEFAULTS_WORKSPACE"`
+	Workspace string `json:"workspace" env:"OMNIPUS_AGENTS_DEFAULTS_WORKSPACE"`
 	// RestrictToWorkspace and AllowReadOutsideWorkspace are removed from the v1
-	// schema (FR-001). Tags use json:"-" so SaveConfig never serialises them;
+	// schema (FR-001). Tags use json:"-" so SaveConfig never serializes them;
 	// validateRemovedKeys rejects any v1 config that still carries these keys.
 	RestrictToWorkspace       bool               `json:"-"                               env:"OMNIPUS_AGENTS_DEFAULTS_RESTRICT_TO_WORKSPACE"`
 	AllowReadOutsideWorkspace bool               `json:"-"                               env:"OMNIPUS_AGENTS_DEFAULTS_ALLOW_READ_OUTSIDE_WORKSPACE"`
@@ -1145,12 +1144,12 @@ func (r *UserRole) UnmarshalJSON(data []byte) error {
 
 // UserConfig holds per-user authentication and authorization settings.
 type UserConfig struct {
-	Username     string     `json:"username,omitempty"`
-	PasswordHash string     `json:"password_hash,omitempty"`     // bcrypt hash
-	TokenHash    BcryptHash `json:"token_hash,omitempty"`        // bcrypt hash of bearer token
+	Username         string     `json:"username,omitempty"`
+	PasswordHash     string     `json:"password_hash,omitempty"`      // bcrypt hash
+	TokenHash        BcryptHash `json:"token_hash,omitempty"`         // bcrypt hash of bearer token
 	SessionTokenHash BcryptHash `json:"session_token_hash,omitempty"` // bcrypt hash of session cookie token
-	Role         UserRole   `json:"role"`
-	Name         string     `json:"name,omitempty"`
+	Role             UserRole   `json:"role"`
+	Name             string     `json:"name,omitempty"`
 }
 
 type GatewayConfig struct {
@@ -1968,7 +1967,10 @@ func (g *GatewayConfig) ValidateAndApplyPreviewDefaults() error {
 	if g.PreviewOrigin != "" {
 		u, err := url.Parse(g.PreviewOrigin)
 		if err != nil || u.Scheme == "" {
-			return fmt.Errorf("gateway.preview_origin %q must be a URL with a scheme (e.g. https://preview.example.com)", g.PreviewOrigin)
+			return fmt.Errorf(
+				"gateway.preview_origin %q must be a URL with a scheme (e.g. https://preview.example.com)",
+				g.PreviewOrigin,
+			)
 		}
 	}
 
@@ -1976,7 +1978,10 @@ func (g *GatewayConfig) ValidateAndApplyPreviewDefaults() error {
 	if g.PublicURL != "" {
 		u, err := url.Parse(g.PublicURL)
 		if err != nil || u.Scheme == "" {
-			return fmt.Errorf("gateway.public_url %q must be a URL with a scheme (e.g. https://omnipus.example.com)", g.PublicURL)
+			return fmt.Errorf(
+				"gateway.public_url %q must be a URL with a scheme (e.g. https://omnipus.example.com)",
+				g.PublicURL,
+			)
 		}
 	}
 

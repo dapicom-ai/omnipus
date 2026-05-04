@@ -168,7 +168,8 @@ func (a *restAPI) HandleToolsRegistry(w http.ResponseWriter, r *http.Request) {
 // HandleAgentToolsRegistry handles GET /api/v1/agents/{id}/tools.
 //
 // Returns per-tool:
-//   {name, configured_policy, effective_policy, fence_applied, requires_admin_ask}
+//
+//	{name, configured_policy, effective_policy, fence_applied, requires_admin_ask}
 //
 // FR-028, FR-086: effective_policy and fence_applied for SPA badge rendering.
 // fence_applied=true means the admin-ask structural fence downgraded allow→ask on a
@@ -211,11 +212,11 @@ func (a *restAPI) HandleAgentToolsRegistry(w http.ResponseWriter, r *http.Reques
 	}
 
 	type agentToolEntry struct {
-		Name              string `json:"name"`
-		ConfiguredPolicy  string `json:"configured_policy"`
-		EffectivePolicy   string `json:"effective_policy"`
-		FenceApplied      bool   `json:"fence_applied"`
-		RequiresAdminAsk  bool   `json:"requires_admin_ask"`
+		Name             string `json:"name"`
+		ConfiguredPolicy string `json:"configured_policy"`
+		EffectivePolicy  string `json:"effective_policy"`
+		FenceApplied     bool   `json:"fence_applied"`
+		RequiresAdminAsk bool   `json:"requires_admin_ask"`
 	}
 
 	var toolEntries []agentToolEntry
@@ -345,13 +346,17 @@ func (a *restAPI) HandleToolApprovals(w http.ResponseWriter, r *http.Request) {
 	case "cancel":
 		action = ApprovalActionCancel
 	default:
-		jsonErr(w, http.StatusBadRequest, fmt.Sprintf("unknown action %q: must be approve, deny, or cancel", body.Action))
+		jsonErr(
+			w,
+			http.StatusBadRequest,
+			fmt.Sprintf("unknown action %q: must be approve, deny, or cancel", body.Action),
+		)
 		return
 	}
 
 	// Guard: registry is nil in pre-registry test harnesses.
 	if a.approvalReg == nil {
-		jsonErr(w, http.StatusServiceUnavailable, "approval registry not initialised")
+		jsonErr(w, http.StatusServiceUnavailable, "approval registry not initialized")
 		return
 	}
 

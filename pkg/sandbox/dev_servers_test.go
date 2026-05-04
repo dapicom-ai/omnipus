@@ -1,5 +1,5 @@
 // Tests for DevServerRegistry: per-agent cap, per-gateway cap, janitor,
-// and Lookup-touches-LastActivity behaviour.
+// and Lookup-touches-LastActivity behavior.
 
 package sandbox
 

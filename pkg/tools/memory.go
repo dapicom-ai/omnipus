@@ -165,7 +165,10 @@ func (t *RememberTool) checkRateLimit(ctx context.Context, agentID string) Memor
 // (v0.2 #155 item 6) so SIEM rules can route on it independently from
 // the success-path "memory.remember" event. Content is never logged raw —
 // only a SHA-256 hex digest is emitted.
-func (t *RememberTool) logRateLimited(agentID, sessionID, caller, category, content string, decision MemoryRateLimitDecision) {
+func (t *RememberTool) logRateLimited(
+	agentID, sessionID, caller, category, content string,
+	decision MemoryRateLimitDecision,
+) {
 	if t.auditLogger == nil {
 		return
 	}
@@ -424,7 +427,11 @@ func (t *RetrospectiveTool) Execute(ctx context.Context, args map[string]any) *T
 
 // logRateLimited emits a memory.rate_limited audit entry for retrospective
 // writes that were rejected by the rate-limit gate (v0.2 #155 item 6).
-func (t *RetrospectiveTool) logRateLimited(agentID, sessionID, caller string, r MemoryRetro, decision MemoryRateLimitDecision) {
+func (t *RetrospectiveTool) logRateLimited(
+	agentID, sessionID, caller string,
+	r MemoryRetro,
+	decision MemoryRateLimitDecision,
+) {
 	if t.auditLogger == nil {
 		return
 	}
@@ -531,7 +538,10 @@ func rateLimitedResult(toolName string, decision MemoryRateLimitDecision) *ToolR
 	}
 	msg := fmt.Sprintf(
 		`%s: rate limit exceeded for the %s scope; retry after %d seconds. error_kind="rate_limited" retry_after_seconds=%d`,
-		toolName, decision.Scope, retryAfterSecs, retryAfterSecs,
+		toolName,
+		decision.Scope,
+		retryAfterSecs,
+		retryAfterSecs,
 	)
 	return &ToolResult{
 		ForLLM:  msg,
@@ -542,14 +552,14 @@ func rateLimitedResult(toolName string, decision MemoryRateLimitDecision) *ToolR
 
 // extractStringSlice safely converts an interface{} to []string.
 // Accepts []interface{} (JSON unmarshaled) and []string directly.
-func extractStringSlice(raw interface{}) []string {
+func extractStringSlice(raw any) []string {
 	if raw == nil {
 		return nil
 	}
 	switch v := raw.(type) {
 	case []string:
 		return v
-	case []interface{}:
+	case []any:
 		result := make([]string, 0, len(v))
 		for _, item := range v {
 			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {

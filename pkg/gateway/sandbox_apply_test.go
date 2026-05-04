@@ -180,7 +180,8 @@ func TestApplySandbox_ProductionOffBanner(t *testing.T) {
 // config snapshot and a FallbackBackend (so the test runs on any kernel).
 //
 // Before the CRIT-1 fix, this path triggered the boot-abort:
-//   applied=enforce, config-reported=off → mismatch → SandboxBootError
+//
+//	applied=enforce, config-reported=off → mismatch → SandboxBootError
 func TestApplySandbox_FreshInstall_Boots(t *testing.T) {
 	// cfg with zero-value Sandbox section — simulates a first-run config
 	// that has no sandbox stanza at all. Mode is empty, AllowedPaths is nil,

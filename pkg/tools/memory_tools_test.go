@@ -141,7 +141,7 @@ type auditSpy struct {
 	entries []auditEntry
 }
 
-func (a *auditSpy) Log(entry interface{}) error {
+func (a *auditSpy) Log(entry any) error {
 	// We use a duck-typed approach since we cannot import pkg/audit in a
 	// black-box test without introducing a cycle. Instead we marshal/unmarshal.
 	data, err := json.Marshal(entry)
@@ -296,7 +296,7 @@ func TestRecallMemoryTool_NoAuditEntryForReads(t *testing.T) {
 		t.Fatal("RecallMemoryTool now implements SetAuditLogger; reads would be audited, violating FR-014")
 	}
 
-	// Behavioural check: run the tool through an audit-wired path and assert
+	// Behavioral check: run the tool through an audit-wired path and assert
 	// the spy logger was never called. We use a real *audit.Logger and count
 	// writes by observing the file it produces.
 	auditDir := t.TempDir()
@@ -472,7 +472,7 @@ func newAuditLogger(t *testing.T, dir string) *AuditLoggerForTest {
 // directly so we need the import.
 //
 // NOTE: Because of how tool tests work, we pass nil to RememberTool/RetrospectiveTool
-// for the audit logger and verify audit behaviour separately. The test just confirms
+// for the audit logger and verify audit behavior separately. The test just confirms
 // the file was created and no errors occurred on tool execution. For the audit
 // entry presence check we verify that the audit logger was called by checking
 // the audit directory for written entries.

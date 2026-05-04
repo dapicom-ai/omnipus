@@ -65,7 +65,7 @@ const workspaceStreamingThreshold = 1 << 20 // 1,048,576 bytes
 //     FR-023a (the dropped Origin middleware on /dev/).
 //   - frame-ancestors '<mainOrigin>' — only the SPA's own origin may
 //     embed served content. Falls back to '*' when mainOrigin is empty
-//     (host=0.0.0.0/[::] without public_url set — see FR-007e). Defence
+//     (host=0.0.0.0/[::] without public_url set — see FR-007e). Defense
 //     against T-04 (foreign embed of leaked-token URL).
 //   - base-uri 'none' — forbid <base> tag hijacking
 //   - object-src 'none' — no plugins

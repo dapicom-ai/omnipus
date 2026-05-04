@@ -20,10 +20,11 @@
 //
 // Production wiring (Landlock per-thread re-restriction in hardened-exec)
 // is tracked as a v0.3 follow-up. Until it lands, these tests serve as:
-//   (a) policy-correctness tests for DefaultChildPolicy — the carve-out
-//       structure works at the kernel level when applied
-//   (b) regression tests to prevent the carve-out from being broken when
-//       the v0.3 wiring eventually lands
+//
+//	(a) policy-correctness tests for DefaultChildPolicy — the carve-out
+//	    structure works at the kernel level when applied
+//	(b) regression tests to prevent the carve-out from being broken when
+//	    the v0.3 wiring eventually lands
 package sandbox_test
 
 import (
@@ -128,7 +129,9 @@ func runSecretReadChild(target string) {
 // Reference: docs/architecture/AS-IS-architecture.md (sandbox carve-out for
 // $OMNIPUS_HOME), pkg/sandbox/sandbox.go::DefaultPolicy.
 func TestRedteam_MasterKey_Exfil_Blocked(t *testing.T) {
-	t.Logf("documents C1 (master.key exfil) from insider-pentest report; closes when v0.2 #155 secrets-subtree carve-out lands")
+	t.Logf(
+		"documents C1 (master.key exfil) from insider-pentest report; closes when v0.2 #155 secrets-subtree carve-out lands",
+	)
 
 	if os.Getenv("OMNIPUS_REDTEAM_MASTER_KEY_CHILD") == "1" {
 		runSecretReadChild(os.Getenv("OMNIPUS_REDTEAM_TARGET"))
@@ -184,8 +187,10 @@ func TestRedteam_MasterKey_Exfil_Blocked(t *testing.T) {
 		t.Skipf("Landlock unavailable in child (exit 77):\n%s", out)
 	case 1:
 		// EXPECTED FAIL by design. The control is missing.
-		t.Errorf("C1 GAP CONFIRMED: sandboxed child READ master.key — secrets-subtree carve-out not yet implemented (#155)\nchild stderr:\n%s",
-			out)
+		t.Errorf(
+			"C1 GAP CONFIRMED: sandboxed child READ master.key — secrets-subtree carve-out not yet implemented (#155)\nchild stderr:\n%s",
+			out,
+		)
 	default:
 		t.Fatalf("child exit %d (unexpected — expected 1=gap, 42=fixed, 77=skip):\n%s", exitCode, out)
 	}
@@ -200,7 +205,9 @@ func TestRedteam_MasterKey_Exfil_Blocked(t *testing.T) {
 // explicit: even if an alternate fix narrows only master.key, credentials.json
 // must still be denied.
 func TestRedteam_Credentials_Exfil_Blocked(t *testing.T) {
-	t.Logf("documents C2 (credentials.json exfil) from insider-pentest report; closes when v0.2 #155 secrets-subtree carve-out lands")
+	t.Logf(
+		"documents C2 (credentials.json exfil) from insider-pentest report; closes when v0.2 #155 secrets-subtree carve-out lands",
+	)
 
 	if os.Getenv("OMNIPUS_REDTEAM_CREDS_CHILD") == "1" {
 		runSecretReadChild(os.Getenv("OMNIPUS_REDTEAM_TARGET"))
@@ -256,8 +263,10 @@ func TestRedteam_Credentials_Exfil_Blocked(t *testing.T) {
 	case 77:
 		t.Skipf("Landlock unavailable in child (exit 77):\n%s", out)
 	case 1:
-		t.Errorf("C2 GAP CONFIRMED: sandboxed child READ credentials.json — secrets-subtree carve-out not yet implemented (#155)\nchild stderr:\n%s",
-			out)
+		t.Errorf(
+			"C2 GAP CONFIRMED: sandboxed child READ credentials.json — secrets-subtree carve-out not yet implemented (#155)\nchild stderr:\n%s",
+			out,
+		)
 	default:
 		t.Fatalf("child exit %d (unexpected — expected 1=gap, 42=fixed, 77=skip):\n%s", exitCode, out)
 	}

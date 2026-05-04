@@ -37,8 +37,8 @@ func TestAuditArgsHash_Deterministic(t *testing.T) {
 	}
 
 	for i := 0; i < 100; i++ {
-		// Recreate the map fresh each iteration to maximise iteration-order
-		// variance — Go randomises map iteration, so this exercises the
+		// Recreate the map fresh each iteration to maximize iteration-order
+		// variance — Go randomizes map iteration, so this exercises the
 		// canonical-key-sort code path 100 times.
 		clone := map[string]any{
 			"path":    "/etc/passwd",
@@ -178,20 +178,20 @@ func TestAuditArgsHash_JSONNumberCompat(t *testing.T) {
 func TestAuditArgsPreview_Redacts_Secrets(t *testing.T) {
 	t.Parallel()
 	args := map[string]any{
-		"path":          "/var/log/app.log",
-		"api_key":       "sk-1234567890abcdef",
+		"path":           "/var/log/app.log",
+		"api_key":        "sk-1234567890abcdef",
 		"OPENAI_API_KEY": "leaked-please-redact",
-		"password":      "hunter2",
-		"client_secret": "shhh",
-		"token":         "xyz",
-		"authorization": "Bearer abcdef0123456789",
+		"password":       "hunter2",
+		"client_secret":  "shhh",
+		"token":          "xyz",
+		"authorization":  "Bearer abcdef0123456789",
 		// innocent key, bearer-shaped value
 		"header": "Bearer abcdef0123456789xyz",
 		// innocent key, innocent value
 		"name": "alice",
 		// integer (passes through)
 		"depth": float64(3),
-		// nested map → summarised
+		// nested map → summarized
 		"opts": map[string]any{"a": 1, "b": 2},
 	}
 	got := ArgsPreview(args)
@@ -216,7 +216,7 @@ func TestAuditArgsPreview_Redacts_Secrets(t *testing.T) {
 		t.Errorf("benign path should be passed through: %v", got["path"])
 	}
 	if v, ok := got["opts"].(string); !ok || !strings.HasPrefix(v, "<object:") {
-		t.Errorf("nested map should summarise, got %v", got["opts"])
+		t.Errorf("nested map should summarize, got %v", got["opts"])
 	}
 }
 
@@ -246,4 +246,3 @@ func TestAuditArgsPreview_NilReturnsNil(t *testing.T) {
 		t.Fatalf("nil args should return nil, got %v", got)
 	}
 }
-

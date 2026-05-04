@@ -87,8 +87,13 @@ func TestUpdateAgent_SandboxOff_GodModeAvailableTrue_AllowGodModeTrue_Returns200
 	r.Header.Set("Content-Type", "application/json")
 	api.HandleAgents(w, r)
 
-	assert.Equal(t, http.StatusOK, w.Code,
-		"sandbox_profile=off with GodModeAvailable=true and allowGodMode=true must return 200; body: %s", w.Body.String())
+	assert.Equal(
+		t,
+		http.StatusOK,
+		w.Code,
+		"sandbox_profile=off with GodModeAvailable=true and allowGodMode=true must return 200; body: %s",
+		w.Body.String(),
+	)
 
 	// Confirm the value was persisted to config.json.
 	raw, err := os.ReadFile(api.homePath + "/config.json")

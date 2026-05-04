@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 )
 
@@ -199,6 +201,18 @@ func StartTestGateway(t *testing.T, opts ...Option) *TestGateway {
 	}
 	if err = os.WriteFile(configPath, rawCfg, 0o600); err != nil {
 		t.Fatalf("testutil.StartTestGateway: write config: %v", err)
+	}
+
+	// Seed the OPENROUTER_API_KEY credential so the gateway's
+	// credentials.InjectFromConfig step (gateway.go:209) succeeds. The seeded
+	// provider entry in buildConfig references this name; without the
+	// credential, boot fails with "fatal: provider credential injection failed".
+	// Real value comes from env when set (so dev/CI runs that exercise real LLM
+	// calls work); otherwise a placeholder is stored — under -tags=test_harness
+	// the SetTestProviderOverride hook supersedes the real provider so the
+	// placeholder is never used to call OpenRouter.
+	if err = seedTestCredentials(homeDir); err != nil {
+		t.Fatalf("testutil.StartTestGateway: seed credentials: %v", err)
 	}
 
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
@@ -448,6 +462,16 @@ func (g *TestGateway) SeedUser(ctx context.Context, u config.UserConfig, beforeW
 }
 
 // buildConfig assembles a minimal config.Config from the harness options.
+//
+// The Providers list is seeded with a single OpenRouter+glm-5-turbo entry that
+// matches the e2e Playwright setup in .github/workflows/pr.yml. The gateway's
+// boot path validates `len(cfg.Providers) > 0` (pkg/providers/legacy_provider.go);
+// without an entry every test using StartTestGateway fails to boot. Under the
+// `test_harness` build tag the SetTestProviderOverride hook supersedes this
+// entry with a ScenarioProvider so tests do not actually call OpenRouter; under
+// vanilla `go test` the entry remains the gateway's real LLM and tests that
+// make LLM calls hit OpenRouter (api_key_ref is resolved from the credential
+// store / env at boot via credentials.InjectFromConfig).
 func buildConfig(hc *harnessConfig, homeDir string, port int) *config.Config {
 	cfg := &config.Config{
 		Version: 1,
@@ -459,8 +483,17 @@ func buildConfig(hc *harnessConfig, homeDir string, port int) *config.Config {
 		Agents: config.AgentsConfig{
 			Defaults: config.AgentDefaults{
 				Workspace: homeDir,
-				ModelName: "scripted-model",
+				ModelName: "openrouter-glm",
 				MaxTokens: 4096,
+			},
+		},
+		Providers: []*config.ModelConfig{
+			{
+				ModelName: "openrouter-glm",
+				Model:     "openrouter/z-ai/glm-5-turbo",
+				Provider:  "openrouter",
+				APIBase:   "https://openrouter.ai/api/v1",
+				APIKeyRef: "OPENROUTER_API_KEY",
 			},
 		},
 	}
@@ -492,4 +525,31 @@ func buildConfig(hc *harnessConfig, homeDir string, port int) *config.Config {
 	}
 
 	return cfg
+}
+
+// seedTestCredentials writes credentials.json into homeDir with an
+// OPENROUTER_API_KEY entry encrypted under testMasterKey. The real OpenRouter
+// key is taken from env var OPENROUTER_API_KEY when set (dev/CI exercising real
+// LLM calls); otherwise a placeholder is stored. Under -tags=test_harness the
+// gateway's SetTestProviderOverride hook supersedes the real provider so the
+// placeholder is never sent over the wire.
+func seedTestCredentials(homeDir string) error {
+	masterKey, err := hex.DecodeString(testMasterKey)
+	if err != nil {
+		return fmt.Errorf("decode testMasterKey: %w", err)
+	}
+
+	store := credentials.NewStore(filepath.Join(homeDir, "credentials.json"))
+	if err := store.UnlockWithKey(masterKey); err != nil {
+		return fmt.Errorf("unlock store: %w", err)
+	}
+
+	apiKey := os.Getenv("OPENROUTER_API_KEY")
+	if apiKey == "" {
+		apiKey = "test-stub-openrouter-key-not-for-real-calls"
+	}
+	if err := store.Set("OPENROUTER_API_KEY", apiKey); err != nil {
+		return fmt.Errorf("set OPENROUTER_API_KEY: %w", err)
+	}
+	return nil
 }

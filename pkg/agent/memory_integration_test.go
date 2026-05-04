@@ -6,7 +6,7 @@
 // unit tests, but it means regressions in the REAL MemoryStore's flock
 // discipline, validation gates, format bytes, or retro layout never fail a
 // tool test. This file closes that gap from the agent side by wiring the
-// production adapter into the real tools and asserting full-path behaviour.
+// production adapter into the real tools and asserting full-path behavior.
 
 package agent
 

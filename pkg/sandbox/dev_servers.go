@@ -381,7 +381,7 @@ func (r *DevServerRegistry) sweepExpired() {
 
 // expiredTokens collects tokens whose registration has hit either timer,
 // taking the lock once and returning a snapshot. Performed without
-// signalling so signalling can happen outside the lock.
+// signaling so signaling can happen outside the lock.
 func (r *DevServerRegistry) expiredTokens(now time.Time) []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()

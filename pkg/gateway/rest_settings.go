@@ -516,7 +516,7 @@ func (a *restAPI) HandleAbout(w http.ResponseWriter, r *http.Request) {
 		"preview_port":             cfg.Gateway.PreviewPort,
 		"preview_listener_enabled": cfg.Gateway.IsPreviewListenerEnabled(),
 		"warmup_timeout_seconds":   cfg.Tools.RunInWorkspace.WarmupTimeoutSeconds,
-		// F-8: signals to the SPA that frame-ancestors is '*' (degraded T-04 defence).
+		// F-8: signals to the SPA that frame-ancestors is '*' (degraded T-04 defense).
 		"frame_ancestors_fallback": frameAncestorsFallback,
 	}
 	// preview_origin is optional — only include when the operator set it.

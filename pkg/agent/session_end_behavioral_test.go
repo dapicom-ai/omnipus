@@ -1,4 +1,4 @@
-// session_end_behavioral_test.go — end-to-end behavioural coverage for
+// session_end_behavioral_test.go — end-to-end behavioral coverage for
 // Fix C's session-end pipeline. Complements session_end_smoke_test.go with
 // spec-mandated #35 (happy path), #43 (bootstrap pass), and boot-gate coverage
 // for FR-029a (cheap-model allow-list).
@@ -28,13 +28,13 @@ import (
 // LLM. Records the last request so tests can assert recap-option hygiene
 // (max_tokens=250, extended_thinking=false, extra_body.reasoning.exclude=true).
 type scriptedProvider struct {
-	mu            sync.Mutex
-	responseBody  string
-	responseErr   error
-	callCount     int
-	lastOpts      map[string]any
-	lastModel     string
-	lastMessages  []providers.Message
+	mu           sync.Mutex
+	responseBody string
+	responseErr  error
+	callCount    int
+	lastOpts     map[string]any
+	lastModel    string
+	lastMessages []providers.Message
 }
 
 func (s *scriptedProvider) Chat(
@@ -112,7 +112,7 @@ func TestRunRecap_HappyPath_PersistsLastSessionAndRetro(t *testing.T) {
 	sessionID := meta.ID
 	if err := store.AppendTranscript(sessionID, session.TranscriptEntry{
 		Role:      "user",
-		Content:   "please summarise what we did today",
+		Content:   "please summarize what we did today",
 		Timestamp: time.Now().UTC(),
 		AgentID:   "recap-agent",
 	}); err != nil {

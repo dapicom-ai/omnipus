@@ -150,7 +150,9 @@ func readDenyPredicate(t *testing.T, name string, res *ToolResult) bool {
 // validatePathWithAllowPaths because that helper detects sibling-agent
 // paths via isCrossAgentPath.
 func TestRedteam_CrossAgent_DirectRead(t *testing.T) {
-	t.Logf("documents C5-DIRECT (cross-agent direct read) from insider-pentest report; current control is isCrossAgentPath")
+	t.Logf(
+		"documents C5-DIRECT (cross-agent direct read) from insider-pentest report; current control is isCrossAgentPath",
+	)
 
 	cases := []crossAgentDirectCase{
 		{
@@ -246,7 +248,9 @@ func TestRedteam_CrossAgent_DirectRead(t *testing.T) {
 // filepath.EvalSymlinks AFTER the workspace-prefix check and rejects
 // when the resolved path falls outside the workspace.
 func TestRedteam_CrossAgent_SymlinkRead(t *testing.T) {
-	t.Logf("documents C5-SYMLINK (cross-agent symlink read) from insider-pentest report; current control is EvalSymlinks in validatePathWithAllowPaths")
+	t.Logf(
+		"documents C5-SYMLINK (cross-agent symlink read) from insider-pentest report; current control is EvalSymlinks in validatePathWithAllowPaths",
+	)
 
 	cases := []crossAgentDirectCase{
 		{

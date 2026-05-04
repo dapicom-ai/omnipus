@@ -345,8 +345,8 @@ type toolMetricsRecorder interface {
 // nopToolMetrics satisfies toolMetricsRecorder when no gateway is wired.
 type nopToolMetrics struct{}
 
-func (nopToolMetrics) IncFilterTotal(_, _ string)  {}
-func (nopToolMetrics) IncCollisionTotal(_ string)  {}
+func (nopToolMetrics) IncFilterTotal(_, _ string) {}
+func (nopToolMetrics) IncCollisionTotal(_ string) {}
 
 // activeToolMetricsRecorder is swapped at gateway boot.
 var activeToolMetricsRecorder toolMetricsRecorder = nopToolMetrics{}

@@ -42,7 +42,7 @@ func TestHarnessQueue_EmptyReturnsErrQueueEmpty(t *testing.T) {
 	testHarnessQueueEmptyReturnsErrQueueEmpty(t)
 }
 
-// TestHarnessQueue_CtxCancelBeforeChat verifies that a cancelled context causes
+// TestHarnessQueue_CtxCancelBeforeChat verifies that a canceled context causes
 // Chat to return ctx.Err() without consuming a step.
 func TestHarnessQueue_CtxCancelBeforeChat(t *testing.T) {
 	testHarnessQueueCtxCancelBeforeChat(t)

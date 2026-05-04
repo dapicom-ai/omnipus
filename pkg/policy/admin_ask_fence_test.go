@@ -25,8 +25,10 @@ func TestIsAdmin(t *testing.T) {
 		{"admin_role", &config.UserConfig{Role: config.UserRoleAdmin}, true},
 		{"user_role_is_not_admin", &config.UserConfig{Role: config.UserRoleUser}, false},
 		{"empty_role_is_not_admin", &config.UserConfig{Role: ""}, false},
-		{"username_does_not_imply_admin",
-			&config.UserConfig{Username: "admin", Role: config.UserRoleUser}, false},
+		{
+			"username_does_not_imply_admin",
+			&config.UserConfig{Username: "admin", Role: config.UserRoleUser}, false,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

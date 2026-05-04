@@ -20,7 +20,7 @@ func TestNewAuditCommand_Wired(t *testing.T) {
 	require.Equal(t, "audit", cmd.Use)
 
 	// Find the verify subcommand.
-	var verify = false
+	verify := false
 	for _, sub := range cmd.Commands() {
 		if sub.Use == "verify" {
 			verify = true

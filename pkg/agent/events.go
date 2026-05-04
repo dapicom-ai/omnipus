@@ -220,8 +220,8 @@ type ToolExecStartPayload struct {
 	ChatID     string
 	// SessionID is the transcript-store session ID for this turn.
 	SessionID string
-	Tool       string
-	Arguments  map[string]any
+	Tool      string
+	Arguments map[string]any
 	// ParentSpawnCallID is non-empty when this tool call fires inside a sub-turn.
 	// It equals the parent spawn tool call's ToolCall.ID (FR-H-002).
 	// The WebSocket forwarder propagates this as parent_call_id on outbound frames (FR-H-005).
@@ -236,7 +236,7 @@ type ToolExecEndPayload struct {
 	ToolCallID session.ToolCallID
 	ChatID     string
 	// SessionID is the transcript-store session ID for this turn.
-	SessionID string
+	SessionID  string
 	Tool       string
 	Duration   time.Duration
 	ForLLMLen  int

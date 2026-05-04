@@ -29,8 +29,10 @@ func TestDefaultChildPolicy_OmitsHomeRoot(t *testing.T) {
 	cleanHome := filepath.Clean(home)
 	for _, r := range policy.FilesystemRules {
 		if filepath.Clean(r.Path) == cleanHome {
-			t.Errorf("DefaultChildPolicy must NOT grant $OMNIPUS_HOME root (%q) — secrets carve-out is defeated when the parent tree is granted",
-				cleanHome)
+			t.Errorf(
+				"DefaultChildPolicy must NOT grant $OMNIPUS_HOME root (%q) — secrets carve-out is defeated when the parent tree is granted",
+				cleanHome,
+			)
 		}
 	}
 }

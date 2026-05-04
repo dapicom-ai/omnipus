@@ -109,7 +109,7 @@ func emitRestrictFailure(callsite string, err error) {
 // new sensitive keys are safe by default.
 //
 // The allowlist covers exactly what a generic build/run child needs to find
-// libraries, locate the user's home, render localised output, and write to
+// libraries, locate the user's home, render localized output, and write to
 // a scratch directory:
 //
 //	PATH    — required to locate executables (npm, node, python, sh, ...)
@@ -460,12 +460,21 @@ func runOnCurrentThread(ctx context.Context, argv []string, env []string, lim Li
 		// security event that operators must see, not a silently discarded error.
 		killErr := cmd.Process.Kill()
 		if killErr != nil && !isProcessDoneError(killErr) {
-			slog.Error("hardened_exec: post-start hardening failed AND child kill failed; child PID may still be running",
-				"pid", cmd.Process.Pid,
-				"kill_err", killErr,
-				"hardening_err", hardeningErr)
+			slog.Error(
+				"hardened_exec: post-start hardening failed AND child kill failed; child PID may still be running",
+				"pid",
+				cmd.Process.Pid,
+				"kill_err",
+				killErr,
+				"hardening_err",
+				hardeningErr,
+			)
 			_, _ = cmd.Process.Wait()
-			return Result{}, fmt.Errorf("hardened_exec: post-start hardening: %w; kill also failed: %v", hardeningErr, killErr)
+			return Result{}, fmt.Errorf(
+				"hardened_exec: post-start hardening: %w; kill also failed: %v",
+				hardeningErr,
+				killErr,
+			)
 		}
 		_, _ = cmd.Process.Wait()
 		return Result{}, fmt.Errorf("hardened_exec: post-start hardening: %w", hardeningErr)
@@ -529,7 +538,7 @@ func mergeEnv(env []string, lim Limits) []string {
 	merged = append(merged, env...)
 
 	// Inject proxy variables. Both upper- and lower-case forms are widely
-	// honoured (npm/node use lowercase, curl uses uppercase, Go's
+	// honored (npm/node use lowercase, curl uses uppercase, Go's
 	// http.Transport uses both via httpproxy.FromEnvironment).
 	if lim.EgressProxyAddr != "" {
 		proxyURL := "http://" + lim.EgressProxyAddr

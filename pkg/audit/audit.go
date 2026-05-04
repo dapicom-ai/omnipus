@@ -62,7 +62,7 @@ const (
 	DecisionError = "error"
 )
 
-// IsValidDecision reports whether d is one of the recognised Decision values.
+// IsValidDecision reports whether d is one of the recognized Decision values.
 // Returns false for unknown values (typos, deprecated values) so the audit
 // pipeline can warn-once and continue rather than reject the entry.
 func IsValidDecision(d Decision) bool {
@@ -73,7 +73,7 @@ func IsValidDecision(d Decision) bool {
 	return false
 }
 
-// IsValidEventName reports whether e is one of the recognised EventName
+// IsValidEventName reports whether e is one of the recognized EventName
 // values. The set is intentionally narrow (only events emitted from the
 // audit, agent, gateway, sandbox, and tools packages today). Unknown values
 // trigger a warn-once log so a typo or new event introduction is loud
@@ -156,7 +156,7 @@ type LoggerConfig struct {
 	// logging (cfg.Sandbox.AuditLog == true). When true, NewLogger returns a
 	// *LoggerConstructionError on openCurrentFile failure so the gateway can
 	// fail closed (CRIT-2). When false, openCurrentFile failures keep the
-	// legacy "log-and-continue" behaviour: NewLogger returns a degraded logger
+	// legacy "log-and-continue" behavior: NewLogger returns a degraded logger
 	// and a nil error so callers wired with audit-disabled don't get spurious
 	// boot aborts on permission/disk hiccups.
 	AuditLogRequested bool
@@ -198,13 +198,13 @@ type Logger struct {
 	chainKey []byte
 
 	// prevHMAC tracks the previous entry's HMAC so the next write can chain
-	// off it. Initialised from the last line of audit.jsonl on open (or from
+	// off it. Initialized from the last line of audit.jsonl on open (or from
 	// genesisSeed for a fresh file). Updated under mu after every successful
 	// write. 32 bytes (raw, not hex-encoded).
 	prevHMAC []byte
 
 	// unknownDecisionWarn / unknownEventWarn fire at most once per process for
-	// the "Decision/Event was an unrecognised value" path. Surfaces typos and
+	// the "Decision/Event was an unrecognized value" path. Surfaces typos and
 	// stale event names without spamming logs on every emit.
 	unknownDecisionWarn sync.Once
 	unknownEventWarn    sync.Once
@@ -216,7 +216,7 @@ type Logger struct {
 // B1.2(b) / CRIT-2: when cfg.Sandbox.AuditLog == true and audit construction
 // fails (including openCurrentFile failure inside NewLogger), the gateway must
 // fail closed (treat as a sandbox boot error). Wrapping the underlying error
-// in this typed sentinel lets the gateway recognise the case without
+// in this typed sentinel lets the gateway recognize the case without
 // string-matching the message and without importing internal state from the
 // agent package.
 type LoggerConstructionError struct {
@@ -254,7 +254,7 @@ func (e *LoggerConstructionError) Unwrap() error {
 // function returns a *LoggerConstructionError so the gateway boot path
 // (gateway.go around the agent.NewAgentLoop call) can fail closed. When
 // cfg.AuditLogRequested == false, openCurrentFile failures fall back to the
-// legacy "return a degraded logger, no error" behaviour so audit-disabled
+// legacy "return a degraded logger, no error" behavior so audit-disabled
 // deployments don't crash on transient permission issues.
 func NewLogger(cfg LoggerConfig) (*Logger, error) {
 	if cfg.MaxSizeBytes <= 0 {
@@ -297,7 +297,7 @@ func NewLogger(cfg LoggerConfig) (*Logger, error) {
 		if cfg.AuditLogRequested {
 			return nil, &LoggerConstructionError{Dir: cfg.Dir, Err: err}
 		}
-		// Operator did not request audit — keep legacy degraded-mode behaviour.
+		// Operator did not request audit — keep legacy degraded-mode behavior.
 		slog.Error("Audit log file cannot be opened. Operating in degraded mode.",
 			"error", err, "path", cfg.Dir)
 		l.degraded = true
@@ -455,7 +455,7 @@ func (l *Logger) writeLine(data []byte, fsyncRequired bool) error {
 
 	// v0.2 #155: embed the HMAC chain link before writing. embedHMAC parses
 	// the pre-marshaled `data`, removes any pre-existing `hmac` field
-	// (defence against caller mistake), computes HMAC-SHA256 over
+	// (defense against caller mistake), computes HMAC-SHA256 over
 	//   prev_hmac || canonical_json_without_hmac
 	// and re-marshals with the new `hmac` field. The output is what we
 	// write to disk.

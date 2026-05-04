@@ -106,12 +106,12 @@ func TestFilterToolsByPolicy_AdminAskFenceOnCustomAgents(t *testing.T) {
 	}
 
 	cases := []struct {
-		name          string
-		effective     string
-		toolName      string
-		agentID       string
-		wantPolicy    string
-		wantFenceOn   bool
+		name        string
+		effective   string
+		toolName    string
+		agentID     string
+		wantPolicy  string
+		wantFenceOn bool
 	}{
 		// (1) custom + sysagent + allow → ask
 		{

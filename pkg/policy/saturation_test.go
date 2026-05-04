@@ -153,7 +153,7 @@ func TestShouldSaturate(t *testing.T) {
 		cap, pending int
 		want         bool
 	}{
-		{cap: 0, pending: 0, want: false},        // unlimited
+		{cap: 0, pending: 0, want: false},         // unlimited
 		{cap: 0, pending: 1_000_000, want: false}, // unlimited
 		{cap: 64, pending: 0, want: false},
 		{cap: 64, pending: 63, want: false},

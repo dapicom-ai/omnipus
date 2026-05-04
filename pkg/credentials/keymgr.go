@@ -292,7 +292,7 @@ func loadKeyFile(path string) ([]byte, error) {
 }
 
 // emitMasterKeyAudit logs a master.key load attempt at the slog level. The
-// audit subsystem may not yet be initialised when Unlock runs — this happens
+// audit subsystem may not yet be initialized when Unlock runs — this happens
 // during boot before the audit Logger is constructed — so we use slog with
 // structured fields that downstream parsers (and operator log aggregation)
 // can reconstruct into an audit record.

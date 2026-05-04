@@ -95,17 +95,17 @@ func TestAllowlist_DeniesPreviouslySensitive(t *testing.T) {
 func TestAllowlist_DeniesNewSensitive(t *testing.T) {
 	// Cases an attacker-or-bug might leak.
 	denied := []string{
-		"OMNIPUS_SESSION_HMAC",         // hypothetical future internal secret
-		"OMNIPUS_CONFIG_PATH",          // even non-secret OMNIPUS_* must not leak
-		"AWS_ACCESS_KEY_ID",            // common upstream cred
-		"GITHUB_TOKEN",                 // CI runner cred
-		"OPENROUTER_API_KEY",           // LLM provider cred
-		"DATABASE_URL",                 // DSN
-		"OMNIPUS_BEARER_TOKEN_BACKUP",  // fat-fingered duplicate
-		"OMNIPUS_KEY_FILE_OLD",         // post-rotation residue
-		"PATHX",                        // PATH typo / spoofing attempt
-		"PATH_INFO",                    // CGI-leak — not the same as PATH
-		"HOMEX",                        // HOME typo / spoofing attempt
+		"OMNIPUS_SESSION_HMAC",        // hypothetical future internal secret
+		"OMNIPUS_CONFIG_PATH",         // even non-secret OMNIPUS_* must not leak
+		"AWS_ACCESS_KEY_ID",           // common upstream cred
+		"GITHUB_TOKEN",                // CI runner cred
+		"OPENROUTER_API_KEY",          // LLM provider cred
+		"DATABASE_URL",                // DSN
+		"OMNIPUS_BEARER_TOKEN_BACKUP", // fat-fingered duplicate
+		"OMNIPUS_KEY_FILE_OLD",        // post-rotation residue
+		"PATHX",                       // PATH typo / spoofing attempt
+		"PATH_INFO",                   // CGI-leak — not the same as PATH
+		"HOMEX",                       // HOME typo / spoofing attempt
 	}
 	for _, k := range denied {
 		if isAllowedChildEnvKey(k) {

@@ -89,7 +89,10 @@ func (s *ServedSubdirs) SetOnEvict(fn func(tokens []string)) {
 //
 // Returns the token (for embedding in the URL) and the registration's
 // expiry time.
-func (s *ServedSubdirs) Register(agentID, absDir string, duration time.Duration) (token string, deadline time.Time, err error) {
+func (s *ServedSubdirs) Register(
+	agentID, absDir string,
+	duration time.Duration,
+) (token string, deadline time.Time, err error) {
 	rawToken := make([]byte, 32)
 	if _, err = rand.Read(rawToken); err != nil {
 		return "", time.Time{}, fmt.Errorf("served_subdirs: generate token: %w", err)

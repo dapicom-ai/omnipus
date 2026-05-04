@@ -50,7 +50,9 @@ import (
 // same coverage. The regex string MUST be kept in sync with the production
 // definition at pkg/tools/shell.go ~L227 (post v0.2 #155 item 5 widening).
 func TestRedteam_ForkBomb_DirectPattern_Blocked(t *testing.T) {
-	t.Logf("documents C3-DIRECT (fork bomb literal pattern) from insider-pentest report; current control is shell-guard regex")
+	t.Logf(
+		"documents C3-DIRECT (fork bomb literal pattern) from insider-pentest report; current control is shell-guard regex",
+	)
 
 	// Production regex — keep in sync with pkg/tools/shell.go ~L227.
 	// v0.2 #155 item 5: widened to also accept arbitrary identifiers and newlines.
@@ -67,10 +69,10 @@ func TestRedteam_ForkBomb_DirectPattern_Blocked(t *testing.T) {
 	// `space_inside_func_def` is kept in the table at mustMatch=true so
 	// any future re-tightening of the pattern surfaces as a regression.
 	bombs := []struct {
-		name        string
-		text        string
-		mustMatch   bool   // when true, regex MUST match; failure is regression.
-		gapNote     string // explanation when mustMatch=false.
+		name      string
+		text      string
+		mustMatch bool   // when true, regex MUST match; failure is regression.
+		gapNote   string // explanation when mustMatch=false.
 	}{
 		{"canonical", `:(){ :|:& };:`, true, ""},
 		{"trailing_double_space", `:(){ :|:& };  :`, true, ""},
@@ -287,7 +289,9 @@ func TestRedteam_ForkBomb_BypassShapes(t *testing.T) {
 //
 // This test is documenting-only. It will FAIL until #155 adds RLIMIT_NPROC.
 func TestRedteam_ForkBomb_IndirectViaScript_Limited(t *testing.T) {
-	t.Logf("documents C3-INDIRECT (fork bomb via script) from insider-pentest report; closes when v0.2 #155 adds RLIMIT_NPROC")
+	t.Logf(
+		"documents C3-INDIRECT (fork bomb via script) from insider-pentest report; closes when v0.2 #155 adds RLIMIT_NPROC",
+	)
 
 	if runtime.GOOS != "linux" {
 		t.Skip("Linux-only — this exercises Linux RLIMIT_NPROC")
@@ -370,7 +374,10 @@ func TestRedteam_ForkBomb_IndirectViaScript_Limited(t *testing.T) {
 		// the right outcome for the threat — bomb didn't get to run. But
 		// we don't accept that as proof of containment because production
 		// must contain it without relying on the test's pre-imposed cap.
-		t.Logf("cmd.Start failed (likely test-imposed NPROC cap): %v — note: this is the test's safety net, not production behaviour", startErr)
+		t.Logf(
+			"cmd.Start failed (likely test-imposed NPROC cap): %v — note: this is the test's safety net, not production behavior",
+			startErr,
+		)
 		t.Errorf(
 			"C3-INDIRECT GAP CONFIRMED (preflight): even bomb startup hit the test's safety cap of %d. "+
 				"That means production hardened_exec_linux.go applies NO limit of its own — the only thing "+
@@ -418,8 +425,13 @@ func TestRedteam_ForkBomb_IndirectViaScript_Limited(t *testing.T) {
 			baselinePIDs, peakPIDs, growth, productionCapWithSlack, safetyCap,
 		)
 	} else {
-		t.Logf("C3-INDIRECT closed: growth=%d (baseline=%d, peak=%d) — production RLIMIT_NPROC contained the bomb below the test safetyCap (%d)",
-			growth, baselinePIDs, peakPIDs, safetyCap)
+		t.Logf(
+			"C3-INDIRECT closed: growth=%d (baseline=%d, peak=%d) — production RLIMIT_NPROC contained the bomb below the test safetyCap (%d)",
+			growth,
+			baselinePIDs,
+			peakPIDs,
+			safetyCap,
+		)
 	}
 }
 

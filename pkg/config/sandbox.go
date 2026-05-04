@@ -112,7 +112,7 @@ func (p SandboxProfile) IsValid() bool {
 // String implements fmt.Stringer.
 func (p SandboxProfile) String() string { return string(p) }
 
-// MarshalJSON serialises the profile as a JSON string.
+// MarshalJSON serializes the profile as a JSON string.
 func (p SandboxProfile) MarshalJSON() ([]byte, error) {
 	return json.Marshal(string(p))
 }
@@ -254,7 +254,7 @@ type OmnipusSandboxConfig struct {
 	// "binary subcommand" string. Comparison is case-sensitive exact-prefix.
 	Tier3Commands []string `json:"tier3_commands,omitempty"`
 
-	// PathGuardAuditFailClosed controls behaviour when the audit logger
+	// PathGuardAuditFailClosed controls behavior when the audit logger
 	// fails during a Tier 2 (build_static) or Tier 3 (web_serve / workspace
 	// shell) invocation. When nil or true (default via ResolveBool), the
 	// tool refuses to run without a guaranteed compliance trail. When

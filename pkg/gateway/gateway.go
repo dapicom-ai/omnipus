@@ -30,7 +30,6 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/channels"
-	"github.com/dapicom-ai/omnipus/pkg/sandbox"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/dingtalk"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/discord"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/feishu"
@@ -58,11 +57,12 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/logger"
 	"github.com/dapicom-ai/omnipus/pkg/media"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
-	"github.com/dapicom-ai/omnipus/pkg/providers"
 	"github.com/dapicom-ai/omnipus/pkg/policy"
+	"github.com/dapicom-ai/omnipus/pkg/providers"
+	"github.com/dapicom-ai/omnipus/pkg/sandbox"
 	"github.com/dapicom-ai/omnipus/pkg/state"
-	"github.com/dapicom-ai/omnipus/pkg/tools"
 	systools "github.com/dapicom-ai/omnipus/pkg/sysagent/tools"
+	"github.com/dapicom-ai/omnipus/pkg/tools"
 	"github.com/dapicom-ai/omnipus/pkg/voice"
 )
 
@@ -581,7 +581,6 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 	// binds so operators see the warning even during a fast crash-loop.
 	stopNag := StartNagBanner(sandboxResult.NagReason, nil)
 
-
 	fmt.Println("\n📦 Agent Status:")
 	startupInfo := agentLoop.GetStartupInfo()
 	toolsInfo, _ := startupInfo["tools"].(map[string]any)
@@ -615,7 +614,18 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 	}
 	centralMCPReg := tools.NewMCPRegistry()
 
-	runningServices, err := setupAndStartServices(cfg, bundle, agentLoop, msgBus, homePath, credStore, sandboxResult, centralBuiltinReg, centralMCPReg, allowGodMode)
+	runningServices, err := setupAndStartServices(
+		cfg,
+		bundle,
+		agentLoop,
+		msgBus,
+		homePath,
+		credStore,
+		sandboxResult,
+		centralBuiltinReg,
+		centralMCPReg,
+		allowGodMode,
+	)
 	if err != nil {
 		stopNag() // don't leak the nag goroutine if service setup fails.
 		return err
@@ -654,9 +664,9 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 	// WireSysagentDeps immediately registers all 35 system.* tools on every agent
 	// in the current registry and stashes deps for re-application on hot-reload.
 	sysAgentDeps := &systools.Deps{
-		Home:       homePath,
-		ConfigPath: configPath,
-		GetCfg:     agentLoop.GetConfig,
+		Home:         homePath,
+		ConfigPath:   configPath,
+		GetCfg:       agentLoop.GetConfig,
 		MutateConfig: agentLoop.MutateConfig,
 		SaveConfigLocked: func(c *config.Config) error {
 			return config.SaveConfig(configPath, c)
@@ -935,7 +945,7 @@ func setupAndStartServices(
 	credStore *credentials.Store,
 	sandboxResult *SandboxApplyResult,
 	builtinReg *tools.BuiltinRegistry, // M16: central builtin registry (FR-001)
-	mcpReg *tools.MCPRegistry,          // M16: central MCP registry (FR-001)
+	mcpReg *tools.MCPRegistry, // M16: central MCP registry (FR-001)
 	allowGodMode bool,
 ) (*services, error) {
 	runningServices := &services{credStore: credStore, bundle: bundle, sandboxResult: sandboxResult}
@@ -1092,9 +1102,11 @@ func setupAndStartServices(
 			}
 		}
 		if wsEnabled {
-			fmt.Fprintf(os.Stderr,
+			fmt.Fprintf(
+				os.Stderr,
 				"WARN: kernel sandbox unavailable on %s; workspace.shell runs with application-level path checks only — do not enable on multi-tenant systems\n",
-				runtime.GOOS)
+				runtime.GOOS,
+			)
 		}
 	}
 
@@ -1196,7 +1208,10 @@ func setupAndStartServices(
 	approvalMaxPending := cfg.Gateway.ToolApprovalMaxPending
 	effectiveCap, capOK := policy.ValidateSaturationCap(context.Background(), nil, approvalMaxPending)
 	if !capOK {
-		return nil, fmt.Errorf("gateway: invalid tool_approval_max_pending=%d — boot aborted (FR-016)", approvalMaxPending)
+		return nil, fmt.Errorf(
+			"gateway: invalid tool_approval_max_pending=%d — boot aborted (FR-016)",
+			approvalMaxPending,
+		)
 	}
 	approvalTimeout := cfg.Gateway.ToolApprovalTimeout
 	var approvalTimeoutDur time.Duration
@@ -1368,7 +1383,7 @@ func setupAndStartServices(
 	// Write port file so external callers (e.g. eval-runner) can discover the bound port.
 	portFile := filepath.Join(cfg.WorkspacePath(), "gateway.port")
 	portData := strconv.Itoa(cfg.Gateway.Port)
-	if err := os.WriteFile(portFile, []byte(portData+"\n"), 0600); err != nil {
+	if err := os.WriteFile(portFile, []byte(portData+"\n"), 0o600); err != nil {
 		return nil, fmt.Errorf("write gateway.port: %w", err)
 	}
 

@@ -188,7 +188,11 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 	// Validate default profile value before any disk writes.
 	if changedDefaultProfile {
 		if !validSandboxProfiles[*body.DefaultProfile] {
-			jsonErr(w, http.StatusBadRequest, `invalid default_profile — must be one of "", "none", "workspace", "workspace+net", "host", "off"`)
+			jsonErr(
+				w,
+				http.StatusBadRequest,
+				`invalid default_profile — must be one of "", "none", "workspace", "workspace+net", "host", "off"`,
+			)
 			return
 		}
 	}

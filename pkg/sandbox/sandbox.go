@@ -209,7 +209,12 @@ var SecretFilesRelative = []string{
 // intended structure.
 //
 // Documents (does not close at the kernel layer): pentest items C1, C2.
-func DefaultChildPolicy(homePath string, allowedPaths []string, warnFn func(msg string, path string), bindPorts []uint16) SandboxPolicy {
+func DefaultChildPolicy(
+	homePath string,
+	allowedPaths []string,
+	warnFn func(msg string, path string),
+	bindPorts []uint16,
+) SandboxPolicy {
 	policy := DefaultPolicy(homePath, allowedPaths, warnFn, bindPorts)
 	if homePath == "" {
 		return policy
@@ -296,7 +301,12 @@ func DefaultChildPolicy(homePath string, allowedPaths []string, warnFn func(msg 
 // enforced (a boot-time WARN documents the degradation). Callers that need
 // to extend or replace the connect-port set should call DefaultPolicy first
 // and then mutate the returned policy's ConnectPortRules slice.
-func DefaultPolicy(homePath string, allowedPaths []string, warnFn func(msg string, path string), bindPorts []uint16) SandboxPolicy {
+func DefaultPolicy(
+	homePath string,
+	allowedPaths []string,
+	warnFn func(msg string, path string),
+	bindPorts []uint16,
+) SandboxPolicy {
 	rules := make([]PathRule, 0, 16+len(allowedPaths))
 
 	// Workspace: full RWX on $OMNIPUS_HOME. This is where agents write
@@ -326,7 +336,7 @@ func DefaultPolicy(homePath string, allowedPaths []string, warnFn func(msg strin
 		"/usr/lib",
 		"/usr/lib64",
 		"/usr/bin",
-		"/opt", // Chromium and other vendor binaries (e.g. /opt/google/chrome) live here.
+		"/opt",              // Chromium and other vendor binaries (e.g. /opt/google/chrome) live here.
 		"/etc/alternatives", // /usr/bin/google-chrome resolves through /etc/alternatives.
 		"/etc/ssl",
 		"/etc/ca-certificates",

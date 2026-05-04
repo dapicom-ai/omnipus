@@ -331,7 +331,7 @@ func NewExecToolWithDeps(
 // sandboxOn reports whether the exec tool should route children through the
 // hardened-exec path (sandbox.Run / ApplyChildHardening). The decision is
 // explicit-opt-in: only "enforce" and "permissive" turn it on. Any other
-// value — including "off" and the empty string — preserves today's behaviour
+// value — including "off" and the empty string — preserves today's behavior
 // (`sh -c <cmd>`, no proxy, no workspace cwd unless the caller passes one).
 //
 // Empty string explicitly maps to OFF so the many test paths that construct

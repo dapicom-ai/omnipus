@@ -147,7 +147,9 @@ func runEgressChild() {
 // works. Loopback to a closed port gives us ECONNREFUSED quickly with
 // zero external impact.
 func TestRedteam_RawTCP_Egress_Blocked(t *testing.T) {
-	t.Logf("documents C4 (raw TCP egress) from insider-pentest report; closes when v0.2 #155 adds NET_CONNECT_TCP enforcement")
+	t.Logf(
+		"documents C4 (raw TCP egress) from insider-pentest report; closes when v0.2 #155 adds NET_CONNECT_TCP enforcement",
+	)
 
 	if os.Getenv("OMNIPUS_REDTEAM_EGRESS_CHILD") == "1" {
 		runEgressChild()
@@ -197,8 +199,10 @@ func TestRedteam_RawTCP_Egress_Blocked(t *testing.T) {
 	case 77:
 		t.Skipf("Landlock unavailable in child (exit 77):\n%s", out)
 	case 1:
-		t.Errorf("C4 GAP CONFIRMED: sandboxed child completed raw TCP connect — NET_CONNECT_TCP enforcement is intentionally disabled (sandbox_linux.go:160). Fix in v0.2 (#155).\nchild stderr:\n%s",
-			out)
+		t.Errorf(
+			"C4 GAP CONFIRMED: sandboxed child completed raw TCP connect — NET_CONNECT_TCP enforcement is intentionally disabled (sandbox_linux.go:160). Fix in v0.2 (#155).\nchild stderr:\n%s",
+			out,
+		)
 	default:
 		t.Fatalf("child exit %d (unexpected — expected 1=gap, 42=fixed, 77=skip):\n%s", exitCode, out)
 	}

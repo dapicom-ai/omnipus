@@ -23,8 +23,8 @@ func TestSpawnBackgroundChild_BasicSpawn(t *testing.T) {
 	cmd, err := sandbox.SpawnBackgroundChild(
 		[]string{"true"},
 		dir,
-		nil,  // env
-		0,    // port
+		nil, // env
+		0,   // port
 		sandbox.Limits{WorkspaceDir: dir},
 	)
 	if err != nil {

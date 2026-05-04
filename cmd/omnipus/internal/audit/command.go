@@ -153,7 +153,7 @@ type exitCodeError struct {
 }
 
 // Error implements error for exitCodeError. Used by cobra when it
-// doesn't recognise the wrapper.
+// doesn't recognize the wrapper.
 func (e *exitCodeError) Error() string {
 	if e == nil || e.err == nil {
 		return ""
@@ -178,7 +178,7 @@ func (e *exitCodeError) ExitCode() int {
 }
 
 // exitErr prints err to stderr and triggers an os.Exit with the
-// specified code. Used by runVerify to honour the documented 0/1/2
+// specified code. Used by runVerify to honor the documented 0/1/2
 // contract.
 func exitErr(code int, err error) error {
 	if err != nil {

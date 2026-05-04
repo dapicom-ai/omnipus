@@ -163,7 +163,7 @@ func DeriveAuditKey(masterKey []byte) ([]byte, error) {
 // resolveChainKey picks the chain key for a Logger in the documented
 // precedence order: LoggerConfig.HMACKey → processChainKey → dev fallback.
 // The dev fallback is deterministic (sha256("omnipus-audit-dev-only-key"))
-// so tests across the suite see consistent behaviour, but emits a sticky
+// so tests across the suite see consistent behavior, but emits a sticky
 // slog.Warn the first time it fires so a misconfigured production deploy
 // is loud.
 func resolveChainKey(cfgKey []byte) []byte {
@@ -203,11 +203,11 @@ func computeEntryHMAC(prev []byte, canonical []byte, key []byte) []byte {
 // canonicalJSONWithoutHMAC returns a canonical JSON encoding of the entry
 // suitable for HMAC computation. It:
 //
-//   1. Unmarshals the input bytes into a generic map[string]any.
-//   2. Removes the `hmac` key (must NOT be in the input to the HMAC).
-//   3. Re-marshals with sorted keys at every level.
+//  1. Unmarshals the input bytes into a generic map[string]any.
+//  2. Removes the `hmac` key (must NOT be in the input to the HMAC).
+//  3. Re-marshals with sorted keys at every level.
 //
-// We rely on a custom encoder because Go's encoding/json randomises map
+// We rely on a custom encoder because Go's encoding/json randomizes map
 // iteration but DOES sort top-level map keys when marshaling map[string]any
 // — however, the contract is documented only for sub-maps, not nested
 // types. To be safe we walk the structure ourselves.

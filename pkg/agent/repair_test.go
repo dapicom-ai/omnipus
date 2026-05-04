@@ -89,7 +89,11 @@ func TestRepairHistory_OrphanToolResult_SynthesizesToolUse(t *testing.T) {
 		t.Errorf("expected 1 synthetic tool_use, got %d", stats.SyntheticToolUses)
 	}
 	if len(out) != len(messages) {
-		t.Fatalf("repair should not change message count on pure-result-orphan case, got %d want %d", len(out), len(messages))
+		t.Fatalf(
+			"repair should not change message count on pure-result-orphan case, got %d want %d",
+			len(out),
+			len(messages),
+		)
 	}
 	// The assistant message should now declare BOTH t_declared and t_orphan.
 	assistant := out[1]
@@ -100,7 +104,7 @@ func TestRepairHistory_OrphanToolResult_SynthesizesToolUse(t *testing.T) {
 	if len(ids) != 2 || ids[0] != "t_declared" || ids[1] != "t_orphan" {
 		t.Errorf("assistant tool_calls = %v; want [t_declared, t_orphan]", ids)
 	}
-	// The synthesised tool_use must carry the tool name + arguments from the transcript.
+	// The synthesized tool_use must carry the tool name + arguments from the transcript.
 	synth := assistant.ToolCalls[1]
 	if synth.Name != "web_fetch" {
 		t.Errorf("synth tool name = %q, want web_fetch", synth.Name)

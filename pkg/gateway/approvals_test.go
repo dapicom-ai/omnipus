@@ -69,7 +69,7 @@ func TestApprovalRegistry_ResolveDeletesEntry(t *testing.T) {
 // cancelBatchShortCircuit() removes the entry from r.entries when
 // terminalRetention=0.
 // BDD: Given a registry with terminalRetention=0,
-// When an approval is requested and then cancelled via batch short-circuit,
+// When an approval is requested and then canceled via batch short-circuit,
 // Then r.entries is empty after the cancellation.
 func TestApprovalRegistry_BatchShortCircuitDeletesEntry(t *testing.T) {
 	reg := newApprovalRegistryV2(64, 300*time.Second)
@@ -132,8 +132,8 @@ func TestApprovalRegistry_RestartCancelDeletesEntry(t *testing.T) {
 		close(doneCh)
 	}()
 
-	cancelled := reg.cancelAllPendingForRestart()
-	require.Len(t, cancelled, 1, "must have cancelled exactly one entry")
+	canceled := reg.cancelAllPendingForRestart()
+	require.Len(t, canceled, 1, "must have canceled exactly one entry")
 
 	select {
 	case <-doneCh:

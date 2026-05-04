@@ -89,7 +89,15 @@ func (a *restAPI) HandlePreview(w http.ResponseWriter, r *http.Request) {
 		reg := a.devServers.Lookup(token)
 		if reg != nil {
 			if reg.AgentID != agentID {
-				a.auditServeFailure(r, "preview.token_agent_mismatch", "deny", agentID, token, http.StatusForbidden, startedAt)
+				a.auditServeFailure(
+					r,
+					"preview.token_agent_mismatch",
+					"deny",
+					agentID,
+					token,
+					http.StatusForbidden,
+					startedAt,
+				)
 				writeDevProxyError(w, http.StatusForbidden, "token does not match agent")
 				return
 			}
@@ -103,7 +111,15 @@ func (a *restAPI) HandlePreview(w http.ResponseWriter, r *http.Request) {
 		entry := a.servedSubdirs.Lookup(token)
 		if entry != nil {
 			if entry.AgentID != agentID {
-				a.auditServeFailure(r, "preview.token_agent_mismatch", "deny", agentID, token, http.StatusForbidden, startedAt)
+				a.auditServeFailure(
+					r,
+					"preview.token_agent_mismatch",
+					"deny",
+					agentID,
+					token,
+					http.StatusForbidden,
+					startedAt,
+				)
 				jsonErr(w, http.StatusForbidden, "token does not belong to this agent")
 				return
 			}
@@ -161,7 +177,7 @@ func (a *restAPI) HandleServeWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if a.servedSubdirs == nil {
-		jsonErr(w, http.StatusInternalServerError, "serve registry not initialised")
+		jsonErr(w, http.StatusInternalServerError, "serve registry not initialized")
 		return
 	}
 	entry := a.servedSubdirs.Lookup(token)
@@ -542,6 +558,6 @@ type responseHeaderWriter struct {
 	h http.Header
 }
 
-func (rhw responseHeaderWriter) Header() http.Header         { return rhw.h }
-func (rhw responseHeaderWriter) Write([]byte) (int, error)  { return 0, nil }
-func (rhw responseHeaderWriter) WriteHeader(int)             {}
+func (rhw responseHeaderWriter) Header() http.Header       { return rhw.h }
+func (rhw responseHeaderWriter) Write([]byte) (int, error) { return 0, nil }
+func (rhw responseHeaderWriter) WriteHeader(int)           {}

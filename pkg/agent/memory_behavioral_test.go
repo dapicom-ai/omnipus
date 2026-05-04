@@ -399,7 +399,11 @@ func TestMemoryStore_SweepRetros_Deletes30DayOld(t *testing.T) {
 		t.Fatalf("create old retro dir: %v", err)
 	}
 	oldRetroPath := filepath.Join(oldDir, "old-session_retro.md")
-	if err := os.WriteFile(oldRetroPath, []byte("<!-- ts=2020-01-01T00:00:00.000Z trigger=joined fallback=false -->\nold recap\n"), 0o600); err != nil {
+	if err := os.WriteFile(
+		oldRetroPath,
+		[]byte("<!-- ts=2020-01-01T00:00:00.000Z trigger=joined fallback=false -->\nold recap\n"),
+		0o600,
+	); err != nil {
 		t.Fatalf("write old retro file: %v", err)
 	}
 
@@ -410,7 +414,11 @@ func TestMemoryStore_SweepRetros_Deletes30DayOld(t *testing.T) {
 		t.Fatalf("create new retro dir: %v", err)
 	}
 	newRetroPath := filepath.Join(newDir, "new-session_retro.md")
-	if err := os.WriteFile(newRetroPath, []byte("<!-- ts=2026-04-24T10:00:00.000Z trigger=joined fallback=false -->\nnew recap\n"), 0o600); err != nil {
+	if err := os.WriteFile(
+		newRetroPath,
+		[]byte("<!-- ts=2026-04-24T10:00:00.000Z trigger=joined fallback=false -->\nnew recap\n"),
+		0o600,
+	); err != nil {
 		t.Fatalf("write new retro file: %v", err)
 	}
 

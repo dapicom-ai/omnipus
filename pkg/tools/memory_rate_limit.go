@@ -38,7 +38,7 @@
 //	check if the remaining count is < limit. We deliberately match the
 //	gateway implementation byte-for-byte for the hot path so the two
 //	limiters share the same operational characteristics: O(N) eviction
-//	in the worst case but amortised O(1) under steady state.
+//	in the worst case but amortized O(1) under steady state.
 //
 // Concurrency:
 //
@@ -154,7 +154,7 @@ func (l *MemoryRateLimiter) Window() time.Duration { return l.window }
 //
 // agentID may be "" (e.g. system tools without a calling agent). An empty
 // agentID is treated as a single shared "anonymous" bucket — this is the
-// same fail-closed behaviour the gateway uses for anonymous IPs. Same for
+// same fail-closed behavior the gateway uses for anonymous IPs. Same for
 // callerID.
 func (l *MemoryRateLimiter) Allow(agentID, callerID string) MemoryRateLimitDecision {
 	if l == nil {

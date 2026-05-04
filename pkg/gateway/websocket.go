@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
+
 	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
@@ -559,7 +560,10 @@ func (h *WSHandler) readLoop(ctx context.Context, conn *websocket.Conn, wc *wsCo
 				// FR-024 lazy CAS: if this agent already has an active session that
 				// differs from the one being attached, close the prior session.
 				if frame.AgentID != "" {
-					if prior, ok := h.agentLoop.GetCurrentSession(frame.AgentID); ok && prior != "" && prior != frame.SessionID {
+					if prior, ok := h.agentLoop.GetCurrentSession(
+						frame.AgentID,
+					); ok && prior != "" &&
+						prior != frame.SessionID {
 						priorSID := prior
 						go func() {
 							defer func() {
@@ -660,7 +664,10 @@ func (h *WSHandler) handleChatMessage(
 			// Validate client-supplied session_id format.
 			if err := validation.EntityID(sessionID); err != nil {
 				slog.Warn("ws: invalid session_id in message frame", "session_id", sessionID, "error", err)
-				sendConnFrame(wc, wsServerFrame{Type: "error", Message: "invalid session_id format", SessionID: sessionID})
+				sendConnFrame(
+					wc,
+					wsServerFrame{Type: "error", Message: "invalid session_id format", SessionID: sessionID},
+				)
 				return
 			}
 			// Validate that the session actually exists in the store.
@@ -710,13 +717,20 @@ func (h *WSHandler) handleChatMessage(
 	defer cancel()
 	if err := h.msgBus.PublishInbound(pubCtx, msg); err != nil {
 		slog.Warn("ws: failed to publish message", "error", err)
-		sendConnFrame(wc, wsServerFrame{Type: "error", Message: fmt.Sprintf("failed to deliver message: %v", err), SessionID: sessionID})
+		sendConnFrame(
+			wc,
+			wsServerFrame{
+				Type:      "error",
+				Message:   fmt.Sprintf("failed to deliver message: %v", err),
+				SessionID: sessionID,
+			},
+		)
 	}
 }
 
 // handleCancel gracefully interrupts the agent turn for the given session.
 // Only the turn belonging to sessionID is interrupted, preventing two parallel
-// sessions from being cancelled together.
+// sessions from being canceled together.
 func (h *WSHandler) handleCancel(wc *wsConn, sessionID string) {
 	if sessionID == "" {
 		sendConnFrame(wc, wsServerFrame{Type: "error", Message: "cancel requires session_id"})

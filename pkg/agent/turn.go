@@ -129,7 +129,7 @@ type turnState struct {
 	// this turn. When it reaches the configured floor (FR-084,
 	// gateway.turn_synthetic_error_floor, default 8), the turn is aborted with
 	// a system message {type: "turn_aborted", reason: "synthetic_error_loop"}.
-	// The counter resets per turn (initialised to zero here).
+	// The counter resets per turn (initialized to zero here).
 	syntheticErrorCount int
 }
 

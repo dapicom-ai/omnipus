@@ -76,7 +76,7 @@ var inlineGroupRe = regexp.MustCompile(`\(\?[^:]`)
 // sibling README.md for schema and extension guidance.
 //
 // The fixture is the source of truth in checked-out source trees. The hardcoded
-// fallback below is a defense-in-depth safety net for build artefacts that do
+// fallback below is a defense-in-depth safety net for build artifacts that do
 // not include the tests/ directory (e.g. published binaries running tests in
 // embedded mode); it MUST stay in sync with the fixture's invariants:
 //
@@ -103,7 +103,7 @@ func knownBadPaths() []string {
 		}
 	}
 	// Fallback: identical invariants to the fixture, kept for missing-tests-dir
-	// build artefacts. Any new entry in known_bad_paths.json that exercises a
+	// build artifacts. Any new entry in known_bad_paths.json that exercises a
 	// new threat class SHOULD also appear here.
 	return []string{
 		"",
@@ -151,13 +151,23 @@ func validateAllowPaths(patterns []string, fieldName string) error {
 
 		// Rule 2: no inline flag groups.
 		if inlineGroupRe.MatchString(pat) {
-			return fmt.Errorf("config error: %s entry %q must not contain inline flag groups (e.g. (?i))", fieldName, pat)
+			return fmt.Errorf(
+				"config error: %s entry %q must not contain inline flag groups (e.g. (?i))",
+				fieldName,
+				pat,
+			)
 		}
 
 		// Rule 3: ASCII-only printable chars.
 		for i, ch := range pat {
 			if ch < 0x20 || ch > 0x7E {
-				return fmt.Errorf("config error: %s entry %q contains non-ASCII-printable character at index %d (0x%02x)", fieldName, pat, i, ch)
+				return fmt.Errorf(
+					"config error: %s entry %q contains non-ASCII-printable character at index %d (0x%02x)",
+					fieldName,
+					pat,
+					i,
+					ch,
+				)
 			}
 		}
 
@@ -233,7 +243,7 @@ func validateBootConfig(cfg *Config) error {
 	if cfg.Tools.BuildStatic.MemoryLimitBytes == 0 {
 		cfg.Tools.BuildStatic.MemoryLimitBytes = 536870912 // 512 MiB
 	}
-	const memMin uint64 = 67108864  // 64 MiB
+	const memMin uint64 = 67108864   // 64 MiB
 	const memMax uint64 = 4294967295 // ~4 GiB
 	if cfg.Tools.BuildStatic.MemoryLimitBytes < memMin || cfg.Tools.BuildStatic.MemoryLimitBytes > memMax {
 		return fmt.Errorf(

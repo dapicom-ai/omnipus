@@ -32,7 +32,7 @@ import (
 )
 
 // PathAccessDeniedEvent is the canonical event name used by every
-// path-guard rejection emitted from a tool's Execute path. Centralised here
+// path-guard rejection emitted from a tool's Execute path. Centralized here
 // so audit-grep tooling and downstream consumers have a single literal to
 // match.
 const PathAccessDeniedEvent = "path.access_denied"

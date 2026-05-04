@@ -1,5 +1,3 @@
-//go:build !cgo
-
 // Omnipus - Ultra-lightweight personal AI agent
 // License: MIT
 // Copyright (c) 2026 Omnipus contributors
@@ -16,7 +14,7 @@
 //     it in DevServerRegistry, returns /preview/<agent>/<token>/ URL.
 //
 // Both modes return a result with a "kind" field ("static" or "dev") so the
-// SPA UI can pick the correct icon and warmup behaviour.
+// SPA UI can pick the correct icon and warmup behavior.
 //
 // Auth: token-only (FR-023). The /preview/ path token IS the credential.
 //
@@ -114,7 +112,7 @@ type WebServeDevConfig struct {
 	// EgressAllowList is the operator allow-list (audit hint only).
 	EgressAllowList []string
 
-	// AuditFailClosed controls behaviour when audit-write fails. When true
+	// AuditFailClosed controls behavior when audit-write fails. When true
 	// (default via cfg.Sandbox.PathGuardAuditFailClosed) the tool refuses to
 	// start without a guaranteed compliance trail. When false, the audit
 	// failure is logged at Error and the dev server proceeds.
@@ -369,7 +367,7 @@ func validateTier3Command(command string, operatorExtensions []string) error {
 	// Build the combined allow-list: baseline + operator extensions.
 	// Defense-in-depth: skip single-token operator extensions at runtime with a
 	// sticky Warn. Config-load validation (validateBootConfig) is the primary
-	// line of defence; this skip handles edge cases such as extensions that were
+	// line of defense; this skip handles edge cases such as extensions that were
 	// mutated after boot (should not happen in normal operation).
 	combined := make([]string, 0, len(tier3BaselineAllowList)+len(operatorExtensions))
 	combined = append(combined, tier3BaselineAllowList...)
@@ -593,7 +591,9 @@ func (t *WebServeTool) executeDev(ctx context.Context, rawPath, command string, 
 	deadline := reg.CreatedAt.Add(sandbox.HardTimeout).UTC().Format(time.RFC3339)
 	summary := fmt.Sprintf(
 		"web_serve: dev server started. URL: %s. Command: %s. Port: %d. Token expires after 30 min idle / 4 h hard cap.",
-		url, command, exposePort,
+		url,
+		command,
+		exposePort,
 	)
 
 	return NewToolResult(fmt.Sprintf(

@@ -166,12 +166,12 @@ func (lb *LinuxBackend) computeRights() {
 	// The earlier rationale for excluding NET_CONNECT_TCP ("gateway needs
 	// outbound 443/53/80") is satisfied by populating ConnectPortRules with
 	// {53, 80, 443} plus the dev-server port range — the gateway's own
-	// outbound LLM/DNS calls remain permitted, but unauthorised ports
+	// outbound LLM/DNS calls remain permitted, but unauthorized ports
 	// (databases, SSH, custom backdoors, the redteam test target 127.0.0.1:1)
 	// are denied at the kernel layer.
 	//
 	// On kernels < ABI v4, handledAccessNet stays 0 entirely, preserving
-	// legacy unrestricted-network behaviour. ConnectPortRules in the policy
+	// legacy unrestricted-network behavior. ConnectPortRules in the policy
 	// are computed but unused — a boot-time WARN documents the degradation.
 	if lb.abiVersion >= 4 {
 		lb.handledAccessNet = landlockAccessNetBindTcp | landlockAccessNetConnectTcp

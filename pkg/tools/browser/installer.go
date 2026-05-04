@@ -265,7 +265,8 @@ func extractZip(zipPath, destDir string) error {
 	for _, f := range r.File {
 		// Reject paths that try to escape destDir via traversal.
 		clean := filepath.Clean(f.Name)
-		if strings.HasPrefix(clean, "..") || strings.Contains(clean, string(os.PathSeparator)+".."+string(os.PathSeparator)) {
+		if strings.HasPrefix(clean, "..") ||
+			strings.Contains(clean, string(os.PathSeparator)+".."+string(os.PathSeparator)) {
 			return fmt.Errorf("zip entry escapes archive root: %q", f.Name)
 		}
 		outPath := filepath.Join(destDir, clean)

@@ -59,7 +59,7 @@ func goldenFilePath(t *testing.T) string {
 //
 // BDD: Given a BuiltinRegistry populated with production builtins,
 //
-//	When Describe() is called and the result is serialised to JSON,
+//	When Describe() is called and the result is serialized to JSON,
 //	Then the output must match pkg/tools/testdata/provider_defs.golden.json byte-for-byte.
 //	If -update is passed, the golden file is written instead of compared.
 //

@@ -378,7 +378,7 @@ func (al *AgentLoop) InterruptGraceful(hint string) error {
 
 // InterruptSession gracefully cancels the turn that belongs to the given sessionID.
 // Unlike InterruptGraceful, this targets only the one session rather than the first
-// active turn found, preventing two parallel sessions from being cancelled together.
+// active turn found, preventing two parallel sessions from being canceled together.
 func (al *AgentLoop) InterruptSession(sessionID, hint string) error {
 	if sessionID == "" {
 		return fmt.Errorf("empty session_id")

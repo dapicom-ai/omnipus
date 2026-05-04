@@ -32,7 +32,6 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/config"
-	"github.com/dapicom-ai/omnipus/pkg/sandbox"
 	"github.com/dapicom-ai/omnipus/pkg/coreagent"
 	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/fileutil"
@@ -40,6 +39,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/media"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
 	providers_pkg "github.com/dapicom-ai/omnipus/pkg/providers"
+	"github.com/dapicom-ai/omnipus/pkg/sandbox"
 	"github.com/dapicom-ai/omnipus/pkg/security"
 	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/skills"
