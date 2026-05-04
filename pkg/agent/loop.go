@@ -547,6 +547,30 @@ func NewAgentLoop(
 			"max_agent_tool_calls_per_minute": cfg.Sandbox.RateLimits.MaxAgentToolCallsPerMinute,
 		})
 
+	// v0.2 #155 item 6: build the shared memory-write rate limiter and
+	// propagate it to every agent's tool registry. One limiter is shared
+	// across all agents so the per-caller bucket is genuinely global —
+	// otherwise a malicious caller could route writes through different
+	// agents to dodge the per-caller ceiling. The per-agent bucket is keyed
+	// on the agent ID inside the limiter so independence is preserved.
+	//
+	// Defaults (60 per agent / minute, 600 per caller / minute) are intentional;
+	// not configurable via cfg today because no operator has expressed a need
+	// to tune them and exposing knobs invites footguns. The constructor accepts
+	// a MemoryRateLimitConfig so a future config-backed override can be wired
+	// in without a structural change.
+	memRL := tools.NewMemoryRateLimiter(tools.MemoryRateLimitConfig{})
+	for _, agentID := range registry.ListAgentIDs() {
+		if agentInst, ok := registry.GetAgent(agentID); ok {
+			agentInst.Tools.SetMemoryRateLimiter(memRL)
+		}
+	}
+	logger.InfoCF("agent", "Memory write rate limiter initialized",
+		map[string]any{
+			"per_agent_per_minute":  memRL.PerAgentLimit(),
+			"per_caller_per_minute": memRL.PerCallerLimit(),
+		})
+
 	// Register shared tools to all agents (now that al is created)
 	registerSharedTools(al, cfg, msgBus, registry, provider)
 
