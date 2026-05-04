@@ -311,19 +311,24 @@ export interface ToolCall {
 // These are parsed from ToolCall.result (which is `unknown` on the wire) by
 // the tool-UI components in src/components/chat/tools/.
 //
-// FR-008: serve_workspace result schema.
-// FR-008a / CR-03: run_in_workspace result schema (migrated from SilentResult).
+// Legacy replay types (pre-unification): ServeWorkspaceResult, RunInWorkspaceResult.
+// Canonical type for new sessions: WebServeResult (defined in WebServeUI.tsx).
 
 /**
- * Result emitted by the `serve_workspace` tool.
+ * Result emitted by the legacy `serve_workspace` tool.
  *
- * `path` is the relative preview path (e.g. `"/serve/<agent>/<token>/"`).
+ * @deprecated Replay-only. Kept so the SPA can render chat transcripts saved
+ * before the web_serve tool unification. Do not use this type for new code —
+ * use `WebServeResult` from `src/components/chat/tools/WebServeUI.tsx` instead.
+ *
+ * `path` is the relative preview path (e.g. `"/preview/<agent>/<token>/"`
+ * or the legacy `"/serve/<agent>/<token>/"`).
  * `url` is the absolute URL preserved for transcript replay safety — old
  * transcripts may contain legacy `0.0.0.0` URLs that the SPA rewrites via
  * `rewriteLegacyURL` in `src/lib/preview-url.ts`.
  */
 export interface ServeWorkspaceResult {
-  /** Relative preview path, e.g. `"/serve/<agent>/<token>/"`. */
+  /** Relative preview path, e.g. `"/preview/<agent>/<token>/"`. */
   path: string
   /** Absolute URL — preserved for replay safety; may contain legacy hosts. */
   url: string
@@ -332,15 +337,20 @@ export interface ServeWorkspaceResult {
 }
 
 /**
- * Result emitted by the `run_in_workspace` tool (FR-008a / CR-03).
+ * Result emitted by the legacy `run_in_workspace` tool.
  *
- * `path` is the relative dev preview path (e.g. `"/dev/<agent>/<token>/"`).
+ * @deprecated Replay-only. Kept so the SPA can render chat transcripts saved
+ * before the web_serve tool unification. Do not use this type for new code —
+ * use `WebServeResult` from `src/components/chat/tools/WebServeUI.tsx` instead.
+ *
+ * `path` is the relative dev preview path (e.g. `"/preview/<agent>/<token>/"`
+ * or the legacy `"/dev/<agent>/<token>/"`).
  * `url` is the absolute URL preserved for transcript replay safety.
  * `command` is the command string that was executed.
  * `port` is the local port the dev server is listening on (inside the workspace).
  */
 export interface RunInWorkspaceResult {
-  /** Relative dev path, e.g. `"/dev/<agent>/<token>/"`. */
+  /** Relative dev path, e.g. `"/preview/<agent>/<token>/"`. */
   path: string
   /** Absolute URL — preserved for replay safety; may contain legacy hosts. */
   url: string

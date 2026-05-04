@@ -3,18 +3,23 @@
  *
  * Handles both static-serve and dev-server modes based on the `kind` field
  * in the tool result. Also used as the canonical implementation backing the
- * back-compat aliases ServeWorkspaceUI and RunInWorkspaceUI.
+ * back-compat replay aliases ServeWorkspaceUI (serve_workspace) and
+ * RunInWorkspaceUI (run_in_workspace) — those components are kept only so
+ * old transcripts replay correctly; all new sessions use WebServeUI directly.
  *
  * Spec: FR-008 / FR-008a / FR-010 / FR-011 / FR-012 / FR-013 / FR-014 / FR-015 / FR-019.
  *
  * kind="static": Globe icon + path label, iframe mounts immediately (no warmup).
- * kind="dev":    Terminal icon + command + port label, warmup state machine (3s grace).
+ * kind="dev":    Terminal icon + command + port label, warmup state machine.
+ *                Default grace period is 60 s (tools.run_in_workspace
+ *                .warmup_timeout_seconds in config.json). The config key retains
+ *                the pre-unification name for back-compat with deployed configs.
  *
- * The `registerToolName` prop selects which tool name to pass to
- * makeAssistantToolUI — this lets the same component register as:
- *   web_serve        (new canonical name)
- *   serve_workspace  (back-compat alias)
- *   run_in_workspace (back-compat alias)
+ * The toolName passed to makeWebServeUI selects which tool name the component
+ * registers under, allowing the same component factory to cover:
+ *   web_serve        (canonical)
+ *   serve_workspace  (back-compat replay alias)
+ *   run_in_workspace (back-compat replay alias)
  */
 
 import { makeAssistantToolUI } from '@assistant-ui/react'

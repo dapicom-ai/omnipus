@@ -1,6 +1,8 @@
 /**
- * IframePreview — shared iframe chrome component used by ServeWorkspaceUI and
- * RunInWorkspaceUI.
+ * IframePreview — shared iframe chrome component used by WebServeBlock (the
+ * canonical caller for the unified `web_serve` tool), and indirectly by the
+ * legacy replay aliases ServeWorkspaceUI / RunInWorkspaceUI which both
+ * delegate through WebServeBlock.
  *
  * Spec references: FR-010 / FR-010a / FR-010b / FR-011 / FR-012 / FR-012a /
  * FR-012b / FR-013 / FR-014 / FR-015 / FR-019.
@@ -18,19 +20,23 @@
  *   allow-same-origin so the iframe is sandboxed at origin level.
  *
  * Warmup schedule note (FR-013 / MN-02):
- *   The probe schedule is driven by a single setInterval that fires every 2 s,
+ *   Only dev-mode sessions require warmup (kind='run_in_workspace'). The
+ *   probe schedule is driven by a single setInterval that fires every 2 s,
  *   independent of whether the previous probe completed. Each interval tick
  *   re-mounts the probe iframe with a new React `key` (= fresh element, not a
  *   src swap) so onload/onerror fire against a fresh navigation. This satisfies
  *   MN-02: "schedule is fixed — probe N starts at t=(N-1)*2s regardless of
  *   probe N-1's actual completion."
  *   An individual probe times out at 1.8 s (no onload within that window).
+ *   The total warmup grace period defaults to 60 s (tools.run_in_workspace
+ *   .warmup_timeout_seconds in config.json, or aboutInfo.warmup_timeout_seconds
+ *   from /api/v1/about).
  *
  * 5xx probe (B1.3b):
  *   After an iframe onload fires, the component issues a HEAD probe at the same
- *   URL (authenticated via Authorization header). A 5xx response surfaces an
- *   "Dev server returned a server error" block with the status code and a Retry
- *   button instead of silently rendering the browser's error page.
+ *   URL. A 5xx response surfaces a "Dev server returned a server error" block
+ *   with the status code and a Retry button instead of silently rendering the
+ *   browser's error page.
  */
 
 import { useCallback, useEffect, useRef, useState, type SyntheticEvent } from 'react'
@@ -44,6 +50,16 @@ import { cn } from '@/lib/utils'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+/**
+ * Discriminated union for IframePreview.
+ *
+ * kind='web_serve' and kind='serve_workspace' both render a static-file
+ * preview with no warmup. kind='run_in_workspace' renders a dev-server
+ * preview with the warmup state machine. The 'serve_workspace' and
+ * 'run_in_workspace' literals are preserved because WebServeBlock passes
+ * them to map the web_serve tool's effectiveKind onto the iframe behaviour;
+ * they are not tool names in the context of current sessions.
+ */
 export type IframePreviewProps =
   | { kind: 'serve_workspace'; result: ServeWorkspaceResult | null; warmupTimeoutSeconds?: number }
   | { kind: 'run_in_workspace'; result: RunInWorkspaceResult | null; warmupTimeoutSeconds?: number }
@@ -64,7 +80,8 @@ type PreviewResult = { path?: string; url?: string } | null
  * Extracts the preview path from a tool result.
  *
  * FR-019 replay safety: if `path` is absent but `url` is present (legacy
- * transcript), attempt to extract a path from `url` using these rules in order:
+ * transcript from before the web_serve unification), attempt to extract a
+ * path from `url` using these rules in order:
  *  1. If `url` starts with `/`, treat it as a relative path and return it
  *     directly (subject to validatePreviewPath).
  *  2. Otherwise, attempt to parse `url` as an absolute URL and extract

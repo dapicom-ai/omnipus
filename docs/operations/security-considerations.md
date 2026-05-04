@@ -14,7 +14,7 @@ Preview URLs contain a time-limited bearer token embedded in the path. Anyone wh
 
 Operators who want tighter access control have two levers:
 
-1. **Shorten the token lifetime** — lower `tools.web_serve.max_duration_seconds` from the default `86400` (24 hours) to a value appropriate for the deployment, for example `3600` (1 hour). Tokens issued after the change use the new duration; existing tokens are not revoked.
+1. **Shorten the token lifetime** — lower `tools.serve_workspace.max_duration_seconds` from the default `86400` (24 hours) to a value appropriate for the deployment, for example `3600` (1 hour). Tokens issued after the change use the new duration; existing tokens are not revoked. (The config key retains the pre-unification name for back-compat with existing operator configs; the `serve_workspace` key controls both static and dev-mode preview durations.)
 
 2. **Treat preview URLs as secrets** — avoid sharing a preview URL outside the trusted user who triggered the agent turn that generated it. The URL itself is the credential for that preview.
 

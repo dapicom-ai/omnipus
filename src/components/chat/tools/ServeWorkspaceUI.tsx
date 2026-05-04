@@ -1,9 +1,10 @@
 /**
- * ServeWorkspaceUI — back-compat alias for the `serve_workspace` tool name.
+ * ServeWorkspaceUI — replay-only alias for the pre-unification `serve_workspace`
+ * tool name.
  *
- * Historical chat transcripts reference `serve_workspace`. Keeping this
- * component registered ensures those transcripts replay correctly. All
- * logic now lives in WebServeUI.
+ * Kept so chat transcripts saved before the web_serve tool unification render
+ * correctly. New sessions use WebServeUI (registered as `web_serve`). Do not
+ * use this component for new features — add them to WebServeUI.tsx instead.
  *
  * Spec: FR-008 / FR-010 / FR-011 / FR-012 / FR-015 / FR-019.
  */

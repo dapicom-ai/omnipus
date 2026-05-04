@@ -8,13 +8,15 @@
  */
 
 /**
- * Type guard for the base preview result shape shared by `serve_workspace`
- * and `run_in_workspace`. Both result types have at minimum `path: string`
- * and `url: string`; this guard checks only those two fields so each tool UI
- * can perform its own cast for the additional fields it consumes.
+ * Type guard for the base preview result shape shared by `web_serve`,
+ * `serve_workspace`, and `run_in_workspace` (the latter two are legacy tool
+ * names preserved for transcript replay). All result types have at minimum
+ * `path: string` and `url: string`; this guard checks only those two fields
+ * so each tool UI can perform its own cast for the additional fields it consumes.
  *
  * @example
- * hasPreviewShape({ path: '/serve/a/b/', url: 'http://...' })  // true
+ * hasPreviewShape({ path: '/preview/a/b/', url: 'http://...' }) // true (canonical)
+ * hasPreviewShape({ path: '/serve/a/b/', url: 'http://...' })   // true (legacy replay)
  * hasPreviewShape({ path: 42, url: 'http://...' })              // false
  * hasPreviewShape(null)                                          // false
  */
@@ -57,11 +59,11 @@ const LEGACY_HOSTS = new Set([
 ])
 
 /**
- * Validates the `path` field returned by `serve_workspace` /
- * `run_in_workspace` / `web_serve` tool results.
+ * Validates the `path` field returned by `web_serve` tool results (and the
+ * legacy `serve_workspace` / `run_in_workspace` tools kept for replay).
  *
  * The regex enforces:
- *   • Starts with `/preview/`, `/serve/`, or `/dev/`
+ *   • Starts with `/preview/` (canonical), `/serve/`, or `/dev/` (legacy back-compat)
  *   • Followed by an agent segment (`[A-Za-z0-9_-]+`)
  *   • Followed by a token segment (`[A-Za-z0-9_-]+`)
  *   • Optionally followed by any additional path segments
@@ -71,7 +73,7 @@ const LEGACY_HOSTS = new Set([
  *   • `//attacker.com/exfil` — scheme-relative
  *   • `/api/v1/agents` — not a `/preview/`, `/serve/`, or `/dev/` path
  *   • `data:text/html,…` — no leading slash
- *   • `/serve/../../etc/passwd` — `..` is not `[A-Za-z0-9_-]`
+ *   • `/preview/../../etc/passwd` — `..` is not `[A-Za-z0-9_-]`
  *   • `""` (empty) — does not match
  *
  * Per FR-010b / MR-10.
@@ -83,14 +85,14 @@ const PREVIEW_PATH_REGEX = /^\/(?:preview|serve|dev)\/[A-Za-z0-9_\-]+\/[A-Za-z0-
  * SPA may use as an iframe `src` suffix.
  *
  * @example
- * validatePreviewPath('/preview/agent-1/abc123/')     // true
- * validatePreviewPath('/serve/agent-1/abc123/')       // true
- * validatePreviewPath('/dev/agent-2/xyz789/')         // true
+ * validatePreviewPath('/preview/agent-1/abc123/')     // true  (canonical)
+ * validatePreviewPath('/serve/agent-1/abc123/')       // true  (legacy back-compat)
+ * validatePreviewPath('/dev/agent-2/xyz789/')         // true  (legacy back-compat)
  * validatePreviewPath('javascript:alert(1)')          // false
  * validatePreviewPath('//attacker.com/exfil')         // false
  * validatePreviewPath('/api/v1/agents')               // false
  * validatePreviewPath('data:text/html,...')           // false
- * validatePreviewPath('/serve/../../etc/passwd')      // false
+ * validatePreviewPath('/preview/../../etc/passwd')    // false
  * validatePreviewPath('')                             // false
  */
 export function validatePreviewPath(path: string): boolean {
@@ -109,8 +111,9 @@ export function validatePreviewPath(path: string): boolean {
  *     (passes through `mailto:`, `tel:`, `javascript:`, `data:`, etc.).
  *  4. If the parsed `hostname` is NOT in `LEGACY_HOSTS`, return unchanged.
  *  5. Rewrite the host to `hostname` (the caller's `window.location.hostname`).
- *  6. If the path starts with `/preview/`, `/serve/`, or `/dev/`, also swap
- *     the port to `previewPort`. Otherwise preserve the original port.
+ *  6. If the path starts with `/preview/` (canonical), `/serve/`, or `/dev/`
+ *     (both legacy back-compat paths), also swap the port to `previewPort`.
+ *     Otherwise preserve the original port.
  *
  * @param href - The raw href string from the markdown link.
  * @param hostname - The host the user is accessing the SPA from
@@ -120,12 +123,17 @@ export function validatePreviewPath(path: string): boolean {
  * @returns The rewritten URL string, or `href` unchanged when no rewrite applies.
  *
  * @example
- * // Path-based, port swap — spec row 1
+ * // Canonical /preview/ path, port swap
+ * rewriteLegacyURL('http://0.0.0.0:5000/preview/m/t/', '146.190.89.151', 5001)
+ * // => 'http://146.190.89.151:5001/preview/m/t/'
+ *
+ * @example
+ * // Legacy /serve/ path, port swap — spec row 1 (back-compat for old transcripts)
  * rewriteLegacyURL('http://0.0.0.0:5000/serve/m/t/', '146.190.89.151', 5001)
  * // => 'http://146.190.89.151:5001/serve/m/t/'
  *
  * @example
- * // localhost variant — spec row 2
+ * // Legacy /dev/ path, localhost variant — spec row 2 (back-compat for old transcripts)
  * rewriteLegacyURL('http://0.0.0.0:5000/dev/m/t/', 'localhost', 5001)
  * // => 'http://localhost:5001/dev/m/t/'
  *
@@ -267,8 +275,9 @@ export interface BuildIframeURLArgs {
 }
 
 /**
- * Constructs the iframe `src` URL for a `serve_workspace` or
- * `run_in_workspace` tool result.
+ * Constructs the iframe `src` URL for a `web_serve` tool result (or the
+ * legacy `serve_workspace` / `run_in_workspace` tool results kept for
+ * transcript replay).
  *
  * Returns either `{ url: string }` on success or one of three typed errors:
  *   - `{ error: 'invalid-path' }` — `path` failed `validatePreviewPath`.
@@ -284,7 +293,28 @@ export interface BuildIframeURLArgs {
  * Per FR-010, FR-010a, FR-010b.
  *
  * @example
- * // Happy path — no previewOrigin, HTTP SPA
+ * // Happy path — no previewOrigin, HTTP SPA (canonical /preview/ path)
+ * buildIframeURL({
+ *   path: '/preview/agent-1/abc123/',
+ *   previewPort: 5001,
+ *   hostname: '146.190.89.151',
+ *   protocol: 'http:',
+ * })
+ * // => { url: 'http://146.190.89.151:5001/preview/agent-1/abc123/' }
+ *
+ * @example
+ * // Happy path — previewOrigin set (canonical /preview/ path)
+ * buildIframeURL({
+ *   path: '/preview/agent-1/abc123/',
+ *   previewOrigin: 'https://preview.acme.com',
+ *   previewPort: 5001,
+ *   hostname: 'omnipus.acme.com',
+ *   protocol: 'https:',
+ * })
+ * // => { url: 'https://preview.acme.com/preview/agent-1/abc123/' }
+ *
+ * @example
+ * // Legacy back-compat: /serve/ path still accepted for transcript replay
  * buildIframeURL({
  *   path: '/serve/agent-1/abc123/',
  *   previewPort: 5001,
@@ -292,17 +322,6 @@ export interface BuildIframeURLArgs {
  *   protocol: 'http:',
  * })
  * // => { url: 'http://146.190.89.151:5001/serve/agent-1/abc123/' }
- *
- * @example
- * // Happy path — previewOrigin set
- * buildIframeURL({
- *   path: '/serve/agent-1/abc123/',
- *   previewOrigin: 'https://preview.acme.com',
- *   previewPort: 5001,
- *   hostname: 'omnipus.acme.com',
- *   protocol: 'https:',
- * })
- * // => { url: 'https://preview.acme.com/serve/agent-1/abc123/' }
  *
  * @example
  * // Invalid path
@@ -317,7 +336,7 @@ export interface BuildIframeURLArgs {
  * @example
  * // Scheme mismatch — HTTP SPA + HTTPS preview origin
  * buildIframeURL({
- *   path: '/serve/agent-1/abc123/',
+ *   path: '/preview/agent-1/abc123/',
  *   previewOrigin: 'https://preview.example.com',
  *   previewPort: 443,
  *   hostname: 'main.example.com',
@@ -328,7 +347,7 @@ export interface BuildIframeURLArgs {
  * @example
  * // Invalid path — path traversal attempt
  * buildIframeURL({
- *   path: '/serve/../../etc/passwd',
+ *   path: '/preview/../../etc/passwd',
  *   previewPort: 5001,
  *   hostname: '1.2.3.4',
  *   protocol: 'http:',

@@ -1,9 +1,10 @@
 /**
- * RunInWorkspaceUI — back-compat alias for the `run_in_workspace` tool name.
+ * RunInWorkspaceUI — replay-only alias for the pre-unification `run_in_workspace`
+ * tool name.
  *
- * Historical chat transcripts reference `run_in_workspace`. Keeping this
- * component registered ensures those transcripts replay correctly. All
- * logic now lives in WebServeUI.
+ * Kept so chat transcripts saved before the web_serve tool unification render
+ * correctly. New sessions use WebServeUI (registered as `web_serve`). Do not
+ * use this component for new features — add them to WebServeUI.tsx instead.
  *
  * Spec: FR-008a / CR-03 / FR-013 / FR-014.
  */
