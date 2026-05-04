@@ -2134,7 +2134,15 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	cm.RegisterHTTPHandler("/api/v1/security/audit-log", a.adminWrap(a.HandleSandboxAuditLog))
 	cm.RegisterHTTPHandler("/api/v1/security/skill-trust", a.adminWrap(a.HandleSkillTrust))
 	cm.RegisterHTTPHandler("/api/v1/security/prompt-guard", a.adminWrap(a.HandlePromptGuard))
-	cm.RegisterHTTPHandler("/api/v1/security/rate-limits", a.withAuth(a.HandleRateLimits))
+	// /api/v1/security/rate-limits handles GET (read state, admin-only because
+	// the response carries the live daily-cost meter and current cap config —
+	// admin-sensitive observability) and PUT (write — must be admin and gated
+	// by RequireNotBypass, since dev_mode_bypass would otherwise let an
+	// anonymous caller change global rate-limit caps). Wrapped with adminWrap
+	// to bring it in line with the other admin security endpoints below and
+	// to satisfy item 7 of v0.2-#155 (admin-route bypass coverage). The inner
+	// handler keeps its own role check as a defense-in-depth belt-and-braces.
+	cm.RegisterHTTPHandler("/api/v1/security/rate-limits", a.adminWrap(a.HandleRateLimits))
 	cm.RegisterHTTPHandler("/api/v1/security/sandbox-config", a.adminWrap(a.HandleSandboxConfig))
 	cm.RegisterHTTPHandler("/api/v1/security/session-scope", a.adminWrap(a.HandleSessionScope))
 	cm.RegisterHTTPHandler("/api/v1/security/retention", a.adminWrap(a.HandleRetention))
