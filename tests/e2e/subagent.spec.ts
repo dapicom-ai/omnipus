@@ -24,17 +24,17 @@ import { softSkip } from './fixtures/skip-tracking';
 
 // Global storageState provides pre-authenticated session (see playwright.config.ts + global-setup.ts).
 
-// Helper: skip with a BLOCKED diagnostic if OPENROUTER_API_KEY_CI is not set.
-// Does NOT silently skip — it logs a prominent message so CI reports show the gap.
-function requireApiKey(t: typeof test): void {
+// Helper: assert OPENROUTER_API_KEY_CI is present.
+// T0.1: no longer soft-skips. The key is required in CI; its absence is a CI
+// configuration failure. The function is kept to preserve call-site structure
+// but now validates (throws) rather than skipping.
+function requireApiKey(_t: typeof test): void {
   if (!process.env.OPENROUTER_API_KEY_CI) {
-    console.warn(
+    throw new Error(
       'BLOCKED: OPENROUTER_API_KEY_CI not set. ' +
-      'Tests (a)-(d) in subagent.spec.ts require a real LLM to trigger spawn. ' +
-      'Scenario-provider HTTP injection into live gateway is not yet implemented. ' +
-      'Set OPENROUTER_API_KEY_CI or add a scenario-provider HTTP endpoint to the gateway.',
+      'This test requires a real LLM. ' +
+      'The key must be present in CI — see tests/e2e/README.md prerequisites.',
     );
-    softSkip(t, 'OPENROUTER_API_KEY_CI not set — real-LLM test cannot run');
   }
 }
 
@@ -371,12 +371,9 @@ test(
 test(
   '(d) real-LLM smoke: spawn triggered by natural language; no console errors; SubagentBlock if spawned',
   async ({ page, consoleErrors }) => {
-    // This test is best-effort and does NOT gate merge (SC-H-003).
-    // If OPENROUTER_API_KEY_CI is absent, skip gracefully (not BLOCKED — this is by design).
-    if (!process.env.OPENROUTER_API_KEY_CI) {
-      softSkip(test, 'OPENROUTER_API_KEY_CI not set — smoke test skipped by design');
-      return;
-    }
+    // T0.1: OPENROUTER_API_KEY_CI soft-skip removed. The key is required in CI.
+    // This test is best-effort (does not gate merge) but must not skip silently.
+    requireApiKey(test);
 
     await startFreshChat(page);
 

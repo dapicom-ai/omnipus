@@ -47,12 +47,20 @@ test(
   },
 );
 
-test.skip(
+test(
   '(b) file-download fallback: large binary request triggers browser download dialog',
-  // blocked on #107: Deterministic file-download test requires a mock gateway tool that
-  // returns a non-image media frame. Real LLM instruction is non-deterministic and CI
-  // does not have a valid OPENROUTER_API_KEY. InlineMedia <a download> only renders on
-  // non-image media frames (ChatScreen.tsx:226-237).
+  // T0.1: Promoted from test.skip. Blocked on #107 — deterministic file-download test
+  // requires a mock gateway tool that returns a non-image media frame. InlineMedia
+  // <a download> only renders on non-image media frames (ChatScreen.tsx:226-237).
   // See tests/e2e/SPA-GAPS.md — "Download test requires mock media tool".
-  async ({ page }) => {},
+  // This test fails loudly until the scenario-provider HTTP endpoint or a mock media
+  // tool is available to inject deterministic non-image frames.
+  async ({ page }) => {
+    void page;
+    // BLOCKED: #107 — mock media tool not implemented. This test will remain failing
+    // until a deterministic non-image media frame can be injected without a real LLM.
+    // Do not re-suppress with test.skip.
+    expect(false, 'BLOCKED: #107 — file-download test requires mock gateway media tool. ' +
+      'InlineMedia <a download> path is untested. Implement scenario provider or mock tool.').toBe(true);
+  },
 );
