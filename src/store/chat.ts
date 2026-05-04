@@ -242,6 +242,11 @@ const SESSION_SCOPED_FRAME_TYPES = new Set([
 // when no session is active; frame writers must early-return on null.
 const FALLBACK_SID = import.meta.env.MODE === 'test' ? '__default' : null
 
+// HIGH-2: consecutive unknown frame counter. Reset on any known-good frame.
+// On threshold (5), promotes to a user-visible warning toast.
+let unknownFrameCount = 0
+const UNKNOWN_FRAME_TOAST_THRESHOLD = 5
+
 export const useChatStore = create<ChatStore>((set, get) => {
   // ── Internal helpers that mutate a named session bucket ─────────────────────
   // These read/write sessionsById[sid] and then re-sync foreground fields.
@@ -896,6 +901,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
 
       const store = get()
 
+      // HIGH-2: reset unknown-frame counter on every known-good frame.
+      unknownFrameCount = 0
+
       switch (frame.type) {
         case 'session_started': {
           // Server minted a new session_id in response to a message sent without one.
@@ -1362,15 +1370,33 @@ export const useChatStore = create<ChatStore>((set, get) => {
           const replayFrame = frame as WsReplayMessageFrame
           const role = (replayFrame.role || 'assistant') as 'user' | 'assistant'
           const text = replayFrame.content ?? ''
+          const messageId = replayFrame.id
+          const messageTimestamp = replayFrame.timestamp
           withBucket(targetSid, (b) => {
             const msgs = [...b.messages]
-            // Reconnection dedup: if a message with the same role and same
-            // content is already at the tail of the bucket, the gateway is
-            // re-replaying a transcript we already have in memory — skip
-            // the push so we don't get a duplicate bubble.
-            const tail = msgs[msgs.length - 1]
-            if (tail && tail.role === role && (tail.content ?? '') === text) {
-              return {}
+            // Reconnection dedup: prefer server-assigned id match when present;
+            // fall back to (content + role + timestamp) tuple. Content-only dedup
+            // was silently dropping legitimate identical user retries.
+            if (messageId) {
+              if (msgs.some((m) => m.id === messageId)) {
+                console.warn('chat.replay_dedup_skipped', { id: messageId, role, reason: 'id-match' })
+                return {}
+              }
+            } else {
+              const tail = msgs[msgs.length - 1]
+              const tailTs = tail?.timestamp ?? ''
+              const frameTs = messageTimestamp ?? ''
+              // Only dedup on content+role if timestamps also match (or both absent),
+              // preventing silent drops of identical retries with different timestamps.
+              if (
+                tail &&
+                tail.role === role &&
+                (tail.content ?? '') === text &&
+                (tailTs === frameTs || (tailTs === '' && frameTs === ''))
+              ) {
+                console.warn('chat.replay_dedup_skipped', { role, reason: 'content-tuple-match' })
+                return {}
+              }
             }
             // Coalesce assistant text into the trailing empty assistant bubble
             // that tool_call_start frames already created. Without this, replay
@@ -1390,10 +1416,10 @@ export const useChatStore = create<ChatStore>((set, get) => {
               }
             }
             msgs.push({
-              id: generateId(),
+              id: messageId ?? generateId(),
               role,
               content: text,
-              timestamp: new Date().toISOString(),
+              timestamp: messageTimestamp ?? new Date().toISOString(),
               status: 'done' as const,
             })
             return { messages: msgs }
@@ -1404,7 +1430,24 @@ export const useChatStore = create<ChatStore>((set, get) => {
         case 'media': {
           if (!targetSid) break
           if (!Array.isArray(frame.parts) || frame.parts.length === 0) {
-            console.warn('[chat] Received media frame with empty or invalid parts — ignoring')
+            console.warn('[chat] Received media frame with empty or invalid parts — appending notice')
+            // Append a visible inline notice rather than silently dropping so
+            // the user sees "1 attachment could not be displayed" instead of
+            // "I screenshotted X" with no screenshot visible.
+            withBucket(targetSid, (b) => {
+              const msgs = [...b.messages]
+              const lastIdx = msgs.map((m) => m.role).lastIndexOf('assistant')
+              if (lastIdx !== -1) {
+                msgs[lastIdx] = {
+                  ...msgs[lastIdx],
+                  content: (msgs[lastIdx].content ?? '') +
+                    (msgs[lastIdx].content ? '\n\n' : '') +
+                    '_1 attachment could not be displayed._',
+                }
+                return { messages: msgs }
+              }
+              return {}
+            })
             break
           }
           const attachments: MediaAttachment[] = frame.parts
@@ -1416,7 +1459,24 @@ export const useChatStore = create<ChatStore>((set, get) => {
               contentType: p.content_type,
               caption: p.caption,
             }))
-          if (attachments.length === 0) break
+          if (attachments.length === 0) {
+            // Parts array was non-empty but all parts failed the url+type filter.
+            withBucket(targetSid, (b) => {
+              const msgs = [...b.messages]
+              const lastIdx = msgs.map((m) => m.role).lastIndexOf('assistant')
+              if (lastIdx !== -1) {
+                msgs[lastIdx] = {
+                  ...msgs[lastIdx],
+                  content: (msgs[lastIdx].content ?? '') +
+                    (msgs[lastIdx].content ? '\n\n' : '') +
+                    `_${frame.parts.length} attachment${frame.parts.length > 1 ? 's' : ''} could not be displayed._`,
+                }
+                return { messages: msgs }
+              }
+              return {}
+            })
+            break
+          }
           withBucket(targetSid, (b) => {
             const msgs = [...b.messages]
             const lastIdx = msgs.map((m) => m.role).lastIndexOf('assistant')
@@ -1505,7 +1565,16 @@ export const useChatStore = create<ChatStore>((set, get) => {
           break
 
         default:
-          console.warn('[chat] Unknown frame type', { type: (frame as { type?: string }).type })
+          unknownFrameCount++
+          console.warn('[chat] Unknown frame type', { type: (frame as { type?: string }).type, count: unknownFrameCount })
+          if (unknownFrameCount >= UNKNOWN_FRAME_TOAST_THRESHOLD) {
+            useUiStore.getState().addToast({
+              message: "Server is sending events this UI doesn't understand — refresh to update.",
+              variant: 'warning',
+            })
+            // Reset so we don't spam the toast on every subsequent unknown frame.
+            unknownFrameCount = 0
+          }
           break
       }
 

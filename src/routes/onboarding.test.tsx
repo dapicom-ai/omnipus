@@ -17,6 +17,8 @@ const mockNavigate = vi.fn()
 vi.mock('@tanstack/react-router', () => ({
   createFileRoute: (_path: string) => (opts: { component: React.ComponentType }) => opts,
   useNavigate: () => mockNavigate,
+  redirect: (opts: unknown) => opts,
+  useRouteContext: () => ({ appStateBannerMessage: null }),
 }))
 
 // Mock Framer Motion — strip all animations so AnimatePresence doesn't keep

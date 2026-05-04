@@ -175,6 +175,9 @@ export interface WsReplayMessageFrame {
   session_id: string
   content: string
   role: string
+  /** Server-assigned message id, used for dedup on reconnect (optional for back-compat). */
+  id?: string
+  timestamp?: string
 }
 
 export interface WsRateLimitFrame {
@@ -415,7 +418,11 @@ export class WsConnection {
     }
 
     this.ws.onerror = () => {
-      this.callbacks.onError('WebSocket connection error')
+      // onerror fires before onclose; onclose produces a richer message with
+      // close code and reason. We emit a minimal diagnostic here so the
+      // connection-error banner has a message, but avoid duplicating the
+      // onclose banner message.
+      this.callbacks.onError(`Connection error reaching ${getWsUrl()} — will retry`)
     }
 
     this.ws.onclose = (event: CloseEvent) => {

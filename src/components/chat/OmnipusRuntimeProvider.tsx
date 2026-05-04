@@ -49,12 +49,22 @@ function WsLifecycle() {
         // transcript context.
         const activeSessionId = useSessionStore.getState().activeSessionId;
         if (activeSessionId) {
+          // The gateway will replay the entire transcript. Mark the session
+          // as replaying symmetrically here (same as in attachToSession).
+          useChatStore.setState({ isReplaying: true });
           // The gateway will replay the entire transcript. Clear the local
           // bucket BEFORE replay starts so frames rebuild it from scratch
           // rather than appending duplicates ("Browse to … / Browse to …"
           // doubled bubbles after every reconnect).
-          resetChatBucketForReplay(activeSessionId);
-          conn.send({ type: "attach_session", session_id: activeSessionId });
+          const sent = conn.send({ type: "attach_session", session_id: activeSessionId });
+          if (!sent) {
+            // send() returned false — socket closed between onopen and here.
+            // Preserve local state (do not wipe bucket) and surface an error.
+            resetChatBucketForReplay(activeSessionId);
+            setConnectionError('Failed to reattach session — please reload');
+          } else {
+            resetChatBucketForReplay(activeSessionId);
+          }
         }
       },
       onDisconnected: () => setConnected(false),

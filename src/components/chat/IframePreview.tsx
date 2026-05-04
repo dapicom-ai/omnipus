@@ -155,7 +155,7 @@ function LinkOnlyFallback({ href, label }: { href: string; label: string }) {
   const safe = isSafeHref(href)
 
   return (
-    <div className="mt-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs">
+    <div data-testid="preview-link-fallback" className="mt-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs">
       <span className="text-[var(--color-muted)]">{label}: </span>
       {safe ? (
         <a
@@ -601,7 +601,7 @@ export function IframePreview(props: IframePreviewProps) {
     if (!absoluteUrl) return
     const probeUrl = absoluteUrl
     setProbeStatus('pending')
-    fetch(probeUrl, { method: 'HEAD' })
+    fetch(probeUrl, { method: 'HEAD', mode: 'no-cors' })
       .then((res) => {
         if (!mountedRef.current) return
         if (res.status >= 500) {
@@ -613,18 +613,21 @@ export function IframePreview(props: IframePreviewProps) {
         }
       })
       .catch((err: unknown) => {
-        // Network or CORS error — don't block the iframe; treat as ok so the user
-        // can see whatever loaded. Log enough context for operators to diagnose.
-        // TypeError typically indicates a CORS or network failure; other error
-        // types may indicate a programming or environment issue.
-        const isCors = err instanceof TypeError
-        console.warn('preview.head_probe_failed', {
-          url: probeUrl,
-          errorType: isCors ? 'TypeError (likely CORS or network)' : (err instanceof Error ? err.constructor.name : typeof err),
+        // Network or CORS error — keep probe status as 'idle' so the iframe is
+        // not blocked, but do NOT downgrade to 'ok'. This preserves 5xx detection
+        // for correctly-deployed two-port setups where a later successful probe
+        // could still fire. Log enough context for operators to diagnose.
+        // Strip preview tokens from logged URL to avoid leaking them to devtools.
+        const redactedUrl = probeUrl.replace(
+          /(\/preview\/[^/]+\/)([^/]+)(\/)/,
+          '$1<redacted>$3',
+        )
+        console.error('preview.head_probe_unreachable', {
+          url: redactedUrl,
           message: err instanceof Error ? err.message : String(err),
         })
         if (mountedRef.current) {
-          setProbeStatus('ok')
+          setProbeStatus('idle')
           setProbeHttpStatus(null)
         }
       })
@@ -759,7 +762,7 @@ export function IframePreview(props: IframePreviewProps) {
           to a different origin, causing the iframe to share the SPA's origin. In this
           configuration allow-same-origin has been suppressed (sandboxRestricted). */}
       {iframeIsSameOrigin && (
-        <div className="px-3 py-2 text-xs bg-amber-900/20 border-b border-amber-500/30 text-amber-400">
+        <div data-testid="preview-cors-warning" className="px-3 py-2 text-xs bg-amber-900/20 border-b border-amber-500/30 text-amber-400">
           Preview restricted — gateway is misconfigured for iframe isolation. Set{' '}
           <code className="font-mono text-[10px] bg-[var(--color-surface-2)] px-1 rounded">
             gateway.preview_origin
@@ -788,7 +791,7 @@ export function IframePreview(props: IframePreviewProps) {
 
       {/* Warmup placeholder */}
       {isWarmupRequired && (warmupPhase === 'starting' || warmupPhase === 'probing') && (
-        <div className="bg-[var(--color-surface-1)] min-h-[240px] flex items-center justify-center">
+        <div data-testid="preview-warmup" className="bg-[var(--color-surface-1)] min-h-[240px] flex items-center justify-center">
           <WarmupPlaceholder toolName={toolName} />
         </div>
       )}
@@ -821,7 +824,7 @@ export function IframePreview(props: IframePreviewProps) {
             />
           </div>
         ) : probeStatus === 'server_error' ? (
-          <div className="bg-[var(--color-surface-1)] min-h-[120px] flex items-center justify-center p-4">
+          <div data-testid="preview-error-block" className="bg-[var(--color-surface-1)] min-h-[120px] flex items-center justify-center p-4">
             <ErrorBlock
               message={`Dev server returned a server error (HTTP ${probeHttpStatus ?? '5xx'}). The server may have crashed or encountered an error.`}
               href={absoluteUrl}
@@ -834,6 +837,7 @@ export function IframePreview(props: IframePreviewProps) {
           </div>
         ) : (
           <iframe
+            data-testid="preview-iframe"
             key={iframeKey}
             src={visibleIframeSrc}
             title={`${toolName} preview`}
