@@ -338,17 +338,18 @@ func (r *DevServerRegistry) Close() {
 		}
 		r.mu.Unlock()
 
-		// Tell the janitor to stop. The goroutine reads r.stop on each
-		// select iteration; closing the channel is observed regardless
-		// of whether the field was nil-ed (we no longer nil it).
+		// Tell the janitor to stop.
 		close(r.stop)
+
+		// H5: wait for the janitor goroutine to exit BEFORE the cleanup
+		// loop. Without this, the janitor's sweepExpired → Unregister path
+		// may run concurrently with the loop below and send SIGTERM twice
+		// to the same PID (which may have been recycled by the OS).
+		<-r.stopped
 
 		for _, tok := range tokens {
 			r.Unregister(tok)
 		}
-		// Wait for the janitor to exit so callers can rely on no
-		// background work after Close returns.
-		<-r.stopped
 	})
 }
 

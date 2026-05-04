@@ -30,6 +30,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -256,6 +257,18 @@ func (t *WebServeTool) Execute(ctx context.Context, args map[string]any) *ToolRe
 
 // executeStatic handles the static-file serving mode.
 func (t *WebServeTool) executeStatic(ctx context.Context, rawPath string, args map[string]any) *ToolResult {
+	// H4: fail-fast when the preview listener is not configured. An empty
+	// gatewayPreviewBaseURL means the URL we'd return would have no scheme
+	// or host, producing a silently-broken link for the agent. Operator must
+	// set gateway.preview_listener_enabled=true and restart.
+	if t.gatewayPreviewBaseURL == "" {
+		return &ToolResult{
+			IsError: true,
+			ForLLM:  "preview disabled: gateway preview listener is not configured; web_serve cannot mint a working URL",
+			ForUser: "Iframe preview is disabled in this gateway configuration. Enable gateway.preview_listener_enabled and restart.",
+		}
+	}
+
 	// Resolve and validate the path within the workspace.
 	absDir, err := ValidateWorkspacePath(rawPath, t.workspace, true, nil)
 	if err != nil {
@@ -408,6 +421,15 @@ func (t *WebServeTool) executeDev(ctx context.Context, rawPath, command string, 
 		return ErrorResult(Tier3UnsupportedMessage)
 	}
 
+	// H4: fail-fast when the preview listener is not configured.
+	if t.gatewayPreviewBaseURL == "" {
+		return &ToolResult{
+			IsError: true,
+			ForLLM:  "preview disabled: gateway preview listener is not configured; web_serve cannot mint a working URL",
+			ForUser: "Iframe preview is disabled in this gateway configuration. Enable gateway.preview_listener_enabled and restart.",
+		}
+	}
+
 	if t.devReg == nil {
 		return ErrorResult("web_serve: dev-server registry not configured")
 	}
@@ -541,11 +563,32 @@ func (t *WebServeTool) executeDev(ctx context.Context, rawPath, command string, 
 	case <-time.After(webServeDevServerStartupGrace):
 	}
 
+	// H7: TCP-probe the bind address after the grace period. If the child
+	// failed to bind (e.g. cross-agent port collision where another process
+	// already holds the port), the probe fails immediately and we surface a
+	// real IsError instead of returning a token URL that points at a corpse.
+	// 50 ms is enough to distinguish "process dead / bind failed" from "bind
+	// in progress" — we already waited 3 s above.
+	probeAddr := fmt.Sprintf("127.0.0.1:%d", exposePort)
+	probeConn, probeErr := net.DialTimeout("tcp", probeAddr, 50*time.Millisecond)
+	if probeErr != nil {
+		t.devReg.Unregister(reg.Token)
+		return &ToolResult{
+			IsError: true,
+			ForLLM: fmt.Sprintf(
+				"web_serve: dev server on port %d did not bind after %s grace period "+
+					"(TCP probe failed: %v); likely port collision — choose a different port",
+				exposePort, webServeDevServerStartupGrace, probeErr),
+		}
+	}
+	_ = probeConn.Close()
+
 	path := fmt.Sprintf("/preview/%s/%s/", agentID, reg.Token)
-	url := sandbox.BuildDevURL(agentID, reg.Token, t.gatewayPreviewBaseURL)
-	// The /preview/ route shares the same URL construction; sandbox.BuildDevURL
-	// handles the scheme coercion and trailing slash. We override the path prefix.
-	url = t.gatewayPreviewBaseURL + path
+	// Build the URL by concatenating the base URL and the path. The base
+	// URL is constructed upstream with a scheme (http/https), so the simple
+	// concat is the canonical builder here; sandbox.BuildDevURL's dead first
+	// line has been removed (H3/A4).
+	url := t.gatewayPreviewBaseURL + path
 
 	deadline := reg.CreatedAt.Add(sandbox.HardTimeout).UTC().Format(time.RFC3339)
 	summary := fmt.Sprintf(

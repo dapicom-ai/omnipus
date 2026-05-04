@@ -46,7 +46,12 @@ type ServedSubdirs struct {
 	// byAgent maps agentID → token so we can enforce the per-agent cap quickly.
 	byAgent map[string]string
 
+	// stopCh signals the janitor to exit. Closed by Stop().
 	stopCh chan struct{}
+	// stopped is closed by the janitor's defer when it returns. Stop waits
+	// on this so callers can rely on no background work after Stop returns
+	// (mirrors the DevServerRegistry pattern — H6).
+	stopped chan struct{}
 
 	// onEvict is called (outside mu) whenever one or more tokens are evicted
 	// from the registry (TTL expiry, manual Evict, or cap-replacement during
@@ -62,6 +67,7 @@ func NewServedSubdirs() *ServedSubdirs {
 		byToken: make(map[string]*ServedEntry),
 		byAgent: make(map[string]string),
 		stopCh:  make(chan struct{}),
+		stopped: make(chan struct{}),
 	}
 	go s.janitor()
 	return s
@@ -170,18 +176,24 @@ func (s *ServedSubdirs) Evict(agentID string) {
 	}
 }
 
-// Stop signals the janitor goroutine to exit. Safe to call multiple times.
+// Stop signals the janitor goroutine to exit and waits for it to return.
+// Safe to call multiple times (subsequent calls are no-ops — stopCh is
+// already closed and the janitor has already exited).
 func (s *ServedSubdirs) Stop() {
 	select {
 	case <-s.stopCh:
-		// already closed
+		// already closed — wait for the janitor to finish (idempotent on <-stopped)
 	default:
 		close(s.stopCh)
 	}
+	// H6: wait for the janitor goroutine to exit so callers can rely on no
+	// background work after Stop returns (mirrors DevServerRegistry.Close).
+	<-s.stopped
 }
 
 // janitor runs every 30 seconds and removes expired entries.
 func (s *ServedSubdirs) janitor() {
+	defer close(s.stopped) // H6: signal Stop() that the goroutine has exited
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 	for {

@@ -200,6 +200,12 @@ type AgentLoop struct {
 	// claimedCloseSessions is the idempotency gate for CloseSession (FR-027).
 	// LoadOrStore ensures only one goroutine triggers recap per session.
 	claimedCloseSessions sync.Map // sessionID (string) → true
+
+	// stopCancel is the CancelFunc created by Run to support Stop(). When
+	// Stop() is called it cancels this func so the Run select wakes
+	// immediately without waiting for the next message or ticker. Stored
+	// atomically via the atomic.Pointer so Stop() can be called before Run.
+	stopCancel atomic.Pointer[context.CancelFunc]
 }
 
 // processOptions configures how a message is processed
@@ -625,7 +631,8 @@ func (al *AgentLoop) resetIdleTicker(sessionID string) {
 	// Cancel the previous ticker (if any).
 	al.cancelIdleTicker(sessionID)
 
-	timeoutMinutes := al.cfg.Agents.Defaults.GetIdleTimeoutMinutes()
+	cfg := al.GetConfig()
+	timeoutMinutes := cfg.Agents.Defaults.GetIdleTimeoutMinutes()
 	ctx, cancel := context.WithCancel(context.Background())
 	al.RegisterIdleTicker(sessionID, cancel)
 
@@ -1432,24 +1439,25 @@ func buildDelegateChecker(agentCfg *config.AgentConfig, defaults config.AgentDef
 func (al *AgentLoop) Run(ctx context.Context) error {
 	al.running.Store(true)
 
-	if err := al.ensureHooksInitialized(ctx); err != nil {
-		return err
-	}
-	if err := al.ensureMCPInitialized(ctx); err != nil {
-		return err
-	}
+	// Wrap the caller's context with a cancel so Stop() can unblock the
+	// select without requiring the outer context to be cancelled. This
+	// replaces the previous 100 ms idle ticker (H4: each wakeup was wasted
+	// CPU polling a bool that almost always returns true).
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
+	al.stopCancel.Store(&runCancel)
 
-	idleTicker := time.NewTicker(100 * time.Millisecond)
-	defer idleTicker.Stop()
+	if err := al.ensureHooksInitialized(runCtx); err != nil {
+		return err
+	}
+	if err := al.ensureMCPInitialized(runCtx); err != nil {
+		return err
+	}
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-runCtx.Done():
 			return nil
-		case <-idleTicker.C:
-			if !al.running.Load() {
-				return nil
-			}
 		case msg, ok := <-al.bus.InboundChan():
 			if !ok {
 				return nil
@@ -1460,7 +1468,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 			// redirected into steering; other inbound messages are requeued.
 			drainCancel := func() {}
 			if activeScope, activeAgentID, ok := al.resolveSteeringTarget(msg); ok {
-				drainCtx, cancel := context.WithCancel(ctx)
+				drainCtx, cancel := context.WithCancel(runCtx)
 				drainCancel = cancel
 				go al.drainBusToSteering(drainCtx, activeScope, activeAgentID)
 			}
@@ -1502,11 +1510,11 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 						}
 					}()
 					if finalResponse != "" && !published {
-						al.publishResponseIfNeeded(ctx, activeAgent, publishChannel, publishChatID, finalResponse)
+						al.publishResponseIfNeeded(runCtx, activeAgent, publishChannel, publishChatID, finalResponse)
 					}
 				}()
 
-				response, activeAgent, err := al.processMessage(ctx, msg)
+				response, activeAgent, err := al.processMessage(runCtx, msg)
 				if err != nil {
 					response = fmt.Sprintf("Error processing message: %v", err)
 				}
@@ -1526,7 +1534,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 					cancelDrain()
 					if finalResponse != "" {
 						published = true
-						al.publishResponseIfNeeded(ctx, activeAgent, msg.Channel, msg.ChatID, finalResponse)
+						al.publishResponseIfNeeded(runCtx, activeAgent, msg.Channel, msg.ChatID, finalResponse)
 					}
 					return
 				}
@@ -1544,7 +1552,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 							"queue_depth": al.pendingSteeringCountForScope(target.SessionKey),
 						})
 
-					continued, continueErr := al.Continue(ctx, target.SessionKey, target.Channel, target.ChatID)
+					continued, continueErr := al.Continue(runCtx, target.SessionKey, target.Channel, target.ChatID)
 					if continueErr != nil {
 						logger.WarnCF("agent", "Failed to continue queued steering",
 							map[string]any{
@@ -1575,7 +1583,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 							"queue_depth": al.pendingSteeringCountForScope(target.SessionKey),
 						})
 
-					continued, continueErr := al.Continue(ctx, target.SessionKey, target.Channel, target.ChatID)
+					continued, continueErr := al.Continue(runCtx, target.SessionKey, target.Channel, target.ChatID)
 					if continueErr != nil {
 						logger.WarnCF("agent", "Failed to continue queued steering after shutdown drain",
 							map[string]any{
@@ -1595,7 +1603,7 @@ func (al *AgentLoop) Run(ctx context.Context) error {
 
 				if finalResponse != "" {
 					published = true
-					al.publishResponseIfNeeded(ctx, activeAgent, target.Channel, target.ChatID, finalResponse)
+					al.publishResponseIfNeeded(runCtx, activeAgent, target.Channel, target.ChatID, finalResponse)
 				}
 			}()
 		}
@@ -1701,6 +1709,12 @@ func (al *AgentLoop) drainBusToSteering(ctx context.Context, activeScope, active
 
 func (al *AgentLoop) Stop() {
 	al.running.Store(false)
+	// Cancel the Run context so the select wakes immediately rather than
+	// waiting for the next inbound message. Safe to call before Run (the
+	// atomic.Pointer is nil until Run stores a cancel func).
+	if fn := al.stopCancel.Load(); fn != nil {
+		(*fn)()
+	}
 }
 
 func (al *AgentLoop) publishResponseIfNeeded(ctx context.Context, ag *AgentInstance, channel, chatID, response string) {
@@ -2666,7 +2680,8 @@ func (al *AgentLoop) sendTranscriptionFeedback(
 	channel, chatID, messageID string,
 	validTexts []string,
 ) {
-	if !al.cfg.Voice.EchoTranscription {
+	cfg := al.GetConfig()
+	if !cfg.Voice.EchoTranscription {
 		return
 	}
 	if al.channelManager == nil {
@@ -3361,6 +3376,13 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 	var summary string
 	if !ts.opts.NoHistory {
 		history = ts.agent.Sessions.GetHistory(ts.sessionKey)
+		// FR-069 / FR-088: recover orphaned tool calls left by a SIGKILL or OOM
+		// kill while the gateway was paused awaiting approval. The function is
+		// idempotent — it no-ops on clean sessions and on sessions where the
+		// synthetic turn_cancelled_restart entry already exists. The on-disk
+		// transcript is preserved; only the LLM-context slice (history) is
+		// cleaned so the LLM does not see dangling unanswered tool_call entries.
+		history = RecoverOrphanedToolCalls(ts.agent.Sessions, ts.sessionKey, al.auditLogger)
 		summary = ts.agent.Sessions.GetSummary(ts.sessionKey)
 	}
 	ts.captureRestorePoint(history, summary)
@@ -3557,7 +3579,7 @@ turnLoop:
 			select {
 			case result, ok := <-ts.pendingResults:
 				if ok && result != nil && result.ForLLM != "" {
-					content := al.cfg.FilterSensitiveData(result.ForLLM)
+					content := cfg.FilterSensitiveData(result.ForLLM)
 					msg := providers.Message{Role: "user", Content: fmt.Sprintf("[SubTurn Result] %s", content)}
 					pendingMessages = append(pendingMessages, msg)
 				}
@@ -3640,7 +3662,7 @@ turnLoop:
 
 		// Native web search support
 		_, hasWebSearch := ts.agent.Tools.Get("web_search")
-		useNativeSearch := al.cfg.Tools.Web.PreferNative &&
+		useNativeSearch := cfg.Tools.Web.PreferNative &&
 			hasWebSearch &&
 			func() bool {
 				// Check if provider supports native search
@@ -4547,12 +4569,12 @@ turnLoop:
 			)
 
 			// Send tool feedback to chat channel if enabled
-			if al.cfg.Agents.Defaults.IsToolFeedbackEnabled() &&
+			if cfg.Agents.Defaults.IsToolFeedbackEnabled() &&
 				ts.channel != "" &&
 				!ts.opts.SuppressToolFeedback {
 				feedbackPreview := utils.Truncate(
 					string(argsJSON),
-					al.cfg.Agents.Defaults.GetToolFeedbackMaxArgsLength(),
+					cfg.Agents.Defaults.GetToolFeedbackMaxArgsLength(),
 				)
 				feedbackMsg := fmt.Sprintf("[tool] `%s`\n```\n%s\n```", tc.Name, feedbackPreview)
 				fbCtx, fbCancel := context.WithTimeout(turnCtx, 3*time.Second)
@@ -4598,7 +4620,7 @@ turnLoop:
 				}
 
 				// Filter sensitive data before publishing
-				content = al.cfg.FilterSensitiveData(content)
+				content = cfg.FilterSensitiveData(content)
 
 				logger.InfoCF("agent", "Async tool completed, publishing result",
 					map[string]any{
@@ -4844,8 +4866,8 @@ turnLoop:
 			}
 
 			// Filter sensitive data (API keys, tokens, secrets) before sending to LLM
-			if al.cfg.Tools.IsFilterSensitiveDataEnabled() {
-				contentForLLM = al.cfg.FilterSensitiveData(contentForLLM)
+			if cfg.Tools.IsFilterSensitiveDataEnabled() {
+				contentForLLM = cfg.FilterSensitiveData(contentForLLM)
 			}
 
 			toolResultMsg := providers.Message{
@@ -4985,7 +5007,7 @@ turnLoop:
 				select {
 				case result, ok := <-ts.pendingResults:
 					if ok && result != nil && result.ForLLM != "" {
-						content := al.cfg.FilterSensitiveData(result.ForLLM)
+						content := cfg.FilterSensitiveData(result.ForLLM)
 						msg := providers.Message{Role: "user", Content: fmt.Sprintf("[SubTurn Result] %s", content)}
 						messages = append(messages, msg)
 						if !ts.opts.NoHistory {
