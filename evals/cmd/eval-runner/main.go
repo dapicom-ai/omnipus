@@ -278,6 +278,11 @@ func seedConfig(homeDir, agentModel string) error {
     "allow_empty": true,
     "dev_mode_bypass": true
   },
+  "agents": {
+    "defaults": {
+      "workspace": "` + homeDir + `"
+    }
+  },
   "model": "",
   "model_list": {}
 }`
@@ -296,7 +301,7 @@ func startGateway(ctx context.Context, omnipusBin, homeDir string) (*gatewayHand
 		"OMNIPUS_BEARER_TOKEN=",
 	)
 	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
+	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start gateway: %w", err)
 	}
@@ -305,7 +310,7 @@ func startGateway(ctx context.Context, omnipusBin, homeDir string) (*gatewayHand
 	// Poll for up to 30 seconds.
 	portFile := filepath.Join(homeDir, "gateway.port")
 	var port string
-	deadline := time.Now().Add(30 * time.Second)
+	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		data, err := os.ReadFile(portFile)
 		if err == nil && len(bytes.TrimSpace(data)) > 0 {
@@ -323,7 +328,7 @@ func startGateway(ctx context.Context, omnipusBin, homeDir string) (*gatewayHand
 
 	// Wait for /health.
 	healthURL := baseURL + "/health"
-	deadline = time.Now().Add(30 * time.Second)
+	deadline = time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		resp, err := http.Get(healthURL) //nolint:noctx
 		if err == nil && resp.StatusCode == http.StatusOK {

@@ -1347,6 +1347,13 @@ func setupAndStartServices(
 		slog.Info("preview listener disabled by config")
 	}
 
+	// Write port file so external callers (e.g. eval-runner) can discover the bound port.
+	portFile := filepath.Join(cfg.WorkspacePath(), "gateway.port")
+	portData := strconv.Itoa(cfg.Gateway.Port)
+	if err := os.WriteFile(portFile, []byte(portData+"\n"), 0600); err != nil {
+		return nil, fmt.Errorf("write gateway.port: %w", err)
+	}
+
 	fmt.Printf(
 		"✓ Health endpoints available at http://%s:%d/health, /ready and /reload (POST)\n",
 		cfg.Gateway.Host,
