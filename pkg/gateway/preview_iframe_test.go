@@ -8,8 +8,8 @@
 // feature (chat-served-iframe-preview-spec.md).
 //
 // Coverage targets (SC-006 per spec):
-//   - pkg/gateway/rest_serve.go
-//   - pkg/gateway/rest_dev.go
+//   - pkg/gateway/rest_preview.go (HandleServeWorkspace, HandleDevProxy — unified
+//     after the web_serve consolidation; previously rest_serve.go + rest_dev.go)
 //   - pkg/gateway/rest_workspace.go (CSP / headers)
 //   - pkg/config/config.go (ValidateAndApplyPreviewDefaults)
 //
@@ -1195,7 +1195,7 @@ func TestDevPreview_FrameAncestorsHeader_ViaRealHandler(t *testing.T) {
 // TestServePreview_SymlinkEscape_Returns403 verifies that HandleServeWorkspace
 // returns 403 when a symlink inside the served directory points to a path
 // outside the registered directory. This tests the F-28 symlink-escape defence
-// added to rest_serve.go.
+// added to rest_preview.go.
 //
 // Skipped on Windows (os.Symlink requires elevated privileges on Windows).
 // Traces to: chat-served-iframe-preview-spec.md FR-005 (path safety) / F-28
@@ -1257,7 +1257,7 @@ func TestServePreview_SymlinkEscape_Returns403(t *testing.T) {
 // TestDevPreview_InvalidEntityID_Returns400 verifies that HandleDevProxy returns
 // 400 when the agentID contains characters that fail validateEntityID (e.g. "$").
 // This is the F-32 path: the same validateEntityID check applied to /serve/ is
-// now also applied to /dev/ (rest_dev.go).
+// now also applied to /dev/ (rest_preview.go).
 // Traces to: chat-served-iframe-preview-spec.md F-32 / dev.path_invalid
 func TestDevPreview_InvalidEntityID_Returns400(t *testing.T) {
 	if runtime.GOOS != "linux" {

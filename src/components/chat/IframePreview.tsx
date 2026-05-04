@@ -1,8 +1,8 @@
 /**
  * IframePreview — shared iframe chrome component used by WebServeBlock (the
  * canonical caller for the unified `web_serve` tool), and indirectly by the
- * legacy replay aliases ServeWorkspaceUI / RunInWorkspaceUI which both
- * delegate through WebServeBlock.
+ * legacy replay aliases ServeWorkspaceUI / RunInWorkspaceUI which delegate
+ * through makeWebServeUI (which wraps WebServeBlock).
  *
  * Spec references: FR-010 / FR-010a / FR-010b / FR-011 / FR-012 / FR-012a /
  * FR-012b / FR-013 / FR-014 / FR-015 / FR-019.

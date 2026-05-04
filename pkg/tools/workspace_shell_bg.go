@@ -70,8 +70,10 @@ type WorkspaceShellBgTool struct {
 	// auditLogger records every invocation.
 	auditLogger *audit.Logger
 
-	// auditFailClosed mirrors RunInWorkspaceConfig.AuditFailClosed. When
-	// true (default) the tool refuses to start when audit write fails.
+	// auditFailClosed mirrors WebServeDevConfig.AuditFailClosed
+	// (pkg/tools/web_serve.go); the on-disk field is
+	// sandbox.path_guard_audit_fail_closed. When true (default) the tool
+	// refuses to start when audit write fails.
 	auditFailClosed bool
 
 	// registry is the shared DevServerRegistry. Must be non-nil in production.

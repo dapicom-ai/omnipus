@@ -85,7 +85,7 @@ var ErrPerAgentCap = errors.New("dev_servers: agent already has an active dev se
 
 // ErrGatewayCap is returned by Register when the gateway-wide concurrency
 // cap (cfg.Sandbox.MaxConcurrentDevServers) is reached. The error message
-// uses the wording specified in.
+// uses the wording specified in spec v4.
 type ErrGatewayCap struct {
 	Current int
 	Max     int
