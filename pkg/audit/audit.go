@@ -107,6 +107,7 @@ func IsValidEventName(e EventName) bool {
 		EventGatewayStartupGuardDisabled,
 		EventGatewayConfigInvalidValue,
 		EventTurnAbortedSyntheticLoop,
+		EventApproverFallback,
 		// security_change.go.
 		EventSecuritySettingChange,
 		// Misc event names emitted by other packages with stable wire

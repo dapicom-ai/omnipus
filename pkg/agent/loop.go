@@ -6203,14 +6203,24 @@ func (al *AgentLoop) resolveSingleToolPolicy(ts *turnState, toolName string) str
 	return p
 }
 
-// loadToolApprover returns the wired PolicyApprover or a nop implementation when
-// none has been set (test mode / CLI without gateway).
+// loadToolApprover returns the wired PolicyApprover or, when none has been
+// set, a fail-closed nopPolicyApprover that denies every ask with reason
+// "no_approver_configured" and emits one `approver.fallback` audit row per
+// process (V2.B; closes silent-failure-hunter BE CRIT-1). The nop carries
+// al.auditLogger so the diagnostic emit lands in the operator's JSONL.
+//
+// The previous default returned `nopPolicyApprover{}` which auto-approved
+// every ask call — including admin-flagged tools — with zero log and zero
+// audit. Test code that needs the auto-approve behaviour now installs
+// `testAutoApproveApprover{}` explicitly via SetToolApprover (build tag
+// `test`; see `tool_approver_testonly.go`).
 func (al *AgentLoop) loadToolApprover() PolicyApprover {
 	al.mu.RLock()
 	a := al.toolApprover
+	logger := al.auditLogger
 	al.mu.RUnlock()
 	if a == nil {
-		return nopPolicyApprover{}
+		return nopPolicyApprover{auditLogger: logger}
 	}
 	return a
 }

@@ -91,6 +91,19 @@ const (
 	// observing N consecutive synthetic-deny tool results (default N=8;
 	// `gateway.turn_synthetic_error_floor`). FR-084.
 	EventTurnAbortedSyntheticLoop = "turn.aborted_synthetic_loop"
+
+	// EventApproverFallback — HIGH. The agent loop hit `nopPolicyApprover`
+	// in a default (production) build, meaning `SetToolApprover` was never
+	// called and an `ask`-policy tool would be denied with reason
+	// "no_approver_configured". This event signals that the approval gate
+	// is mis-wired and ANY ask-policy tool — including admin-flagged ones —
+	// is being failed-closed in production.
+	//
+	// Emitted at most once per process via sync.Once: the first hit is the
+	// diagnostic signal, subsequent denies are repeated by definition and
+	// would flood the audit log if a misconfigured deployment kept calling
+	// ask-policy tools. Closes V2.B silent-failure-hunter BE CRIT-1.
+	EventApproverFallback = "approver.fallback"
 )
 
 // ---------------------------------------------------------------------------
