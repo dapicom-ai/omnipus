@@ -8,8 +8,7 @@
 // workspace + npm cache) that limit damage from a hostile build script.
 // - The proxy enforces an operator-controlled allow-list (cfg.Sandbox.
 // EgressAllowList) on the HTTP/HTTPS host. Hosts not on the list get
-// a 403 with a structured audit log entry (path.network_denied) per
-//.
+// a 403 with a structured audit log entry (path.network_denied).
 // - Wildcard convention follows the prevailing one: "*.x"
 // matches one-or-more leading labels (e.g. "*.npmjs.org" matches both
 // "registry.npmjs.org" and "foo.bar.npmjs.org") but NOT the apex
@@ -21,8 +20,8 @@
 // printable bytes in the host.
 //
 // Limitations (acknowledged in spec):
-// - HTTP/HTTPS only. Raw TCP connect bypasses the proxy entirely
-//. Operators are warned in the env preamble.
+// - HTTP/HTTPS only. Raw TCP connect bypasses the proxy entirely.
+// Operators are warned in the env preamble.
 // - The proxy CONNECT method blesses the upstream TLS connection. We do
 // not MITM TLS — the client tunnels through us. Allow-list is checked
 // on the CONNECT host; subsequent bytes are forwarded opaquely.

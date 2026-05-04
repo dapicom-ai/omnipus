@@ -31,7 +31,8 @@ var devURLSchemeWarnOnce sync.Once
 // workspace.shell_bg still uses the /dev/ form directly (back-compat shim
 // on the preview listener resolves both paths).
 //
-// gatewayHost examples accepted:
+// gatewayHost examples accepted (results shown in the workspace.shell_bg
+// /dev/ form; web_serve dev mode substitutes /preview/):
 //   - ""                       → "/dev/agent/token/"
 //   - "127.0.0.1:5001"         → "https://127.0.0.1:5001/dev/agent/token/"
 //   - "https://example.com"    → "https://example.com/dev/agent/token/"

@@ -311,15 +311,24 @@ export interface ToolCall {
 // These are parsed from ToolCall.result (which is `unknown` on the wire) by
 // the tool-UI components in src/components/chat/tools/.
 //
-// Legacy replay types (pre-unification): ServeWorkspaceResult, RunInWorkspaceResult.
-// Canonical type for new sessions: WebServeResult (defined in WebServeUI.tsx).
+// Pre-unification result shapes: ServeWorkspaceResult, RunInWorkspaceResult.
+// New tool-result code on the agent side emits `WebServeResult` (defined in
+// WebServeUI.tsx); the two shapes here remain the iframe prop carriers that
+// `WebServeBlock` casts into and that `IframePreview` consumes — so they
+// are NOT dead. Replay paths (chat transcripts saved before unification)
+// also rely on these shapes when rendering historical sessions.
 
 /**
- * Result emitted by the legacy `serve_workspace` tool.
+ * Result shape originally emitted by the legacy `serve_workspace` tool.
  *
- * @deprecated Replay-only. Kept so the SPA can render chat transcripts saved
- * before the web_serve tool unification. Do not use this type for new code —
- * use `WebServeResult` from `src/components/chat/tools/WebServeUI.tsx` instead.
+ * Used as the static-mode iframe prop carrier on the canonical `web_serve`
+ * code path: `WebServeBlock` casts the static-mode result of `web_serve`
+ * into this shape and feeds it to `IframePreview` (kind=`'web_serve'`).
+ * Also produced by the legacy `serve_workspace` tool in pre-unification
+ * chat transcripts so the SPA can render historical sessions.
+ *
+ * Tool-result authors should produce `WebServeResult`; only this shape is
+ * exposed to the iframe layer.
  *
  * `path` is the relative preview path (e.g. `"/preview/<agent>/<token>/"`
  * or the legacy `"/serve/<agent>/<token>/"`).
@@ -337,11 +346,16 @@ export interface ServeWorkspaceResult {
 }
 
 /**
- * Result emitted by the legacy `run_in_workspace` tool.
+ * Result shape originally emitted by the legacy `run_in_workspace` tool.
  *
- * @deprecated Replay-only. Kept so the SPA can render chat transcripts saved
- * before the web_serve tool unification. Do not use this type for new code —
- * use `WebServeResult` from `src/components/chat/tools/WebServeUI.tsx` instead.
+ * Used as the dev-mode iframe prop carrier on the canonical `web_serve`
+ * code path: `WebServeBlock` casts the dev-mode result of `web_serve`
+ * into this shape and feeds it to `IframePreview` (kind=`'run_in_workspace'`,
+ * which is a mode discriminator, not a current tool name). Also produced
+ * by the legacy `run_in_workspace` tool in pre-unification chat transcripts.
+ *
+ * Tool-result authors should produce `WebServeResult`; only this shape is
+ * exposed to the iframe layer.
  *
  * `path` is the relative dev preview path (e.g. `"/preview/<agent>/<token>/"`
  * or the legacy `"/dev/<agent>/<token>/"`).

@@ -258,7 +258,12 @@ export function rewriteLegacyURL(href: string, hostname: string, previewPort: nu
  * Arguments for `buildIframeURL`.
  */
 export interface BuildIframeURLArgs {
-  /** The relative path from the tool result, e.g. `"/serve/<agent>/<token>/"`. */
+  /**
+   * The relative path from the tool result, e.g.
+   * `"/preview/<agent>/<token>/"` (canonical) or the legacy
+   * `"/serve/<agent>/<token>/"` / `"/dev/<agent>/<token>/"` for transcript
+   * replay.
+   */
   path: string
   /**
    * When the operator has set `gateway.preview_origin`, this is that value

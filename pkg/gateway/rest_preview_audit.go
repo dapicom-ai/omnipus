@@ -201,13 +201,14 @@ func markFirstUpstreamFailure(token, remoteIP string) (firstInWindow bool, suppr
 	return false, 0
 }
 
-// emitPreviewAuditEntry writes a /serve/ or /dev/ audit entry to the
-// gateway's audit logger. The schema follows FR-024:
+// emitPreviewAuditEntry writes a preview-listener audit entry (/preview/,
+// /serve/, /dev/) to the gateway's audit logger. The schema follows
+// FR-024:
 //
 //	{
 //	  "agent_id": "<string>",
 //	  "token_prefix": "<first 8 chars of token>",
-//	  "sanitised_path": "/serve/<agent>/<redacted>/<remaining>",
+//	  "sanitised_path": "/<prefix>/<agent>/<redacted>/<remaining>",
 //	  "method": "<HTTP method>",
 //	  "status": <int>,
 //	  "remote_ip": "<X-Forwarded-For canonicalised, else r.RemoteAddr>",
@@ -216,8 +217,9 @@ func markFirstUpstreamFailure(token, remoteIP string) (firstInWindow bool, suppr
 //	}
 //
 // level is the slog level for the underlying message — Info for success
-// (serve.served, dev.proxied), Warn for security failures
-// (serve.token_invalid, dev.token_agent_mismatch, etc.).
+// (preview.served, serve.served, dev.proxied), Warn for security
+// failures (preview.token_invalid, serve.token_invalid,
+// dev.token_agent_mismatch, etc.).
 //
 // Audit-write failures are logged at Warn but NEVER block the HTTP
 // response. Audit is best-effort here — the spec is explicit that

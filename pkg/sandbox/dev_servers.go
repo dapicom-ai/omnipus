@@ -4,8 +4,9 @@
 // Lifecycle:
 // - Registration created when web_serve dev mode successfully spawns a
 // hardened child that bound the requested port.
-// - Idle deadline: 30 min from last activity (touched by the
-// /preview/<agent>/<token>/ reverse proxy on each request).
+// - Idle deadline: 30 min from last activity (touched by the preview
+// reverse proxy on each request — /preview/, /serve/, and /dev/ all
+// route through Lookup).
 // - Hard cap: 4 h from registration time, regardless of activity. The
 // janitor enforces both.
 // - Per-agent cap: 1 active dev server. Per-gateway cap from
@@ -53,8 +54,9 @@ type DevServerRegistration struct {
 	// CreatedAt is when this registration was first inserted (drives the
 	// 4-h hard cap).
 	CreatedAt time.Time
-	// LastActivity is the most recent /preview/<agent>/<token>/ proxy hit
-	// (drives the 30-min idle cap).
+	// LastActivity is the most recent preview reverse-proxy hit on any of
+	// the three URL prefixes (/preview/, /serve/, /dev/) — drives the
+	// 30-min idle cap.
 	LastActivity time.Time
 	// Command is the user-supplied command for diagnostics; not used in
 	// auth decisions.

@@ -322,6 +322,11 @@ function ChromeBar({
 
 // ── Warmup placeholder ────────────────────────────────────────────────────────
 
+// `toolName` here is the IframePreviewProps.kind discriminator label
+// passed down from the parent — NOT a current tool name. The literal
+// 'run_in_workspace' selects dev-mode placeholder copy and is the
+// IframePreview kind for dev mode regardless of which tool produced
+// the result (the canonical tool is `web_serve` dev mode).
 function WarmupPlaceholder({ toolName }: { toolName: string }) {
   return (
     <div
@@ -354,6 +359,11 @@ function WarmupPlaceholder({ toolName }: { toolName: string }) {
 export function IframePreview(props: IframePreviewProps) {
   const { kind, result, warmupTimeoutSeconds } = props
   const isWarmupRequired = kind === 'run_in_workspace'
+  // `toolName` is a kind-discriminator label fed to WarmupPlaceholder
+  // and warmup-resolution logic, NOT a current tool name. The legacy
+  // names (`serve_workspace`, `run_in_workspace`) are preserved here as
+  // mode tags because the placeholder copy and warmup branching depend
+  // on them; renaming would require touching every consumer.
   const toolName = kind === 'web_serve' ? 'serve_workspace' : kind
   const {
     data: aboutInfo,
