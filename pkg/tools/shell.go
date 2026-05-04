@@ -224,7 +224,18 @@ var (
 			`>\s*/dev/(sd[a-z]|hd[a-z]|vd[a-z]|xvd[a-z]|nvme\d|mmcblk\d|loop\d|dm-\d|md\d|sr\d|nbd\d)`,
 		),
 		regexp.MustCompile(`\b(shutdown|reboot|poweroff)\b`),
-		regexp.MustCompile(`:\(\)\s*\{.*\};\s*:`),
+		// Fork-bomb guard. Widened in v0.2 #155 item 5 to also match the
+		// "whitespace anywhere" bypass shapes:
+		//   `: ( ) { :|:& };:`  (whitespace around parens)
+		//   `:(){ :|:& } ; :`   (whitespace around `;`)
+		//   `: ( ) { : | : & } ; :` (whitespace everywhere)
+		// The previous pattern `:\(\)\s*\{.*\};\s*:` required literal `()` and
+		// `};` adjacent — both forms an attacker can sidestep with single
+		// space inserts. We now allow optional \s* at every join: after the
+		// leading colon, inside and after the parens, around `;`, and before
+		// the trailing recursion. RLIMIT_NPROC in hardened_exec_linux.go is
+		// the kernel-layer backstop for any shape that still slips through.
+		regexp.MustCompile(`:\s*\(\s*\)\s*\{.*\}\s*;\s*:`),
 		regexp.MustCompile(`\$\([^)]+\)`),
 		regexp.MustCompile(`\$\{[^}]+\}`),
 		regexp.MustCompile("`[^`]+`"),
