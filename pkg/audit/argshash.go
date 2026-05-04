@@ -29,6 +29,7 @@
 // `args_preview` is a redacted, length-capped projection used to give
 // operators a sense of what an approval was for without leaking secrets.
 // The algorithm is documented in the `ArgsPreview` doc-comment.
+
 package audit
 
 import (
@@ -323,14 +324,14 @@ func redactPreviewValue(key string, v any) any {
 	return truncate(string(data), previewMaxLen)
 }
 
-// truncate clamps s to at most max bytes on a UTF-8 rune boundary, appending
+// truncate clamps s to at most maxLen bytes on a UTF-8 rune boundary, appending
 // the unicode-aware ellipsis "…" when truncation occurred.
-func truncate(s string, max int) string {
-	if len(s) <= max {
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
 		return s
 	}
-	// Find the last rune boundary <= max.
-	cut := max
+	// Find the last rune boundary <= maxLen.
+	cut := maxLen
 	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}

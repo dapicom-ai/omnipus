@@ -301,8 +301,8 @@ func embedHMAC(rawJSON []byte, prev []byte, key []byte) (line []byte, mac []byte
 	var m map[string]any
 	dec := json.NewDecoder(bytes.NewReader(rawJSON))
 	dec.UseNumber()
-	if err := dec.Decode(&m); err != nil {
-		return nil, nil, fmt.Errorf("audit: embed hmac: %w", err)
+	if decErr := dec.Decode(&m); decErr != nil {
+		return nil, nil, fmt.Errorf("audit: embed hmac: %w", decErr)
 	}
 	m["hmac"] = hexMac
 	out, err := json.Marshal(m)

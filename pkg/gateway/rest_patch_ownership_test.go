@@ -96,14 +96,13 @@ func newPatchOwnershipAPI(
 
 	// Write a minimal config.json so safeUpdateConfigJSON can read it.
 	// Include the custom agent and users so PATCH can find them.
-	gwUsers := []any{
-		map[string]any{
-			"username":      "admin",
-			"role":          "admin",
-			"password_hash": "",
-			"token_hash":    "",
-		},
-	}
+	gwUsers := make([]any, 0, 1+len(extraUsers))
+	gwUsers = append(gwUsers, map[string]any{
+		"username":      "admin",
+		"role":          "admin",
+		"password_hash": "",
+		"token_hash":    "",
+	})
 	for _, u := range extraUsers {
 		gwUsers = append(gwUsers, map[string]any{
 			"username":      u.Username,

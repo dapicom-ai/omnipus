@@ -10,6 +10,7 @@
 // `TestFilterToolsByPolicy_AdminAskFenceOnCustomAgents` test exercises
 // the policy.ApplyAdminAskFence helper directly so the invariant has a
 // failing-but-buildable home today and a passing home once A1 lands.
+
 package tools
 
 import (
@@ -160,6 +161,7 @@ func TestFilterToolsByPolicy_AdminAskFenceOnCustomAgents(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			got, fenceApplied := policy.ApplyAdminAskFence(
 				tc.effective, tc.toolName, tc.agentID,
 				requiresAdminAsk, isCoreAgent,

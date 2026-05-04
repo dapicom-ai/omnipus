@@ -21,6 +21,7 @@
 // descendants) bounds the host damage. The test asserts that production
 // code SHOULD propagate a similar limit; until then the test reports the
 // gap as a t.Errorf.
+
 package sandbox_test
 
 import (

@@ -1,8 +1,10 @@
 // memory_behavioral_test.go — Fix C (memory) behavioral tests.
 // Traces to: env-awareness-and-memory-spec.md (spec v7), FR-001 through FR-031.
+
 package agent
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -146,7 +148,7 @@ func TestMemoryStore_AppendLongTerm_StripsNull_RejectsCommentInjection(t *testin
 
 	// After the NUL-stripped write, the file must not contain a literal NUL.
 	raw, _ := os.ReadFile(filepath.Join(dir, "memory", "MEMORY.md"))
-	if strings.ContainsRune(string(raw), 0) {
+	if bytes.ContainsRune(raw, 0) {
 		t.Error("MEMORY.md contains a NUL byte — NUL stripping failed")
 	}
 }
@@ -190,8 +192,8 @@ func TestMemoryStore_ReadLongTermEntries_ParsesAndCaches(t *testing.T) {
 
 	// After a new append (file changes), cache must miss and return 2 entries.
 	time.Sleep(5 * time.Millisecond) // ensure mtime advances
-	if err := ms.AppendLongTerm("second fact", "key_decision"); err != nil {
-		t.Fatalf("AppendLongTerm second: %v", err)
+	if appendErr := ms.AppendLongTerm("second fact", "key_decision"); appendErr != nil {
+		t.Fatalf("AppendLongTerm second: %v", appendErr)
 	}
 	entries3, err := ms.ReadLongTermEntries()
 	if err != nil {

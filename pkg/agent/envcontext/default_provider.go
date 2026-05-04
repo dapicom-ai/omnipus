@@ -47,7 +47,7 @@ func NewDefaultProvider(cfg *config.Config, backend sandbox.SandboxBackend, work
 var (
 	procVersionOnce sync.Once
 	cachedKernel    string
-	cachedKernelErr error
+	errCachedKernel error
 )
 
 // readKernelVersion reads /proc/version once and extracts the short release
@@ -61,7 +61,7 @@ func readKernelVersion() (string, error) {
 	procVersionOnce.Do(func() {
 		data, err := os.ReadFile("/proc/version")
 		if err != nil {
-			cachedKernelErr = err
+			errCachedKernel = err
 			return
 		}
 		// /proc/version format: "Linux version 6.8.0-107-generic ..."
@@ -70,7 +70,7 @@ func readKernelVersion() (string, error) {
 		// segments (major.minor) as the "short release token".
 		fields := strings.Fields(string(data))
 		if len(fields) < 3 {
-			cachedKernelErr = fmt.Errorf("unexpected /proc/version format")
+			errCachedKernel = fmt.Errorf("unexpected /proc/version format")
 			return
 		}
 		// fields[0]="Linux", fields[1]="version", fields[2]="6.8.0-107-generic"
@@ -87,7 +87,7 @@ func readKernelVersion() (string, error) {
 			cachedKernel = full
 		}
 	})
-	return cachedKernel, cachedKernelErr
+	return cachedKernel, errCachedKernel
 }
 
 // Platform implements Provider. Returns GOOS, GOARCH, and on Linux the short

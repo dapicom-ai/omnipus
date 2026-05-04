@@ -5,6 +5,7 @@
 // scope — they exercise the fence as a pure post-resolution operation, so
 // regardless of how the resolver evolves, the fence's downgrade logic is
 // proven independently.
+
 package policy
 
 import (
@@ -32,6 +33,7 @@ func TestIsAdmin(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := IsAdmin(c.u); got != c.want {
 				t.Fatalf("IsAdmin = %v, want %v", got, c.want)
 			}

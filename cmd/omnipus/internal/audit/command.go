@@ -138,45 +138,6 @@ func runVerify(ctx context.Context, dir string, jsonOutput bool) error {
 	return nil
 }
 
-// exitCodeError wraps an error with a specific shell exit code. Cobra's
-// SilenceErrors+SilenceUsage on the parent command, plus the
-// PersistentPostRun hook on the root, are NOT in scope for this
-// subcommand — instead we set os.Exit directly via a sentinel value.
-//
-// The cleaner alternative would be cobra's SetOut/SetErr + a custom
-// handler in main.go, but that requires a wider refactor of cmd/omnipus
-// just for the audit verify command. The os.Exit shortcut is documented
-// here so the next person who reads the code knows it's intentional.
-type exitCodeError struct {
-	code int
-	err  error
-}
-
-// Error implements error for exitCodeError. Used by cobra when it
-// doesn't recognize the wrapper.
-func (e *exitCodeError) Error() string {
-	if e == nil || e.err == nil {
-		return ""
-	}
-	return e.err.Error()
-}
-
-// Unwrap exposes the inner error for errors.Is/As.
-func (e *exitCodeError) Unwrap() error {
-	if e == nil {
-		return nil
-	}
-	return e.err
-}
-
-// ExitCode returns the desired shell exit code.
-func (e *exitCodeError) ExitCode() int {
-	if e == nil {
-		return 0
-	}
-	return e.code
-}
-
 // exitErr prints err to stderr and triggers an os.Exit with the
 // specified code. Used by runVerify to honor the documented 0/1/2
 // contract.

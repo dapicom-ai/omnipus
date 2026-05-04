@@ -57,44 +57,16 @@ func NewToolRegistry() *ToolRegistry {
 	}
 }
 
-func (r *ToolRegistry) Register(tool Tool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+// registerToolLocked saves a tool entry into the registry. Must be called with r.mu held.
+func (r *ToolRegistry) registerToolLocked(tool Tool, isCore bool, warnPrefix, debugLabel string) {
 	name := tool.Name()
 	if _, exists := r.tools[name]; exists {
-		logger.WarnCF("tools", "Tool registration overwrites existing tool",
+		logger.WarnCF("tools", warnPrefix+" overwrites existing tool",
 			map[string]any{"name": name})
 	}
 	r.tools[name] = &ToolEntry{
 		Tool:   tool,
-		IsCore: true,
-		TTL:    0, // Core tools do not use TTL
-	}
-	if aware, ok := tool.(mediaStoreAware); ok && r.mediaStore != nil {
-		aware.SetMediaStore(r.mediaStore)
-	}
-	if aware, ok := tool.(auditLoggerAware); ok && r.auditLogger != nil {
-		aware.SetAuditLogger(r.auditLogger)
-	}
-	if aware, ok := tool.(memoryRateLimiterAware); ok && r.memoryRateLimiter != nil {
-		aware.SetMemoryRateLimiter(r.memoryRateLimiter)
-	}
-	r.version.Add(1)
-	logger.DebugCF("tools", "Registered core tool", map[string]any{"name": name})
-}
-
-// RegisterHidden saves hidden tools (visible only via TTL)
-func (r *ToolRegistry) RegisterHidden(tool Tool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	name := tool.Name()
-	if _, exists := r.tools[name]; exists {
-		logger.WarnCF("tools", "Hidden tool registration overwrites existing tool",
-			map[string]any{"name": name})
-	}
-	r.tools[name] = &ToolEntry{
-		Tool:   tool,
-		IsCore: false,
+		IsCore: isCore,
 		TTL:    0,
 	}
 	if aware, ok := tool.(mediaStoreAware); ok && r.mediaStore != nil {
@@ -107,7 +79,20 @@ func (r *ToolRegistry) RegisterHidden(tool Tool) {
 		aware.SetMemoryRateLimiter(r.memoryRateLimiter)
 	}
 	r.version.Add(1)
-	logger.DebugCF("tools", "Registered hidden tool", map[string]any{"name": name})
+	logger.DebugCF("tools", debugLabel, map[string]any{"name": name})
+}
+
+func (r *ToolRegistry) Register(tool Tool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.registerToolLocked(tool, true, "Tool registration", "Registered core tool")
+}
+
+// RegisterHidden saves hidden tools (visible only via TTL)
+func (r *ToolRegistry) RegisterHidden(tool Tool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.registerToolLocked(tool, false, "Hidden tool registration", "Registered hidden tool")
 }
 
 // SetMediaStore injects a MediaStore into all registered tools that can

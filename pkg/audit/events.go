@@ -13,6 +13,7 @@
 // failure is logged via slog but never bubbled up to the caller, except
 // the boot-abort path (FR-063) which uses a stderr fallback before exit
 // (see boot_abort.go).
+
 package audit
 
 import (

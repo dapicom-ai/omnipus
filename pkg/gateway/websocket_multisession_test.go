@@ -202,12 +202,12 @@ func TestWS_MessageWithEmptySessionID_MintsAndAcks(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		conn.SetReadDeadline(deadline) //nolint:errcheck
-		_, raw, err := conn.ReadMessage()
-		if err != nil {
+		_, raw, readErr := conn.ReadMessage()
+		if readErr != nil {
 			break
 		}
 		var f wsServerFrame
-		if err := json.Unmarshal(raw, &f); err != nil {
+		if unmarshalErr := json.Unmarshal(raw, &f); unmarshalErr != nil {
 			continue
 		}
 		if f.Type == "session_started" {

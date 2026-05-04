@@ -417,7 +417,7 @@ func TestFilterToolsByPolicy_WildcardDataset(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			// Build a tool list containing the requested tool.
-			scope := ToolScope(ScopeGeneral)
+			scope := ScopeGeneral
 			if len(tc.toolRequested) > 7 && tc.toolRequested[:7] == "system." {
 				scope = ScopeCore
 			}

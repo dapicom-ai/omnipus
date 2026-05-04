@@ -41,7 +41,7 @@ const (
 	// ApprovalStatePending is the sole active state.  The agent loop is paused.
 	ApprovalStatePending ApprovalState = "pending"
 
-	// Terminal states — any action on these returns HTTP 410 Gone.
+	// ApprovalStateApproved and the other terminal states return HTTP 410 Gone on any action.
 	ApprovalStateApproved                ApprovalState = "approved"
 	ApprovalStateDeniedUser              ApprovalState = "denied_user"
 	ApprovalStateDeniedTimeout           ApprovalState = "denied_timeout"
@@ -142,21 +142,21 @@ type approvalRegistryV2 struct {
 const defaultTerminalRetention = 60 * time.Second
 
 // newApprovalRegistryV2 creates a registry with the given saturation cap and timeout.
-// cap == 0 means unlimited (ShouldSaturate always returns false per FR-016).
-// cap > 0 is the saturation limit. Negative cap must not reach here (caller
+// maxCap == 0 means unlimited (ShouldSaturate always returns false per FR-016).
+// maxCap > 0 is the saturation limit. Negative maxCap must not reach here (caller
 // must validate via policy.ValidateSaturationCap before constructing).
 // timeout <= 0 selects the spec default (300 s).
-func newApprovalRegistryV2(cap int, timeout time.Duration) *approvalRegistryV2 {
+func newApprovalRegistryV2(maxCap int, timeout time.Duration) *approvalRegistryV2 {
 	if timeout <= 0 {
 		timeout = 300 * time.Second
 	}
 	r := &approvalRegistryV2{
 		entries:           make(map[string]*approvalEntry),
-		maxPending:        cap,
+		maxPending:        maxCap,
 		timeout:           timeout,
 		terminalRetention: defaultTerminalRetention,
 	}
-	r.maxPendingAtomic.Store(int64(cap))
+	r.maxPendingAtomic.Store(int64(maxCap))
 	return r
 }
 
@@ -203,8 +203,8 @@ func (r *approvalRegistryV2) requestApproval(
 			pendingCount++
 		}
 	}
-	cap := r.maxPending
-	if cap > 0 && pendingCount >= cap {
+	maxCap := r.maxPending
+	if maxCap > 0 && pendingCount >= maxCap {
 		// Return a synthetic saturated entry — caller must NOT emit WS event.
 		synthetic := &approvalEntry{
 			ApprovalID:    uuid.New().String(),

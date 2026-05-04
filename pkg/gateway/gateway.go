@@ -506,9 +506,9 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 				return
 			}
 			// B1.2(a): logger.Log is nil-safe; no further guard needed.
-			if err := logger.Log(entry); err != nil {
+			if logErr := logger.Log(entry); logErr != nil {
 				slog.Error("sandbox: restrict-failure audit write failed",
-					"event", entry.Event, "error", err)
+					"event", entry.Event, "error", logErr)
 			}
 		})
 	}
@@ -607,9 +607,9 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 	// MCPRegistry starts empty; MCP servers populate it at connection time.
 	centralBuiltinReg := tools.NewBuiltinRegistry()
 	for _, t := range systools.AllTools(nil, nil) {
-		if err := centralBuiltinReg.RegisterBuiltin(t); err != nil {
+		if regErr := centralBuiltinReg.RegisterBuiltin(t); regErr != nil {
 			slog.Warn("gateway: central builtin registry pre-population skipped duplicate",
-				"tool", t.Name(), "error", err)
+				"tool", t.Name(), "error", regErr)
 		}
 	}
 	centralMCPReg := tools.NewMCPRegistry()
@@ -992,8 +992,8 @@ func setupAndStartServices(
 		// Reload refs persisted by a previous gateway instance so
 		// /api/v1/media/<ref> URLs in old session transcripts still resolve.
 		// Best-effort — a load failure should not block boot.
-		if err := fms.LoadRegistry(); err != nil {
-			slog.Warn("media: failed to load persisted registry", "error", err)
+		if loadErr := fms.LoadRegistry(); loadErr != nil {
+			slog.Warn("media: failed to load persisted registry", "error", loadErr)
 		}
 		fms.Start()
 	}
@@ -1161,9 +1161,9 @@ func setupAndStartServices(
 			return
 		}
 		// B1.2(a): logger.Log is nil-safe by contract; no extra guard.
-		if err := logger.Log(entry); err != nil {
+		if logErr := logger.Log(entry); logErr != nil {
 			slog.Error("egress_proxy: audit write failed",
-				"event", entry.Event, "error", err)
+				"event", entry.Event, "error", logErr)
 		}
 	}
 
@@ -1383,8 +1383,8 @@ func setupAndStartServices(
 	// Write port file so external callers (e.g. eval-runner) can discover the bound port.
 	portFile := filepath.Join(cfg.WorkspacePath(), "gateway.port")
 	portData := strconv.Itoa(cfg.Gateway.Port)
-	if err := os.WriteFile(portFile, []byte(portData+"\n"), 0o600); err != nil {
-		return nil, fmt.Errorf("write gateway.port: %w", err)
+	if writeErr := os.WriteFile(portFile, []byte(portData+"\n"), 0o600); writeErr != nil {
+		return nil, fmt.Errorf("write gateway.port: %w", writeErr)
 	}
 
 	fmt.Printf(
@@ -1553,8 +1553,8 @@ func restartServices(
 		// Reload refs persisted by a previous gateway instance so
 		// /api/v1/media/<ref> URLs in old session transcripts still resolve.
 		// Best-effort — a load failure should not block boot.
-		if err := fms.LoadRegistry(); err != nil {
-			slog.Warn("media: failed to load persisted registry", "error", err)
+		if loadErr := fms.LoadRegistry(); loadErr != nil {
+			slog.Warn("media: failed to load persisted registry", "error", loadErr)
 		}
 		fms.Start()
 	}
@@ -1754,14 +1754,6 @@ func createHeartbeatHandler(agentLoop *agent.AgentLoop) func(prompt, channel, ch
 		}
 		return tools.SilentResult(response)
 	}
-}
-
-// remoteChannelNames is the set of channel identifiers that route messages from
-// external networks. Used by emitGHSARemovalWarn to detect agents that face
-// remote traffic.
-var remoteChannelNames = []string{
-	"telegram", "discord", "slack", "matrix", "irc", "teams", "google-chat",
-	"whatsapp", "signal",
 }
 
 // emitGHSARemovalWarn logs a WARN when any agent that has a remote channel

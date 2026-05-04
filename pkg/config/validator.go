@@ -27,10 +27,11 @@ const fr001RemovedKeysMsg = "config error: agents.defaults.restrict_to_workspace
 // tag renaming.
 func validateRemovedKeys(data []byte) error {
 	// Navigate agents.defaults to check for the removed keys.
-	var top map[string]json.RawMessage
-	if err := json.Unmarshal(data, &top); err != nil {
-		// If the top-level can't be parsed as an object, a later step will
-		// catch the malformed JSON; no removed-key check needed.
+	// Parse failures at each level are intentionally ignored: the main JSON
+	// unmarshal step surfaces malformed input; this pre-check only inspects
+	// specific keys when the structure is parseable.
+	top := unmarshalMapSilent(data)
+	if top == nil {
 		return nil
 	}
 
@@ -39,8 +40,8 @@ func validateRemovedKeys(data []byte) error {
 		return nil
 	}
 
-	var agents map[string]json.RawMessage
-	if err := json.Unmarshal(agentsRaw, &agents); err != nil {
+	agents := unmarshalMapSilent(agentsRaw)
+	if agents == nil {
 		return nil
 	}
 
@@ -49,8 +50,8 @@ func validateRemovedKeys(data []byte) error {
 		return nil
 	}
 
-	var defaults map[string]json.RawMessage
-	if err := json.Unmarshal(defaultsRaw, &defaults); err != nil {
+	defaults := unmarshalMapSilent(defaultsRaw)
+	if defaults == nil {
 		return nil
 	}
 
@@ -62,6 +63,18 @@ func validateRemovedKeys(data []byte) error {
 	}
 
 	return nil
+}
+
+// unmarshalMapSilent attempts to unmarshal JSON bytes into a
+// map[string]json.RawMessage. Returns nil on any parse failure; callers
+// use nil to skip optional key checks (the main unmarshal step surfaces
+// malformed JSON).
+func unmarshalMapSilent(data []byte) map[string]json.RawMessage {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil
+	}
+	return m
 }
 
 // inlineGroupRe matches inline flag groups such as (?i), (?s), (?m), (?-i).

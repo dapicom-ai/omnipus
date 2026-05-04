@@ -1,5 +1,5 @@
-// Package config provides the Omnipus configuration data model.
-// This file implements agent ownership helpers.
+// agent_ownership.go implements agent ownership helpers.
+
 package config
 
 import "errors"

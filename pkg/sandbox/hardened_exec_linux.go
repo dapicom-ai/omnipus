@@ -93,11 +93,11 @@ func readCurrentUserNProc() uint64 {
 			break
 		}
 		for _, name := range names {
-			if _, err := strconv.Atoi(name); err != nil {
+			if _, atoiErr := strconv.Atoi(name); atoiErr != nil {
 				continue
 			}
 			var st unix.Stat_t
-			if err := unix.Stat("/proc/"+name, &st); err != nil {
+			if statErr := unix.Stat("/proc/"+name, &st); statErr != nil {
 				continue
 			}
 			if uint64(st.Uid) == uid {

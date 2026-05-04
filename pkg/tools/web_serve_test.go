@@ -588,9 +588,6 @@ func TestAuditDevDeny_NoIncSkippedOnNilLogger(t *testing.T) {
 func TestWebServeTool_StaticDurationClamp(t *testing.T) {
 	// Use a stub that records the duration passed to Register.
 	var gotDuration time.Duration
-	type capturingStub struct {
-		stubServedSubdirs
-	}
 	cs := &struct {
 		stubServedSubdirs
 		captured time.Duration

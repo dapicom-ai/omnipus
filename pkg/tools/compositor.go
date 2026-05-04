@@ -7,6 +7,7 @@
 // M8 — fence consolidation: the admin-ask fence is applied via a single call to
 // policy.ApplyAdminAskFence. The previous inline version (lines 215-219 in the
 // pre-M8 code) has been removed; policy.ApplyAdminAskFence is the sole path.
+
 package tools
 
 import (

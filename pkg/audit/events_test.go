@@ -1,4 +1,5 @@
 // Tests for the Tool Registry redesign (Wave A2) audit event emitters.
+
 package audit
 
 import (

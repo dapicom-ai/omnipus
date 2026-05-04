@@ -260,10 +260,8 @@ func (a *restAPI) emitPreviewAuditEntry(
 	var trustXFF bool
 	if auditCfg := configFromContext(r.Context()); auditCfg != nil {
 		trustXFF = auditCfg.Gateway.TrustXFF
-	} else if a != nil && a.agentLoop != nil {
-		if liveCfg := a.agentLoop.GetConfig(); liveCfg != nil {
-			trustXFF = liveCfg.Gateway.TrustXFF
-		}
+	} else if liveCfg := a.agentLoop.GetConfig(); liveCfg != nil {
+		trustXFF = liveCfg.Gateway.TrustXFF
 	}
 	remoteIP := canonicalRemoteIP(r, trustXFF)
 

@@ -40,7 +40,6 @@ import (
 	"strings"
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
-	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 )
 
@@ -328,15 +327,4 @@ func (a *restAPI) HandleWorkspace(w http.ResponseWriter, r *http.Request) {
 	if _, copyErr := io.Copy(w, f); copyErr != nil {
 		slog.Debug("rest: HandleWorkspace: io.Copy failed", "error", copyErr)
 	}
-}
-
-// workspaceAuthMiddleware wraps the workspace handler with session-cookie-or-
-// bearer auth. Separated so tests can inject a pre-authenticated request
-// without going through the full auth chain.
-//
-// This is a helper used by registerAdditionalEndpoints to compose the final
-// handler. It is intentionally not a method on restAPI so the auth closure
-// captures a stable getCfg function.
-func workspaceAuthMiddleware(getCfg func() *config.Config, h http.HandlerFunc) http.Handler {
-	return middleware.RequireSessionCookieOrBearer(getCfg)(h)
 }

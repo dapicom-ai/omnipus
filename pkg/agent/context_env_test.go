@@ -1,5 +1,6 @@
 // context_env_test.go — Fix A (env-awareness) integration tests for ContextBuilder.
 // Traces to: env-awareness-and-memory-spec.md (spec v7)
+
 package agent
 
 import (
@@ -457,8 +458,8 @@ func TestNoLLMProviderIdentityReference(t *testing.T) {
 		if strings.HasSuffix(path, "context_env_test.go") {
 			return nil
 		}
-		data, readErr := os.ReadFile(path)
-		if readErr != nil {
+		data, _ := os.ReadFile(path)
+		if len(data) == 0 {
 			return nil
 		}
 		text := string(data)

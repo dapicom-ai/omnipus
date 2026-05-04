@@ -37,6 +37,7 @@
 //     remote port refused; that's the "no enforcement" outcome.
 //   - EACCES/EPERM indicates the kernel blocked the syscall; that's the
 //     "enforcement present" outcome.
+
 package sandbox_test
 
 import (

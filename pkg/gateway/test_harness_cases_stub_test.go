@@ -15,10 +15,6 @@ package gateway
 
 import "testing"
 
-// resetProcessHarnessQueueForTest is a no-op in non-test_harness builds.
-// The processHarnessQueue singleton does not exist without the tag.
-func resetProcessHarnessQueueForTest() {}
-
 func testHarnessQueueFIFOOrder(t *testing.T) {
 	t.Helper()
 	t.Skip("test_harness build tag required — HarnessQueue not compiled in this build")

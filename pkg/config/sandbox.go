@@ -99,8 +99,8 @@ const (
 
 // IsValid reports whether p is one of the defined SandboxProfile constants.
 // An empty string is considered valid (means "use global default").
-func (p SandboxProfile) IsValid() bool {
-	switch p {
+func (p *SandboxProfile) IsValid() bool {
+	switch *p {
 	case SandboxProfileWorkspace, SandboxProfileWorkspaceNet,
 		SandboxProfileHost, SandboxProfileOff, "":
 		return true
@@ -110,11 +110,11 @@ func (p SandboxProfile) IsValid() bool {
 }
 
 // String implements fmt.Stringer.
-func (p SandboxProfile) String() string { return string(p) }
+func (p *SandboxProfile) String() string { return string(*p) }
 
 // MarshalJSON serializes the profile as a JSON string.
-func (p SandboxProfile) MarshalJSON() ([]byte, error) {
-	return json.Marshal(string(p))
+func (p *SandboxProfile) MarshalJSON() ([]byte, error) {
+	return json.Marshal(string(*p))
 }
 
 // UnmarshalJSON validates and deserialises a SandboxProfile from JSON.

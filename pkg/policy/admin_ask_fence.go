@@ -22,6 +22,7 @@
 // (`pkg/tools/` imports `pkg/policy/` for the same admin-ask predicate).
 // The caller in pkg/tools/compositor.go injects a predicate that calls
 // the Tool's RequiresAdminAsk method.
+
 package policy
 
 // AdminAskPredicate reports whether the named tool requires admin approval.

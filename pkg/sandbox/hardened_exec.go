@@ -297,11 +297,6 @@ type Result struct {
 // build logs while preventing a runaway child from exhausting gateway memory.
 const outputCap = 4 << 20
 
-// proxyGracePeriod is how long the parent waits between SIGTERM and SIGKILL
-// when a hardened child exceeds its timeout. Must be long enough for npm /
-// node to flush stdout but short enough that operators don't notice.
-const proxyGracePeriod = 5 * time.Second
-
 // ErrEmptyArgv is returned by Run when called with no command to execute.
 var ErrEmptyArgv = errors.New("hardened_exec: argv is empty")
 

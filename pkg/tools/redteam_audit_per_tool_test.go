@@ -26,6 +26,7 @@
 // ExecuteWithContext (e.g. a tool that's invoked directly, or a parallel
 // dispatcher), the corresponding test row will not be wired up and the
 // gap is documented as a missed coverage row in the registry catalog.
+
 package tools
 
 import (

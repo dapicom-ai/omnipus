@@ -19,6 +19,7 @@
 // allowing A3 to provide the concurrent-state machinery (channels,
 // timeouts, broadcaster) that has nothing to do with the security
 // decision.
+
 package policy
 
 import (
@@ -64,25 +65,25 @@ const SaturationSentinelUnlimited = 0
 // still fires for the negative-cap case.
 //
 // FR-016, FR-063.
-func ValidateSaturationCap(ctx context.Context, logger *audit.Logger, cap int) (effective int, ok bool) {
-	if cap < 0 {
+func ValidateSaturationCap(ctx context.Context, logger *audit.Logger, satCap int) (effective int, ok bool) {
+	if satCap < 0 {
 		audit.EmitGatewayConfigInvalidValue(ctx, logger, SaturationConfigKey,
-			fmt.Sprintf("%d", cap),
+			fmt.Sprintf("%d", satCap),
 			"negative value; only 0 (unlimited) and positive integers are accepted")
 		audit.EmitBootAbortStderr(
 			audit.EventGatewayConfigInvalidValue,
 			"-", // no agent
 			"-", // no path
-			fmt.Errorf("invalid %s=%d: must be >= 0", SaturationConfigKey, cap),
+			fmt.Errorf("invalid %s=%d: must be >= 0", SaturationConfigKey, satCap),
 			nil,
 		)
 		return 0, false
 	}
-	if cap == SaturationSentinelUnlimited {
+	if satCap == SaturationSentinelUnlimited {
 		audit.EmitGatewayStartupGuardDisabled(ctx, logger, SaturationConfigKey)
 		return SaturationSentinelUnlimited, true
 	}
-	return cap, true
+	return satCap, true
 }
 
 // ShouldSaturate reports whether a new ask request must be synthesized
@@ -99,9 +100,9 @@ func ValidateSaturationCap(ctx context.Context, logger *audit.Logger, cap int) (
 // function does not synchronize.
 //
 // FR-016.
-func ShouldSaturate(cap, currentPending int) bool {
-	if cap == SaturationSentinelUnlimited {
+func ShouldSaturate(satCap, currentPending int) bool {
+	if satCap == SaturationSentinelUnlimited {
 		return false
 	}
-	return currentPending >= cap
+	return currentPending >= satCap
 }

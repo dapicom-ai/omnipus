@@ -35,12 +35,12 @@ func TestDevServerRegistry_GatewayCap(t *testing.T) {
 		t.Fatalf("first Register: %v", err)
 	}
 	_, err := r.Register("b", 18001, 2, "next dev", 1)
-	var capErr ErrGatewayCap
+	var capErr GatewayCapError
 	if !errors.As(err, &capErr) {
-		t.Fatalf("expected ErrGatewayCap, got %v", err)
+		t.Fatalf("expected GatewayCapError, got %v", err)
 	}
 	if capErr.Current != 1 || capErr.Max != 1 {
-		t.Errorf("ErrGatewayCap = %+v; want Current=1 Max=1", capErr)
+		t.Errorf("GatewayCapError = %+v; want Current=1 Max=1", capErr)
 	}
 	if capErr.EarliestExpiry.IsZero() {
 		t.Error("EarliestExpiry is zero; want a real timestamp")

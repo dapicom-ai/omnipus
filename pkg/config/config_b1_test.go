@@ -11,6 +11,7 @@
 // - TestValidateAuthMismatchLogLevel_* — gateway field
 // - TestResolveBool_* — *bool resolver
 // - TestBootConfigRoundTrip — new fields survive SaveConfig/LoadConfig round-trip
+
 package config
 
 import (

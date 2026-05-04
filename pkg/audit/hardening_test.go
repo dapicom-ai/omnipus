@@ -428,12 +428,12 @@ func TestUnknownDecisionWarn_FiresOnce(t *testing.T) {
 	// Three entries with unknown Decision values — all should still be written
 	// (Log doesn't reject; only warn-once).
 	for i := 0; i < 3; i++ {
-		err := logger.Log(&audit.Entry{
+		logErr := logger.Log(&audit.Entry{
 			Event:    audit.EventToolCall,
 			Decision: "allowed", // unknown — typo for "allow"
 			AgentID:  "ray",
 		})
-		require.NoError(t, err, "unknown Decision must not reject the entry")
+		require.NoError(t, logErr, "unknown Decision must not reject the entry")
 	}
 
 	logPath := filepath.Join(dir, "audit.jsonl")

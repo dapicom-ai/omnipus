@@ -77,8 +77,8 @@ func TestProviderDefs_ShapeUnchanged(t *testing.T) {
 	goldenPath := goldenFilePath(t)
 
 	if *updateGolden {
-		if err := os.WriteFile(goldenPath, got, 0o644); err != nil {
-			t.Fatalf("writing golden file %s: %v", goldenPath, err)
+		if writeErr := os.WriteFile(goldenPath, got, 0o644); writeErr != nil {
+			t.Fatalf("writing golden file %s: %v", goldenPath, writeErr)
 		}
 		t.Logf("golden file updated: %s", goldenPath)
 		return

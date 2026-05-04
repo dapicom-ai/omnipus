@@ -37,12 +37,12 @@ func newTranscriptFixture(t *testing.T, entries []session.TranscriptEntry) (*ses
 	metaData, _ := json.Marshal(meta)
 	_ = os.WriteFile(filepath.Join(baseDir, sessionID, "meta.json"), metaData, 0o600)
 	for _, entry := range entries {
-		data, err := json.Marshal(entry)
-		if err != nil {
-			t.Fatalf("marshal entry: %v", err)
+		data, marshalErr := json.Marshal(entry)
+		if marshalErr != nil {
+			t.Fatalf("marshal entry: %v", marshalErr)
 		}
-		if _, err := f.Write(append(data, '\n')); err != nil {
-			t.Fatalf("write: %v", err)
+		if _, writeErr := f.Write(append(data, '\n')); writeErr != nil {
+			t.Fatalf("write: %v", writeErr)
 		}
 	}
 	store, err := session.NewUnifiedStore(baseDir)
@@ -97,7 +97,7 @@ func TestRepairHistory_OrphanToolResult_SynthesizesToolUse(t *testing.T) {
 	}
 	// The assistant message should now declare BOTH t_declared and t_orphan.
 	assistant := out[1]
-	ids := []string{}
+	ids := make([]string, 0, len(assistant.ToolCalls))
 	for _, tc := range assistant.ToolCalls {
 		ids = append(ids, tc.ID)
 	}

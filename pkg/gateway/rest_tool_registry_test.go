@@ -858,7 +858,7 @@ func TestApprovalRegistry_TimeoutTransition(t *testing.T) {
 func TestApprovalRegistry_CancelAllPendingForRestart(t *testing.T) {
 	reg := newApprovalRegistryV2(64, 300*time.Second)
 
-	var entries []*approvalEntry
+	entries := make([]*approvalEntry, 0, 3)
 	for i := range 3 {
 		e, accepted := reg.requestApproval(
 			"tc-restart-"+string(rune('0'+i)), "exec",

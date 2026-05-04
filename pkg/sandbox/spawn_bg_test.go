@@ -200,8 +200,8 @@ func TestSpawnBackgroundChild_LogAccumulates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("spawn1: %v", err)
 	}
-	if err := cmd1.Wait(); err != nil {
-		t.Fatalf("spawn1 Wait: %v", err)
+	if waitErr := cmd1.Wait(); waitErr != nil {
+		t.Fatalf("spawn1 Wait: %v", waitErr)
 	}
 
 	// Second spawn: write a different sentinel line.

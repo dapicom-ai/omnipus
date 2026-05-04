@@ -1626,8 +1626,8 @@ func loadConfigInternal(path string, store CredentialStore) (*Config, error) {
 	// Reject removed keys only for v1+ configs (FR-001). Legacy v0 configs may
 	// legitimately contain restrict_to_workspace; we migrate them instead.
 	if versionInfo.Version >= CurrentVersion {
-		if err := validateRemovedKeys(data); err != nil {
-			return nil, err
+		if validateErr := validateRemovedKeys(data); validateErr != nil {
+			return nil, validateErr
 		}
 	}
 	if len(data) <= 10 {

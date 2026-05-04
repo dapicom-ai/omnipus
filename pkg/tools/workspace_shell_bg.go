@@ -364,7 +364,7 @@ func (t *WorkspaceShellBgTool) Execute(ctx context.Context, args map[string]any)
 			slog.Info("workspace.shell_bg: orphaned child exited (registration failed)",
 				"agent_id", agentID, "pid", orphanPid, "exit_code", exitCode, "error", waitErr)
 		}()
-		var capErr sandbox.ErrGatewayCap
+		var capErr sandbox.GatewayCapError
 		if errors.As(regErr, &capErr) {
 			return ErrorResult(fmt.Sprintf(
 				"too many concurrent dev servers (%d/%d); previous registration expires at %s",

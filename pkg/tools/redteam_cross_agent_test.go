@@ -25,6 +25,7 @@
 // builtins. Adding a new FS tool that takes a path argument requires
 // adding a row here, otherwise the new tool slips its way around the
 // cross-agent guard unnoticed.
+
 package tools
 
 import (

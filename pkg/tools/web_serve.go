@@ -91,10 +91,6 @@ func normalisePort(v any) (int32, error) {
 // before registering it. Long enough for the child to bind its port.
 const webServeDevServerStartupGrace = 3 * time.Second
 
-// webServeDefaultStaticDuration is the default registration lifetime for
-// static mode when duration_seconds is not provided.
-const webServeDefaultStaticDuration = time.Hour
-
 // WebServeDevConfig is the runtime config snapshot for web_serve dev mode.
 // It replaces the RunInWorkspaceConfig that lived in the now-removed
 // run_in_workspace.go.
@@ -526,7 +522,7 @@ func (t *WebServeTool) executeDev(ctx context.Context, rawPath, command string, 
 				"agent_id", agentID, "pid", orphanPid, "exit_code", exitCode, "error", waitErr)
 		}()
 
-		var capErr sandbox.ErrGatewayCap
+		var capErr sandbox.GatewayCapError
 		if errors.As(regErr, &capErr) {
 			return ErrorResult(fmt.Sprintf(
 				"too many concurrent dev servers (%d/%d); earliest expiry at %s",

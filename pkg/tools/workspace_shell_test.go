@@ -38,10 +38,10 @@ func newTestWorkspaceShellTool(
 // TestWorkspaceShellTool_DenyPatterns verifies that deny patterns fire when
 // EnableDenyPatterns=true and are inert when EnableDenyPatterns=false.
 func TestWorkspaceShellTool_DenyPatterns(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix-only test")
 	}
-	t.Parallel()
 
 	dir := t.TempDir()
 
@@ -117,10 +117,10 @@ func TestWorkspaceShellTool_DenyPatterns(t *testing.T) {
 
 // TestWorkspaceShellTool_CWDResolution verifies cwd path handling.
 func TestWorkspaceShellTool_CWDResolution(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("Unix-only test")
 	}
-	t.Parallel()
 
 	dir := t.TempDir()
 

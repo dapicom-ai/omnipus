@@ -97,18 +97,18 @@ func EnsureChromium(ctx context.Context, installRoot string) (string, error) {
 	}
 
 	versionDir := filepath.Join(installRoot, channel.Version)
-	if err := os.MkdirAll(versionDir, 0o700); err != nil {
-		return "", fmt.Errorf("browser: create install dir: %w", err)
+	if mkdirErr := os.MkdirAll(versionDir, 0o700); mkdirErr != nil {
+		return "", fmt.Errorf("browser: create install dir: %w", mkdirErr)
 	}
 
 	zipPath := filepath.Join(versionDir, cftDownloadID+"-"+platform+".zip")
-	if err := downloadFile(ctx, zipURL, zipPath); err != nil {
+	if dlErr := downloadFile(ctx, zipURL, zipPath); dlErr != nil {
 		_ = os.Remove(zipPath)
-		return "", fmt.Errorf("browser: download %s: %w", zipURL, err)
+		return "", fmt.Errorf("browser: download %s: %w", zipURL, dlErr)
 	}
 
-	if err := extractZip(zipPath, versionDir); err != nil {
-		return "", fmt.Errorf("browser: extract %s: %w", zipPath, err)
+	if extractErr := extractZip(zipPath, versionDir); extractErr != nil {
+		return "", fmt.Errorf("browser: extract %s: %w", zipPath, extractErr)
 	}
 	_ = os.Remove(zipPath)
 

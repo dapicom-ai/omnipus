@@ -288,8 +288,8 @@ func TestVerify_RotationPreservesChain(t *testing.T) {
 	all := append([]string{}, rotated...)
 	all = append(all, filepath.Join(dir, "audit.jsonl"))
 	for _, f := range all {
-		b, err := os.ReadFile(f)
-		require.NoError(t, err)
+		b, readErr := os.ReadFile(f)
+		require.NoError(t, readErr)
 		totalLines += strings.Count(strings.TrimRight(string(b), "\n"), "\n") + 1
 	}
 	require.Equal(t, 4, totalLines, "all 4 entries must survive rotation; got %d", totalLines)
@@ -553,8 +553,8 @@ func rewriteDecisionLocal(path string, lineIdx int, from, to string) error {
 		return os.ErrInvalid
 	}
 	var entry map[string]any
-	if err := json.Unmarshal([]byte(lines[lineIdx]), &entry); err != nil {
-		return err
+	if unmarshalErr := json.Unmarshal([]byte(lines[lineIdx]), &entry); unmarshalErr != nil {
+		return unmarshalErr
 	}
 	if got, _ := entry["decision"].(string); got != from {
 		return os.ErrInvalid

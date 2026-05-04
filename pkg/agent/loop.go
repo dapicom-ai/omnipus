@@ -3421,7 +3421,6 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 	var history []providers.Message
 	var summary string
 	if !ts.opts.NoHistory {
-		history = ts.agent.Sessions.GetHistory(ts.sessionKey)
 		// FR-069 / FR-088: recover orphaned tool calls left by a SIGKILL or OOM
 		// kill while the gateway was paused awaiting approval. The function is
 		// idempotent — it no-ops on clean sessions and on sessions where the
@@ -3689,13 +3688,11 @@ turnLoop:
 		if dedupErr := al.checkToolDedupInvariant(ts, policyFilteredTools); dedupErr != nil {
 			denyMsg := fmt.Sprintf(`{"error":"tool_assembly_duplicate","message":%q}`, dedupErr.Error())
 			syntheticDenyMsg := providers.Message{Role: "system", Content: denyMsg}
-			messages = append(messages, syntheticDenyMsg)
 			if !ts.opts.NoHistory {
 				ts.agent.Sessions.AddFullMessage(ts.sessionKey, syntheticDenyMsg)
 				ts.recordPersistedMessage(syntheticDenyMsg)
 			}
-			if shouldAbort, abortMsg := al.recordSyntheticDeny(ts); shouldAbort {
-				messages = append(messages, providers.Message{Role: "system", Content: abortMsg})
+			if shouldAbort, _ := al.recordSyntheticDeny(ts); shouldAbort {
 				turnStatus = TurnEndStatusAborted
 				return al.abortTurn(ts)
 			}
@@ -3904,7 +3901,7 @@ turnLoop:
 			// inline image data URLs from tool messages and retry once. This
 			// keeps text-only models working while still giving vision-capable
 			// models the picture.
-			if err != nil && strings.Contains(err.Error(), "image input") {
+			if strings.Contains(err.Error(), "image input") {
 				stripped := false
 				for i := range callMessages {
 					if callMessages[i].Role == "tool" && len(callMessages[i].Media) > 0 {
@@ -4538,8 +4535,7 @@ turnLoop:
 						Reason: "permission_denied (mid-turn policy change)",
 					},
 				)
-				if shouldAbort, abortMsg := al.recordSyntheticDeny(ts); shouldAbort {
-					messages = append(messages, providers.Message{Role: "system", Content: abortMsg})
+				if shouldAbort, _ := al.recordSyntheticDeny(ts); shouldAbort {
 					turnStatus = TurnEndStatusAborted
 					return al.abortTurn(ts)
 				}
@@ -4578,8 +4574,7 @@ turnLoop:
 							Reason: fmt.Sprintf("permission_denied (ask denied: %s)", denialReason),
 						},
 					)
-					if shouldAbort, abortMsg := al.recordSyntheticDeny(ts); shouldAbort {
-						messages = append(messages, providers.Message{Role: "system", Content: abortMsg})
+					if shouldAbort, _ := al.recordSyntheticDeny(ts); shouldAbort {
 						turnStatus = TurnEndStatusAborted
 						return al.abortTurn(ts)
 					}
