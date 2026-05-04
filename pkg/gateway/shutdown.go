@@ -14,6 +14,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
+	"github.com/dapicom-ai/omnipus/pkg/sandbox"
 )
 
 // omnipusShutdownTimeout is the maximum time to wait for in-flight operations
@@ -152,6 +153,12 @@ func omnipusGracefulShutdown(
 	if runningServices.stopNagBanner != nil {
 		runningServices.stopNagBanner()
 	}
+
+	// Sweep-5: clear the per-thread restrict-failure audit hook so in-process
+	// test scaffolding that boots and tears down multiple gateways does not leak
+	// the hook's closure (which captures agentLoop) from one boot into the next.
+	// SetRestrictAuditHook is thread-safe and idempotent.
+	sandbox.SetRestrictAuditHook(nil)
 
 	slog.Info("shutdown: complete")
 }

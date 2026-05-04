@@ -7,6 +7,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -146,6 +147,105 @@ func errorFromString(s string) error {
 type testError struct{ msg string }
 
 func (e *testError) Error() string { return e.msg }
+
+// ---------------------------------------------------------------------------
+// TestKillAuditFn_InvokedOnKillFailure (quick sweep 3)
+//
+// Verifies that t.killAuditFn is correctly constructed by SetAuditLogger and,
+// when invoked, produces a "process_kill_failed" audit entry with the expected
+// fields. Tests the wiring path: SetAuditLogger builds killAuditFn, and the
+// closure calls auditLogger.Log with a well-formed Entry.
+// ---------------------------------------------------------------------------
+
+func TestKillAuditFn_InvokedOnKillFailure(t *testing.T) {
+	auditDir := t.TempDir()
+	auditLogger, err := audit.NewLogger(audit.LoggerConfig{
+		Dir:           auditDir,
+		RetentionDays: 1,
+	})
+	require.NoError(t, err)
+
+	tool, toolErr := NewExecTool(t.TempDir(), false)
+	require.NoError(t, toolErr)
+	tool.SetAuditLogger(auditLogger)
+
+	// killAuditFn must be non-nil after SetAuditLogger with a non-nil logger.
+	require.NotNil(t, tool.killAuditFn,
+		"SetAuditLogger must populate killAuditFn when logger is non-nil")
+
+	// Invoke the closure directly with a synthetic kill error.
+	syntheticErr := errorFromString("operation not permitted")
+	tool.killAuditFn(12345, syntheticErr, "kill_session_tool")
+
+	// Flush the in-memory audit buffer to disk.
+	require.NoError(t, auditLogger.Close())
+
+	// Read the written audit entries and verify the kill-failed event.
+	entries, readErr := os.ReadDir(auditDir)
+	require.NoError(t, readErr)
+	require.NotEmpty(t, entries, "audit dir must contain at least one file")
+
+	found := false
+	for _, e := range entries {
+		data, readFileErr := os.ReadFile(filepath.Join(auditDir, e.Name()))
+		require.NoError(t, readFileErr)
+		// Each line is a JSONL entry; scan all lines.
+		for len(data) > 0 {
+			var line []byte
+			idx := -1
+			for i, b := range data {
+				if b == '\n' {
+					idx = i
+					break
+				}
+			}
+			if idx >= 0 {
+				line = data[:idx]
+				data = data[idx+1:]
+			} else {
+				line = data
+				data = nil
+			}
+			if len(line) == 0 {
+				continue
+			}
+			var entry map[string]any
+			if json.Unmarshal(line, &entry) != nil {
+				continue
+			}
+			if entry["event"] == "process_kill_failed" {
+				details, _ := entry["details"].(map[string]any)
+				if details != nil {
+					pidVal, _ := details["pid"].(float64)
+					callerVal, _ := details["caller"].(string)
+					if int(pidVal) == 12345 && callerVal == "kill_session_tool" {
+						found = true
+					}
+				}
+			}
+		}
+	}
+	assert.True(t, found,
+		"audit log must contain a process_kill_failed entry with pid=12345 and caller=kill_session_tool")
+}
+
+// TestKillAuditFn_NilAfterNilLogger verifies that SetAuditLogger(nil)
+// clears killAuditFn so no-op calls at kill sites are safe.
+func TestKillAuditFn_NilAfterNilLogger(t *testing.T) {
+	tool, err := NewExecTool(t.TempDir(), false)
+	require.NoError(t, err)
+
+	// Set a real logger, then clear it.
+	auditDir := t.TempDir()
+	al, alErr := audit.NewLogger(audit.LoggerConfig{Dir: auditDir, RetentionDays: 1})
+	require.NoError(t, alErr)
+	tool.SetAuditLogger(al)
+	require.NotNil(t, tool.killAuditFn)
+
+	tool.SetAuditLogger(nil)
+	assert.Nil(t, tool.killAuditFn,
+		"SetAuditLogger(nil) must clear killAuditFn")
+}
 
 // ---------------------------------------------------------------------------
 // Differentiation test: two different rejected paths produce real error results.

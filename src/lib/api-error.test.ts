@@ -176,3 +176,75 @@ describe('ApiError extends Error properly', () => {
     expect(err.cause).toBe(cause)
   })
 })
+
+// H3-FE: Body size cap and binary content sniff.
+describe('ApiError.fromResponse — body size cap + binary sniff (H3-FE)', () => {
+  it('rejects body declared >4 KiB via Content-Length and uses status default', async () => {
+    const headers = new Headers({
+      'Content-Type': 'text/plain',
+      'Content-Length': String(4 * 1024 + 1),
+    })
+    const res = new Response('x'.repeat(4 * 1024 + 1), { status: 502, headers })
+    const err = await ApiError.fromResponse(res)
+    expect(err.status).toBe(502)
+    // Must use the status-class default, not the body text
+    expect(err.userMessage).toMatch(/server is unavailable/i)
+  })
+
+  it('rejects body exceeding 4 KiB after read (no Content-Length) and uses status default', async () => {
+    // No Content-Length header — the cap must apply after reading.
+    const bigBody = 'a'.repeat(4 * 1024 + 1)
+    const res = new Response(bigBody, { status: 503 })
+    const err = await ApiError.fromResponse(res)
+    expect(err.status).toBe(503)
+    expect(err.userMessage).toMatch(/server is unavailable/i)
+  })
+
+  it('accepts a body exactly at 4 KiB boundary', async () => {
+    const body = 'z'.repeat(4 * 1024)
+    const res = new Response(body, {
+      status: 400,
+      headers: { 'Content-Type': 'text/plain' },
+    })
+    const err = await ApiError.fromResponse(res)
+    expect(err.status).toBe(400)
+    // Body is text so should use it as userMessage
+    expect(err.userMessage).toBe(body)
+  })
+
+  it('rejects non-text content-type and uses status default', async () => {
+    const res = new Response('\x00\x01\x02\x03', {
+      status: 502,
+      headers: { 'Content-Type': 'application/octet-stream' },
+    })
+    const err = await ApiError.fromResponse(res)
+    expect(err.status).toBe(502)
+    expect(err.userMessage).toMatch(/server is unavailable/i)
+  })
+
+  it('rejects binary body (>5% non-printable bytes) and uses status default', async () => {
+    // Build a string with ~10% non-printable bytes (NUL chars)
+    const sample = Array.from({ length: 100 }, (_, i) => (i % 10 === 0 ? '\x00' : 'a')).join('')
+    const res = new Response(sample, {
+      status: 500,
+      // No explicit content-type so binary sniff applies
+    })
+    const err = await ApiError.fromResponse(res)
+    expect(err.status).toBe(500)
+    expect(err.userMessage).toMatch(/server is unavailable/i)
+  })
+
+  it('accepts a text body with no Content-Type (printable ASCII)', async () => {
+    const res = new Response('Something broke in the proxy', { status: 502 })
+    const err = await ApiError.fromResponse(res)
+    expect(err.status).toBe(502)
+    expect(err.userMessage).toBe('Something broke in the proxy')
+  })
+
+  it('falls back to status default for a body that is all non-printable', async () => {
+    const binary = '\x01\x02\x03\x04\x05\x06\x07\x08\x0e\x0f'.repeat(10)
+    const res = new Response(binary, { status: 500 })
+    const err = await ApiError.fromResponse(res)
+    expect(err.userMessage).toMatch(/server is unavailable/i)
+  })
+})

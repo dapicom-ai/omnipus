@@ -25,6 +25,7 @@ function resetStore() {
       isReplaying: false,
       replayCompletedForSession: null,
       rateLimitEvent: null,
+      lastUserMessageAt: null,
     })
     useConnectionStore.setState({
       connection: null,
@@ -1150,5 +1151,91 @@ describe('ChatStore_sibling_spans_crosswire (W2-10)', () => {
 
     // Span B must have exactly 0 steps (no frames targeted "cB")
     expect(spanB!.steps).toHaveLength(0)
+  })
+})
+
+// H1-FE: Regression — unknown-sid done must not corrupt an active mid-stream session.
+// When a `done` frame arrives for a session_id not in sessionsById (e.g. a deleted
+// or replayed session), the handler should NOT force-clear isStreaming on the active
+// bucket if the active session sent a user message recently and is still streaming.
+describe('chat store — H1-FE: unknown-sid done does not corrupt active stream', () => {
+  const ACTIVE_SID = 'active-session'
+  const GHOST_SID = 'ghost-session-wiped'
+
+  function seedActiveMidStream(lastUserMessageAt: number) {
+    act(() => {
+      useSessionStore.setState({ activeSessionId: ACTIVE_SID, activeAgentId: null, activeAgentType: null })
+      useChatStore.setState((state) => ({
+        sessionsById: {
+          ...state.sessionsById,
+          [ACTIVE_SID]: {
+            messages: [
+              { id: 'u1', session_id: ACTIVE_SID, role: 'user', content: 'hi', timestamp: new Date().toISOString(), status: 'done' },
+              { id: 'a1', session_id: ACTIVE_SID, role: 'assistant', content: 'thinking…', timestamp: new Date().toISOString(), status: 'streaming', isStreaming: true },
+            ],
+            toolCalls: {},
+            toolCallOrder: [],
+            textAtToolCallStart: {},
+            pendingApprovals: [],
+            isStreaming: true,
+            isReplaying: false,
+            replayCompletedForSession: null,
+            sessionTokens: 0,
+            sessionCost: 0,
+            rateLimitEvent: null,
+            lastUserMessageAt,
+          },
+        },
+        // Sync foreground fields
+        isStreaming: true,
+        messages: [],
+        toolCalls: {},
+        toolCallOrder: [],
+        textAtToolCallStart: {},
+        pendingApprovals: [],
+        sessionTokens: 0,
+        sessionCost: 0,
+        isReplaying: false,
+        replayCompletedForSession: null,
+        rateLimitEvent: null,
+        lastUserMessageAt,
+      }))
+    })
+  }
+
+  it('leaves active bucket isStreaming=true when unknown-sid done arrives mid-stream (within 10s)', () => {
+    // Seed active session as streaming, user sent message 2 seconds ago
+    seedActiveMidStream(Date.now() - 2_000)
+
+    // Dispatch a done frame for the ghost session (not in sessionsById)
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'done',
+        session_id: GHOST_SID,
+        stats: { tokens: 0, cost: 0 },
+      })
+    })
+
+    // Active bucket must still be streaming — the unknown-sid done must not touch it
+    const activeBucket = useChatStore.getState().sessionsById[ACTIVE_SID]
+    expect(activeBucket?.isStreaming).toBe(true)
+  })
+
+  it('clears active bucket isStreaming when unknown-sid done arrives after grace period (>10s)', () => {
+    // Seed active session as streaming, but user sent message 15 seconds ago
+    // (stale spinner from a wiped session — safe to clear)
+    seedActiveMidStream(Date.now() - 15_000)
+
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'done',
+        session_id: GHOST_SID,
+        stats: { tokens: 0, cost: 0 },
+      })
+    })
+
+    // Active bucket spinner is stale — should be cleared
+    const activeBucket = useChatStore.getState().sessionsById[ACTIVE_SID]
+    expect(activeBucket?.isStreaming).toBe(false)
   })
 })

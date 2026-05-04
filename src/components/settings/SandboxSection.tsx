@@ -542,7 +542,7 @@ export function SandboxSection(): React.ReactElement {
     },
     onError: (err: Error) => {
       setAgentDefaultsSaving(false)
-      addToast({ message: err.message, variant: 'error' })
+      addToast({ message: isApiError(err) ? err.userMessage : err.message, variant: 'error' })
     },
   })
 
@@ -662,8 +662,9 @@ export function SandboxSection(): React.ReactElement {
     },
     onError: (err: Error) => {
       setSaveState('error')
-      setErrorMessage(err.message)
-      addToast({ message: err.message, variant: 'error' })
+      const msg = isApiError(err) ? err.userMessage : err.message
+      setErrorMessage(msg)
+      addToast({ message: msg, variant: 'error' })
       // Revert to server mode
       setCurrentMode(savedMode)
     },
@@ -691,7 +692,7 @@ export function SandboxSection(): React.ReactElement {
       const msg = isApiError(err)
         ? err.userMessage
         : err.message.replace(/^\d+:\s*/, '')
-      setErrorMessage(isApiError(err) ? err.userMessage : err.message)
+      setErrorMessage(msg)
       const pathRowMatch = /allowed_paths\[(\d+)\]:\s*(.+)/.exec(msg)
       if (pathRowMatch) {
         const rowIdx = parseInt(pathRowMatch[1], 10)

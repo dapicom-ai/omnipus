@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/creack/pty"
@@ -164,17 +166,44 @@ type ExecTool struct {
 	// execTimeoutSeconds is the timeout passed to sandbox.Run (sandbox-on
 	// foreground path). 0 = no timeout.
 	execTimeoutSeconds int32
+
+	// killAuditFn is a pre-built audit callback for process-kill failures.
+	// H5-BK: constructed once at SetAuditLogger time so all kill sites
+	// (runSync's terminateProcessTree, runSync's fallback kill, background
+	// session hard-kill, and kill_session tool path) share one closure rather
+	// than each rebuilding it inline. Nil when auditLogger is nil.
+	killAuditFn func(pid int, killErr error, caller string)
 }
 
 // SetAuditLogger injects an audit.Logger into the ExecTool so that
 // path.access_denied events are emitted on workspace-guard rejections.
 // Satisfies the auditLoggerAware contract used by the ToolRegistry.
 // Calling this on a nil ExecTool is a no-op.
+//
+// H5-BK: also pre-builds killAuditFn once so all kill sites (runSync's
+// terminateProcessTree, runSync's fallback kill, background session hard-kill,
+// and kill_session tool path) share one closure rather than each rebuilding it.
 func (t *ExecTool) SetAuditLogger(l *audit.Logger) {
 	if t == nil {
 		return
 	}
 	t.auditLogger = l
+	if l != nil {
+		al := l
+		t.killAuditFn = func(pid int, killErr error, caller string) {
+			_ = al.Log(&audit.Entry{
+				Event:    "process_kill_failed",
+				Decision: audit.DecisionError,
+				Details: map[string]any{
+					"pid":    pid,
+					"error":  killErr.Error(),
+					"caller": caller,
+				},
+			})
+		}
+	} else {
+		t.killAuditFn = nil
+	}
 }
 
 var (
@@ -670,32 +699,30 @@ func (t *ExecTool) runSync(ctx context.Context, command, cwd string) *ToolResult
 	select {
 	case err = <-done:
 	case <-cmdCtx.Done():
-		// B1.4-f: build an audit-emit callback so kill failures are
-		// recorded in the audit log, not just slog. The callback is nil-safe
-		// when auditLogger is not wired (e.g. god-mode or test scaffolding).
-		var killAuditFn func(pid int, killErr error, caller string)
-		if t.auditLogger != nil {
-			al := t.auditLogger
-			killAuditFn = func(pid int, killErr error, caller string) {
-				_ = al.Log(&audit.Entry{
-					Event:    "process_kill_failed",
-					Decision: audit.DecisionError,
-					Details: map[string]any{
-						"pid":    pid,
-						"error":  killErr.Error(),
-						"caller": caller,
-					},
-				})
-			}
-		}
-		if termErr := terminateProcessTree(cmd, killAuditFn); termErr != nil {
+		// H5-BK: use the pre-built killAuditFn stored on the ExecTool so all
+		// kill sites share one closure. Nil-safe: terminateProcessTree and the
+		// fallback both guard on killAuditFn != nil before calling.
+		if termErr := terminateProcessTree(cmd, t.killAuditFn); termErr != nil {
 			logger.WarnCF("shell", "terminateProcessTree error", map[string]any{"error": termErr.Error()})
 		}
 		select {
 		case err = <-done:
 		case <-time.After(2 * time.Second):
+			// H2-BK: the 2-second graceful-exit window elapsed. This is the
+			// absolute last-resort kill. Failure here means the shell child is
+			// permanently loose — surface it through the same audit hook used by
+			// terminateProcessTree so operators see the event in the audit log.
 			if cmd.Process != nil {
-				_ = cmd.Process.Kill()
+				if killErr := cmd.Process.Kill(); killErr != nil {
+					// Use errors.Is instead of string comparison (quick sweep 1).
+					if !errors.Is(killErr, os.ErrProcessDone) && !errors.Is(killErr, syscall.ESRCH) {
+						slog.Error("shell: runSync fallback Kill failed; child PID may be loose",
+							"pid", cmd.Process.Pid, "error", killErr)
+						if t.killAuditFn != nil {
+							t.killAuditFn(cmd.Process.Pid, killErr, "runSync_fallback_kill")
+						}
+					}
+				}
 			}
 			err = <-done
 		}
@@ -1179,8 +1206,20 @@ func (t *ExecTool) runBackground(ctx context.Context, command, cwd string, ptyEn
 			// then fall back to SIGKILL via the OS handle.
 			gracefulKillProcessGroup(pid, 5*time.Second)
 			// Ensure the process is gone via the safe OS handle (no PID reuse risk).
+			// H5-BK: surface kill failures through the stored audit callback so
+			// operators see a process_kill_failed event in the audit log, not just
+			// a silent discard.
 			if proc != nil {
-				_ = proc.Kill()
+				if killErr := proc.Kill(); killErr != nil {
+					// Use errors.Is instead of string comparison (quick sweep 1).
+					if !errors.Is(killErr, os.ErrProcessDone) && !errors.Is(killErr, syscall.ESRCH) {
+						slog.Error("shell: background session hard-kill failed; child PID may be loose",
+							"session_id", sid, "pid", pid, "error", killErr)
+						if t.killAuditFn != nil {
+							t.killAuditFn(pid, killErr, "bg_session_hard_kill")
+						}
+					}
+				}
 			}
 
 			// Mark session done under lock only if still running (the wait goroutine
@@ -1355,6 +1394,13 @@ func (t *ExecTool) executeKill(args map[string]any) *ToolResult {
 	}
 
 	if err := session.Kill(); err != nil {
+		// H5-BK: emit an audit entry when kill_session fails so operators
+		// can detect loose processes via the audit log, not just the tool
+		// error response. Use the stored killAuditFn built at SetAuditLogger
+		// time — nil when auditLogger is not wired (god-mode / tests).
+		if t.killAuditFn != nil {
+			t.killAuditFn(session.PID, err, "kill_session_tool")
+		}
 		return ErrorResult(fmt.Sprintf("failed to kill session: %v", err))
 	}
 

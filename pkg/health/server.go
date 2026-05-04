@@ -228,7 +228,11 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	skipped := audit.SnapshotSkipped()
-	auditDegraded := auditLoggerStatus == "unavailable" || skipped.Total > 0
+	// H3-BK: treat "unknown" as degraded — we cannot positively confirm
+	// audit is working, so the boolean must reflect that uncertainty.
+	// The "unknown" string survives in the response field for diagnostic
+	// clarity; only the boolean changes.
+	auditDegraded := auditLoggerStatus != "ok" || skipped.Total > 0
 
 	if degradedFn != nil {
 		if isDegraded, reason := degradedFn(); isDegraded {

@@ -3,6 +3,8 @@
 package tools
 
 import (
+	"errors"
+	"os"
 	"os/exec"
 	"syscall"
 	"time"
@@ -72,7 +74,8 @@ func terminateProcessTree(cmd *exec.Cmd, onKillFailure func(pid int, err error, 
 	// Fallback kill on the shell process itself via the safe OS handle.
 	if err := cmd.Process.Kill(); err != nil {
 		// os.ErrProcessDone / ESRCH means the process already exited; not a fault.
-		if err != syscall.ESRCH && err.Error() != "os: process already finished" {
+		// Use errors.Is instead of string comparison (quick sweep 1).
+		if !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, syscall.ESRCH) {
 			if onKillFailure != nil {
 				onKillFailure(pid, err, "Kill_proc")
 			}

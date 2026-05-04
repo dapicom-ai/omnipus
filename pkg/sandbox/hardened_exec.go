@@ -359,10 +359,20 @@ func runOnCurrentThread(ctx context.Context, argv []string, env []string, lim Li
 
 	// Apply post-start hardening (Windows Job Object assignment must run
 	// after Start because we need the child's process Handle).
-	if err := applyPostStartHardening(cmd, lim); err != nil {
-		_ = cmd.Process.Kill()
+	if hardeningErr := applyPostStartHardening(cmd, lim); hardeningErr != nil {
+		// H1-BK: surface kill errors — a loose partially-sandboxed child is a
+		// security event that operators must see, not a silently discarded error.
+		killErr := cmd.Process.Kill()
+		if killErr != nil && !isProcessDoneError(killErr) {
+			slog.Error("hardened_exec: post-start hardening failed AND child kill failed; child PID may still be running",
+				"pid", cmd.Process.Pid,
+				"kill_err", killErr,
+				"hardening_err", hardeningErr)
+			_, _ = cmd.Process.Wait()
+			return Result{}, fmt.Errorf("hardened_exec: post-start hardening: %w; kill also failed: %v", hardeningErr, killErr)
+		}
 		_, _ = cmd.Process.Wait()
-		return Result{}, fmt.Errorf("hardened_exec: post-start hardening: %w", err)
+		return Result{}, fmt.Errorf("hardened_exec: post-start hardening: %w", hardeningErr)
 	}
 
 	waitErr := cmd.Wait()

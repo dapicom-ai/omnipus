@@ -446,29 +446,21 @@ func (lb *LinuxBackend) accessToLandlockRights(access uint64) uint64 {
 // is delivered entirely through StartLocked; this stub preserves interface
 // compatibility without introducing a misleading no-op that callers might
 // mistake for sufficient sandbox setup.
-//
-// startLockedCalledForCmd is checked in debug builds to catch callers that call
-// ApplyToCmd and then proceed with cmd.Start() instead of StartLocked. See the
-// companion function markStartLockedForCmd and the debug-build assertion below.
 func (lb *LinuxBackend) ApplyToCmd(_ *exec.Cmd, _ SandboxPolicy) error {
 	return nil
 }
 
-// markStartLockedCalled records that StartLocked was invoked in this process
-// for a sandboxed spawn. Called by StartLocked so debug assertions in ApplyToCmd
-// can detect the correct call ordering. The atomic is write-once: once set it
-// stays true, confirming that at least one correctly-ordered spawn has occurred.
-// This is a process-wide guard — it does not track per-cmd ordering, which
-// would require a sync.Map keyed on *exec.Cmd and is unnecessary given that all
-// sandboxed spawns in production go through StartLocked.
-var startLockedCalledOnce atomic.Bool
-
-// MarkStartLockedCalled is called by StartLocked to record that the correct
-// spawn path has been used at least once in this process. Package-level so
-// hardened_exec.go (same package) can call it without a LinuxBackend reference.
-func MarkStartLockedCalled() {
-	startLockedCalledOnce.Store(true)
-}
+// MarkStartLockedCalled is a no-op on Linux.
+//
+// The per-cmd ordering guard (startLockedCalledOnce + the companion atomic
+// field) was written-but-never-read dead code: the doc comment promised a
+// "debug-build assertion below" that was never implemented. Removed under the
+// v0.2 quick-wins charter; a proper per-cmd assertion via sync.Map is deferred
+// to v0.3 per docs/design/sandbox-redesign-2026-05.md.
+//
+// The function signature is preserved so callers (hardened_exec.go) do not
+// need a conditional: the call is a no-op and the compiler will inline+elide it.
+func MarkStartLockedCalled() {}
 
 func addLandlockPathRule(rulesetFd int, path string, rights uint64) error {
 	fd, err := unix.Open(path, unix.O_PATH|unix.O_CLOEXEC, 0)

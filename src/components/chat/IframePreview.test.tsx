@@ -1176,7 +1176,7 @@ describe('IframePreview — 5xx HEAD probe after onload (B1.3b)', () => {
     expect(iframesAfter.length).toBeGreaterThan(0)
   })
 
-  it('does not show error block when HEAD probe returns 503', async () => {
+  it('shows error block when HEAD probe returns 503', async () => {
     // 503 is also a 5xx — should show the error block
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(
       new Response(null, { status: 503 })
@@ -1193,5 +1193,32 @@ describe('IframePreview — 5xx HEAD probe after onload (B1.3b)', () => {
       expect(screen.getByText(/dev server returned a server error/i)).toBeInTheDocument()
     })
     expect(screen.getByText(/503/)).toBeInTheDocument()
+  })
+
+  it('does not include an Authorization header in the HEAD probe', async () => {
+    // CRIT-FE-1: The preview listener uses URL-path token auth, not Bearer.
+    // Sending Authorization makes the request non-simple (CORS preflight), which
+    // the preview port's CORS config rejects — silently disabling the probe.
+    // Verify the fetch call carries no Authorization header.
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(null, { status: 200 })
+    )
+
+    render(<IframePreview {...makeReadyProps()} />)
+
+    const iframe = document.querySelector('iframe:not([aria-hidden])')
+    await act(async () => {
+      fireEvent.load(iframe!)
+    })
+
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalled()
+    })
+
+    const [_url, init] = fetchSpy.mock.calls[0] as [string, RequestInit | undefined]
+    const headers = (init?.headers ?? {}) as Record<string, string>
+    // Must not carry Authorization in any casing
+    const headerKeys = Object.keys(headers).map((k) => k.toLowerCase())
+    expect(headerKeys).not.toContain('authorization')
   })
 })

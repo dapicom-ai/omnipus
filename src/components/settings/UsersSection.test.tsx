@@ -35,6 +35,7 @@ import { useUiStore } from '@/store/ui'
 import { useAuthStore } from '@/store/auth'
 import { UsersSection } from './UsersSection'
 import type { UserEntry } from '@/lib/api'
+import { ApiError } from '@/lib/api-error'
 
 function makeClient() {
   return new QueryClient({
@@ -327,7 +328,7 @@ describe('UsersSection — delete last admin', () => {
     }
     vi.mocked(fetchUsers).mockResolvedValue([ADMIN_USER, ALICE_ADMIN])
     vi.mocked(deleteUser).mockRejectedValue(
-      new Error('409: cannot leave the deployment with zero administrators'),
+      new ApiError(409, 'cannot leave the deployment with zero administrators'),
     )
 
     renderSection()

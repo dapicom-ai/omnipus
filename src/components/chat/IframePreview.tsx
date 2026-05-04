@@ -573,13 +573,19 @@ export function IframePreview(props: IframePreviewProps) {
     // chat instead of an actionable message.
     //
     // We probe the base URL (without the cache-buster) to match the iframe content.
+    //
+    // CRIT-FE-1: Do NOT include an Authorization header here. The preview
+    // listener uses URL-path token authentication (the token is embedded in
+    // the path: /preview/<agent>/<token>/...), so Bearer auth is never needed.
+    // Including it would make this a "non-simple" CORS request, triggering an
+    // OPTIONS preflight that the preview listener's CORS config does not permit
+    // (Authorization is not listed in Access-Control-Allow-Headers). The failed
+    // preflight silently falls into .catch → setProbeStatus('ok'), masking the
+    // 5xx detection entirely in correctly-deployed two-port setups.
     if (!absoluteUrl) return
     const probeUrl = absoluteUrl
     setProbeStatus('pending')
-    const token = sessionStorage.getItem('omnipus_auth_token') ?? localStorage.getItem('omnipus_auth_token')
-    const headers: Record<string, string> = {}
-    if (token) headers['Authorization'] = `Bearer ${token}`
-    fetch(probeUrl, { method: 'HEAD', headers })
+    fetch(probeUrl, { method: 'HEAD' })
       .then((res) => {
         if (!mountedRef.current) return
         if (res.status >= 500) {
@@ -590,8 +596,17 @@ export function IframePreview(props: IframePreviewProps) {
           setProbeHttpStatus(null)
         }
       })
-      .catch(() => {
-        // Network error — don't block the iframe; treat as ok (user can see what loaded)
+      .catch((err: unknown) => {
+        // Network or CORS error — don't block the iframe; treat as ok so the user
+        // can see whatever loaded. Log enough context for operators to diagnose.
+        // TypeError typically indicates a CORS or network failure; other error
+        // types may indicate a programming or environment issue.
+        const isCors = err instanceof TypeError
+        console.warn('preview.head_probe_failed', {
+          url: probeUrl,
+          errorType: isCors ? 'TypeError (likely CORS or network)' : (err instanceof Error ? err.constructor.name : typeof err),
+          message: err instanceof Error ? err.message : String(err),
+        })
         if (mountedRef.current) {
           setProbeStatus('ok')
           setProbeHttpStatus(null)

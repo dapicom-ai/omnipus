@@ -1,10 +1,19 @@
 // Package audit — package-level counters for audit-skip events.
 //
-// B1.2(e): when a tool's audit-fail-closed mode is disabled (operator
-// override) and a write fails, the tool emits slog.Error and proceeds —
-// silently from the operator's perspective. This file exposes
-// AuditSkippedTotal as a process-wide counter so /health (B1.2(f)) and
-// /metrics can surface the degraded-audit state.
+// B1.2(e) / H4-BK: these counters track *unexpected write loss* — the
+// operator-configured logger is wired but a write to it failed.  They must
+// NOT be incremented when audit is explicitly disabled (AuditLog=false /
+// auditLogger==nil) by operator choice.  The two signals are distinct:
+//
+//   - audit_logger   (in /health) — config-state flag: "is a logger wired?"
+//   - audit_skipped  (this file)  — runtime health signal: "a configured
+//     logger failed mid-flight and a write was silently dropped."
+//
+// When a write fails with AuditFailClosed=false, the tool emits slog.Error
+// and calls IncSkipped so /health and /metrics can surface the degraded-audit
+// state.  When auditLogger is nil (deliberately disabled), IncSkipped must
+// not be called — doing so conflates "broken" with "disabled" and causes
+// audit_degraded to trip permanently in explicitly-disabled deployments.
 //
 // Why here? The tools package can't depend on gateway's metrics
 // infrastructure without an import cycle. The audit package is the

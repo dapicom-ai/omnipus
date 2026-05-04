@@ -125,8 +125,40 @@ export class ApiError extends Error {
    * as JSON `{code?, error?, message?}` when possible and falling back to
    * plain text. This is a static convenience so request() in api.ts and the
    * standalone uploadFiles() path both stay in sync.
+   *
+   * H3-FE: Guards against large or binary bodies that could freeze the UI when
+   * rendered as a toast:
+   *   - Bodies larger than 4 KiB are rejected; defaultUserMessage() is used instead.
+   *   - Bodies whose Content-Type is not text/ or application/json, or that
+   *     contain >5% non-printable bytes in the first 256 bytes, are rejected.
    */
   static async fromResponse(res: Response): Promise<ApiError> {
+    // H3-FE: Reject oversized bodies before reading.
+    const MAX_BODY_BYTES = 4 * 1024 // 4 KiB
+    const contentLengthHeader = res.headers.get('content-length')
+    const declaredLength = contentLengthHeader !== null ? parseInt(contentLengthHeader, 10) : null
+    if (declaredLength !== null && !isNaN(declaredLength) && declaredLength > MAX_BODY_BYTES) {
+      console.warn('[api-error] response body too large, using status default', {
+        status: res.status,
+        contentLength: declaredLength,
+      })
+      return new ApiError(res.status, defaultUserMessage(res.status))
+    }
+
+    // H3-FE: Reject non-text, non-JSON content types before reading.
+    const contentType = res.headers.get('content-type') ?? ''
+    const isTextLike =
+      contentType.includes('application/json') ||
+      contentType.includes('text/')
+    // When Content-Type is absent we allow reading and rely on the binary-sniff below.
+    if (contentType !== '' && !isTextLike) {
+      console.warn('[api-error] non-text content-type, using status default', {
+        status: res.status,
+        contentType,
+      })
+      return new ApiError(res.status, defaultUserMessage(res.status))
+    }
+
     let bodyText = ''
     try {
       bodyText = await res.text()
@@ -134,6 +166,39 @@ export class ApiError extends Error {
       // Reading body failed (e.g. response stream errored). Use statusText.
       console.warn('[api-error] Could not read response body:', err)
       bodyText = res.statusText
+    }
+
+    // H3-FE: Reject bodies that exceed MAX_BODY_BYTES after the read (handles
+    // servers that omit Content-Length).
+    if (bodyText.length > MAX_BODY_BYTES) {
+      console.warn('[api-error] response body exceeds cap after read, using status default', {
+        status: res.status,
+        bodyLength: bodyText.length,
+      })
+      return new ApiError(res.status, defaultUserMessage(res.status))
+    }
+
+    // H3-FE: Binary content sniff — check the first 256 chars for non-printable
+    // characters. If >5% are non-printable (i.e. code point < 0x20 excluding
+    // common whitespace \t \n \r), treat as binary and use the default.
+    if (bodyText.length > 0) {
+      const sample = bodyText.slice(0, 256)
+      let nonPrintable = 0
+      for (let i = 0; i < sample.length; i++) {
+        const cp = sample.charCodeAt(i)
+        // Allow tab (0x09), newline (0x0A), carriage return (0x0D); reject other
+        // control characters below 0x20 and also DEL (0x7F).
+        if ((cp < 0x20 && cp !== 0x09 && cp !== 0x0a && cp !== 0x0d) || cp === 0x7f) {
+          nonPrintable++
+        }
+      }
+      if (nonPrintable / sample.length > 0.05) {
+        console.warn('[api-error] binary content detected, using status default', {
+          status: res.status,
+          nonPrintableRatio: (nonPrintable / sample.length).toFixed(2),
+        })
+        return new ApiError(res.status, defaultUserMessage(res.status))
+      }
     }
 
     let parsedMessage: string | undefined

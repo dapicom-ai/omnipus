@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/sandbox"
 )
 
@@ -501,6 +502,85 @@ func TestWebServeTool_DevCommandAllowed_ProceedsToRegistryCheck(t *testing.T) {
 	if !strings.Contains(result.ForLLM, "registry not configured") {
 		t.Errorf("expected 'registry not configured' error; got: %s", result.ForLLM)
 	}
+}
+
+// TestAuditDevStart_FailClosedOnNilLogger is the CRIT-BK-1 regression test.
+//
+// When auditLogger is nil AND AuditFailClosed=true, executeDev must refuse to
+// spawn and return a non-nil *ToolResult with IsError=true. Before this fix,
+// auditDevStart silently returned nil, allowing the spawn to proceed without
+// an audit row — violating the operator's explicit fail-closed contract.
+func TestAuditDevStart_FailClosedOnNilLogger(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("dev mode is Linux-only; test requires Linux to reach auditDevStart")
+	}
+	dir := t.TempDir()
+	devReg := sandbox.NewDevServerRegistry()
+	t.Cleanup(devReg.Close)
+
+	tool := NewWebServeTool(
+		dir,
+		"audit-agent",
+		"http://127.0.0.1:5001",
+		&stubServedSubdirs{token: "tok"},
+		devReg,
+		WebServeDevConfig{
+			PortRange:       [2]int32{18000, 18999},
+			MaxConcurrent:   2,
+			AuditFailClosed: true, // operator demands fail-closed
+		},
+		nil,  // egressProxy
+		nil,  // auditLogger = nil — CRIT-BK-1 scenario
+		60,
+		86400,
+	)
+
+	ctx := WithAgentID(context.Background(), "audit-agent")
+	result := tool.Execute(ctx, map[string]any{
+		"path":    ".",
+		"command": "vite dev",
+		"port":    float64(18000),
+	})
+
+	require.NotNil(t, result, "executeDev must return a non-nil result when fail-closed and no logger")
+	require.True(t, result.IsError, "result must have IsError=true")
+	assert.Contains(t, result.ForLLM, "failing closed",
+		"error message must mention fail-closed behaviour")
+}
+
+// TestAuditDevDeny_NoIncSkippedOnNilLogger verifies H4-BK: when the audit
+// logger is nil (audit explicitly disabled by operator), neither auditDevDeny
+// nor auditDevStart should increment the IncSkipped counter. The counter is
+// reserved for unexpected write loss on a configured-but-failing logger.
+func TestAuditDevDeny_NoIncSkippedOnNilLogger(t *testing.T) {
+	// Reset the counter to a known baseline before this test.
+	audit.ResetSkippedForTest()
+
+	dir := t.TempDir()
+	tool := NewWebServeTool(
+		dir,
+		"skip-agent",
+		"http://127.0.0.1:5001",
+		&stubServedSubdirs{token: "tok"},
+		nil, // devReg
+		WebServeDevConfig{
+			PortRange:       [2]int32{18000, 18999},
+			MaxConcurrent:   2,
+			AuditFailClosed: false, // normal/allow-skip path
+		},
+		nil, // egressProxy
+		nil, // auditLogger = nil → explicitly disabled
+		60,
+		86400,
+	)
+
+	// Call auditDevDeny directly.
+	result := tool.auditDevDeny("skip-agent", "vite dev", "test reason")
+	require.Nil(t, result, "auditDevDeny with nil logger and AuditFailClosed=false must return nil")
+
+	snap := audit.SnapshotSkipped()
+	assert.Equal(t, int64(0), snap.Total,
+		"IncSkipped must NOT be called when audit is explicitly disabled (H4-BK)")
 }
 
 // TestWebServeTool_StaticDurationClamp verifies that out-of-range

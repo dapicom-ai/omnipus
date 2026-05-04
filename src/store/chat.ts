@@ -95,6 +95,13 @@ export interface SessionChatState {
   sessionTokens: number
   sessionCost: number
   rateLimitEvent: RateLimitEventData | null
+  /**
+   * H1-FE: Unix timestamp (ms) when the most recent user message was sent for
+   * this session. Used to guard against force-clearing isStreaming on the active
+   * bucket when an unknown-sid done arrives — if the active session just sent a
+   * user message recently it is very likely mid-stream, not a stale spinner.
+   */
+  lastUserMessageAt: number | null
 }
 
 function emptySessionState(): SessionChatState {
@@ -110,6 +117,7 @@ function emptySessionState(): SessionChatState {
     sessionTokens: 0,
     sessionCost: 0,
     rateLimitEvent: null,
+    lastUserMessageAt: null,
   }
 }
 
@@ -758,6 +766,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
             toolCalls: toolCallsAfterReset,
             toolCallOrder: toolCallOrderAfterReset,
             isStreaming: true,
+            // H1-FE: record when user last sent a message so the unknown-sid
+            // done handler can tell whether the active bucket is mid-stream.
+            lastUserMessageAt: Date.now(),
           }
         })
 
@@ -945,13 +956,38 @@ export const useChatStore = create<ChatStore>((set, get) => {
             // B1.3d: when done arrives for a targetSid that isn't in sessionsById yet,
             // the session was probably switched away mid-stream. The active bucket's
             // isStreaming flag would otherwise stay true forever (infinite spinner).
-            // Log a diagnostic warning and force-clear isStreaming on the active bucket.
+            // Log a diagnostic warning and conditionally force-clear isStreaming on
+            // the active bucket.
+            //
+            // H1-FE: Guard against corrupting an active mid-stream session.
+            // Two cases where we must NOT force-clear the active bucket:
+            //   1. targetSid === activeSid — the active session itself produced an
+            //      unknown-sid done, which should never happen; the normal path below
+            //      will handle it correctly, so do not fall through to the break.
+            //   2. The active bucket sent a user message recently (< 10 s ago) and is
+            //      still streaming — the done belongs to a different (wiped/replayed)
+            //      session and the active spinner is legitimate.
             const knownSid = !!get().sessionsById[targetSid]
             if (!knownSid) {
               console.warn('chat.done_unknown_sid', { targetSid, activeSid: activeSid })
-              // Force-clear the active bucket so the UI recovers.
-              if (activeSid && get().sessionsById[activeSid]) {
-                withBucket(activeSid, () => ({ isStreaming: false }))
+              const STREAM_GRACE_MS = 10_000
+              if (activeSid && activeSid !== targetSid && get().sessionsById[activeSid]) {
+                const activeBucket = get().sessionsById[activeSid]!
+                const isActiveMidStream =
+                  activeBucket.isStreaming &&
+                  activeBucket.lastUserMessageAt !== null &&
+                  Date.now() - activeBucket.lastUserMessageAt < STREAM_GRACE_MS
+                if (!isActiveMidStream) {
+                  // Active bucket spinner is likely a stale remnant from the wiped
+                  // session — safe to clear.
+                  withBucket(activeSid, () => ({ isStreaming: false }))
+                } else {
+                  console.warn('chat.done_unknown_sid_skipped_active_mid_stream', {
+                    targetSid,
+                    activeSid,
+                    lastUserMessageAt: activeBucket.lastUserMessageAt,
+                  })
+                }
               }
               break
             }

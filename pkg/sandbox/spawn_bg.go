@@ -31,6 +31,7 @@ package sandbox
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -38,7 +39,19 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
+
+// isProcessDoneError reports whether err indicates the process has already
+// exited. Both os.ErrProcessDone and syscall.ESRCH are "already gone" signals
+// that must not be treated as a security event; every other error is novel and
+// requires operator attention.
+func isProcessDoneError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH)
+}
 
 // SpawnBackgroundChild starts a long-running process under the agent's
 // sandbox Limits. Returns the started *exec.Cmd. The caller is responsible
@@ -168,9 +181,19 @@ func SpawnBackgroundChild(
 
 	// Post-start hardening (Windows Job Object assignment, prlimit on Linux).
 	if !isZero {
-		if err := ApplyChildPostStartHardening(cmd, limits); err != nil {
-			_ = cmd.Process.Kill()
-			return nil, fmt.Errorf("SpawnBackgroundChild: post-start hardening: %w", err)
+		if hardeningErr := ApplyChildPostStartHardening(cmd, limits); hardeningErr != nil {
+			// H1-BK: capture the kill error so a loose child is never silently
+			// swallowed. A partially-sandboxed child that we cannot kill is a
+			// security event — log at Error so operators can investigate.
+			killErr := cmd.Process.Kill()
+			if killErr != nil && !isProcessDoneError(killErr) {
+				slog.Error("SpawnBackgroundChild: post-start hardening failed AND child kill failed; child PID may still be running",
+					"pid", cmd.Process.Pid,
+					"kill_err", killErr,
+					"hardening_err", hardeningErr)
+				return nil, fmt.Errorf("SpawnBackgroundChild: post-start hardening: %w; kill also failed: %v", hardeningErr, killErr)
+			}
+			return nil, fmt.Errorf("SpawnBackgroundChild: post-start hardening: %w", hardeningErr)
 		}
 	}
 

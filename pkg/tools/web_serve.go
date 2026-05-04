@@ -645,11 +645,9 @@ func (t *WebServeTool) auditDevDeny(agentID, command, reason string) *ToolResult
 				ForUser: "Tier 3 requires audit logging; aborting",
 			}
 		}
-		// B1.2(e): bump the audit-skipped counter so /health and /metrics
-		// can surface the degraded-audit state. The slog.Warn is sticky
-		// (one per process) but the counter ticks every time, giving
-		// operators rate-of-skip visibility.
-		audit.IncSkipped(ToolNameWebServe, audit.DecisionDeny)
+		// H4-BK: audit explicitly disabled by operator (AuditLog=false).
+		// Do NOT bump IncSkipped — skipped_counter tracks unexpected write
+		// loss on a configured-but-failing logger, not a deliberate disable.
 		auditDevNilOnce.Do(func() {
 			slog.Warn("web_serve: auditLogger is nil; deny will not be recorded",
 				"agent_id", agentID, "command", command)
@@ -689,12 +687,33 @@ func (t *WebServeTool) auditDevDeny(agentID, command, reason string) *ToolResult
 
 // auditDevStart emits an audit entry before spawning the child (HIGH-6).
 // Returns a non-nil *ToolResult only when the dev server must be aborted.
+//
+// When AuditFailClosed=true:
+//   - nil auditLogger → returns a *ToolResult so the caller aborts the spawn
+//     (the command is blocked AND the audit trail is broken).
+//   - write failure → same as nil logger: returns a *ToolResult.
+//
+// When AuditFailClosed=false:
+//   - nil auditLogger → audit explicitly disabled by operator; return nil and
+//     allow the spawn to proceed. No IncSkipped — this is a deliberate
+//     configuration choice, not a failure (see H4-BK).
+//   - write failure → logs slog.Error, bumps IncSkipped, and returns nil.
 func (t *WebServeTool) auditDevStart(ctx context.Context, agentID, command string, port int32) *ToolResult {
 	if t.auditLogger == nil {
-		// B1.2(e): nil-logger path is silent today by design (operators who
-		// run with audit_log=false have explicitly accepted the trade-off).
-		// Still bump the counter so /health surfaces the degraded state.
-		audit.IncSkipped(ToolNameWebServe, audit.DecisionAllow)
+		if t.devCfg.AuditFailClosed {
+			// CRIT-BK-1: mirror the deny-path shape — refuse to spawn when the
+			// operator demands a compliance trail and no logger is wired.
+			slog.Error("web_serve: auditLogger is nil; cannot record dev-server start — failing closed",
+				"agent_id", agentID, "command", command, "audit_fail_closed", true)
+			return &ToolResult{
+				IsError: true,
+				ForLLM:  "audit logger unavailable; dev server start denied — failing closed",
+				ForUser: "Tier 3 requires audit logging; aborting",
+			}
+		}
+		// H4-BK: audit explicitly disabled by operator (AuditLog=false).
+		// Do NOT bump IncSkipped — skipped_counter tracks unexpected write
+		// loss on a configured-but-failing logger, not a deliberate disable.
 		return nil
 	}
 	logErr := t.auditLogger.Log(&audit.Entry{
