@@ -182,7 +182,7 @@ export function SubagentBlock({ span }: SubagentBlockProps) {
         </span>
 
         {/* Step count */}
-        <span className="text-[var(--color-muted)] shrink-0 tabular-nums">
+        <span data-testid="subagent-step-counter" className="text-[var(--color-muted)] shrink-0 tabular-nums">
           {stepCountText(stepCount)}
         </span>
 
@@ -228,11 +228,15 @@ export function SubagentBlock({ span }: SubagentBlockProps) {
           {/* Steps — in arrival order. W4-5: switch on step.kind */}
           {span.steps.map((step, idx) => {
             if (step.kind === 'tool') {
-              return <ToolCallBadge key={step.tool.call_id} toolCall={step.tool} />
+              return (
+                <div key={step.tool.call_id} data-testid="subagent-live-step">
+                  <ToolCallBadge toolCall={step.tool} />
+                </div>
+              )
             }
             // kind === 'text' — reserved for future subagent-text streaming
             return (
-              <p key={idx} className="text-[10px] text-[var(--color-secondary)] font-sans py-0.5">
+              <p key={idx} data-testid="subagent-live-step" className="text-[10px] text-[var(--color-secondary)] font-sans py-0.5">
                 {step.text}
               </p>
             )
