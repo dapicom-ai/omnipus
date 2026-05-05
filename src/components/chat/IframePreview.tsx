@@ -448,6 +448,10 @@ export function IframePreview(props: IframePreviewProps) {
       clearTimeout(probeTimeoutRef.current)
       probeTimeoutRef.current = null
     }
+    // Invalidate any in-flight probe callbacks so stale onload/fetch
+    // completions cannot overwrite a terminal warmup phase (error or ready
+    // set by a later path). See F-6 / B1.3b stale-probe guard.
+    currentProbeIdRef.current += 1
   }, [])
 
   const startPolling = useCallback(() => {
@@ -501,12 +505,60 @@ export function IframePreview(props: IframePreviewProps) {
     if (!mountedRef.current) return
     const probeId = Number((e.currentTarget as HTMLIFrameElement).dataset.probeId ?? -1)
     if (probeId !== currentProbeIdRef.current) return // stale event — ignore
-    // F-37: successful probe resets the consecutive error counter.
-    consecutiveErrorsRef.current = 0
-    if (warmupPhase === 'probing' || warmupPhase === 'starting') {
-      stopPolling()
-      setWarmupPhase('ready')
-    }
+
+    // B1.3b / MN-02: The iframe's onload fires even when the server returns
+    // a 4xx or 5xx response (the browser received an HTTP response and
+    // rendered it). We must verify the actual HTTP status via a HEAD fetch
+    // before marking the dev server as ready, otherwise a gateway 503 ("dev
+    // server not started yet") would prematurely complete the warmup.
+    //
+    // mode: 'cors' allows reading the response status. Playwright route
+    // intercepts bypass CORS in tests; the preview server must emit
+    // Access-Control-Allow-Origin on actual responses for production.
+    // On CORS / network error we treat the probe as failed and let the
+    // interval continue counting.
+    const capturedProbeId = probeId
+    const probeUrl = absoluteUrl
+    if (!probeUrl) return
+    fetch(probeUrl, { method: 'HEAD', mode: 'cors' })
+      .then((res) => {
+        if (!mountedRef.current) return
+        if (capturedProbeId !== currentProbeIdRef.current) return // stale
+        if (res.status >= 200 && res.status < 400) {
+          // F-37: successful probe resets the consecutive error counter.
+          consecutiveErrorsRef.current = 0
+          stopPolling()
+          setWarmupPhase('ready')
+        } else {
+          // Non-2xx / non-3xx: dev server is not ready (e.g. gateway 503).
+          consecutiveErrorsRef.current += 1
+          if (consecutiveErrorsRef.current >= 3) {
+            stopPolling()
+            setWarmupPhase('error')
+            console.warn('preview.warmup_fast_fail', {
+              errors: consecutiveErrorsRef.current,
+              status: res.status,
+              tool: toolName,
+              path,
+            })
+          }
+        }
+      })
+      .catch(() => {
+        if (!mountedRef.current) return
+        if (capturedProbeId !== currentProbeIdRef.current) return // stale
+        // CORS / network error — probe failed, let the interval continue.
+        consecutiveErrorsRef.current += 1
+        if (consecutiveErrorsRef.current >= 3) {
+          stopPolling()
+          setWarmupPhase('error')
+          console.warn('preview.warmup_fast_fail', {
+            errors: consecutiveErrorsRef.current,
+            tool: toolName,
+            path,
+          })
+        }
+      })
   }
 
   function handleProbeError(e: SyntheticEvent<HTMLIFrameElement>) {
@@ -601,7 +653,14 @@ export function IframePreview(props: IframePreviewProps) {
     if (!absoluteUrl) return
     const probeUrl = absoluteUrl
     setProbeStatus('pending')
-    fetch(probeUrl, { method: 'HEAD', mode: 'no-cors' })
+    // B1.3b: mode:'cors' allows reading the response status code so we can
+    // detect 5xx responses and surface the error block. Playwright route
+    // intercepts bypass CORS in tests; the preview server emits
+    // Access-Control-Allow-Origin on GET/HEAD responses for production.
+    // On CORS / network error (preview server unreachable or no CORS headers)
+    // we fall back to 'idle' so the iframe is not hidden — the browser already
+    // showed whatever the server returned.
+    fetch(probeUrl, { method: 'HEAD', mode: 'cors' })
       .then((res) => {
         if (!mountedRef.current) return
         if (res.status >= 500) {

@@ -57,6 +57,9 @@ func (a *restAPI) HandlePreview(w http.ResponseWriter, r *http.Request) {
 		a.handleServePreviewPreflight(w, r)
 		return
 	}
+	// B1.3b: emit CORS headers on actual GET/HEAD responses so the SPA's
+	// cors-mode HEAD probe can read the status code.
+	a.addPreviewCORSHeaders(w, r)
 	startedAt := time.Now()
 
 	remainder := strings.TrimPrefix(r.URL.Path, "/preview/")
@@ -145,6 +148,8 @@ func (a *restAPI) HandleServeWorkspace(w http.ResponseWriter, r *http.Request) {
 		a.handleServePreviewPreflight(w, r)
 		return
 	}
+	// B1.3b: emit CORS headers on actual GET/HEAD responses.
+	a.addPreviewCORSHeaders(w, r)
 	startedAt := time.Now()
 
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -203,6 +208,8 @@ func (a *restAPI) HandleDevProxy(w http.ResponseWriter, r *http.Request) {
 		a.handleServePreviewPreflight(w, r)
 		return
 	}
+	// B1.3b: emit CORS headers on actual GET/HEAD responses.
+	a.addPreviewCORSHeaders(w, r)
 	startedAt := time.Now()
 
 	if runtime.GOOS != "linux" {
@@ -277,6 +284,27 @@ func (a *restAPI) handleServePreviewPreflight(w http.ResponseWriter, r *http.Req
 		w.Header().Set("Access-Control-Max-Age", "86400")
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// addPreviewCORSHeaders adds Access-Control-Allow-Origin to GET/HEAD
+// responses on the preview listener so the SPA's cors-mode HEAD probe
+// (B1.3b) can read the HTTP status code and detect 5xx errors.
+// Only emitted when the request carries an Origin header that matches the
+// configured main origin (same same-origin check as the preflight handler).
+func (a *restAPI) addPreviewCORSHeaders(w http.ResponseWriter, r *http.Request) {
+	cfg := configFromContext(r.Context())
+	if cfg == nil {
+		cfg = a.agentLoop.GetConfig()
+	}
+	mainOrigin := resolveMainOrigin(cfg)
+	requestOrigin := r.Header.Get("Origin")
+	if mainOrigin != "" && requestOrigin != "" && strings.EqualFold(
+		strings.TrimRight(requestOrigin, "/"),
+		strings.TrimRight(mainOrigin, "/"),
+	) {
+		w.Header().Set("Access-Control-Allow-Origin", mainOrigin)
+		w.Header().Set("Vary", "Origin")
+	}
 }
 
 // serveStaticFile serves the file at absDir/relPath with path-traversal guards,

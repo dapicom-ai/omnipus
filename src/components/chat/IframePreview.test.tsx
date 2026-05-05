@@ -625,8 +625,16 @@ describe('IframePreview — warmup probe success transition (F-41)', () => {
     vi.useRealTimers()
   })
 
-  it('transitions from warmup to ready when probe iframe loads', () => {
+  it('transitions from warmup to ready when probe iframe loads', async () => {
     // Traces to: chat-served-iframe-preview-spec.md — FR-013 probe success → ready phase
+    //
+    // handleProbeLoad now issues a HEAD fetch to verify HTTP status before
+    // marking the dev server ready (B1.3b fix: prevent 503 gateway responses
+    // from completing warmup prematurely). This test mocks fetch to return 200.
+    const fetchSpy = vi.spyOn(global, 'fetch').mockResolvedValue(
+      new Response(null, { status: 200 }),
+    )
+
     render(<IframePreview {...makeWarmupProps()} />)
 
     // Advance t=0 so the mount effect fires and sets warmupPhase → 'probing'
@@ -640,12 +648,18 @@ describe('IframePreview — warmup probe success transition (F-41)', () => {
     // WarmupPlaceholder is shown while probing
     expect(screen.getByText(/starting dev server/i)).toBeInTheDocument()
 
-    // Simulate the probe iframe's onload firing — the dev server responded
+    // Simulate the probe iframe's onload firing — the dev server responded.
+    // handleProbeLoad issues a HEAD fetch to verify HTTP status; we flush
+    // all pending microtasks so the fetch mock resolves before asserting.
     act(() => {
       fireEvent.load(probeIframe!)
     })
+    // Flush microtasks so the mocked fetch().then() callback runs
+    await act(async () => {
+      await Promise.resolve()
+    })
 
-    // After onload: warmup phase → 'ready', WarmupPlaceholder must be gone
+    // After onload + successful HEAD fetch: warmup phase → 'ready'
     expect(screen.queryByText(/starting dev server/i)).toBeNull()
 
     // The visible iframe (non-hidden) is now in the DOM with the correct src
@@ -659,6 +673,8 @@ describe('IframePreview — warmup probe success transition (F-41)', () => {
     act(() => { vi.advanceTimersByTime(6000) }) // 3 × 2000ms
     const probesAfter = document.querySelectorAll('iframe[aria-hidden]')
     expect(probesAfter.length).toBe(0)
+
+    fetchSpy.mockRestore()
   })
 })
 
