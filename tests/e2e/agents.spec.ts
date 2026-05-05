@@ -135,9 +135,10 @@ test('(f) name collision on Create Agent surfaces server 409 error in UI', async
   await submitBtn.click();
 
   // Error appears as a toast (ToastContainer in AppShell — no role="alert").
-  // The api.ts request() helper throws new Error(`${status}: ${body}`) so the message is
-  // "409: {\"error\": \"agent name already exists\"}". Match on the 409 status prefix.
-  const errorToast = page.locator('text=409').first();
+  // CreateAgentModal uses isApiError(err) ? err.userMessage which for a 409 response
+  // is defaultUserMessage(409) = "This conflicts with the current state. Please refresh and try again."
+  // (see src/lib/api-error.ts and src/components/agents/CreateAgentModal.tsx).
+  const errorToast = page.locator('text=conflicts with the current state').first();
   await expect(errorToast).toBeVisible({ timeout: 10_000 });
 });
 
