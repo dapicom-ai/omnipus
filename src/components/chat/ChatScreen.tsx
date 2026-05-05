@@ -282,14 +282,24 @@ function AssistantMessageAvatar() {
 function AssistantMessage() {
   const activeAgentId = useSessionStore((s) => s.activeAgentId)
   const { data: agents = [] } = useQuery({ queryKey: ['agents'], queryFn: fetchAgents })
-  const agent = agents.find((a) => a.id === activeAgentId)
+  const message = useMessage()
+  const messages = useChatStore((s) => s.messages)
+
+  // Prefer the per-message agentId (set during transcript replay) over the
+  // session-level activeAgentId. This makes multi-agent transcripts show the
+  // correct per-turn agent label instead of the current session agent.
+  const storeMsg = messages.find((m) => m.id === message.id)
+  const messageAgentId = storeMsg?.agentId ?? activeAgentId
+  const agent = agents.find((a) => a.id === messageAgentId)
+  // Fallback to the raw agentId string if the agent isn't in the list yet
+  const agentDisplayName = agent?.name ?? (messageAgentId || null)
 
   return (
     <MessagePrimitive.Root data-testid="assistant-message" className="group flex gap-3 px-4 py-3">
       <AssistantMessageAvatar />
       <div className="flex flex-col gap-1 max-w-[85%] min-w-0 flex-1">
-        {agent && (
-          <span className="text-[10px] text-[var(--color-muted)]">{agent.name}</span>
+        {agentDisplayName && (
+          <span data-testid="agent-label" className="text-[10px] text-[var(--color-muted)]">{agentDisplayName}</span>
         )}
         <div className="text-sm leading-relaxed text-[var(--color-secondary)]">
           {/* Media (screenshots, files) renders BEFORE the parts so the image

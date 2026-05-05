@@ -178,6 +178,8 @@ export interface WsReplayMessageFrame {
   /** Server-assigned message id, used for dedup on reconnect (optional for back-compat). */
   id?: string
   timestamp?: string
+  /** Agent that produced this message (omitted when empty). */
+  agent_id?: string
 }
 
 export interface WsRateLimitFrame {

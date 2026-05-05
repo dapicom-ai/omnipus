@@ -1,4 +1,6 @@
-import { expect } from '@playwright/test';
+import * as fs from 'fs'
+import * as path from 'path'
+import { expect, type Page } from '@playwright/test';
 import { test } from './fixtures/console-errors';
 import { expectA11yClean } from './fixtures/a11y';
 import { chatInput, agentPicker, assistantMessages } from './fixtures/selectors';
@@ -12,18 +14,184 @@ import { chatInput, agentPicker, assistantMessages } from './fixtures/selectors'
 // a real LLM (requires OPENROUTER_API_KEY_CI) and prompts that strongly suggest spawning.
 // Traces to: sprint-h-subagent-block-spec.md line 380 (TDD row 20, BDD Scenarios 1, 4)
 
+// ── Transcript helpers (mirrored from replay-fidelity.spec.ts) ─────────────────
+
+const BASE_URL = process.env.OMNIPUS_URL || 'http://localhost:6060'
+
+const OMNIPUS_HOME =
+  process.env.OMNIPUS_HOME ||
+  (process.env.HOME ? path.join(process.env.HOME, '.omnipus') : '/tmp/omnipus-e2e-test')
+
+interface TranscriptEntry {
+  id: string
+  type?: string
+  role: string
+  content?: string
+  timestamp: string
+  agent_id?: string
+}
+
+function seedTranscript(sessionId: string, entries: TranscriptEntry[]): void {
+  const sessionDir = path.join(OMNIPUS_HOME, 'sessions', sessionId)
+  if (!fs.existsSync(sessionDir)) {
+    throw new Error(
+      `Session directory does not exist: ${sessionDir}. ` +
+        'Create the session via REST API before seeding the transcript.',
+    )
+  }
+  const transcriptPath = path.join(sessionDir, 'transcript.jsonl')
+  const lines = entries.map((e) => JSON.stringify(e)).join('\n') + '\n'
+  fs.writeFileSync(transcriptPath, lines, { encoding: 'utf-8' })
+}
+
+function getStoredAuthToken(): string | null {
+  const authFile = path.join(
+    path.dirname(new URL(import.meta.url).pathname),
+    'fixtures/.auth/admin.json',
+  )
+  if (!fs.existsSync(authFile)) return null
+  try {
+    const raw = fs.readFileSync(authFile, 'utf-8')
+    const state = JSON.parse(raw) as {
+      origins?: Array<{
+        origin: string
+        localStorage?: Array<{ name: string; value: string }>
+      }>
+    }
+    for (const origin of state.origins ?? []) {
+      for (const item of origin.localStorage ?? []) {
+        if (item.name === 'omnipus_auth_token') return item.value
+      }
+    }
+  } catch {
+    // Auth file may not exist in first run
+  }
+  return null
+}
+
+async function getCsrfToken(page: Page): Promise<string | null> {
+  const cookies = await page.context().cookies()
+  const csrfCookie = cookies.find((c) => c.name === '__Host-csrf')
+  return csrfCookie?.value ?? null
+}
+
+async function apiHeaders(page: Page): Promise<Record<string, string>> {
+  const authToken = getStoredAuthToken()
+  const csrfToken = await getCsrfToken(page)
+  return {
+    'Content-Type': 'application/json',
+    ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
+  }
+}
+
+async function createSession(page: Page): Promise<string> {
+  const resp = await page.request.post(`${BASE_URL}/api/v1/sessions`, {
+    headers: await apiHeaders(page),
+    data: { agent_id: 'main', type: 'chat' },
+  })
+  if (!resp.ok()) {
+    const body = await resp.text()
+    throw new Error(`POST /api/v1/sessions failed: ${resp.status()} ${resp.statusText()} — ${body}`)
+  }
+  const meta = (await resp.json()) as { id: string }
+  if (!meta.id) throw new Error('POST /api/v1/sessions returned no id')
+  return meta.id
+}
+
+async function renameSession(page: Page, sessionId: string, title: string): Promise<void> {
+  const resp = await page.request.put(`${BASE_URL}/api/v1/sessions/${sessionId}`, {
+    headers: await apiHeaders(page),
+    data: { title },
+  })
+  if (!resp.ok()) {
+    const body = await resp.text()
+    throw new Error(
+      `PUT /api/v1/sessions/${sessionId} failed: ${resp.status()} ${resp.statusText()} — ${body}`,
+    )
+  }
+}
+
+async function openSession(page: Page, sessionTitle: string): Promise<void> {
+  await page.getByRole('button', { name: 'Open sessions panel' }).click()
+  const sessionBtn = page
+    .getByRole('button', { name: new RegExp(`Open session: ${sessionTitle}`, 'i') })
+    .first()
+  await expect(sessionBtn).toBeVisible({ timeout: 10_000 })
+  await sessionBtn.click()
+}
+
+async function waitForReplayDone(page: Page): Promise<void> {
+  await expect(chatInput(page)).toBeEnabled({ timeout: 30_000 })
+}
+
+// ── Tests ──────────────────────────────────────────────────────────────────────
+
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
 });
 
-test.skip(
+test(
   '(a) Ray→Max→Jim chain: transcript shows all three agent labels',
-  // blocked on #111: AssistantMessage does not annotate messages with per-agent attribution
-  // in the DOM. No data-testid="messages-list" and no per-message agent label element.
-  // A deterministic handoff also requires a mock tool trigger, not a real LLM call.
-  // See tests/e2e/SPA-GAPS.md — "Agent handoff transcript labels not surfaced in DOM".
-  // ALLOW-LISTED: { issue: "https://github.com/dapicom-ai/omnipus/issues/111", until: "2026-07-01" }
-  async ({ page }) => {},
+  // Implements #111: assistant messages from different agents show a visible label.
+  // Uses transcript-seeding (same approach as replay-fidelity.spec.ts) for determinism —
+  // no real LLM needed. Seeds three assistant messages with agent_ids 'ray', 'max', 'jim'
+  // then asserts that [data-testid="agent-label"] elements appear for each.
+  async ({ page }) => {
+    await expect(page.getByRole('banner')).toBeVisible({ timeout: 15_000 })
+    await expect(chatInput(page)).toBeEnabled({ timeout: 15_000 })
+
+    // Create a session and seed a transcript with messages from three agents.
+    const sessionId = await createSession(page)
+    const sessionTitle = `handoff-a-labels-${Date.now()}`
+    await renameSession(page, sessionId, sessionTitle)
+
+    seedTranscript(sessionId, [
+      {
+        id: 'entry-user-1',
+        role: 'user',
+        content: 'Start a handoff chain.',
+        timestamp: new Date(Date.now() - 6000).toISOString(),
+        agent_id: '',
+      },
+      {
+        id: 'entry-ray-1',
+        role: 'assistant',
+        content: 'Ray here. Handing off to Max.',
+        timestamp: new Date(Date.now() - 5000).toISOString(),
+        agent_id: 'ray',
+      },
+      {
+        id: 'entry-max-1',
+        role: 'assistant',
+        content: 'Max here. Handing off to Jim.',
+        timestamp: new Date(Date.now() - 4000).toISOString(),
+        agent_id: 'max',
+      },
+      {
+        id: 'entry-jim-1',
+        role: 'assistant',
+        content: 'Jim here. Handoff chain complete.',
+        timestamp: new Date(Date.now() - 3000).toISOString(),
+        agent_id: 'jim',
+      },
+    ])
+
+    // Navigate to the session via the sessions panel.
+    await openSession(page, sessionTitle)
+    await waitForReplayDone(page)
+
+    // Assert: three agent-label elements appear — one per assistant message.
+    const agentLabels = page.locator('[data-testid="agent-label"]')
+    await expect(agentLabels).toHaveCount(3, { timeout: 15_000 })
+
+    // Assert: each agent's id/name appears in at least one label.
+    // The label shows the agent name if known, or falls back to agent_id.
+    // Ray, Max, Jim are core agents whose IDs may equal their names.
+    await expect(agentLabels.filter({ hasText: /ray/i })).toBeVisible()
+    await expect(agentLabels.filter({ hasText: /max/i })).toBeVisible()
+    await expect(agentLabels.filter({ hasText: /jim/i })).toBeVisible()
+  },
 );
 
 // BDD Scenario 1 (sprint-h-subagent-block-spec.md line 207):

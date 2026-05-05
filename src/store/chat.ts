@@ -61,6 +61,8 @@ export interface ChatMessage extends Message {
   isStreaming?: boolean
   media?: MediaAttachment[]
   spans?: SubagentSpan[]
+  /** Agent that produced this message (assistant messages only). */
+  agentId?: string
 }
 
 export interface RateLimitEventData {
@@ -1381,6 +1383,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
           const text = replayFrame.content ?? ''
           const messageId = replayFrame.id
           const messageTimestamp = replayFrame.timestamp
+          const replayAgentId = replayFrame.agent_id
           withBucket(targetSid, (b) => {
             const msgs = [...b.messages]
             // Reconnection dedup: prefer server-assigned id match when present;
@@ -1420,6 +1423,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
                   content: text,
                   status: 'done',
                   isStreaming: false,
+                  ...(replayAgentId ? { agentId: replayAgentId } : {}),
                 }
                 return { messages: msgs }
               }
@@ -1466,6 +1470,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
               content: text,
               timestamp: messageTimestamp ?? new Date().toISOString(),
               status: 'done' as const,
+              ...(replayAgentId ? { agentId: replayAgentId } : {}),
             })
             return { messages: msgs }
           })
