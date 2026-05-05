@@ -105,47 +105,26 @@ import { execSync } from 'child_process';
 //
 // Traces to: quizzical-marinating-frog.md — Wave V2.G stage 3, items 10–11
 export const SKIP_ALLOWLIST: { test: string; issue: string; until: string; note?: string }[] = [
-  // agents.spec.ts
-  {
-    test: '(g) session with deleted agent shows read-only transcript and "Agent removed" banner',
-    issue: 'https://github.com/dapicom-ai/omnipus/issues/103',
-    until: '2026-06-30',
-    note: 'ChatScreen does not check agent_removed in session response; needs data-testid="agent-removed-banner".',
-  },
-  // handoff.spec.ts
-  {
-    test: '(a) Ray→Max→Jim chain: transcript shows all three agent labels',
-    issue: 'https://github.com/dapicom-ai/omnipus/issues/111',
-    until: '2026-06-30',
-    note: 'AssistantMessage does not annotate messages with per-agent attribution.',
-  },
-  // skills.spec.ts
-  {
-    test: '(b) skill install with hash mismatch shows block dialog',
-    issue: 'https://github.com/dapicom-ai/omnipus/issues/109',
-    until: '2026-06-30',
-    note: 'SkillBrowser does not expose a file input on the /skills route.',
-  },
-  // settings.spec.ts
-  {
-    test: '(e) tool-policy "Always Allow" toggle persists across page reload',
-    issue: 'https://github.com/dapicom-ai/omnipus/issues/108',
-    until: '2026-06-30',
-    note: 'SecuritySection does not render an "Always Allow" toggle with a testid.',
-  },
-  // replay-fidelity.spec.ts
+  // replay-fidelity.spec.ts — #133 blocked: needs deterministic slow-streaming scenario provider
   {
     test: '(c) attach-during-active-turn: second browser context receives all events without loss',
     issue: 'https://github.com/dapicom-ai/omnipus/issues/133',
     until: '2026-06-30',
     note: 'Covered by Go-level TestAttach_RegistersLiveEventsBeforeReplay; E2E requires a second browser context.',
   },
-  // version-drift.spec.ts
+  // chat.spec.ts — W1.6 user-approved permanent skip: #105 offline send queue
   {
-    test: 'mock stale build hash triggers "New version available" toast',
-    issue: 'https://github.com/dapicom-ai/omnipus/issues/110',
-    until: '2026-06-30',
-    note: 'SPA does not poll /api/v1/version and does not show a "New version available" toast.',
+    test: '(f) queue-on-disconnect: messages sent during WS disconnect send in order after reconnect',
+    issue: 'https://github.com/dapicom-ai/omnipus/issues/105',
+    until: '2026-09-30',
+    note: 'useChatStore has no offline send queue; messages sent during WS disconnect are dropped.',
+  },
+  // media.spec.ts — W1.6 user-approved permanent skip: #107 mock-media tool
+  {
+    test: '(b) file-download fallback: large binary request triggers browser download dialog',
+    issue: 'https://github.com/dapicom-ai/omnipus/issues/107',
+    until: '2026-09-30',
+    note: 'InlineMedia <a download> path requires a mock non-image media frame; no scenario provider yet.',
   },
 ];
 

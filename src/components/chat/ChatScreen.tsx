@@ -407,7 +407,7 @@ function FilePreviewThumbnail({ file }: { file: File }) {
 }
 
 // Exported for unit testing (TDD row 22).
-export function OmnipusComposer() {
+export function OmnipusComposer({ agentRemoved = false }: { agentRemoved?: boolean }) {
   const isStreaming = useChatStore((s) => s.isStreaming)
   // FR-I-014: disable send while replay frames are still arriving
   const isReplaying = useChatStore((s) => s.isReplaying)
@@ -667,14 +667,14 @@ export function OmnipusComposer() {
       >
         <ComposerPrimitive.Input
           data-testid="chat-input"
-          placeholder={composerPlaceholder(isConnected, isStreaming || isUploading, isReplaying, activeAgentName)}
-          disabled={!isConnected || isStreaming || isUploading || isReplaying}
+          placeholder={agentRemoved ? 'Agent has been removed — this session is read-only' : composerPlaceholder(isConnected, isStreaming || isUploading, isReplaying, activeAgentName)}
+          disabled={agentRemoved || !isConnected || isStreaming || isUploading || isReplaying}
           rows={1}
           className={cn(
             'flex-1 resize-none rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 py-2.5 text-sm text-[var(--color-secondary)] outline-none',
             'placeholder:text-[var(--color-muted)] min-h-[24px] max-h-[200px] leading-6 overflow-hidden',
             'focus:border-[var(--color-accent)]/50 focus:ring-1 focus:ring-[var(--color-accent)]/20',
-            (!isConnected || isStreaming || isUploading || isReplaying) && 'opacity-60 cursor-not-allowed',
+            (agentRemoved || !isConnected || isStreaming || isUploading || isReplaying) && 'opacity-60 cursor-not-allowed',
           )}
           aria-label="Message input"
           onChange={(e) => {
@@ -789,7 +789,7 @@ function WelcomeState({ hasAgent }: { hasAgent: boolean }) {
 
 // ── Main screen ───────────────────────────────────────────────────────────────
 
-export function ChatScreen() {
+export function ChatScreen({ agentRemoved = false }: { agentRemoved?: boolean }) {
   const activeSessionId = useSessionStore((s) => s.activeSessionId)
   const activeAgentId = useSessionStore((s) => s.activeAgentId)
   const pendingApprovals = useChatStore((s) => s.pendingApprovals)
@@ -862,6 +862,18 @@ export function ChatScreen() {
 
   return (
     <div className="flex flex-col absolute inset-0 overflow-hidden">
+      {/* Agent-removed banner — shown when the session's agent has been deleted (#103) */}
+      {agentRemoved && (
+        <div
+          data-testid="agent-removed-banner"
+          className="px-4 py-2 bg-[var(--color-error)]/10 border-b border-[var(--color-error)]/20 flex items-center gap-2"
+        >
+          <span className="text-xs text-[var(--color-error)] flex-1">
+            Agent removed — this session is read-only
+          </span>
+        </div>
+      )}
+
       {/* Task session banner — shown when viewing a task execution transcript */}
       {attachedSessionType === 'task' && (
         <div className="px-4 py-2 bg-[var(--color-surface-2)] border-b border-[var(--color-border)] flex items-center gap-2">
@@ -932,7 +944,7 @@ export function ChatScreen() {
             {/* Gradient fade above composer */}
             <div className="absolute -top-8 left-0 right-0 h-8 bg-gradient-to-t from-[var(--color-primary)] to-transparent pointer-events-none" />
             <div className="w-full max-w-3xl mx-auto px-4 pb-2 pt-2">
-              <OmnipusComposer />
+              <OmnipusComposer agentRemoved={agentRemoved} />
             </div>
           </div>
         </ThreadPrimitive.Root>

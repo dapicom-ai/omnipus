@@ -142,13 +142,56 @@ test('(f) name collision on Create Agent surfaces server 409 error in UI', async
   await expect(errorToast).toBeVisible({ timeout: 10_000 });
 });
 
-test.skip(
-  '(g) session with deleted agent shows read-only transcript and "Agent removed" banner',
-  // blocked on #103: ChatScreen does not check agent_removed in the session response.
-  // Needs data-testid="agent-removed-banner" and a disabled composer for ghost sessions.
-  // See tests/e2e/SPA-GAPS.md — "Agent-removed banner".
-  async ({ page }) => {},
-);
+test('(g) session with deleted agent shows read-only transcript and "Agent removed" banner', async ({ page }) => {
+  // Read the Bearer token from localStorage so page.request calls can include
+  // it as an Authorization header. The CSRF middleware exempts Bearer-token
+  // requests (double-submit cookie only defends ambient cookie credentials),
+  // so this is both correct and necessary — page.request does NOT auto-add
+  // the X-Csrf-Token header that the double-submit pattern requires.
+  const bearerToken = await page.evaluate(() =>
+    localStorage.getItem('omnipus_auth_token') ?? ''
+  );
+  const authHeaders = { Authorization: `Bearer ${bearerToken}` };
+
+  // Step 1: Create a temporary agent via API
+  const resp = await page.request.post('/api/v1/agents', {
+    headers: authHeaders,
+    data: {
+      name: `TempAgent-${Date.now()}`,
+      type: 'custom',
+      model: 'openrouter/google/gemini-2.0-flash-001',
+    },
+  });
+  const agent = await resp.json() as { id: string };
+  const agentId = agent.id;
+
+  // Step 2: Create a session for this agent
+  const sessionResp = await page.request.post('/api/v1/sessions', {
+    headers: authHeaders,
+    data: { agent_id: agentId },
+  });
+  const session = await sessionResp.json() as { id?: string; session?: { id: string } };
+  const sessionId = session.id ?? session.session?.id;
+
+  // Step 3: Delete the agent
+  await page.request.delete(`/api/v1/agents/${agentId}`, { headers: authHeaders });
+
+  // Step 4: Navigate to the session
+  await page.goto(`/#/sessions/${sessionId}`);
+  // Wait for the route to settle (URL must contain "sessions")
+  await expect(page).toHaveURL(/sessions/, { timeout: 10_000 });
+  // Wait for the app shell to render (banner landmark = auth OK)
+  await expect(page.getByRole('banner')).toBeVisible({ timeout: 10_000 });
+
+  // Step 5: The banner must appear
+  const banner = page.getByTestId('agent-removed-banner');
+  await expect(banner).toBeVisible({ timeout: 15_000 });
+  await expect(banner).toContainText(/agent.*removed/i);
+
+  // Step 6: Composer must be disabled
+  const input = page.locator('textarea[placeholder*="message" i], [data-testid="chat-input"]').first();
+  await expect(input).toBeDisabled({ timeout: 5_000 });
+});
 
 test.afterAll(async ({ request }) => {
   // Clean up any PennyTest agents created by test (c) across all runs

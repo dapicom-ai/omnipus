@@ -389,6 +389,30 @@ export function fetchSessionMessages(sessionId: string): Promise<Message[]> {
   return request<Message[]>(`/sessions/${encodeURIComponent(sessionId)}/messages`)
 }
 
+export async function installSkillFromFile(content: string, filename: string): Promise<void> {
+  await request<void>('/skills/install', {
+    method: 'POST',
+    body: JSON.stringify({ content, filename }),
+  })
+}
+
+export interface SessionDetail {
+  session: Session
+  messages: Message[]
+  agent_removed?: boolean
+}
+
+export async function fetchSessionDetail(sessionId: string): Promise<SessionDetail> {
+  const raw = await request<{ session: RawSession; messages: Message[]; agent_removed?: boolean }>(
+    `/sessions/${encodeURIComponent(sessionId)}`,
+  )
+  return {
+    session: rawToSession(raw.session),
+    messages: raw.messages,
+    agent_removed: raw.agent_removed,
+  }
+}
+
 export function createSession(agentId: string): Promise<Session> {
   return request<Session>('/sessions', {
     method: 'POST',

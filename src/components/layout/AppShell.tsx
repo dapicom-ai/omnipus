@@ -13,6 +13,7 @@ import { fetchTasks, fetchAgents, fetchAppState } from '@/lib/api'
 import { useConnectionStore } from '@/store/connection'
 import { useUiStore } from '@/store/ui'
 import { useQuery } from '@tanstack/react-query'
+import { useVersionCheck } from '@/hooks/useVersionCheck'
 
 // US-4: Application shell — hamburger + sidebar + main content area
 export function AppShell() {
@@ -28,6 +29,9 @@ export function AppShell() {
     staleTime: 60_000,
   })
   const devModeBypass = appState?.dev_mode_bypass === true
+
+  // Version-drift detection (#110): shows a toast when build_sha changes
+  useVersionCheck()
 
   // Prefetch command center data on app load so it's cached when the user navigates there
   useEffect(() => {

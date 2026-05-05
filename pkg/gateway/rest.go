@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"sort"
 	"strings"
@@ -406,7 +407,22 @@ func (a *restAPI) getSession(w http.ResponseWriter, _ *http.Request, id string) 
 		jsonErr(w, http.StatusInternalServerError, fmt.Sprintf("could not read transcript: %v", err))
 		return
 	}
-	jsonOK(w, unifiedSessionDetailResponse{Session: meta, Messages: messages})
+	// Detect ghost sessions: if the session references an agent that no longer
+	// exists in the current config, surface agent_removed=true so the frontend
+	// can show the read-only "Agent removed" banner (#103).
+	agentRemoved := false
+	if meta.AgentID != "" {
+		cfg := a.agentLoop.GetConfig()
+		found := false
+		for _, ac := range cfg.Agents.List {
+			if ac.ID == meta.AgentID {
+				found = true
+				break
+			}
+		}
+		agentRemoved = !found
+	}
+	jsonOK(w, unifiedSessionDetailResponse{Session: meta, Messages: messages, AgentRemoved: agentRemoved})
 }
 
 func (a *restAPI) getSessionMessages(w http.ResponseWriter, _ *http.Request, id string) {
@@ -603,6 +619,12 @@ func (a *restAPI) HandleAgents(w http.ResponseWriter, r *http.Request) {
 		} else {
 			jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
+	case http.MethodDelete:
+		if agentID != "" {
+			a.deleteAgent(w, agentID)
+		} else {
+			jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		}
 	default:
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
@@ -647,8 +669,9 @@ type skillResponse struct {
 
 // unifiedSessionDetailResponse is the JSON shape returned by GET /api/v1/sessions/{id}.
 type unifiedSessionDetailResponse struct {
-	Session  *session.UnifiedMeta      `json:"session"`
-	Messages []session.TranscriptEntry `json:"messages"`
+	Session      *session.UnifiedMeta      `json:"session"`
+	Messages     []session.TranscriptEntry `json:"messages"`
+	AgentRemoved bool                      `json:"agent_removed,omitempty"`
 }
 
 // gatewayStatusResponse is the JSON shape returned by GET /api/v1/status.
@@ -1203,6 +1226,61 @@ func (a *restAPI) createAgent(w http.ResponseWriter, r *http.Request) {
 	ag.Warning = createReloadWarning
 	w.WriteHeader(http.StatusCreated)
 	jsonOK(w, ag)
+}
+
+// deleteAgent handles DELETE /api/v1/agents/{id}.
+// Removes the agent from config.json and reloads the live config.
+// Core (locked) agents cannot be deleted (403).
+func (a *restAPI) deleteAgent(w http.ResponseWriter, id string) {
+	cfg := a.agentLoop.GetConfig()
+	var found *config.AgentConfig
+	for i := range cfg.Agents.List {
+		if cfg.Agents.List[i].ID == id {
+			found = &cfg.Agents.List[i]
+			break
+		}
+	}
+	if found == nil {
+		jsonErr(w, http.StatusNotFound, fmt.Sprintf("agent %q not found", id))
+		return
+	}
+	if found.Locked {
+		jsonErr(w, http.StatusForbidden, "cannot delete a locked (core) agent")
+		return
+	}
+	// Remove the agent from config.json.
+	if err := a.safeUpdateConfigJSON(func(m map[string]any) error {
+		agents, _ := m["agents"].(map[string]any)
+		if agents == nil {
+			return nil
+		}
+		list, _ := agents["list"].([]any)
+		filtered := make([]any, 0, len(list))
+		for _, item := range list {
+			entry, _ := item.(map[string]any)
+			if entry == nil {
+				continue
+			}
+			if entryID, _ := entry["id"].(string); entryID == id {
+				continue // skip the deleted agent
+			}
+			filtered = append(filtered, item)
+		}
+		agents["list"] = filtered
+		return nil
+	}); err != nil {
+		slog.Error("rest: deleteAgent: save config failed", "agent_id", id, "error", err)
+		jsonErr(w, http.StatusInternalServerError, "failed to save config")
+		return
+	}
+	// Reload the live config so the deleted agent is no longer in memory.
+	// awaitReload sleeps 100ms after triggering so the in-memory config is
+	// updated before the 204 response is sent back to the caller (prevents a
+	// race where an immediate GET /sessions/:id still sees agent_removed=false).
+	if err := a.awaitReload(); err != nil {
+		slog.Error("rest: deleteAgent: reload failed", "agent_id", id, "error", err)
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *restAPI) updateAgent(w http.ResponseWriter, r *http.Request, id string) {
@@ -2207,6 +2285,9 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 	// Unauthenticated for Prometheus scrape compatibility; does not expose secrets.
 	cm.RegisterHTTPHandler("/metrics", http.HandlerFunc(a.HandleMetrics))
 
+	// Version endpoint — unauthenticated; returns build SHA for frontend version-drift detection (#110).
+	cm.RegisterHTTPHandler("/api/v1/version", http.HandlerFunc(a.HandleVersion))
+
 	// Register the test-harness scenario endpoint (test_harness build tag only).
 	// In non-test_harness builds this is a no-op stub in test_harness_disabled.go.
 	a.registerTestHarness(cm)
@@ -2376,6 +2457,28 @@ func (a *restAPI) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		ChannelCount: countEnabledChannels(cfg) + 1, // +1 for webchat (always available)
 		DailyCost:    0,
 		Version:      Version,
+	})
+}
+
+// HandleVersion handles GET /api/v1/version — unauthenticated build-info endpoint
+// used by the frontend to detect version drift and prompt "New version available" (#110).
+func (a *restAPI) HandleVersion(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	buildSha := "dev"
+	if info, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range info.Settings {
+			if s.Key == "vcs.revision" {
+				buildSha = s.Value
+				break
+			}
+		}
+	}
+	jsonOK(w, map[string]string{
+		"version":   Version,
+		"build_sha": buildSha,
 	})
 }
 

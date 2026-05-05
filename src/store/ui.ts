@@ -6,6 +6,7 @@ export interface Toast {
   message: string
   variant: 'default' | 'error' | 'success' | 'warning'
   duration?: number
+  testId?: string
 }
 
 interface UiStore {
