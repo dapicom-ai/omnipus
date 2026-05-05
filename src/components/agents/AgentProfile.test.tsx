@@ -76,7 +76,7 @@ describe('AgentProfile — error state', () => {
     // Traces to: wave5a-wire-ui-spec.md — US-7: profile shows error state
     vi.mocked(fetchAgent).mockRejectedValue(new Error('Not found'))
     renderProfile('bad-id')
-    const errorMsg = await screen.findByText(/could not load agent/i)
+    const errorMsg = await screen.findByText(/agent not found/i)
     expect(errorMsg).toBeInTheDocument()
   })
 })

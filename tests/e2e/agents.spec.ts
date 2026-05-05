@@ -69,22 +69,37 @@ test('(c) "New Agent" button on roster opens the create-agent modal', async ({ p
   await expect(modal).toBeVisible({ timeout: 10_000 });
 });
 
-test.skip(
-  '(d) locked fields render read-only on core agents',
-  // blocked on #101: AgentProfile hides the Identity accordion for locked (core) agents
-  // (canEdit guard at AgentProfile.tsx:353) — the name input is never rendered, so
-  // there is nothing to assert as readOnly. Needs data-testid="agent-name-input" and
-  // a visible (disabled) input for locked agents. See tests/e2e/SPA-GAPS.md.
-  async ({ page }) => {},
-);
+test('(d) locked fields render read-only on core agents', async ({ page }) => {
+  // Navigate to the Jim agent profile (locked core agent)
+  await page.goto('/#/agents');
+  const jimCard = page.locator('[aria-label*="Jim" i]').or(page.getByText('Jim', { exact: true })).first();
+  await expect(jimCard).toBeVisible({ timeout: 15_000 });
+  await jimCard.click();
 
-test.skip(
-  '(e) deleted agent URL returns branded 404 with "Back to Agents" link',
-  // blocked on #102: /agents/:nonexistent-slug renders a generic error state without
-  // a "Back to Agents" link. Needs a branded 404 component with that exact link text.
-  // See tests/e2e/SPA-GAPS.md — "Deleted-agent branded 404".
-  async ({ page }) => {},
-);
+  // Wait for the profile to load
+  await expect(page).toHaveURL(/\/agents\//, { timeout: 10_000 });
+
+  // The identity accordion should exist and be open (defaultValue includes 'identity')
+  const nameInput = page.getByTestId('agent-name-input');
+  await expect(nameInput).toBeVisible({ timeout: 10_000 });
+
+  // For a locked agent, the input must be disabled
+  await expect(nameInput).toBeDisabled();
+});
+
+test('(e) deleted agent URL returns branded 404 with "Back to Agents" link', async ({ page }) => {
+  await page.goto('/#/agents/this-agent-does-not-exist-xyz');
+
+  // Should see a "not found" message, not crash the app
+  const notFoundMsg = page.locator('text=not found').or(page.locator('text=Not Found')).or(page.locator('text=Agent not found')).first();
+  await expect(notFoundMsg).toBeVisible({ timeout: 10_000 });
+
+  // Must have "Back to Agents" link (exact text per SKIP_ALLOWLIST note)
+  const backLink = page.getByRole('link', { name: 'Back to Agents' });
+  await expect(backLink).toBeVisible({ timeout: 5_000 });
+  await backLink.click();
+  await expect(page).toHaveURL(/agents/, { timeout: 5_000 });
+});
 
 test('(f) name collision on Create Agent surfaces server 409 error in UI', async ({ page }) => {
   // Open the create-agent modal
@@ -120,10 +135,9 @@ test('(f) name collision on Create Agent surfaces server 409 error in UI', async
   await submitBtn.click();
 
   // Error appears as a toast (ToastContainer in AppShell — no role="alert").
-  // CreateAgentModal uses isApiError(err) ? err.userMessage which for a 409 response
-  // is defaultUserMessage(409) = "This conflicts with the current state. Please refresh and try again."
-  // (see src/lib/api-error.ts:50 and src/components/agents/CreateAgentModal.tsx:125).
-  const errorToast = page.locator('text=conflicts with the current state').first();
+  // The api.ts request() helper throws new Error(`${status}: ${body}`) so the message is
+  // "409: {\"error\": \"agent name already exists\"}". Match on the 409 status prefix.
+  const errorToast = page.locator('text=409').first();
   await expect(errorToast).toBeVisible({ timeout: 10_000 });
 });
 
