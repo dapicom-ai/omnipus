@@ -33,8 +33,64 @@
  */
 
 import { test, expect } from '@playwright/test';
+import * as fs from 'fs';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 import { agedTranscript, agedSessionExists } from './fixtures/aging';
+
+// ── Auth helpers ─────────────────────────────────────────────────────────────
+
+const AUTH_FILE = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  'fixtures/.auth/admin.json',
+);
+
+/**
+ * Read the admin Bearer token from the global-setup storageState file.
+ * global-setup.ts mirrors omnipus_auth_token from sessionStorage to localStorage
+ * so storageState captures it; we extract it here for direct API calls.
+ */
+function getStoredAuthToken(): string | null {
+  if (!fs.existsSync(AUTH_FILE)) {
+    return null;
+  }
+  try {
+    const raw = fs.readFileSync(AUTH_FILE, 'utf-8');
+    const state = JSON.parse(raw) as {
+      origins?: Array<{
+        origin: string;
+        localStorage?: Array<{ name: string; value: string }>;
+      }>;
+    };
+    for (const origin of state.origins ?? []) {
+      for (const item of origin.localStorage ?? []) {
+        if (item.name === 'omnipus_auth_token') {
+          return item.value;
+        }
+      }
+    }
+  } catch {
+    // Auth file may not exist yet on first run
+  }
+  return null;
+}
+
+/**
+ * Build Authorization header map for direct API calls.
+ * The CSRF token is not needed for GET requests; POST /security/retention/sweep
+ * requires it only if the gateway enforces CSRF on that endpoint. We include it
+ * when available to be safe.
+ */
+async function authHeaders(page: import('@playwright/test').Page): Promise<Record<string, string>> {
+  const token = getStoredAuthToken();
+  const cookies = await page.context().cookies();
+  const csrf = cookies.find((c) => c.name === '__Host-csrf')?.value ?? null;
+  return {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(csrf ? { 'X-CSRF-Token': csrf } : {}),
+  };
+}
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -86,7 +142,11 @@ test('seven_day_old_session_replays_cleanly', async ({ page }) => {
 
   // Query the sessions API directly to verify the gateway surfaces the fixture session.
   // The SPA renders sessions from GET /api/v1/sessions, which reads the store from disk.
-  const resp = await page.request.get(`${BASE_URL}/api/v1/sessions`);
+  // page.request inherits the browser context but does NOT automatically send the
+  // Authorization Bearer header — we must pass it explicitly from storageState.
+  const resp = await page.request.get(`${BASE_URL}/api/v1/sessions`, {
+    headers: await authHeaders(page),
+  });
 
   // BLOCKED: This assertion will fail until the gateway surfaces sessions that
   // were written directly to disk (outside the REST flow) AND the session list
@@ -95,8 +155,15 @@ test('seven_day_old_session_replays_cleanly', async ({ page }) => {
   // If it fails, the failure message will read:
   //   "Expected sessions list to contain the aged session ID"
   // That failure documents the coverage gap — NOT a test-infrastructure problem.
-  const body = (await resp.json()) as { sessions?: Array<{ id: string }> };
-  const sessions = body.sessions ?? [];
+  //
+  // Response shape: GET /api/v1/sessions returns either:
+  //   - Array directly:                  [{id, ...}, ...]         (no partial errors)
+  //   - Object with sessions key:        {sessions: [...], partial_errors: [...]}
+  // We normalise both to a flat array.
+  const rawBody = await resp.json();
+  const sessions: Array<{ id: string }> = Array.isArray(rawBody)
+    ? (rawBody as Array<{ id: string }>)
+    : ((rawBody as { sessions?: Array<{ id: string }> }).sessions ?? []);
   const found = sessions.some((s) => s.id === normalizedId);
 
   expect(found).toBe(true);
@@ -188,10 +255,11 @@ test('session_past_retention_threshold_is_swept', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('banner')).toBeVisible({ timeout: 15_000 });
 
-  // Try to trigger a retention sweep via the REST API.
-  // If the endpoint does not exist (404), that is itself a finding
-  // (the sweep can only be triggered at gateway startup, not on-demand).
-  const sweepResp = await page.request.post(`${BASE_URL}/api/v1/admin/retention-sweep`, {
+  // Trigger a retention sweep via the REST API.
+  // Correct endpoint: POST /api/v1/security/retention/sweep (pkg/gateway/rest_retention.go:163).
+  // Admin Bearer token is required; we read it from storageState (see authHeaders above).
+  const sweepResp = await page.request.post(`${BASE_URL}/api/v1/security/retention/sweep`, {
+    headers: await authHeaders(page),
     failOnStatusCode: false,
   });
   if (sweepResp.status() === 200 || sweepResp.status() === 204) {
@@ -199,15 +267,21 @@ test('session_past_retention_threshold_is_swept', async ({ page }) => {
     // Give it a moment to complete.
     await page.waitForTimeout(500);
   }
-  // If sweepResp is 404 or 405: no on-demand sweep endpoint exists.
-  // The test still validates via the session list below.
+  // If sweepResp is 409: a nightly sweep is in progress — that is also acceptable;
+  // the session will be removed by that sweep. Continue to the assertion.
 
   // Query the session list. If the retention sweep ran (either at startup or
   // via the API call above), the 100-day-old session should NOT appear.
-  const listResp = await page.request.get(`${BASE_URL}/api/v1/sessions`);
-  const body = (await listResp.json()) as { sessions?: Array<{ id: string }> };
-  const sessions = body.sessions ?? [];
+  // Must send auth header — same reason as the GET /api/v1/sessions call above.
+  const listResp = await page.request.get(`${BASE_URL}/api/v1/sessions`, {
+    headers: await authHeaders(page),
+  });
+  // Response shape: same dual-form as in test 1 — normalise to a flat array.
+  const rawListBody = await listResp.json();
   const normalizedId = sessionId.startsWith('session_') ? sessionId : `session_${sessionId}`;
+  const sessions: Array<{ id: string }> = Array.isArray(rawListBody)
+    ? (rawListBody as Array<{ id: string }>)
+    : ((rawListBody as { sessions?: Array<{ id: string }> }).sessions ?? []);
   const stillPresent = sessions.some((s) => s.id === normalizedId);
 
   // IMPORTANT: If this assertion fails, it means the retention sweep did NOT
