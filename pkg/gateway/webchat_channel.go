@@ -67,27 +67,60 @@ func (c *webchatChannel) Send(_ context.Context, msg bus.OutboundMessage) error 
 		return nil
 	}
 
+	// Resolve the originating chat's session_id and find every connection
+	// currently bound to that session. Cross-browser session attach (#133)
+	// requires that a second tab observing the same session receives the
+	// final token/done frames — not just the chat_id that triggered the turn.
 	c.wsHandler.mu.Lock()
-	conn, ok := c.wsHandler.sessions[msg.ChatID]
-	// Backfill session_id from the handler's chat→session map when the
-	// upstream OutboundMessage didn't carry one. The SPA drops session-
-	// scoped frames that arrive without session_id, so every token/done
-	// must be tagged.
 	sid := msg.SessionID
 	if sid == "" {
 		sid = c.wsHandler.sessionIDs[msg.ChatID]
 	}
+	conns := c.collectSessionConnsLocked(msg.ChatID, sid)
 	c.wsHandler.mu.Unlock()
 
-	if !ok {
+	if len(conns) == 0 {
 		return fmt.Errorf("webchat: no active connection for chat %s", msg.ChatID)
 	}
 
-	if msg.Content != "" {
-		sendConnFrame(conn, wsServerFrame{Type: "token", Content: msg.Content, SessionID: sid})
+	for _, conn := range conns {
+		if msg.Content != "" {
+			sendConnFrame(conn, wsServerFrame{Type: "token", Content: msg.Content, SessionID: sid})
+		}
+		sendConnFrame(conn, wsServerFrame{Type: "done", Stats: map[string]any{}, SessionID: sid})
 	}
-	sendConnFrame(conn, wsServerFrame{Type: "done", Stats: map[string]any{}, SessionID: sid})
 	return nil
+}
+
+// collectSessionConnsLocked returns every wsConn that should receive a
+// session-scoped outbound frame: the originating chatID plus any other
+// connections (from different browser tabs) attached to the same session.
+// Caller must hold c.wsHandler.mu.
+func (c *webchatChannel) collectSessionConnsLocked(originChatID, sessionID string) []*wsConn {
+	out := make([]*wsConn, 0, 2)
+	seen := make(map[*wsConn]struct{}, 2)
+	if conn, ok := c.wsHandler.sessions[originChatID]; ok {
+		out = append(out, conn)
+		seen[conn] = struct{}{}
+	}
+	if sessionID == "" {
+		return out
+	}
+	for chatID, sid := range c.wsHandler.sessionIDs {
+		if sid != sessionID || chatID == originChatID {
+			continue
+		}
+		conn, ok := c.wsHandler.sessions[chatID]
+		if !ok {
+			continue
+		}
+		if _, dup := seen[conn]; dup {
+			continue
+		}
+		out = append(out, conn)
+		seen[conn] = struct{}{}
+	}
+	return out
 }
 
 // SendMedia delivers media attachments to the WebSocket client.

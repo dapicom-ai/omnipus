@@ -35,6 +35,21 @@ func testHarnessQueueReset(t *testing.T) {
 	t.Skip("test_harness build tag required — HarnessQueue not compiled in this build")
 }
 
+func testHarnessQueueDelayHonored(t *testing.T) {
+	t.Helper()
+	t.Skip("test_harness build tag required — HarnessQueue not compiled in this build")
+}
+
+func testHarnessQueueDelayCtxCancel(t *testing.T) {
+	t.Helper()
+	t.Skip("test_harness build tag required — HarnessQueue not compiled in this build")
+}
+
+func testParseScenarioRequestDelayCap(t *testing.T) {
+	t.Helper()
+	t.Skip("test_harness build tag required — parseScenarioRequest not compiled in this build")
+}
+
 func testParseScenarioRequestValidText(t *testing.T) {
 	t.Helper()
 	t.Skip("test_harness build tag required — parseScenarioRequest not compiled in this build")

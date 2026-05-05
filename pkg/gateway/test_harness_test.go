@@ -53,6 +53,25 @@ func TestHarnessQueue_Reset(t *testing.T) {
 	testHarnessQueueReset(t)
 }
 
+// TestHarnessQueue_DelayHonored verifies that delay_ms blocks Chat for the
+// requested duration. Underpins the replay-fidelity attach-during-active-turn
+// E2E test (#133).
+func TestHarnessQueue_DelayHonored(t *testing.T) {
+	testHarnessQueueDelayHonored(t)
+}
+
+// TestHarnessQueue_DelayCtxCancel verifies that a pending delay returns early
+// when the context is cancelled.
+func TestHarnessQueue_DelayCtxCancel(t *testing.T) {
+	testHarnessQueueDelayCtxCancel(t)
+}
+
+// TestParseScenarioRequest_DelayCap verifies that an over-large delay_ms is
+// rejected at parse time so a misconfigured scenario fails loudly.
+func TestParseScenarioRequest_DelayCap(t *testing.T) {
+	testParseScenarioRequestDelayCap(t)
+}
+
 // --- parseScenarioRequest unit tests ---
 
 // TestParseScenarioRequest_ValidText verifies a text-only scenario parses correctly.

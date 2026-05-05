@@ -430,13 +430,24 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 	}
 
 	// Check for a test provider override BEFORE calling createStartupProvider.
-	// If one is installed, bypass the real provider creation entirely — the
-	// override factory supplies the provider directly. This hook is always nil
-	// in production. See pkg/gateway/testhook.go / testhook_stub.go.
+	// If one is installed, the override factory supplies the provider — but we
+	// also still build the real provider so a delegate-aware override (e.g.
+	// the test_harness HarnessQueue) can fall through to real LLM calls when
+	// no scripted scenario is enqueued. This hook is always nil in production.
+	// See pkg/gateway/testhook.go / testhook_stub.go.
 	var provider providers.LLMProvider
 	var modelID string
 	if overridePtr := testProviderOverride.Load(); overridePtr != nil {
 		provider = (*overridePtr)()
+		realProvider, realModelID, realErr := createStartupProvider(cfg, allowEmptyStartup)
+		if realErr == nil {
+			modelID = realModelID
+			if d, ok := provider.(interface {
+				SetDelegate(providers.LLMProvider)
+			}); ok {
+				d.SetDelegate(realProvider)
+			}
+		}
 	} else {
 		provider, modelID, err = createStartupProvider(cfg, allowEmptyStartup)
 		if err != nil {
@@ -1463,14 +1474,35 @@ func handleConfigReload(
 	logger.Info("  Stopping all services...")
 	stopAndCleanupServices(runningServices, serviceShutdownTimeout, true)
 
-	newProvider, newModelID, err := createStartupProvider(newCfg, allowEmptyStartup)
-	if err != nil {
-		logger.Errorf("  ⚠ Error creating new provider: %v", err)
-		logger.Warn("  Attempting to restart services with old provider and config...")
-		if restartErr := restartServices(al, runningServices, msgBus); restartErr != nil {
-			logger.Errorf("  ⚠ Failed to restart services: %v", restartErr)
+	// Honor the test provider override on reload (same hook as boot path at
+	// gateway.go:438). Without this, a config reload that recreates the
+	// provider unconditionally drops the test_harness LLM override and the
+	// agent loop starts hitting the real upstream — which breaks scripted
+	// scenarios that depend on injected responses.
+	var newProvider providers.LLMProvider
+	var newModelID string
+	if overridePtr := testProviderOverride.Load(); overridePtr != nil {
+		newProvider = (*overridePtr)()
+		realProvider, realModelID, realErr := createStartupProvider(newCfg, allowEmptyStartup)
+		if realErr == nil {
+			newModelID = realModelID
+			if d, ok := newProvider.(interface {
+				SetDelegate(providers.LLMProvider)
+			}); ok {
+				d.SetDelegate(realProvider)
+			}
 		}
-		return fmt.Errorf("error creating new provider: %w", err)
+	} else {
+		var err error
+		newProvider, newModelID, err = createStartupProvider(newCfg, allowEmptyStartup)
+		if err != nil {
+			logger.Errorf("  ⚠ Error creating new provider: %v", err)
+			logger.Warn("  Attempting to restart services with old provider and config...")
+			if restartErr := restartServices(al, runningServices, msgBus); restartErr != nil {
+				logger.Errorf("  ⚠ Failed to restart services: %v", restartErr)
+			}
+			return fmt.Errorf("error creating new provider: %w", err)
+		}
 	}
 
 	if newModelID != "" && newCfg.Agents.Defaults.ModelName == "" {

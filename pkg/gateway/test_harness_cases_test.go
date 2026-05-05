@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -103,6 +104,72 @@ func testHarnessQueueReset(t *testing.T) {
 	require.Equal(t, 2, q.Len())
 	q.Reset()
 	assert.Equal(t, 0, q.Len(), "Reset must drain the queue")
+}
+
+// testHarnessQueueDelayHonored verifies that a scripted step with delay_ms set
+// causes Chat() to block for at least that long before returning. This is the
+// mechanism the attach-during-active-turn replay-fidelity test depends on.
+func testHarnessQueueDelayHonored(t *testing.T) {
+	t.Helper()
+	q := &HarnessQueue{}
+	steps, err := parseScenarioRequest(harnessScenarioRequest{
+		Responses: []harnessResponseEntry{
+			{Type: "text", Content: "slow", DelayMs: 200},
+		},
+	})
+	require.NoError(t, err)
+	q.Enqueue(steps)
+
+	start := time.Now()
+	resp, chatErr := q.Chat(context.Background(), nil, nil, "", nil)
+	elapsed := time.Since(start)
+
+	require.NoError(t, chatErr)
+	require.NotNil(t, resp)
+	assert.Equal(t, "slow", resp.Content)
+	assert.GreaterOrEqual(t, elapsed, 200*time.Millisecond,
+		"Chat must block for at least delay_ms before returning")
+}
+
+// testHarnessQueueDelayCtxCancel verifies that a pending delay aborts when the
+// agent-loop context is cancelled, instead of blocking the full duration.
+func testHarnessQueueDelayCtxCancel(t *testing.T) {
+	t.Helper()
+	q := &HarnessQueue{}
+	steps, err := parseScenarioRequest(harnessScenarioRequest{
+		Responses: []harnessResponseEntry{
+			{Type: "text", Content: "slow", DelayMs: 5_000},
+		},
+	})
+	require.NoError(t, err)
+	q.Enqueue(steps)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	start := time.Now()
+	_, chatErr := q.Chat(ctx, nil, nil, "", nil)
+	elapsed := time.Since(start)
+
+	assert.ErrorIs(t, chatErr, context.Canceled)
+	assert.Less(t, elapsed, 1*time.Second,
+		"Chat must abort the delay when ctx is cancelled, not wait the full %dms", 5_000)
+}
+
+// testParseScenarioRequestDelayCap verifies that delay_ms beyond the
+// maxScenarioDelay cap is rejected with a 400-style error.
+func testParseScenarioRequestDelayCap(t *testing.T) {
+	t.Helper()
+	_, err := parseScenarioRequest(harnessScenarioRequest{
+		Responses: []harnessResponseEntry{
+			{Type: "text", Content: "x", DelayMs: 60_000}, // 60s > 30s cap
+		},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds cap")
 }
 
 func testParseScenarioRequestValidText(t *testing.T) {

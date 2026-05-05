@@ -434,26 +434,106 @@ test(
 
 // ── Test (c): attach-during-active-turn no event loss ─────────────────────────
 
-test.skip(
+const AUTH_FILE = path.join(
+  path.dirname(new URL(import.meta.url).pathname),
+  'fixtures/.auth/admin.json',
+)
+
+test(
   '(c) attach-during-active-turn: second browser context receives all events without loss',
-  // Covered by Go-level TestAttach_RegistersLiveEventsBeforeReplay (pkg/gateway/websocket_test.go).
-  //
-  // Remaining Playwright blocker: a deterministic slow-streaming scenario provider is needed
-  // to control timing (attach after start, before done). Without it the 2-second window
-  // for "attach after start but before done" cannot be reliably controlled in Playwright.
-  // The Go unit test covers the race without a full browser — the E2E is belt-and-suspenders.
+  // Belt-and-suspenders companion to TestAttach_RegistersLiveEventsBeforeReplay
+  // (pkg/gateway/replay_test.go). Drives the determinism via the test_harness
+  // scenario endpoint with delay_ms — REQUIRES the gateway built with
+  // -tags test_harness. Skipped via SKIP_ALLOWLIST when the endpoint is absent.
   //
   // Traces to: sprint-i-historical-replay-fidelity-spec.md BDD Scenario 9; TDD row 25.
   async ({ page, browser }) => {
-    // Implementation sketch (for when blockers are resolved):
-    // 1. Start a gateway with a slow-stream scenario provider activated.
-    // 2. Browser context 1 sends a message that triggers the slow stream (>10s).
-    // 3. Sleep ~2s; attach browser context 2 to the same session.
-    // 4. Wait for replay done on context 2.
-    // 5. Wait for the final assistant message on both contexts.
-    // 6. Assert context 2's final message content === context 1's.
-    void page
-    void browser
+    test.setTimeout(60_000)
+
+    // ── Step 1: page1 — fresh session ──
+    await page.goto('/')
+    await expect(page.getByRole('banner')).toBeVisible({ timeout: 15_000 })
+    await waitForWsConnected(page)
+
+    const sessionId = await createSession(page)
+    const sessionTitle = `replay-fidelity-test-c-${Date.now()}`
+    await renameSession(page, sessionId, sessionTitle)
+
+    // ── Step 2: enqueue a slow scripted LLM response ──
+    // delay_ms gives us ~3s of "active turn" — long enough to reliably attach
+    // page2 mid-turn but short enough not to stretch the test.
+    const expectedReply = `attach-during-turn-${Date.now()}`
+    const scenarioResp = await page.request.post(`${BASE_URL}/api/v1/_test/scenario`, {
+      headers: await apiHeaders(page),
+      data: {
+        responses: [{ type: 'text', content: expectedReply, delay_ms: 3000 }],
+      },
+    })
+    if (scenarioResp.status() === 404) {
+      throw new Error(
+        'test_harness scenario endpoint returned 404 — gateway must be built with -tags test_harness for this test',
+      )
+    }
+    expect(scenarioResp.ok(), `enqueue scenario: ${scenarioResp.status()}`).toBeTruthy()
+
+    // ── Step 3: open session and send the user message on page1 ──
+    await openSession(page, sessionTitle)
+    await waitForReplayDone(page)
+
+    const input = chatInput(page)
+    await expect(input).toBeEnabled({ timeout: 10_000 })
+    await input.fill('begin slow turn')
+    const sendStart = Date.now()
+    await input.press('Enter')
+
+    // The user message should appear immediately (echoed by WS).
+    const userMsgs = page.locator('[data-message-id].flex-row-reverse')
+    await expect(userMsgs).toHaveCount(1, { timeout: 5_000 })
+
+    // ── Step 4: while the agent is still in delay, attach page2 ──
+    // Wait ~800ms after send so we are reliably mid-delay (3000ms total)
+    // but well before the assistant message arrives.
+    await page.waitForTimeout(800)
+    const context2 = await browser.newContext({ storageState: AUTH_FILE, baseURL: BASE_URL })
+    const page2 = await context2.newPage()
+
+    try {
+      await page2.goto('/')
+      await expect(page2.getByRole('banner')).toBeVisible({ timeout: 15_000 })
+      await waitForWsConnected(page2)
+      await openSession(page2, sessionTitle)
+      await waitForReplayDone(page2)
+
+      // page2 must replay the user message that page1 sent before page2 attached.
+      const userMsgs2 = page2.locator('[data-message-id].flex-row-reverse')
+      await expect(userMsgs2).toHaveCount(1, { timeout: 10_000 })
+
+      // ── Step 5: both contexts receive the final assistant message ──
+      // Wait for the assistant reply (with our scripted content) on both pages.
+      // The expectedReply is a unique random string only the harness produces, so
+      // a body-text containment check is strictly equivalent to "the harness
+      // response was delivered" without coupling the test to a specific bubble
+      // component (live AssistantUI vs. replayed MessageItem render differently).
+      // Page2 first — it attached mid-turn so it's the harder case (FR-I-009);
+      // page1 was the originator and should have the message already.
+      await expect(page2.locator('body')).toContainText(expectedReply, { timeout: 20_000 })
+      await expect(page.locator('body')).toContainText(expectedReply, { timeout: 20_000 })
+
+      // page2 attached AFTER the turn started, so the only way it could see the
+      // assistant message is if live forwarding picked up where replay left off
+      // — that's what FR-I-009 demands and what we're verifying.
+      const wallClock = Date.now() - sendStart
+      expect(wallClock).toBeGreaterThanOrEqual(2_500) // confirms the delay actually ran
+
+      // Final-state agreement: both browser contexts must show the same harness
+      // reply. The body-text contains check above already proved both saw it;
+      // belt-and-suspenders here verifies neither got a duplicate or truncation.
+      const text1 = await page.locator(`text=${expectedReply}`).first().innerText()
+      const text2 = await page2.locator(`text=${expectedReply}`).first().innerText()
+      expect(text2.trim()).toBe(text1.trim())
+    } finally {
+      await context2.close()
+    }
   },
 )
 

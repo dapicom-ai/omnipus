@@ -86,6 +86,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 	"github.com/dapicom-ai/omnipus/pkg/providers"
@@ -96,31 +97,68 @@ import (
 // remain. Tests must not leave the queue empty when an LLM call is expected.
 var ErrQueueEmpty = errors.New("test harness: scenario queue is empty")
 
+// maxScenarioDelay caps the per-step delay so a runaway scenario can't hang
+// a test gateway indefinitely. 30s is enough for the attach-during-active-turn
+// test (needs ~2-4s) but short enough to fail loudly if misconfigured.
+const maxScenarioDelay = 30 * time.Second
+
 // scenarioStep is one scripted LLM response stored in the queue.
 type scenarioStep struct {
-	resp *providers.LLMResponse
+	resp  *providers.LLMResponse
+	delay time.Duration
 }
 
 // HarnessQueue is a process-level FIFO LLM provider that returns scripted
-// responses in the order they were enqueued. Thread-safe.
+// responses in the order they were enqueued. When the queue is empty the
+// queue delegates to the real upstream provider (set via SetDelegate),
+// so tests that don't use the harness still get real LLM behavior. This
+// lets a single test_harness binary serve both the deterministic E2E
+// scenarios (e.g. replay-fidelity attach-during-active-turn) and the
+// real-LLM tests (handoff, subagent) in the same suite. Thread-safe.
 type HarnessQueue struct {
-	mu    sync.Mutex
-	steps []scenarioStep
+	mu       sync.Mutex
+	steps    []scenarioStep
+	delegate providers.LLMProvider
 }
 
 // processHarnessQueue is the singleton installed at gateway boot.
 // Accessed only via the atomic pointer in testhook.go.
 var processHarnessQueue = &HarnessQueue{}
 
-// Chat dequeues and returns the next scripted response.
-// Returns ErrQueueEmpty when no responses remain.
+// init installs processHarnessQueue as the provider override at package-load
+// time. This is required because gateway.RunContext reads the override BEFORE
+// the REST mux is wired (see gateway.go:438). Installing it later from
+// registerTestHarness leaves the agent loop pinned to the real provider.
+//
+// Only present in -tags test_harness builds; production binaries never link
+// this file.
+func init() {
+	SetTestProviderOverride(func() providers.LLMProvider {
+		return processHarnessQueue
+	})
+}
+
+// SetDelegate sets the fallback LLM provider that HarnessQueue.Chat invokes
+// when its scripted-response queue is empty. Called once during gateway boot
+// (and on reload) with the configured upstream provider.
+func (q *HarnessQueue) SetDelegate(p providers.LLMProvider) {
+	q.mu.Lock()
+	q.delegate = p
+	q.mu.Unlock()
+}
+
+// Chat dequeues and returns the next scripted response. When the queue is
+// empty it delegates to the real upstream provider (set via SetDelegate)
+// instead of returning ErrQueueEmpty. ErrQueueEmpty is returned only when
+// no delegate has been installed — that path remains useful for unit tests
+// that want to assert the empty-queue behavior in isolation.
 // Implements providers.LLMProvider.
 func (q *HarnessQueue) Chat(
 	ctx context.Context,
-	_ []providers.Message,
-	_ []providers.ToolDefinition,
-	_ string,
-	_ map[string]any,
+	messages []providers.Message,
+	tools []providers.ToolDefinition,
+	model string,
+	opts map[string]any,
 ) (*providers.LLMResponse, error) {
 	select {
 	case <-ctx.Done():
@@ -130,12 +168,27 @@ func (q *HarnessQueue) Chat(
 
 	q.mu.Lock()
 	if len(q.steps) == 0 {
+		delegate := q.delegate
 		q.mu.Unlock()
+		if delegate != nil {
+			return delegate.Chat(ctx, messages, tools, model, opts)
+		}
 		return nil, ErrQueueEmpty
 	}
 	step := q.steps[0]
 	q.steps = q.steps[1:]
 	q.mu.Unlock()
+
+	// Honor the per-step delay so tests can drive deterministic slow turns
+	// (e.g. attach-during-active-turn replay-fidelity test). The select
+	// returns early if the agent-loop context is cancelled.
+	if step.delay > 0 {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(step.delay):
+		}
+	}
 
 	return step.resp, nil
 }
@@ -182,6 +235,11 @@ type harnessResponseEntry struct {
 	Content string `json:"content,omitempty"`
 	// ToolCalls is the list of tool-call descriptors for type="tool_calls".
 	ToolCalls []harnessToolCallEntry `json:"tool_calls,omitempty"`
+	// DelayMs is an optional artificial delay before this scripted response
+	// is returned by HarnessQueue.Chat. Used to simulate a slow LLM so
+	// integration tests can attach a second client mid-turn. Capped at
+	// maxScenarioDelay; values <= 0 mean no delay.
+	DelayMs int `json:"delay_ms,omitempty"`
 }
 
 // harnessToolCallEntry describes one tool call within a scripted LLM turn.
@@ -201,6 +259,13 @@ func parseScenarioRequest(body harnessScenarioRequest) ([]scenarioStep, error) {
 	}
 	steps := make([]scenarioStep, 0, len(body.Responses))
 	for i, entry := range body.Responses {
+		delay := time.Duration(entry.DelayMs) * time.Millisecond
+		if delay < 0 {
+			delay = 0
+		}
+		if delay > maxScenarioDelay {
+			return nil, fmt.Errorf("responses[%d].delay_ms: %dms exceeds cap of %v", i, entry.DelayMs, maxScenarioDelay)
+		}
 		switch entry.Type {
 		case "text":
 			steps = append(steps, scenarioStep{
@@ -208,6 +273,7 @@ func parseScenarioRequest(body harnessScenarioRequest) ([]scenarioStep, error) {
 					Content:   entry.Content,
 					ToolCalls: []protocoltypes.ToolCall{},
 				},
+				delay: delay,
 			})
 		case "tool_calls":
 			if len(entry.ToolCalls) == 0 {
@@ -238,6 +304,7 @@ func parseScenarioRequest(body harnessScenarioRequest) ([]scenarioStep, error) {
 					Content:   entry.Content,
 					ToolCalls: calls,
 				},
+				delay: delay,
 			})
 		default:
 			return nil, fmt.Errorf("responses[%d]: unknown type %q — must be \"text\" or \"tool_calls\"", i, entry.Type)

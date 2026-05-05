@@ -105,13 +105,6 @@ import { execSync } from 'child_process';
 //
 // Traces to: quizzical-marinating-frog.md — Wave V2.G stage 3, items 10–11
 export const SKIP_ALLOWLIST: { test: string; issue: string; until: string; note?: string }[] = [
-  // replay-fidelity.spec.ts — #133 blocked: needs deterministic slow-streaming scenario provider
-  {
-    test: '(c) attach-during-active-turn: second browser context receives all events without loss',
-    issue: 'https://github.com/dapicom-ai/omnipus/issues/133',
-    until: '2026-06-30',
-    note: 'Covered by Go-level TestAttach_RegistersLiveEventsBeforeReplay; E2E requires a second browser context.',
-  },
   // chat.spec.ts — W1.6 user-approved permanent skip: #105 offline send queue
   {
     test: '(f) queue-on-disconnect: messages sent during WS disconnect send in order after reconnect',
