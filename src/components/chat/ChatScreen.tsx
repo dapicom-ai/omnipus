@@ -559,7 +559,7 @@ export function OmnipusComposer() {
       )}
 
       {!isConnected && (
-        <div className="mb-2 text-xs text-[var(--color-error)] flex items-center gap-1">
+        <div data-testid="reconnect-banner" className="mb-2 text-xs text-[var(--color-error)] flex items-center gap-1">
           <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-error)] inline-block" />
           Disconnected — reconnecting...
         </div>

@@ -44,8 +44,9 @@ MockWebSocket.CLOSED = 3
 
 // ── Event listener capture ─────────────────────────────────────────────────────
 
-// Capture addEventListener / removeEventListener calls on window so we can
-// trigger the registered handlers in tests.
+// Capture addEventListener / removeEventListener calls on window AND document.
+// visibilitychange fires on document per the Web Platform spec (ws.ts uses
+// document.addEventListener for it); online/offline fire on window.
 const windowListeners: Record<string, EventListenerOrEventListenerObject[]> = {}
 
 function setupWindowEventCapture() {
@@ -56,6 +57,19 @@ function setupWindowEventCapture() {
     }
   )
   vi.spyOn(window, 'removeEventListener').mockImplementation(
+    (type: string, listener: EventListenerOrEventListenerObject) => {
+      if (windowListeners[type]) {
+        windowListeners[type] = windowListeners[type].filter((l) => l !== listener)
+      }
+    }
+  )
+  vi.spyOn(document, 'addEventListener').mockImplementation(
+    (type: string, listener: EventListenerOrEventListenerObject) => {
+      if (!windowListeners[type]) windowListeners[type] = []
+      windowListeners[type].push(listener)
+    }
+  )
+  vi.spyOn(document, 'removeEventListener').mockImplementation(
     (type: string, listener: EventListenerOrEventListenerObject) => {
       if (windowListeners[type]) {
         windowListeners[type] = windowListeners[type].filter((l) => l !== listener)

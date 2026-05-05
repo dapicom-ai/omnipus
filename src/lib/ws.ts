@@ -493,13 +493,13 @@ export class WsConnection {
       }
     }
 
-    window.addEventListener('visibilitychange', this._onVisibilityChange)
+    document.addEventListener('visibilitychange', this._onVisibilityChange)
     window.addEventListener('online', this._onOnline)
   }
 
   private _detachWindowListeners(): void {
     if (this._onVisibilityChange) {
-      window.removeEventListener('visibilitychange', this._onVisibilityChange)
+      document.removeEventListener('visibilitychange', this._onVisibilityChange)
       this._onVisibilityChange = null
     }
     if (this._onOnline) {
