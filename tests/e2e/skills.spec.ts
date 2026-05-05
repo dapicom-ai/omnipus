@@ -83,10 +83,11 @@ test('(c) MCP server add with duplicate name returns 409 and inline error', asyn
   await expect(submitBtn).toBeEnabled({ timeout: 5_000 });
   await submitBtn.click();
 
-  // McpServerModal calls addToast({ message: err.message, variant: 'error' }) on error
+  // McpServerModal calls addToast({ message: isApiError(err) ? err.userMessage : err.message })
   // (McpServerModal.tsx:44 — no role="alert", error surfaces as a toast notification).
-  // The api.ts request() helper throws new Error(`${status}: ${body}`) so the message is
-  // "409: {\"error\": \"MCP server name already exists\"}" — match on the status code.
-  const errorToast = page.locator('text=409').first();
+  // For a 409 response, err.userMessage = defaultUserMessage(409) =
+  // "This conflicts with the current state. Please refresh and try again."
+  // (see src/lib/api-error.ts:50 and src/components/skills/McpServerModal.tsx:44).
+  const errorToast = page.locator('text=conflicts with the current state').first();
   await expect(errorToast).toBeVisible({ timeout: 10_000 });
 });
