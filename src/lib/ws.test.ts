@@ -133,7 +133,7 @@ describe('WsConnection — visibilitychange triggers reconnect (B1.3c)', () => {
     conn.disconnect()
   })
 
-  it('reconnects immediately when visibilitychange fires while ws is null', () => {
+  it('reconnects via visibilitychange after a 250ms minimum window so the disconnect banner is observable', () => {
     vi.useFakeTimers()
     const cbs = makeCallbacks()
     const conn = new WsConnection(cbs)
@@ -147,14 +147,18 @@ describe('WsConnection — visibilitychange triggers reconnect (B1.3c)', () => {
     const wsCallCountAfterDisconnect = MockWebSocket.mock.calls.length
 
     // Trigger visibilitychange (user returns to the tab)
-    // Stub document.visibilityState to 'visible'
     Object.defineProperty(document, 'visibilityState', {
       get: () => 'visible',
       configurable: true,
     })
     triggerWindowEvent('visibilitychange')
 
-    // A new WebSocket should have been created immediately (backoff reset)
+    // The handler clears the pending reconnect timer and schedules a fresh
+    // 250ms one so the disconnected UI gets at least one render cycle.
+    expect(MockWebSocket.mock.calls.length).toBe(wsCallCountAfterDisconnect)
+
+    // After 250ms the new WebSocket is constructed.
+    vi.advanceTimersByTime(250)
     expect(MockWebSocket.mock.calls.length).toBeGreaterThan(wsCallCountAfterDisconnect)
 
     conn.disconnect()
@@ -212,7 +216,7 @@ describe('WsConnection — online event triggers reconnect (B1.3c)', () => {
     conn.disconnect()
   })
 
-  it('reconnects immediately when online event fires while ws is null', () => {
+  it('reconnects via online event after a 250ms minimum window so the disconnect banner is observable', () => {
     vi.useFakeTimers()
     const cbs = makeCallbacks()
     const conn = new WsConnection(cbs)
@@ -227,6 +231,9 @@ describe('WsConnection — online event triggers reconnect (B1.3c)', () => {
     // Trigger online — network recovered
     triggerWindowEvent('online')
 
+    // Same observable-banner contract as visibilitychange — 250ms delay.
+    expect(MockWebSocket.mock.calls.length).toBe(wsCallCountAfterDisconnect)
+    vi.advanceTimersByTime(250)
     expect(MockWebSocket.mock.calls.length).toBeGreaterThan(wsCallCountAfterDisconnect)
 
     conn.disconnect()

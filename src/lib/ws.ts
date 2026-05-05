@@ -326,6 +326,7 @@ export class WsConnection {
   // B1.3c: bound event handler references so they can be removed on disconnect.
   private _onVisibilityChange: (() => void) | null = null
   private _onOnline: (() => void) | null = null
+  private _onOffline: (() => void) | null = null
 
   constructor(callbacks: WsConnectionCallbacks) {
     this.callbacks = callbacks
@@ -366,6 +367,16 @@ export class WsConnection {
     } catch (err) {
       this.callbacks.onError(`Failed to create WebSocket: ${err instanceof Error ? err.message : String(err)}`)
       return
+    }
+
+    // Expose live WebSocket on window so tests can deterministically simulate a
+    // network drop by calling ws.close() — there is no other reliable hook for
+    // closing only the SPA's WS without disabling the entire network context.
+    // See tests/e2e/ws-reconnect.spec.ts.
+    if (typeof window !== 'undefined') {
+      const w = window as unknown as { __ws_instances?: WebSocket[] }
+      w.__ws_instances ??= []
+      w.__ws_instances.push(this.ws)
     }
 
     this.ws.onopen = () => {
@@ -422,22 +433,32 @@ export class WsConnection {
     }
 
     this.ws.onclose = (event: CloseEvent) => {
+      // Drop this socket from the test-visible registry before nulling.
+      if (typeof window !== 'undefined') {
+        const w = window as unknown as { __ws_instances?: WebSocket[] }
+        if (w.__ws_instances && this.ws) {
+          const idx = w.__ws_instances.indexOf(this.ws)
+          if (idx >= 0) w.__ws_instances.splice(idx, 1)
+        }
+      }
       this.ws = null
       this._stopHeartbeat()
       this.callbacks.onDisconnected()
-      // B1.3c: surface non-1000/1001 close codes through the persistent connection
-      // error banner (via onError → connectionStore.setConnectionError). The banner
-      // in AppShell.tsx will remain visible until reconnect succeeds (onConnected
-      // clears connectionError via setConnected(true)).
-      if (!this.intentionalClose && event.code !== 1000 && event.code !== 1001) {
-        const codeLabel = event.code ? ` code ${event.code}` : ''
-        const reasonLabel = event.reason ? `: ${event.reason}` : ''
-        this.callbacks.onError(
-          `Disconnected from gateway —${codeLabel}${reasonLabel || ' connection lost'}. Reconnecting…`
-        )
-        this._scheduleReconnect()
-      } else if (!this.intentionalClose) {
-        // Normal close (1000/1001) that wasn't intentional — still reconnect but no banner.
+      // Any non-intentional close should reconnect. The persistent banner is
+      // driven by isConnected=false in the connection store (set by
+      // onDisconnected above) — ChatScreen renders the reconnect-banner div
+      // for the entire disconnected interval. We surface a richer onError
+      // message for unexpected close codes (≠ 1000 / 1001) so the user sees a
+      // diagnostic toast as well; for clean-but-unintentional 1000/1001 the
+      // banner alone is sufficient.
+      if (!this.intentionalClose) {
+        if (event.code !== 1000 && event.code !== 1001) {
+          const codeLabel = event.code ? ` code ${event.code}` : ''
+          const reasonLabel = event.reason ? `: ${event.reason}` : ''
+          this.callbacks.onError(
+            `Disconnected from gateway —${codeLabel}${reasonLabel || ' connection lost'}. Reconnecting…`
+          )
+        }
         this._scheduleReconnect()
       }
     }
@@ -477,24 +498,44 @@ export class WsConnection {
         !this.intentionalClose &&
         this.ws === null
       ) {
-        // Reset backoff — user is actively looking at the page.
+        // Reset backoff — user is actively looking at the page. Schedule
+        // through the existing reconnect timer with a short delay so the
+        // disconnected banner is visible at least one render cycle even
+        // when the new socket connects in <50ms (localhost / LAN). This
+        // avoids the banner flicker that would otherwise be invisible.
         this.reconnectAttempts = 0
         this._clearReconnectTimer()
-        this._createSocket()
+        this.reconnectTimer = setTimeout(() => this._createSocket(), 250)
       }
     }
 
     this._onOnline = () => {
       if (!this.intentionalClose && this.ws === null) {
-        // Network recovered — reset backoff and reconnect immediately.
+        // Network recovered — reset backoff and reconnect with the same
+        // 250ms minimum delay as visibilitychange to keep the banner
+        // observable on fast networks.
         this.reconnectAttempts = 0
         this._clearReconnectTimer()
-        this._createSocket()
+        this.reconnectTimer = setTimeout(() => this._createSocket(), 250)
+      }
+    }
+
+    // The browser's WebSocket close handler does not always fire promptly when
+    // the underlying network drops. Listen for the offline event and force-close
+    // so onclose fires synchronously and the UI flips to disconnected.
+    this._onOffline = () => {
+      if (this.ws && this.ws.readyState !== WebSocket.CLOSED) {
+        try {
+          this.ws.close(1000, 'offline')
+        } catch {
+          // ignore — onclose will run regardless
+        }
       }
     }
 
     document.addEventListener('visibilitychange', this._onVisibilityChange)
     window.addEventListener('online', this._onOnline)
+    window.addEventListener('offline', this._onOffline)
   }
 
   private _detachWindowListeners(): void {
@@ -505,6 +546,10 @@ export class WsConnection {
     if (this._onOnline) {
       window.removeEventListener('online', this._onOnline)
       this._onOnline = null
+    }
+    if (this._onOffline) {
+      window.removeEventListener('offline', this._onOffline)
+      this._onOffline = null
     }
   }
 

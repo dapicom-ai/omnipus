@@ -64,6 +64,12 @@ func runRetentionSweepLoop(
 	getCfg func() *config.Config,
 	tickInterval time.Duration,
 ) {
+	// Boot-time sweep — drop sessions already past retention before the first
+	// tick so an operator restarting after a long downtime does not have to
+	// wait up to tickInterval for stale data to clear. The ticker timeline is
+	// otherwise identical to before.
+	executeSweepTick(store, getCfg)
+
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 
