@@ -261,10 +261,12 @@ func TestApprovalHook_Denial(t *testing.T) {
 func TestApprovalHook_Timeout(t *testing.T) {
 	conn := makeTestConn()
 	hook, _ := makeTestHook(conn, 100*time.Millisecond)
+	t.Cleanup(func() { close(conn.sendCh) })
 
 	req := &agent.ToolApprovalRequest{Tool: "slow_tool", Arguments: map[string]any{}}
 
 	// Drain sendCh so the expiry frame does not block the select in ApproveTool.
+	// The drainer exits when sendCh is closed in t.Cleanup.
 	go func() {
 		for range conn.sendCh {
 		}
@@ -289,6 +291,7 @@ func TestApprovalHook_Timeout(t *testing.T) {
 func TestApprovalHook_ContextCancelled(t *testing.T) {
 	conn := makeTestConn()
 	hook, _ := makeTestHook(conn, 5*time.Second)
+	t.Cleanup(func() { close(conn.sendCh) })
 
 	req := &agent.ToolApprovalRequest{Tool: "long_tool", Arguments: map[string]any{}}
 
@@ -299,6 +302,7 @@ func TestApprovalHook_ContextCancelled(t *testing.T) {
 	}()
 
 	// Drain sendCh so the approval-request frame does not block.
+	// The drainer exits when sendCh is closed in t.Cleanup.
 	go func() {
 		for range conn.sendCh {
 		}
@@ -339,8 +343,10 @@ func TestApprovalHook_NilConn(t *testing.T) {
 func TestApprovalHook_ConnectionClosed(t *testing.T) {
 	conn := makeTestConn()
 	hook, _ := makeTestHook(conn, 5*time.Second)
+	t.Cleanup(func() { close(conn.sendCh) })
 
 	// Drain sendCh to avoid blocking on the approval-request send.
+	// The drainer exits when sendCh is closed in t.Cleanup.
 	go func() {
 		for range conn.sendCh {
 		}
@@ -365,34 +371,46 @@ func TestApprovalHook_ConnectionClosed(t *testing.T) {
 // When the browser sends exec_approval_response with decision="allow",
 // Then the registry channel receives VerdictAllow.
 // Traces to: vivid-roaming-planet.md line 152
-func TestHandleApprovalResponse_Allow(t *testing.T) {
+// runApprovalResponseRoundTrip drives one exec_approval_response round-trip
+// for the three TestHandleApprovalResponse_* tests below. Centralizing this
+// keeps the per-decision tests focused on their single assertion.
+func runApprovalResponseRoundTrip(
+	t *testing.T,
+	pendingID, decision string,
+	want agent.ApprovalVerdict,
+	wantApproved bool,
+) {
+	t.Helper()
 	handler, _, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
 	conn := dialTestWS(t, srv)
 	t.Cleanup(func() { _ = conn.Close() })
 
-	// Authenticate first — required by authenticateWS before any other frames.
 	sendWSAuthFrameDevMode(t, conn)
 
-	pendingID := "test-allow-request-id"
 	ch := handler.approvalRegistry.register(pendingID, "")
 	defer handler.approvalRegistry.unregister(pendingID)
 
 	writeWSClientFrame(t, conn, wsClientFrame{
 		Type:     "exec_approval_response",
 		ID:       pendingID,
-		Decision: "allow",
+		Decision: decision,
 	})
 
 	select {
-	case decision := <-ch:
-		assert.True(t, decision.IsApproved(), "allow decision must be approved")
-		assert.Equal(t, agent.VerdictAllow, decision.Verdict)
+	case got := <-ch:
+		assert.Equal(t, wantApproved, got.IsApproved(), "decision=%s must yield IsApproved=%v", decision, wantApproved)
+		assert.Equal(t, want, got.Verdict)
 	case <-time.After(2 * time.Second):
-		t.Fatal("registry was not resolved after exec_approval_response with allow")
+		t.Fatalf("registry was not resolved after exec_approval_response with %s", decision)
 	}
+}
+
+func TestHandleApprovalResponse_Allow(t *testing.T) {
+	runApprovalResponseRoundTrip(t, "test-allow-request-id", "allow", agent.VerdictAllow, true)
 }
 
 // TestHandleApprovalResponse_Deny verifies that decision "deny" resolves as VerdictDeny.
@@ -401,33 +419,7 @@ func TestHandleApprovalResponse_Allow(t *testing.T) {
 // Then the registry resolves with VerdictDeny and IsApproved() is false.
 // Traces to: vivid-roaming-planet.md line 153
 func TestHandleApprovalResponse_Deny(t *testing.T) {
-	handler, _, _ := newTestWSHandler(t)
-	srv := httptest.NewServer(handler)
-	t.Cleanup(srv.Close)
-
-	conn := dialTestWS(t, srv)
-	t.Cleanup(func() { _ = conn.Close() })
-
-	// Authenticate first — required by authenticateWS before any other frames.
-	sendWSAuthFrameDevMode(t, conn)
-
-	pendingID := "test-deny-request-id"
-	ch := handler.approvalRegistry.register(pendingID, "")
-	defer handler.approvalRegistry.unregister(pendingID)
-
-	writeWSClientFrame(t, conn, wsClientFrame{
-		Type:     "exec_approval_response",
-		ID:       pendingID,
-		Decision: "deny",
-	})
-
-	select {
-	case decision := <-ch:
-		assert.False(t, decision.IsApproved(), "deny must not be approved")
-		assert.Equal(t, agent.VerdictDeny, decision.Verdict)
-	case <-time.After(2 * time.Second):
-		t.Fatal("registry was not resolved after exec_approval_response with deny")
-	}
+	runApprovalResponseRoundTrip(t, "test-deny-request-id", "deny", agent.VerdictDeny, false)
 }
 
 // TestHandleApprovalResponse_Always verifies that decision "always" resolves as VerdictAlways.
@@ -436,33 +428,7 @@ func TestHandleApprovalResponse_Deny(t *testing.T) {
 // Then the registry resolves with VerdictAlways and IsApproved() is true.
 // Traces to: vivid-roaming-planet.md line 154
 func TestHandleApprovalResponse_Always(t *testing.T) {
-	handler, _, _ := newTestWSHandler(t)
-	srv := httptest.NewServer(handler)
-	t.Cleanup(srv.Close)
-
-	conn := dialTestWS(t, srv)
-	t.Cleanup(func() { _ = conn.Close() })
-
-	// Authenticate first — required by authenticateWS before any other frames.
-	sendWSAuthFrameDevMode(t, conn)
-
-	pendingID := "test-always-request-id"
-	ch := handler.approvalRegistry.register(pendingID, "")
-	defer handler.approvalRegistry.unregister(pendingID)
-
-	writeWSClientFrame(t, conn, wsClientFrame{
-		Type:     "exec_approval_response",
-		ID:       pendingID,
-		Decision: "always",
-	})
-
-	select {
-	case decision := <-ch:
-		assert.True(t, decision.IsApproved(), "always verdict must be approved")
-		assert.Equal(t, agent.VerdictAlways, decision.Verdict)
-	case <-time.After(2 * time.Second):
-		t.Fatal("registry was not resolved after exec_approval_response with always")
-	}
+	runApprovalResponseRoundTrip(t, "test-always-request-id", "always", agent.VerdictAlways, true)
 }
 
 // --- autoApproveSafeTool unit tests (Test Suite 2) ---
@@ -570,6 +536,7 @@ func TestApprovalHook_HappyPath_ExecTool(t *testing.T) {
 // Traces to: vivid-roaming-planet.md line 155
 func TestHandleApprovalResponse_EmptyID(t *testing.T) {
 	handler, _, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 

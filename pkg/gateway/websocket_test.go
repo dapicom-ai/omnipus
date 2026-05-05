@@ -80,6 +80,7 @@ func sendWSAuthFrameDevMode(t *testing.T, conn *websocket.Conn) {
 // Traces to: wave5a-wire-ui-spec.md — Scenario: WebSocket chat works without auth in dev mode
 func TestWSHandlerNoAuthRequired(t *testing.T) {
 	handler, _, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
@@ -138,6 +139,7 @@ func TestWSHandlerValidAuth(t *testing.T) {
 func TestWSHandlerInvalidAuth(t *testing.T) {
 	const testToken = "ws-correct-token"
 	handler, _, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 	t.Setenv("OMNIPUS_BEARER_TOKEN", testToken)
 
 	srv := httptest.NewServer(handler)
@@ -173,6 +175,7 @@ func TestWSHandlerInvalidAuth(t *testing.T) {
 // Traces to: wave5a-wire-ui-spec.md — Scenario: WebSocket malformed frame handling (E1)
 func TestWSHandlerMalformedFrame(t *testing.T) {
 	handler, _, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
@@ -197,6 +200,7 @@ func TestWSHandlerMalformedFrame(t *testing.T) {
 // Traces to: wave5a-wire-ui-spec.md — Scenario: WebSocket cancel (E1)
 func TestWSHandlerCancelFrame(t *testing.T) {
 	handler, _, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
@@ -223,6 +227,7 @@ func TestWSHandlerCancelFrame(t *testing.T) {
 // Traces to: wave5a-wire-ui-spec.md — Scenario: WebSocket message routed to agent (E1)
 func TestWSHandlerMessagePublishedToBus(t *testing.T) {
 	handler, msgBus, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
@@ -266,6 +271,7 @@ func TestWSHandlerMessagePublishedToBus(t *testing.T) {
 func TestWSHandlerAuthNotRequired_NoFirstFrameNeeded(t *testing.T) {
 	// newTestWSHandler already sets OMNIPUS_BEARER_TOKEN = ""
 	handler, msgBus, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
@@ -303,6 +309,7 @@ func TestWSHandlerAuthNotRequired_NoFirstFrameNeeded(t *testing.T) {
 func TestWSHandlerAuthRequired_InvalidTokenRejected(t *testing.T) {
 	const testToken = "required-token-xyz"
 	handler, _, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 	t.Setenv("OMNIPUS_BEARER_TOKEN", testToken)
 
 	srv := httptest.NewServer(handler)
@@ -335,6 +342,7 @@ func TestWSHandlerAuthRequired_InvalidTokenRejected(t *testing.T) {
 // Traces to: pkg/gateway/websocket.go — WSHandler.eventForwarder
 func TestEventForwarder_ForwardsToolExecStart(t *testing.T) {
 	handler, _, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 
 	wc := makeTestConn()
 	chatID := "chat-1"
@@ -385,6 +393,7 @@ func TestEventForwarder_ForwardsToolExecStart(t *testing.T) {
 // Traces to: pkg/gateway/websocket.go — WSHandler.eventForwarder chatID filter
 func TestEventForwarder_FiltersByChatID(t *testing.T) {
 	handler, _, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 
 	wc := makeTestConn()
 	chatID := "chat-1"

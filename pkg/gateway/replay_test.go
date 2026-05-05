@@ -665,6 +665,7 @@ func TestReplay_CtxCancelled_StopsCleanly(t *testing.T) {
 // Traces to: TDD row 16, FR-I-009, BDD Scenario 9
 func TestAttach_RegistersLiveEventsBeforeReplay(t *testing.T) {
 	handler, _, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 
 	// Create a session with one user entry.
 	store := handler.agentLoop.GetSessionStore()
@@ -730,6 +731,7 @@ func TestAttach_StartLogged(t *testing.T) {
 	defer slog.SetDefault(slog.New(slog.Default().Handler()))
 
 	handler, _, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 
 	store := handler.agentLoop.GetSessionStore()
 	require.NotNil(t, store)
@@ -761,6 +763,7 @@ func TestAttach_EndLogged(t *testing.T) {
 	defer slog.SetDefault(slog.New(slog.Default().Handler()))
 
 	handler, _, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 
 	store := handler.agentLoop.GetSessionStore()
 	require.NotNil(t, store)
@@ -968,6 +971,7 @@ func filterByType(frames []wsServerFrame, typ string) []wsServerFrame {
 // We verify that the existing H1 frames carry the field via the event payload.
 func TestLiveEventForwarder_ToolCallStart_CarriesAgentID(t *testing.T) {
 	handler, _, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 
 	wc := makeTestConn()
 	chatID := "chat-agentid-parity"

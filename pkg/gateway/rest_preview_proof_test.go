@@ -92,8 +92,15 @@ func TestSanitisePreviewPath_RedactsToken(t *testing.T) {
 // per-token serve.served / dev.proxied audit emission cap.
 func TestMarkFirstServed_OnlyTrueOnce(t *testing.T) {
 	a := &restAPI{}
-	// Use a unique token so this test is independent of others.
+	// markFirstServed records into a process-global set; under -count=N the
+	// same t.Name() runs N times and would see the prior iteration's entry.
+	// Drop the entry on cleanup so each iteration starts fresh.
 	token := "test-token-mark-first-served-" + t.Name()
+	t.Cleanup(func() {
+		firstServedMu.Lock()
+		delete(firstServedTokens, token)
+		firstServedMu.Unlock()
+	})
 
 	first := a.markFirstServed(token)
 	second := a.markFirstServed(token)

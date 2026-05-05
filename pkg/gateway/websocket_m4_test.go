@@ -48,6 +48,7 @@ func TestWSReadLimit_ConstantIs5MB(t *testing.T) {
 // Traces to: pkg/gateway/websocket.go — readLoop SetReadLimit + CloseMessageTooBig handler
 func TestWSReadLimit_RejectsOversizedFrame(t *testing.T) {
 	handler, _, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 	// Enable dev-mode bypass so authenticateWS passes on the first auth frame
 	// without requiring a real token or OMNIPUS_BEARER_TOKEN to be set.
 	handler.agentLoop.GetConfig().Gateway.DevModeBypass = true
@@ -108,6 +109,7 @@ func TestWSReadLimit_RejectsOversizedFrame(t *testing.T) {
 // Traces to: pkg/gateway/websocket.go — readLoop SetReadLimit
 func TestWSReadLimit_AcceptsSmallFrame(t *testing.T) {
 	handler, _, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 	handler.agentLoop.GetConfig().Gateway.DevModeBypass = true
 
 	srv := httptest.NewServer(handler)
@@ -321,10 +323,16 @@ func TestSendConnFrame_DroppedFramesResetAfterDegradedWarning(t *testing.T) {
 	wc.sendCh <- []byte(`{"type":"dummy"}`)
 
 	// Drain so the degraded frame can land and the blocking select unblocks.
+	// Closes sendCh on cleanup so the drainer goroutine exits with the test.
 	go func() {
 		for range wc.sendCh {
 		}
 	}()
+	t.Cleanup(func() {
+		// Brief wait so any in-flight sendConnFrame finishes before close.
+		time.Sleep(50 * time.Millisecond)
+		close(wc.sendCh)
+	})
 
 	sendConnFrame(wc, wsServerFrame{Type: "token", Content: "trigger-reset"})
 

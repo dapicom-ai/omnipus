@@ -27,6 +27,7 @@ func TestWebchatChannel_SendSkipsWhenStreamed(t *testing.T) {
 	t.Helper()
 
 	handler, _, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 	wc := makeTestConn()
 
 	chatID := "chat-streamed"

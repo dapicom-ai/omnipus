@@ -622,6 +622,7 @@ func TestApprovalRegistry_AllTransitions(t *testing.T) {
 // Traces to: tool-registry-redesign-spec.md FR-052, FR-081
 func TestWS_SessionStatePayloadSchema(t *testing.T) {
 	handler, _, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 	// Attach an approval registry so emitSessionState has a valid registry.
 	handler.approvalRegV2 = newApprovalRegistryV2(64, 300*time.Second)
 
@@ -702,6 +703,7 @@ func TestWS_SessionState_PerUserScoping(t *testing.T) {
 	collectSessionState := func(t *testing.T, role config.UserRole) map[string]any {
 		t.Helper()
 		handler, _, _ := newTestWSHandler(t)
+		t.Cleanup(handler.Wait)
 		handler.approvalRegV2 = reg
 
 		srv := httptest.NewServer(handler)
@@ -774,6 +776,7 @@ func TestWS_ToolApprovalRequired_ExpiresInMs(t *testing.T) {
 	})
 
 	handler, _, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 	handler.approvalRegV2 = reg
 
 	// Inject a fake wsConn into handler.sessions directly.
@@ -952,6 +955,7 @@ func TestREST_HandleToolApprovals_NotFound404(t *testing.T) {
 // TestWS_BroadcastToolApprovalRequired_NilEntry verifies nil entry is handled safely.
 func TestWS_BroadcastToolApprovalRequired_NilEntry(t *testing.T) {
 	handler, _, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 	// Should not panic.
 	handler.broadcastToolApprovalRequired(nil)
 }

@@ -85,8 +85,8 @@ func testHarnessQueueCtxCancelBeforeChat(t *testing.T) {
 	_, chatErr := q.Chat(ctx, nil, nil, "", nil)
 	require.Error(t, chatErr)
 	assert.ErrorIs(t, chatErr, context.Canceled,
-		"cancelled context must return context.Canceled, not consume the step")
-	assert.Equal(t, 1, q.Len(), "step must not be consumed when context is already cancelled")
+		"canceled context must return context.Canceled, not consume the step")
+	assert.Equal(t, 1, q.Len(), "step must not be consumed when context is already canceled")
 }
 
 func testHarnessQueueReset(t *testing.T) {

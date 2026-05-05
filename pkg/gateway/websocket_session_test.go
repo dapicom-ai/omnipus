@@ -67,6 +67,7 @@ func readFrameOfType(t *testing.T, conn *websocket.Conn, wantType string, timeou
 // Traces to: pkg/gateway/websocket.go case "session_close"
 func TestWS_SessionClose_AcksOnValidSessionID(t *testing.T) {
 	handler, _, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
@@ -106,6 +107,7 @@ func TestWS_SessionClose_AcksOnValidSessionID(t *testing.T) {
 // Traces to: pkg/gateway/websocket.go case "session_close" empty-ID branch.
 func TestWS_SessionClose_ReturnsErrorOnEmptySessionID(t *testing.T) {
 	handler, _, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
@@ -135,6 +137,7 @@ func TestWS_SessionClose_ReturnsErrorOnEmptySessionID(t *testing.T) {
 // Traces to: pkg/agent/session_end.go CloseSession idempotency gate (FR-027).
 func TestWS_SessionClose_Idempotent(t *testing.T) {
 	handler, _, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
@@ -174,6 +177,7 @@ func TestWS_SessionClose_Idempotent(t *testing.T) {
 // Traces to: pkg/gateway/websocket.go case "attach_session" lazy-CAS branch (FR-024).
 func TestWS_AttachSession_LazyCAS_ClosesStaleSession(t *testing.T) {
 	handler, _, al := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 
 	// Pre-seed an existing current session for the agent.
 	const agentID = "test-agent"
@@ -222,6 +226,7 @@ func TestWS_AttachSession_LazyCAS_ClosesStaleSession(t *testing.T) {
 // Traces to: pkg/gateway/websocket.go case "attach_session": prior != frame.SessionID guard.
 func TestWS_AttachSession_NoLazyCAS_WhenSameSession(t *testing.T) {
 	handler, _, al := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 
 	const agentID = "same-agent"
 	const sessionID = "same-session-0000000000000000000000"

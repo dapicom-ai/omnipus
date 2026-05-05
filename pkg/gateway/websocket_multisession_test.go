@@ -94,12 +94,24 @@ func newStreamingTestWSHandler(t *testing.T) (*WSHandler, *bus.MessageBus, *agen
 	// Without this, PublishInbound in handleChatMessage sends to the bus but
 	// nothing consumes it, and no streaming frames are emitted.
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
+	runDone := make(chan struct{})
 	go func() {
+		defer close(runDone)
 		if err := al.Run(ctx); err != nil && err != context.Canceled {
 			t.Logf("agent loop Run exited: %v", err)
 		}
 	}()
+	// Wait for Run to fully exit before t.TempDir cleanup — otherwise session
+	// writers race with RemoveAll and produce "directory not empty" failures
+	// (TestWS_HandoffOverrideKeyedBySessionID and friends).
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-runDone:
+		case <-time.After(2 * time.Second):
+			t.Logf("agent loop Run did not exit within 2s of cancel")
+		}
+	})
 	// Give the loop time to start reading from the bus.
 	time.Sleep(20 * time.Millisecond)
 
@@ -381,6 +393,7 @@ func TestWS_TwoParallelSessions_NoCrosstalk(t *testing.T) {
 func TestWS_MessageWithUnknownSessionID_ErrorsCleanly(t *testing.T) {
 	// BDD: Given
 	handler, _, _ := newTestWSHandler(t)
+	t.Cleanup(handler.Wait)
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
