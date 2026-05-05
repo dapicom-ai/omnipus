@@ -737,6 +737,7 @@ export interface AppState {
   last_doctor_score?: number
   god_mode_available?: boolean
   god_mode_opted_in?: boolean
+  dev_mode_bypass?: boolean
 }
 
 export function fetchAppState(): Promise<AppState> {

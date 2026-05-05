@@ -322,10 +322,10 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
   if (isError || !agent) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4">
-        <p className="text-[var(--color-muted)] text-sm">Could not load agent.</p>
-        <Button variant="outline" size="sm" onClick={() => navigate({ to: '/agents' })}>
+        <p className="text-[var(--color-muted)] text-sm">Agent not found</p>
+        <a href="/#/agents" className="text-sm text-[var(--color-muted)] underline hover:text-[var(--color-secondary)]">
           Back to Agents
-        </Button>
+        </a>
       </div>
     )
   }
@@ -381,21 +381,24 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
         defaultValue={['identity']}
         className="rounded-lg border border-[var(--color-border)] divide-y divide-[var(--color-border)] overflow-hidden"
       >
-        {/* Identity — default OPEN */}
-        {canEdit && (
-          <AccordionItem value="identity" className="border-0">
-            <AccordionTrigger className="px-4 font-headline font-bold text-sm">
-              Identity
-            </AccordionTrigger>
-            <AccordionContent>
-              <div className="px-4 space-y-3">
-                <div className="space-y-2">
-                  <Input
-                    value={name}
-                    onChange={(e) => { markDirty(); setName(e.target.value) }}
-                    placeholder="Agent name"
-                    className="text-sm"
-                  />
+        {/* Identity — always rendered; read-only for locked (core) agents */}
+        <AccordionItem value="identity" className="border-0">
+          <AccordionTrigger className="px-4 font-headline font-bold text-sm">
+            Identity
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="px-4 space-y-3">
+              <div className="space-y-2">
+                <Input
+                  data-testid="agent-name-input"
+                  value={name}
+                  disabled={isLocked}
+                  readOnly={isLocked}
+                  onChange={isLocked ? undefined : (e) => { markDirty(); setName(e.target.value) }}
+                  placeholder="Agent name"
+                  className="text-sm"
+                />
+                {canEdit && (
                   <Textarea
                     value={description}
                     onChange={(e) => { markDirty(); setDescription(e.target.value) }}
@@ -403,7 +406,9 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
                     rows={2}
                     className="text-sm resize-none"
                   />
-                </div>
+                )}
+              </div>
+              {canEdit && (
                 <div className="space-y-1.5">
                   <p className="text-xs text-[var(--color-muted)]">Avatar color</p>
                   <div className="flex gap-2">
@@ -422,6 +427,8 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
                     ))}
                   </div>
                 </div>
+              )}
+              {canEdit && (
                 <div className="space-y-1.5">
                   <p className="text-xs text-[var(--color-muted)]">Avatar icon</p>
                   <SmartSelect
@@ -431,10 +438,10 @@ export function AgentProfile({ agentId }: AgentProfileProps) {
                     items={ICON_OPTIONS.map(({ name: iconName }) => ({ value: iconName, label: iconName }))}
                   />
                 </div>
-              </div>
-            </AccordionContent>
-          </AccordionItem>
-        )}
+              )}
+            </div>
+          </AccordionContent>
+        </AccordionItem>
 
         {/* Sandbox — editable for custom agents, read-only for locked core agents */}
         {!isLocked ? (
