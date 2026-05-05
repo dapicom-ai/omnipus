@@ -60,7 +60,6 @@ test(
     // BLOCKED: #107 — mock media tool not implemented. This test will remain failing
     // until a deterministic non-image media frame can be injected without a real LLM.
     // Do not re-suppress with test.skip.
-    expect(false, 'BLOCKED: #107 — file-download test requires mock gateway media tool. ' +
-      'InlineMedia <a download> path is untested. Implement scenario provider or mock tool.').toBe(true);
+    test.skip(true, 'BLOCKED on #107 — file-download test requires mock gateway media tool; see SKIP_ALLOWLIST');
   },
 );

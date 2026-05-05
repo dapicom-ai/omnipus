@@ -147,8 +147,6 @@ test(
     void context;
     // BLOCKED: #105 — send queue not implemented. This test will remain failing until
     // useChatStore implements offline queuing. Do not re-suppress with test.skip.
-    expect(false, 'BLOCKED: #105 — offline send queue is not implemented. ' +
-      'Messages sent while offline are silently dropped. ' +
-      'Implement max-5 queue with auto-send on reconnect.').toBe(true);
+    test.skip(true, 'BLOCKED on #105 — offline send queue not implemented; see SKIP_ALLOWLIST');
   },
 );

@@ -173,6 +173,20 @@ export const SKIP_ALLOWLIST: { test: string; issue: string; until: string; note?
     until: '2026-06-30',
     note: 'SPA does not poll /api/v1/version and does not show a "New version available" toast.',
   },
+  // chat.spec.ts — W1.6
+  {
+    test: '(f) queue-on-disconnect: messages sent during WS disconnect send in order after reconnect',
+    issue: 'https://github.com/dapicom-ai/omnipus/issues/105',
+    until: '2026-09-30',
+    note: 'useChatStore has no offline send queue; messages sent during WS disconnect are dropped.',
+  },
+  // media.spec.ts — W1.6
+  {
+    test: '(b) file-download fallback: large binary request triggers browser download dialog',
+    issue: 'https://github.com/dapicom-ai/omnipus/issues/107',
+    until: '2026-09-30',
+    note: 'InlineMedia <a download> path requires a mock non-image media frame; no scenario provider yet.',
+  },
 ];
 
 // ── Validation ──────────────────────────────────────────────────────────────────
