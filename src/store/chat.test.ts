@@ -874,8 +874,11 @@ describe('ChatStore_ReplayMessageThenToolCall_InterleavesCorrectly', () => {
 
 // TDD row 18 supplement: isReplaying flag transitions
 describe('ChatStore_isReplaying_flag', () => {
-  it('starts false, can be set true via setReplaying, cleared to false on done (with 250ms minimum display window)', async () => {
-    // W2-6(a): Fix comment: "100ms minimum" → "250ms minimum" (matches MIN_REPLAY_DISPLAY_MS constant).
+  it('starts false, can be set true via setReplaying, cleared to false on done (with 750ms minimum display window)', async () => {
+    // W2-6(a): MIN_REPLAY_DISPLAY_MS raised from 250ms → 750ms (FR-I-014 timing fix).
+    // The minimum window is long enough for Playwright's page.click() to return and
+    // the test assertion to start polling — without this, the timer fires before the
+    // first poll and the textarea is already enabled when Playwright checks.
     // Traces to: temporal-puzzling-melody.md W2-6(a)
     // Initial state
     expect(useChatStore.getState().isReplaying).toBe(false)
@@ -886,16 +889,17 @@ describe('ChatStore_isReplaying_flag', () => {
     })
     expect(useChatStore.getState().isReplaying).toBe(true)
 
-    // done frame schedules clear — but minimum 250ms display window is enforced
-    // so the placeholder doesn't flicker on sub-frame replays.
+    // done frame schedules clear — but minimum 750ms display window is enforced
+    // so the placeholder doesn't flicker on sub-frame replays and Playwright can
+    // observe the disabled state before the window expires.
     act(() => {
       useChatStore.getState().handleFrame({ type: 'done', session_id: TEST_SESSION_ID })
     })
     // Still true immediately after done (inside the window).
     expect(useChatStore.getState().isReplaying).toBe(true)
 
-    // After >= 250ms the setTimeout fires and flips it.
-    await new Promise((r) => setTimeout(r, 300))
+    // After >= 750ms the setTimeout fires and flips it.
+    await new Promise((r) => setTimeout(r, 800))
     expect(useChatStore.getState().isReplaying).toBe(false)
   })
 
@@ -933,22 +937,23 @@ describe('ChatStore_isReplaying_flag', () => {
 
   // W2-6(c): setReplaying(true) when already true does NOT reset replayingStartedAt.
   it('setReplaying(true) when already true does not extend the minimum window', async () => {
-    // BDD: Given setReplaying(true) was called at T=0, starting the 250ms minimum window
-    // BDD: When setReplaying(true) is called again at T=200ms (before window ends)
-    // BDD: Then the window does NOT extend — done frame at T=210ms still fires within 250ms of T=0
+    // BDD: Given setReplaying(true) was called at T=0, starting the 750ms minimum window
+    // BDD: When setReplaying(true) is called again at T=700ms (before window ends)
+    // BDD: Then the window does NOT extend — done frame at T=710ms still fires within 750ms of T=0
     // Traces to: temporal-puzzling-melody.md W2-6(c)
+    // W2-6(c): MIN_REPLAY_DISPLAY_MS raised from 250ms → 750ms (FR-I-014 timing fix).
 
     act(() => {
       useChatStore.getState().setReplaying(true)
     })
     expect(useChatStore.getState().isReplaying).toBe(true)
 
-    // Wait 200ms (still inside the 250ms window from the first call)
-    await new Promise((r) => setTimeout(r, 200))
+    // Wait 700ms (still inside the 750ms window from the first call)
+    await new Promise((r) => setTimeout(r, 700))
 
     // Call setReplaying(true) again — if it reset replayingStartedAt, the window would
-    // extend by another 250ms. The test verifies it does NOT by checking that
-    // isReplaying flips to false within ~100ms after this second call (total ~300ms > 250ms from T=0).
+    // extend by another 750ms. The test verifies it does NOT by checking that
+    // isReplaying flips to false within ~100ms after this second call (total ~800ms > 750ms from T=0).
     act(() => {
       useChatStore.getState().setReplaying(true)
     })
@@ -959,10 +964,10 @@ describe('ChatStore_isReplaying_flag', () => {
       useChatStore.getState().handleFrame({ type: 'done', session_id: TEST_SESSION_ID })
     })
 
-    // After another 100ms (total ~300ms from first call), should have cleared.
+    // After another 100ms (total ~800ms from first call), should have cleared.
     // If the window was reset on the second setReplaying(true), it would still be true here.
     await new Promise((r) => setTimeout(r, 100))
-    // isReplaying should be false by now (250ms from original T=0 has elapsed).
+    // isReplaying should be false by now (750ms from original T=0 has elapsed).
     expect(useChatStore.getState().isReplaying).toBe(false)
   })
 })

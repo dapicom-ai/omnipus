@@ -310,7 +310,13 @@ export const useChatStore = create<ChatStore>((set, get) => {
       }
       sawReplayMessageThisTurn[sid] = false
       const elapsed = Date.now() - (replayingStartedAt[sid] ?? 0)
-      const MIN_REPLAY_DISPLAY_MS = 250
+      // FR-I-014: keep the "Loading session history…" overlay visible for at least
+      // MIN_REPLAY_DISPLAY_MS after replay starts.  250ms was too short — Playwright's
+      // page.click() waits for network-idle before returning, which can take 250+ ms,
+      // meaning the timer fired before the test could observe the disabled state.
+      // 750ms is a conservative minimum that survives typical CI latency while still
+      // clearing quickly enough for interactive use.
+      const MIN_REPLAY_DISPLAY_MS = 750
       if (elapsed >= MIN_REPLAY_DISPLAY_MS) {
         withBucket(sid, () => ({ isReplaying: false }))
       } else {
@@ -1008,7 +1014,9 @@ export const useChatStore = create<ChatStore>((set, get) => {
             const sid = targetSid
             const wasReplaying = (get().sessionsById[sid] ?? EMPTY_BUCKET).isReplaying
             const elapsed = wasReplaying ? Date.now() - (replayingStartedAt[sid] ?? 0) : 0
-            const MIN_REPLAY_DISPLAY_MS = 250
+            // FR-I-014: mirror the same MIN_REPLAY_DISPLAY_MS used in setReplaying above.
+            // Both code paths that clear isReplaying must use the same threshold.
+            const MIN_REPLAY_DISPLAY_MS = 750
             const clearReplayingNow = wasReplaying && elapsed >= MIN_REPLAY_DISPLAY_MS
             if (wasReplaying) {
               sawReplayMessageThisTurn[sid] = false
