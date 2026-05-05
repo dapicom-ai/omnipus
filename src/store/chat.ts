@@ -1415,6 +1415,42 @@ export const useChatStore = create<ChatStore>((set, get) => {
                 }
                 return { messages: msgs }
               }
+              // T1.10: A new assistant turn is starting. Bake any live tool calls
+              // from the previous turn into the previous assistant message so they
+              // are anchored to the correct bubble via msg.tool_calls.  Without
+              // this, the live store entries stay "unclaimed" and buildContentParts
+              // renders them in the NEW (last) assistant message instead — the
+              // "badge teleport" regression caught by multi-turn-render.spec.ts.
+              if (lastIdx !== -1 && b.toolCallOrder.length > 0) {
+                const baked = b.toolCallOrder
+                  .filter((id) => b.toolCalls[id])
+                  .map((id) => {
+                    const tc = b.toolCalls[id]
+                    return {
+                      id,
+                      tool: tc.tool,
+                      params: tc.params ?? {},
+                      result: tc.result,
+                      status: tc.status,
+                      duration_ms: tc.duration_ms,
+                      error: tc.error,
+                    }
+                  })
+                const existing = msgs[lastIdx].tool_calls ?? []
+                const mergedById = new Map(existing.map((tc) => [tc.id, tc]))
+                for (const tc of baked) mergedById.set(tc.id, tc)
+                msgs[lastIdx] = {
+                  ...msgs[lastIdx],
+                  tool_calls: Array.from(mergedById.values()),
+                }
+                // Clear the live store so these calls don't bleed into the new turn.
+                return {
+                  messages: msgs,
+                  toolCalls: {},
+                  toolCallOrder: [],
+                  textAtToolCallStart: {},
+                }
+              }
             }
             msgs.push({
               id: messageId ?? generateId(),

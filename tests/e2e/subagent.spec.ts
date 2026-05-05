@@ -4,23 +4,20 @@
 // ARCHITECTURE NOTE: The spec calls for a "scenario-provider path" (deterministic scripted LLM)
 // for tests (a)-(c). The Go-level ScenarioProvider (pkg/agent/testutil) is only available via
 // the test_harness build tag and CANNOT be injected into a live Playwright-targeted gateway via
-// HTTP. These tests therefore use a real LLM (OPENROUTER_API_KEY_CI required) with carefully
-// crafted prompts, or gracefully exit with a documented BLOCKED reason when the API key is absent.
-//
-// When a scenario-provider HTTP interface is added to the live gateway, these tests must be
-// updated to use it for determinism. Until then, tests (a)-(c) run as real-LLM tests with the
-// same skip/BLOCKED semantics as (d).
+// HTTP. These tests use a real LLM (OPENROUTER_API_KEY_CI required) with temperature=0 and
+// seed=42 plumbed into OpenRouter requests for maximum determinism (Wave 2.1).
 //
 // data-testid cross-reference:
-//   - [data-testid="subagent-collapsed"] — SubagentBlock.tsx
-//   - [data-testid="subagent-expanded"]  — SubagentBlock.tsx
-//   - [data-testid="tool-call-badge"]    — ToolCallBadge.tsx (added in commit aaa9de7)
+//   - [data-testid="subagent-collapsed"]    — SubagentBlock.tsx (collapsed header button)
+//   - [data-testid="subagent-expanded"]     — SubagentBlock.tsx (expanded body)
+//   - [data-testid="subagent-step-counter"] — SubagentBlock.tsx (step count span)
+//   - [data-testid="subagent-live-step"]    — SubagentBlock.tsx (individual step wrapper)
+//   - [data-testid="tool-call-badge"]       — ToolCallBadge.tsx
 
 import { expect } from '@playwright/test';
 import { test } from './fixtures/console-errors';
 import { expectA11yClean } from './fixtures/a11y';
 import { chatInput, assistantMessages, newChatButton } from './fixtures/selectors';
-import { softSkip } from './fixtures/skip-tracking';
 
 // Global storageState provides pre-authenticated session (see playwright.config.ts + global-setup.ts).
 
@@ -39,7 +36,7 @@ function requireApiKey(_t: typeof test): void {
 }
 
 // Helper: wait for up to `timeoutMs` ms for a subagent-collapsed block to appear.
-// Returns true if found, false if not (non-deterministic LLM behaviour).
+// Returns true if found, false if not.
 async function waitForSubagentBlock(
   page: import('@playwright/test').Page,
   timeoutMs = 30_000,
@@ -85,9 +82,8 @@ test(
     const input = chatInput(page);
     await expect(input).toBeVisible({ timeout: 15_000 });
 
-    // Prompt: commanding + specific. Older prompts ("Use the spawn tool to delegate…")
-    // gave Opus room to narrate instead of calling the tool. This version specifies the
-    // exact tool name, task, and behavior with no optional phrasing.
+    // Deterministic prompt with temperature=0+seed=42 now plumbed into OpenRouter.
+    // Commanding, specific: exact tool name, task, and behavior with no optional phrasing.
     await input.fill(
       [
         'Call the `spawn` tool exactly once, right now, with these arguments:',
@@ -98,20 +94,11 @@ test(
     );
     await input.press('Enter');
 
-    // Wait for at least one subagent-collapsed to appear (the parent spawn).
-    const parentBlockAppeared = await waitForSubagentBlock(page, 40_000);
-    if (!parentBlockAppeared) {
-      console.warn(
-        'WARNING: Parent spawn did not produce [data-testid="subagent-collapsed"] within 40s. ' +
-        'LLM may not have called spawn. Real-LLM non-determinism — re-run.',
-      );
-      softSkip(test, 'LLM did not produce subagent-collapsed block within 40s — non-determinism');
-      return;
-    }
-
-    // Count collapsed blocks. If the grandchild prohibition works correctly,
-    // there should be exactly ONE subagent-collapsed (the parent), not two.
+    // Structural assertion: wait for at least one subagent-collapsed to appear (the parent spawn).
+    // With temperature=0+seed=42 the LLM must comply — if it doesn't, the test fails honestly.
     const collapsedBlocks = page.locator('[data-testid="subagent-collapsed"]');
+    await expect(collapsedBlocks.first()).toBeVisible({ timeout: 40_000 });
+
     const blockCount = await collapsedBlocks.count();
 
     // Expand the parent block to inspect inner content.
@@ -119,20 +106,16 @@ test(
     const expandedBlock = page.locator('[data-testid="subagent-expanded"]');
     await expect(expandedBlock).toBeVisible({ timeout: 10_000 });
 
-    // Assert: no nested [data-testid="subagent-collapsed"] inside the expanded region.
+    // Structural assertion: no nested [data-testid="subagent-collapsed"] inside the expanded region.
     // Traces to: BDD Scenario 10 — "no subagent_start frame with a grandchild parent_call_id"
     const nestedCollapsed = expandedBlock.locator('[data-testid="subagent-collapsed"]');
     const nestedCount = await nestedCollapsed.count();
     expect(nestedCount).toBe(0, 'expanded SubagentBlock must contain zero nested subagent-collapsed elements (grandchildren are forbidden — FR-H-006)');
 
-    // Assert: exactly one parent-level collapsed block.
-    // Differentiation test: blockCount distinguishes correct from broken implementation.
+    // Structural assertion: exactly one parent-level collapsed block.
     expect(blockCount).toBe(1, 'exactly one SubagentBlock at parent level — grandchild attempt must not create a second block');
 
-    // The expanded block should contain the subagent's "unknown tool" error response
-    // (either as a tool-call-badge error or as text in the final-result section).
-    // We cannot assert the exact text because ToolCallBadge has no testid yet,
-    // but we verify the expanded body is non-empty and has child elements.
+    // Structural assertion: expanded block has child elements (steps or error message).
     const children = await expandedBlock.locator('> *').count();
     expect(children).toBeGreaterThan(0, 'expanded block must have content (steps or error message)');
   },
@@ -157,7 +140,7 @@ test(
     const input = chatInput(page);
     await expect(input).toBeVisible({ timeout: 15_000 });
 
-    // Prompt: commanding, explicit, numbered.
+    // Deterministic prompt: explicit, numbered, no prose.
     await input.fill(
       [
         'Call the `spawn` tool exactly TWO times, in sequence. No other tools. No prose answer until both spawns have been issued.',
@@ -173,63 +156,30 @@ test(
     );
     await input.press('Enter');
 
-    // Wait for the first collapsed block.
-    const firstBlockAppeared = await waitForSubagentBlock(page, 40_000);
-    if (!firstBlockAppeared) {
-      console.warn(
-        'WARNING: First sibling spawn did not produce [data-testid="subagent-collapsed"]. ' +
-        'LLM may not have called spawn. Real-LLM non-determinism — re-run.',
-      );
-      softSkip(test, 'LLM did not produce first sibling subagent-collapsed block — non-determinism');
-      return;
-    }
-
-    // Wait for a second collapsed block (allow extra time for LLM to issue both spawns).
-    // Traces to: BDD Scenario 13 — "two distinct SubagentBlock elements"
+    // Structural assertion: wait for the first collapsed block.
     const collapsedBlocks = page.locator('[data-testid="subagent-collapsed"]');
-    try {
-      await expect(collapsedBlocks).toHaveCount(2, { timeout: 60_000 });
-    } catch {
-      const count = await collapsedBlocks.count();
-      console.warn(
-        `WARNING: Expected 2 subagent-collapsed blocks, found ${count}. ` +
-        'LLM may not have issued two separate spawn calls. Real-LLM non-determinism.',
-      );
-      if (count === 0) {
-        softSkip(test, 'LLM produced 0 sibling subagent blocks — non-determinism');
-        return;
-      }
-      // If only 1 appeared, still test what we can (single block should at least expand).
-    }
+    await expect(collapsedBlocks.first()).toBeVisible({ timeout: 40_000 });
 
+    // Structural assertion: wait for exactly 2 sibling blocks.
+    // Traces to: BDD Scenario 13 — "two distinct SubagentBlock elements"
+    await expect(collapsedBlocks).toHaveCount(2, { timeout: 60_000 });
+
+    // Verify independent expansion: expand first — second should remain collapsed.
+    await collapsedBlocks.nth(0).click();
+    const expandedBlocks = page.locator('[data-testid="subagent-expanded"]');
+    await expect(expandedBlocks).toHaveCount(1, { timeout: 10_000 });
+
+    // Expand second — both should now be expanded independently.
+    await collapsedBlocks.nth(1).click();
+    await expect(expandedBlocks).toHaveCount(2, { timeout: 10_000 });
+
+    // Collapse first — second should remain expanded.
+    await collapsedBlocks.nth(0).click();
+    await expect(expandedBlocks).toHaveCount(1, { timeout: 10_000 });
+
+    // Differentiation test: two different blocks expanded/collapsed independently.
     const finalCount = await collapsedBlocks.count();
-
-    if (finalCount >= 2) {
-      // Exactly 2 sibling spawns: verify independent expansion.
-      // Expand first block — second should remain collapsed.
-      await collapsedBlocks.nth(0).click();
-      const expandedBlocks = page.locator('[data-testid="subagent-expanded"]');
-      await expect(expandedBlocks).toHaveCount(1, { timeout: 10_000 });
-
-      // Expand second block — both should now be expanded independently.
-      await collapsedBlocks.nth(1).click();
-      await expect(expandedBlocks).toHaveCount(2, { timeout: 10_000 });
-
-      // Collapse first — second should remain expanded.
-      // (The collapsed header button is [data-testid="subagent-collapsed"] regardless of state.)
-      await collapsedBlocks.nth(0).click();
-      await expect(expandedBlocks).toHaveCount(1, { timeout: 10_000 });
-
-      // Differentiation test: two different blocks expanded/collapsed independently.
-      expect(finalCount).toBe(2, 'exactly 2 sibling SubagentBlocks must be rendered for two spawn calls');
-    } else {
-      // Only 1 block — partial success; verify it at least expands.
-      await collapsedBlocks.first().click();
-      const expanded = page.locator('[data-testid="subagent-expanded"]');
-      await expect(expanded).toBeVisible({ timeout: 10_000 });
-      // Log this partial result; do not fail the test on LLM non-determinism.
-      console.warn('Partial: only 1 SubagentBlock appeared instead of 2. Sibling independence not fully verifiable.');
-    }
+    expect(finalCount).toBe(2, 'exactly 2 sibling SubagentBlocks must be rendered for two spawn calls');
   },
 );
 
@@ -251,12 +201,8 @@ test(
     const input = chatInput(page);
     await expect(input).toBeVisible({ timeout: 15_000 });
 
-    // Prompt: force a single spawn with a subagent task that mandates ≥3 tool calls.
-    // The three tool calls are all `shell echo ...` — no filesystem access, no sandbox
-    // traversal. This matters because the subagent runs in its own workspace sandbox
-    // and filesystem tools (list_dir, fs.read) reject paths outside it, causing the
-    // subagent to abort early with <3 steps. Shell `echo` runs inside any sandbox
-    // and always succeeds, so the step counter reliably increments three times.
+    // Deterministic prompt: force a single spawn with a subagent task that mandates ≥3 tool calls.
+    // Shell echo always succeeds in any sandbox.
     await input.fill(
       [
         'Call the `spawn` tool exactly once, now, with these arguments:',
@@ -267,38 +213,29 @@ test(
     );
     await input.press('Enter');
 
-    // Wait for the collapsed block to appear.
-    const blockAppeared = await waitForSubagentBlock(page, 40_000);
-    if (!blockAppeared) {
-      console.warn(
-        'WARNING: No [data-testid="subagent-collapsed"] appeared. LLM did not spawn. ' +
-        'Real-LLM non-determinism.',
-      );
-      softSkip(test, 'LLM did not spawn — no subagent-collapsed block appeared — non-determinism');
-      return;
-    }
-
+    // Structural assertion: wait for the collapsed block to appear.
     const collapsedBlock = page.locator('[data-testid="subagent-collapsed"]').first();
+    await expect(collapsedBlock).toBeVisible({ timeout: 40_000 });
 
-    // Observe the step counter text. It should start at "0 steps" or "1 step"
-    // and increment as the sub-turn progresses.
+    // Structural assertion: [data-testid="subagent-step-counter"] must be present.
+    // This verifies the step counter element exists in the DOM (FR-H-010).
+    const stepCounter = collapsedBlock.locator('[data-testid="subagent-step-counter"]');
+    await expect(stepCounter).toBeVisible({ timeout: 5_000 });
+
+    // Poll for ≥3 steps in the step counter text.
     // Traces to: sprint-h-subagent-block-spec.md BDD Scenario 2 — "step counter shows N steps"
-    //
-    // Poll strategy: check the step count text at intervals until it reaches ≥3 steps,
-    // or until the sub-turn finishes (at which point we assert the final count).
     let reachedThreeSteps = false;
     const deadline = Date.now() + 60_000; // 60s budget for multi-step run
 
     while (Date.now() < deadline) {
       // W3-11: scoped catch — only swallow stale-locator errors, rethrow others.
-      const headerText = await collapsedBlock.textContent().catch((err: unknown) => {
-        if (err instanceof Error && (err.message.includes('Element is not attached') || err.message.includes('locator handle is stale'))) return null
-        throw err
+      const counterText = await stepCounter.textContent().catch((err: unknown) => {
+        if (err instanceof Error && (err.message.includes('Element is not attached') || err.message.includes('locator handle is stale'))) return null;
+        throw err;
       });
-      if (!headerText) break;
+      if (!counterText) break;
 
-      // Check for ≥3 steps in the text (stepCountText: "N steps" or "1 step")
-      const stepMatch = headerText.match(/(\d+)\s+steps?/);
+      const stepMatch = counterText.match(/(\d+)\s+steps?/);
       if (stepMatch) {
         const count = parseInt(stepMatch[1], 10);
         if (count >= 3) {
@@ -307,55 +244,40 @@ test(
         }
       }
 
-      // Check if the sub-turn has finished (status pill changed from "working")
-      // If it finished with fewer than 3 steps, exit the loop.
-      const isFinished =
-        !headerText.includes('working') &&
-        !headerText.includes('Running');
-      if (isFinished && !reachedThreeSteps) {
-        // Sub-turn finished with fewer than 3 steps — may be LLM executed fewer tools.
-        break;
-      }
+      // Check if the sub-turn has finished.
+      const headerText = await collapsedBlock.textContent().catch((err: unknown) => {
+        if (err instanceof Error && (err.message.includes('Element is not attached') || err.message.includes('locator handle is stale'))) return null;
+        throw err;
+      });
+      if (!headerText) break;
+      const isFinished = !headerText.includes('working') && !headerText.includes('Running');
+      if (isFinished && !reachedThreeSteps) break;
 
       await page.waitForTimeout(500);
     }
 
+    // Hard assertion: the step counter must have reached ≥3 steps.
+    // With temperature=0+seed=42 the subagent must execute all three shell calls.
+    // If reachedThreeSteps is false, the product did not produce the required steps.
     if (!reachedThreeSteps) {
-      console.warn(
-        'WARNING: Step counter did not reach 3 steps within timeout. ' +
-        'The LLM subagent may have executed fewer tool calls than requested. ' +
-        'This is a real-LLM non-determinism issue — re-run with a more constrained prompt.',
-      );
-      // W2-7: Verify at least the counter IS incrementing (any non-zero count).
-      // If a SubagentBlock appeared but step-counter text is never present at timeout,
-      // that is a confirmed product regression — fail hard (not skip).
-      // Reserve test.skip() for the "no block at all" case (handled above via blockAppeared check).
-      // Traces to: temporal-puzzling-melody.md W2-7
-      // W3-11: scoped catch — only swallow stale-locator errors, rethrow others.
-      const finalText = await collapsedBlock.textContent().catch((err: unknown) => {
-        if (err instanceof Error && (err.message.includes('Element is not attached') || err.message.includes('locator handle is stale'))) return ''
-        throw err
-      });
-      const anySteps = /\d+\s+steps?/.test(finalText ?? '');
+      // Verify at least the step counter IS rendering (not a missing testid regression).
+      const finalCounterText = await stepCounter.textContent().catch(() => '');
+      const anySteps = /\d+\s+steps?/.test(finalCounterText ?? '');
       if (!anySteps) {
-        // SubagentBlock appeared but step counter text is missing — confirmed product regression.
         throw new Error(
-          'PRODUCT REGRESSION: SubagentBlock appeared but no step counter text was rendered. ' +
-          'Expected text matching /\\d+ steps?/ in the collapsed header. ' +
+          'PRODUCT REGRESSION: SubagentBlock appeared but [data-testid="subagent-step-counter"] rendered no step count text. ' +
+          'Expected text matching /\\d+ steps?/. ' +
           'Traces to: temporal-puzzling-melody.md W2-7, sprint-h-subagent-block-spec.md FR-H-010.',
         );
       }
-      softSkip(test, 'LLM subagent executed fewer than 3 tool calls — non-determinism');
-      return;
+      throw new Error(
+        'ASSERTION FAILED: LLM subagent executed fewer than 3 tool calls. ' +
+        'With temperature=0+seed=42 the subagent must follow the prompt and execute 3 shell calls. ' +
+        `Step counter text at timeout: "${finalCounterText}". ` +
+        'Traces to: sprint-h-subagent-block-spec.md BDD Scenario 2.',
+      );
     }
 
-    // If we reached here, the polling loop observed ≥3 steps — the counter is
-    // live and incrementing (FR-H-010). The loop's reachedThreeSteps=true flag
-    // IS the assertion; no further check is required. The earlier code tried
-    // to re-parse the final header text, but by the time we reach this point,
-    // the sub-turn has completed and the header may show duration ("3.2s")
-    // instead of the step count ("3 steps") — that re-check was always
-    // redundant and had a syntax bug (toBeNull doesn't accept a message arg).
     expect(reachedThreeSteps).toBe(true);
   },
 );
@@ -394,8 +316,8 @@ test(
     const collapsedBlock = page.locator('[data-testid="subagent-collapsed"]');
     // W3-11: scoped catch — only swallow stale-locator errors, rethrow others.
     const spawnOccurred = await collapsedBlock.isVisible({ timeout: 5_000 }).catch((err: unknown) => {
-      if (err instanceof Error && (err.message.includes('Element is not attached') || err.message.includes('locator handle is stale'))) return false
-      throw err
+      if (err instanceof Error && (err.message.includes('Element is not attached') || err.message.includes('locator handle is stale'))) return false;
+      throw err;
     });
 
     if (spawnOccurred) {
@@ -448,18 +370,10 @@ test(
     );
     await input.press('Enter');
 
-    // Wait for a SubagentBlock to appear.
-    const blockAppeared = await waitForSubagentBlock(page, 40_000);
-    if (!blockAppeared) {
-      console.warn(
-        'WARNING: No SubagentBlock appeared for axe test. LLM did not spawn. ' +
-        'Skipping axe assertion — no subagent elements to check.',
-      );
-      softSkip(test, 'LLM did not spawn for axe test — no subagent elements to check — non-determinism');
-      return;
-    }
-
+    // Structural assertion: wait for a SubagentBlock to appear.
+    // With temperature=0+seed=42 the LLM must comply — test fails honestly if it doesn't.
     const collapsedBlock = page.locator('[data-testid="subagent-collapsed"]');
+    await expect(collapsedBlock.first()).toBeVisible({ timeout: 40_000 });
 
     // Test 1: axe against collapsed state.
     // Traces to: sprint-h-subagent-block-spec.md Scenario 11 — "collapsed SubagentBlock"

@@ -2,7 +2,6 @@ import { expect } from '@playwright/test';
 import { test } from './fixtures/console-errors';
 import { expectA11yClean } from './fixtures/a11y';
 import { chatInput, agentPicker, assistantMessages } from './fixtures/selectors';
-import { softSkip } from './fixtures/skip-tracking';
 
 // Global storageState provides pre-authenticated session (see playwright.config.ts + global-setup.ts).
 
@@ -11,9 +10,6 @@ import { softSkip } from './fixtures/skip-tracking';
 // is only injectable into the gateway via the test_harness build tag — it is NOT available as
 // an HTTP endpoint when running a live Playwright-targeted gateway. These tests therefore use
 // a real LLM (requires OPENROUTER_API_KEY_CI) and prompts that strongly suggest spawning.
-// If no spawn occurs (LLM discretion), the test exits cleanly rather than failing on a
-// condition the LLM chose not to produce. When the scenario-provider HTTP interface is added
-// to the live gateway, these tests should be updated to use it.
 // Traces to: sprint-h-subagent-block-spec.md line 380 (TDD row 20, BDD Scenarios 1, 4)
 
 test.beforeEach(async ({ page }) => {
@@ -56,11 +52,8 @@ test(
     const input = chatInput(page);
     await expect(input).toBeVisible({ timeout: 15_000 });
 
-    // Prompt engineered to elicit BOTH a spawn AND at least one nested tool call.
-    // The subagent's workspace-scoped filesystem tools may refuse paths — so we
-    // use `shell` with `echo` which always succeeds in any sandbox. This pattern
-    // matches subagent.spec.ts (c) and reliably produces ≥1 nested tool-call-badge
-    // inside the expanded SubagentBlock (otherwise the assertion at ~L116 fails).
+    // Deterministic prompt: explicit tool name, exact arguments, no prose allowed.
+    // temperature=0 + seed=42 are plumbed into OpenRouter requests for determinism.
     await input.fill(
       [
         'Call the `spawn` tool exactly once, right now, with these arguments:',
@@ -72,26 +65,11 @@ test(
     await input.press('Enter');
 
     // Wait up to 30s for a subagent-collapsed block to appear.
-    // If no spawn occurred (LLM discretion), the locator count is 0 and we skip gracefully.
+    // Structural assertion: if no spawn occurred the test fails honestly.
     const collapsedBlock = page.locator('[data-testid="subagent-collapsed"]');
-
-    try {
-      await expect(collapsedBlock).toBeVisible({ timeout: 30_000 });
-    } catch {
-      // The LLM did not issue a spawn. This is a real-LLM non-determinism issue, not a
-      // product bug. Document and exit cleanly — re-run will likely succeed.
-      console.warn(
-        'WARNING: LLM did not issue a spawn tool call. ' +
-        'No [data-testid="subagent-collapsed"] appeared within 30s. ' +
-        'This is a real-LLM non-determinism issue. ' +
-        'Re-run this test or use the scenario-provider HTTP interface once available.',
-      );
-      softSkip(test, 'LLM did not issue a spawn tool call within 30s — non-determinism');
-      return;
-    }
+    await expect(collapsedBlock).toBeVisible({ timeout: 30_000 });
 
     // Assert: at least one collapsed block is present with correct structure.
-    // Differentiation test: we sent a specific prompt; the block must render.
     const blockCount = await collapsedBlock.count();
     expect(blockCount).toBeGreaterThanOrEqual(1, 'at least one SubagentBlock must be rendered');
 
@@ -101,28 +79,10 @@ test(
     const expandedBlock = page.locator('[data-testid="subagent-expanded"]');
     await expect(expandedBlock).toBeVisible({ timeout: 10_000 });
 
-    // W2-8 + CI retry: [data-testid="tool-call-badge"] IS present in the DOM
-    // (commit aaa9de7), so zero badges here means the LLM *spawned a subagent
-    // but had the subagent emit zero tool calls* — pure real-LLM non-determinism.
-    // The product code is fine; the subagent prompt asked for `shell cmd="echo hello"`
-    // and the LLM chose not to follow it. Differentiate from a true product bug
-    // (no testid rendered at all) with a soft skip: we reached the correct
-    // collapsed+expanded UI, so the SubagentBlock component works — we simply
-    // can't verify badge rendering without a deterministic nested call.
-    // Traces to: temporal-puzzling-melody.md W2-8 + real-LLM flake on 2026-04-20 run.
+    // Assert: expanded block has at least one tool-call-badge (the subagent called shell).
+    // Structural assertion: checks [data-testid="tool-call-badge"] presence.
     const toolCallBadges = expandedBlock.locator('[data-testid="tool-call-badge"]');
-    const badgeCount = await toolCallBadges.count();
-    if (badgeCount === 0) {
-      console.warn(
-        'WARNING: Subagent spawned but emitted zero nested tool calls. ' +
-        'The collapsed→expanded UI rendered correctly; only the LLM-discretion ' +
-        'path (nested call emission) was not exercised this run.',
-      );
-      softSkip(test, 'LLM spawned subagent but emitted no nested tool calls — non-determinism');
-      return;
-    }
-    expect(badgeCount).toBeGreaterThan(0,
-      'expanded SubagentBlock must contain at least one [data-testid="tool-call-badge"]');
+    await expect(toolCallBadges.first()).toBeVisible({ timeout: 10_000 });
 
     // a11y baseline check on subagent elements (BDD Scenario 11, FR-H-008).
     // Traces to: sprint-h-subagent-block-spec.md line 316 (Scenario 11)
