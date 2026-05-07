@@ -460,13 +460,18 @@ test(
     await renameSession(page, sessionId, sessionTitle)
 
     // ── Step 2: enqueue a slow scripted LLM response ──
-    // delay_ms gives us ~3s of "active turn" — long enough to reliably attach
-    // page2 mid-turn but short enough not to stretch the test.
+    // delay_ms gives us 8s of "active turn". Page2 setup (newContext +
+    // newPage + goto + waitForReplayDone + assertions) regularly takes
+    // 4-6 seconds of wall-clock time even on a hot gateway, so 3s was
+    // racy — the response would publish before page2's WebSocket was
+    // attached and the cross-browser broadcast had nobody to deliver to.
+    // 8s gives comfortable headroom while keeping the test well under
+    // its 60s test.setTimeout.
     const expectedReply = `attach-during-turn-${Date.now()}`
     const scenarioResp = await page.request.post(`${BASE_URL}/api/v1/_test/scenario`, {
       headers: await apiHeaders(page),
       data: {
-        responses: [{ type: 'text', content: expectedReply, delay_ms: 3000 }],
+        responses: [{ type: 'text', content: expectedReply, delay_ms: 8000 }],
       },
     })
     if (scenarioResp.status() === 404) {
@@ -523,7 +528,7 @@ test(
       // assistant message is if live forwarding picked up where replay left off
       // — that's what FR-I-009 demands and what we're verifying.
       const wallClock = Date.now() - sendStart
-      expect(wallClock).toBeGreaterThanOrEqual(2_500) // confirms the delay actually ran
+      expect(wallClock).toBeGreaterThanOrEqual(7_000) // confirms the 8s delay actually ran
 
       // Final-state agreement: both browser contexts must show the same harness
       // reply. The body-text contains check above already proved both saw it;

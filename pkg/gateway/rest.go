@@ -3548,9 +3548,19 @@ func (a *restAPI) updateAgentTools(w http.ResponseWriter, r *http.Request, agent
 		return
 	}
 
-	// Tool policy changes are config-only — no reload needed. The policy is
-	// resolved at request time from the live config, not baked into agent instances.
-	// FR-061 invalidation fires inside safeUpdateConfigJSON above.
+	// Trigger a reload so the agent's atomic toolPolicy pointer
+	// (pkg/agent/instance.go:290 — populated by ReloadProviderAndConfig)
+	// is swapped to the new policy. Without this the next turn's
+	// resolveToolPolicyAtExec / FilterToolsByPolicy still sees the previous
+	// snapshot, and (e.g.) an exec call freshly bumped to "ask" runs as
+	// "allow" because LoadToolPolicy returns the stale pointer. The earlier
+	// "no reload needed" claim was wrong — config-on-disk and the in-memory
+	// pointer are decoupled. Reload is cheap and idempotent.
+	if err := a.agentLoop.TriggerReload(); err != nil {
+		slog.Error("agent tools update: reload failed", "agent_id", agentID, "error", err)
+		// Still return the saved config so the caller sees what landed; the
+		// reload error is logged for the operator.
+	}
 	a.getAgentTools(w, agentID)
 }
 

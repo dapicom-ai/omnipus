@@ -1500,11 +1500,49 @@ func (s *wsStreamer) Update(_ context.Context, content string) error {
 	select {
 	case s.conn.sendCh <- data:
 		s.accumulated.WriteString(content)
-		return nil
 	default:
 		s.conn.droppedTokens.Add(1)
 		slog.Warn("ws: token dropped", "session_id", s.sessionID, "chat_id", s.chatID, "agent_id", s.agentID)
 		return fmt.Errorf("ws: token channel full, token dropped")
+	}
+	// Cross-browser session attach (#133): also forward the token to every
+	// other connection bound to the same session. The originating chat
+	// already received the frame above; secondary tabs see the live stream
+	// through this fan-out instead of waiting for a transcript reload.
+	s.fanOutToSessionPeers(data)
+	return nil
+}
+
+// fanOutToSessionPeers ships a frame to every wsConn that shares this
+// streamer's session, skipping the originating connection. Used by Update
+// (token frames) and Finalize (done frame) so a second browser tab attached
+// mid-turn observes the live stream as it happens.
+func (s *wsStreamer) fanOutToSessionPeers(data []byte) {
+	if s.channel == nil || s.sessionID == "" {
+		return
+	}
+	h := s.channel.wsHandler
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	peers := make([]*wsConn, 0, 1)
+	for chatID, sid := range h.sessionIDs {
+		if sid != s.sessionID || chatID == s.chatID {
+			continue
+		}
+		if conn, ok := h.sessions[chatID]; ok && conn != s.conn {
+			peers = append(peers, conn)
+		}
+	}
+	h.mu.Unlock()
+	for _, peer := range peers {
+		select {
+		case peer.sendCh <- data:
+		default:
+			peer.droppedTokens.Add(1)
+			slog.Warn("ws: peer token dropped", "session_id", s.sessionID)
+		}
 	}
 }
 
@@ -1521,7 +1559,14 @@ func (s *wsStreamer) Finalize(_ context.Context, _ string) error {
 	stats["cost"] = s.statsCostUSD
 	stats["duration_ms"] = s.statsDuration.Milliseconds()
 	s.statsMu.Unlock()
-	sendConnFrame(s.conn, wsServerFrame{Type: "done", Stats: stats, SessionID: s.sessionID})
+	doneFrame := wsServerFrame{Type: "done", Stats: stats, SessionID: s.sessionID}
+	sendConnFrame(s.conn, doneFrame)
+	// Cross-browser session attach (#133): a second tab attached mid-turn
+	// needs the done frame too, otherwise its UI stays in "streaming" state
+	// forever even after our token fan-out delivered the full content.
+	if doneData, mErr := json.Marshal(doneFrame); mErr == nil {
+		s.fanOutToSessionPeers(doneData)
+	}
 	// Only mark as streamed if we actually sent content. If the LLM failed
 	// before producing any tokens, let the outbound Send path deliver the
 	// error message — otherwise the user sees a stuck "thinking" spinner.
