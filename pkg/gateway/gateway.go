@@ -443,7 +443,7 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 		if realErr == nil {
 			modelID = realModelID
 			if d, ok := provider.(interface {
-				SetDelegate(providers.LLMProvider)
+				SetDelegate(p providers.LLMProvider)
 			}); ok {
 				d.SetDelegate(realProvider)
 			}
@@ -1487,7 +1487,7 @@ func handleConfigReload(
 		if realErr == nil {
 			newModelID = realModelID
 			if d, ok := newProvider.(interface {
-				SetDelegate(providers.LLMProvider)
+				SetDelegate(p providers.LLMProvider)
 			}); ok {
 				d.SetDelegate(realProvider)
 			}

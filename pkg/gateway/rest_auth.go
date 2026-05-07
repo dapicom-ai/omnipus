@@ -494,7 +494,7 @@ func (a *restAPI) HandleRegisterAdmin(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Normalise users array: may be nil/absent on a fresh config.
-		var users []any
+		users := make([]any, 0, 1)
 		if raw, exists := gw["users"]; exists && raw != nil {
 			users, ok = raw.([]any)
 			if !ok {

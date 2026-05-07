@@ -608,7 +608,7 @@ func (c *configV0) hasLegacySecrets() bool {
 // hasLegacySecretsReflect is the recursive reflection walker for hasLegacySecrets.
 func hasLegacySecretsReflect(v reflect.Value) bool {
 	// Dereference pointer/interface.
-	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+	for v.Kind() == reflect.Pointer || v.Kind() == reflect.Interface {
 		if v.IsNil() {
 			return false
 		}

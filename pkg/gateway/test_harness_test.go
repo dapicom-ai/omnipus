@@ -61,7 +61,7 @@ func TestHarnessQueue_DelayHonored(t *testing.T) {
 }
 
 // TestHarnessQueue_DelayCtxCancel verifies that a pending delay returns early
-// when the context is cancelled.
+// when the context is canceled.
 func TestHarnessQueue_DelayCtxCancel(t *testing.T) {
 	testHarnessQueueDelayCtxCancel(t)
 }
