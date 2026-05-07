@@ -119,13 +119,30 @@ test(
   async ({ page }) => {
     const input = chatInput(page);
     await expect(input).toBeVisible({ timeout: 15_000 });
+    // Mia has strong "no long enumerations in chat" / "hand off creative work
+    // to Jim" guardrails that finish almost instantly — the Stop button never
+    // appears under her. Switch to Jim explicitly and ask for a long in-agent
+    // explanation; Jim does in-line generation with a multi-second stream
+    // window that reliably exposes the Stop button.
+    const picker = agentPicker(page);
+    await expect(picker).toBeVisible({ timeout: 15_000 });
+    await picker.click();
+    await page.getByRole('menuitem', { name: /Jim/i }).click();
+    await expect(picker).toContainText(/Jim/i, { timeout: 5_000 });
+
     await input.fill(
-      'Write a very long essay about the history of the internet with at least 500 words',
+      'Explain in deep technical detail how the Internet routes packets, ' +
+        'including the OSI model layers, BGP, IP addressing (v4 and v6), ' +
+        'TCP handshake, DNS resolution, NAT traversal, congestion control, ' +
+        'TLS handshake. At least 1500 words. Do not call any tool, just write prose.',
     );
     await input.press('Enter');
 
     const stopBtn = page.locator('button[aria-label="Stop generation"]');
-    await expect(stopBtn).toBeVisible({ timeout: 15_000 });
+    // 30s timeout: opus-4.7 with the full tool registry has 5–10 s TTFT, plus
+    // connection setup. The 15 s default was tight enough that any cold-start
+    // jitter (slow upstream, larger system prompt) flaked the test.
+    await expect(stopBtn).toBeVisible({ timeout: 30_000 });
     await stopBtn.click();
 
     await expect(stopBtn).not.toBeVisible({ timeout: 15_000 });

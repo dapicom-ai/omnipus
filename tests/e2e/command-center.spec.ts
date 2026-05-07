@@ -66,10 +66,14 @@ test('(b) approval-queue: policy=ask tool call triggers approval modal and Appro
   // Create a session with the ApprovalTest agent directly via the API.
   const sessionResp = await apiFetch('POST', '/api/v1/sessions', { agent_id: agentId });
   expect(sessionResp.ok).toBeTruthy();
+  const sessionId = (sessionResp.body as { id: string }).id;
 
-  // Navigate to the chat screen and select the session.
-  // The session panel lists recent sessions. Navigate to root (chat screen).
-  await page.goto('/#/');
+  // Navigate DIRECTLY to the new session's URL so the SPA activates the
+  // ApprovalTest agent in sessionStore (sessions.$sessionId.tsx route hook).
+  // Without this, sendMessage routes to the default Mia session whose exec
+  // policy is "allow" — the approval modal never fires and the test times
+  // out at the toBeVisible() assertion.
+  await page.goto(`/#/sessions/${sessionId}`);
   await expect(page.getByRole('banner')).toBeVisible({ timeout: 15_000 });
 
   // Find the chat input and send a message that triggers exec with policy=ask.

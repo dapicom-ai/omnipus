@@ -222,11 +222,15 @@ test(
 
     // Deterministic prompt: explicit tool name, exact arguments, no prose allowed.
     // temperature=0 + seed=42 are plumbed into OpenRouter requests for determinism.
+    // Use `exec` (not `shell`) — the spawned subagent inherits the parent's
+    // toolset and Mia's policy excludes the workspace shell tools, so a
+    // `shell`-named call gets refused with "tool not available". `exec` is on
+    // Mia by default and produces the tool_call_badge the test asserts.
     await input.fill(
       [
         'Call the `spawn` tool exactly once, right now, with these arguments:',
         '  label: "handoff-b test"',
-        '  task: "You are the subagent. Call the `shell` tool ONCE with cmd=\\"echo hello\\". Then reply with the single word \\"done\\". Do not use any other tool."',
+        '  task: "You are the subagent. Call the `exec` tool ONCE with action=\\"run\\" and command=\\"echo hello\\". Then reply with the single word \\"done\\". Do not use any other tool."',
         'Do not reply in prose. Do not call any other tool. Call spawn now.',
       ].join('\n'),
     );

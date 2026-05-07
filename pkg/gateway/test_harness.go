@@ -147,6 +147,61 @@ func (q *HarnessQueue) SetDelegate(p providers.LLMProvider) {
 	q.mu.Unlock()
 }
 
+// ChatStream implements providers.StreamingProvider. With scripted scenarios
+// queued, the harness emits the scripted text in one chunk through onChunk
+// so streaming-driven UI tests still observe a token frame. With the queue
+// empty, ChatStream delegates to the underlying provider's ChatStream when
+// available, preserving real token-by-token streaming for tests that depend
+// on it (e.g. chat (e) cancel-mid-reply). When the delegate is not a
+// StreamingProvider, ChatStream falls back to a non-streaming Chat() call
+// and emits the full text once. Without a delegate, returns ErrQueueEmpty.
+func (q *HarnessQueue) ChatStream(
+	ctx context.Context,
+	messages []providers.Message,
+	tools []providers.ToolDefinition,
+	model string,
+	opts map[string]any,
+	onChunk func(accumulated string),
+) (*providers.LLMResponse, error) {
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+	}
+
+	q.mu.Lock()
+	if len(q.steps) == 0 {
+		delegate := q.delegate
+		q.mu.Unlock()
+		if delegate == nil {
+			return nil, ErrQueueEmpty
+		}
+		if sp, ok := delegate.(providers.StreamingProvider); ok {
+			return sp.ChatStream(ctx, messages, tools, model, opts, onChunk)
+		}
+		resp, err := delegate.Chat(ctx, messages, tools, model, opts)
+		if err != nil {
+			return nil, err
+		}
+		if onChunk != nil && resp != nil && resp.Content != "" {
+			onChunk(resp.Content)
+		}
+		return resp, nil
+	}
+	step := q.steps[0]
+	q.steps = q.steps[1:]
+	q.mu.Unlock()
+
+	resp, err := q.dispatchStep(ctx, step)
+	if err != nil {
+		return nil, err
+	}
+	if onChunk != nil && resp != nil && resp.Content != "" {
+		onChunk(resp.Content)
+	}
+	return resp, nil
+}
+
 // Chat dequeues and returns the next scripted response. When the queue is
 // empty it delegates to the real upstream provider (set via SetDelegate)
 // instead of returning ErrQueueEmpty. ErrQueueEmpty is returned only when
@@ -179,9 +234,14 @@ func (q *HarnessQueue) Chat(
 	q.steps = q.steps[1:]
 	q.mu.Unlock()
 
-	// Honor the per-step delay so tests can drive deterministic slow turns
-	// (e.g. attach-during-active-turn replay-fidelity test). The select
-	// returns early if the agent-loop context is cancelled.
+	return q.dispatchStep(ctx, step)
+}
+
+// dispatchStep honors the per-step delay (so tests can drive deterministic
+// slow turns, e.g. attach-during-active-turn replay-fidelity test) and then
+// returns the canned response. The select returns early if the agent-loop
+// context is cancelled. Shared by Chat and ChatStream.
+func (q *HarnessQueue) dispatchStep(ctx context.Context, step scenarioStep) (*providers.LLMResponse, error) {
 	if step.delay > 0 {
 		select {
 		case <-ctx.Done():
@@ -189,7 +249,6 @@ func (q *HarnessQueue) Chat(
 		case <-time.After(step.delay):
 		}
 	}
-
 	return step.resp, nil
 }
 
