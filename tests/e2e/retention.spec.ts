@@ -255,46 +255,98 @@ test('session_past_retention_threshold_is_swept', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('banner')).toBeVisible({ timeout: 15_000 });
 
-  // Trigger a retention sweep via the REST API.
-  // Correct endpoint: POST /api/v1/security/retention/sweep (pkg/gateway/rest_retention.go:163).
-  // Admin Bearer token is required; we read it from storageState (see authHeaders above).
-  const sweepResp = await page.request.post(`${BASE_URL}/api/v1/security/retention/sweep`, {
-    headers: await authHeaders(page),
-    failOnStatusCode: false,
-  });
-  if (sweepResp.status() === 200 || sweepResp.status() === 204) {
-    // Sweep triggered successfully. Now check the session is gone.
-    // Give it a moment to complete.
+  // The retention sweep endpoint is wrapped with `RequireNotBypass` (CLAUDE.md
+  // §"Defense-in-depth contract") which returns 503 when dev_mode_bypass=true.
+  // The global test gateway boots with bypass=true; we flip it off for this
+  // test only, run the sweep, then restore so the rest of the suite is
+  // unaffected. The /reload endpoint on the health server requires no auth
+  // and triggers an in-place config reload via the health-server reload hook.
+  const configPath = path.join(OMNIPUS_HOME, 'config.json');
+  const originalRaw = fs.readFileSync(configPath, 'utf-8');
+  const cfgObj = JSON.parse(originalRaw) as { gateway?: { dev_mode_bypass?: boolean } };
+  const bypassWasOn = cfgObj.gateway?.dev_mode_bypass === true;
+  if (bypassWasOn) {
+    cfgObj.gateway!.dev_mode_bypass = false;
+    fs.writeFileSync(configPath, JSON.stringify(cfgObj, null, 2));
+    const reloadResp = await page.request.post(`${BASE_URL}/reload`, {
+      failOnStatusCode: false,
+    });
+    expect(
+      reloadResp.ok(),
+      `POST /reload returned ${reloadResp.status()} ${await reloadResp.text()}`,
+    ).toBeTruthy();
+    // Reload propagation is asynchronous; give the manualReloadChan a moment
+    // to drain and the config-snapshot pointer to swap.
     await page.waitForTimeout(500);
   }
-  // If sweepResp is 409: a nightly sweep is in progress — that is also acceptable;
-  // the session will be removed by that sweep. Continue to the assertion.
 
-  // Query the session list. If the retention sweep ran (either at startup or
-  // via the API call above), the 100-day-old session should NOT appear.
-  // Must send auth header — same reason as the GET /api/v1/sessions call above.
-  const listResp = await page.request.get(`${BASE_URL}/api/v1/sessions`, {
-    headers: await authHeaders(page),
-  });
-  // Response shape: same dual-form as in test 1 — normalise to a flat array.
-  const rawListBody = await listResp.json();
-  const normalizedId = sessionId.startsWith('session_') ? sessionId : `session_${sessionId}`;
-  const sessions: Array<{ id: string }> = Array.isArray(rawListBody)
-    ? (rawListBody as Array<{ id: string }>)
-    : ((rawListBody as { sessions?: Array<{ id: string }> }).sessions ?? []);
-  const stillPresent = sessions.some((s) => s.id === normalizedId);
+  try {
+    // Trigger a retention sweep via the REST API.
+    // Correct endpoint: POST /api/v1/security/retention/sweep (pkg/gateway/rest_retention.go:163).
+    // Admin Bearer token is required; we read it from storageState (see authHeaders above).
+    const sweepResp = await page.request.post(`${BASE_URL}/api/v1/security/retention/sweep`, {
+      headers: await authHeaders(page),
+      failOnStatusCode: false,
+    });
+    expect(
+      [200, 204, 409].includes(sweepResp.status()),
+      `POST /api/v1/security/retention/sweep returned ${sweepResp.status()} ${await sweepResp.text()} ` +
+        '(expected 200/204 for success, or 409 if a nightly sweep is in progress)',
+    ).toBeTruthy();
+    if (sweepResp.status() === 200 || sweepResp.status() === 204) {
+      // Sweep triggered successfully. Now check the session is gone.
+      // Give it a moment to complete.
+      await page.waitForTimeout(500);
+    }
+    // If sweepResp is 409: a nightly sweep is in progress — that is also acceptable;
+    // the session will be removed by that sweep. Continue to the assertion.
 
-  // IMPORTANT: If this assertion fails, it means the retention sweep did NOT
-  // remove the session. This is the exact bug class this test is designed to catch.
-  // Do NOT change this to `toBe(true)` — the session must be absent.
-  expect(
-    stillPresent,
-    [
-      `Session ${normalizedId} (${daysAgo} days old, past ${DEFAULT_RETENTION_DAYS}-day threshold)`,
-      'is still present in the session list after the retention sweep should have run.',
-      'This indicates the retention sweep is not running, not finding this session,',
-      'or the cutoff calculation is wrong.',
-      `Session was written to: ${OMNIPUS_HOME}/sessions/${normalizedId}/`,
-    ].join('\n'),
-  ).toBe(false);
+    // Query the session list. If the retention sweep ran (either at startup or
+    // via the API call above), the 100-day-old session should NOT appear.
+    // Must send auth header — same reason as the GET /api/v1/sessions call above.
+    const listResp = await page.request.get(`${BASE_URL}/api/v1/sessions`, {
+      headers: await authHeaders(page),
+    });
+    // Response shape: same dual-form as in test 1 — normalise to a flat array.
+    const rawListBody = await listResp.json();
+    const normalizedId = sessionId.startsWith('session_') ? sessionId : `session_${sessionId}`;
+    const sessions: Array<{ id: string }> = Array.isArray(rawListBody)
+      ? (rawListBody as Array<{ id: string }>)
+      : ((rawListBody as { sessions?: Array<{ id: string }> }).sessions ?? []);
+    const stillPresent = sessions.some((s) => s.id === normalizedId);
+
+    // IMPORTANT: If this assertion fails, it means the retention sweep did NOT
+    // remove the session. This is the exact bug class this test is designed to catch.
+    // Do NOT change this to `toBe(true)` — the session must be absent.
+    expect(
+      stillPresent,
+      [
+        `Session ${normalizedId} (${daysAgo} days old, past ${DEFAULT_RETENTION_DAYS}-day threshold)`,
+        'is still present in the session list after the retention sweep should have run.',
+        'This indicates the retention sweep is not running, not finding this session,',
+        'or the cutoff calculation is wrong.',
+        `Session was written to: ${OMNIPUS_HOME}/sessions/${normalizedId}/`,
+      ].join('\n'),
+    ).toBe(false);
+  } finally {
+    // Restore the original config so subsequent tests see the bypass mode the
+    // global setup chose for them. We write the original raw bytes verbatim
+    // to preserve secret values that would otherwise round-trip through JSON
+    // and lose any non-JSON-safe content (the config has SecureString fields).
+    if (bypassWasOn) {
+      fs.writeFileSync(configPath, originalRaw);
+      const reloadResp = await page.request.post(`${BASE_URL}/reload`, {
+        failOnStatusCode: false,
+      });
+      // Best-effort restore: if reload fails here, surface a warning but do
+      // not fail the test (the assertion above is what matters; later tests
+      // get a fresh OMNIPUS_HOME in CI anyway).
+      if (!reloadResp.ok()) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `retention.spec: post-test config restore reload returned ${reloadResp.status()}`,
+        );
+      }
+    }
+  }
 });

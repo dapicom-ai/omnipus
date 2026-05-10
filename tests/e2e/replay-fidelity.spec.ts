@@ -591,9 +591,16 @@ test(
 
     // ── Step 2: Send a new message and verify it appears BELOW the replayed transcript ──
     // Traces to: BDD Scenario 8 AS-1: new response streams in below replayed transcript.
+    //
+    // Phrasing note: the prompt mirrors chat.spec.ts (b)'s "Echo it back verbatim"
+    // pattern, which reliably yields deterministic short text from Mia (main agent).
+    // Earlier wording ("Reply with exactly:") tripped Mia's "no boilerplate" guardrail
+    // and the LLM streamed only thinking-mode placeholders without producing final text.
     const input = chatInput(page)
     await expect(input).toBeEnabled({ timeout: 10_000 })
-    await input.fill('Reply with exactly: "continuation confirmed"')
+    await input.fill(
+      'Echo this token back to me verbatim, on its own line, with no other words: continuation confirmed',
+    )
     await input.press('Enter')
 
     // A new assistant message appears (total count increases by 1).
@@ -601,7 +608,7 @@ test(
 
     // The last assistant message should contain the expected reply.
     const lastAsstMsg = asstMsgs.last()
-    await expect(lastAsstMsg).toContainText(/continuation confirmed/i, { timeout: 30_000 })
+    await expect(lastAsstMsg).toContainText(/continuation confirmed/i, { timeout: 60_000 })
 
     // No messages are duplicated: the replayed messages remain exactly as seeded.
     // SC-I-004(iv): user messages still show exactly 1 (the replayed one + new one we sent = 2).
@@ -688,28 +695,27 @@ test(
       })
       .first()
     await expect(sessionBtn).toBeVisible({ timeout: 10_000 })
-    await sessionBtn.click()
 
-    // Immediately after clicking the session, the replay starts.
-    // FR-I-014 (I2): the chat input MUST be disabled during replay (isReplaying=true).
-    // The textarea is disabled={!isConnected || isStreaming || isUploading || isReplaying}.
-    // We check the input is disabled within 500ms — if I2 is not wiring isReplaying to
-    // the textarea's disabled prop, this assertion will pass (because we'd expect disabled
-    // but get enabled). The test correctly validates the blocked state.
-    //
     // Note: the send button (ComposerPrimitive.Send) is ALSO disabled when the input
     // is empty (AssistantUI internal behavior), making it unreliable for replay detection.
     // We use the textarea disabled state as the primary replay indicator.
     const input = chatInput(page)
 
-    // During replay, the chat input must be disabled.
-    // isReplaying is set to true when attach_session is sent (session store: setReplaying action).
-    // isReplaying is set to false when the done frame arrives (chat store: setReplaying action
-    // in handleFrame's 'done' case).
-    // Timeout 1500ms accommodates page-nav + sessions-panel-click + session-button-click overhead
-    // before the assertion can settle, while still safely under MIN_REPLAY_DISPLAY_MS=750ms's
-    // visible window for a 20-entry transcript.
-    await expect(input).toBeDisabled({ timeout: 1500 })
+    // FR-I-014 (I2): the chat input MUST be disabled during replay (isReplaying=true).
+    // The textarea is disabled={!isConnected || isStreaming || isUploading || isReplaying}.
+    // isReplaying flips on at attachToSession (sessionBtn click handler), and off when the
+    // 'done' frame arrives from the gateway (with a MIN_REPLAY_DISPLAY_MS=750ms minimum
+    // visible window enforced in src/store/chat.ts).
+    //
+    // We must observe the disabled window WHILE click() is still resolving — Playwright's
+    // default click() waits for networkidle, which can outlast the 750ms disabled window
+    // on a small seeded transcript. Promise.all races the assertion in parallel with the
+    // click so the polling loop catches the transient disabled state regardless of how
+    // long click()'s post-actions take to settle.
+    await Promise.all([
+      sessionBtn.click(),
+      expect(input).toBeDisabled({ timeout: 5_000 }),
+    ])
 
     // After replay completes (done frame arrives, isReplaying → false), input must be enabled.
     // Traces to: Scenario 10 When "replay's done frame arrives → send button becomes enabled".
