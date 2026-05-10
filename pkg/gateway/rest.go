@@ -2287,10 +2287,6 @@ func (a *restAPI) registerAdditionalEndpoints(cm httpHandlerRegistrar) {
 
 	// Version endpoint — unauthenticated; returns build SHA for frontend version-drift detection (#110).
 	cm.RegisterHTTPHandler("/api/v1/version", http.HandlerFunc(a.HandleVersion))
-
-	// Register the test-harness scenario endpoint (test_harness build tag only).
-	// In non-test_harness builds this is a no-op stub in test_harness_disabled.go.
-	a.registerTestHarness(cm)
 }
 
 // registerPreviewEndpoints registers /preview/, /serve/, and /dev/ on the

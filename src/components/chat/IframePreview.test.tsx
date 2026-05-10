@@ -1105,14 +1105,13 @@ describe('IframePreview — same-origin guard (B1.3a)', () => {
   })
 })
 
-// ── B1.3(b) — 5xx HEAD probe after iframe onload ──────────────────────────────
+// ── 5xx pass-through (no probe) ───────────────────────────────────────────────
 
-describe('IframePreview — 5xx HEAD probe after onload (B1.3b)', () => {
-  // Traces to: B1.3(b) security hardening
-  // After the visible iframe's onload fires, a HEAD probe is issued to detect
-  // 5xx responses. The iframe's onload fires even when the server returns a 500
-  // page (the browser renders the HTML). Without this probe, the user sees a
-  // generic browser error page instead of an actionable message.
+describe('IframePreview — 5xx pass-through after onload', () => {
+  // AC update (2026-05-10): the SPA does NOT probe the iframe URL after onload.
+  // Whatever the dev server sent (200, 500, 503, etc.) renders verbatim. The
+  // dev server's own diagnostic UI surfaces the error to the user; the SPA
+  // does not replace the iframe content with its own error block.
 
   beforeEach(() => {
     Object.defineProperty(window, 'location', {
@@ -1133,108 +1132,39 @@ describe('IframePreview — 5xx HEAD probe after onload (B1.3b)', () => {
     vi.restoreAllMocks()
   })
 
-  it('renders server error block when HEAD probe returns 500', async () => {
-    // Mock fetch to return a 500 response
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(null, { status: 500, statusText: 'Internal Server Error' })
-    )
+  it('does not issue a HEAD probe after iframe onload', async () => {
+    // Regression guard: any HEAD probe re-introduction would re-enable the
+    // CORS preflight problem (CRIT-FE-1) and force every preview deployment
+    // to add CORS headers it does not need. fetch() must not be called from
+    // the iframe onload handler.
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
 
     render(<IframePreview {...makeReadyProps()} />)
 
     const iframe = document.querySelector('iframe:not([aria-hidden])')
     expect(iframe).not.toBeNull()
 
-    // Simulate the iframe's onload firing
     await act(async () => {
       fireEvent.load(iframe!)
     })
 
-    // The 5xx error block should be visible
-    await waitFor(() => {
-      expect(screen.getByText(/dev server returned a server error/i)).toBeInTheDocument()
-    })
-
-    // HTTP status code is shown — anchor on the word "HTTP 500" so the
-    // assertion doesn't also match "5001" (the preview port in the link).
-    expect(screen.getByText(/HTTP 500/i)).toBeInTheDocument()
-
-    // Retry button is present
-    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
-
-    // No iframe is visible (replaced by error block)
-    const iframesAfter = document.querySelectorAll('iframe:not([aria-hidden])')
-    expect(iframesAfter.length).toBe(0)
+    expect(
+      fetchSpy,
+      'iframe onload must not trigger a HEAD probe — 5xx is passed through to the user',
+    ).not.toHaveBeenCalled()
   })
 
-  it('keeps the iframe rendered when HEAD probe returns 200', async () => {
-    // Mock fetch to return a 200 response
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(null, { status: 200 })
-    )
-
+  it('keeps the iframe visible regardless of upstream HTTP status', async () => {
     render(<IframePreview {...makeReadyProps()} />)
 
     const iframe = document.querySelector('iframe:not([aria-hidden])')
-    expect(iframe).not.toBeNull()
-
-    // Simulate the iframe's onload
     await act(async () => {
       fireEvent.load(iframe!)
     })
 
-    // No error block
-    await waitFor(() => {
-      expect(screen.queryByText(/dev server returned a server error/i)).toBeNull()
-    })
-
-    // Iframe is still present
+    // No error block is injected by the SPA on 5xx — the iframe stays.
+    expect(screen.queryByText(/dev server returned a server error/i)).toBeNull()
     const iframesAfter = document.querySelectorAll('iframe:not([aria-hidden])')
     expect(iframesAfter.length).toBeGreaterThan(0)
-  })
-
-  it('shows error block when HEAD probe returns 503', async () => {
-    // 503 is also a 5xx — should show the error block
-    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(null, { status: 503 })
-    )
-
-    render(<IframePreview {...makeReadyProps()} />)
-
-    const iframe = document.querySelector('iframe:not([aria-hidden])')
-    await act(async () => {
-      fireEvent.load(iframe!)
-    })
-
-    await waitFor(() => {
-      expect(screen.getByText(/dev server returned a server error/i)).toBeInTheDocument()
-    })
-    expect(screen.getByText(/503/)).toBeInTheDocument()
-  })
-
-  it('does not include an Authorization header in the HEAD probe', async () => {
-    // CRIT-FE-1: The preview listener uses URL-path token auth, not Bearer.
-    // Sending Authorization makes the request non-simple (CORS preflight), which
-    // the preview port's CORS config rejects — silently disabling the probe.
-    // Verify the fetch call carries no Authorization header.
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(null, { status: 200 })
-    )
-
-    render(<IframePreview {...makeReadyProps()} />)
-
-    const iframe = document.querySelector('iframe:not([aria-hidden])')
-    await act(async () => {
-      fireEvent.load(iframe!)
-    })
-
-    await waitFor(() => {
-      expect(fetchSpy).toHaveBeenCalled()
-    })
-
-    const [_url, init] = fetchSpy.mock.calls[0] as [string, RequestInit | undefined]
-    const headers = (init?.headers ?? {}) as Record<string, string>
-    // Must not carry Authorization in any casing
-    const headerKeys = Object.keys(headers).map((k) => k.toLowerCase())
-    expect(headerKeys).not.toContain('authorization')
   })
 })

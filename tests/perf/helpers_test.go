@@ -5,16 +5,17 @@ package perf
 // startPerfGateway mirrors testutil.StartTestGateway but accepts testing.TB so
 // it can be called from both *testing.T (SLO tests) and *testing.B (benchmarks).
 // It boots the real gateway via gateway.RunContext (registered in TestMain) with
-// DevModeBypass=true and a ScenarioProvider so there are no external LLM calls.
+// DevModeBypass=true and a real OpenRouter provider entry. The test_harness
+// override hook was removed 2026-05-10 — perf tests that exercise the LLM hit
+// real OpenRouter (OPENROUTER_API_KEY required in env).
 //
-// This file retains //go:build !cgo because it directly imports and calls
-// pkg/gateway functions (RunContext, SetTestProviderOverride, ClearTestProviderOverride)
-// that are themselves tagged //go:build !cgo. F1 removes the tag from the benchmark
-// and SLO test files (which only use HTTP clients and don't import the gateway
-// package directly). This file is the sole exception in the perf package.
+// This file retains //go:build !cgo because it directly imports pkg/gateway,
+// which itself is tagged //go:build !cgo. The benchmark and SLO test files in
+// this package do NOT have the !cgo tag.
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -27,8 +28,8 @@ import (
 
 	"github.com/dapicom-ai/omnipus/pkg/agent/testutil"
 	"github.com/dapicom-ai/omnipus/pkg/config"
+	"github.com/dapicom-ai/omnipus/pkg/credentials"
 	"github.com/dapicom-ai/omnipus/pkg/gateway"
-	"github.com/dapicom-ai/omnipus/pkg/providers"
 )
 
 // testMasterKey matches the value in pkg/agent/testutil/gateway_harness.go.
@@ -60,24 +61,18 @@ func (g *perfGateway) close(tb testing.TB) {
 // startPerfGateway boots a real gateway for perf tests. It accepts testing.TB
 // so it works from both *testing.T (SLO tests) and *testing.B (benchmarks).
 //
-// The scenario parameter may be nil; in that case an empty ScenarioProvider is used.
+// The scenario parameter is unused (kept for signature compatibility with
+// existing callers; the test_harness override hook was removed 2026-05-10).
 // DevModeBypass is always true (no bearer auth required for WS connections).
-func startPerfGateway(tb testing.TB, scenario *testutil.ScenarioProvider) *perfGateway {
+func startPerfGateway(tb testing.TB, _ *testutil.ScenarioProvider) *perfGateway {
 	tb.Helper()
 
-	if scenario == nil {
-		scenario = testutil.NewScenario()
-	}
-
-	// Set master key so credentials unlock cleanly.
 	tb.Setenv("OMNIPUS_MASTER_KEY", testMasterKey)
-	// Clear bearer token so DevModeBypass takes effect.
 	tb.Setenv("OMNIPUS_BEARER_TOKEN", "")
 
 	homeDir := tb.TempDir()
 	configPath := filepath.Join(homeDir, "config.json")
 
-	// Pick an ephemeral port.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		tb.Fatalf("startPerfGateway: allocate port: %v", err)
@@ -98,11 +93,21 @@ func startPerfGateway(tb testing.TB, scenario *testutil.ScenarioProvider) *perfG
 		Agents: config.AgentsConfig{
 			Defaults: config.AgentDefaults{
 				Workspace: homeDir,
-				ModelName: "scripted-model",
+				ModelName: "openrouter-glm",
 				MaxTokens: 4096,
 			},
 		},
+		Providers: []*config.ModelConfig{
+			{
+				ModelName: "openrouter-glm",
+				Model:     "openrouter/z-ai/glm-5-turbo",
+				Provider:  "openrouter",
+				APIBase:   "https://openrouter.ai/api/v1",
+				APIKeyRef: "OPENROUTER_API_KEY",
+			},
+		},
 	}
+	cfg.Sandbox.Mode = "off"
 
 	rawCfg, err := json.Marshal(cfg)
 	if err != nil {
@@ -110,6 +115,10 @@ func startPerfGateway(tb testing.TB, scenario *testutil.ScenarioProvider) *perfG
 	}
 	if err = os.WriteFile(configPath, rawCfg, 0o600); err != nil {
 		tb.Fatalf("startPerfGateway: write config: %v", err)
+	}
+
+	if err = seedPerfCredentials(homeDir); err != nil {
+		tb.Fatalf("startPerfGateway: seed credentials: %v", err)
 	}
 
 	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
@@ -123,14 +132,6 @@ func startPerfGateway(tb testing.TB, scenario *testutil.ScenarioProvider) *perfG
 		done:       done,
 	}
 
-	// Install the scenario provider before launching RunContext.
-	// gateway.SetTestProviderOverride is safe to call from any goroutine;
-	// RunContext reads it synchronously during boot before the serve loop starts.
-	scenarioCopy := scenario
-	gateway.SetTestProviderOverride(func() providers.LLMProvider {
-		return scenarioCopy
-	})
-
 	go func() {
 		defer close(done)
 		runErr := gateway.RunContext(ctx, false, homeDir, configPath, true /*allowEmpty*/)
@@ -139,7 +140,6 @@ func startPerfGateway(tb testing.TB, scenario *testutil.ScenarioProvider) *perfG
 		}
 	}()
 
-	// Poll /health until 200 or 5 s timeout.
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		resp, httpErr := gw.HTTPClient.Get(baseURL + "/health")
@@ -161,9 +161,28 @@ func startPerfGateway(tb testing.TB, scenario *testutil.ScenarioProvider) *perfG
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	// Clear the provider override now that the gateway has booted and consumed it.
-	gateway.ClearTestProviderOverride()
-
 	tb.Cleanup(func() { gw.close(tb) })
 	return gw
+}
+
+// seedPerfCredentials writes credentials.json into homeDir with an
+// OPENROUTER_API_KEY entry encrypted under testMasterKey. Mirrors the seed in
+// pkg/agent/testutil/gateway_harness.go::seedTestCredentials.
+func seedPerfCredentials(homeDir string) error {
+	masterKey, err := hex.DecodeString(testMasterKey)
+	if err != nil {
+		return fmt.Errorf("decode testMasterKey: %w", err)
+	}
+	store := credentials.NewStore(filepath.Join(homeDir, "credentials.json"))
+	if err := store.UnlockWithKey(masterKey); err != nil {
+		return fmt.Errorf("unlock store: %w", err)
+	}
+	apiKey := os.Getenv("OPENROUTER_API_KEY")
+	if apiKey == "" {
+		apiKey = "test-stub-openrouter-key-not-for-real-calls"
+	}
+	if err := store.Set("OPENROUTER_API_KEY", apiKey); err != nil {
+		return fmt.Errorf("set OPENROUTER_API_KEY: %w", err)
+	}
+	return nil
 }

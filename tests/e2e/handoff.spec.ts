@@ -7,11 +7,11 @@ import { chatInput, agentPicker, assistantMessages } from './fixtures/selectors'
 
 // Global storageState provides pre-authenticated session (see playwright.config.ts + global-setup.ts).
 
-// ARCHITECTURE NOTE: The sprint-h-subagent-block-spec.md (TDD row 20) calls for using a
-// "scenario-provider path" for determinism. The Go-level scenario provider (pkg/agent/testutil)
-// is only injectable into the gateway via the test_harness build tag — it is NOT available as
-// an HTTP endpoint when running a live Playwright-targeted gateway. These tests therefore use
-// a real LLM (requires OPENROUTER_API_KEY_CI) and prompts that strongly suggest spawning.
+// ARCHITECTURE NOTE: The sprint-h-subagent-block-spec.md (TDD row 20) called for using a
+// "scenario-provider path" for determinism via a Go-level scenario provider gated behind the
+// `test_harness` build tag. That mechanism was removed 2026-05-10 — both Go and Playwright
+// suites now drive a real LLM (requires OPENROUTER_API_KEY_CI) and rely on tightened prompts +
+// structural assertions for determinism.
 // Traces to: sprint-h-subagent-block-spec.md line 380 (TDD row 20, BDD Scenarios 1, 4)
 
 // ── Transcript helpers (mirrored from replay-fidelity.spec.ts) ─────────────────

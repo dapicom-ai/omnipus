@@ -1,11 +1,10 @@
 // Sprint H · Subagent Collapsed-Block UI — E2E Tests
 // Traces to: sprint-h-subagent-block-spec.md TDD rows 21, 22, 23, 24
 //
-// ARCHITECTURE NOTE: The spec calls for a "scenario-provider path" (deterministic scripted LLM)
-// for tests (a)-(c). The Go-level ScenarioProvider (pkg/agent/testutil) is only available via
-// the test_harness build tag and CANNOT be injected into a live Playwright-targeted gateway via
-// HTTP. These tests use a real LLM (OPENROUTER_API_KEY_CI required) with temperature=0 and
-// seed=42 plumbed into OpenRouter requests for maximum determinism (Wave 2.1).
+// ARCHITECTURE NOTE: The spec originally called for a "scenario-provider path" (deterministic
+// scripted LLM) gated behind the `test_harness` build tag. That mechanism was removed
+// 2026-05-10 — these tests use a real LLM (OPENROUTER_API_KEY_CI required) with temperature=0
+// and seed=42 plumbed into OpenRouter requests for maximum determinism (Wave 2.1).
 //
 // data-testid cross-reference:
 //   - [data-testid="subagent-collapsed"]    — SubagentBlock.tsx (collapsed header button)

@@ -16,9 +16,12 @@ import (
 // An error is returned only if the base directory walk cannot start.
 //
 // After all aged .jsonl files are removed, session directories that contain
-// only stale sidecar metadata (meta.json / .lock / .ulid) AND whose directory
-// mtime is itself past the cutoff are removed entirely so ListSessions does
-// not continue to surface a session with no transcript.
+// zero remaining .jsonl files are removed entirely (sidecar metadata and
+// lock files are ignored). An empty session folder is junk by definition —
+// it would otherwise continue to appear in ListSessions with no transcript
+// content. This semantic is independent of the folder's mtime, which kernel-
+// level filesystems update to "now" the moment a child file is removed
+// (making any post-deletion mtime check incorrect).
 func (us *UnifiedStore) RetentionSweep(retentionDays int) (int, error) {
 	if retentionDays <= 0 {
 		return 0, nil
@@ -94,26 +97,25 @@ func (us *UnifiedStore) RetentionSweep(retentionDays int) (int, error) {
 	}
 
 	// Second pass: remove session directories that lost all their transcripts
-	// to the sweep AND whose remaining sidecar files are all themselves past
-	// the cutoff. This prevents ListSessions from continuing to enumerate a
-	// session whose data has been swept.
+	// to the sweep. An empty session folder (no .jsonl files remaining) is
+	// junk regardless of any sidecar metadata's age — ListSessions enumerates
+	// the folder on disk, so leaving it behind surfaces a content-less ghost
+	// session in the UI. This check is mtime-independent because filesystems
+	// (ext4, xfs) bump the parent directory's mtime to "now" the moment a
+	// child file is removed, breaking any post-deletion mtime comparison.
 	for sessDir := range touchedSessionDirs {
 		entries, readErr := os.ReadDir(sessDir)
 		if readErr != nil {
 			continue
 		}
-		stillFresh := false
+		hasTranscript := false
 		for _, ent := range entries {
-			info, infoErr := ent.Info()
-			if infoErr != nil {
-				continue
-			}
-			if !info.ModTime().Before(cutoff) {
-				stillFresh = true
+			if !ent.IsDir() && strings.HasSuffix(ent.Name(), ".jsonl") {
+				hasTranscript = true
 				break
 			}
 		}
-		if stillFresh {
+		if hasTranscript {
 			continue
 		}
 		if rmErr := os.RemoveAll(sessDir); rmErr != nil {

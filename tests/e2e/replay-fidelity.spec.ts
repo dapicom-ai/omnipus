@@ -442,13 +442,19 @@ const AUTH_FILE = path.join(
 test(
   '(c) attach-during-active-turn: second browser context receives all events without loss',
   // Belt-and-suspenders companion to TestAttach_RegistersLiveEventsBeforeReplay
-  // (pkg/gateway/replay_test.go). Drives the determinism via the test_harness
-  // scenario endpoint with delay_ms — REQUIRES the gateway built with
-  // -tags test_harness. Skipped via SKIP_ALLOWLIST when the endpoint is absent.
+  // (pkg/gateway/replay_test.go). Drives a real LLM with a prompt engineered to
+  // produce a long enough response (4-12s of streaming) that page2 can attach
+  // mid-turn before the final assistant message arrives.
+  //
+  // The scripted-scenario harness this test originally used was removed
+  // 2026-05-10 along with the test_harness build tag. We now rely on the LLM's
+  // streaming latency for the "active turn" window — variance is acceptable
+  // because the assertions check final state, and the wall-clock floor is
+  // relaxed to 3s (vs. the deterministic 7s the harness provided).
   //
   // Traces to: sprint-i-historical-replay-fidelity-spec.md BDD Scenario 9; TDD row 25.
   async ({ page, browser }) => {
-    test.setTimeout(60_000)
+    test.setTimeout(90_000)
 
     // ── Step 1: page1 — fresh session ──
     await page.goto('/')
@@ -459,35 +465,21 @@ test(
     const sessionTitle = `replay-fidelity-test-c-${Date.now()}`
     await renameSession(page, sessionId, sessionTitle)
 
-    // ── Step 2: enqueue a slow scripted LLM response ──
-    // delay_ms gives us 8s of "active turn". Page2 setup (newContext +
-    // newPage + goto + waitForReplayDone + assertions) regularly takes
-    // 4-6 seconds of wall-clock time even on a hot gateway, so 3s was
-    // racy — the response would publish before page2's WebSocket was
-    // attached and the cross-browser broadcast had nobody to deliver to.
-    // 8s gives comfortable headroom while keeping the test well under
-    // its 60s test.setTimeout.
-    const expectedReply = `attach-during-turn-${Date.now()}`
-    const scenarioResp = await page.request.post(`${BASE_URL}/api/v1/_test/scenario`, {
-      headers: await apiHeaders(page),
-      data: {
-        responses: [{ type: 'text', content: expectedReply, delay_ms: 8000 }],
-      },
-    })
-    if (scenarioResp.status() === 404) {
-      throw new Error(
-        'test_harness scenario endpoint returned 404 — gateway must be built with -tags test_harness for this test',
-      )
-    }
-    expect(scenarioResp.ok(), `enqueue scenario: ${scenarioResp.status()}`).toBeTruthy()
-
-    // ── Step 3: open session and send the user message on page1 ──
+    // ── Step 2: open session and send a long-form prompt on page1 ──
+    // The unique nonce forces a verbatim echo we can match exactly. The
+    // 600-word body prefix ensures the response streams for several seconds
+    // (typically 4-12s on glm-5-turbo) so page2 can attach mid-turn.
     await openSession(page, sessionTitle)
     await waitForReplayDone(page)
 
+    const nonce = `attach-during-turn-${Date.now()}`
+    const prompt =
+      `Write exactly 600 words about renewable energy. Vary your wording — do not repeat sentences. ` +
+      `At the very end of your reply, output the literal token ${nonce} on its own line.`
+
     const input = chatInput(page)
     await expect(input).toBeEnabled({ timeout: 10_000 })
-    await input.fill('begin slow turn')
+    await input.fill(prompt)
     const sendStart = Date.now()
     await input.press('Enter')
 
@@ -495,9 +487,9 @@ test(
     const userMsgs = page.locator('[data-message-id].flex-row-reverse')
     await expect(userMsgs).toHaveCount(1, { timeout: 5_000 })
 
-    // ── Step 4: while the agent is still in delay, attach page2 ──
-    // Wait ~800ms after send so we are reliably mid-delay (3000ms total)
-    // but well before the assistant message arrives.
+    // ── Step 3: while the agent is still streaming, attach page2 ──
+    // Wait ~800ms after send so we are reliably mid-stream but well before
+    // the assistant message completes.
     await page.waitForTimeout(800)
     const context2 = await browser.newContext({ storageState: AUTH_FILE, baseURL: BASE_URL })
     const page2 = await context2.newPage()
@@ -513,28 +505,28 @@ test(
       const userMsgs2 = page2.locator('[data-message-id].flex-row-reverse')
       await expect(userMsgs2).toHaveCount(1, { timeout: 10_000 })
 
-      // ── Step 5: both contexts receive the final assistant message ──
-      // Wait for the assistant reply (with our scripted content) on both pages.
-      // The expectedReply is a unique random string only the harness produces, so
-      // a body-text containment check is strictly equivalent to "the harness
-      // response was delivered" without coupling the test to a specific bubble
-      // component (live AssistantUI vs. replayed MessageItem render differently).
-      // Page2 first — it attached mid-turn so it's the harder case (FR-I-009);
-      // page1 was the originator and should have the message already.
-      await expect(page2.locator('body')).toContainText(expectedReply, { timeout: 20_000 })
-      await expect(page.locator('body')).toContainText(expectedReply, { timeout: 20_000 })
+      // ── Step 4: both contexts receive the final assistant message ──
+      // Wait for the assistant reply containing our nonce on both pages.
+      // The nonce is a unique random string we asked the LLM to echo, so a
+      // body-text containment check confirms the response was delivered.
+      // Page2 first — it attached mid-turn so it's the harder case (FR-I-009).
+      await expect(page2.locator('body')).toContainText(nonce, { timeout: 60_000 })
+      await expect(page.locator('body')).toContainText(nonce, { timeout: 60_000 })
 
       // page2 attached AFTER the turn started, so the only way it could see the
       // assistant message is if live forwarding picked up where replay left off
-      // — that's what FR-I-009 demands and what we're verifying.
+      // — that's what FR-I-009 demands and what we're verifying. We require at
+      // least 3s of wall-clock since send to confirm we observed a real
+      // mid-turn attach (the 800ms attach delay + page2 setup + assistant
+      // completion can't all happen in under that floor for a 600-word reply).
       const wallClock = Date.now() - sendStart
-      expect(wallClock).toBeGreaterThanOrEqual(7_000) // confirms the 8s delay actually ran
+      expect(wallClock).toBeGreaterThanOrEqual(3_000)
 
-      // Final-state agreement: both browser contexts must show the same harness
-      // reply. The body-text contains check above already proved both saw it;
-      // belt-and-suspenders here verifies neither got a duplicate or truncation.
-      const text1 = await page.locator(`text=${expectedReply}`).first().innerText()
-      const text2 = await page2.locator(`text=${expectedReply}`).first().innerText()
+      // Final-state agreement: both browser contexts must show the same nonce.
+      // The body-text contains check above proved both saw it; belt-and-suspenders
+      // verifies the matched bubble text agrees character-for-character.
+      const text1 = await page.locator(`text=${nonce}`).first().innerText()
+      const text2 = await page2.locator(`text=${nonce}`).first().innerText()
       expect(text2.trim()).toBe(text1.trim())
     } finally {
       await context2.close()
@@ -714,7 +706,10 @@ test(
     // isReplaying is set to true when attach_session is sent (session store: setReplaying action).
     // isReplaying is set to false when the done frame arrives (chat store: setReplaying action
     // in handleFrame's 'done' case).
-    await expect(input).toBeDisabled({ timeout: 500 })
+    // Timeout 1500ms accommodates page-nav + sessions-panel-click + session-button-click overhead
+    // before the assertion can settle, while still safely under MIN_REPLAY_DISPLAY_MS=750ms's
+    // visible window for a 20-entry transcript.
+    await expect(input).toBeDisabled({ timeout: 1500 })
 
     // After replay completes (done frame arrives, isReplaying → false), input must be enabled.
     // Traces to: Scenario 10 When "replay's done frame arrives → send button becomes enabled".
