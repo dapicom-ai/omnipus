@@ -175,6 +175,29 @@ func (m *BrowserManager) ensureStarted() error {
 		return fmt.Errorf("browser: cannot create profile directory %s: %w", m.cfg.ProfileDir, err)
 	}
 
+	// Clean up stale SingletonLock files. When Chromium exits ungracefully
+	// (kill -9, crash, or the gateway's chromedp allocator cancelling mid-
+	// startup), `SingletonLock` / `SingletonCookie` / `SingletonSocket`
+	// stay behind in the profile dir. The next launch refuses to start with:
+	//   "Failed to create .../SingletonLock: File exists (17)
+	//    Failed to create a ProcessSingleton for your profile directory."
+	// and every subsequent browser.navigate fails. We always own this
+	// profile directory exclusively (single chromedp allocator per gateway
+	// process; tabs share the same Chromium instance), so it is safe to
+	// remove these on each lazy-init. Symlinks (which is what Chrome uses
+	// for SingletonLock — a symlink whose target encodes pid + hostname)
+	// must be removed with os.Remove; os.RemoveAll would fail to follow
+	// them in some edge cases.
+	for _, name := range []string{"SingletonLock", "SingletonCookie", "SingletonSocket"} {
+		path := filepath.Join(m.cfg.ProfileDir, name)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			logger.WarnCF("browser", "Failed to remove stale Chromium singleton file", map[string]any{
+				"path":  path,
+				"error": err.Error(),
+			})
+		}
+	}
+
 	execPath, err := m.resolveExecPath(context.Background())
 	if err != nil {
 		return fmt.Errorf("browser: cannot locate chromium: %w", err)
