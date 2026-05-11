@@ -544,6 +544,10 @@ test(
     //
     // IMPORTANT: This test requires a real LLM (OPENROUTER_API_KEY_CI) to send a live message.
 
+    // test.slow() triples the global 90s test timeout to 270s. The LLM
+    // continuation reply can take 30-60s under suite load.
+    test.slow()
+
     await page.goto('/')
     await expect(page.getByRole('banner')).toBeVisible({ timeout: 15_000 })
 

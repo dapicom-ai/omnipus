@@ -12,6 +12,11 @@ test.beforeEach(async ({ page }) => {
 test(
   '(a) screenshot inline render: Max screenshots example.com and renders an img',
   async ({ page }) => {
+    // test.slow() triples the global 90s test timeout to 270s. The screenshot
+    // flow exercises the LLM (tool selection) + Chromium (screenshot) +
+    // SPA (media render). End-to-end can take 60-120s under suite load even
+    // though every layer alone is sub-30s.
+    test.slow();
     // Select Max agent via the agent picker dropdown
     const picker = agentPicker(page);
     await expect(picker).toBeVisible({ timeout: 15_000 });

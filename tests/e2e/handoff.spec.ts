@@ -217,6 +217,11 @@ test(
     // If OPENROUTER_API_KEY_CI is unset, the LLM call below will fail and the
     // test will fail honestly — which is the correct behavior.
 
+    // test.slow() triples the global 90s test timeout to 270s. Real-LLM
+    // spawn under suite load occasionally takes 40-60s; the test passes
+    // in 5-15s alone.
+    test.slow();
+
     const input = chatInput(page);
     await expect(input).toBeVisible({ timeout: 15_000 });
 
@@ -236,10 +241,12 @@ test(
     );
     await input.press('Enter');
 
-    // Wait up to 30s for a subagent-collapsed block to appear.
+    // Wait up to 60s for a subagent-collapsed block to appear under
+    // real-LLM determinism — 30s was tight when this test runs after
+    // ~10 min of suite-induced OpenRouter load (2026-05-11).
     // Structural assertion: if no spawn occurred the test fails honestly.
     const collapsedBlock = page.locator('[data-testid="subagent-collapsed"]');
-    await expect(collapsedBlock).toBeVisible({ timeout: 30_000 });
+    await expect(collapsedBlock).toBeVisible({ timeout: 60_000 });
 
     // Assert: at least one collapsed block is present with correct structure.
     const blockCount = await collapsedBlock.count();

@@ -75,6 +75,10 @@ test(
   '(a) grandchild refused: subagent attempting spawn gets unknown-tool error, no nested block',
   async ({ page }) => {
     requireApiKey(test);
+    // test.slow() triples the global 90s test timeout to 270s. Subagent
+    // spawn + execution can take 30-90s end-to-end under suite load even
+    // though the same test passes in 5-15s alone.
+    test.slow();
 
     await startFreshChat(page);
 
@@ -96,7 +100,7 @@ test(
     // Structural assertion: wait for at least one subagent-collapsed to appear (the parent spawn).
     // With temperature=0+seed=42 the LLM must comply — if it doesn't, the test fails honestly.
     const collapsedBlocks = page.locator('[data-testid="subagent-collapsed"]');
-    await expect(collapsedBlocks.first()).toBeVisible({ timeout: 40_000 });
+    await expect(collapsedBlocks.first()).toBeVisible({ timeout: 60_000 });
 
     const blockCount = await collapsedBlocks.count();
 
@@ -133,6 +137,10 @@ test(
   '(b) sibling spawns: two back-to-back spawns render as two independent SubagentBlocks',
   async ({ page }) => {
     requireApiKey(test);
+    // test.slow() triples the global 90s test timeout to 270s. Subagent
+    // spawn + execution can take 30-90s end-to-end under suite load even
+    // though the same test passes in 5-15s alone.
+    test.slow();
 
     await startFreshChat(page);
 
@@ -157,7 +165,7 @@ test(
 
     // Structural assertion: wait for the first collapsed block.
     const collapsedBlocks = page.locator('[data-testid="subagent-collapsed"]');
-    await expect(collapsedBlocks.first()).toBeVisible({ timeout: 40_000 });
+    await expect(collapsedBlocks.first()).toBeVisible({ timeout: 60_000 });
 
     // Structural assertion: wait for exactly 2 sibling blocks.
     // Traces to: BDD Scenario 13 — "two distinct SubagentBlock elements"
@@ -194,6 +202,10 @@ test(
   '(c) live step counter: collapsed header step count increments during multi-step sub-turn',
   async ({ page }) => {
     requireApiKey(test);
+    // test.slow() triples the global 90s test timeout to 270s. Subagent
+    // spawn + execution can take 30-90s end-to-end under suite load even
+    // though the same test passes in 5-15s alone.
+    test.slow();
 
     await startFreshChat(page);
 
@@ -214,7 +226,7 @@ test(
 
     // Structural assertion: wait for the collapsed block to appear.
     const collapsedBlock = page.locator('[data-testid="subagent-collapsed"]').first();
-    await expect(collapsedBlock).toBeVisible({ timeout: 40_000 });
+    await expect(collapsedBlock).toBeVisible({ timeout: 60_000 });
 
     // Structural assertion: [data-testid="subagent-step-counter"] must be present.
     // This verifies the step counter element exists in the DOM (FR-H-010).
@@ -295,6 +307,9 @@ test(
     // T0.1: OPENROUTER_API_KEY_CI soft-skip removed. The key is required in CI.
     // This test is best-effort (does not gate merge) but must not skip silently.
     requireApiKey(test);
+    // test.slow() triples the global 90s test timeout to 270s; same rationale
+    // as the sibling subagent tests (real-LLM spawn under suite load).
+    test.slow();
 
     await startFreshChat(page);
 
@@ -353,6 +368,10 @@ test(
   '(e) axe baseline: SubagentBlock elements are WCAG 2.1 AA clean',
   async ({ page }) => {
     requireApiKey(test);
+    // test.slow() triples the global 90s test timeout to 270s. Subagent
+    // spawn + execution can take 30-90s end-to-end under suite load even
+    // though the same test passes in 5-15s alone.
+    test.slow();
 
     await startFreshChat(page);
 
@@ -372,7 +391,7 @@ test(
     // Structural assertion: wait for a SubagentBlock to appear.
     // With temperature=0+seed=42 the LLM must comply — test fails honestly if it doesn't.
     const collapsedBlock = page.locator('[data-testid="subagent-collapsed"]');
-    await expect(collapsedBlock.first()).toBeVisible({ timeout: 40_000 });
+    await expect(collapsedBlock.first()).toBeVisible({ timeout: 60_000 });
 
     // Test 1: axe against collapsed state.
     // Traces to: sprint-h-subagent-block-spec.md Scenario 11 — "collapsed SubagentBlock"

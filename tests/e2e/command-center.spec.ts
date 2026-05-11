@@ -27,6 +27,9 @@ test('(a) all section cards load without console errors', async ({ page }) => {
 });
 
 test('(b) approval-queue: policy=ask tool call triggers approval modal and Approve routes it through', async ({ page }) => {
+  // test.slow() triples the global 90s test timeout to 270s. The LLM-driven
+  // approval modal occasionally takes 40-60s to appear under suite load.
+  test.slow();
   // Navigate first so the SPA is running with an authenticated session.
   await page.goto('/#/command-center');
   await expect(page.getByRole('banner')).toBeVisible({ timeout: 15_000 });
@@ -84,9 +87,12 @@ test('(b) approval-queue: policy=ask tool call triggers approval modal and Appro
   await input.fill('Use the exec tool RIGHT NOW with command="echo approval-test". Do not do anything else.');
   await input.press('Enter');
 
-  // Wait for the approval modal (data-testid="approval-modal" from ExecApprovalBlock)
+  // Wait for the approval modal (data-testid="approval-modal" from ExecApprovalBlock).
+  // 60s timeout: under real-LLM determinism and prolonged suite load
+  // (~10 min wall-clock by the time this test runs), OpenRouter sometimes
+  // takes 30-50s to emit the tool call. The fast-path is still ~5s alone.
   const approvalModal = page.getByTestId('approval-modal');
-  await expect(approvalModal).toBeVisible({ timeout: 30_000 });
+  await expect(approvalModal).toBeVisible({ timeout: 60_000 });
 
   // Click Allow (the approval button in ExecApprovalBlock)
   const allowBtn = approvalModal.getByRole('button', { name: /allow/i }).first();
