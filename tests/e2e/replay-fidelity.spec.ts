@@ -703,19 +703,75 @@ test(
 
     // FR-I-014 (I2): the chat input MUST be disabled during replay (isReplaying=true).
     // The textarea is disabled={!isConnected || isStreaming || isUploading || isReplaying}.
-    // isReplaying flips on at attachToSession (sessionBtn click handler), and off when the
-    // 'done' frame arrives from the gateway (with a MIN_REPLAY_DISPLAY_MS=750ms minimum
-    // visible window enforced in src/store/chat.ts).
+    // isReplaying flips on at attachToSession (sessionBtn click handler), and off when
+    // the 'done' frame arrives from the gateway (with a MIN_REPLAY_DISPLAY_MS=750ms
+    // minimum visible window enforced in src/store/chat.ts).
     //
-    // We must observe the disabled window WHILE click() is still resolving — Playwright's
-    // default click() waits for networkidle, which can outlast the 750ms disabled window
-    // on a small seeded transcript. Promise.all races the assertion in parallel with the
-    // click so the polling loop catches the transient disabled state regardless of how
-    // long click()'s post-actions take to settle.
-    await Promise.all([
-      sessionBtn.click(),
-      expect(input).toBeDisabled({ timeout: 5_000 }),
-    ])
+    // OBSERVATION STRATEGY: install a client-side MutationObserver BEFORE the click
+    // and capture every disabled/placeholder transition. The earlier `Promise.all`
+    // approach raced `expect.toBeDisabled` against `click()`, but Playwright's
+    // assertion-polling cadence (~100ms minimum, with backoff) and click()'s
+    // post-action networkidle wait conspire to miss the 750ms disabled window
+    // when the seeded transcript is small. The MutationObserver runs inside the
+    // browser on every attribute mutation, so it cannot miss the transition no
+    // matter how short the window is.
+    await page.evaluate(() => {
+      const w = window as unknown as { __replayDisabledTrace?: Array<{ t: number; disabled: boolean; placeholder: string }> }
+      w.__replayDisabledTrace = []
+      const observe = (ta: HTMLTextAreaElement): void => {
+        const obs = new MutationObserver(() => {
+          w.__replayDisabledTrace!.push({
+            t: performance.now(),
+            disabled: ta.disabled,
+            placeholder: ta.placeholder,
+          })
+        })
+        obs.observe(ta, { attributes: true, attributeFilter: ['disabled', 'placeholder'] })
+        // Capture the initial state too.
+        w.__replayDisabledTrace!.push({
+          t: performance.now(),
+          disabled: ta.disabled,
+          placeholder: ta.placeholder,
+        })
+      }
+      // Observe the current textarea AND any future ones (React may remount on session switch).
+      const current = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message input"]')
+      if (current) observe(current)
+      const bodyObs = new MutationObserver((mutations) => {
+        for (const m of mutations) {
+          for (const node of m.addedNodes) {
+            if (!(node instanceof HTMLElement)) continue
+            const found = node.matches?.('textarea[aria-label="Message input"]')
+              ? (node as HTMLTextAreaElement)
+              : node.querySelector?.<HTMLTextAreaElement>('textarea[aria-label="Message input"]')
+            if (found) observe(found)
+          }
+        }
+      })
+      bodyObs.observe(document.body, { subtree: true, childList: true })
+    })
+
+    await sessionBtn.click()
+
+    // Poll the observer trace from the test side. We accept anything that proves
+    // the disabled state was true at least once between click and done. expect.poll
+    // gives us up to 10s of patient waiting in case the SPA boots slowly under load.
+    await expect
+      .poll(
+        async () => {
+          return page.evaluate(() => {
+            const w = window as unknown as { __replayDisabledTrace?: Array<{ disabled: boolean }> }
+            return (w.__replayDisabledTrace ?? []).some((entry) => entry.disabled === true)
+          })
+        },
+        {
+          timeout: 10_000,
+          message:
+            'expected textarea to be disabled at least once during replay (FR-I-014). ' +
+            'The trace recorded only disabled=false events — isReplaying never reached the composer.',
+        },
+      )
+      .toBe(true)
 
     // After replay completes (done frame arrives, isReplaying → false), input must be enabled.
     // Traces to: Scenario 10 When "replay's done frame arrives → send button becomes enabled".

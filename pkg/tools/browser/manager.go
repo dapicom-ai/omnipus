@@ -21,6 +21,23 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/security"
 )
 
+// DebugPort is the fixed loopback TCP port the managed Chromium binds its
+// DevTools WebSocket to. Pinning this lets the gateway's Landlock
+// NET_CONNECT_TCP allow-list include it (see pkg/gateway/sandbox_apply.go).
+// Without a fixed port, chromedp defaults to remote-debugging-port=0,
+// Chrome picks a random ephemeral port, and the gateway's connect-to-
+// chromedp dial returns EACCES.
+//
+// Exposed as a package constant (not a config knob) so the sandbox layer
+// and the browser layer agree without a circular import. Operators who
+// need a different port today can recompile; a config knob is a v0.3
+// follow-up if a real conflict surfaces.
+const DebugPort = 9223
+
+// browserDebugPort is the string form passed to chromedp.Flag (which takes
+// the flag value as a string). Kept private so callers use DebugPort.
+const browserDebugPort = "9223"
+
 // BrowserConfig holds browser automation configuration.
 // Mapped from config.json: tools.browser.*
 type BrowserConfig struct {
@@ -182,6 +199,18 @@ func (m *BrowserManager) ensureStarted() error {
 		// "Permission denied" spam during browser startup.
 		chromedp.Flag("disable-crash-reporter", true),
 		chromedp.Flag("disable-breakpad", true),
+		// Pin the DevTools WebSocket to a fixed loopback port so the
+		// gateway's Landlock NET_CONNECT_TCP allow-list can include it
+		// (v0.1 fix for "browser.navigate: dial tcp 127.0.0.1:<random>:
+		// connect: permission denied"). Without this, chromedp picks an
+		// ephemeral port and Landlock blocks the dial because only
+		// {53, 80, 443} + dev-server ports are allow-listed by default.
+		// 9223 was chosen to sit just above Chrome's traditional 9222
+		// debug port (which we avoid to reduce collision risk with
+		// operator workstations that may already have a remote-debugged
+		// Chrome listening on 9222). pkg/gateway/sandbox_apply.go appends
+		// this port to ConnectPortRules when the browser tool is enabled.
+		chromedp.Flag("remote-debugging-port", browserDebugPort),
 		chromedp.Env(
 			"HOME="+chromeHome,
 			"XDG_CONFIG_HOME="+filepath.Join(chromeHome, "config"),

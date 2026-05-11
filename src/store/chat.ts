@@ -188,6 +188,12 @@ const rateLimitClearTimers: Record<string, ReturnType<typeof setTimeout>> = {}
 // Tracks when isReplaying was most recently set to true per session, keyed by session_id.
 const replayingStartedAt: Record<string, number> = {}
 
+// Pending setTimeout handles that will flip isReplaying=false after
+// MIN_REPLAY_DISPLAY_MS - elapsed. Tracked per-session so a new
+// setReplaying(true) (e.g. re-attach to the same session) can cancel the
+// stale timer before it stomps the freshly-started replay window.
+const replayingClearTimers: Record<string, ReturnType<typeof setTimeout>> = {}
+
 // W1-7: diagnostic flag per session — true when at least one replay_message was processed.
 const sawReplayMessageThisTurn: Record<string, boolean> = {}
 
@@ -294,10 +300,19 @@ export const useChatStore = create<ChatStore>((set, get) => {
       const sid = getActiveSid()
       if (!sid) return
       if (value) {
-        // Only reset the window start on a false→true transition.
-        const current = get().sessionsById[sid]
-        if (!current?.isReplaying) {
-          replayingStartedAt[sid] = Date.now()
+        // Always reset the window start on setReplaying(true), even when
+        // isReplaying is already true. A second attach to the same session
+        // (e.g. user re-clicks the session button, or the SPA re-fires attach
+        // after a session_started frame) must give a fresh MIN_REPLAY_DISPLAY_MS
+        // window — otherwise a stale `replayingStartedAt` from minutes earlier
+        // makes the elapsed-time computation in the false-path collapse the
+        // disabled window to zero on the next 'done' frame.
+        replayingStartedAt[sid] = Date.now()
+        // Cancel any pending false-flip timer scheduled by a previous attach;
+        // letting it fire would clobber the freshly-started replay window.
+        if (replayingClearTimers[sid]) {
+          clearTimeout(replayingClearTimers[sid])
+          delete replayingClearTimers[sid]
         }
         withBucket(sid, () => ({ isReplaying: true }))
         return
@@ -322,7 +337,15 @@ export const useChatStore = create<ChatStore>((set, get) => {
       if (elapsed >= MIN_REPLAY_DISPLAY_MS) {
         withBucket(sid, () => ({ isReplaying: false }))
       } else {
-        setTimeout(() => withBucket(sid, () => ({ isReplaying: false })), MIN_REPLAY_DISPLAY_MS - elapsed)
+        // Cancel any previous pending timer before scheduling a new one so a
+        // burst of `done` frames doesn't queue multiple stale clears.
+        if (replayingClearTimers[sid]) {
+          clearTimeout(replayingClearTimers[sid])
+        }
+        replayingClearTimers[sid] = setTimeout(() => {
+          delete replayingClearTimers[sid]
+          withBucket(sid, () => ({ isReplaying: false }))
+        }, MIN_REPLAY_DISPLAY_MS - elapsed)
       }
     },
 
@@ -687,6 +710,13 @@ export const useChatStore = create<ChatStore>((set, get) => {
       }
       sawReplayMessageThisTurn[sessionId] = false
       replayingStartedAt[sessionId] = Date.now()
+      // Re-attach refreshes the replay window — cancel any stale
+      // setReplaying(false) timer left over from the previous attach so it
+      // can't fire mid-window and prematurely re-enable the composer.
+      if (replayingClearTimers[sessionId]) {
+        clearTimeout(replayingClearTimers[sessionId])
+        delete replayingClearTimers[sessionId]
+      }
       withBucket(sessionId, () => ({
         ...emptySessionState(),
         isReplaying: true,
@@ -1023,7 +1053,13 @@ export const useChatStore = create<ChatStore>((set, get) => {
             if (wasReplaying) {
               sawReplayMessageThisTurn[sid] = false
               if (!clearReplayingNow) {
-                setTimeout(() => withBucket(sid, () => ({ isReplaying: false })), MIN_REPLAY_DISPLAY_MS - elapsed)
+                if (replayingClearTimers[sid]) {
+                  clearTimeout(replayingClearTimers[sid])
+                }
+                replayingClearTimers[sid] = setTimeout(() => {
+                  delete replayingClearTimers[sid]
+                  withBucket(sid, () => ({ isReplaying: false }))
+                }, MIN_REPLAY_DISPLAY_MS - elapsed)
               }
             }
             withBucket(sid, (b) => {

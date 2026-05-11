@@ -1158,8 +1158,19 @@ func sendWSFrame(conn *websocket.Conn, frame wsServerFrame) {
 // orphanWatchdogTimeout is the duration the forwarder waits after a parent turn ends
 // before synthesizing a subagent_end{status:"interrupted"} for any still-open span.
 // Configurable so tests can override to a short value (e.g., 200ms) without sleeping.
-// Production default is 5 seconds (FR-H-004 / Scenario 7).
-var orphanWatchdogTimeout = 5 * time.Second
+//
+// Bumped 2026-05-11 from 5s → 60s. The old value killed legitimate subagents:
+// a sub-turn that runs 3 shell calls back-to-back through a real LLM regularly
+// takes 6–12s of wall-clock (1–4s per turn iteration × N tool calls), and Mia's
+// root turn ends within ~2s of dispatching `spawn`. With a 5s watchdog the
+// subagent was synthesizing `status:"interrupted"` after the second shell call
+// even though the agent loop was still executing — closes the cascade of
+// suite-load flakes in subagent.spec.ts (a)–(e) and handoff.spec.ts (b).
+//
+// 60s is a conservative upper bound for a single sub-turn; the parent-loop
+// `subturn.default_timeout_minutes` config knob already enforces a hard
+// runtime cap higher up the stack for legitimately stuck sub-turns.
+var orphanWatchdogTimeout = 60 * time.Second
 
 // openSpanEntry tracks an in-flight subagent span in the event forwarder.
 type openSpanEntry struct {

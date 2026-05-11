@@ -935,39 +935,50 @@ describe('ChatStore_isReplaying_flag', () => {
     expect(useChatStore.getState().isReplaying).toBe(false)
   })
 
-  // W2-6(c): setReplaying(true) when already true does NOT reset replayingStartedAt.
-  it('setReplaying(true) when already true does not extend the minimum window', async () => {
-    // BDD: Given setReplaying(true) was called at T=0, starting the 750ms minimum window
-    // BDD: When setReplaying(true) is called again at T=700ms (before window ends)
-    // BDD: Then the window does NOT extend — done frame at T=710ms still fires within 750ms of T=0
-    // Traces to: temporal-puzzling-melody.md W2-6(c)
-    // W2-6(c): MIN_REPLAY_DISPLAY_MS raised from 250ms → 750ms (FR-I-014 timing fix).
+  // W2-6(c): setReplaying(true) resets the minimum window AND cancels any pending
+  // clear-timer from the previous attach.
+  //
+  // Updated 2026-05-11: the previous behaviour (no-reset on re-true) made the
+  // window observable for as little as ~0ms if a stale `replayingStartedAt`
+  // from minutes earlier was still in the map (e.g. a session reopened in the
+  // same SPA session). FR-I-014 requires a guaranteed visible window on every
+  // attach; the only correct policy is to reset the window each time replay
+  // is re-armed and cancel any in-flight false-flip timer that would otherwise
+  // fire mid-window and prematurely re-enable the composer.
+  it('setReplaying(true) when already true resets the minimum window and cancels stale timers', async () => {
+    // BDD: Given setReplaying(true) was called at T=0, starting the 750ms window
+    // BDD: When setReplaying(true) is called again at T=700ms
+    // BDD: Then the window restarts — isReplaying stays true until at least T=700+750=1450ms
 
     act(() => {
       useChatStore.getState().setReplaying(true)
     })
     expect(useChatStore.getState().isReplaying).toBe(true)
 
-    // Wait 700ms (still inside the 750ms window from the first call)
+    // Wait 700ms (still inside the 750ms window from the first call).
     await new Promise((r) => setTimeout(r, 700))
 
-    // Call setReplaying(true) again — if it reset replayingStartedAt, the window would
-    // extend by another 750ms. The test verifies it does NOT by checking that
-    // isReplaying flips to false within ~100ms after this second call (total ~800ms > 750ms from T=0).
+    // Second setReplaying(true) — must reset the window.
     act(() => {
       useChatStore.getState().setReplaying(true)
     })
     expect(useChatStore.getState().isReplaying).toBe(true)
 
-    // Issue done to schedule the clear.
+    // Done frame schedules a clear. With the new behaviour, replayingStartedAt
+    // was just reset to ~T=700, so elapsed=0, and the clear is scheduled
+    // 750ms from now (~T=1450ms from the original T=0).
     act(() => {
       useChatStore.getState().handleFrame({ type: 'done', session_id: TEST_SESSION_ID })
     })
 
-    // After another 100ms (total ~800ms from first call), should have cleared.
-    // If the window was reset on the second setReplaying(true), it would still be true here.
+    // 100ms after the second setReplaying(true) — well inside the fresh 750ms window.
+    // With the old (broken) behaviour, isReplaying would already be false because the
+    // stale start time put us past 750ms. With the new behaviour, it stays true.
     await new Promise((r) => setTimeout(r, 100))
-    // isReplaying should be false by now (750ms from original T=0 has elapsed).
+    expect(useChatStore.getState().isReplaying).toBe(true)
+
+    // After the fresh window expires (~750ms after the second setReplaying), it clears.
+    await new Promise((r) => setTimeout(r, 700))
     expect(useChatStore.getState().isReplaying).toBe(false)
   })
 })
