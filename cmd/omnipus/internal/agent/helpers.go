@@ -32,7 +32,7 @@ func agentCmd(message, sessionKey, model string, debug bool) error {
 
 	if debug {
 		logger.SetLevel(logger.DEBUG)
-		fmt.Println("🔍 Debug mode enabled")
+		fmt.Println("Debug mode enabled")
 	}
 
 	if model != "" {
@@ -68,16 +68,24 @@ func agentCmd(message, sessionKey, model string, debug bool) error {
 		})
 
 	if message != "" {
-		ctx := context.Background()
+		// Non-interactive: attach the raw-stdin cancel watcher so pressing
+		// Escape twice during inference cancels the turn (FR-3, FR-31a).
+		ctx, cancel := context.WithCancel(context.Background())
+		stopWatcher, _ := startRawStdinWatcher(ctx, cancel)
 		response, err := agentLoop.ProcessDirect(ctx, message, sessionKey)
+		stopWatcher()
 		if err != nil {
+			if ctx.Err() != nil {
+				fmt.Fprintln(os.Stderr, "(interrupted)")
+				return nil
+			}
 			return fmt.Errorf("error processing message: %w", err)
 		}
 		fmt.Printf("\n%s %s\n", internal.Logo, response)
 		return nil
 	}
 
-	fmt.Printf("%s Interactive mode (Ctrl+C to exit)\n\n", internal.Logo)
+	fmt.Printf("%s Interactive mode (Ctrl+C to exit, Esc Esc to cancel inference)\n\n", internal.Logo)
 	interactiveMode(agentLoop, sessionKey)
 
 	return nil
@@ -102,6 +110,7 @@ func interactiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
 	defer rl.Close()
 
 	for {
+		// readline owns stdin here. No watcher is active.
 		line, err := rl.Readline()
 		if err != nil {
 			if err == readline.ErrInterrupt || err == io.EOF {
@@ -122,10 +131,29 @@ func interactiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
 			return
 		}
 
-		ctx := context.Background()
-		response, err := agentLoop.ProcessDirect(ctx, input, sessionKey)
-		if err != nil {
-			fmt.Printf("Error: %v\n", err)
+		// readline has returned; we now own stdin. Start the raw-stdin watcher
+		// for the duration of this ProcessDirect call (FR-3, FR-31a, EC-12).
+		ctx, cancel := context.WithCancel(context.Background())
+		stopWatcher, watcherActive := startRawStdinWatcher(ctx, cancel)
+
+		response, procesErr := agentLoop.ProcessDirect(ctx, input, sessionKey)
+
+		// Transfer stdin ownership back to readline: stop the watcher and
+		// restore canonical mode before calling rl.Readline() again.
+		stopWatcher()
+		cancel() // ensure ctx is always cancelled so the goroutine exits
+
+		if procesErr != nil {
+			if ctx.Err() != nil {
+				// Cancelled by double-Escape.
+				fmt.Println("\n(interrupted)")
+				if watcherActive {
+					// Print a blank line so the next readline prompt is clean.
+					fmt.Println()
+				}
+				continue
+			}
+			fmt.Printf("Error: %v\n", procesErr)
 			continue
 		}
 
@@ -157,6 +185,9 @@ func simpleInteractiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
 			return
 		}
 
+		// Simple mode: no raw-stdin watcher (bufio.Reader already owns stdin
+		// at the level below; adding a concurrent raw reader would race). The
+		// user falls back to Ctrl+C to cancel.
 		ctx := context.Background()
 		response, err := agentLoop.ProcessDirect(ctx, input, sessionKey)
 		if err != nil {
