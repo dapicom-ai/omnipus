@@ -12,8 +12,10 @@ import (
 // between pkg/commands and pkg/agent.
 type AgentLoopInterface interface {
 	// InterruptSession requests a graceful interrupt for the turn associated with
-	// the given session ID, attaching hint to the audit trail.
-	InterruptSession(sessionID, hint string) error
+	// the given session ID, attaching hint to the audit trail. Returns the list
+	// of cancelled turn IDs (parent + sub-turns) which the gateway uses for the
+	// turn_cancelled audit entry; the commands runtime discards it.
+	InterruptSession(sessionID, hint string) ([]string, error)
 	// InterruptByChannelChat requests a graceful interrupt for all active turns
 	// whose channel and chatID match the supplied values. Used by Tier B
 	// (text-parsing) channels where inbound messages carry no explicit SessionID.
@@ -59,7 +61,7 @@ func (rt *Runtime) CancelActiveTurn(ctx context.Context, sessionID string, cance
 		return nil
 	}
 	hint := fmt.Sprintf("cancelled by %s via %s", canceller.UserID, canceller.Channel)
-	err := rt.agentLoop.InterruptSession(sessionID, hint)
+	_, err := rt.agentLoop.InterruptSession(sessionID, hint)
 	// "no active turn" is not an error at the commands layer — it surfaces to the
 	// caller as a no-op cancel attempt (audit is the responsibility of the
 	// gateway cancel handler wave).

@@ -54,11 +54,11 @@ type stubAgentLoop struct {
 	callCount       int
 }
 
-func (s *stubAgentLoop) InterruptSession(sessionID, hint string) error {
+func (s *stubAgentLoop) InterruptSession(sessionID, hint string) ([]string, error) {
 	s.calledSessionID = sessionID
 	s.calledHint = hint
 	s.callCount++
-	return nil
+	return nil, nil
 }
 
 func (s *stubAgentLoop) InterruptByChannelChat(channel, chatID, hint string) error {

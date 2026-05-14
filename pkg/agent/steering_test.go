@@ -1673,7 +1673,7 @@ func TestInterruptSession_CascadeToSubTurns(t *testing.T) {
 	_ = ts2
 	_ = ts3
 
-	if err := al.InterruptSession(sid, "wrap up"); err != nil {
+	if _, err := al.InterruptSession(sid, "wrap up"); err != nil {
 		t.Fatalf("InterruptSession returned unexpected error: %v", err)
 	}
 
@@ -1717,7 +1717,7 @@ func TestInterruptSession_NoActiveTurnIsAttemptOnly(t *testing.T) {
 	defer cleanup()
 
 	// activeTurnStates is empty by construction.
-	err := al.InterruptSession("nonexistent-session", "hint")
+	_, err := al.InterruptSession("nonexistent-session", "hint")
 	if err != nil {
 		t.Fatalf("InterruptSession on empty activeTurnStates returned error: %v (want nil)", err)
 	}
@@ -1742,7 +1742,7 @@ func TestInterruptSessionHard_CascadesAcrossSession(t *testing.T) {
 	_, pc2 := stubTurnStateForCancel(t, al, "hard-sub1", sid)
 	_, pc3 := stubTurnStateForCancel(t, al, "hard-sub2", sid)
 
-	if err := al.InterruptSessionHard(sid, "hard abort"); err != nil {
+	if _, err := al.InterruptSessionHard(sid, "hard abort"); err != nil {
 		t.Fatalf("InterruptSessionHard returned unexpected error: %v", err)
 	}
 
