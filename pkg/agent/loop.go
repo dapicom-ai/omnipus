@@ -5937,6 +5937,16 @@ func (al *AgentLoop) buildCommandsRuntime(agent *AgentInstance, opts *processOpt
 			return agent.Sessions.Save(opts.SessionKey)
 		}
 	}
+
+	// Inject the session ID accessor so /cancel can target the current session.
+	if opts != nil {
+		sessionKey := opts.SessionKey
+		rt.SessionID = func() string { return sessionKey }
+	}
+
+	// Inject the agent loop so CancelActiveTurn can call InterruptSession.
+	rt = rt.WithAgentLoop(al)
+
 	return rt
 }
 
