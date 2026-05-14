@@ -426,15 +426,17 @@ func TestHandleCancel_AbandonedAfterHardTimeout(t *testing.T) {
 	hardAt := time.Now()
 
 	// Simulate Phase C timer (5s in production; shortened for test).
+	// Order: emit audit BEFORE signaling the channel so the test reads a
+	// flushed audit log when it advances past the select.
 	time.AfterFunc(10*time.Millisecond, func() {
 		if fakeTurn.IsAlive() {
 			fakeTurn.MarkAbandoned()
-			abandonedCh <- struct{}{}
 			audit.Emit(context.Background(), logger, audit.EventTurnCancelStuck, audit.SeverityWarn, map[string]any{
 				"session_id":                      "sess-t7",
 				"turn_id":                         fakeTurn.TurnID(),
 				"goroutine_age_after_hard_cancel": time.Since(hardAt).String(),
 			})
+			abandonedCh <- struct{}{}
 		}
 	})
 
