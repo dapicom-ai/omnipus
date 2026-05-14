@@ -765,6 +765,10 @@ func (c *MatrixChannel) handleMessageEvent(ctx context.Context, evt *event.Event
 		metadata["reply_to_msg_id"] = replyTo.String()
 	}
 
+	if channels.DispatchCancelIfRecognized(c.baseContext(), content, "matrix", roomID, senderID, c.GetCancelInterceptor(), channels.CancelSendFn(c)) {
+		return
+	}
+
 	c.HandleMessage(
 		c.baseContext(),
 		bus.Peer{Kind: peerKind, ID: peerID},

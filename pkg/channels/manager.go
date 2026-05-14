@@ -104,16 +104,17 @@ type Manager struct {
 	httpServer   *http.Server
 	// previewMux and previewServer serve only /serve/ and /dev/ routes on the
 	// preview listener (FR-001, FR-005). Nil when preview is disabled.
-	previewMux     *dynamicServeMux
-	previewServer  *http.Server
-	mu             sync.RWMutex
-	placeholders   sync.Map           // "channel:chatID" → placeholderID (string)
-	typingStops    sync.Map           // "channel:chatID" → func()
-	reactionUndos  sync.Map           // "channel:chatID" → reactionEntry
-	streamActive   sync.Map           // "channel:chatID" → true (set when streamer.Finalize sent the message)
-	channelHashes  map[string]string  // channel name → config hash
-	streamFallback bus.StreamDelegate // optional fallback for channels not in m.channels (e.g., webchat WebSocket)
-	failedChannels []ChannelInitError // enabled channels that failed to start
+	previewMux        *dynamicServeMux
+	previewServer     *http.Server
+	mu                sync.RWMutex
+	placeholders      sync.Map           // "channel:chatID" → placeholderID (string)
+	typingStops       sync.Map           // "channel:chatID" → func()
+	reactionUndos     sync.Map           // "channel:chatID" → reactionEntry
+	streamActive      sync.Map           // "channel:chatID" → true (set when streamer.Finalize sent the message)
+	channelHashes     map[string]string  // channel name → config hash
+	streamFallback    bus.StreamDelegate // optional fallback for channels not in m.channels (e.g., webchat WebSocket)
+	failedChannels    []ChannelInitError // enabled channels that failed to start
+	cancelInterceptor CancelInterceptor  // set after construction via SetCancelInterceptor; may be nil
 }
 
 type asyncTask struct {
@@ -315,6 +316,22 @@ func (m *Manager) SetStreamFallback(d bus.StreamDelegate) {
 	m.streamFallback = d
 }
 
+// SetCancelInterceptor registers the CancelInterceptor (typically the agent
+// loop) so that Tier B text-parsing channels can fire /cancel. Must be called
+// after the Manager is constructed and before channels receive messages.
+// It is safe to call multiple times (last write wins).
+func (m *Manager) SetCancelInterceptor(ci CancelInterceptor) {
+	m.mu.Lock()
+	m.cancelInterceptor = ci
+	// Propagate to all channels already initialised.
+	for _, ch := range m.channels {
+		if setter, ok := ch.(interface{ SetCancelInterceptor(CancelInterceptor) }); ok {
+			setter.SetCancelInterceptor(ci)
+		}
+	}
+	m.mu.Unlock()
+}
+
 // GetStreamer implements bus.StreamDelegate.
 // It checks if the named channel supports streaming and returns a Streamer.
 // Falls back to streamFallback for channels not in the Manager (e.g., webchat).
@@ -402,6 +419,13 @@ func (m *Manager) initChannel(name, displayName string) error {
 	// Inject owner reference so BaseChannel.HandleMessage can auto-trigger typing/reaction
 	if setter, ok := ch.(interface{ SetOwner(ch Channel) }); ok {
 		setter.SetOwner(ch)
+	}
+	// Inject CancelInterceptor if one has been registered (may be nil at init time;
+	// SetCancelInterceptor propagates to all channels when called later).
+	if m.cancelInterceptor != nil {
+		if setter, ok := ch.(interface{ SetCancelInterceptor(CancelInterceptor) }); ok {
+			setter.SetCancelInterceptor(m.cancelInterceptor)
+		}
 	}
 	m.channels[name] = ch
 	logger.InfoCF("channels", "Channel enabled successfully", map[string]any{

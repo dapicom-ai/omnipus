@@ -61,6 +61,10 @@ func (s *stubAgentLoop) InterruptSession(sessionID, hint string) error {
 	return nil
 }
 
+func (s *stubAgentLoop) InterruptByChannelChat(channel, chatID, hint string) error {
+	return nil
+}
+
 // TestCancelHandler_CallsInterruptSession verifies that the /cancel handler
 // invokes InterruptSession on the agent loop with the correct session ID and a
 // hint that contains the canceller identity (spec FR-27, FR-1).

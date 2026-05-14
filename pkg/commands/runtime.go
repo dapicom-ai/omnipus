@@ -14,6 +14,10 @@ type AgentLoopInterface interface {
 	// InterruptSession requests a graceful interrupt for the turn associated with
 	// the given session ID, attaching hint to the audit trail.
 	InterruptSession(sessionID, hint string) error
+	// InterruptByChannelChat requests a graceful interrupt for all active turns
+	// whose channel and chatID match the supplied values. Used by Tier B
+	// (text-parsing) channels where inbound messages carry no explicit SessionID.
+	InterruptByChannelChat(channel, chatID, hint string) error
 }
 
 // Canceller identifies who/what issued a cancel — populated for audit attribution.

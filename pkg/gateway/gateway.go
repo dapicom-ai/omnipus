@@ -1006,6 +1006,10 @@ func setupAndStartServices(
 
 	agentLoop.SetChannelManager(runningServices.ChannelManager)
 	agentLoop.SetMediaStore(runningServices.MediaStore)
+	// Wire the agent loop as the CancelInterceptor so Tier B channels can fire
+	// /cancel via text-parsing (FR-2). Must happen after SetChannelManager so
+	// the Manager already has its channels map populated.
+	runningServices.ChannelManager.SetCancelInterceptor(agentLoop)
 
 	if transcriber := voice.DetectTranscriber(cfg, runningServices.bundle); transcriber != nil {
 		agentLoop.SetTranscriber(transcriber)
@@ -1557,6 +1561,7 @@ func restartServices(
 	al.SetMediaStore(runningServices.MediaStore)
 
 	al.SetChannelManager(runningServices.ChannelManager)
+	runningServices.ChannelManager.SetCancelInterceptor(al)
 
 	if err = runningServices.ChannelManager.Reload(context.Background(), cfg, runningServices.bundle); err != nil {
 		return fmt.Errorf("error reload channels: %w", err)

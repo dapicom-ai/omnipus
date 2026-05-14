@@ -505,6 +505,64 @@ func (al *AgentLoop) InterruptHard() error {
 	return nil
 }
 
+// InterruptByChannelChat gracefully cancels all active turns whose channel and
+// chatID match the supplied values. This is the correct cancellation path for
+// Tier B (text-parsing) channels: inbound messages from those channels carry no
+// explicit SessionID so InterruptSession would match nothing. Instead we scan
+// activeTurnStates by ts.channel + ts.chatID which ARE always populated.
+//
+// Returns nil whether or not any matching turn was found — "no active turn" is
+// a valid no-op. Returns a non-nil error only when channel or chatID is empty.
+func (al *AgentLoop) InterruptByChannelChat(channel, chatID, hint string) error {
+	if channel == "" || chatID == "" {
+		return fmt.Errorf("InterruptByChannelChat: channel and chatID must be non-empty")
+	}
+
+	var matches []*turnState
+	al.activeTurnStates.Range(func(_, value any) bool {
+		ts := value.(*turnState)
+		ts.mu.RLock()
+		ch := ts.channel
+		cid := ts.chatID
+		ts.mu.RUnlock()
+		if ch == channel && cid == chatID {
+			matches = append(matches, ts)
+		}
+		return true
+	})
+
+	if len(matches) == 0 {
+		return nil
+	}
+
+	var wg sync.WaitGroup
+	for _, ts := range matches {
+		ts := ts
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ts.mu.Lock()
+			pc := ts.providerCancel
+			ts.mu.Unlock()
+			if pc != nil {
+				pc()
+			}
+			if ts.requestGracefulInterrupt(hint) {
+				al.emitEvent(
+					EventKindInterruptReceived,
+					ts.eventMeta("InterruptByChannelChat", "turn.interrupt.received"),
+					InterruptReceivedPayload{
+						Kind:    InterruptKindGraceful,
+						HintLen: len(hint),
+					},
+				)
+			}
+		}()
+	}
+	wg.Wait()
+	return nil
+}
+
 // ====================== SubTurn Result Polling ======================
 
 // dequeuePendingSubTurnResults polls the SubTurn result channel for the given
