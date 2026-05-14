@@ -35,6 +35,9 @@ const (
 	EntryTypeSystem EntryType = "system"
 	// EntryTypeToolCall marks a tool invocation entry.
 	EntryTypeToolCall EntryType = "tool_call"
+	// EntryTypeTurnCancelled marks the JSONL entry written when a turn is cancelled
+	// mid-stream. Written once per fired cancel to transcript.jsonl (FR-15).
+	EntryTypeTurnCancelled EntryType = "turn_cancelled"
 )
 
 // SessionStatus classifies the lifecycle state of a session.
@@ -126,6 +129,11 @@ type TranscriptEntry struct {
 
 	// For compaction entries.
 	MessagesCompacted int `json:"messages_compacted,omitempty"`
+
+	// Truncated is set to true on the last assistant entry when a turn is
+	// cancelled mid-stream. Only serialised when true (FR-14). Only written to
+	// transcript.jsonl; context.jsonl is never mutated (FR-14a).
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // Attachment represents a file attached to a message.

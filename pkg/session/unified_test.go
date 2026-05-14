@@ -304,3 +304,142 @@ func TestDeleteSession_PersistenceCheck(t *testing.T) {
 	_, err = store.GetMeta(meta.ID)
 	assert.Error(t, err, "GetMeta must return error after session is deleted")
 }
+
+// --- MarkLastEntryTruncated tests ---
+
+// TestMarkLastEntryTruncated_FlagsLastAssistantEntry verifies the core invariant of FR-14:
+// after calling MarkLastEntryTruncated, the last assistant transcript entry has
+// Truncated==true while all other fields are preserved unchanged.
+//
+// BDD: Given a session with one assistant transcript entry,
+// When MarkLastEntryTruncated is called with that session's ID,
+// Then ReadTranscript returns the entry with Truncated==true and all other fields intact.
+//
+// Traces to: pkg/session/unified.go MarkLastEntryTruncated (FR-14)
+func TestMarkLastEntryTruncated_FlagsLastAssistantEntry(t *testing.T) {
+	store := newTestStore(t)
+
+	meta, err := store.NewSession(SessionTypeChat, "", "test-agent")
+	require.NoError(t, err)
+	sessionID := meta.ID
+
+	// Append an assistant entry.
+	entry := TranscriptEntry{
+		ID:      "entry-001",
+		Type:    EntryTypeMessage,
+		Role:    "assistant",
+		Content: "Hello from the assistant",
+		AgentID: "test-agent",
+	}
+	require.NoError(t, store.AppendTranscript(sessionID, entry))
+
+	// Call MarkLastEntryTruncated.
+	require.NoError(t, store.MarkLastEntryTruncated(sessionID))
+
+	// Read back and assert Truncated==true and other fields preserved.
+	entries, err := store.ReadTranscript(sessionID)
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "must have exactly one entry")
+
+	got := entries[0]
+	assert.True(t, got.Truncated, "Truncated must be true after MarkLastEntryTruncated")
+	assert.Equal(t, "entry-001", got.ID, "ID must be preserved")
+	assert.Equal(t, EntryTypeMessage, got.Type, "Type must be preserved")
+	assert.Equal(t, "assistant", got.Role, "Role must be preserved")
+	assert.Equal(t, "Hello from the assistant", got.Content, "Content must be preserved")
+	assert.Equal(t, "test-agent", got.AgentID, "AgentID must be preserved")
+}
+
+// TestMarkLastEntryTruncated_NoAssistantEntryIsNoOp verifies that calling
+// MarkLastEntryTruncated on a session with no assistant entries (only user
+// entries or an empty transcript) is a no-op — nil error, no file mutation.
+//
+// BDD: Given a session with only user transcript entries,
+// When MarkLastEntryTruncated is called,
+// Then nil is returned and entries are unchanged (Truncated remains false).
+//
+// Traces to: pkg/session/unified.go MarkLastEntryTruncated — no-assistant-entry path (FR-14)
+func TestMarkLastEntryTruncated_NoAssistantEntryIsNoOp(t *testing.T) {
+	store := newTestStore(t)
+
+	meta, err := store.NewSession(SessionTypeChat, "", "test-agent")
+	require.NoError(t, err)
+	sessionID := meta.ID
+
+	// Append a user entry (no assistant entries).
+	userEntry := TranscriptEntry{
+		ID:      "user-001",
+		Type:    EntryTypeMessage,
+		Role:    "user",
+		Content: "A user message",
+		AgentID: "test-agent",
+	}
+	require.NoError(t, store.AppendTranscript(sessionID, userEntry))
+
+	// MarkLastEntryTruncated must return nil.
+	require.NoError(t, store.MarkLastEntryTruncated(sessionID))
+
+	// Entries must be unchanged.
+	entries, err := store.ReadTranscript(sessionID)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.False(t, entries[0].Truncated, "user entry must not have Truncated set")
+
+	// Also verify the empty-transcript case (fresh session with no appended entries).
+	metaEmpty, err := store.NewSession(SessionTypeChat, "", "test-agent")
+	require.NoError(t, err)
+	require.NoError(t, store.MarkLastEntryTruncated(metaEmpty.ID),
+		"MarkLastEntryTruncated on empty transcript must be a no-op")
+}
+
+// TestMarkLastEntryTruncated_DoesNotTouchContextStore verifies the FR-14a invariant:
+// MarkLastEntryTruncated only mutates transcript.jsonl; context.jsonl is never
+// touched. This is T9's key invariant from the cancel spec.
+//
+// BDD: Given a session whose context.jsonl contains an assistant message,
+// When MarkLastEntryTruncated is called,
+// Then transcript.jsonl's last assistant entry has Truncated==true,
+// AND context.jsonl is byte-for-byte identical to before the call.
+//
+// Traces to: pkg/session/unified.go MarkLastEntryTruncated (FR-14a / T9)
+func TestMarkLastEntryTruncated_DoesNotTouchContextStore(t *testing.T) {
+	store := newTestStore(t)
+
+	meta, err := store.NewSession(SessionTypeChat, "", "test-agent")
+	require.NoError(t, err)
+	sessionID := meta.ID
+
+	// Write an assistant entry to transcript.jsonl via AppendTranscript.
+	transcriptEntry := TranscriptEntry{
+		ID:      "transcript-001",
+		Type:    EntryTypeMessage,
+		Role:    "assistant",
+		Content: "assistant partial content",
+		AgentID: "test-agent",
+	}
+	require.NoError(t, store.AppendTranscript(sessionID, transcriptEntry))
+
+	// Write a message to context.jsonl via the SessionStore interface.
+	// AddMessage appends role/content to context.jsonl through the JSONL backend.
+	store.AddMessage(sessionID, "assistant", "context store assistant content")
+
+	// Snapshot context.jsonl before the call.
+	contextPath := filepath.Join(store.BaseDir(), ".context", sessionID+".jsonl")
+	contextBefore, readErr := os.ReadFile(contextPath)
+	require.NoError(t, readErr, "context.jsonl must exist after AddMessage")
+
+	// Call MarkLastEntryTruncated.
+	require.NoError(t, store.MarkLastEntryTruncated(sessionID))
+
+	// Assert transcript.jsonl has Truncated==true on the assistant entry.
+	entries, err := store.ReadTranscript(sessionID)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.True(t, entries[0].Truncated, "transcript.jsonl assistant entry must have Truncated==true")
+
+	// Assert context.jsonl is byte-for-byte unchanged.
+	contextAfter, readErr := os.ReadFile(contextPath)
+	require.NoError(t, readErr, "context.jsonl must still be readable after MarkLastEntryTruncated")
+	assert.Equal(t, string(contextBefore), string(contextAfter),
+		"context.jsonl must not be mutated by MarkLastEntryTruncated (FR-14a / T9)")
+}

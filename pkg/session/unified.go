@@ -337,6 +337,97 @@ func (us *UnifiedStore) AppendTranscript(sessionID string, entry TranscriptEntry
 	return nil
 }
 
+// MarkLastEntryTruncated finds the last assistant transcript entry for the
+// given session in transcript.jsonl and rewrites it with truncated=true.
+// This is called by the cancel handler when a turn is cancelled mid-stream
+// to mark the partial assistant content for SPA replay rendering (FR-14).
+//
+// Acquires the same in-process mutex as AppendTranscript. Does NOT touch
+// context.jsonl (LLM history) — per FR-14a, the partial content there remains
+// untouched so the next turn's LLM context sees natural truncation.
+//
+// Returns nil if no assistant entry is found (e.g., cancel arrived before
+// any assistant content was written). Returns an error only on I/O failure.
+func (us *UnifiedStore) MarkLastEntryTruncated(sessionID string) error {
+	if err := validateSessionID(sessionID); err != nil {
+		return err
+	}
+
+	us.mu.Lock()
+	defer us.mu.Unlock()
+
+	transcriptPath := filepath.Join(us.baseDir, sessionID, "transcript.jsonl")
+	data, err := os.ReadFile(transcriptPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// No transcript at all — nothing to mark; treat as no-op.
+			return nil
+		}
+		return fmt.Errorf("unified_store: mark truncated: read transcript: %w", err)
+	}
+
+	// Split into non-empty lines and parse.
+	rawLines := bytes.Split(data, []byte{'\n'})
+	entries := make([]json.RawMessage, 0, len(rawLines))
+	for _, line := range rawLines {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		entries = append(entries, json.RawMessage(line))
+	}
+
+	if len(entries) == 0 {
+		return nil
+	}
+
+	// Walk backward to find the last assistant entry.
+	targetIdx := -1
+	for i := len(entries) - 1; i >= 0; i-- {
+		var e TranscriptEntry
+		if jsonErr := json.Unmarshal(entries[i], &e); jsonErr != nil {
+			// Skip malformed lines.
+			slog.Warn("unified_store: mark truncated: skipping malformed line", "session_id", sessionID, "index", i, "error", jsonErr)
+			continue
+		}
+		if e.Role == "assistant" {
+			targetIdx = i
+			break
+		}
+	}
+
+	if targetIdx == -1 {
+		// No assistant entry found — no-op, not an error.
+		return nil
+	}
+
+	// Unmarshal the target entry, set Truncated, re-marshal into the slot.
+	var target TranscriptEntry
+	if jsonErr := json.Unmarshal(entries[targetIdx], &target); jsonErr != nil {
+		return fmt.Errorf("unified_store: mark truncated: unmarshal target entry: %w", jsonErr)
+	}
+	target.Truncated = true
+	rewritten, jsonErr := json.Marshal(target)
+	if jsonErr != nil {
+		return fmt.Errorf("unified_store: mark truncated: marshal updated entry: %w", jsonErr)
+	}
+	entries[targetIdx] = json.RawMessage(rewritten)
+
+	// Rebuild the file contents (one JSON object per line, no trailing newline on last).
+	var buf bytes.Buffer
+	for i, line := range entries {
+		buf.Write(line)
+		if i < len(entries)-1 {
+			buf.WriteByte('\n')
+		}
+	}
+
+	if writeErr := fileutil.WriteFileAtomic(transcriptPath, buf.Bytes(), 0o600); writeErr != nil {
+		return fmt.Errorf("unified_store: mark truncated: write transcript: %w", writeErr)
+	}
+	return nil
+}
+
 // ReadTranscript returns all entries from {session-id}/transcript.jsonl.
 func (us *UnifiedStore) ReadTranscript(sessionID string) ([]TranscriptEntry, error) {
 	if err := validateSessionID(sessionID); err != nil {
