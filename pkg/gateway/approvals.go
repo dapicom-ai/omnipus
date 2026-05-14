@@ -453,6 +453,38 @@ func (r *approvalRegistryV2) pendingGaugeValue() int64 {
 	return r.pendingCount.Load()
 }
 
+// cancelAllPendingForSession transitions every pending approval that belongs to
+// the given session to denied_cancel and unblocks the waiting agent loop goroutines.
+// Returns the number of approvals cancelled.
+// Called by handleCancel when the user cancels a session (FR-12, FR-13a).
+func (r *approvalRegistryV2) cancelAllPendingForSession(sessionID, reason string) int {
+	r.mu.Lock()
+	var toCancel []approvalEntry
+	var cancelledIDs []string
+	for _, e := range r.entries {
+		if e.state == ApprovalStatePending && e.SessionID == sessionID {
+			e.state = ApprovalStateDeniedCancel
+			if e.timer != nil {
+				e.timer.Stop()
+				e.timer = nil
+			}
+			toCancel = append(toCancel, *e)
+			cancelledIDs = append(cancelledIDs, e.ApprovalID)
+			r.pendingCount.Add(-1)
+		}
+	}
+	for _, id := range cancelledIDs {
+		r.scheduleTerminalDelete(id)
+	}
+	r.mu.Unlock()
+
+	for _, snap := range toCancel {
+		snap := snap // capture loop variable
+		snap.resultCh <- ApprovalOutcome{Approved: false, Reason: reason}
+	}
+	return len(toCancel)
+}
+
 // expiresInMs returns milliseconds until this entry expires (clamped to 0).
 func (e *approvalEntry) expiresInMs() int64 {
 	remaining := time.Until(e.ExpiresAt)

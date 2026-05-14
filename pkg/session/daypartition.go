@@ -134,6 +134,14 @@ type TranscriptEntry struct {
 	// cancelled mid-stream. Only serialised when true (FR-14). Only written to
 	// transcript.jsonl; context.jsonl is never mutated (FR-14a).
 	Truncated bool `json:"truncated,omitempty"`
+
+	// Cancel-specific fields — only populated for EntryTypeTurnCancelled entries
+	// (FR-15). All are omitempty so they are invisible on other entry types.
+	TurnID               string   `json:"turn_id,omitempty"`
+	CancelledByUser      string   `json:"cancelled_by_user,omitempty"`
+	CancelledByChannel   string   `json:"cancelled_by_channel,omitempty"`
+	CancelMethod         string   `json:"cancel_method,omitempty"` // "graceful" | "hard"
+	DescendantsCancelled []string `json:"descendants_cancelled,omitempty"`
 }
 
 // Attachment represents a file attached to a message.

@@ -105,6 +105,29 @@ const (
 	// would flood the audit log if a misconfigured deployment kept calling
 	// ask-policy tools. Closes V2.B silent-failure-hunter BE CRIT-1.
 	EventApproverFallback = "approver.fallback"
+
+	// EventTurnCancelAttempt — INFO. A cancel request arrived for a session.
+	// Emitted for every attempt including duplicates and no-op cancels (FR-10,
+	// FR-11). The was_fired field indicates whether this attempt triggered an
+	// actual interrupt or was a no-op (e.g. turn already finished).
+	EventTurnCancelAttempt = "turn.cancel.attempt"
+
+	// EventTurnCancelled — INFO. A cancelled turn has fully exited and the
+	// transcript has been marked. Contains the cancel_method ("graceful" or
+	// "hard") and the list of descendant turn IDs that were also cancelled
+	// (FR-15, FR-17, FR-18).
+	EventTurnCancelled = "turn.cancelled"
+
+	// EventTurnCancelStuck — WARN. The turn goroutine did not exit within
+	// 5 seconds after the hard-abort signal was sent. The turn has been
+	// detached (abandoned=true) and the gateway will stop waiting for it
+	// (FR-19, FR-20, FR-21).
+	EventTurnCancelStuck = "turn.cancel.stuck"
+
+	// EventCancelAbusePattern — WARN. A single canceller (user + channel)
+	// sent >= 10 cancel requests within 60 seconds, suggesting runaway client
+	// logic or intentional abuse (FR-25a).
+	EventCancelAbusePattern = "cancel.abuse_pattern"
 )
 
 // ---------------------------------------------------------------------------

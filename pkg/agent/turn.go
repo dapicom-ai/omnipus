@@ -76,6 +76,13 @@ type turnState struct {
 	providerCancel        context.CancelFunc
 	turnCancel            context.CancelFunc
 
+	// Cancel dedup / callback fields (FR-10, FR-11, FR-15).
+	// cancelMu guards cancelFired to make the first-cancel-wins check atomic.
+	cancelMu       sync.Mutex
+	cancelFired    atomic.Bool // true once handleCancel has claimed this turn
+	abandoned      atomic.Bool // true once the stuck-watchdog gives up on the goroutine
+	onCancelFinish func(cancelMethod string) // called exactly once by Finish when cancelFired
+
 	restorePointHistory []providers.Message
 	restorePointSummary string
 	persistedMessages   []providers.Message
@@ -234,6 +241,68 @@ func (al *AgentLoop) GetActiveAgentIDs() []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// TurnCancelHook is the exported interface that the gateway's cancel handler
+// uses to interact with an active turn. It exposes only the methods needed
+// for the two-stage cancel timer, preventing gateway code from touching
+// unexported turnState fields.
+type TurnCancelHook interface {
+	// IsAlive returns true while the turn has not yet finished.
+	IsAlive() bool
+	// TurnID returns the turn's unique identifier.
+	TurnID() string
+	// SetOnCancelFinish registers a callback invoked by Finish() when the turn
+	// exits after a cancel. Receives "graceful" or "hard".
+	SetOnCancelFinish(fn func(cancelMethod string))
+	// ClaimCancel performs the atomic first-cancel-wins check. Returns true
+	// if this call is the first to claim the cancel (i.e. cancelFired was false
+	// and has now been set to true). Returns false if already cancelled.
+	ClaimCancel() bool
+	// MarkAbandoned sets the abandoned flag so the gateway can stop tracking
+	// a stuck goroutine (FR-19, FR-20, FR-21).
+	MarkAbandoned()
+}
+
+// Compile-time check: *turnState implements TurnCancelHook.
+var _ TurnCancelHook = (*turnState)(nil)
+
+// ClaimCancel performs the atomic first-cancel-wins check under cancelMu.
+// Returns true if this call successfully set cancelFired from false→true.
+func (ts *turnState) ClaimCancel() bool {
+	ts.cancelMu.Lock()
+	defer ts.cancelMu.Unlock()
+	if ts.cancelFired.Load() {
+		return false
+	}
+	ts.cancelFired.Store(true)
+	return true
+}
+
+// MarkAbandoned sets the abandoned flag. Called by the stuck-watchdog timer
+// when the turn goroutine has not exited 5s after the hard-abort signal (FR-21).
+func (ts *turnState) MarkAbandoned() {
+	ts.abandoned.Store(true)
+}
+
+// GetActiveTurnHookForSession returns a TurnCancelHook for the active turn
+// belonging to the given transcript session ID, or nil if none is active.
+// Used by handleCancel to atomically claim the turn and register the
+// post-cancel callback (FR-10, FR-11, FR-15).
+func (al *AgentLoop) GetActiveTurnHookForSession(sessionID string) TurnCancelHook {
+	var found *turnState
+	al.activeTurnStates.Range(func(_, value any) bool {
+		ts := value.(*turnState)
+		if ts.transcriptSessionID == sessionID {
+			found = ts
+			return false
+		}
+		return true
+	})
+	if found == nil {
+		return nil
+	}
+	return found
 }
 
 func (al *AgentLoop) GetActiveTurnBySession(sessionKey string) *ActiveTurnInfo {
@@ -488,7 +557,13 @@ func (ts *turnState) appendToolCallTranscript(tc session.ToolCall) {
 
 // SubTurn-related methods
 
-// Finish marks the turn as finished and closes the pendingResults channel
+// Finish marks the turn as finished and closes the pendingResults channel.
+//
+// When cancelFired is true (i.e. handleCancel claimed this turn), Finish
+// invokes the onCancelFinish callback exactly once with the cancel method
+// ("hard" when isHardAbort, "graceful" otherwise). The callback is called
+// from within the goroutine that finishes the turn, so it must not block or
+// call back into the agent loop with any locks held.
 func (ts *turnState) Finish(isHardAbort bool) {
 	ts.isFinished.Store(true)
 
@@ -531,6 +606,22 @@ func (ts *turnState) Finish(isHardAbort bool) {
 			}
 		}
 	}
+
+	// If handleCancel claimed this turn, fire the post-cancel callback once.
+	// The callback writes the turn_cancelled transcript entry and emits the
+	// turn.cancelled audit event (FR-15).
+	if ts.cancelFired.Load() {
+		ts.mu.RLock()
+		cb := ts.onCancelFinish
+		ts.mu.RUnlock()
+		if cb != nil {
+			method := "graceful"
+			if isHardAbort {
+				method = "hard"
+			}
+			cb(method)
+		}
+	}
 }
 
 // Finished returns a channel that is closed when the turn finishes.
@@ -555,6 +646,29 @@ func (ts *turnState) IsParentEnded() bool {
 		return false
 	}
 	return ts.parentTurnState.isFinished.Load()
+}
+
+// IsAlive returns true when the turn has not yet finished. This is the
+// complement of isFinished and is used by the cancel watchdog timers in
+// handleCancel to decide whether to escalate to the next stage.
+func (ts *turnState) IsAlive() bool {
+	return !ts.isFinished.Load()
+}
+
+// TurnID returns the turn's ID string for use outside the agent package.
+func (ts *turnState) TurnID() string {
+	return ts.turnID
+}
+
+// SetOnCancelFinish registers a callback that Finish() will invoke exactly
+// once when cancelFired==true and the turn exits. The callback receives the
+// cancel method ("graceful" or "hard"). Calling this more than once replaces
+// the previous callback; it must be called before handleCancel calls Finish
+// (i.e. before the timers fire).
+func (ts *turnState) SetOnCancelFinish(fn func(cancelMethod string)) {
+	ts.mu.Lock()
+	defer ts.mu.Unlock()
+	ts.onCancelFinish = fn
 }
 
 // GetLastFinishReason returns the last LLM finish_reason

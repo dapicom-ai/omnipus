@@ -377,18 +377,20 @@ func (al *AgentLoop) InterruptGraceful(hint string) error {
 }
 
 // InterruptSession gracefully cancels the parent turn AND every sub-turn sharing
-// the given sessionID (transcriptSessionID match). FR-6, FR-10, FR-12a.
+// the given sessionID (transcriptSessionID match). FR-6, FR-10, FR-12a, FR-15.
 //
 // The cascade walks activeTurnStates and, for each matching turnState, spawns a
 // goroutine that calls requestGracefulInterrupt AND providerCancel in parallel so
 // the in-flight LLM HTTP request is aborted immediately (FR-12a) rather than
 // waiting for the stream to drain naturally within the 3s graceful window.
 //
+// Returns the list of turn IDs that received the cancel signal (parent + sub-turns).
+// The cancel handler includes this in the turn_cancelled audit/transcript entry.
 // Returns an error only if sessionID is empty. A session with no active turns is
-// not an error — cancel handlers should treat it as a no-op (was_fired=false).
-func (al *AgentLoop) InterruptSession(sessionID, hint string) error {
+// not an error — cancel handlers treat it as a no-op (was_fired=false).
+func (al *AgentLoop) InterruptSession(sessionID, hint string) (descendants []string, err error) {
 	if sessionID == "" {
-		return fmt.Errorf("empty session_id")
+		return nil, fmt.Errorf("empty session_id")
 	}
 
 	// Collect all matching turn states before spawning goroutines so we hold the
@@ -398,12 +400,13 @@ func (al *AgentLoop) InterruptSession(sessionID, hint string) error {
 		ts := value.(*turnState)
 		if ts.transcriptSessionID == sessionID {
 			matches = append(matches, ts)
+			descendants = append(descendants, ts.turnID)
 		}
 		return true // continue walking — cascade to ALL matches (parent + sub-turns)
 	})
 
 	if len(matches) == 0 {
-		return nil // no active turn — caller emits turn_cancel_attempt{was_fired:false}
+		return nil, nil // no active turn — caller emits turn_cancel_attempt{was_fired:false}
 	}
 
 	var wg sync.WaitGroup
@@ -433,7 +436,7 @@ func (al *AgentLoop) InterruptSession(sessionID, hint string) error {
 		}()
 	}
 	wg.Wait()
-	return nil
+	return descendants, nil
 }
 
 // InterruptSessionHard escalates a previously-graceful cancel to a hard abort for
@@ -442,9 +445,11 @@ func (al *AgentLoop) InterruptSession(sessionID, hint string) error {
 // Unlike the existing InterruptHard (which operates on getAnyActiveTurnState and
 // has signature func() error), this function targets a specific session and cascades
 // across all matching turnStates. It does NOT replace or modify InterruptHard.
-func (al *AgentLoop) InterruptSessionHard(sessionID, hint string) error {
+//
+// Returns the list of turn IDs that received the hard-abort signal.
+func (al *AgentLoop) InterruptSessionHard(sessionID, hint string) (descendants []string, err error) {
 	if sessionID == "" {
-		return fmt.Errorf("empty session_id")
+		return nil, fmt.Errorf("empty session_id")
 	}
 
 	var matches []*turnState
@@ -452,12 +457,13 @@ func (al *AgentLoop) InterruptSessionHard(sessionID, hint string) error {
 		ts := value.(*turnState)
 		if ts.transcriptSessionID == sessionID {
 			matches = append(matches, ts)
+			descendants = append(descendants, ts.turnID)
 		}
 		return true
 	})
 
 	if len(matches) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	var wg sync.WaitGroup
@@ -479,10 +485,17 @@ func (al *AgentLoop) InterruptSessionHard(sessionID, hint string) error {
 					pc()
 				}
 			}
+			al.emitEvent(
+				EventKindInterruptReceived,
+				ts.eventMeta("InterruptSessionHard", "turn.interrupt.received"),
+				InterruptReceivedPayload{
+					Kind: InterruptKindHard,
+				},
+			)
 		}()
 	}
 	wg.Wait()
-	return nil
+	return descendants, nil
 }
 
 func (al *AgentLoop) InterruptHard() error {
