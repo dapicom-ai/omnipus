@@ -376,36 +376,112 @@ func (al *AgentLoop) InterruptGraceful(hint string) error {
 	return nil
 }
 
-// InterruptSession gracefully cancels the turn that belongs to the given sessionID.
-// Unlike InterruptGraceful, this targets only the one session rather than the first
-// active turn found, preventing two parallel sessions from being canceled together.
+// InterruptSession gracefully cancels the parent turn AND every sub-turn sharing
+// the given sessionID (transcriptSessionID match). FR-6, FR-10, FR-12a.
+//
+// The cascade walks activeTurnStates and, for each matching turnState, spawns a
+// goroutine that calls requestGracefulInterrupt AND providerCancel in parallel so
+// the in-flight LLM HTTP request is aborted immediately (FR-12a) rather than
+// waiting for the stream to drain naturally within the 3s graceful window.
+//
+// Returns an error only if sessionID is empty. A session with no active turns is
+// not an error — cancel handlers should treat it as a no-op (was_fired=false).
 func (al *AgentLoop) InterruptSession(sessionID, hint string) error {
 	if sessionID == "" {
 		return fmt.Errorf("empty session_id")
 	}
-	var target *turnState
+
+	// Collect all matching turn states before spawning goroutines so we hold the
+	// sync.Map range lock for as short a time as possible.
+	var matches []*turnState
 	al.activeTurnStates.Range(func(_, value any) bool {
 		ts := value.(*turnState)
 		if ts.transcriptSessionID == sessionID {
-			target = ts
-			return false // stop
+			matches = append(matches, ts)
+		}
+		return true // continue walking — cascade to ALL matches (parent + sub-turns)
+	})
+
+	if len(matches) == 0 {
+		return nil // no active turn — caller emits turn_cancel_attempt{was_fired:false}
+	}
+
+	var wg sync.WaitGroup
+	for _, ts := range matches {
+		ts := ts // capture loop variable
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// FR-12a: call providerCancel first so the in-flight HTTP stream is
+			// aborted immediately, before the graceful-interrupt flag is polled.
+			ts.mu.Lock()
+			pc := ts.providerCancel
+			ts.mu.Unlock()
+			if pc != nil {
+				pc()
+			}
+			if ts.requestGracefulInterrupt(hint) {
+				al.emitEvent(
+					EventKindInterruptReceived,
+					ts.eventMeta("InterruptSession", "turn.interrupt.received"),
+					InterruptReceivedPayload{
+						Kind:    InterruptKindGraceful,
+						HintLen: len(hint),
+					},
+				)
+			}
+		}()
+	}
+	wg.Wait()
+	return nil
+}
+
+// InterruptSessionHard escalates a previously-graceful cancel to a hard abort for
+// every turn matching sessionID. Called at t=3s after InterruptSession per FR-11.
+//
+// Unlike the existing InterruptHard (which operates on getAnyActiveTurnState and
+// has signature func() error), this function targets a specific session and cascades
+// across all matching turnStates. It does NOT replace or modify InterruptHard.
+func (al *AgentLoop) InterruptSessionHard(sessionID, hint string) error {
+	if sessionID == "" {
+		return fmt.Errorf("empty session_id")
+	}
+
+	var matches []*turnState
+	al.activeTurnStates.Range(func(_, value any) bool {
+		ts := value.(*turnState)
+		if ts.transcriptSessionID == sessionID {
+			matches = append(matches, ts)
 		}
 		return true
 	})
-	if target == nil {
-		return fmt.Errorf("no active turn for session %s", sessionID)
+
+	if len(matches) == 0 {
+		return nil
 	}
-	if !target.requestGracefulInterrupt(hint) {
-		return fmt.Errorf("turn %s cannot accept graceful interrupt", target.turnID)
+
+	var wg sync.WaitGroup
+	for _, ts := range matches {
+		ts := ts
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// requestHardAbort already calls providerCancel and turnCancel internally
+			// (see turn.go:requestHardAbort). We also call providerCancel explicitly
+			// for the case where hardAbort was already set but providerCancel was not
+			// yet fired (e.g. if graceful path ran before providerCancel was wired).
+			if !ts.requestHardAbort() {
+				// already aborting — still fire providerCancel to be safe
+				ts.mu.Lock()
+				pc := ts.providerCancel
+				ts.mu.Unlock()
+				if pc != nil {
+					pc()
+				}
+			}
+		}()
 	}
-	al.emitEvent(
-		EventKindInterruptReceived,
-		target.eventMeta("InterruptSession", "turn.interrupt.received"),
-		InterruptReceivedPayload{
-			Kind:    InterruptKindGraceful,
-			HintLen: len(hint),
-		},
-	)
+	wg.Wait()
 	return nil
 }
 

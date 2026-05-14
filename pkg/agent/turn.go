@@ -131,6 +131,18 @@ type turnState struct {
 	// a system message {type: "turn_aborted", reason: "synthetic_error_loop"}.
 	// The counter resets per turn (initialized to zero here).
 	syntheticErrorCount int
+
+	// Cancel feature fields (docs/specs/cancel-cross-channel-spec.md)
+	// FR-12: abandoned is set true when the turn goroutine refuses to exit after
+	// hard cancel; subsequent writes/frames/cost-accumulations become no-ops.
+	abandoned atomic.Bool
+	// FR-13a: cancelMu protects the cancel-vs-Finish race. The cancel handler
+	// and Finish both acquire this mutex before writing terminal state.
+	// cancelMu used by cancel handler; see FR-13a.
+	cancelMu sync.Mutex
+	// FR-13a: cancelFired is set true (under cancelMu) when cancel has been
+	// applied to this turnState. A second cancel checks this and exits as a no-op.
+	cancelFired atomic.Bool
 }
 
 func newTurnState(agent *AgentInstance, opts processOptions, scope turnEventScope) *turnState {

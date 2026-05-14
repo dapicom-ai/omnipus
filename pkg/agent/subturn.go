@@ -432,7 +432,11 @@ func spawnSubTurn(
 		)
 	}
 
-	// Create processOptions for the child turn
+	// Create processOptions for the child turn.
+	// FR-6a: inherit TranscriptSessionID from parent so that cascade cancel in
+	// InterruptSession can match this sub-turn via ts.transcriptSessionID == sessionID.
+	// Without this, every sub-turn has transcriptSessionID == "" and the cascade
+	// matches only the parent turn (the load-bearing bug fixed here).
 	opts := processOptions{
 		SessionKey:              childID,
 		Channel:                 parentTS.channel,
@@ -448,6 +452,8 @@ func spawnSubTurn(
 		SendResponse:            false,
 		NoHistory:               true, // SubTurns don't use session history
 		SkipInitialSteeringPoll: true,
+		TranscriptSessionID:     parentTS.transcriptSessionID,
+		TranscriptStore:         parentTS.transcriptStore,
 	}
 
 	// Create event scope for the child turn

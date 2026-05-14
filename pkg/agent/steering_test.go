@@ -1603,3 +1603,171 @@ func init() {
 	// with the proper argument serialization.
 	_ = json.Marshal
 }
+
+// --------------------------------------------------------------------------
+// Cancel-cascade tests (TDD Plan T1, T2, T4)
+// Refs: docs/specs/cancel-cross-channel-spec.md FR-6, FR-10, FR-11, FR-12a
+// --------------------------------------------------------------------------
+
+// stubTurnState builds a minimal turnState wired with a stub providerCancel.
+// interruptedCh is closed when requestGracefulInterrupt fires.
+// hardAbortedCh is closed when requestHardAbort fires.
+// providerCancelledCh is closed when providerCancel is called.
+//
+// We store the channels in the turnState's providerCancel func so the cascade
+// code exercises the real mutex-protected path rather than a side channel.
+func stubTurnStateForCancel(t *testing.T, al *AgentLoop, sessionKey, transcriptSID string) (
+	ts *turnState,
+	providerCancelledCh chan struct{},
+) {
+	t.Helper()
+	providerCancelledCh = make(chan struct{}, 1)
+
+	agent := al.registry.GetDefaultAgent()
+	if agent == nil {
+		t.Fatal("expected default agent")
+	}
+	opts := processOptions{
+		SessionKey:          sessionKey,
+		Channel:             "test",
+		ChatID:              "chat1",
+		TranscriptSessionID: transcriptSID,
+	}
+	scope := al.newTurnEventScope(agent.ID, sessionKey)
+	ts = newTurnState(agent, opts, scope)
+
+	// Wire a stub providerCancel that signals the channel.
+	doneCh := providerCancelledCh
+	ts.mu.Lock()
+	ts.providerCancel = func() {
+		select {
+		case doneCh <- struct{}{}:
+		default:
+		}
+	}
+	ts.mu.Unlock()
+
+	al.activeTurnStates.Store(sessionKey, ts)
+	t.Cleanup(func() { al.activeTurnStates.Delete(sessionKey) })
+	return ts, providerCancelledCh
+}
+
+// TestInterruptSession_CascadeToSubTurns is T1.
+//
+// BDD: Given a parent turn and 2 sub-turns all sharing transcriptSessionID "S"
+// registered in activeTurnStates,
+// When InterruptSession("S", "hint") is called,
+// Then all 3 turnStates receive requestGracefulInterrupt (gracefulInterrupt=true)
+// AND all 3 providerCancel stubs fire within 200ms.
+//
+// Refs: FR-6, FR-10, FR-12a, TDD Plan T1.
+func TestInterruptSession_CascadeToSubTurns(t *testing.T) {
+	al, cleanup := newAL(t)
+	defer cleanup()
+
+	const sid = "test-session-cascade"
+
+	_, pc1 := stubTurnStateForCancel(t, al, "parent", sid)
+	ts2, pc2 := stubTurnStateForCancel(t, al, "sub1", sid)
+	ts3, pc3 := stubTurnStateForCancel(t, al, "sub2", sid)
+	_ = ts2
+	_ = ts3
+
+	if err := al.InterruptSession(sid, "wrap up"); err != nil {
+		t.Fatalf("InterruptSession returned unexpected error: %v", err)
+	}
+
+	// All three providerCancel stubs must have fired (FR-12a).
+	timeout := time.After(200 * time.Millisecond)
+	for i, ch := range []chan struct{}{pc1, pc2, pc3} {
+		select {
+		case <-ch:
+		case <-timeout:
+			t.Fatalf("providerCancel[%d] was not called within 200ms (FR-12a)", i)
+		}
+	}
+
+	// All three turnStates must have gracefulInterrupt set (FR-6, FR-10).
+	for i, key := range []string{"parent", "sub1", "sub2"} {
+		raw, ok := al.activeTurnStates.Load(key)
+		if !ok {
+			t.Fatalf("turn %d (%s) not found in activeTurnStates", i, key)
+		}
+		ts := raw.(*turnState)
+		interrupted, _ := ts.gracefulInterruptRequested()
+		if !interrupted {
+			t.Errorf("turn %d (%s): gracefulInterrupt not set after cascade", i, key)
+		}
+	}
+}
+
+// TestInterruptSession_NoActiveTurnIsAttemptOnly is T2.
+//
+// BDD: Given activeTurnStates is empty (no active turns),
+// When InterruptSession is called with a valid sessionID,
+// Then it returns nil (not an error) and does not panic.
+//
+// The cancel handler (websocket.go, next wave) is responsible for emitting
+// turn_cancel_attempt{was_fired:false} in this case. This test only verifies
+// the backend function signature contract.
+//
+// Refs: FR-6, TDD Plan T2.
+func TestInterruptSession_NoActiveTurnIsAttemptOnly(t *testing.T) {
+	al, cleanup := newAL(t)
+	defer cleanup()
+
+	// activeTurnStates is empty by construction.
+	err := al.InterruptSession("nonexistent-session", "hint")
+	if err != nil {
+		t.Fatalf("InterruptSession on empty activeTurnStates returned error: %v (want nil)", err)
+	}
+}
+
+// TestInterruptSessionHard_CascadesAcrossSession is T4.
+//
+// BDD: Given a parent turn and 2 sub-turns all sharing transcriptSessionID "S"
+// registered in activeTurnStates,
+// When InterruptSessionHard("S", "hard abort") is called,
+// Then all 3 turnStates receive requestHardAbort (hardAbort=true)
+// AND all 3 providerCancel stubs fire within 200ms.
+//
+// Refs: FR-11, TDD Plan T4.
+func TestInterruptSessionHard_CascadesAcrossSession(t *testing.T) {
+	al, cleanup := newAL(t)
+	defer cleanup()
+
+	const sid = "test-session-hard"
+
+	_, pc1 := stubTurnStateForCancel(t, al, "hard-parent", sid)
+	_, pc2 := stubTurnStateForCancel(t, al, "hard-sub1", sid)
+	_, pc3 := stubTurnStateForCancel(t, al, "hard-sub2", sid)
+
+	if err := al.InterruptSessionHard(sid, "hard abort"); err != nil {
+		t.Fatalf("InterruptSessionHard returned unexpected error: %v", err)
+	}
+
+	// All three providerCancel stubs must have fired (FR-11 + requestHardAbort path).
+	timeout := time.After(200 * time.Millisecond)
+	for i, ch := range []chan struct{}{pc1, pc2, pc3} {
+		select {
+		case <-ch:
+		case <-timeout:
+			t.Fatalf("providerCancel[%d] was not called within 200ms for hard cascade", i)
+		}
+	}
+
+	// All three turnStates must have hardAbort set.
+	for i, key := range []string{"hard-parent", "hard-sub1", "hard-sub2"} {
+		raw, ok := al.activeTurnStates.Load(key)
+		if !ok {
+			t.Fatalf("turn %d (%s) not found in activeTurnStates", i, key)
+		}
+		ts := raw.(*turnState)
+		ts.mu.RLock()
+		ha := ts.hardAbort
+		ts.mu.RUnlock()
+		if !ha {
+			t.Errorf("turn %d (%s): hardAbort not set after InterruptSessionHard", i, key)
+		}
+	}
+}
