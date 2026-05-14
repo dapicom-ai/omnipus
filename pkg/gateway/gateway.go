@@ -36,7 +36,7 @@ import (
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/googlechat"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/irc"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/line"
-	_ "github.com/dapicom-ai/omnipus/pkg/channels/maixcam"
+
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/onebot"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/qq"
 	_ "github.com/dapicom-ai/omnipus/pkg/channels/slack"

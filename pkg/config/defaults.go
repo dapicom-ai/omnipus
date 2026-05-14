@@ -104,12 +104,7 @@ func DefaultConfig() *Config {
 				AllowFrom:   FlexibleStringSlice{},
 				MentionOnly: false,
 			},
-			MaixCam: MaixCamConfig{
-				Enabled:   false,
-				Host:      "0.0.0.0",
-				Port:      18790,
-				AllowFrom: FlexibleStringSlice{},
-			},
+
 			QQ: QQConfig{
 				Enabled:              false,
 				AppID:                "",

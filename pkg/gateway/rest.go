@@ -3717,13 +3717,6 @@ func (a *restAPI) HandleChannels(w http.ResponseWriter, r *http.Request) {
 		},
 		{ID: "irc", Name: "IRC", Transport: "tcp", Enabled: ch.IRC.Enabled, Description: "Internet Relay Chat"},
 		{ID: "matrix", Name: "Matrix", Transport: "http", Enabled: ch.Matrix.Enabled, Description: "Matrix protocol"},
-		{
-			ID:          "maixcam",
-			Name:        "MaixCam",
-			Transport:   "serial",
-			Enabled:     ch.MaixCam.Enabled,
-			Description: "MaixCam edge device",
-		},
 	}
 	jsonOK(w, channels)
 }
@@ -3734,7 +3727,7 @@ var validChannelIDs = map[string]bool{
 	"telegram": true, "discord": true, "slack": true, "whatsapp": true,
 	"feishu": true, "dingtalk": true, "wecom": true, "weixin": true,
 	"line": true, "qq": true, "onebot": true, "irc": true,
-	"matrix": true, "maixcam": true,
+	"matrix": true,
 }
 
 func (a *restAPI) setChannelEnabled(w http.ResponseWriter, channelID string, enabled bool) {
@@ -3778,7 +3771,6 @@ var channelSensitiveFields = map[string][]string{
 	"onebot":   {"access_token"},
 	"irc":      {"password", "nickserv_password", "sasl_password"},
 	"weixin":   {"token"},
-	"maixcam":  {},
 	"whatsapp": {},
 }
 
@@ -3796,7 +3788,6 @@ var channelRequiredFields = map[string][]string{
 	"onebot":   {"ws_url"},
 	"irc":      {"server", "nick"},
 	"weixin":   {"token"},
-	"maixcam":  {},
 	"whatsapp": {},
 }
 
@@ -3921,7 +3912,6 @@ func countEnabledChannels(cfg *config.Config) int {
 		ch.OneBot.Enabled,
 		ch.IRC.Enabled,
 		ch.Matrix.Enabled,
-		ch.MaixCam.Enabled,
 	} {
 		if enabled {
 			count++

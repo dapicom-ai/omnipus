@@ -495,30 +495,6 @@ export const CHANNEL_FIELDS: Record<string, ChannelField[]> = {
     },
   ],
 
-  maixcam: [
-    {
-      key: 'host',
-      label: 'Host',
-      type: 'text',
-      required: true,
-      placeholder: '192.168.1.100',
-      helpText: 'IP address or hostname of the MaixCam device',
-    },
-    {
-      key: 'port',
-      label: 'Port',
-      type: 'number',
-      required: false,
-      placeholder: '8765',
-    },
-    {
-      key: 'allow_from',
-      label: 'Allow From',
-      type: 'text',
-      required: false,
-      placeholder: 'device_id1',
-    },
-  ],
 
   pico: [
     {

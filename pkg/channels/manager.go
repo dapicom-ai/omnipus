@@ -464,12 +464,6 @@ func (m *Manager) initChannels(channels *config.ChannelsConfig) error {
 		}
 	}
 
-	if channels.MaixCam.Enabled {
-		if err := m.initChannel("maixcam", "MaixCam"); err != nil {
-			m.recordChannelFailure("maixcam", "MaixCam", err)
-		}
-	}
-
 	if channels.QQ.Enabled {
 		if err := m.initChannel("qq", "QQ"); err != nil {
 			m.recordChannelFailure("qq", "QQ", err)

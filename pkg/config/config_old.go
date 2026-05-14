@@ -101,7 +101,7 @@ type channelsConfigV0 struct {
 	Telegram telegramConfigV0 `json:"telegram"`
 	Feishu   feishuConfigV0   `json:"feishu"`
 	Discord  discordConfigV0  `json:"discord"`
-	MaixCam  maixcamConfigV0  `json:"maixcam"`
+
 	Weixin   weixinConfigV0   `json:"weixin"`
 	QQ       qqConfigV0       `json:"qq"`
 	DingTalk dingtalkConfigV0 `json:"dingtalk"`
@@ -119,7 +119,7 @@ func (v *channelsConfigV0) ToChannelsConfig() ChannelsConfig {
 		Telegram: v.Telegram.ToTelegramConfig(),
 		Feishu:   v.Feishu.ToFeishuConfig(),
 		Discord:  v.Discord.ToDiscordConfig(),
-		MaixCam:  v.MaixCam.ToMaixCamConfig(),
+
 		QQ:       v.QQ.ToQQConfig(),
 		Weixin:   v.Weixin.ToWeiXinConfig(),
 		DingTalk: v.DingTalk.ToDingTalkConfig(),
@@ -234,23 +234,7 @@ func (v *discordConfigV0) ToDiscordConfig() DiscordConfig {
 	}
 }
 
-type maixcamConfigV0 struct {
-	Enabled            bool                `json:"enabled"              env:"OMNIPUS_CHANNELS_MAIXCAM_ENABLED"`
-	Host               string              `json:"host"                 env:"OMNIPUS_CHANNELS_MAIXCAM_HOST"`
-	Port               int                 `json:"port"                 env:"OMNIPUS_CHANNELS_MAIXCAM_PORT"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"           env:"OMNIPUS_CHANNELS_MAIXCAM_ALLOW_FROM"`
-	ReasoningChannelID string              `json:"reasoning_channel_id" env:"OMNIPUS_CHANNELS_MAIXCAM_REASONING_CHANNEL_ID"`
-}
 
-func (v *maixcamConfigV0) ToMaixCamConfig() MaixCamConfig {
-	return MaixCamConfig{
-		Enabled:            v.Enabled,
-		Host:               v.Host,
-		Port:               v.Port,
-		AllowFrom:          v.AllowFrom,
-		ReasoningChannelID: v.ReasoningChannelID,
-	}
-}
 
 type dingtalkConfigV0 struct {
 	Enabled            bool                `json:"enabled"                 env:"OMNIPUS_CHANNELS_DINGTALK_ENABLED"`

@@ -2215,7 +2215,7 @@ func TestTargetReasoningChannelID_AllChannels(t *testing.T) {
 		"telegram": "rid-telegram",
 		"feishu":   "rid-feishu",
 		"discord":  "rid-discord",
-		"maixcam":  "rid-maixcam",
+
 		"qq":       "rid-qq",
 		"dingtalk": "rid-dingtalk",
 		"slack":    "rid-slack",
@@ -2234,7 +2234,7 @@ func TestTargetReasoningChannelID_AllChannels(t *testing.T) {
 		{channel: "telegram", wantID: "rid-telegram"},
 		{channel: "feishu", wantID: "rid-feishu"},
 		{channel: "discord", wantID: "rid-discord"},
-		{channel: "maixcam", wantID: "rid-maixcam"},
+
 		{channel: "qq", wantID: "rid-qq"},
 		{channel: "dingtalk", wantID: "rid-dingtalk"},
 		{channel: "slack", wantID: "rid-slack"},

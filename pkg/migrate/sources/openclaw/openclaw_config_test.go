@@ -313,11 +313,7 @@ func TestConvertToOmnipusWithQQAndDingTalk(t *testing.T) {
 				"appId": "ding-app-id",
 				"appSecret": "ding-app-secret"
 			},
-			"maixcam": {
-				"enabled": true,
-				"host": "192.168.1.100",
-				"port": 9000
-			},
+
 			"slack": {
 				"enabled": true,
 				"botToken": "xoxb-test",
@@ -355,15 +351,6 @@ func TestConvertToOmnipusWithQQAndDingTalk(t *testing.T) {
 		t.Errorf("expected dingtalk client ID 'ding-app-id', got '%s'", picoCfg.Channels.DingTalk.ClientID)
 	}
 
-	if !picoCfg.Channels.MaixCam.Enabled {
-		t.Error("maixcam should be enabled")
-	}
-	if picoCfg.Channels.MaixCam.Host != "192.168.1.100" {
-		t.Errorf("expected maixcam host '192.168.1.100', got '%s'", picoCfg.Channels.MaixCam.Host)
-	}
-	if picoCfg.Channels.MaixCam.Port != 9000 {
-		t.Errorf("expected maixcam port 9000, got %d", picoCfg.Channels.MaixCam.Port)
-	}
 
 	if !picoCfg.Channels.Slack.Enabled {
 		t.Error("slack should be enabled")

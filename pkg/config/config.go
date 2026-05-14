@@ -775,7 +775,7 @@ type ChannelsConfig struct {
 	Telegram   TelegramConfig   `json:"telegram"    yaml:"telegram,omitempty"`
 	Feishu     FeishuConfig     `json:"feishu"      yaml:"feishu,omitempty"`
 	Discord    DiscordConfig    `json:"discord"     yaml:"discord,omitempty"`
-	MaixCam    MaixCamConfig    `json:"maixcam"     yaml:"-"`
+
 	QQ         QQConfig         `json:"qq"          yaml:"qq,omitempty"`
 	DingTalk   DingTalkConfig   `json:"dingtalk"    yaml:"dingtalk,omitempty"`
 	Slack      SlackConfig      `json:"slack"       yaml:"slack,omitempty"`
@@ -874,13 +874,6 @@ type DiscordConfig struct {
 	ReasoningChannelID string              `json:"reasoning_channel_id"    yaml:"-" env:"OMNIPUS_CHANNELS_DISCORD_REASONING_CHANNEL_ID"`
 }
 
-type MaixCamConfig struct {
-	Enabled            bool                `json:"enabled"              env:"OMNIPUS_CHANNELS_MAIXCAM_ENABLED"`
-	Host               string              `json:"host"                 env:"OMNIPUS_CHANNELS_MAIXCAM_HOST"`
-	Port               int                 `json:"port"                 env:"OMNIPUS_CHANNELS_MAIXCAM_PORT"`
-	AllowFrom          FlexibleStringSlice `json:"allow_from"           env:"OMNIPUS_CHANNELS_MAIXCAM_ALLOW_FROM"`
-	ReasoningChannelID string              `json:"reasoning_channel_id" env:"OMNIPUS_CHANNELS_MAIXCAM_REASONING_CHANNEL_ID"`
-}
 
 type QQConfig struct {
 	Enabled              bool                `json:"enabled"                  yaml:"-" env:"OMNIPUS_CHANNELS_QQ_ENABLED"`
