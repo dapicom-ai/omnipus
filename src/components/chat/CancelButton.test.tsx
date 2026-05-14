@@ -29,14 +29,16 @@ beforeEach(() => {
 })
 
 describe('MessageInput — stop button during streaming (test #36)', () => {
-  it('renders Stop button (aria-label="Stop generation") while isStreaming', () => {
+  it('renders Stop button while isStreaming', () => {
     // Traces to: wave5a-wire-ui-spec.md — AC1: send button transforms into Stop during streaming
+    // FR-21: aria-label is now the current label state ("Stop" initially)
     act(() => {
       useChatStore.setState({ isStreaming: true })
       useConnectionStore.setState({ isConnected: true })
     })
     render(<MessageInput />)
-    expect(screen.getByRole('button', { name: /stop generation/i })).toBeInTheDocument()
+    // aria-label is "Stop" (the label from stopButtonLabel('stop'))
+    expect(screen.getByRole('button', { name: /^stop$/i })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /send message/i })).toBeNull()
   })
 
@@ -57,7 +59,7 @@ describe('MessageInput — stop button during streaming (test #36)', () => {
       useSessionStore.setState({ activeSessionId: 'sess_1' })
     })
     render(<MessageInput />)
-    fireEvent.click(screen.getByRole('button', { name: /stop generation/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^stop$/i }))
     // cancelStream sends cancel frame (or is no-op if we set isStreaming false)
     // It calls connection.send with cancel frame
     expect(useChatStore.getState().isStreaming).toBe(false)
@@ -120,5 +122,58 @@ describe('MessageInput — Escape key no-op when idle (test #39)', () => {
     fireEvent.keyDown(textarea, { key: 'Escape' })
     // connection.send must NOT be called (no cancel frame sent)
     expect(mockSend).not.toHaveBeenCalled()
+  })
+})
+
+// ── T14: Escape fires cancel ONLY during streaming ────────────────────────────
+
+describe('T14: Escape fires cancelStream only during streaming', () => {
+  it('pressing Escape during streaming calls cancelStream', () => {
+    // T14: cancel fires during streaming
+    const mockSend = vi.fn().mockReturnValue(true)
+    act(() => {
+      useChatStore.setState({ isStreaming: true })
+      useConnectionStore.setState({
+        isConnected: true,
+        connection: {
+          send: mockSend,
+          disconnect: vi.fn(),
+          connect: vi.fn(),
+          isConnected: true,
+        } as any,
+      })
+      useSessionStore.setState({ activeSessionId: 'sess_escape_test' })
+    })
+    render(<MessageInput />)
+    const textarea = screen.getByRole('textbox')
+    fireEvent.keyDown(textarea, { key: 'Escape' })
+    // After Escape during streaming, isStreaming is false (cancel fired)
+    expect(useChatStore.getState().isStreaming).toBe(false)
+    // The cancel frame was sent over the connection
+    expect(mockSend).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'cancel', session_id: 'sess_escape_test' })
+    )
+  })
+
+  it('pressing Escape when NOT streaming does not call cancelStream (T14 complement)', () => {
+    const mockSend = vi.fn()
+    act(() => {
+      useChatStore.setState({ isStreaming: false })
+      useConnectionStore.setState({
+        isConnected: true,
+        connection: {
+          send: mockSend,
+          disconnect: vi.fn(),
+          connect: vi.fn(),
+          isConnected: true,
+        } as any,
+      })
+    })
+    render(<MessageInput />)
+    const textarea = screen.getByRole('textbox')
+    fireEvent.keyDown(textarea, { key: 'Escape' })
+    // isStreaming was already false; mockSend must not be called
+    expect(mockSend).not.toHaveBeenCalled()
+    expect(useChatStore.getState().isStreaming).toBe(false)
   })
 })

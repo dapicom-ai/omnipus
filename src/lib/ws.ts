@@ -265,6 +265,18 @@ export interface WsReplayWarningFrame {
   }
 }
 
+// FR-21: emitted by the gateway during the cancel escalation sequence so the
+// Stop button can morph through "Stopping…" → "Force-stopping…" → "Cancelled".
+// stage values:
+//   'hard'     — graceful window expired; hard cancel fired (≈3s after cancel request)
+//   'detached' — goroutine did not exit after hard cancel; detached/neutered (≈8s)
+// The 'detached' stage signals the UI to re-enable input.
+export interface WsCancelStageFrame {
+  type: 'cancel_stage'
+  session_id: string
+  stage: 'hard' | 'detached'
+}
+
 // F-S5: session_id contract — session-scoped frames have session_id: string (required);
 // global frames (error, session_state, device_pairing_*) may omit it.
 // WsSessionStartedFrame carries session_id as the minted id, not as routing context.
@@ -287,6 +299,7 @@ export type WsReceiveFrame =
   | WsSessionStateFrame
   | WsSystemOverloadFrame
   | WsReplayWarningFrame
+  | WsCancelStageFrame
 
 /** Allowed status values for subagent_end frames. */
 const SUBAGENT_END_STATUSES = new Set<string>(['success', 'error', 'cancelled', 'interrupted', 'timeout'])

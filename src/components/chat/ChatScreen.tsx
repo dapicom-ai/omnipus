@@ -361,6 +361,9 @@ function AssistantMessage() {
 interface SlashCommand {
   label: string
   description: string
+  // When true, this command remains visible in the slash menu even while a
+  // response is streaming. All other commands are hidden during streaming.
+  availableWhileStreaming?: boolean
 }
 
 // Built-in slash commands. Custom commands registered via 'commands' WebSocket
@@ -369,6 +372,8 @@ const SLASH_COMMANDS: SlashCommand[] = [
   { label: '/session new', description: 'Start a new session' },
   { label: '/clear', description: 'Clear all messages' },
   { label: '/help', description: 'Show help information' },
+  // FR-3a: /cancel must be reachable mid-turn; it is the only streaming-safe command.
+  { label: '/cancel', description: 'Cancel current turn', availableWhileStreaming: true },
 ]
 
 const HELP_TEXT = `**Omnipus commands:**
@@ -452,8 +457,16 @@ export function OmnipusComposer({ agentRemoved = false }: { agentRemoved?: boole
   // so we only fire one toast per paste/input event that exceeds 1MB.
   const hasWarnedLargeInput = useRef(false)
 
-  // Show slash dropdown when input starts with "/"
-  const shouldShowSlash = inputValue.startsWith('/') && !isStreaming && !isReplaying && isConnected
+  // FR-3a: during streaming, show the slash menu ONLY if at least one command
+  // with availableWhileStreaming:true matches the current input prefix.
+  // Outside streaming, show all commands as before.
+  const visibleSlashCommands = (() => {
+    if (!inputValue.startsWith('/') || isReplaying || !isConnected) return []
+    const all = SLASH_COMMANDS.filter((cmd) => cmd.label.startsWith(inputValue) || inputValue === '/')
+    if (isStreaming) return all.filter((cmd) => cmd.availableWhileStreaming === true)
+    return all
+  })()
+  const shouldShowSlash = visibleSlashCommands.length > 0 && (inputValue.startsWith('/')) && !isReplaying && isConnected
 
   function closeSlash() {
     setSlashOpen(false)
@@ -487,6 +500,12 @@ export function OmnipusComposer({ agentRemoved = false }: { agentRemoved?: boole
       if (!isCreatingSession) doCreateSession()
       return
     }
+
+    // FR-3a: /cancel uses the same cancelStream() as the Stop button.
+    if (cmd === '/cancel') {
+      cancelStream()
+      return
+    }
   }
 
   function handleFilesSelected(files: File[]) {
@@ -511,15 +530,17 @@ export function OmnipusComposer({ agentRemoved = false }: { agentRemoved?: boole
 
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      setSlashHighlight((h) => (h + 1) % SLASH_COMMANDS.length)
+      setSlashHighlight((h) => (h + 1) % visibleSlashCommands.length)
       setSlashOpen(true)
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
-      setSlashHighlight((h) => (h - 1 + SLASH_COMMANDS.length) % SLASH_COMMANDS.length)
+      setSlashHighlight((h) => (h - 1 + visibleSlashCommands.length) % visibleSlashCommands.length)
       setSlashOpen(true)
     } else if (e.key === 'Enter' && slashOpen) {
       e.preventDefault()
-      executeSlashCommand(SLASH_COMMANDS[slashHighlight].label)
+      if (visibleSlashCommands[slashHighlight]) {
+        executeSlashCommand(visibleSlashCommands[slashHighlight].label)
+      }
     } else if (e.key === 'Escape') {
       closeSlash()
     }
@@ -578,7 +599,7 @@ export function OmnipusComposer({ agentRemoved = false }: { agentRemoved?: boole
       {/* Slash command dropdown */}
       {shouldShowSlash && slashOpen && (
         <div className="mb-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] overflow-hidden shadow-lg">
-          {SLASH_COMMANDS.map((cmd, i) => (
+          {visibleSlashCommands.map((cmd, i) => (
             <button
               key={cmd.label}
               type="button"

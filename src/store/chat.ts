@@ -5,7 +5,7 @@ import { useConnectionStore } from '@/store/connection'
 import { useSessionStore, registerChatSetReplaying, registerChatResetForReplay } from '@/store/session'
 import { queryClient } from '@/lib/queryClient'
 import type { Message, ToolCall } from '@/lib/api'
-import type { WsReceiveFrame, WsExecApprovalRequestFrame, WsReplayMessageFrame, WsRateLimitFrame, WsSubagentStartFrame, WsSubagentEndFrame } from '@/lib/ws'
+import type { WsReceiveFrame, WsExecApprovalRequestFrame, WsReplayMessageFrame, WsRateLimitFrame, WsSubagentStartFrame, WsSubagentEndFrame, WsCancelStageFrame } from '@/lib/ws'
 import { useToolApprovalStore } from '@/store/toolApproval'
 import { registerSyncChatForeground } from '@/store/session'
 
@@ -104,6 +104,12 @@ export interface SessionChatState {
    * user message recently it is very likely mid-stream, not a stale spinner.
    */
   lastUserMessageAt: number | null
+  /**
+   * FR-21: Cancel escalation stage for this session. Drives Stop button label
+   * morphing: null → "Stop", 'hard' → "Force-stopping…", 'detached' → "Cancelled".
+   * Reset to null when streaming ends (done/error frame or next user message).
+   */
+  cancelStage: WsCancelStageFrame['stage'] | null
 }
 
 function emptySessionState(): SessionChatState {
@@ -120,6 +126,7 @@ function emptySessionState(): SessionChatState {
     sessionCost: 0,
     rateLimitEvent: null,
     lastUserMessageAt: null,
+    cancelStage: null,
   }
 }
 
@@ -142,6 +149,7 @@ interface ChatStore {
   sessionCost: number
   rateLimitEvent: RateLimitEventData | null
   lastUserMessageAt: number | null
+  cancelStage: WsCancelStageFrame['stage'] | null
 
   // ── Actions that operate on the foreground session ───────────────────────────
   setReplaying: (value: boolean) => void
@@ -244,6 +252,8 @@ const SESSION_SCOPED_FRAME_TYPES = new Set([
   'agent_switched', 'task_status_changed', 'exec_approval_request',
   'tool_approval_required', 'rate_limit', 'media', 'session_started',
   'system_overload', 'session_close_ack',
+  // FR-21: cancel escalation stage notifications
+  'cancel_stage',
 ])
 
 // F-S2: FALLBACK_SID exists only in test mode so tests that don't establish a session
@@ -875,6 +885,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
             updated[key] = { ...updated[key], status: 'cancelled' }
           }
         }
+        // cancelStage intentionally NOT reset here — hold label state until
+        // the server sends the next cancel_stage frame or done/error clears it.
         return { toolCalls: updated, isStreaming: false }
       })
     },
@@ -1081,6 +1093,8 @@ export const useChatStore = create<ChatStore>((set, get) => {
                 sessionTokens: b.sessionTokens + tokenDelta,
                 sessionCost: b.sessionCost + costDelta,
                 replayCompletedForSession: replayCompleted,
+                // FR-21: clear cancel stage on turn completion
+                cancelStage: null,
               }
               if (clearReplayingNow) {
                 patch.isReplaying = false
@@ -1415,6 +1429,10 @@ export const useChatStore = create<ChatStore>((set, get) => {
           if (!targetSid) break
           sawReplayMessageThisTurn[targetSid] = true
           const replayFrame = frame as WsReplayMessageFrame
+          // FR-16: turn_cancelled entries are metadata-only and must not render
+          // as chat bubbles. The preceding assistant entry with truncated:true
+          // (status:"interrupted") still renders with the (interrupted) suffix.
+          if (replayFrame.role === 'turn_cancelled') break
           const role = (replayFrame.role || 'assistant') as 'user' | 'assistant'
           const text = replayFrame.content ?? ''
           const messageId = replayFrame.id
@@ -1649,6 +1667,15 @@ export const useChatStore = create<ChatStore>((set, get) => {
             variant: 'warning',
           })
           break
+
+        case 'cancel_stage': {
+          // FR-21: cancel escalation stage — morphs Stop button label.
+          // 'hard' → "Force-stopping…", 'detached' → "Cancelled" (input re-enabled).
+          if (targetSid) {
+            withBucket(targetSid, () => ({ cancelStage: frame.stage }))
+          }
+          break
+        }
 
         default:
           unknownFrameCount++

@@ -1,14 +1,52 @@
-import { useState, useRef, useCallback } from 'react'
-import { PaperPlaneRight, Stop } from '@phosphor-icons/react'
+import { useState, useRef, useCallback, useEffect } from 'react'
+import { PaperPlaneRight, Stop, Spinner } from '@phosphor-icons/react'
 import { useChatStore } from '@/store/chat'
 import { useConnectionStore } from '@/store/connection'
 import { cn } from '@/lib/utils'
 
+// FR-21: label states for the Stop button during cancel escalation
+type StopLabel = 'stop' | 'stopping' | 'force-stopping' | 'cancelled'
+
+function stopButtonLabel(label: StopLabel): string {
+  switch (label) {
+    case 'stopping': return 'Stopping...'
+    case 'force-stopping': return 'Force-stopping...'
+    case 'cancelled': return 'Cancelled'
+    default: return 'Stop'
+  }
+}
+
 export function MessageInput() {
   const [value, setValue] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const { sendMessage, cancelStream, isStreaming } = useChatStore()
+  const { sendMessage, cancelStream, isStreaming, cancelStage } = useChatStore()
   const { isConnected } = useConnectionStore()
+
+  // FR-21: local label state for the Stop button.
+  // 'stopping' fires immediately on click, before the server responds.
+  // 'force-stopping' and 'cancelled' are driven by cancelStage from the store.
+  const [stopLabel, setStopLabel] = useState<StopLabel>('stop')
+
+  // Sync stopLabel with server-pushed cancelStage.
+  useEffect(() => {
+    if (cancelStage === 'hard') {
+      setStopLabel('force-stopping')
+    } else if (cancelStage === 'detached') {
+      setStopLabel('cancelled')
+    }
+  }, [cancelStage])
+
+  // Reset label when streaming ends.
+  useEffect(() => {
+    if (!isStreaming) {
+      setStopLabel('stop')
+    }
+  }, [isStreaming])
+
+  const handleCancel = useCallback(() => {
+    setStopLabel('stopping')
+    cancelStream()
+  }, [cancelStream])
 
   const handleSend = useCallback(() => {
     const trimmed = value.trim()
@@ -23,9 +61,9 @@ export function MessageInput() {
       e.preventDefault()
       handleSend()
     }
-    // Escape cancels streaming (no-op when idle)
+    // Escape cancels streaming (no-op when idle) — T14
     if (e.key === 'Escape' && isStreaming) {
-      cancelStream()
+      handleCancel()
     }
   }
 
@@ -39,6 +77,9 @@ export function MessageInput() {
 
   const canSend = value.trim().length > 0 && !isStreaming && isConnected
   const disconnected = !isConnected
+
+  const isDetached = cancelStage === 'detached'
+  const showSpinner = stopLabel === 'stopping' || stopLabel === 'force-stopping'
 
   return (
     <div className="border-t border-[var(--color-border)] bg-[var(--color-surface-1)] px-4 py-3">
@@ -67,11 +108,12 @@ export function MessageInput() {
               ? 'Waiting for response...'
               : 'Message your agent… (Enter to send, Shift+Enter for newline)'
           }
-          disabled={disconnected || isStreaming}
+          // FR-21: re-enable input when 'detached' stage arrives (goroutine neutered)
+          disabled={disconnected || (isStreaming && !isDetached)}
           rows={1}
           className={cn(
             'flex-1 resize-none bg-transparent text-sm text-[var(--color-secondary)] outline-none placeholder:text-[var(--color-muted)] min-h-[24px] max-h-[200px] leading-6',
-            (disconnected || isStreaming) && 'opacity-60 cursor-not-allowed'
+            (disconnected || (isStreaming && !isDetached)) && 'opacity-60 cursor-not-allowed'
           )}
           style={{ overflow: 'hidden' }}
           aria-label="Message input"
@@ -81,12 +123,24 @@ export function MessageInput() {
         {isStreaming ? (
           <button
             type="button"
-            onClick={cancelStream}
-            className="shrink-0 w-8 h-8 rounded-lg bg-[var(--color-error)]/20 text-[var(--color-error)] hover:bg-[var(--color-error)]/30 flex items-center justify-center transition-colors"
-            aria-label="Stop generation"
+            onClick={stopLabel === 'stop' || stopLabel === 'stopping' ? handleCancel : undefined}
+            disabled={stopLabel === 'cancelled'}
+            className={cn(
+              'shrink-0 h-8 rounded-lg flex items-center justify-center gap-1.5 px-2 transition-colors text-xs font-medium',
+              stopLabel === 'cancelled'
+                ? 'bg-[var(--color-surface-3)] text-[var(--color-muted)] cursor-default'
+                : 'bg-[var(--color-error)]/20 text-[var(--color-error)] hover:bg-[var(--color-error)]/30',
+            )}
+            aria-label={stopButtonLabel(stopLabel)}
             title="Stop (Escape)"
+            data-testid="stop-btn"
           >
-            <Stop size={15} weight="fill" />
+            {showSpinner ? (
+              <Spinner size={13} className="animate-spin" />
+            ) : (
+              <Stop size={13} weight="fill" />
+            )}
+            <span>{stopButtonLabel(stopLabel)}</span>
           </button>
         ) : (
           <button
