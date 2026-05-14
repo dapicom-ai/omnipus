@@ -1,0 +1,506 @@
+/**
+ * cancel-cross-channel.spec.ts — E2E tests for cross-channel /cancel feature.
+ *
+ * Scope: T21–T26 from cancel-cross-channel-spec.md §10 TDD Plan.
+ * Traces to: docs/specs/cancel-cross-channel-spec.md US-1, US-4, US-5; T21–T26.
+ *
+ * Tests T21–T24, T26 drive a real LLM (OPENROUTER_API_KEY_CI required in CI).
+ * T25 is partially driven by real LLM; the "Force-stopping..." path requires a
+ * stuck goroutine and is documented as manually-verifiable — the test covers
+ * the "Stopping..." label only, which fires from React state on click.
+ *
+ * Architecture note: Tests switch the active agent to Jim, which generates
+ * long inline prose rather than handing off to another agent (Mia has strong
+ * "no long enumerations" guardrails that finish too quickly for the Stop button
+ * to be visible). This mirrors the pattern in tests/e2e/chat.spec.ts test (e).
+ */
+
+import * as fs from 'fs'
+import * as path from 'path'
+import { expect, type Page } from '@playwright/test'
+import { test } from './fixtures/console-errors'
+import { chatInput, agentPicker, assistantMessages } from './fixtures/selectors'
+
+// ── Constants ──────────────────────────────────────────────────────────────────
+
+const BASE_URL = process.env.OMNIPUS_URL || 'http://localhost:6060'
+
+/**
+ * OMNIPUS_HOME: gateway workspace directory.
+ * Must match the directory the running gateway is using.
+ */
+const OMNIPUS_HOME =
+  process.env.OMNIPUS_HOME ||
+  (process.env.HOME ? path.join(process.env.HOME, '.omnipus') : '/tmp/omnipus-e2e-test')
+
+// ── Auth helpers (mirrored from handoff.spec.ts) ──────────────────────────────
+
+function getStoredAuthToken(): string | null {
+  const authFile = path.join(
+    path.dirname(new URL(import.meta.url).pathname),
+    'fixtures/.auth/admin.json',
+  )
+  if (!fs.existsSync(authFile)) return null
+  try {
+    const raw = fs.readFileSync(authFile, 'utf-8')
+    const state = JSON.parse(raw) as {
+      origins?: Array<{
+        origin: string
+        localStorage?: Array<{ name: string; value: string }>
+      }>
+    }
+    for (const origin of state.origins ?? []) {
+      for (const item of origin.localStorage ?? []) {
+        if (item.name === 'omnipus_auth_token') return item.value
+      }
+    }
+  } catch {
+    // Auth file may not exist on first run
+  }
+  return null
+}
+
+async function getCsrfToken(page: Page): Promise<string | null> {
+  const cookies = await page.context().cookies()
+  const csrfCookie = cookies.find((c) => c.name === '__Host-csrf')
+  return csrfCookie?.value ?? null
+}
+
+async function apiHeaders(page: Page): Promise<Record<string, string>> {
+  const authToken = getStoredAuthToken()
+  const csrfToken = await getCsrfToken(page)
+  return {
+    'Content-Type': 'application/json',
+    ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
+  }
+}
+
+async function createSession(page: Page): Promise<string> {
+  const resp = await page.request.post(`${BASE_URL}/api/v1/sessions`, {
+    headers: await apiHeaders(page),
+    data: { agent_id: 'main', type: 'chat' },
+  })
+  if (!resp.ok()) {
+    const body = await resp.text()
+    throw new Error(`POST /api/v1/sessions failed: ${resp.status()} ${resp.statusText()} — ${body}`)
+  }
+  const meta = (await resp.json()) as { id: string }
+  if (!meta.id) throw new Error('POST /api/v1/sessions returned no id')
+  return meta.id
+}
+
+// ── JSONL reader helpers ───────────────────────────────────────────────────────
+
+interface AuditEntry {
+  event_type?: string
+  was_fired?: boolean
+  session_id?: string
+  // allow any extra fields
+  [key: string]: unknown
+}
+
+interface TranscriptEntry {
+  id?: string
+  type?: string
+  role?: string
+  truncated?: boolean
+  descendants_cancelled?: string[]
+  // allow any extra fields
+  [key: string]: unknown
+}
+
+/**
+ * Read and parse all lines from a JSONL file. Lines that fail JSON.parse are
+ * skipped (partial writes, comment lines, etc.).
+ */
+function readJsonl<T>(filePath: string): T[] {
+  if (!fs.existsSync(filePath)) return []
+  const lines = fs.readFileSync(filePath, 'utf-8').split('\n')
+  const results: T[] = []
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    try {
+      results.push(JSON.parse(trimmed) as T)
+    } catch {
+      // skip malformed lines
+    }
+  }
+  return results
+}
+
+// ── Shared helper: switch to Jim and trigger a long-running turn ──────────────
+
+/**
+ * Switch the agent picker to Jim (who generates long inline prose) and send
+ * a prompt that reliably produces multi-second streaming output.
+ * Returns when streaming has started (stop button is visible).
+ */
+async function triggerLongStreamingTurn(page: Page): Promise<void> {
+  const input = chatInput(page)
+  await expect(input).toBeEnabled({ timeout: 20_000 })
+
+  // Switch to Jim — long inline generation, multi-second stream window.
+  const picker = agentPicker(page)
+  await expect(picker).toBeVisible({ timeout: 15_000 })
+  await picker.click()
+  await page.getByRole('menuitem', { name: /Jim/i }).click()
+  await expect(picker).toContainText(/Jim/i, { timeout: 5_000 })
+
+  await input.fill(
+    'Write exactly 500 words about renewable energy. Start now and continue for the full 500 words.',
+  )
+  await input.press('Enter')
+
+  // Wait for the stop button to appear — confirms streaming has started.
+  const stopBtn = page.locator('[data-testid="stop-btn"]')
+  await expect(stopBtn).toBeVisible({ timeout: 30_000 })
+}
+
+// ── T21: Web stop button cancels turn within 5 seconds (US-1.1, SC-1) ─────────
+// Traces to: cancel-cross-channel-spec.md line 600 (T21)
+// BDD: Given a turn is actively streaming
+//      When the user clicks the Stop button
+//      Then within 5 seconds the turn ends and the message shows "(interrupted)"
+//      And chat input is re-enabled.
+
+test(
+  'T21 — web Stop button cancels streaming turn within 5s',
+  async ({ page }) => {
+    // test.slow() triples the 90s timeout. Real-LLM round-trips can take up to 30s.
+    test.slow()
+
+    await page.goto('/')
+
+    await triggerLongStreamingTurn(page)
+
+    const stopBtn = page.locator('[data-testid="stop-btn"]')
+    await stopBtn.click()
+
+    // Within 5s: the stop button disappears (streaming ended).
+    await expect(stopBtn).not.toBeVisible({ timeout: 5_000 })
+
+    // Within 5s: the chat input is re-enabled.
+    await expect(chatInput(page)).toBeEnabled({ timeout: 5_000 })
+
+    // The last assistant message should show the "(interrupted)" label suffix.
+    // MessageItem renders: {message.status === 'interrupted' && <span>(interrupted)</span>}
+    // Allow up to 5s for the message to reflect the cancelled status.
+    const interruptedLabels = page.locator('text=(interrupted)')
+    await expect(interruptedLabels.first()).toBeVisible({ timeout: 5_000 })
+  },
+)
+
+// ── T22: Web slash menu /cancel during streaming (US-1.3, FR-3a) ─────────────
+// Traces to: cancel-cross-channel-spec.md line 601 (T22)
+// BDD: Given a turn is actively streaming
+//      When the user types "/c" into the chat input
+//      Then the slash menu appears with "/cancel" visible (FR-3a)
+//      When the user clicks "/cancel"
+//      Then the same cancel behavior fires as clicking Stop.
+
+test(
+  'T22 — web slash menu /cancel is visible during streaming and cancels turn',
+  async ({ page }) => {
+    test.slow()
+
+    await page.goto('/')
+
+    await triggerLongStreamingTurn(page)
+
+    const input = chatInput(page)
+
+    // Typing "/c" mid-stream: FR-3a requires the slash menu to appear during
+    // streaming for commands tagged availableWhileStreaming: true.
+    // The input is disabled during streaming per MessageInput.tsx, but
+    // ChatScreen.tsx has a second textarea (data-testid="chat-input") that
+    // owns the slash logic. Use that testid for the type interaction.
+    const slashInput = page.locator('[data-testid="chat-input"]')
+    await slashInput.click()
+    await slashInput.type('/c')
+
+    // Assert the slash menu is shown.
+    // ChatScreen renders the dropdown when shouldShowSlash && slashOpen:
+    // the menu contains buttons with font-mono label text.
+    const slashMenu = page.locator('.font-mono').filter({ hasText: '/cancel' })
+    await expect(slashMenu.first()).toBeVisible({ timeout: 5_000 })
+
+    // The entire menu should be visible.
+    const cancelMenuItem = page.getByRole('button', { name: /\/cancel/ })
+    await expect(cancelMenuItem.first()).toBeVisible({ timeout: 5_000 })
+
+    // Click /cancel.
+    await cancelMenuItem.first().click()
+
+    // Assert cancel behavior: stop button disappears, input re-enabled, (interrupted) shown.
+    const stopBtn = page.locator('[data-testid="stop-btn"]')
+    await expect(stopBtn).not.toBeVisible({ timeout: 5_000 })
+    await expect(chatInput(page)).toBeEnabled({ timeout: 5_000 })
+    const interruptedLabels = page.locator('text=(interrupted)')
+    await expect(interruptedLabels.first()).toBeVisible({ timeout: 5_000 })
+  },
+)
+
+// ── T23: Web Escape key cancels during streaming (US-1.4) ────────────────────
+// Traces to: cancel-cross-channel-spec.md line 602 (T23)
+// BDD: Given a turn is actively streaming
+//      When the user presses Escape with focus in the chat input
+//      Then the same cancel code path fires as the Stop button.
+
+test(
+  'T23 — web Escape key cancels streaming turn',
+  async ({ page }) => {
+    test.slow()
+
+    await page.goto('/')
+
+    await triggerLongStreamingTurn(page)
+
+    // MessageInput.tsx handles Escape on the textarea aria-label="Message input"
+    // when isStreaming === true. The textarea is disabled during streaming but
+    // keyboard events still fire. Press Escape on the page directly.
+    await page.keyboard.press('Escape')
+
+    // Assert cancel behavior.
+    const stopBtn = page.locator('[data-testid="stop-btn"]')
+    await expect(stopBtn).not.toBeVisible({ timeout: 5_000 })
+    await expect(chatInput(page)).toBeEnabled({ timeout: 5_000 })
+    const interruptedLabels = page.locator('text=(interrupted)')
+    await expect(interruptedLabels.first()).toBeVisible({ timeout: 5_000 })
+  },
+)
+
+// ── T24: Cancel cascades to subagent (US-4.1) ────────────────────────────────
+// Traces to: cancel-cross-channel-spec.md line 603 (T24)
+// BDD: Given a session with a parent turn that has spawned a subagent (spawn tool)
+//      When the user clicks Stop while the subagent is running
+//      Then the parent message shows "(interrupted)" within 5s
+//      And transcript.jsonl contains a {type: "turn_cancelled"} entry
+//      And that entry has a non-empty descendants_cancelled array.
+
+test(
+  'T24 — cancel cascades to subagent: transcript.jsonl records turn_cancelled with descendants',
+  async ({ page }) => {
+    test.slow()
+
+    await page.goto('/')
+
+    const input = chatInput(page)
+    await expect(input).toBeEnabled({ timeout: 20_000 })
+
+    // Get the session ID from the URL before sending (it changes after navigation).
+    // The SPA URL is /#/<sessionId> after a session is created.
+    // We also create a session explicitly so we have the ID for fs reads.
+    const sessionId = await createSession(page)
+
+    // Navigate to the new session.
+    await page.goto(`/#/${sessionId}`)
+    await expect(input).toBeEnabled({ timeout: 20_000 })
+
+    // Switch to Jim for deterministic spawn behaviour.
+    const picker = agentPicker(page)
+    await expect(picker).toBeVisible({ timeout: 15_000 })
+    await picker.click()
+    await page.getByRole('menuitem', { name: /Jim/i }).click()
+    await expect(picker).toContainText(/Jim/i, { timeout: 5_000 })
+
+    // Trigger a turn that uses the spawn tool.
+    await input.fill(
+      [
+        'Call the `spawn` tool ONCE with task="echo hello". After spawn returns, reply with \'done\'.',
+      ].join(''),
+    )
+    await input.press('Enter')
+
+    // Wait for the subagent collapsed block to appear — confirms spawn fired.
+    const collapsedBlock = page.locator('[data-testid="subagent-collapsed"]')
+    await expect(collapsedBlock).toBeVisible({ timeout: 60_000 })
+
+    // Click Stop while the subagent is running.
+    const stopBtn = page.locator('[data-testid="stop-btn"]')
+    await expect(stopBtn).toBeVisible({ timeout: 10_000 })
+    await stopBtn.click()
+
+    // Assert the parent message shows "(interrupted)" within 5s.
+    await expect(stopBtn).not.toBeVisible({ timeout: 5_000 })
+    await expect(chatInput(page)).toBeEnabled({ timeout: 5_000 })
+    const interruptedLabels = page.locator('text=(interrupted)')
+    await expect(interruptedLabels.first()).toBeVisible({ timeout: 5_000 })
+
+    // Assert transcript.jsonl contains {type: "turn_cancelled"} entry with
+    // a non-empty descendants_cancelled array.
+    // Allow a short settling window (max 3s) for the transcript write to flush.
+    await page.waitForTimeout(3_000)
+
+    // Sessions are stored at OMNIPUS_HOME/sessions/<id>/<YYYY-MM-DD>.jsonl
+    // The transcript file path uses day-partitioned JSONL.
+    const today = new Date().toISOString().slice(0, 10) // YYYY-MM-DD
+    const transcriptDir = path.join(OMNIPUS_HOME, 'sessions', sessionId)
+    // Try both the day-partitioned name and the legacy transcript.jsonl name.
+    const candidates = [
+      path.join(transcriptDir, `${today}.jsonl`),
+      path.join(transcriptDir, 'transcript.jsonl'),
+    ]
+    let entries: TranscriptEntry[] = []
+    for (const candidate of candidates) {
+      const parsed = readJsonl<TranscriptEntry>(candidate)
+      if (parsed.length > 0) {
+        entries = parsed
+        break
+      }
+    }
+
+    const cancelledEntry = entries.find((e) => e.type === 'turn_cancelled')
+    if (!cancelledEntry) {
+      // Allow the alternative: the feature may not yet be implemented —
+      // report as a test failure with clear context rather than a silent skip.
+      throw new Error(
+        'BLOCKED or INCOMPLETE: transcript.jsonl does not contain a {type:"turn_cancelled"} entry ' +
+          `after cancel. Searched: ${candidates.join(', ')}. ` +
+          `Entries found: ${JSON.stringify(entries.map((e) => ({ type: e.type, role: e.role })))}. ` +
+          'Traces to: cancel-cross-channel-spec.md T24, US-4.1, FR-15.',
+      )
+    }
+
+    // descendants_cancelled must be a non-empty array (cascade fired).
+    expect(
+      Array.isArray(cancelledEntry.descendants_cancelled) &&
+        (cancelledEntry.descendants_cancelled as string[]).length > 0,
+      'turn_cancelled entry must have a non-empty descendants_cancelled array (cascade wired per FR-6a)',
+    ).toBe(true)
+  },
+)
+
+// ── T25: Stop button UI progression (EC-15, FR-21) ──────────────────────────
+// Traces to: cancel-cross-channel-spec.md line 604 (T25)
+// BDD: Given a cancel is fired on a streaming turn
+//      When the user clicks Stop
+//      Then the button label is "Stopping..." (or shows a spinner) within 100ms.
+//
+// Note: "Force-stopping..." requires a stuck loop (t=3s) and "Cancelled" requires
+// detach (t=8s). These stages need a goroutine that ignores context cancellation,
+// which cannot be reliably induced via E2E. Those stages are documented as
+// manually-verifiable. This test asserts only the t=0 "Stopping..." label.
+
+test(
+  'T25 — stop button morphs to "Stopping..." immediately on click (EC-15, FR-21)',
+  async ({ page }) => {
+    test.slow()
+
+    await page.goto('/')
+
+    await triggerLongStreamingTurn(page)
+
+    const stopBtn = page.locator('[data-testid="stop-btn"]')
+
+    // Capture the moment of click — the label should change within 100ms.
+    // We click and immediately check for the "Stopping..." text.
+    await stopBtn.click()
+
+    // Within 500ms (generous for flaky environments): button text is "Stopping..."
+    // MessageInput.tsx: handleCancel calls setStopLabel('stopping') synchronously
+    // before cancelStream(), so this fires as local React state with no network RTT.
+    await expect(stopBtn).toContainText('Stopping...', { timeout: 500 })
+
+    // Allow the test to settle — the stop button disappears when streaming ends.
+    await expect(stopBtn).not.toBeVisible({ timeout: 10_000 })
+    await expect(chatInput(page)).toBeEnabled({ timeout: 5_000 })
+
+    // SKIP ASSERTION — "Force-stopping..." state (t=3s):
+    // Requires the agent goroutine to ignore context.Cancel() for 3s. In normal
+    // operation the LLM stream aborts quickly via providerCancel(). This stage
+    // is not reliably inducible in E2E. Verified manually per EC-15.
+    //
+    // SKIP ASSERTION — "Cancelled" state (t=8s detach):
+    // Same reason as above. Verified manually.
+  },
+)
+
+// ── T26: Audit entries exist after cancel (US-5.1, US-5.2) ──────────────────
+// Traces to: cancel-cross-channel-spec.md line 605 (T26)
+// BDD: Given any cancel request lands at the gateway
+//      When the audit log is queried
+//      Then exactly one turn_cancel_attempt entry exists with was_fired: true
+//      And exactly one turn_cancelled entry exists
+//      And their session_id values match.
+
+test(
+  'T26 — audit log contains turn_cancel_attempt and turn_cancelled entries after cancel',
+  async ({ page }) => {
+    test.slow()
+
+    await page.goto('/')
+
+    // Create a fresh session so we can match session_id in audit log.
+    const sessionId = await createSession(page)
+    await page.goto(`/#/${sessionId}`)
+
+    const input = chatInput(page)
+    await expect(input).toBeEnabled({ timeout: 20_000 })
+
+    // Switch to Jim for reliable long streaming output.
+    const picker = agentPicker(page)
+    await expect(picker).toBeVisible({ timeout: 15_000 })
+    await picker.click()
+    await page.getByRole('menuitem', { name: /Jim/i }).click()
+    await expect(picker).toContainText(/Jim/i, { timeout: 5_000 })
+
+    // Record audit log size before the cancel to isolate entries added by THIS test.
+    const auditPath = path.join(OMNIPUS_HOME, 'system', 'audit.jsonl')
+    const entriesBefore = readJsonl<AuditEntry>(auditPath).length
+
+    await input.fill(
+      'Write exactly 400 words about solar power. Do not call any tool, just write prose.',
+    )
+    await input.press('Enter')
+
+    // Wait for streaming to start.
+    const stopBtn = page.locator('[data-testid="stop-btn"]')
+    await expect(stopBtn).toBeVisible({ timeout: 30_000 })
+
+    // Cancel the turn.
+    await stopBtn.click()
+
+    // Wait for cancel to complete.
+    await expect(stopBtn).not.toBeVisible({ timeout: 5_000 })
+    await expect(chatInput(page)).toBeEnabled({ timeout: 5_000 })
+
+    // Allow audit flush (audit writes are synchronous on the gateway path, but
+    // give a short settling window).
+    await page.waitForTimeout(2_000)
+
+    // Read all audit entries written after we started.
+    const allEntries = readJsonl<AuditEntry>(auditPath)
+    const newEntries = allEntries.slice(entriesBefore)
+
+    // Assert: turn_cancel_attempt entry with was_fired: true.
+    // events.go: EventTurnCancelAttempt = "turn.cancel.attempt"
+    const attemptEntry = newEntries.find(
+      (e) => e.event_type === 'turn.cancel.attempt' && e.was_fired === true,
+    )
+    if (!attemptEntry) {
+      throw new Error(
+        'INCOMPLETE: audit log does not contain a turn.cancel.attempt entry with was_fired:true. ' +
+          `New entries found: ${JSON.stringify(newEntries.map((e) => ({ event_type: e.event_type, was_fired: e.was_fired })))}. ` +
+          'Traces to: cancel-cross-channel-spec.md T26, US-5.1, FR-18.',
+      )
+    }
+
+    // Assert: turn_cancelled entry.
+    // events.go: EventTurnCancelled = "turn.cancelled"
+    const cancelledEntry = newEntries.find((e) => e.event_type === 'turn.cancelled')
+    if (!cancelledEntry) {
+      throw new Error(
+        'INCOMPLETE: audit log does not contain a turn.cancelled entry. ' +
+          `New entries found: ${JSON.stringify(newEntries.map((e) => ({ event_type: e.event_type })))}. ` +
+          'Traces to: cancel-cross-channel-spec.md T26, US-5.2, FR-19.',
+      )
+    }
+
+    // Assert: session_id matches between the two entries.
+    expect(attemptEntry.session_id).toBeTruthy()
+    expect(cancelledEntry.session_id).toBeTruthy()
+    expect(attemptEntry.session_id).toEqual(cancelledEntry.session_id)
+  },
+)
