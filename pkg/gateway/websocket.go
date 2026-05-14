@@ -739,6 +739,11 @@ func (h *WSHandler) handleCancel(wc *wsConn, sessionID string) {
 	if err := h.agentLoop.InterruptSession(sessionID, "user canceled via WebSocket"); err != nil {
 		slog.Debug("ws: cancel — no active turn for session", "session_id", sessionID, "error", err)
 	}
+	// Auto-deny any pending tool approvals for this session so the agent loop
+	// goroutine is unblocked immediately (FR-7 / EC-8).
+	if h.approvalRegV2 != nil {
+		h.approvalRegV2.cancelAllPendingForSession(sessionID, "session cancelled")
+	}
 	store := h.resolveSessionStore(sessionID)
 	if store != nil {
 		status := session.StatusInterrupted

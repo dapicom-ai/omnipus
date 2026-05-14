@@ -407,6 +407,47 @@ func (r *approvalRegistryV2) cancelAllPendingForRestart() []approvalEntry {
 	return canceled
 }
 
+// cancelAllPendingForSession auto-denies every pending approval whose SessionID
+// matches the given sessionID, using ApprovalStateDeniedCancel as the terminal
+// state. Called by the cancel handler after InterruptSession so that any agent
+// loop goroutine blocked on a resultCh select is unblocked immediately (FR-7).
+//
+// reason is the human-readable explanation delivered in ApprovalOutcome.Reason;
+// callers SHOULD pass "session cancelled" (per FR-7 / EC-8).
+//
+// Returns the count of approvals auto-denied (for audit / observability).
+// Approvals that are already terminal when this function runs are unaffected
+// (FR-8 contract: tools whose execution has already started are not killed here).
+func (r *approvalRegistryV2) cancelAllPendingForSession(sessionID, reason string) int {
+	r.mu.Lock()
+	var toDeliver []*approvalEntry
+	cancelledIDs := make([]string, 0)
+	for _, e := range r.entries {
+		if e.state != ApprovalStatePending || e.SessionID != sessionID {
+			continue
+		}
+		e.state = ApprovalStateDeniedCancel
+		if e.timer != nil {
+			e.timer.Stop()
+			e.timer = nil
+		}
+		toDeliver = append(toDeliver, e)
+		cancelledIDs = append(cancelledIDs, e.ApprovalID)
+		r.pendingCount.Add(-1)
+	}
+	for _, id := range cancelledIDs {
+		r.scheduleTerminalDelete(id)
+	}
+	r.mu.Unlock()
+
+	for _, e := range toDeliver {
+		e.resultCh <- ApprovalOutcome{Approved: false, Reason: reason}
+	}
+	slog.Info("approval: auto-denied pending approvals on session cancel",
+		"session_id", sessionID, "count", len(toDeliver), "reason", reason)
+	return len(toDeliver)
+}
+
 // pendingCount returns a current count of pending approvals for the Prometheus gauge.
 func (r *approvalRegistryV2) pendingGaugeValue() int64 {
 	return r.pendingCount.Load()
