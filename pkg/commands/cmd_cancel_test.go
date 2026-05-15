@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -52,13 +53,14 @@ type stubAgentLoop struct {
 	calledSessionID string
 	calledHint      string
 	callCount       int
+	returnErr       error // if non-nil, returned by InterruptSession
 }
 
 func (s *stubAgentLoop) InterruptSession(sessionID, hint string) ([]string, error) {
 	s.calledSessionID = sessionID
 	s.calledHint = hint
 	s.callCount++
-	return nil, nil
+	return nil, s.returnErr
 }
 
 func (s *stubAgentLoop) InterruptByChannelChat(channel, chatID, hint string) error {
@@ -143,10 +145,10 @@ func TestCancelHandler_NilRuntimeRepliesUnavailable(t *testing.T) {
 	}
 }
 
-// TestCancelHandler_NilAgentLoopReturnsSuccess verifies that CancelActiveTurn
-// with no agent loop wired is a safe no-op — the handler still replies
-// "⏸ Cancelling..." so the user sees acknowledgement.
-func TestCancelHandler_NilAgentLoopReturnsSuccess(t *testing.T) {
+// TestCancelHandler_NilAgentLoopRepliesNothingToCancel verifies that
+// CancelActiveTurn with no agent loop wired returns ErrNoActiveTurn, causing
+// the handler to reply "Nothing to cancel" (C-3 fix: was previously "⏸ Cancelling...").
+func TestCancelHandler_NilAgentLoopRepliesNothingToCancel(t *testing.T) {
 	rt := &Runtime{
 		SessionID: func() string { return "some-session" },
 		// agentLoop intentionally left nil
@@ -167,7 +169,122 @@ func TestCancelHandler_NilAgentLoopReturnsSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if reply != "⏸ Cancelling..." {
-		t.Errorf("reply = %q, want %q", reply, "⏸ Cancelling...")
+	if reply != "Nothing to cancel" {
+		t.Errorf("reply = %q, want %q", reply, "Nothing to cancel")
 	}
+}
+
+// TestCancelActiveTurn_PropagatesRealError verifies that a genuine
+// InterruptSession failure (e.g., fsync error) is not swallowed (C-3 fix).
+func TestCancelActiveTurn_PropagatesRealError(t *testing.T) {
+	stub := &stubAgentLoop{
+		returnErr: errors.New("audit fsync failed"),
+	}
+	rt := &Runtime{
+		SessionID: func() string { return "sess-x" },
+	}
+	rt = rt.WithAgentLoop(stub)
+
+	err := rt.CancelActiveTurn(context.Background(), "sess-x", Canceller{UserID: "u", Channel: "c"})
+	if err == nil {
+		t.Fatal("expected non-nil error for real InterruptSession failure, got nil")
+	}
+	if !errors.Is(err, stub.returnErr) {
+		// The error must wrap the original.
+		if err.Error() == "" || !contains(err.Error(), "audit fsync failed") {
+			t.Errorf("error %q must contain %q", err.Error(), "audit fsync failed")
+		}
+	}
+}
+
+// TestCancelActiveTurn_NoActiveTurnReturnsSentinel verifies that when the agent
+// loop returns nil (success with empty descendants), CancelActiveTurn returns nil
+// (not ErrNoActiveTurn) — and separately that the "no active turn" string path
+// returns the sentinel (C-3 fix).
+func TestCancelActiveTurn_NoActiveTurnReturnsSentinel(t *testing.T) {
+	// Case 1: loop returns nil → success (no ErrNoActiveTurn).
+	stub := &stubAgentLoop{returnErr: nil}
+	rt := &Runtime{SessionID: func() string { return "s" }}
+	rt = rt.WithAgentLoop(stub)
+
+	err := rt.CancelActiveTurn(context.Background(), "s", Canceller{UserID: "u", Channel: "c"})
+	if err != nil {
+		t.Errorf("nil InterruptSession error must produce nil from CancelActiveTurn, got: %v", err)
+	}
+
+	// Case 2: loop returns "no active turn" text → ErrNoActiveTurn sentinel.
+	stub2 := &stubAgentLoop{returnErr: errors.New("no active turn for session s")}
+	rt2 := &Runtime{SessionID: func() string { return "s" }}
+	rt2 = rt2.WithAgentLoop(stub2)
+
+	err2 := rt2.CancelActiveTurn(context.Background(), "s", Canceller{UserID: "u", Channel: "c"})
+	if !errors.Is(err2, ErrNoActiveTurn) {
+		t.Errorf("expected ErrNoActiveTurn, got: %v", err2)
+	}
+}
+
+// TestCancelHandler_ReplyMatchesErrorState verifies that the /cancel handler
+// reply message matches the error state from CancelActiveTurn (C-3 fix).
+func TestCancelHandler_ReplyMatchesErrorState(t *testing.T) {
+	cancelDef := cancelCommand()
+
+	cases := []struct {
+		name      string
+		loopErr   error
+		wantReply string
+	}{
+		{
+			name:      "success",
+			loopErr:   nil,
+			wantReply: "⏸ Cancelling...",
+		},
+		{
+			name:      "no_active_turn",
+			loopErr:   errors.New("no active turn for session abc"),
+			wantReply: "Nothing to cancel",
+		},
+		{
+			name:      "real_failure",
+			loopErr:   errors.New("audit fsync failed: disk full"),
+			wantReply: "Cancel request failed: cancel: audit fsync failed: disk full",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := &stubAgentLoop{returnErr: tc.loopErr}
+			rt := &Runtime{SessionID: func() string { return "sess-1" }}
+			rt = rt.WithAgentLoop(stub)
+
+			var reply string
+			err := cancelDef.Handler(context.Background(), Request{
+				Channel:  "web",
+				SenderID: "user_x",
+				Text:     "/cancel",
+				Reply: func(text string) error {
+					reply = text
+					return nil
+				},
+			}, rt)
+			if err != nil {
+				t.Fatalf("handler returned unexpected error: %v", err)
+			}
+			if reply != tc.wantReply {
+				t.Errorf("reply = %q, want %q", reply, tc.wantReply)
+			}
+		})
+	}
+}
+
+// contains is a helper for string containment without importing strings.
+func contains(s, sub string) bool {
+	if len(sub) == 0 {
+		return true
+	}
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
 }

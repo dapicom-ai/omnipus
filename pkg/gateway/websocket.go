@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -733,6 +734,59 @@ func (h *WSHandler) handleChatMessage(
 	}
 }
 
+// wsCancelStageFrame is the JSON shape of a "cancel_stage" WebSocket frame sent
+// to the SPA to drive the progressive Stop-button label (FR-21). The dedicated
+// struct avoids polluting wsServerFrame.Status (used by other frame types) and
+// emits the field as "stage" — which is what the SPA reducer reads.
+type wsCancelStageFrame struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Stage     string `json:"stage"` // "graceful" | "hard" | "detached"
+}
+
+// sendCancelStageFrame marshals a wsCancelStageFrame and delivers it via wc.sendCh.
+// Mirrors sendConnFrame's non-critical send path (immediate try, then 10ms/50ms
+// backoffs) but uses the dedicated struct so the JSON field is "stage" not "status".
+// Best-effort: marshal/send errors are logged at debug level and do not block the
+// cancel state machine.
+func sendCancelStageFrame(wc *wsConn, sessionID, stage string) {
+	if wc == nil {
+		return
+	}
+	data, err := json.Marshal(wsCancelStageFrame{
+		Type:      "cancel_stage",
+		SessionID: sessionID,
+		Stage:     stage,
+	})
+	if err != nil {
+		slog.Debug("ws: marshal cancel_stage frame failed", "stage", stage, "error", err)
+		return
+	}
+	targetCh := wc.sendCh
+	if wc.isReplayingLive.Load() && wc.replayDivertCh != nil {
+		targetCh = wc.replayDivertCh
+	}
+	// Non-critical: try immediate, fall back to brief retries, drop on backpressure.
+	for _, wait := range [...]time.Duration{0, 10 * time.Millisecond, 50 * time.Millisecond} {
+		if wait == 0 {
+			select {
+			case targetCh <- data:
+				return
+			default:
+			}
+			continue
+		}
+		t := time.NewTimer(wait)
+		select {
+		case targetCh <- data:
+			t.Stop()
+			return
+		case <-t.C:
+		}
+	}
+	slog.Debug("ws: dropped cancel_stage frame due to backpressure", "stage", stage)
+}
+
 // handleCancel implements the two-stage cancel timer with audit emission and
 // abuse detection (FR-10, FR-11, FR-12, FR-13a, FR-15, FR-17, FR-18-21,
 // FR-25a, FR-35, FR-36).
@@ -786,11 +840,7 @@ func (h *WSHandler) handleCancel(wc *wsConn, sessionID string) {
 	if h.approvalRegV2 != nil {
 		h.approvalRegV2.cancelAllPendingForSession(sessionID, "session cancelled")
 	}
-	sendConnFrame(wc, wsServerFrame{
-		Type:      "cancel_stage",
-		SessionID: sessionID,
-		Status:    "graceful",
-	})
+	sendCancelStageFrame(wc, sessionID, "graceful")
 
 	// Register the post-cancel callback: fires exactly once when the turn exits.
 	// Captures: activeTurn, sessionID, cancellerUser, cancellerChannel, descendants,
@@ -840,31 +890,48 @@ func (h *WSHandler) handleCancel(wc *wsConn, sessionID string) {
 	}
 
 	// PHASE B: 3s timer → hard abort if the turn is still alive.
+	// Wrap in defer-recover so a panic inside the cascade does not crash the gateway (C-1).
 	time.AfterFunc(3*time.Second, func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("ws: cancel timer panic",
+					"stage", "hard",
+					"session_id", sessionID,
+					"panic", r,
+					"stack", string(debug.Stack()),
+				)
+			}
+		}()
 		if !activeTurn.IsAlive() {
 			return // already finished, skip
 		}
-		_, _ = h.agentLoop.InterruptSessionHard(sessionID, hint)
-		sendConnFrame(wc, wsServerFrame{
-			Type:      "cancel_stage",
-			SessionID: sessionID,
-			Status:    "hard",
-		})
+		// C-2: don't silently discard hard-abort error; log at WARN but continue
+		// the timer chain regardless (degraded but not fatal).
+		if _, err := h.agentLoop.InterruptSessionHard(sessionID, hint); err != nil {
+			slog.Warn("ws: hard abort failed", "session_id", sessionID, "error", err)
+		}
+		sendCancelStageFrame(wc, sessionID, "hard")
 
 		// PHASE C: 5s after hard → detach if still alive.
 		hardAt := time.Now()
 		time.AfterFunc(5*time.Second, func() {
+			defer func() {
+				if r := recover(); r != nil {
+					slog.Error("ws: cancel timer panic",
+						"stage", "detached",
+						"session_id", sessionID,
+						"panic", r,
+						"stack", string(debug.Stack()),
+					)
+				}
+			}()
 			if !activeTurn.IsAlive() {
 				return // finished in the meantime
 			}
 			// Mark abandoned so the gateway stops tracking the goroutine.
 			// The turn goroutine will eventually finish on its own.
 			activeTurn.MarkAbandoned()
-			sendConnFrame(wc, wsServerFrame{
-				Type:      "cancel_stage",
-				SessionID: sessionID,
-				Status:    "detached",
-			})
+			sendCancelStageFrame(wc, sessionID, "detached")
 			audit.Emit(ctx, auditLogger, audit.EventTurnCancelStuck, audit.SeverityWarn, map[string]any{
 				"session_id":                      sessionID,
 				"turn_id":                         turnID,

@@ -2,7 +2,6 @@ package discord
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/bwmarrin/discordgo"
 
@@ -43,11 +42,16 @@ func (c *DiscordChannel) RegisterCommands(ctx context.Context, defs []commands.D
 	// "" as guildID means global registration (all guilds).
 	_, err := c.session.ApplicationCommandBulkOverwrite(appID, "", appCmds)
 	if err != nil {
+		// FR-28: slash-command registration failures must not crash channel
+		// startup. Other Tier A channels (Slack, Teams, Feishu, DingTalk,
+		// GoogleChat) log WARN and return nil on platform API errors. Discord
+		// matches that behaviour: the channel continues to receive messages and
+		// parses /cancel via text matching as a fallback.
 		logger.WarnCF("discord", "Discord command registration failed; text parsing still works (FR-28)", map[string]any{
 			"error": err.Error(),
 			"count": len(appCmds),
 		})
-		return fmt.Errorf("discord: ApplicationCommandBulkOverwrite: %w", err)
+		return nil
 	}
 
 	logger.InfoCF("discord", "Discord slash commands registered globally", map[string]any{

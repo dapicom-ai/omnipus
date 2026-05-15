@@ -213,3 +213,41 @@ func TestDiscordRegisterCommands_SkipsEmptyList(t *testing.T) {
 		t.Fatal("expected no HTTP call for empty filtered list")
 	}
 }
+
+// TestDiscordRegisterCommands_BulkOverwriteFailureReturnsNil is H-3: verifies
+// that a platform API failure (e.g., 503 from Discord) returns nil (not an
+// error) so channel startup is not blocked.  Text-parsing fallback covers the
+// /cancel path per FR-28.
+func TestDiscordRegisterCommands_BulkOverwriteFailureReturnsNil(t *testing.T) {
+	// Server that always returns 503.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "discord unavailable", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	origFn := discordgo.EndpointApplicationGlobalCommands
+	discordgo.EndpointApplicationGlobalCommands = func(aID string) string {
+		return srv.URL + "/applications/" + aID + "/commands"
+	}
+	defer func() { discordgo.EndpointApplicationGlobalCommands = origFn }()
+
+	session, err := discordgo.New("Bot fake-token")
+	if err != nil {
+		t.Fatalf("discordgo.New: %v", err)
+	}
+	session.Client = srv.Client()
+
+	ch := &DiscordChannel{
+		session:   session,
+		botUserID: "app-id-503-test",
+	}
+
+	defs := []commands.Definition{
+		{Name: "cancel", Description: "Cancel the running agent task"},
+	}
+
+	// Must return nil — startup must not be blocked by a platform API failure.
+	if err := ch.RegisterCommands(context.Background(), defs); err != nil {
+		t.Errorf("RegisterCommands() returned non-nil error on 503: %v (H-3: must return nil per FR-28)", err)
+	}
+}

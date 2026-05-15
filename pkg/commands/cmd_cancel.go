@@ -1,6 +1,9 @@
 package commands
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 func cancelCommand() Definition {
 	return Definition{
@@ -24,15 +27,18 @@ func cancelCommand() Definition {
 				Channel: req.Channel,
 			}
 
-			// CancelActiveTurn always returns nil (see runtime.go); the reply is
-			// sent regardless of whether a turn was actually active — the handler
-			// layer acknowledges receipt, and the audit path (turn_cancel_attempt
-			// / turn_cancelled entries) is the responsibility of the gateway
-			// cancel-handler wave.
-			if err := rt.CancelActiveTurn(ctx, sessionID, canceller); err != nil {
+			err := rt.CancelActiveTurn(ctx, sessionID, canceller)
+			switch {
+			case err == nil:
+				// Interrupt successfully fired.
+				return req.Reply("⏸ Cancelling...")
+			case errors.Is(err, ErrNoActiveTurn):
+				// Informational — nothing was running; not a failure.
+				return req.Reply("Nothing to cancel")
+			default:
+				// Real failure (e.g., fsync error, lock contention).
 				return req.Reply("Cancel request failed: " + err.Error())
 			}
-			return req.Reply("⏸ Cancelling...")
 		},
 	}
 }

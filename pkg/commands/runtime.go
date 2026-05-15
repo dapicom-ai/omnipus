@@ -2,10 +2,18 @@ package commands
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
 )
+
+// ErrNoActiveTurn is returned by CancelActiveTurn when InterruptSession reports
+// that no turn is currently running for the given session. Callers should reply
+// with an informational "Nothing to cancel" message rather than treating it as
+// a failure.
+var ErrNoActiveTurn = errors.New("no active turn")
 
 // AgentLoopInterface is a minimal interface for the agent-loop methods needed by
 // the commands runtime. Using an interface here avoids a hard import cycle
@@ -53,26 +61,32 @@ type Runtime struct {
 
 // CancelActiveTurn requests a graceful interrupt of the active turn for sessionID.
 // The canceller fields are included in the audit hint so the interrupt can be
-// attributed in the audit log. Returns nil both when the interrupt was fired and
-// when there is no active turn — callers should not treat "no active turn" as an
-// error at this layer.
+// attributed in the audit log.
+//
+// Return values:
+//   - nil           — interrupt was successfully fired.
+//   - ErrNoActiveTurn — the agent loop reported no running turn (informational).
+//   - other error   — a real failure (e.g., fsync, lock failure) that the caller
+//     must surface to the user as a failure response.
 func (rt *Runtime) CancelActiveTurn(ctx context.Context, sessionID string, canceller Canceller) error {
 	if rt == nil || rt.agentLoop == nil {
-		return nil
+		// No agent loop wired — treat as "nothing to cancel" so the
+		// nil-runtime path still acknowledges the request.
+		return ErrNoActiveTurn
 	}
 	hint := fmt.Sprintf("cancelled by %s via %s", canceller.UserID, canceller.Channel)
 	_, err := rt.agentLoop.InterruptSession(sessionID, hint)
-	// "no active turn" is not an error at the commands layer — it surfaces to the
-	// caller as a no-op cancel attempt (audit is the responsibility of the
-	// gateway cancel handler wave).
-	if err != nil {
-		// Distinguish "no active turn" from real errors by returning nil for the
-		// known "no active turn" sentinel so handlers can reply uniformly.
-		// The deeper audit emission (turn_cancel_attempt) is handled by the
-		// gateway/cancel-handler wave; here we just drive the interrupt.
+	if err == nil {
 		return nil
 	}
-	return nil
+	// Distinguish "no active turn" from real errors. The agent loop may not
+	// yet expose a typed sentinel (depends on whether the loop package has been
+	// migrated). Until it does, fall back to string inspection.
+	// Switch to errors.Is once the loop exports a typed ErrNoActiveTurn.
+	if strings.Contains(err.Error(), "no active turn") {
+		return ErrNoActiveTurn
+	}
+	return fmt.Errorf("cancel: %w", err)
 }
 
 // WithAgentLoop returns a shallow copy of rt with agentLoop set. Used by the
