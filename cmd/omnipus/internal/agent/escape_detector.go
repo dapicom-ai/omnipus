@@ -16,10 +16,12 @@ import (
 // passThrough contains bytes that should be passed to the terminal as-is (e.g.
 // the bytes of an arrow-key sequence after we determine it is not a cancel).
 //
-// The caller drives timing: after receiving a first Escape, it must call
-// d.tick() at least once after 500ms to expire the window; alternatively,
-// the window expires automatically on the next feed call if enough wall time
-// has elapsed.
+// Timing is wall-clock driven. Two consecutive Escape bytes arriving within
+// window (500ms) trigger cancel. A single 0x1B followed by 0x5B ('[') or 0x4F
+// ('O') within csiTimeout (50ms) is treated as a CSI/SS3 sequence and passed
+// through. A CSI introducer arriving after csiTimeout is NOT classified as a
+// CSI sequence — the buffered ESC is silently discarded and the new byte starts
+// fresh processing (FR-31a).
 //
 // This type is NOT goroutine-safe; the caller must serialise calls.
 type escapeDetector struct {
@@ -28,8 +30,8 @@ type escapeDetector struct {
 	// introducer (ignore + pass through), or something else (clear).
 	waitingForSecond bool
 
-	// firstEscapeAt is the wall-clock time we received the first 0x1B.
-	firstEscapeAt time.Time
+	// firstEscAt is the wall-clock time we received the first 0x1B.
+	firstEscAt time.Time
 
 	// window is the maximum gap between two consecutive Escape bytes
 	// that still counts as "double Escape". Default 500ms.
@@ -61,9 +63,9 @@ func (d *escapeDetector) feed(b byte) (cancel bool, passThrough []byte) {
 
 	now := time.Now()
 
-	// If we were waiting for a second Escape but the window has expired,
+	// If we were waiting for a second Escape but the 500ms window has expired,
 	// clear the pending state first.
-	if d.waitingForSecond && now.Sub(d.firstEscapeAt) > d.window {
+	if d.waitingForSecond && now.Sub(d.firstEscAt) > d.window {
 		d.waitingForSecond = false
 	}
 
@@ -71,7 +73,7 @@ func (d *escapeDetector) feed(b byte) (cancel bool, passThrough []byte) {
 	case !d.waitingForSecond && b == byteESC:
 		// First Escape: enter the waiting-for-second state.
 		d.waitingForSecond = true
-		d.firstEscapeAt = now
+		d.firstEscAt = now
 		return false, nil
 
 	case d.waitingForSecond && b == byteESC:
@@ -80,11 +82,20 @@ func (d *escapeDetector) feed(b byte) (cancel bool, passThrough []byte) {
 		return true, nil
 
 	case d.waitingForSecond && (b == byteCSI || b == byteSS3):
-		// CSI/SS3 introducer within the csiTimeout of the first Escape:
-		// this is an arrow key or F-key sequence, not a double-Escape.
-		// Pass both the ESC and this byte through so readline can process them.
+		// CSI/SS3 introducer after the first Escape.
+		// FR-31a: only treat it as a CSI/SS3 sequence if it arrived within
+		// csiTimeout (50ms). If more than 50ms has elapsed, the ESC was a
+		// standalone escape — discard it silently and process the new byte
+		// as a regular byte (not a cancel trigger).
 		d.waitingForSecond = false
-		return false, []byte{byteESC, b}
+		if now.Sub(d.firstEscAt) <= d.csiTimeout {
+			// Arrow key or F-key sequence within the 50ms CSI window:
+			// pass both the ESC and this byte through so readline can process them.
+			return false, []byte{byteESC, b}
+		}
+		// CSI byte arrived too late — the ESC was stale. Discard the ESC and
+		// treat '[' or 'O' as a normal byte.
+		return false, []byte{b}
 
 	case d.waitingForSecond:
 		// Some other byte after a single Escape: ignore the Escape (no-op)

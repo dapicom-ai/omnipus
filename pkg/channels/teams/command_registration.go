@@ -27,10 +27,6 @@ the Teams Admin Center.`
 // add to their manifest.json.  It always returns nil so the channel starts
 // successfully and falls back to text parsing (FR-28).
 func (c *TeamsChannel) RegisterCommands(_ context.Context, defs []commands.Definition) error {
-	type entry struct {
-		title       string
-		description string
-	}
 	var entries []string
 	for _, def := range defs {
 		if def.Name == "" || def.Description == "" {

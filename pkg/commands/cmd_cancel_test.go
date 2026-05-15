@@ -67,6 +67,17 @@ func (s *stubAgentLoop) InterruptByChannelChat(channel, chatID, hint string) err
 	return nil
 }
 
+func (s *stubAgentLoop) RequestCancelForSession(ctx context.Context, sessionID, userID, channel string) (bool, error) {
+	// Delegate to InterruptSession for test coverage continuity.
+	// Include both userID and channel in the hint so tests can assert on both.
+	hint := "cancel from " + userID + " via " + channel
+	_, err := s.InterruptSession(sessionID, hint)
+	if err != nil {
+		return false, err
+	}
+	return s.callCount > 0, nil
+}
+
 // TestCancelHandler_CallsInterruptSession verifies that the /cancel handler
 // invokes InterruptSession on the agent loop with the correct session ID and a
 // hint that contains the canceller identity (spec FR-27, FR-1).

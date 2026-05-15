@@ -441,10 +441,7 @@ func (al *AgentLoop) InterruptSession(sessionID, hint string) (descendants []str
 
 // InterruptSessionHard escalates a previously-graceful cancel to a hard abort for
 // every turn matching sessionID. Called at t=3s after InterruptSession per FR-11.
-//
-// Unlike the existing InterruptHard (which operates on getAnyActiveTurnState and
-// has signature func() error), this function targets a specific session and cascades
-// across all matching turnStates. It does NOT replace or modify InterruptHard.
+// See InterruptHard for the legacy single-turn path; this function is session-scoped.
 //
 // Returns the list of turn IDs that received the hard-abort signal.
 func (al *AgentLoop) InterruptSessionHard(sessionID, hint string) (descendants []string, err error) {
@@ -518,11 +515,17 @@ func (al *AgentLoop) InterruptHard() error {
 	return nil
 }
 
-// InterruptByChannelChat gracefully cancels all active turns whose channel and
-// chatID match the supplied values. This is the correct cancellation path for
-// Tier B (text-parsing) channels: inbound messages from those channels carry no
-// explicit SessionID so InterruptSession would match nothing. Instead we scan
-// activeTurnStates by ts.channel + ts.chatID which ARE always populated.
+// InterruptByChannelChat gracefully cancels the active root turn (depth==0)
+// whose channel and chatID match the supplied values, then cascades to all
+// sub-turns that share the same transcriptSessionID via InterruptSession.
+//
+// This is the correct cancellation path for Tier B (text-parsing) channels:
+// inbound messages from those channels carry no explicit SessionID so a direct
+// InterruptSession call would match nothing. Sub-turns inherit their parent's
+// transcriptSessionID but NOT channel/chatID (they are created with empty
+// values), so matching by channel+chatID alone misses them. The two-step
+// strategy — find root by channel+chatID, then cascade by sessionID — covers
+// both parent and all sub-turns.
 //
 // Returns nil whether or not any matching turn was found — "no active turn" is
 // a valid no-op. Returns a non-nil error only when channel or chatID is empty.
@@ -531,49 +534,33 @@ func (al *AgentLoop) InterruptByChannelChat(channel, chatID, hint string) error 
 		return fmt.Errorf("InterruptByChannelChat: channel and chatID must be non-empty")
 	}
 
-	var matches []*turnState
+	// Step 1: find the root turn (depth==0) matching channel+chatID and extract
+	// its transcriptSessionID. We stop at the first match because a given
+	// channel+chatID pair can have at most one active root turn at a time.
+	var sid string
 	al.activeTurnStates.Range(func(_, value any) bool {
 		ts := value.(*turnState)
 		ts.mu.RLock()
 		ch := ts.channel
 		cid := ts.chatID
+		depth := ts.depth
 		ts.mu.RUnlock()
-		if ch == channel && cid == chatID {
-			matches = append(matches, ts)
+		if ch == channel && cid == chatID && depth == 0 {
+			sid = ts.transcriptSessionID
+			return false // stop walking — found the root
 		}
 		return true
 	})
 
-	if len(matches) == 0 {
+	if sid == "" {
+		// No active root turn for this channel+chatID — valid no-op.
 		return nil
 	}
 
-	var wg sync.WaitGroup
-	for _, ts := range matches {
-		ts := ts
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			ts.mu.Lock()
-			pc := ts.providerCancel
-			ts.mu.Unlock()
-			if pc != nil {
-				pc()
-			}
-			if ts.requestGracefulInterrupt(hint) {
-				al.emitEvent(
-					EventKindInterruptReceived,
-					ts.eventMeta("InterruptByChannelChat", "turn.interrupt.received"),
-					InterruptReceivedPayload{
-						Kind:    InterruptKindGraceful,
-						HintLen: len(hint),
-					},
-				)
-			}
-		}()
-	}
-	wg.Wait()
-	return nil
+	// Step 2: cascade via InterruptSession which covers parent + all sub-turns
+	// that share the same transcriptSessionID.
+	_, err := al.InterruptSession(sid, hint)
+	return err
 }
 
 // ====================== SubTurn Result Polling ======================

@@ -47,9 +47,9 @@ func TestRawStdinHandler_SingleEscapeNoOp(t *testing.T) {
 		t.Fatal("first Escape should not trigger cancel")
 	}
 
-	// Simulate 600ms elapsing by rewinding firstEscapeAt into the past.
-	// The detector uses wall time from d.firstEscapeAt; we can fake it:
-	d.firstEscapeAt = time.Now().Add(-600 * time.Millisecond)
+	// Simulate 600ms elapsing by rewinding firstEscAt into the past.
+	// The detector uses wall time from d.firstEscAt; we can fake it:
+	d.firstEscAt = time.Now().Add(-600 * time.Millisecond)
 
 	// Feed an unrelated byte. The expired window should clear pending state
 	// and pass the byte through without cancelling.
@@ -109,6 +109,137 @@ func TestRawStdinHandler_SS3SequenceNoCancel(t *testing.T) {
 	}
 	if len(pass) != 2 || pass[0] != 0x1B || pass[1] != 0x4F {
 		t.Fatalf("expected ESC+'O' in passThrough; got %v", pass)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// FR-31a — CSI timeout enforcement: 50ms window between ESC and '[' or 'O'
+// ---------------------------------------------------------------------------
+
+// TestEscapeDetector_CSIWithin50ms verifies that ESC followed by '[' within
+// 50ms is classified as a CSI sequence and passed through (no cancel).
+func TestEscapeDetector_CSIWithin50ms(t *testing.T) {
+	d := newEscapeDetector()
+
+	// First byte: ESC.
+	cancel, pass := d.feed(0x1B)
+	if cancel {
+		t.Fatal("ESC should not cancel")
+	}
+	if len(pass) != 0 {
+		t.Fatalf("ESC should produce no passThrough; got %v", pass)
+	}
+
+	// Fake 30ms elapsed (well within csiTimeout).
+	d.firstEscAt = d.firstEscAt.Add(-30 * time.Millisecond)
+
+	// Second byte: '[' (CSI introducer within 50ms).
+	cancel, pass = d.feed(0x5B)
+	if cancel {
+		t.Fatal("ESC+[ within 50ms should not cancel")
+	}
+	if len(pass) != 2 || pass[0] != 0x1B || pass[1] != 0x5B {
+		t.Fatalf("expected ESC+'[' passThrough; got %v", pass)
+	}
+
+	// Third byte: 'A' — tail of the Up-arrow sequence.
+	cancel, pass = d.feed(0x41)
+	if cancel {
+		t.Fatal("trailing byte should not cancel")
+	}
+	if len(pass) != 1 || pass[0] != 0x41 {
+		t.Fatalf("expected 'A' passThrough; got %v", pass)
+	}
+}
+
+// TestEscapeDetector_CSIAfter50ms verifies that ESC followed by '[' AFTER
+// 50ms is NOT classified as CSI — the stale ESC is discarded and '[' is
+// returned as a normal byte (FR-31a).
+func TestEscapeDetector_CSIAfter50ms(t *testing.T) {
+	d := newEscapeDetector()
+
+	// First byte: ESC.
+	cancel, _ := d.feed(0x1B)
+	if cancel {
+		t.Fatal("ESC should not cancel")
+	}
+
+	// Fake 60ms elapsed (past csiTimeout).
+	d.firstEscAt = d.firstEscAt.Add(-60 * time.Millisecond)
+
+	// '[' arrives after 60ms: must NOT be classified as CSI.
+	// The stale ESC is discarded; '[' is returned as a plain byte.
+	cancel, pass := d.feed(0x5B)
+	if cancel {
+		t.Fatal("stale ESC + '[' should not cancel")
+	}
+	// ESC was discarded — passThrough should contain only '[', not ESC+'['.
+	if len(pass) != 1 || pass[0] != 0x5B {
+		t.Fatalf("expected only '[' in passThrough (ESC discarded); got %v", pass)
+	}
+	if d.waitingForSecond {
+		t.Fatal("state should be cleared after stale ESC handling")
+	}
+
+	// 'A' is just a normal byte.
+	cancel, pass = d.feed(0x41)
+	if cancel {
+		t.Fatal("'A' should not cancel")
+	}
+	if len(pass) != 1 || pass[0] != 0x41 {
+		t.Fatalf("expected 'A' passThrough; got %v", pass)
+	}
+}
+
+// TestEscapeDetector_DoubleEscWithin500ms verifies that ESC followed by a
+// second ESC within 500ms (but both before the 50ms CSI check is relevant)
+// fires cancel.
+func TestEscapeDetector_DoubleEscWithin500ms(t *testing.T) {
+	d := newEscapeDetector()
+
+	// First ESC.
+	cancel, _ := d.feed(0x1B)
+	if cancel {
+		t.Fatal("first ESC should not cancel")
+	}
+
+	// Fake 30ms elapsed.
+	d.firstEscAt = d.firstEscAt.Add(-30 * time.Millisecond)
+
+	// Second ESC within window → cancel.
+	cancel, pass := d.feed(0x1B)
+	if !cancel {
+		t.Fatal("second ESC within 500ms should cancel")
+	}
+	if len(pass) != 0 {
+		t.Fatalf("cancel must produce no passThrough; got %v", pass)
+	}
+}
+
+// TestEscapeDetector_DoubleEscAfter500ms verifies that ESC followed by a
+// second ESC after 500ms does NOT fire cancel — the first ESC window expires.
+func TestEscapeDetector_DoubleEscAfter500ms(t *testing.T) {
+	d := newEscapeDetector()
+
+	// First ESC.
+	cancel, _ := d.feed(0x1B)
+	if cancel {
+		t.Fatal("first ESC should not cancel")
+	}
+
+	// Fake 600ms elapsed — window has expired.
+	d.firstEscAt = d.firstEscAt.Add(-600 * time.Millisecond)
+
+	// Second ESC: first window expired, so this starts a fresh window (no cancel yet).
+	cancel, pass := d.feed(0x1B)
+	if cancel {
+		t.Fatal("second ESC after 500ms should not cancel (first window expired)")
+	}
+	if len(pass) != 0 {
+		t.Fatalf("new first-ESC should produce no passThrough; got %v", pass)
+	}
+	if !d.waitingForSecond {
+		t.Fatal("should be waiting for second ESC after new first-ESC")
 	}
 }
 

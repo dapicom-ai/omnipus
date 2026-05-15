@@ -1723,6 +1723,107 @@ func TestInterruptSession_NoActiveTurnIsAttemptOnly(t *testing.T) {
 	}
 }
 
+// TestInterruptByChannelChat_CascadesToSubTurns verifies that a Tier B cancel
+// originating from a channel+chatID match propagates to sub-turns that share
+// the same transcriptSessionID even though sub-turns have empty channel/chatID.
+//
+// BDD: Given a root turn (depth=0, channel="telegram", chatID="123", transcriptSessionID="S")
+// and a sub-turn (depth=1, channel="", chatID="", transcriptSessionID="S"),
+// When InterruptByChannelChat("telegram", "123", "hint") is called,
+// Then BOTH turns receive requestGracefulInterrupt (gracefulInterrupt=true).
+//
+// Refs: architect N3, FR-6, FR-10.
+func TestInterruptByChannelChat_CascadesToSubTurns(t *testing.T) {
+	al, cleanup := newAL(t)
+	defer cleanup()
+
+	const sid = "channel-chat-cascade-session"
+
+	agent := al.registry.GetDefaultAgent()
+	if agent == nil {
+		t.Fatal("expected default agent")
+	}
+
+	// Helper to build a turnState stub with explicit channel/chatID/depth.
+	makeTurn := func(sessionKey, channel, chatID string, depth int, transcriptSID string) (*turnState, chan struct{}) {
+		t.Helper()
+		provCh := make(chan struct{}, 1)
+		opts := processOptions{
+			SessionKey:          sessionKey,
+			Channel:             channel,
+			ChatID:              chatID,
+			TranscriptSessionID: transcriptSID,
+		}
+		scope := al.newTurnEventScope(agent.ID, sessionKey)
+		ts := newTurnState(agent, opts, scope)
+		ts.depth = depth
+		ts.mu.Lock()
+		ts.providerCancel = func() {
+			select {
+			case provCh <- struct{}{}:
+			default:
+			}
+		}
+		ts.mu.Unlock()
+		al.activeTurnStates.Store(sessionKey, ts)
+		t.Cleanup(func() { al.activeTurnStates.Delete(sessionKey) })
+		return ts, provCh
+	}
+
+	// Root turn: has channel/chatID populated.
+	parentTS, parentPC := makeTurn("parent-key", "telegram", "123", 0, sid)
+	// Sub-turn: inherits transcriptSessionID but has no channel/chatID (depth=1).
+	subTS, subPC := makeTurn("sub-key", "", "", 1, sid)
+
+	if err := al.InterruptByChannelChat("telegram", "123", "test"); err != nil {
+		t.Fatalf("InterruptByChannelChat returned unexpected error: %v", err)
+	}
+
+	// Both providerCancel stubs must fire within 200ms (FR-12a).
+	timeout := time.After(200 * time.Millisecond)
+	for i, ch := range []chan struct{}{parentPC, subPC} {
+		select {
+		case <-ch:
+		case <-timeout:
+			t.Fatalf("providerCancel[%d] was not called within 200ms", i)
+		}
+	}
+
+	// Both turns must have gracefulInterrupt set.
+	for i, ts := range []*turnState{parentTS, subTS} {
+		interrupted, _ := ts.gracefulInterruptRequested()
+		if !interrupted {
+			t.Errorf("turn %d: gracefulInterrupt not set after Tier B cascade", i)
+		}
+	}
+}
+
+// TestInterruptByChannelChat_NoMatchIsNoop verifies that calling
+// InterruptByChannelChat when no root turn matches is a silent no-op.
+func TestInterruptByChannelChat_NoMatchIsNoop(t *testing.T) {
+	al, cleanup := newAL(t)
+	defer cleanup()
+
+	// No turns registered — must return nil, not error.
+	if err := al.InterruptByChannelChat("telegram", "999", "hint"); err != nil {
+		t.Fatalf("expected nil for no-match, got: %v", err)
+	}
+}
+
+// TestInterruptByChannelChat_EmptyArgsError verifies that empty channel or
+// chatID returns a non-nil error.
+func TestInterruptByChannelChat_EmptyArgsError(t *testing.T) {
+	al, cleanup := newAL(t)
+	defer cleanup()
+
+	if err := al.InterruptByChannelChat("", "123", "hint"); err == nil {
+		t.Fatal("expected error for empty channel")
+	}
+	if err := al.InterruptByChannelChat("telegram", "", "hint"); err == nil {
+		t.Fatal("expected error for empty chatID")
+	}
+}
+
 // TestInterruptSessionHard_CascadesAcrossSession is T4.
 //
 // BDD: Given a parent turn and 2 sub-turns all sharing transcriptSessionID "S"

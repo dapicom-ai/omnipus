@@ -135,8 +135,8 @@ describe('MessageInput — stop button label morphing (B3)', () => {
       useConnectionStore.setState({ isConnected: true })
     })
     render(<MessageInput />)
-    // Button is still "Stop generation" (aria-label) but text "Stopping..." is visible.
-    expect(screen.getByRole('button', { name: /stop generation/i })).toBeInTheDocument()
+    // FR-21: aria-label is the current label state; in graceful stage it is "Stopping..."
+    expect(screen.getByRole('button', { name: /stopping\.\.\./i })).toBeInTheDocument()
     expect(screen.getByText('Stopping...')).toBeInTheDocument()
   })
 
@@ -175,9 +175,9 @@ describe('MessageInput — stop button label morphing (B3)', () => {
       useSessionStore.setState({ activeSessionId: 'sess_1' })
     })
     render(<MessageInput />)
-    // Before click: no label text shown (just icon)
+    // Before click: no label text shown (just icon); aria-label is "Stop" (FR-21 idle state)
     expect(screen.queryByText('Stopping...')).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: /stop generation/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^stop$/i }))
     // After click: optimistic "Stopping..." label appears; isStreaming still true so Stop button stays.
     expect(screen.getByText('Stopping...')).toBeInTheDocument()
   })

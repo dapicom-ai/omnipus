@@ -75,6 +75,9 @@ export function MessageInput() {
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`
   }
 
+  // FR-21: textarea re-enables when the goroutine is neutered (detached stage).
+  const isDetached = cancelStage === 'detached'
+
   const canSend = value.trim().length > 0 && !isStreaming && isConnected
   const disconnected = !isConnected
 
@@ -130,7 +133,7 @@ export function MessageInput() {
             type="button"
             onClick={handleStop}
             className="shrink-0 h-8 min-w-8 rounded-lg bg-[var(--color-error)]/20 text-[var(--color-error)] hover:bg-[var(--color-error)]/30 flex items-center justify-center gap-1.5 px-2 transition-colors"
-            aria-label="Stop generation"
+            aria-label={stopButtonLabel}
             title="Stop (Escape)"
             data-testid="stop-btn"
           >

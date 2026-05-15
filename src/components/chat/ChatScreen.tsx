@@ -379,6 +379,7 @@ const SLASH_COMMANDS: SlashCommand[] = [
 const HELP_TEXT = `**Omnipus commands:**
 - \`/session new\` — Start a new session
 - \`/clear\` — Clear the current chat history
+- \`/cancel\` — Cancel the current in-progress turn
 - \`/help\` — Show this help message
 
 **Tips:**
