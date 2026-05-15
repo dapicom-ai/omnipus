@@ -164,19 +164,21 @@ func (al *AgentLoop) RequestCancel(
 		return CancelOutcome{Fired: false}, nil
 	}
 
-	// --- PHASE A: graceful cascade + approval auto-deny ---
-	descendants, _ := al.InterruptSession(sessionID, hint)
-
-	if hooks.CancelPendingApprovals != nil {
-		hooks.CancelPendingApprovals(sessionID, "session cancelled")
-	}
-	if hooks.SendStageFrame != nil {
-		hooks.SendStageFrame(sessionID, "graceful")
-	}
-
-	// --- Register the post-cancel callback (fires exactly once when turn exits) ---
+	// --- Compute descendants list BEFORE InterruptSession to close the race ---
+	//
+	// Race window: InterruptSession calls providerCancel + requestGracefulInterrupt
+	// which wakes the agent goroutine. That goroutine may call Finish() before we
+	// reach SetOnCancelFinish below. If that happens, Finish() sees cancelFired==true
+	// but onCancelFinish==nil and returns without invoking the callback — the
+	// transcript entry, audit event, and MarkLastEntryTruncated are permanently lost.
+	//
+	// Fix: collect the descendants list now (same predicate as InterruptSession),
+	// build the callback closure with the pre-computed list, register it via
+	// SetOnCancelFinish, and THEN call InterruptSession. The callback is always
+	// registered before any goroutine can reach Finish().
 	store := al.ResolveSessionStore(sessionID)
 	turnID := activeTurn.TurnID()
+	descendants := al.collectDescendantTurnIDs(sessionID)
 
 	activeTurn.SetOnCancelFinish(func(cancelMethod string) {
 		// Mark the last transcript entry as truncated.
@@ -211,6 +213,32 @@ func (al *AgentLoop) RequestCancel(
 			"descendants_cancelled": descendants,
 		})
 	})
+
+	// --- PHASE A: graceful cascade + approval auto-deny ---
+	//
+	// Now that the callback is registered, fire InterruptSession. The ordering
+	// guarantee: SetOnCancelFinish (above) stores the callback under ts.mu before
+	// any goroutine awakened by InterruptSession can reach Finish() and read it.
+	interrupted, _ := al.InterruptSession(sessionID, hint)
+
+	// Defensive consistency check: the pre-computed descendants list must match
+	// what InterruptSession collected. A mismatch means a turn was added or removed
+	// in the narrow window between collectDescendantTurnIDs and InterruptSession —
+	// this should never happen in practice but is worth a WARN if it does.
+	if len(interrupted) != len(descendants) {
+		slog.Warn("agent: RequestCancel: descendants list mismatch — turn added/removed between collect and interrupt",
+			"session_id", sessionID,
+			"pre_collected", descendants,
+			"interrupted", interrupted,
+		)
+	}
+
+	if hooks.CancelPendingApprovals != nil {
+		hooks.CancelPendingApprovals(sessionID, "session cancelled")
+	}
+	if hooks.SendStageFrame != nil {
+		hooks.SendStageFrame(sessionID, "graceful")
+	}
 
 	// --- Mark session as interrupted in meta (best-effort) ---
 	if hooks.SetSessionInterrupted != nil {

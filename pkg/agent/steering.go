@@ -376,6 +376,25 @@ func (al *AgentLoop) InterruptGraceful(hint string) error {
 	return nil
 }
 
+// collectDescendantTurnIDs walks activeTurnStates and returns the turn IDs of
+// every turnState whose transcriptSessionID matches sessionID. This is the
+// canonical session-match predicate shared by InterruptSession and
+// RequestCancel so both callers produce an identical descendants list.
+//
+// The returned slice is freshly allocated; modifying it does not affect the
+// sync.Map. Returns nil (not an error) when no matching turns are found.
+func (al *AgentLoop) collectDescendantTurnIDs(sessionID string) []string {
+	var ids []string
+	al.activeTurnStates.Range(func(_, value any) bool {
+		ts := value.(*turnState)
+		if ts.transcriptSessionID == sessionID {
+			ids = append(ids, ts.turnID)
+		}
+		return true
+	})
+	return ids
+}
+
 // InterruptSession gracefully cancels the parent turn AND every sub-turn sharing
 // the given sessionID (transcriptSessionID match). FR-6, FR-10, FR-12a, FR-15.
 //
