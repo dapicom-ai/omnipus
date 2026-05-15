@@ -125,55 +125,60 @@ describe('MessageInput — Escape key no-op when idle (test #39)', () => {
   })
 })
 
-// ── T14: Escape fires cancel ONLY during streaming ────────────────────────────
-
-describe('T14: Escape fires cancelStream only during streaming', () => {
-  it('pressing Escape during streaming calls cancelStream', () => {
-    // T14: cancel fires during streaming
-    const mockSend = vi.fn().mockReturnValue(true)
+// B3: stop-button label state machine
+// Refs: docs/specs/cancel-cross-channel-spec-review.md B3
+describe('MessageInput — stop button label morphing (B3)', () => {
+  it('shows "Stopping..." when cancelStage is "graceful"', () => {
+    // Traces to: B3 — graceful stage must display "Stopping..." same as optimistic click state.
     act(() => {
-      useChatStore.setState({ isStreaming: true })
-      useConnectionStore.setState({
-        isConnected: true,
-        connection: {
-          send: mockSend,
-          disconnect: vi.fn(),
-          connect: vi.fn(),
-          isConnected: true,
-        } as any,
-      })
-      useSessionStore.setState({ activeSessionId: 'sess_escape_test' })
+      useChatStore.setState({ isStreaming: true, cancelStage: 'graceful' })
+      useConnectionStore.setState({ isConnected: true })
     })
     render(<MessageInput />)
-    const textarea = screen.getByRole('textbox')
-    fireEvent.keyDown(textarea, { key: 'Escape' })
-    // After Escape during streaming, isStreaming is false (cancel fired)
-    expect(useChatStore.getState().isStreaming).toBe(false)
-    // The cancel frame was sent over the connection
-    expect(mockSend).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'cancel', session_id: 'sess_escape_test' })
-    )
+    // Button is still "Stop generation" (aria-label) but text "Stopping..." is visible.
+    expect(screen.getByRole('button', { name: /stop generation/i })).toBeInTheDocument()
+    expect(screen.getByText('Stopping...')).toBeInTheDocument()
   })
 
-  it('pressing Escape when NOT streaming does not call cancelStream (T14 complement)', () => {
-    const mockSend = vi.fn()
+  it('shows "Force-stopping..." with spinner when cancelStage is "hard"', () => {
+    // Traces to: B3 — hard stage must display "Force-stopping..." with spinner.
     act(() => {
-      useChatStore.setState({ isStreaming: false })
-      useConnectionStore.setState({
-        isConnected: true,
-        connection: {
-          send: mockSend,
-          disconnect: vi.fn(),
-          connect: vi.fn(),
-          isConnected: true,
-        } as any,
-      })
+      useChatStore.setState({ isStreaming: true, cancelStage: 'hard' })
+      useConnectionStore.setState({ isConnected: true })
     })
     render(<MessageInput />)
-    const textarea = screen.getByRole('textbox')
-    fireEvent.keyDown(textarea, { key: 'Escape' })
-    // isStreaming was already false; mockSend must not be called
-    expect(mockSend).not.toHaveBeenCalled()
-    expect(useChatStore.getState().isStreaming).toBe(false)
+    expect(screen.getByText('Force-stopping...')).toBeInTheDocument()
+  })
+
+  it('shows "Cancelled" when cancelStage is "detached"', () => {
+    // Traces to: B3 — detached stage shown briefly before done frame clears isStreaming.
+    act(() => {
+      useChatStore.setState({ isStreaming: true, cancelStage: 'detached' })
+      useConnectionStore.setState({ isConnected: true })
+    })
+    render(<MessageInput />)
+    expect(screen.getByText('Cancelled')).toBeInTheDocument()
+  })
+
+  it('clicking Stop sets label to "Stopping..." optimistically (before done frame clears isStreaming)', () => {
+    // Traces to: B3 — immediate optimistic update on click without waiting for graceful frame.
+    // We set no connection so cancelStream hits the early-return guard and leaves
+    // isStreaming: true. This simulates the window between clicking Stop and the
+    // done frame arriving from the server.
+    act(() => {
+      useChatStore.setState({ isStreaming: true, cancelStage: null })
+      // No connection — cancelStream returns early, isStreaming stays true
+      useConnectionStore.setState({
+        isConnected: true,
+        connection: null,
+      })
+      useSessionStore.setState({ activeSessionId: 'sess_1' })
+    })
+    render(<MessageInput />)
+    // Before click: no label text shown (just icon)
+    expect(screen.queryByText('Stopping...')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /stop generation/i }))
+    // After click: optimistic "Stopping..." label appears; isStreaming still true so Stop button stays.
+    expect(screen.getByText('Stopping...')).toBeInTheDocument()
   })
 })

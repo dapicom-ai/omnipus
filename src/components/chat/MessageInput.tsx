@@ -1,20 +1,15 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { PaperPlaneRight, Stop, Spinner } from '@phosphor-icons/react'
+import { PaperPlaneRight, Stop, SpinnerGap } from '@phosphor-icons/react'
 import { useChatStore } from '@/store/chat'
 import { useConnectionStore } from '@/store/connection'
 import { cn } from '@/lib/utils'
 
-// FR-21: label states for the Stop button during cancel escalation
+// B3: label union for the stop button state machine.
+// 'stop'           — idle streaming, ready to cancel.
+// 'stopping'       — cancel clicked (optimistic) or graceful stage received.
+// 'force-stopping' — hard stage received; turn is being force-killed.
+// 'cancelled'      — detached stage received; shown briefly before revert.
 type StopLabel = 'stop' | 'stopping' | 'force-stopping' | 'cancelled'
-
-function stopButtonLabel(label: StopLabel): string {
-  switch (label) {
-    case 'stopping': return 'Stopping...'
-    case 'force-stopping': return 'Force-stopping...'
-    case 'cancelled': return 'Cancelled'
-    default: return 'Stop'
-  }
-}
 
 export function MessageInput() {
   const [value, setValue] = useState('')
@@ -22,31 +17,29 @@ export function MessageInput() {
   const { sendMessage, cancelStream, isStreaming, cancelStage } = useChatStore()
   const { isConnected } = useConnectionStore()
 
-  // FR-21: local label state for the Stop button.
-  // 'stopping' fires immediately on click, before the server responds.
-  // 'force-stopping' and 'cancelled' are driven by cancelStage from the store.
+  // B3: stop-button label state machine.
+  // Optimistic: clicking Stop immediately shows 'stopping'.
+  // Then synced with cancelStage frames from the gateway.
   const [stopLabel, setStopLabel] = useState<StopLabel>('stop')
 
-  // Sync stopLabel with server-pushed cancelStage.
+  // B3: sync stopLabel with the cancelStage value from the store.
   useEffect(() => {
-    if (cancelStage === 'hard') {
+    if (!isStreaming) {
+      // When streaming ends (done frame), revert to default.
+      setStopLabel('stop')
+      return
+    }
+    if (cancelStage === 'graceful') {
+      setStopLabel('stopping')
+    } else if (cancelStage === 'hard') {
       setStopLabel('force-stopping')
     } else if (cancelStage === 'detached') {
       setStopLabel('cancelled')
+      // Show 'cancelled' briefly then the button disappears when isStreaming
+      // clears on the done frame — no manual revert needed.
     }
-  }, [cancelStage])
-
-  // Reset label when streaming ends.
-  useEffect(() => {
-    if (!isStreaming) {
-      setStopLabel('stop')
-    }
-  }, [isStreaming])
-
-  const handleCancel = useCallback(() => {
-    setStopLabel('stopping')
-    cancelStream()
-  }, [cancelStream])
+    // null → leave whatever label is already showing (may be the optimistic 'stopping').
+  }, [cancelStage, isStreaming])
 
   const handleSend = useCallback(() => {
     const trimmed = value.trim()
@@ -56,6 +49,13 @@ export function MessageInput() {
     textareaRef.current?.focus()
   }, [value, isStreaming, isConnected, sendMessage])
 
+  const handleStop = useCallback(() => {
+    // Optimistic: show 'stopping' immediately without waiting for the
+    // graceful cancel_stage frame (which may take a round-trip).
+    setStopLabel('stopping')
+    cancelStream()
+  }, [cancelStream])
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -63,7 +63,7 @@ export function MessageInput() {
     }
     // Escape cancels streaming (no-op when idle) — T14
     if (e.key === 'Escape' && isStreaming) {
-      handleCancel()
+      handleStop()
     }
   }
 
@@ -78,8 +78,13 @@ export function MessageInput() {
   const canSend = value.trim().length > 0 && !isStreaming && isConnected
   const disconnected = !isConnected
 
-  const isDetached = cancelStage === 'detached'
-  const showSpinner = stopLabel === 'stopping' || stopLabel === 'force-stopping'
+  // B3: derive button label text and spinner visibility from stopLabel.
+  const stopButtonLabel =
+    stopLabel === 'stopping' ? 'Stopping...' :
+    stopLabel === 'force-stopping' ? 'Force-stopping...' :
+    stopLabel === 'cancelled' ? 'Cancelled' :
+    'Stop'
+  const showStopSpinner = stopLabel === 'force-stopping'
 
   return (
     <div className="border-t border-[var(--color-border)] bg-[var(--color-surface-1)] px-4 py-3">
@@ -123,24 +128,20 @@ export function MessageInput() {
         {isStreaming ? (
           <button
             type="button"
-            onClick={stopLabel === 'stop' || stopLabel === 'stopping' ? handleCancel : undefined}
-            disabled={stopLabel === 'cancelled'}
-            className={cn(
-              'shrink-0 h-8 rounded-lg flex items-center justify-center gap-1.5 px-2 transition-colors text-xs font-medium',
-              stopLabel === 'cancelled'
-                ? 'bg-[var(--color-surface-3)] text-[var(--color-muted)] cursor-default'
-                : 'bg-[var(--color-error)]/20 text-[var(--color-error)] hover:bg-[var(--color-error)]/30',
-            )}
-            aria-label={stopButtonLabel(stopLabel)}
+            onClick={handleStop}
+            className="shrink-0 h-8 min-w-8 rounded-lg bg-[var(--color-error)]/20 text-[var(--color-error)] hover:bg-[var(--color-error)]/30 flex items-center justify-center gap-1.5 px-2 transition-colors"
+            aria-label="Stop generation"
             title="Stop (Escape)"
             data-testid="stop-btn"
           >
-            {showSpinner ? (
-              <Spinner size={13} className="animate-spin" />
+            {showStopSpinner ? (
+              <SpinnerGap size={14} className="animate-spin shrink-0" />
             ) : (
-              <Stop size={13} weight="fill" />
+              <Stop size={15} weight="fill" className="shrink-0" />
             )}
-            <span>{stopButtonLabel(stopLabel)}</span>
+            {stopLabel !== 'stop' && (
+              <span className="text-xs font-medium whitespace-nowrap">{stopButtonLabel}</span>
+            )}
           </button>
         ) : (
           <button

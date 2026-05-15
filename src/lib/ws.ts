@@ -265,16 +265,18 @@ export interface WsReplayWarningFrame {
   }
 }
 
-// FR-21: emitted by the gateway during the cancel escalation sequence so the
-// Stop button can morph through "Stopping…" → "Force-stopping…" → "Cancelled".
-// stage values:
-//   'hard'     — graceful window expired; hard cancel fired (≈3s after cancel request)
-//   'detached' — goroutine did not exit after hard cancel; detached/neutered (≈8s)
-// The 'detached' stage signals the UI to re-enable input.
+// B3: cancel progress notifications sent by the gateway after the SPA sends
+// a cancel frame. Three stages:
+//   graceful  — cancel request acknowledged; agent is completing the current
+//               tool call and will stop at the next safe checkpoint.
+//   hard      — graceful deadline expired; the agent turn is being force-killed.
+//   detached  — the session has been detached from the running turn; the SPA
+//               can now treat the session as idle.
+// Field name is 'stage' (not 'status') — see parallel gateway fix.
 export interface WsCancelStageFrame {
   type: 'cancel_stage'
   session_id: string
-  stage: 'hard' | 'detached'
+  stage: 'graceful' | 'hard' | 'detached'
 }
 
 // F-S5: session_id contract — session-scoped frames have session_id: string (required);
@@ -304,6 +306,9 @@ export type WsReceiveFrame =
 /** Allowed status values for subagent_end frames. */
 const SUBAGENT_END_STATUSES = new Set<string>(['success', 'error', 'cancelled', 'interrupted', 'timeout'])
 
+/** Allowed stage values for cancel_stage frames (B3). */
+const CANCEL_STAGE_VALUES = new Set<string>(['graceful', 'hard', 'detached'])
+
 function isValidFrame(frame: unknown): frame is WsReceiveFrame {
   if (typeof frame !== 'object' || frame === null) return false
   const f = frame as Record<string, unknown>
@@ -311,6 +316,13 @@ function isValidFrame(frame: unknown): frame is WsReceiveFrame {
   // W4-6: validate subagent_end status to prevent unknown-status render crashes.
   if (f.type === 'subagent_end') {
     if (typeof f.status !== 'string' || !SUBAGENT_END_STATUSES.has(f.status)) {
+      return false
+    }
+  }
+  // B3: validate cancel_stage.stage to prevent unknown-stage falling into the
+  // default handler and incrementing unknownFrameCount.
+  if (f.type === 'cancel_stage') {
+    if (typeof f.stage !== 'string' || !CANCEL_STAGE_VALUES.has(f.stage)) {
       return false
     }
   }

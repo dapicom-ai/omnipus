@@ -105,11 +105,14 @@ export interface SessionChatState {
    */
   lastUserMessageAt: number | null
   /**
-   * FR-21: Cancel escalation stage for this session. Drives Stop button label
-   * morphing: null → "Stop", 'hard' → "Force-stopping…", 'detached' → "Cancelled".
-   * Reset to null when streaming ends (done/error frame or next user message).
+   * B3: current cancel stage for this session, or null when no cancel is in
+   * progress. Set by cancel_stage frames from the gateway:
+   *   graceful  — cancel acknowledged; agent finishing current tool call.
+   *   hard      — graceful deadline expired; force-killing the agent turn.
+   *   detached  — session detached from the turn; treat as idle.
+   * Cleared to null when a done frame arrives.
    */
-  cancelStage: WsCancelStageFrame['stage'] | null
+  cancelStage: 'graceful' | 'hard' | 'detached' | null
 }
 
 function emptySessionState(): SessionChatState {
@@ -149,7 +152,8 @@ interface ChatStore {
   sessionCost: number
   rateLimitEvent: RateLimitEventData | null
   lastUserMessageAt: number | null
-  cancelStage: WsCancelStageFrame['stage'] | null
+  /** B3: cancel progress stage for the active session, or null when idle. */
+  cancelStage: 'graceful' | 'hard' | 'detached' | null
 
   // ── Actions that operate on the foreground session ───────────────────────────
   setReplaying: (value: boolean) => void
@@ -251,9 +255,7 @@ const SESSION_SCOPED_FRAME_TYPES = new Set([
   'subagent_start', 'subagent_end', 'replay_message', 'replay_done',
   'agent_switched', 'task_status_changed', 'exec_approval_request',
   'tool_approval_required', 'rate_limit', 'media', 'session_started',
-  'system_overload', 'session_close_ack',
-  // FR-21: cancel escalation stage notifications
-  'cancel_stage',
+  'system_overload', 'session_close_ack', 'cancel_stage',
 ])
 
 // F-S2: FALLBACK_SID exists only in test mode so tests that don't establish a session
@@ -1093,7 +1095,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
                 sessionTokens: b.sessionTokens + tokenDelta,
                 sessionCost: b.sessionCost + costDelta,
                 replayCompletedForSession: replayCompleted,
-                // FR-21: clear cancel stage on turn completion
+                // B3: clear cancel stage once the turn is definitively done.
                 cancelStage: null,
               }
               if (clearReplayingNow) {
@@ -1668,14 +1670,13 @@ export const useChatStore = create<ChatStore>((set, get) => {
           })
           break
 
-        case 'cancel_stage': {
-          // FR-21: cancel escalation stage — morphs Stop button label.
-          // 'hard' → "Force-stopping…", 'detached' → "Cancelled" (input re-enabled).
-          if (targetSid) {
-            withBucket(targetSid, () => ({ cancelStage: frame.stage }))
-          }
+        case 'cancel_stage':
+          // B3: gateway is broadcasting cancel progress for this session.
+          // Write the stage into the per-session bucket so the UI can update
+          // the stop-button label in real time. The done handler (above) clears
+          // it back to null once the turn is definitively over.
+          withBucket(targetSid, () => ({ cancelStage: frame.stage }))
           break
-        }
 
         default:
           unknownFrameCount++

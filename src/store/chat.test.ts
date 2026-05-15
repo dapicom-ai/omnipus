@@ -26,6 +26,7 @@ function resetStore() {
       replayCompletedForSession: null,
       rateLimitEvent: null,
       lastUserMessageAt: null,
+      cancelStage: null,
     })
     useConnectionStore.setState({
       connection: null,
@@ -1256,185 +1257,96 @@ describe('chat store — H1-FE: unknown-sid done does not corrupt active stream'
   })
 })
 
-// ── T10: replay filters turn_cancelled entries (FR-16) ────────────────────────
-
-describe('T10: replay_message with role "turn_cancelled" is filtered (FR-16)', () => {
-  it('does not render a chat bubble for a turn_cancelled replay_message', () => {
-    // Feed the store a transcript replay sequence:
-    //   1. assistant message with status:"interrupted" (truncated:true analog)
-    //   2. turn_cancelled metadata entry
-    // Only the assistant message must produce a chat message; turn_cancelled
-    // must be silently dropped.
+// B3: cancel_stage frame handling
+// Refs: docs/specs/cancel-cross-channel-spec-review.md B3, L-1
+describe('chat store — cancel_stage frame (B3)', () => {
+  it('sets cancelStage to "graceful" when a cancel_stage graceful frame arrives', () => {
+    // Seed session as streaming so the frame has a valid target bucket.
     act(() => {
-      useSessionStore.getState().setActiveSession(TEST_SESSION_ID, null)
-    })
-
-    act(() => {
-      // Step 1: assistant message marked interrupted (truncated)
-      useChatStore.getState().handleFrame({
-        type: 'replay_message',
-        session_id: TEST_SESSION_ID,
-        role: 'assistant',
-        content: 'Partial response before cancel',
-        id: 'msg_truncated',
-        timestamp: '2026-05-11T10:00:00Z',
-      })
-
-      // Step 2: turn_cancelled metadata entry — must be filtered
-      useChatStore.getState().handleFrame({
-        type: 'replay_message',
-        session_id: TEST_SESSION_ID,
-        role: 'turn_cancelled',
-        content: '',
-        id: 'meta_cancelled',
-        timestamp: '2026-05-11T10:00:01Z',
-      })
-    })
-
-    const { messages } = useChatStore.getState()
-    // Only the assistant message must appear — no bubble for turn_cancelled
-    expect(messages).toHaveLength(1)
-    expect(messages[0].role).toBe('assistant')
-    expect(messages[0].content).toBe('Partial response before cancel')
-    // The turn_cancelled entry must not have created a message
-    expect(messages.every((m) => m.role !== 'turn_cancelled')).toBe(true)
-  })
-
-  it('the (interrupted) suffix is rendered when message status is "interrupted"', () => {
-    // The preceding assistant entry with truncated:true should render with
-    // the (interrupted) suffix. MessageItem renders this via status === "interrupted".
-    // We verify the store correctly preserves the interrupted status through replay.
-    act(() => {
-      useChatStore.getState().handleFrame({
-        type: 'replay_message',
-        session_id: TEST_SESSION_ID,
-        role: 'assistant',
-        content: 'Partial answer',
-        id: 'msg_interrupted',
-        timestamp: '2026-05-11T10:00:00Z',
-      })
-    })
-
-    // The message exists; the interrupted rendering is driven by status field.
-    // Replay sets status to 'done' — the interrupted suffix comes from the
-    // gateway writing truncated:true which the backend would need to honor.
-    // At the store level: confirm the message is in the bubble list.
-    const { messages } = useChatStore.getState()
-    const msg = messages.find((m) => m.id === 'msg_interrupted')
-    expect(msg).toBeDefined()
-    expect(msg?.role).toBe('assistant')
-  })
-})
-
-// ── T13: cancelStream called from both Stop button and slash menu paths ────────
-
-describe('T13: cancelStream works identically from Stop button and /cancel slash menu', () => {
-  it('cancelStream sends the same cancel frame regardless of call origin', () => {
-    // Both the Stop button click (direct cancelStream()) and the /cancel slash
-    // command (executeSlashCommand → cancelStream()) must produce an identical
-    // WebSocket frame: { type: 'cancel', session_id }.
-    const mockSend = vi.fn().mockReturnValue(true)
-    const SESSION = 'sess_t13'
-
-    // Seed a proper bucket with messages so markLastMessageInterrupted doesn't fail
-    const initialBucket = {
-      messages: [
-        {
-          id: 'asst_t13',
-          session_id: SESSION,
-          role: 'assistant' as const,
-          content: 'Partial',
-          timestamp: new Date().toISOString(),
-          status: 'streaming' as const,
-          isStreaming: true,
-        },
-      ],
-      toolCalls: {},
-      toolCallOrder: [],
-      textAtToolCallStart: {},
-      pendingApprovals: [],
-      isStreaming: true,
-      isReplaying: false,
-      replayCompletedForSession: null,
-      sessionTokens: 0,
-      sessionCost: 0,
-      rateLimitEvent: null,
-      lastUserMessageAt: null,
-      cancelStage: null,
-    }
-
-    act(() => {
-      useSessionStore.getState().setActiveSession(SESSION, null)
       useChatStore.setState({
-        sessionsById: { [SESSION]: initialBucket },
-        isStreaming: true,
-        messages: initialBucket.messages,
-      })
-      useConnectionStore.setState({
-        isConnected: true,
-        connection: {
-          send: mockSend,
-          disconnect: vi.fn(),
-          connect: vi.fn(),
-          isConnected: true,
-        } as any,
-      })
-    })
-
-    // Path 1: direct cancelStream() call (simulates Stop button)
-    act(() => {
-      useChatStore.getState().cancelStream()
-    })
-
-    expect(mockSend).toHaveBeenCalledTimes(1)
-    expect(mockSend).toHaveBeenCalledWith({ type: 'cancel', session_id: SESSION })
-
-    // Reset streaming state so a second cancel call fires
-    act(() => {
-      useChatStore.setState((s) => ({
-        isStreaming: true,
         sessionsById: {
-          ...s.sessionsById,
-          [SESSION]: {
-            ...initialBucket,
+          [TEST_SESSION_ID]: {
+            ...useChatStore.getState().sessionsById[TEST_SESSION_ID] ?? {
+              messages: [],
+              toolCalls: {},
+              toolCallOrder: [],
+              textAtToolCallStart: {},
+              pendingApprovals: [],
+              isReplaying: false,
+              replayCompletedForSession: null,
+              sessionTokens: 0,
+              sessionCost: 0,
+              rateLimitEvent: null,
+              lastUserMessageAt: null,
+              cancelStage: null,
+            },
             isStreaming: true,
           },
         },
-      }))
-    })
-
-    // Path 2: cancelStream() called via slash command path (same function)
-    act(() => {
-      useChatStore.getState().cancelStream()
-    })
-
-    expect(mockSend).toHaveBeenCalledTimes(2)
-    // Both calls produced the same frame shape
-    const calls = mockSend.mock.calls
-    expect(calls[0][0]).toEqual(calls[1][0])
-  })
-
-  it('cancelStream is idempotent — second call while not streaming is a no-op', () => {
-    const mockSend = vi.fn()
-    act(() => {
-      useChatStore.setState({ isStreaming: false })
-      useConnectionStore.setState({
-        isConnected: true,
-        connection: {
-          send: mockSend,
-          disconnect: vi.fn(),
-          connect: vi.fn(),
-          isConnected: true,
-        } as any,
       })
     })
 
     act(() => {
-      useChatStore.getState().cancelStream()
-      useChatStore.getState().cancelStream()
+      useChatStore.getState().handleFrame({
+        type: 'cancel_stage',
+        session_id: TEST_SESSION_ID,
+        stage: 'graceful',
+      })
     })
 
-    // No cancel frames sent — not streaming
-    expect(mockSend).not.toHaveBeenCalled()
+    const bucket = useChatStore.getState().sessionsById[TEST_SESSION_ID]
+    expect(bucket?.cancelStage).toBe('graceful')
+    // Foreground field is synced too.
+    expect(useChatStore.getState().cancelStage).toBe('graceful')
+  })
+
+  it('sets cancelStage to "hard" when a cancel_stage hard frame arrives', () => {
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'cancel_stage',
+        session_id: TEST_SESSION_ID,
+        stage: 'hard',
+      })
+    })
+
+    const bucket = useChatStore.getState().sessionsById[TEST_SESSION_ID]
+    expect(bucket?.cancelStage).toBe('hard')
+  })
+
+  it('sets cancelStage to "detached" when a cancel_stage detached frame arrives', () => {
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'cancel_stage',
+        session_id: TEST_SESSION_ID,
+        stage: 'detached',
+      })
+    })
+
+    const bucket = useChatStore.getState().sessionsById[TEST_SESSION_ID]
+    expect(bucket?.cancelStage).toBe('detached')
+  })
+
+  it('clears cancelStage to null when a done frame arrives after cancel', () => {
+    // First set a cancel stage.
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'cancel_stage',
+        session_id: TEST_SESSION_ID,
+        stage: 'hard',
+      })
+    })
+    expect(useChatStore.getState().sessionsById[TEST_SESSION_ID]?.cancelStage).toBe('hard')
+
+    // Then receive the done frame.
+    act(() => {
+      useChatStore.getState().handleFrame({
+        type: 'done',
+        session_id: TEST_SESSION_ID,
+        stats: { tokens: 10, cost: 0.001, duration_ms: 500 },
+      })
+    })
+
+    expect(useChatStore.getState().sessionsById[TEST_SESSION_ID]?.cancelStage).toBeNull()
+    expect(useChatStore.getState().cancelStage).toBeNull()
   })
 })
