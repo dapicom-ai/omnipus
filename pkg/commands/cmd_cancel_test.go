@@ -53,7 +53,8 @@ type stubAgentLoop struct {
 	calledSessionID string
 	calledHint      string
 	callCount       int
-	returnErr       error // if non-nil, returned by InterruptSession
+	returnErr       error // if non-nil, returned by InterruptSession and RequestCancelForSession
+	returnFired     *bool // if non-nil, overrides the fired return value from RequestCancelForSession
 }
 
 func (s *stubAgentLoop) InterruptSession(sessionID, hint string) ([]string, error) {
@@ -75,8 +76,12 @@ func (s *stubAgentLoop) RequestCancelForSession(ctx context.Context, sessionID, 
 	if err != nil {
 		return false, err
 	}
+	if s.returnFired != nil {
+		return *s.returnFired, nil
+	}
 	return s.callCount > 0, nil
 }
+
 
 // TestCancelHandler_CallsInterruptSession verifies that the /cancel handler
 // invokes InterruptSession on the agent loop with the correct session ID and a
@@ -209,28 +214,29 @@ func TestCancelActiveTurn_PropagatesRealError(t *testing.T) {
 }
 
 // TestCancelActiveTurn_NoActiveTurnReturnsSentinel verifies that when the agent
-// loop returns nil (success with empty descendants), CancelActiveTurn returns nil
-// (not ErrNoActiveTurn) — and separately that the "no active turn" string path
-// returns the sentinel (C-3 fix).
+// loop reports no active turn, CancelActiveTurn returns ErrNoActiveTurn — and
+// when the loop reports success (fired=true), CancelActiveTurn returns nil.
 func TestCancelActiveTurn_NoActiveTurnReturnsSentinel(t *testing.T) {
-	// Case 1: loop returns nil → success (no ErrNoActiveTurn).
+	// Case 1: loop returns (fired=true, nil) → success (no ErrNoActiveTurn).
 	stub := &stubAgentLoop{returnErr: nil}
 	rt := &Runtime{SessionID: func() string { return "s" }}
 	rt = rt.WithAgentLoop(stub)
 
 	err := rt.CancelActiveTurn(context.Background(), "s", Canceller{UserID: "u", Channel: "c"})
 	if err != nil {
-		t.Errorf("nil InterruptSession error must produce nil from CancelActiveTurn, got: %v", err)
+		t.Errorf("fired=true must produce nil from CancelActiveTurn, got: %v", err)
 	}
 
-	// Case 2: loop returns "no active turn" text → ErrNoActiveTurn sentinel.
-	stub2 := &stubAgentLoop{returnErr: errors.New("no active turn for session s")}
+	// Case 2: loop returns (fired=false, nil) → ErrNoActiveTurn sentinel.
+	// This is the correct path when no active turn exists for the session.
+	f := false
+	stub2 := &stubAgentLoop{returnFired: &f}
 	rt2 := &Runtime{SessionID: func() string { return "s" }}
 	rt2 = rt2.WithAgentLoop(stub2)
 
 	err2 := rt2.CancelActiveTurn(context.Background(), "s", Canceller{UserID: "u", Channel: "c"})
 	if !errors.Is(err2, ErrNoActiveTurn) {
-		t.Errorf("expected ErrNoActiveTurn, got: %v", err2)
+		t.Errorf("fired=false must return ErrNoActiveTurn, got: %v", err2)
 	}
 }
 
@@ -239,10 +245,13 @@ func TestCancelActiveTurn_NoActiveTurnReturnsSentinel(t *testing.T) {
 func TestCancelHandler_ReplyMatchesErrorState(t *testing.T) {
 	cancelDef := cancelCommand()
 
+	fired := false
+
 	cases := []struct {
-		name      string
-		loopErr   error
-		wantReply string
+		name        string
+		loopErr     error
+		returnFired *bool
+		wantReply   string
 	}{
 		{
 			name:      "success",
@@ -250,9 +259,11 @@ func TestCancelHandler_ReplyMatchesErrorState(t *testing.T) {
 			wantReply: "⏸ Cancelling...",
 		},
 		{
-			name:      "no_active_turn",
-			loopErr:   errors.New("no active turn for session abc"),
-			wantReply: "Nothing to cancel",
+			// No active turn: loop returns (fired=false, nil).
+			// CancelActiveTurn returns ErrNoActiveTurn → handler replies "Nothing to cancel".
+			name:        "no_active_turn",
+			returnFired: &fired,
+			wantReply:   "Nothing to cancel",
 		},
 		{
 			name:      "real_failure",
@@ -263,7 +274,7 @@ func TestCancelHandler_ReplyMatchesErrorState(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			stub := &stubAgentLoop{returnErr: tc.loopErr}
+			stub := &stubAgentLoop{returnErr: tc.loopErr, returnFired: tc.returnFired}
 			rt := &Runtime{SessionID: func() string { return "sess-1" }}
 			rt = rt.WithAgentLoop(stub)
 

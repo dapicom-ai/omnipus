@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/dapicom-ai/omnipus/pkg/config"
 )
@@ -83,10 +82,6 @@ func (rt *Runtime) CancelActiveTurn(ctx context.Context, sessionID string, cance
 	}
 	fired, err := rt.agentLoop.RequestCancelForSession(ctx, sessionID, canceller.UserID, canceller.Channel)
 	if err != nil {
-		// Distinguish "no active turn" from real errors.
-		if strings.Contains(err.Error(), "no active turn") || strings.Contains(err.Error(), "scope must set") {
-			return ErrNoActiveTurn
-		}
 		return fmt.Errorf("cancel: %w", err)
 	}
 	if !fired {

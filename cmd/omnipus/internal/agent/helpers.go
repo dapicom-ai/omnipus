@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -159,12 +160,14 @@ func interactiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
 				// Cancelled by double-Escape. Fire the full cancel state machine so
 				// audit, transcript marking, abuse detection, and the 2-stage timer
 				// apply uniformly (cancel-centralization, resolves finding B2).
-				agentLoop.RequestCancel( //nolint:errcheck // best-effort; CLI continues regardless
+				if _, err := agentLoop.RequestCancel(
 					context.Background(),
 					agent.CancelScope{SessionID: sessionKey},
 					agent.CancelCanceller{UserID: cliCancellerUser(), Channel: "cli"},
 					agent.CancelHooks{}, // no transport-specific side-effects in CLI
-				)
+				); err != nil {
+					slog.Warn("cli: cancel request failed", "session", sessionKey, "error", err)
+				}
 				fmt.Println("\n(interrupted)")
 				if watcherActive {
 					// Print a blank line so the next readline prompt is clean.

@@ -488,12 +488,15 @@ func (al *AgentLoop) InterruptSessionHard(sessionID, hint string) (descendants [
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// requestHardAbort already calls providerCancel and turnCancel internally
-			// (see turn.go:requestHardAbort). We also call providerCancel explicitly
-			// for the case where hardAbort was already set but providerCancel was not
-			// yet fired (e.g. if graceful path ran before providerCancel was wired).
+			// requestHardAbort sets hardAbort and fires providerCancel+turnCancel
+			// atomically (see turn.go:requestHardAbort). The else branch executes
+			// only when hardAbort was already true — meaning a concurrent caller
+			// already flipped the flag and fired providerCancel. We re-fire it here
+			// defensively in case its turnCancel pointer was reset between the two
+			// calls (e.g. a new turn started on the same turnState slot).
 			if !ts.requestHardAbort() {
-				// already aborting — still fire providerCancel to be safe
+				// Concurrent caller already set hardAbort — re-fire providerCancel
+				// in case the pointer was replaced since that call.
 				ts.mu.Lock()
 				pc := ts.providerCancel
 				ts.mu.Unlock()
