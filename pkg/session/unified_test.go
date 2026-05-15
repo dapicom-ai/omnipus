@@ -311,11 +311,11 @@ func TestDeleteSession_PersistenceCheck(t *testing.T) {
 // after calling MarkLastEntryTruncated, the last assistant transcript entry has
 // Truncated==true while all other fields are preserved unchanged.
 //
-// BDD: Given a session with one assistant transcript entry,
-// When MarkLastEntryTruncated is called with that session's ID,
+// BDD: Given a session with one assistant transcript entry with a known turnID,
+// When MarkLastEntryTruncated is called with that session's ID and turnID,
 // Then ReadTranscript returns the entry with Truncated==true and all other fields intact.
 //
-// Traces to: pkg/session/unified.go MarkLastEntryTruncated (FR-14)
+// Traces to: pkg/session/unified.go MarkLastEntryTruncated (FR-14, H2)
 func TestMarkLastEntryTruncated_FlagsLastAssistantEntry(t *testing.T) {
 	store := newTestStore(t)
 
@@ -323,18 +323,19 @@ func TestMarkLastEntryTruncated_FlagsLastAssistantEntry(t *testing.T) {
 	require.NoError(t, err)
 	sessionID := meta.ID
 
-	// Append an assistant entry.
+	// Append an assistant entry with a known turn ID.
 	entry := TranscriptEntry{
 		ID:      "entry-001",
 		Type:    EntryTypeMessage,
 		Role:    "assistant",
 		Content: "Hello from the assistant",
 		AgentID: "test-agent",
+		TurnID:  "turn-001",
 	}
 	require.NoError(t, store.AppendTranscript(sessionID, entry))
 
-	// Call MarkLastEntryTruncated.
-	require.NoError(t, store.MarkLastEntryTruncated(sessionID))
+	// Call MarkLastEntryTruncated with the turn ID.
+	require.NoError(t, store.MarkLastEntryTruncated(sessionID, "turn-001"))
 
 	// Read back and assert Truncated==true and other fields preserved.
 	entries, err := store.ReadTranscript(sessionID)
@@ -377,7 +378,7 @@ func TestMarkLastEntryTruncated_NoAssistantEntryIsNoOp(t *testing.T) {
 	require.NoError(t, store.AppendTranscript(sessionID, userEntry))
 
 	// MarkLastEntryTruncated must return nil.
-	require.NoError(t, store.MarkLastEntryTruncated(sessionID))
+	require.NoError(t, store.MarkLastEntryTruncated(sessionID, ""))
 
 	// Entries must be unchanged.
 	entries, err := store.ReadTranscript(sessionID)
@@ -388,7 +389,7 @@ func TestMarkLastEntryTruncated_NoAssistantEntryIsNoOp(t *testing.T) {
 	// Also verify the empty-transcript case (fresh session with no appended entries).
 	metaEmpty, err := store.NewSession(SessionTypeChat, "", "test-agent")
 	require.NoError(t, err)
-	require.NoError(t, store.MarkLastEntryTruncated(metaEmpty.ID),
+	require.NoError(t, store.MarkLastEntryTruncated(metaEmpty.ID, ""),
 		"MarkLastEntryTruncated on empty transcript must be a no-op")
 }
 
@@ -428,8 +429,8 @@ func TestMarkLastEntryTruncated_DoesNotTouchContextStore(t *testing.T) {
 	contextBefore, readErr := os.ReadFile(contextPath)
 	require.NoError(t, readErr, "context.jsonl must exist after AddMessage")
 
-	// Call MarkLastEntryTruncated.
-	require.NoError(t, store.MarkLastEntryTruncated(sessionID))
+	// Call MarkLastEntryTruncated (empty turnID = backward-compat path).
+	require.NoError(t, store.MarkLastEntryTruncated(sessionID, ""))
 
 	// Assert transcript.jsonl has Truncated==true on the assistant entry.
 	entries, err := store.ReadTranscript(sessionID)
@@ -442,4 +443,62 @@ func TestMarkLastEntryTruncated_DoesNotTouchContextStore(t *testing.T) {
 	require.NoError(t, readErr, "context.jsonl must still be readable after MarkLastEntryTruncated")
 	assert.Equal(t, string(contextBefore), string(contextAfter),
 		"context.jsonl must not be mutated by MarkLastEntryTruncated (FR-14a / T9)")
+}
+
+// TestMarkLastEntryTruncated_DoesNotMutatePreviousTurnEntry verifies the H2 invariant:
+// MarkLastEntryTruncated with a specific turnID must only flag entries belonging
+// to that turn and must NOT touch assistant entries from other turns.
+//
+// BDD: Given a session with two assistant entries with different turnIDs (T1 and T2),
+// When MarkLastEntryTruncated is called with turnID="T1",
+// Then only the T1 entry has Truncated==true; the T2 entry is unchanged.
+//
+// Traces to: pkg/session/unified.go MarkLastEntryTruncated (H2 / turn-scoped truncation)
+func TestMarkLastEntryTruncated_DoesNotMutatePreviousTurnEntry(t *testing.T) {
+	store := newTestStore(t)
+
+	meta, err := store.NewSession(SessionTypeChat, "", "test-agent")
+	require.NoError(t, err)
+	sid := meta.ID
+
+	// Write assistant entry for turn T1.
+	require.NoError(t, store.AppendTranscript(sid, TranscriptEntry{
+		ID:      "asst-T1",
+		Type:    EntryTypeMessage,
+		Role:    "assistant",
+		Content: "Response from turn T1",
+		AgentID: "test-agent",
+		TurnID:  "T1",
+	}))
+	// Write assistant entry for turn T2 (the "current" turn at cancel time).
+	require.NoError(t, store.AppendTranscript(sid, TranscriptEntry{
+		ID:      "asst-T2",
+		Type:    EntryTypeMessage,
+		Role:    "assistant",
+		Content: "Partial response from turn T2",
+		AgentID: "test-agent",
+		TurnID:  "T2",
+	}))
+
+	// Cancel arrives for T1 only (e.g., a delayed cancel for a previous turn).
+	require.NoError(t, store.MarkLastEntryTruncated(sid, "T1"))
+
+	entries, err := store.ReadTranscript(sid)
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+
+	// Find by TurnID.
+	var t1, t2 *TranscriptEntry
+	for i := range entries {
+		switch entries[i].TurnID {
+		case "T1":
+			t1 = &entries[i]
+		case "T2":
+			t2 = &entries[i]
+		}
+	}
+	require.NotNil(t, t1, "T1 entry must exist")
+	require.NotNil(t, t2, "T2 entry must exist")
+	assert.True(t, t1.Truncated, "T1 entry must be marked truncated")
+	assert.False(t, t2.Truncated, "T2 entry must NOT be marked truncated by a T1 cancel")
 }

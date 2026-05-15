@@ -3388,6 +3388,13 @@ func (al *AgentLoop) runTurn(ctx context.Context, ts *turnState) (turnResult, er
 	turnCtx = tools.WithTranscriptSessionID(turnCtx, ts.opts.TranscriptSessionID)
 
 	al.registerActiveTurn(ts)
+	// B1: Finish must run before clearActiveTurn so that IsAlive() goes false
+	// and the onCancelFinish callback fires on natural turn completion, not only
+	// on explicit cancel paths. closeOnce.Do inside Finish makes repeated calls
+	// safe — the cancel path may have already called Finish(true); the second
+	// call here is a no-op via isFinished.Store(true) being idempotent and
+	// closeOnce.Do executing at most once.
+	defer ts.Finish(false)
 	defer al.clearActiveTurn(ts)
 
 	turnStatus := TurnEndStatusCompleted
@@ -3867,6 +3874,13 @@ turnLoop:
 					logger.InfoCF("agent", "Using streaming for response", map[string]any{"channel": ts.channel, "chat_id": ts.chatID})
 					var lastChunk string
 					resp, streamErr := sp.ChatStream(providerCtx, messagesForCall, toolDefsForCall, llmModel, llmOpts, func(accumulated string) {
+						// B4: if the turn has been abandoned (stuck-goroutine detach),
+						// suppress further frame emits so a zombie goroutine cannot
+						// push frames to disconnected clients.
+						if ts.abandoned.Load() {
+							abandonedWritesSuppressed.Add(1)
+							return
+						}
 						// Send only the new delta (accumulated minus what we already sent)
 						delta := accumulated[len(lastChunk):]
 						lastChunk = accumulated

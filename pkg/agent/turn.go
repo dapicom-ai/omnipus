@@ -14,6 +14,18 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/tools"
 )
 
+// abandonedWritesSuppressed is incremented each time a write (transcript
+// append, frame emit, or cost accumulation) is skipped because the turn has
+// been marked abandoned. Exposed via AbandonedWritesSuppressed() for tests
+// and operator tooling (omnipus_abandoned_writes_suppressed_total).
+var abandonedWritesSuppressed atomic.Int64
+
+// AbandonedWritesSuppressed returns the current value of the
+// omnipus_abandoned_writes_suppressed_total counter.
+func AbandonedWritesSuppressed() int64 {
+	return abandonedWritesSuppressed.Load()
+}
+
 type TurnPhase string
 
 const (
@@ -278,20 +290,36 @@ func (ts *turnState) MarkAbandoned() {
 // belonging to the given transcript session ID, or nil if none is active.
 // Used by handleCancel to atomically claim the turn and register the
 // post-cancel callback (FR-10, FR-11, FR-15).
+//
+// H1: When multiple turns share the same transcriptSessionID (a root turn
+// plus one or more sub-turns), the root turn (depth==0 / parentTurnID=="")
+// is preferred so the cancel handler targets the outermost scope. The first
+// match in the sync.Map iteration is returned only as a last-resort fallback
+// (defensive; should not occur in normal operation).
 func (al *AgentLoop) GetActiveTurnHookForSession(sessionID string) TurnCancelHook {
-	var found *turnState
+	var rootMatch *turnState
+	var anyMatch *turnState
 	al.activeTurnStates.Range(func(_, value any) bool {
 		ts := value.(*turnState)
-		if ts.transcriptSessionID == sessionID {
-			found = ts
-			return false
+		if ts.transcriptSessionID != sessionID {
+			return true
+		}
+		if anyMatch == nil {
+			anyMatch = ts
+		}
+		if ts.depth == 0 || ts.parentTurnID == "" {
+			rootMatch = ts
+			return false // stop — root found
 		}
 		return true
 	})
-	if found == nil {
-		return nil
+	if rootMatch != nil {
+		return rootMatch
 	}
-	return found
+	if anyMatch != nil {
+		return anyMatch
+	}
+	return nil
 }
 
 func (al *AgentLoop) GetActiveTurnBySession(sessionKey string) *ActiveTurnInfo {
@@ -380,6 +408,15 @@ type streamerStatsSetter interface {
 }
 
 func (ts *turnState) finalizeStreamer(ctx context.Context) {
+	// B4: if the turn has been abandoned, suppress the final "done" frame so
+	// a stuck goroutine cannot send a spurious done signal to the frontend.
+	if ts.abandoned.Load() {
+		abandonedWritesSuppressed.Add(1)
+		ts.mu.Lock()
+		ts.lastStreamer = nil
+		ts.mu.Unlock()
+		return
+	}
 	ts.mu.Lock()
 	s := ts.lastStreamer
 	tokens := ts.turnTokens
@@ -526,8 +563,13 @@ func (ts *turnState) interruptHintMessage() providers.Message {
 }
 
 // appendToolCallTranscript records a tool call to the session transcript.
-// It is a no-op when no transcript store or session ID is configured.
+// It is a no-op when no transcript store or session ID is configured, or when
+// the turn has been marked abandoned (B4: suppresses writes from stuck goroutines).
 func (ts *turnState) appendToolCallTranscript(tc session.ToolCall) {
+	if ts.abandoned.Load() {
+		abandonedWritesSuppressed.Add(1)
+		return
+	}
 	if ts.transcriptStore == nil || ts.transcriptSessionID == "" {
 		return
 	}
@@ -596,13 +638,15 @@ func (ts *turnState) Finish(isHardAbort bool) {
 		}
 	}
 
-	// If handleCancel claimed this turn, fire the post-cancel callback once.
-	// The callback writes the turn_cancelled transcript entry and emits the
-	// turn.cancelled audit event (FR-15).
+	// If handleCancel claimed this turn, fire the post-cancel callback exactly
+	// once. Swap the callback to nil under the write-lock so that concurrent or
+	// repeated Finish calls (e.g. the defer Finish(false) after a hard-abort
+	// Finish(true)) cannot invoke it a second time (FR-15).
 	if ts.cancelFired.Load() {
-		ts.mu.RLock()
+		ts.mu.Lock()
 		cb := ts.onCancelFinish
-		ts.mu.RUnlock()
+		ts.onCancelFinish = nil
+		ts.mu.Unlock()
 		if cb != nil {
 			method := "graceful"
 			if isHardAbort {
@@ -691,7 +735,13 @@ func (ts *turnState) SetLastUsage(usage *providers.UsageInfo) {
 // AddTurnStats accumulates per-iteration token counts and cost so the
 // turn-end "done" frame can surface the full cost of the turn to the UI.
 // Safe to call multiple times per turn (once per LLM iteration).
+// B4: suppressed when the turn is marked abandoned so stuck goroutines cannot
+// inflate cost counters after the operator-visible 5s detach point.
 func (ts *turnState) AddTurnStats(tokens int64, costUSD float64) {
+	if ts.abandoned.Load() {
+		abandonedWritesSuppressed.Add(1)
+		return
+	}
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 	ts.turnTokens += tokens

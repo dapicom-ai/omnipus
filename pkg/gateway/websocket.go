@@ -800,9 +800,9 @@ func (h *WSHandler) handleCancel(wc *wsConn, sessionID string) {
 	activeTurn.SetOnCancelFinish(func(cancelMethod string) {
 		// Mark the last transcript entry as truncated.
 		if store != nil {
-			if err := store.MarkLastEntryTruncated(sessionID); err != nil {
+			if err := store.MarkLastEntryTruncated(sessionID, turnID); err != nil {
 				slog.Warn("ws: MarkLastEntryTruncated failed",
-					"session_id", sessionID, "error", err)
+					"session_id", sessionID, "turn_id", turnID, "error", err)
 			}
 			// Append a turn_cancelled entry to the transcript.
 			appendErr := store.AppendTranscript(sessionID, session.TranscriptEntry{

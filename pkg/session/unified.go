@@ -338,19 +338,33 @@ func (us *UnifiedStore) AppendTranscript(sessionID string, entry TranscriptEntry
 }
 
 // MarkLastEntryTruncated finds the last assistant transcript entry for the
-// given session in transcript.jsonl and rewrites it with truncated=true.
-// This is called by the cancel handler when a turn is cancelled mid-stream
-// to mark the partial assistant content for SPA replay rendering (FR-14).
+// given session in transcript.jsonl that belongs to turnID and rewrites it
+// with truncated=true.
+//
+// H2: The turnID parameter scopes the backward-walk to entries whose
+// turn_id matches. This prevents a cancel on turn T2 from mutating the
+// clean final assistant entry of a previously-completed turn T1 when both
+// share the same sessionID.
+//
+// If turnID is empty, the function falls back to the pre-H2 behavior (match
+// the last assistant entry regardless of turn_id) and logs a warning. This
+// preserves backward compatibility with any call sites that cannot supply
+// a turn ID.
 //
 // Acquires the same in-process mutex as AppendTranscript. Does NOT touch
 // context.jsonl (LLM history) — per FR-14a, the partial content there remains
 // untouched so the next turn's LLM context sees natural truncation.
 //
-// Returns nil if no assistant entry is found (e.g., cancel arrived before
-// any assistant content was written). Returns an error only on I/O failure.
-func (us *UnifiedStore) MarkLastEntryTruncated(sessionID string) error {
+// Returns nil if no matching assistant entry is found (e.g., cancel arrived
+// before any assistant content was written). Returns an error only on I/O
+// failure.
+func (us *UnifiedStore) MarkLastEntryTruncated(sessionID, turnID string) error {
 	if err := validateSessionID(sessionID); err != nil {
 		return err
+	}
+	if turnID == "" {
+		slog.Warn("unified_store: MarkLastEntryTruncated called with empty turnID — falling back to last-assistant-entry behavior",
+			"session_id", sessionID)
 	}
 
 	us.mu.Lock()
@@ -381,7 +395,8 @@ func (us *UnifiedStore) MarkLastEntryTruncated(sessionID string) error {
 		return nil
 	}
 
-	// Walk backward to find the last assistant entry.
+	// Walk backward to find the last assistant entry matching turnID.
+	// When turnID is empty (backward-compat path) any assistant entry matches.
 	targetIdx := -1
 	for i := len(entries) - 1; i >= 0; i-- {
 		var e TranscriptEntry
@@ -390,14 +405,18 @@ func (us *UnifiedStore) MarkLastEntryTruncated(sessionID string) error {
 			slog.Warn("unified_store: mark truncated: skipping malformed line", "session_id", sessionID, "index", i, "error", jsonErr)
 			continue
 		}
-		if e.Role == "assistant" {
-			targetIdx = i
-			break
+		if e.Role != "assistant" {
+			continue
 		}
+		if turnID != "" && e.TurnID != turnID {
+			continue
+		}
+		targetIdx = i
+		break
 	}
 
 	if targetIdx == -1 {
-		// No assistant entry found — no-op, not an error.
+		// No matching assistant entry found — no-op, not an error.
 		return nil
 	}
 
