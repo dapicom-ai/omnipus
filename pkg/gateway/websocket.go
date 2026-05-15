@@ -16,7 +16,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,7 +25,6 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/dapicom-ai/omnipus/pkg/agent"
-	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/media"
@@ -140,9 +138,6 @@ type WSHandler struct {
 	// pairingStore is the global device pairing state (pending + paired devices).
 	pairingStore *pairing.PairingStore
 
-	// cancelAbuse detects runaway or abusive cancel-request patterns (FR-25a).
-	cancelAbuse *cancelAbuseDetector
-
 	upgrader websocket.Upgrader
 }
 
@@ -188,7 +183,6 @@ func newWSHandler(
 		approvalRegistry:      newWSApprovalRegistry(),
 		devicePairingRegistry: newDevicePairingRegistry(),
 		pairingStore:          pairing.NewPairingStore(),
-		cancelAbuse:           newCancelAbuseDetector(),
 		upgrader: websocket.Upgrader{
 			// CheckOrigin: parses the Origin URL and compares hostname against the request
 			// Host to allow same-origin requests. Also allows localhost/127.0.0.1 for development.
@@ -787,158 +781,56 @@ func sendCancelStageFrame(wc *wsConn, sessionID, stage string) {
 	slog.Debug("ws: dropped cancel_stage frame due to backpressure", "stage", stage)
 }
 
-// handleCancel implements the two-stage cancel timer with audit emission and
-// abuse detection (FR-10, FR-11, FR-12, FR-13a, FR-15, FR-17, FR-18-21,
-// FR-25a, FR-35, FR-36).
+// handleCancel delegates to agentLoop.RequestCancel — the canonical cancel
+// state machine that provides uniform audit, transcript, abuse-detection, and
+// 2-stage timer behaviour across all four cancel entry points (web SPA,
+// Tier A /cancel command, Tier B text-parsing, CLI). FR-10, FR-11, FR-12,
+// FR-13a, FR-15, FR-17, FR-18-21, FR-25a, FR-35, FR-36.
 //
-// Stage 0 (immediate): graceful interrupt + auto-deny pending approvals.
-// Stage 1 (3s after stage 0): hard abort if turn is still alive.
-// Stage 2 (5s after stage 1): mark turn abandoned if still alive, emit stuck audit.
-//
-// The onCancelFinish callback registered on the active turnState fires exactly
-// once when the turn goroutine exits (regardless of which stage caused it) and
-// writes the turn_cancelled transcript entry + turn.cancelled audit event.
+// This function is intentionally thin: it builds scope/canceller/hooks and
+// delegates. All state-machine logic lives in pkg/agent.RequestCancel.
 func (h *WSHandler) handleCancel(wc *wsConn, sessionID string) {
 	if sessionID == "" {
 		sendConnFrame(wc, wsServerFrame{Type: "error", Message: "cancel requires session_id"})
 		return
 	}
 
-	cancellerUser := wc.userID
-	cancellerChannel := "web"
-	hint := "user canceled via WebSocket"
-	ctx := context.Background()
-	at := time.Now()
-	auditLogger := h.agentLoop.AuditLogger()
-
-	// Abuse detection: record this attempt before the first-cancel-wins check so
-	// that every attempt (including duplicates) is counted (FR-25a).
-	if h.cancelAbuse != nil {
-		h.cancelAbuse.recordAttempt(ctx, cancellerUser, cancellerChannel, at, auditLogger)
+	scope := agent.CancelScope{SessionID: sessionID}
+	canceller := agent.CancelCanceller{
+		UserID:  wc.userID,
+		Channel: "web",
 	}
-	// First-cancel-wins: atomically claim the active turn for this session.
-	// If no turn is active, or the turn was already claimed, wasFired is false.
-	activeTurn := h.agentLoop.GetActiveTurnHookForSession(sessionID)
-	wasFired := activeTurn != nil && activeTurn.ClaimCancel()
+	hooks := agent.CancelHooks{
+		SendStageFrame: func(sid, stage string) {
+			sendCancelStageFrame(wc, sid, stage)
+		},
+		CancelPendingApprovals: func(sid, reason string) {
+			if h.approvalRegV2 != nil {
+				h.approvalRegV2.cancelAllPendingForSession(sid, reason)
+			}
+		},
+		SetSessionInterrupted: func(sid string) {
+			store := h.resolveSessionStore(sid)
+			if store != nil {
+				status := session.StatusInterrupted
+				if err := store.SetMeta(sid, session.MetaPatch{Status: &status}); err != nil {
+					slog.Warn("ws: could not mark session interrupted",
+						"session_id", sid, "error", err)
+				}
+			}
+		},
+	}
 
-	// Audit: attempt (always, even for duplicate cancels or no-turn cancels).
-	audit.Emit(ctx, auditLogger, audit.EventTurnCancelAttempt, audit.SeverityInfo, map[string]any{
-		"session_id":        sessionID,
-		"canceller_user":    cancellerUser,
-		"canceller_channel": cancellerChannel,
-		"was_fired":         wasFired,
-	})
-
-	if !wasFired {
-		// Either no active turn or it was already cancelled — nothing more to do.
-		slog.Debug("ws: cancel — no active turn or already cancelled", "session_id", sessionID)
+	outcome, err := h.agentLoop.RequestCancel(context.Background(), scope, canceller, hooks)
+	if err != nil {
+		slog.Warn("ws: handleCancel: RequestCancel error",
+			"session_id", sessionID, "error", err)
+		sendConnFrame(wc, wsServerFrame{Type: "error", Message: "cancel failed: " + err.Error()})
 		return
 	}
-
-	// PHASE A: graceful cascade + auto-deny pending approvals.
-	descendants, _ := h.agentLoop.InterruptSession(sessionID, hint)
-	if h.approvalRegV2 != nil {
-		h.approvalRegV2.cancelAllPendingForSession(sessionID, "session cancelled")
+	if !outcome.Fired {
+		slog.Debug("ws: cancel — no active turn or already cancelled", "session_id", sessionID)
 	}
-	sendCancelStageFrame(wc, sessionID, "graceful")
-
-	// Register the post-cancel callback: fires exactly once when the turn exits.
-	// Captures: activeTurn, sessionID, cancellerUser, cancellerChannel, descendants,
-	// auditLogger (safe to capture; auditLogger is stable for the process lifetime).
-	store := h.resolveSessionStore(sessionID)
-	turnID := activeTurn.TurnID()
-	activeTurn.SetOnCancelFinish(func(cancelMethod string) {
-		// Mark the last transcript entry as truncated.
-		if store != nil {
-			if err := store.MarkLastEntryTruncated(sessionID, turnID); err != nil {
-				slog.Warn("ws: MarkLastEntryTruncated failed",
-					"session_id", sessionID, "turn_id", turnID, "error", err)
-			}
-			// Append a turn_cancelled entry to the transcript.
-			appendErr := store.AppendTranscript(sessionID, session.TranscriptEntry{
-				ID:                   sessionID + "_cancelled",
-				Type:                 session.EntryTypeTurnCancelled,
-				TurnID:               turnID,
-				CancelledByUser:      cancellerUser,
-				CancelledByChannel:   cancellerChannel,
-				CancelMethod:         cancelMethod,
-				DescendantsCancelled: descendants,
-				Timestamp:            time.Now().UTC(),
-			})
-			if appendErr != nil {
-				slog.Warn("ws: could not append turn_cancelled transcript entry",
-					"session_id", sessionID, "error", appendErr)
-			}
-		}
-		// Audit: turn_cancelled (fired once when the turn exits).
-		audit.Emit(ctx, auditLogger, audit.EventTurnCancelled, audit.SeverityInfo, map[string]any{
-			"session_id":            sessionID,
-			"turn_id":               turnID,
-			"canceller_user":        cancellerUser,
-			"canceller_channel":     cancellerChannel,
-			"cancel_method":         cancelMethod,
-			"descendants_cancelled": descendants,
-		})
-	})
-
-	// Mark session as interrupted in meta (best-effort).
-	if store != nil {
-		status := session.StatusInterrupted
-		if err := store.SetMeta(sessionID, session.MetaPatch{Status: &status}); err != nil {
-			slog.Warn("ws: could not mark session interrupted", "session_id", sessionID, "error", err)
-		}
-	}
-
-	// PHASE B: 3s timer → hard abort if the turn is still alive.
-	// Wrap in defer-recover so a panic inside the cascade does not crash the gateway (C-1).
-	time.AfterFunc(3*time.Second, func() {
-		defer func() {
-			if r := recover(); r != nil {
-				slog.Error("ws: cancel timer panic",
-					"stage", "hard",
-					"session_id", sessionID,
-					"panic", r,
-					"stack", string(debug.Stack()),
-				)
-			}
-		}()
-		if !activeTurn.IsAlive() {
-			return // already finished, skip
-		}
-		// C-2: don't silently discard hard-abort error; log at WARN but continue
-		// the timer chain regardless (degraded but not fatal).
-		if _, err := h.agentLoop.InterruptSessionHard(sessionID, hint); err != nil {
-			slog.Warn("ws: hard abort failed", "session_id", sessionID, "error", err)
-		}
-		sendCancelStageFrame(wc, sessionID, "hard")
-
-		// PHASE C: 5s after hard → detach if still alive.
-		hardAt := time.Now()
-		time.AfterFunc(5*time.Second, func() {
-			defer func() {
-				if r := recover(); r != nil {
-					slog.Error("ws: cancel timer panic",
-						"stage", "detached",
-						"session_id", sessionID,
-						"panic", r,
-						"stack", string(debug.Stack()),
-					)
-				}
-			}()
-			if !activeTurn.IsAlive() {
-				return // finished in the meantime
-			}
-			// Mark abandoned so the gateway stops tracking the goroutine.
-			// The turn goroutine will eventually finish on its own.
-			activeTurn.MarkAbandoned()
-			sendCancelStageFrame(wc, sessionID, "detached")
-			audit.Emit(ctx, auditLogger, audit.EventTurnCancelStuck, audit.SeverityWarn, map[string]any{
-				"session_id":                      sessionID,
-				"turn_id":                         turnID,
-				"goroutine_age_after_hard_cancel": time.Since(hardAt).String(),
-			})
-		})
-	})
 }
 
 // handleAttachSession loads an existing session's transcript and replays it to

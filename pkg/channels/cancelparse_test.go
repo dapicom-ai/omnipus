@@ -57,7 +57,7 @@ func TestDispatchCancelIfRecognized_NilInterceptorSafe(t *testing.T) {
 // not panic when /cancel is matched.
 func TestDispatchCancelIfRecognized_NilSendFnSafe(t *testing.T) {
 	interrupted := false
-	interceptor := &mockInterceptor{onInterrupt: func(channel, chatID, hint string) error {
+	interceptor := &mockInterceptor{onRequestCancel: func(ctx context.Context, channel, chatID, userID string) error {
 		interrupted = true
 		return nil
 	}}
@@ -74,7 +74,7 @@ func TestDispatchCancelIfRecognized_NilSendFnSafe(t *testing.T) {
 // messages return false (caller should dispatch normally).
 func TestDispatchCancelIfRecognized_PassthroughOnNonCancel(t *testing.T) {
 	interrupted := false
-	interceptor := &mockInterceptor{onInterrupt: func(_, _, _ string) error {
+	interceptor := &mockInterceptor{onRequestCancel: func(_ context.Context, _, _, _ string) error {
 		interrupted = true
 		return nil
 	}}
@@ -90,13 +90,12 @@ func TestDispatchCancelIfRecognized_PassthroughOnNonCancel(t *testing.T) {
 }
 
 // TestDispatchCancelIfRecognized_InterceptorCalledWithCorrectArgs verifies
-// the hint and fields passed to InterruptByChannelChat.
+// the channel and chatID fields passed to RequestCancelByChannelChat.
 func TestDispatchCancelIfRecognized_InterceptorCalledWithCorrectArgs(t *testing.T) {
-	var gotChannel, gotChatID, gotHint string
-	interceptor := &mockInterceptor{onInterrupt: func(channel, chatID, hint string) error {
+	var gotChannel, gotChatID string
+	interceptor := &mockInterceptor{onRequestCancel: func(ctx context.Context, channel, chatID, userID string) error {
 		gotChannel = channel
 		gotChatID = chatID
-		gotHint = hint
 		return nil
 	}}
 	channels.DispatchCancelIfRecognized(context.Background(), "  /CANCEL  ", "telegram", "chat123", "user42", interceptor, nil)
@@ -106,19 +105,26 @@ func TestDispatchCancelIfRecognized_InterceptorCalledWithCorrectArgs(t *testing.
 	if gotChatID != "chat123" {
 		t.Errorf("chatID = %q; want %q", gotChatID, "chat123")
 	}
-	if gotHint == "" {
-		t.Error("hint must not be empty")
-	}
 }
 
 // mockInterceptor implements CancelInterceptor for testing.
+// It exposes both the legacy InterruptByChannelChat and the new
+// RequestCancelByChannelChat so tests can exercise either path.
 type mockInterceptor struct {
-	onInterrupt func(channel, chatID, hint string) error
+	onInterrupt     func(channel, chatID, hint string) error
+	onRequestCancel func(ctx context.Context, channel, chatID, userID string) error
 }
 
 func (m *mockInterceptor) InterruptByChannelChat(channel, chatID, hint string) error {
 	if m.onInterrupt != nil {
 		return m.onInterrupt(channel, chatID, hint)
+	}
+	return nil
+}
+
+func (m *mockInterceptor) RequestCancelByChannelChat(ctx context.Context, channel, chatID, userID string) error {
+	if m.onRequestCancel != nil {
+		return m.onRequestCancel(ctx, channel, chatID, userID)
 	}
 	return nil
 }

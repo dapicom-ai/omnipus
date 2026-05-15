@@ -2,7 +2,6 @@ package channels
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/dapicom-ai/omnipus/pkg/bus"
@@ -15,7 +14,14 @@ import (
 type CancelInterceptor interface {
 	// InterruptByChannelChat gracefully cancels all active turns whose channel
 	// and chatID match. Returns nil when no active turn exists (no-op).
+	// Deprecated: prefer RequestCancelByChannelChat which runs the full cancel
+	// state machine (audit, transcript, abuse-detection, 2-stage timer).
 	InterruptByChannelChat(channel, chatID, hint string) error
+	// RequestCancelByChannelChat runs the full cancel state machine for the
+	// turn identified by (channelName, chatID). All parameters are primitives to
+	// avoid importing pkg/agent from pkg/channels (circular dependency).
+	// Returns nil when no active turn exists (no-op).
+	RequestCancelByChannelChat(ctx context.Context, channelName, chatID, userID string) error
 }
 
 // IsCancelCommand reports whether msg is exactly the /cancel command per FR-2:
@@ -49,10 +55,11 @@ func DispatchCancelIfRecognized(
 		return false
 	}
 
-	hint := fmt.Sprintf("cancelled by %s via %s", senderID, channelName)
-
 	if interceptor != nil {
-		if err := interceptor.InterruptByChannelChat(channelName, chatID, hint); err != nil {
+		// RequestCancelByChannelChat runs the full cancel state machine: audit,
+		// transcript marking, abuse detection, and the 2-stage graceful→hard timer.
+		// This supersedes the old InterruptByChannelChat path which skipped all of that.
+		if err := interceptor.RequestCancelByChannelChat(ctx, channelName, chatID, senderID); err != nil {
 			logger.WarnCF("channels", "cancel intercept error", map[string]any{
 				"channel": channelName,
 				"chat_id": chatID,

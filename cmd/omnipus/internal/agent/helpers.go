@@ -18,6 +18,17 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 )
 
+// cliCancellerUser returns the OS user for cancel audit attribution in CLI mode.
+func cliCancellerUser() string {
+	if u := os.Getenv("USER"); u != "" {
+		return u
+	}
+	if u := os.Getenv("USERNAME"); u != "" {
+		return u
+	}
+	return "cli-user"
+}
+
 func agentCmd(message, sessionKey, model string, debug bool) error {
 	if sessionKey == "" {
 		sessionKey = "cli:default"
@@ -145,7 +156,15 @@ func interactiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
 
 		if procesErr != nil {
 			if ctx.Err() != nil {
-				// Cancelled by double-Escape.
+				// Cancelled by double-Escape. Fire the full cancel state machine so
+				// audit, transcript marking, abuse detection, and the 2-stage timer
+				// apply uniformly (cancel-centralization, resolves finding B2).
+				agentLoop.RequestCancel( //nolint:errcheck // best-effort; CLI continues regardless
+					context.Background(),
+					agent.CancelScope{SessionID: sessionKey},
+					agent.CancelCanceller{UserID: cliCancellerUser(), Channel: "cli"},
+					agent.CancelHooks{}, // no transport-specific side-effects in CLI
+				)
 				fmt.Println("\n(interrupted)")
 				if watcherActive {
 					// Print a blank line so the next readline prompt is clean.

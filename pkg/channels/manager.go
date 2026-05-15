@@ -19,6 +19,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/dapicom-ai/omnipus/pkg/bus"
+	"github.com/dapicom-ai/omnipus/pkg/commands"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/constants"
 	"github.com/dapicom-ai/omnipus/pkg/credentials"
@@ -801,6 +802,33 @@ func (m *Manager) StartAll(ctx context.Context) error {
 	}
 
 	logger.InfoC("channels", "All channels started")
+
+	// C1 fix: invoke RegisterCommands on every started channel that implements
+	// CommandRegistrarCapable (FR-28 fallback: failures are WARN-logged, channel
+	// startup continues). This registers /cancel and other builtins with the
+	// upstream platform (Telegram BotCommand, Slack slash commands, etc.) so they
+	// appear in the platform's command menu.
+	defs := commands.BuiltinDefinitions()
+	for name, ch := range m.channels {
+		if reg, ok := ch.(CommandRegistrarCapable); ok {
+			name, reg := name, reg // capture for goroutine
+			go func() {
+				regCtx, regCancel := context.WithTimeout(dispatchCtx, 30*time.Second)
+				defer regCancel()
+				if err := reg.RegisterCommands(regCtx, defs); err != nil {
+					logger.WarnCF("channels", "RegisterCommands failed — platform command menu not updated",
+						map[string]any{
+							"channel": name,
+							"error":   err.Error(),
+						})
+				} else {
+					logger.InfoCF("channels", "RegisterCommands succeeded",
+						map[string]any{"channel": name, "command_count": len(defs)})
+				}
+			}()
+		}
+	}
+
 	return nil
 }
 

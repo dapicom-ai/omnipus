@@ -28,6 +28,14 @@ type AgentLoopInterface interface {
 	// whose channel and chatID match the supplied values. Used by Tier B
 	// (text-parsing) channels where inbound messages carry no explicit SessionID.
 	InterruptByChannelChat(channel, chatID, hint string) error
+	// RequestCancelForSession runs the full cancel state machine (audit, transcript,
+	// abuse-detection, approval auto-deny, 2-stage timer) for the given session.
+	// All parameters are primitive types so this interface can be defined without
+	// importing pkg/agent (which would create a circular dependency).
+	//
+	// Returns (fired bool, err error): fired is true when an active turn was
+	// successfully claimed; err is non-nil only for validation failures.
+	RequestCancelForSession(ctx context.Context, sessionID, userID, channel string) (fired bool, err error)
 }
 
 // Canceller identifies who/what issued a cancel — populated for audit attribution.
@@ -59,34 +67,32 @@ type Runtime struct {
 	agentLoop AgentLoopInterface
 }
 
-// CancelActiveTurn requests a graceful interrupt of the active turn for sessionID.
-// The canceller fields are included in the audit hint so the interrupt can be
-// attributed in the audit log.
+// CancelActiveTurn runs the full cancel state machine (audit, transcript,
+// abuse-detection, 2-stage timer) for the given session via the centralized
+// RequestCancelForSession entry point. The canceller fields are used for audit
+// attribution.
 //
 // Return values:
-//   - nil           — interrupt was successfully fired.
-//   - ErrNoActiveTurn — the agent loop reported no running turn (informational).
-//   - other error   — a real failure (e.g., fsync, lock failure) that the caller
-//     must surface to the user as a failure response.
+//   - nil           — cancel fired (or no active turn — informational).
+//   - ErrNoActiveTurn — no running turn found for sessionID.
+//   - other error   — a real failure that the caller must surface.
 func (rt *Runtime) CancelActiveTurn(ctx context.Context, sessionID string, canceller Canceller) error {
 	if rt == nil || rt.agentLoop == nil {
-		// No agent loop wired — treat as "nothing to cancel" so the
-		// nil-runtime path still acknowledges the request.
+		// No agent loop wired — treat as "nothing to cancel".
 		return ErrNoActiveTurn
 	}
-	hint := fmt.Sprintf("cancelled by %s via %s", canceller.UserID, canceller.Channel)
-	_, err := rt.agentLoop.InterruptSession(sessionID, hint)
-	if err == nil {
-		return nil
+	fired, err := rt.agentLoop.RequestCancelForSession(ctx, sessionID, canceller.UserID, canceller.Channel)
+	if err != nil {
+		// Distinguish "no active turn" from real errors.
+		if strings.Contains(err.Error(), "no active turn") || strings.Contains(err.Error(), "scope must set") {
+			return ErrNoActiveTurn
+		}
+		return fmt.Errorf("cancel: %w", err)
 	}
-	// Distinguish "no active turn" from real errors. The agent loop may not
-	// yet expose a typed sentinel (depends on whether the loop package has been
-	// migrated). Until it does, fall back to string inspection.
-	// Switch to errors.Is once the loop exports a typed ErrNoActiveTurn.
-	if strings.Contains(err.Error(), "no active turn") {
+	if !fired {
 		return ErrNoActiveTurn
 	}
-	return fmt.Errorf("cancel: %w", err)
+	return nil
 }
 
 // WithAgentLoop returns a shallow copy of rt with agentLoop set. Used by the

@@ -206,6 +206,11 @@ type AgentLoop struct {
 	// immediately without waiting for the next message or ticker. Stored
 	// atomically via the atomic.Pointer so Stop() can be called before Run.
 	stopCancel atomic.Pointer[context.CancelFunc]
+
+	// cancelAbuse is the shared abuse detector used by RequestCancel across all
+	// four cancel entry points (web, Tier A /cancel, Tier B text-parsing, CLI).
+	// Initialized in NewAgentLoop; always non-nil after construction.
+	cancelAbuse *cancelAbuseDetector
 }
 
 // processOptions configures how a message is processed
@@ -531,6 +536,9 @@ func NewAgentLoop(
 				map[string]any{"addr": proxy.Addr()})
 		}
 	}
+
+	// Initialize cancel abuse detector (shared across all four cancel entry points).
+	al.cancelAbuse = newCancelAbuseDetector()
 
 	// SEC-26: Initialize rate limiter registry and persistent cost tracker.
 	// The registry always exists so per-agent windows can be created even when
