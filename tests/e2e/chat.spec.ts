@@ -31,14 +31,14 @@ test(
 test(
   '(b) multi-turn retention: turn 3 references content from turn 1',
   async ({ page }) => {
-    // test.setTimeout(480_000): This test makes three sequential LLM calls. The
+    // test.setTimeout(560_000): This test makes three sequential LLM calls. The
     // assistantMessages selector excludes data-status="running" (cluster B change)
     // so each toHaveCount waits for a fully COMPLETED response, not a streaming
     // placeholder. z-ai/glm-5v-turbo enters extended thinking mode on follow-up
-    // turns with growing context, taking up to 150s per turn. Budget:
-    //   setup 15s + turn1 60s + turn2 150s + turn3 150s + final-check 30s = 405s.
-    // 480s gives a comfortable 75s margin above the theoretical maximum.
-    test.setTimeout(480_000);
+    // turns with growing context, consistently taking >150s per turn under load.
+    // Budget: setup 15s + turn1 60s + turn2 200s + turn3 200s + final-check 30s = 505s.
+    // 560s gives a 55s margin above the observed ceiling.
+    test.setTimeout(560_000);
 
     const input = chatInput(page);
     await expect(input).toBeVisible({ timeout: 15_000 });
@@ -54,20 +54,20 @@ test(
 
     await input.fill('What is 2 + 2?');
     await input.press('Enter');
-    // 150s: z-ai/glm-5v-turbo enters extended thinking mode for follow-up turns
+    // 200s: z-ai/glm-5v-turbo enters extended thinking mode for follow-up turns
     // with growing context. The assistantMessages selector excludes
     // data-status="running" (cluster B change) so we wait for a COMPLETED response
     // rather than just a streaming placeholder — this requires the full LLM latency
-    // window. 90s was insufficient under load; 150s matches the observed ceiling.
-    await expect(assistantMessages(page)).toHaveCount(2, { timeout: 150_000 });
+    // window. 150s was insufficient; observed ceiling is ~160s under load.
+    await expect(assistantMessages(page)).toHaveCount(2, { timeout: 200_000 });
 
     await input.fill(
       'Look back at my first message in THIS conversation — what serial number ' +
         'did I mention? Echo it back verbatim.',
     );
     await input.press('Enter');
-    // 150s: same rationale as turn 2 above — full LLM completion required.
-    await expect(assistantMessages(page)).toHaveCount(3, { timeout: 150_000 });
+    // 200s: same rationale as turn 2 above — full LLM completion required.
+    await expect(assistantMessages(page)).toHaveCount(3, { timeout: 200_000 });
 
     await expect(assistantMessages(page).nth(2)).toContainText(/XYZQUUX7734/i, {
       timeout: 30_000,
