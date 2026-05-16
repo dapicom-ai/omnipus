@@ -213,12 +213,12 @@ test(
     await expect(input).toBeVisible({ timeout: 15_000 });
 
     // Deterministic prompt: force a single spawn with a subagent task that mandates ≥3 tool calls.
-    // Shell echo always succeeds in any sandbox.
+    // read_file is always registered and does not require special permissions.
     await input.fill(
       [
         'Call the `spawn` tool exactly once, now, with these arguments:',
         '  label: "multi step counter test"',
-        '  task: "You are a subagent. Execute these THREE shell tool calls in this exact order. Do not skip any. Do not reply in prose between them. After all three have completed, reply with the single word \\"finished\\". (1) shell cmd=\\"echo step one\\"; (2) shell cmd=\\"echo step two\\"; (3) shell cmd=\\"echo step three\\"."',
+        '  task: "You are a subagent. You MUST call the read_file tool exactly THREE times in this exact order. Do not skip any call. Do not reply in prose between them. (1) read_file with path=\\"/etc/hostname\\"; (2) read_file with path=\\"/etc/os-release\\"; (3) read_file with path=\\"/proc/version\\". After all three read_file calls have completed, reply with the single word \\"finished\\"."',
         'Do not call any other tool. Do not reply in prose. Call spawn now.',
       ].join('\n'),
     );
@@ -268,7 +268,7 @@ test(
     }
 
     // Hard assertion: the step counter must have reached ≥3 steps.
-    // With temperature=0+seed=42 the subagent must execute all three shell calls.
+    // With temperature=0 the subagent must execute all three read_file calls.
     // If reachedThreeSteps is false, the product did not produce the required steps.
     if (!reachedThreeSteps) {
       // Verify at least the step counter IS rendering (not a missing testid regression).
@@ -283,7 +283,7 @@ test(
       }
       throw new Error(
         'ASSERTION FAILED: LLM subagent executed fewer than 3 tool calls. ' +
-        'With temperature=0+seed=42 the subagent must follow the prompt and execute 3 shell calls. ' +
+        'The subagent must follow the prompt and execute 3 read_file calls. ' +
         `Step counter text at timeout: "${finalCounterText}". ` +
         'Traces to: sprint-h-subagent-block-spec.md BDD Scenario 2.',
       );
