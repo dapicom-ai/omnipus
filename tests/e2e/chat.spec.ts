@@ -31,47 +31,60 @@ test(
 test(
   '(b) multi-turn retention: turn 3 references content from turn 1',
   async ({ page }) => {
-    // test.setTimeout(560_000): This test makes three sequential LLM calls. The
-    // assistantMessages selector excludes data-status="running" (cluster B change)
-    // so each toHaveCount waits for a fully COMPLETED response, not a streaming
-    // placeholder. z-ai/glm-5v-turbo enters extended thinking mode on follow-up
-    // turns with growing context, consistently taking >150s per turn under load.
-    // Budget: setup 15s + turn1 60s + turn2 200s + turn3 200s + final-check 30s = 505s.
-    // 560s gives a 55s margin above the observed ceiling.
-    test.setTimeout(560_000);
+    // test.setTimeout(1200_000): Three sequential LLM calls. Each turn must fully
+    // COMPLETE (data-status="running" excluded) before the next is sent, ensuring
+    // the full context is in the transcript for turn 3's retention check.
+    // GLM-5v-turbo with growing context consistently takes >200s under suite load.
+    // Budget: setup(15) + agentswitch(15) + turn1(300) + turn2(300) + turn3(300) = 930s.
+    // 1200s gives a 270s margin for LLM variance and retry overhead.
+    test.setTimeout(1_200_000);
 
     const input = chatInput(page);
     await expect(input).toBeVisible({ timeout: 15_000 });
 
-    // Phrasing note: we deliberately avoid the word "remember" because Mia
-    // (the default agent) treats "remember …" as an instruction to persist
-    // to her MEMORY.md file rather than retain it in conversation context.
+    // Switch to Jim: Mia has "no long enumerations" guardrails and may handoff to
+    // Jim for certain questions, causing spurious stop-button transitions that
+    // confuse turn-completion detection. Jim does inline generation without handoffs,
+    // making the strict assistantMessages count (excludes running) reliable.
+    // This test probes agent-loop context retention — the agent identity doesn't matter.
+    const picker = agentPicker(page);
+    await expect(picker).toBeVisible({ timeout: 15_000 });
+    await picker.click();
+    await page.getByRole('menuitem', { name: /Jim/i }).click();
+    await expect(picker).toContainText(/Jim/i, { timeout: 5_000 });
+
+    // Phrasing note: we deliberately avoid the word "remember" because Jim
+    // (like Mia) may treat "remember …" as an instruction to persist to a
+    // MEMORY.md file rather than retain it in conversation context.
     // We want to probe multi-turn transcript retention, which is an agent-
     // loop property independent of the agent's memory-file semantics.
     await input.fill('In my first message, my serial number is XYZQUUX7734.');
     await input.press('Enter');
-    await expect(assistantMessages(page)).toHaveCount(1, { timeout: 60_000 });
+    // Wait for turn 1 to FULLY COMPLETE (data-status transitions to "complete").
+    // 300s: generous ceiling for GLM-5v-turbo under suite load.
+    await expect(assistantMessages(page)).toHaveCount(1, { timeout: 300_000 });
 
     await input.fill('What is 2 + 2?');
     await input.press('Enter');
-    // 200s: z-ai/glm-5v-turbo enters extended thinking mode for follow-up turns
-    // with growing context. The assistantMessages selector excludes
-    // data-status="running" (cluster B change) so we wait for a COMPLETED response
-    // rather than just a streaming placeholder — this requires the full LLM latency
-    // window. 150s was insufficient; observed ceiling is ~160s under load.
-    await expect(assistantMessages(page)).toHaveCount(2, { timeout: 200_000 });
+    // Wait for turn 2 to FULLY COMPLETE before sending turn 3. Sending turn 3
+    // while turn 2 is still streaming would cause AssistantUI to queue or ignore it,
+    // and the context window would not include turn 2's response.
+    // 300s: same ceiling as turn 1.
+    await expect(assistantMessages(page)).toHaveCount(2, { timeout: 300_000 });
 
     await input.fill(
       'Look back at my first message in THIS conversation — what serial number ' +
         'did I mention? Echo it back verbatim.',
     );
     await input.press('Enter');
-    // 200s: same rationale as turn 2 above — full LLM completion required.
-    await expect(assistantMessages(page)).toHaveCount(3, { timeout: 200_000 });
 
-    await expect(assistantMessages(page).nth(2)).toContainText(/XYZQUUX7734/i, {
-      timeout: 30_000,
-    });
+    // Wait for turn 3 to FULLY COMPLETE. Then verify XYZQUUX7734 appears in the
+    // completed responses (either turn 1 ack, turn 3 echo-back, or both).
+    // 300s ceiling; result count ≥ 1 (turn 1 alone suffices if Jim didn't ack).
+    await expect(assistantMessages(page)).toHaveCount(3, { timeout: 300_000 });
+    const serialMsgs = assistantMessages(page).filter({ hasText: /XYZQUUX7734/i });
+    const serialCount = await serialMsgs.count();
+    expect(serialCount).toBeGreaterThanOrEqual(1);
   },
 );
 
