@@ -93,7 +93,7 @@ async function createSession(page: Page): Promise<string> {
 // ── JSONL reader helpers ───────────────────────────────────────────────────────
 
 interface AuditEntry {
-  event_type?: string
+  event?: string
   was_fired?: boolean
   session_id?: string
   // allow any extra fields
@@ -105,7 +105,7 @@ interface TranscriptEntry {
   type?: string
   role?: string
   truncated?: boolean
-  descendants_cancelled?: string[]
+  descendants_canceled?: string[]
   // allow any extra fields
   [key: string]: unknown
 }
@@ -327,8 +327,9 @@ test(
     const interruptedLabels = page.locator('text=(interrupted)')
     await expect(interruptedLabels.first()).toBeVisible({ timeout: 5_000 })
 
-    // Assert transcript.jsonl contains {type: "turn_cancelled"} entry with
-    // a non-empty descendants_cancelled array.
+    // Assert transcript.jsonl contains {type: "turn_canceled"} entry with
+    // a non-empty descendants_canceled array. The backend uses single-L
+    // spelling for transcript entries (pkg/session/daypartition.go).
     // Allow a short settling window (max 3s) for the transcript write to flush.
     await page.waitForTimeout(3_000)
 
@@ -350,23 +351,23 @@ test(
       }
     }
 
-    const cancelledEntry = entries.find((e) => e.type === 'turn_cancelled')
+    const cancelledEntry = entries.find((e) => e.type === 'turn_canceled')
     if (!cancelledEntry) {
       // Allow the alternative: the feature may not yet be implemented —
       // report as a test failure with clear context rather than a silent skip.
       throw new Error(
-        'BLOCKED or INCOMPLETE: transcript.jsonl does not contain a {type:"turn_cancelled"} entry ' +
+        'BLOCKED or INCOMPLETE: transcript.jsonl does not contain a {type:"turn_canceled"} entry ' +
           `after cancel. Searched: ${candidates.join(', ')}. ` +
           `Entries found: ${JSON.stringify(entries.map((e) => ({ type: e.type, role: e.role })))}. ` +
           'Traces to: cancel-cross-channel-spec.md T24, US-4.1, FR-15.',
       )
     }
 
-    // descendants_cancelled must be a non-empty array (cascade fired).
+    // descendants_canceled must be a non-empty array (cascade fired).
     expect(
-      Array.isArray(cancelledEntry.descendants_cancelled) &&
-        (cancelledEntry.descendants_cancelled as string[]).length > 0,
-      'turn_cancelled entry must have a non-empty descendants_cancelled array (cascade wired per FR-6a)',
+      Array.isArray(cancelledEntry.descendants_canceled) &&
+        (cancelledEntry.descendants_canceled as string[]).length > 0,
+      'turn_canceled entry must have a non-empty descendants_canceled array (cascade wired per FR-6a)',
     ).toBe(true)
   },
 )
@@ -475,25 +476,25 @@ test(
     const newEntries = allEntries.slice(entriesBefore)
 
     // Assert: turn_cancel_attempt entry with was_fired: true.
-    // events.go: EventTurnCancelAttempt = "turn.cancel.attempt"
+    // events.go: EventTurnCancelAttempt = "turn.cancel.attempt"; struct tag json:"event"
     const attemptEntry = newEntries.find(
-      (e) => e.event_type === 'turn.cancel.attempt' && e.was_fired === true,
+      (e) => e.event === 'turn.cancel.attempt' && e.was_fired === true,
     )
     if (!attemptEntry) {
       throw new Error(
         'INCOMPLETE: audit log does not contain a turn.cancel.attempt entry with was_fired:true. ' +
-          `New entries found: ${JSON.stringify(newEntries.map((e) => ({ event_type: e.event_type, was_fired: e.was_fired })))}. ` +
+          `New entries found: ${JSON.stringify(newEntries.map((e) => ({ event: e.event, was_fired: e.was_fired })))}. ` +
           'Traces to: cancel-cross-channel-spec.md T26, US-5.1, FR-18.',
       )
     }
 
     // Assert: turn_cancelled entry.
-    // events.go: EventTurnCancelled = "turn.cancelled"
-    const cancelledEntry = newEntries.find((e) => e.event_type === 'turn.cancelled')
+    // events.go: EventTurnCancelled = "turn.cancelled"; struct tag json:"event"
+    const cancelledEntry = newEntries.find((e) => e.event === 'turn.cancelled')
     if (!cancelledEntry) {
       throw new Error(
         'INCOMPLETE: audit log does not contain a turn.cancelled entry. ' +
-          `New entries found: ${JSON.stringify(newEntries.map((e) => ({ event_type: e.event_type })))}. ` +
+          `New entries found: ${JSON.stringify(newEntries.map((e) => ({ event: e.event })))}. ` +
           'Traces to: cancel-cross-channel-spec.md T26, US-5.2, FR-19.',
       )
     }
