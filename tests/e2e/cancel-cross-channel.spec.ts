@@ -288,9 +288,11 @@ test(
 test(
   'T24 — cancel cascades to subagent: transcript.jsonl records turn_cancelled with descendants',
   async ({ page }) => {
-    // 300s: spawn wait (120s) + subagent execution + cancel + assertions + settling window.
+    // 360s: spawn wait (180s) + subagent execution + cancel + assertions + settling window.
     // test.slow() only gives 270s which is insufficient when GLM enters extended thinking.
-    test.setTimeout(300_000)
+    // Under full-suite load, prior tests (T21-T23) backlog the LLM queue; GLM-5v-turbo
+    // can take 120-150s before emitting the spawn tool call. 180s gives a safe margin.
+    test.setTimeout(360_000)
 
     await page.goto('/')
 
@@ -325,10 +327,11 @@ test(
     await input.press('Enter')
 
     // Wait for the subagent collapsed block to appear — confirms spawn fired.
-    // 120s: GLM-5v-turbo enters extended thinking mode under suite load, taking
-    // 60-90s before emitting the spawn tool call. 90s was insufficient in practice.
+    // 180s: GLM-5v-turbo enters extended thinking mode under suite load, taking
+    // 60-150s before emitting the spawn tool call when the LLM queue is backlogged
+    // by T21-T23. 120s was insufficient under full-suite load.
     const collapsedBlock = page.locator('[data-testid="subagent-collapsed"]')
-    await expect(collapsedBlock).toBeVisible({ timeout: 120_000 })
+    await expect(collapsedBlock).toBeVisible({ timeout: 180_000 })
 
     // Click Stop while the subagent is running.
     const stopBtn = page.locator('[data-testid="stop-btn"]')
@@ -477,9 +480,10 @@ test(
     // Cancel the turn.
     await stopBtn.click()
 
-    // Wait for cancel to complete.
-    await expect(stopBtn).not.toBeVisible({ timeout: 5_000 })
-    await expect(chatInput(page)).toBeEnabled({ timeout: 5_000 })
+    // Wait for cancel to complete. Allow 15s — under suite load the LLM cancel
+    // propagation can take several seconds after the stop button is clicked.
+    await expect(stopBtn).not.toBeVisible({ timeout: 15_000 })
+    await expect(chatInput(page)).toBeEnabled({ timeout: 15_000 })
 
     // Allow audit flush (audit writes are synchronous on the gateway path, but
     // give a short settling window).

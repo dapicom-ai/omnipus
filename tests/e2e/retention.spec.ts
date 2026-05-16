@@ -264,11 +264,35 @@ test('session_past_retention_threshold_is_swept', async ({ page }) => {
   // unaffected. The /reload endpoint on the health server requires no auth
   // and triggers an in-place config reload via the health-server reload hook.
   const configPath = path.join(OMNIPUS_HOME, 'config.json');
-  const originalRaw = fs.readFileSync(configPath, 'utf-8');
-  const cfgObj = JSON.parse(originalRaw) as { gateway?: { dev_mode_bypass?: boolean } };
+  // config.json may not exist when the gateway was started with in-memory defaults
+  // (e.g., started via env-only config without a persistent config file).
+  // In that case we fetch the current config from the gateway's REST API, modify
+  // dev_mode_bypass, and write the result to disk so /reload picks it up.
+  // originalRaw is null when the file did not exist before the test; the finally
+  // block removes the synthesised file to restore the pre-test state.
+  const configExists = fs.existsSync(configPath);
+  let originalRaw: string | null = null;
+  let cfgObj: { gateway?: { dev_mode_bypass?: boolean; [key: string]: unknown }; [key: string]: unknown };
+  if (configExists) {
+    originalRaw = fs.readFileSync(configPath, 'utf-8');
+    cfgObj = JSON.parse(originalRaw) as typeof cfgObj;
+  } else {
+    // Fetch current config from the gateway API so we don't lose users/credentials on reload.
+    const apiCfgResp = await page.request.get(`${BASE_URL}/api/v1/config`, {
+      headers: await authHeaders(page),
+      failOnStatusCode: false,
+    });
+    if (apiCfgResp.ok()) {
+      cfgObj = (await apiCfgResp.json()) as typeof cfgObj;
+    } else {
+      // Fallback to minimal config if the API call fails.
+      cfgObj = { gateway: { dev_mode_bypass: true } };
+    }
+  }
   const bypassWasOn = cfgObj.gateway?.dev_mode_bypass === true;
   if (bypassWasOn) {
-    cfgObj.gateway!.dev_mode_bypass = false;
+    if (!cfgObj.gateway) cfgObj.gateway = {};
+    cfgObj.gateway.dev_mode_bypass = false;
     fs.writeFileSync(configPath, JSON.stringify(cfgObj, null, 2));
     const reloadResp = await page.request.post(`${BASE_URL}/reload`, {
       failOnStatusCode: false,
@@ -332,11 +356,18 @@ test('session_past_retention_threshold_is_swept', async ({ page }) => {
     ).toBe(false);
   } finally {
     // Restore the original config so subsequent tests see the bypass mode the
-    // global setup chose for them. We write the original raw bytes verbatim
-    // to preserve secret values that would otherwise round-trip through JSON
+    // global setup chose for them.
+    // If we created config.json (originalRaw === null), remove it to restore
+    // the pre-test state. Otherwise write the original bytes verbatim to
+    // preserve secret values that would otherwise round-trip through JSON
     // and lose any non-JSON-safe content (the config has SecureString fields).
     if (bypassWasOn) {
-      fs.writeFileSync(configPath, originalRaw);
+      if (originalRaw === null) {
+        // config.json did not exist before the test; remove the synthesised file.
+        try { fs.unlinkSync(configPath); } catch { /* best-effort */ }
+      } else {
+        fs.writeFileSync(configPath, originalRaw);
+      }
       const reloadResp = await page.request.post(`${BASE_URL}/reload`, {
         failOnStatusCode: false,
       });
