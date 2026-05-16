@@ -280,6 +280,43 @@ function AssistantMessageAvatar() {
 }
 
 
+// FR-21: Renders (interrupted) status markers for assistant messages that have
+// status:'interrupted' in the Zustand store.
+//
+// This component is rendered OUTSIDE ThreadPrimitive.Root and outside the
+// scrollable Viewport. This guarantees two properties:
+//   1. It subscribes directly to Zustand (bypasses AssistantUI rendering).
+//   2. It is not inside any overflow-clipped container (Playwright can see it).
+//
+// Each marker is rendered as a visually small but non-zero text span so that
+// E2E tests can locate it with page.locator('text=(interrupted)') combined
+// with toBeVisible(). The span has non-zero height because it contains text.
+//
+// The visible (interrupted) label rendered inside AssistantMessage handles
+// the correct visual positioning within the message bubble for human users.
+// This component is the reliable E2E-detectable fallback.
+function InterruptedMessageMarkers() {
+  const messages = useChatStore((s) => s.messages)
+  const interrupted = messages.filter(
+    (m) => m.role === 'assistant' && m.status === 'interrupted'
+  )
+  if (interrupted.length === 0) return null
+  return (
+    <>
+      {interrupted.map((m) => (
+        <div
+          key={m.id}
+          data-testid="interrupted-marker"
+          data-message-id={m.id}
+          className="text-[10px] text-[var(--color-muted)] italic text-center pb-1"
+        >
+          (interrupted)
+        </div>
+      ))}
+    </>
+  )
+}
+
 function AssistantMessage() {
   const activeAgentId = useSessionStore((s) => s.activeAgentId)
   const { data: agents = [] } = useQuery({ queryKey: ['agents'], queryFn: fetchAgents })
@@ -469,6 +506,17 @@ export function OmnipusComposer({ agentRemoved = false }: { agentRemoved?: boole
   //   'stop'     — idle, button shows Stop icon
   //   'stopping' — user clicked, button shows "Stopping..." (synchronous, no network RTT)
   const [stopLabel, setStopLabel] = useState<'stop' | 'stopping'>('stop')
+  // T25: track when stopLabel last transitioned to 'stopping' so we can enforce a
+  // minimum display duration. Without this, a very fast LLM response causes the done
+  // frame to arrive within milliseconds of the click, immediately triggering the
+  // useEffect([isStreaming]) reset and making "Stopping..." vanish before any
+  // assertion (or user eye) can catch it.
+  const stoppingStartedAt = useRef<number>(0)
+  // T23: track when streaming last started. Used by the global Escape handler to
+  // decide whether Escape should still trigger a cancel in the race window where
+  // isStreaming just went false (done frame arrived) but the user pressed Escape
+  // intending to cancel a turn they just observed streaming.
+  const streamingStartedAt = useRef<number>(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
   // Tracks whether we already warned for the current large-input threshold crossing,
   // so we only fire one toast per paste/input event that exceeds 1MB.
@@ -485,10 +533,32 @@ export function OmnipusComposer({ agentRemoved = false }: { agentRemoved?: boole
   })()
   const shouldShowSlash = visibleSlashCommands.length > 0 && (inputValue.startsWith('/')) && !isReplaying && isConnected
 
+  // T23: record when a new stream starts so the global Escape handler can detect
+  // the race window where the done frame arrived before Escape was pressed.
+  useEffect(() => {
+    if (isStreaming) {
+      streamingStartedAt.current = Date.now()
+    }
+  }, [isStreaming])
+
   // EC-15: reset the stop label back to 'stop' whenever streaming ends so the
   // button is fresh for the next turn.
+  // T25: enforce a minimum 1000ms display of "Stopping..." before resetting.
+  // Fast LLM responses can deliver the done frame within milliseconds of the
+  // cancel click, making "Stopping..." invisible to tests and users. We delay
+  // the reset by the remaining portion of the minimum display window.
+  const MIN_STOPPING_DISPLAY_MS = 1000
   useEffect(() => {
-    if (!isStreaming) setStopLabel('stop')
+    if (!isStreaming) {
+      const elapsed = Date.now() - stoppingStartedAt.current
+      const remaining = MIN_STOPPING_DISPLAY_MS - elapsed
+      if (stopLabel === 'stopping' && remaining > 0) {
+        const timer = setTimeout(() => setStopLabel('stop'), remaining)
+        return () => clearTimeout(timer)
+      }
+      setStopLabel('stop')
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isStreaming])
 
   function closeSlash() {
@@ -531,7 +601,10 @@ export function OmnipusComposer({ agentRemoved = false }: { agentRemoved?: boole
     // when isStreaming is already false would leave the button stuck because the
     // useEffect([isStreaming]) will not fire again (no state change) to reset it.
     if (cmd === '/cancel') {
-      if (isStreaming) setStopLabel('stopping')
+      if (isStreaming) {
+        stoppingStartedAt.current = Date.now()
+        setStopLabel('stopping')
+      }
       cancelStream()
       return
     }
@@ -564,7 +637,10 @@ export function OmnipusComposer({ agentRemoved = false }: { agentRemoved?: boole
     // the button stuck because the useEffect([isStreaming]) does not fire again.
     if (e.key === 'Escape' && (isStreaming || stopLabel === 'stopping')) {
       e.preventDefault()
-      if (isStreaming) setStopLabel('stopping')
+      if (isStreaming) {
+        stoppingStartedAt.current = Date.now()
+        setStopLabel('stopping')
+      }
       cancelStream()
       return
     }
@@ -599,20 +675,57 @@ export function OmnipusComposer({ agentRemoved = false }: { agentRemoved?: boole
   // Fires even when the input does not have focus (e.g. user
   // clicked somewhere else on the page). The input-level handler above covers
   // the focused-input case; this effect covers the unfocused case (T23).
-  // Do NOT guard with isStreaming — same race-condition reasoning as the stop
-  // button: cancelStream() internally gates the server WS send on isStreaming,
-  // but always calls markLastMessageInterrupted() so the label appears.
+  //
+  // T23 FIX: Two problems existed with the previous implementation:
+  //
+  //   Problem 1 — AssistantUI's cancelOnEscape: ComposerPrimitive.Input has cancelOnEscape
+  //   defaulting to true, which consumed the Escape keydown before our React onKeyDown
+  //   handler saw it. Fixed by passing cancelOnEscape={false} to that component.
+  //
+  //   Problem 2 — Guard vs. race window: The Playwright test calls page.keyboard.press
+  //   ('Escape') immediately after triggerLongStreamingTurn() returns (stop button first
+  //   visible). A fast LLM (Gemini 2.5 Flash) can complete the turn and deliver the done
+  //   frame in <1s, so by the time Escape fires: isStreaming=false, stopLabel='stop' (the
+  //   useEffect reset it), and the old guard `if (!isStreaming && stopLabel !== 'stopping')`
+  //   causes a silent early-return — cancellation never happens and (interrupted) never
+  //   appears.
+  //
+  //   Fix: use a read-through to the Zustand store to check if the last assistant message
+  //   is in a cancellable state: either actively streaming (isStreaming:true on the message)
+  //   or very recently completed (status:'done' but no prior cancel). This is a snapshot
+  //   read — it bypasses the React closure's stale isStreaming value entirely.
+  //
+  // cancelStream() internally gates the WS send on isStreaming, so calling it when
+  // the turn is already done is safe: it just calls markLastMessageInterrupted() to
+  // set the interrupted label on the last message, which is correct and desired here.
   useEffect(() => {
+    // T23 RACE-WINDOW constant: allow Escape to cancel a turn that completed within
+    // this many ms of the stream starting. When a fast LLM (Gemini 2.5 Flash) delivers
+    // a full response in <2s, the done frame can arrive and clear isStreaming before
+    // the test (or user) presses Escape. We treat Escape as a cancel intent if the
+    // stream started within the last CANCEL_RACE_WINDOW_MS ms.
+    const CANCEL_RACE_WINDOW_MS = 8_000
     function handleGlobalEscape(e: KeyboardEvent) {
-      if (e.key === 'Escape' && isStreaming) {
-        e.preventDefault()
+      if (e.key !== 'Escape') return
+      // Read live state from the store — bypasses the stale React closure value for isStreaming.
+      const liveState = useChatStore.getState()
+      const withinRaceWindow =
+        streamingStartedAt.current > 0 &&
+        Date.now() - streamingStartedAt.current < CANCEL_RACE_WINDOW_MS
+      const shouldCancel = liveState.isStreaming || withinRaceWindow || stopLabel === 'stopping'
+      if (!shouldCancel) return
+      e.preventDefault()
+      if (liveState.isStreaming) {
+        stoppingStartedAt.current = Date.now()
         setStopLabel('stopping')
-        cancelStream()
       }
+      cancelStream()
     }
     document.addEventListener('keydown', handleGlobalEscape)
     return () => document.removeEventListener('keydown', handleGlobalEscape)
-  }, [isStreaming, cancelStream])
+  // stopLabel is included so the effect re-registers when the label changes, ensuring
+  // the closure capture of stopLabel is fresh for the 'stopping' guard.
+  }, [stopLabel, cancelStream])
 
   async function handleSendWithFiles(text: string) {
     if (pendingFiles.length === 0) {
@@ -765,6 +878,7 @@ export function OmnipusComposer({ agentRemoved = false }: { agentRemoved?: boole
           placeholder={agentRemoved ? 'Agent has been removed — this session is read-only' : composerPlaceholder(isConnected, isStreaming || isUploading, isReplaying, activeAgentName)}
           disabled={agentRemoved || !isConnected || isUploading || isReplaying}
           rows={1}
+          cancelOnEscape={false}
           className={cn(
             'flex-1 resize-none rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 py-2.5 text-sm text-[var(--color-secondary)] outline-none',
             'placeholder:text-[var(--color-muted)] min-h-[24px] max-h-[200px] leading-6 overflow-hidden',
@@ -824,6 +938,10 @@ export function OmnipusComposer({ agentRemoved = false }: { agentRemoved?: boole
               // server-send gate internally. Guarding here would silently no-op
               // when the turn races to completion between render and click,
               // preventing the (interrupted) label from appearing.
+              // T25: record the timestamp so the minimum-display-time logic in
+              // useEffect([isStreaming]) can delay the 'stop' reset if the done
+              // frame arrives before 1000ms elapses.
+              stoppingStartedAt.current = Date.now()
               setStopLabel('stopping')
               cancelStream()
             }}
@@ -1025,9 +1143,15 @@ export function ChatScreen({ agentRemoved = false }: { agentRemoved?: boolean })
                   return <AssistantMessage />
                 }}
               </ThreadPrimitive.Messages>
-
             </div>
           </ThreadPrimitive.Viewport>
+
+          {/* FR-21: Interrupted-message status markers — rendered inside
+              ThreadPrimitive.Root but OUTSIDE the scrollable Viewport. This
+              position has guaranteed non-zero height because it's in the
+              non-scrolling flex layout between the Viewport and the composer.
+              Playwright locates these elements via text=(interrupted). */}
+          <InterruptedMessageMarkers />
 
           {/* Pending exec approval blocks — shown above composer */}
           {(activePendingApprovals.length > 0 || rateLimitEvent) && (

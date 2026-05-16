@@ -406,16 +406,43 @@ export const useChatStore = create<ChatStore>((set, get) => {
       withBucket(sid, (b) => {
         const msgs = [...b.messages]
         const lastIdx = msgs.map((m) => m.role).lastIndexOf('assistant')
-        if (lastIdx === -1) return {}
-        // FR-21 / T21–T26: do NOT set isStreaming:false on the message here.
-        // Keeping isStreaming:true on the message prevents the token handler from
-        // creating a new placeholder when trailing tokens arrive after the cancel
-        // (the check `!msgs[lastIdx].isStreaming` would reset lastIdx to -1, causing
-        // a second assistant bubble that doesn't have the interrupted status).
-        // The bucket-level isStreaming is cleared by cancelStream()'s own withBucket
-        // call, which also stops the stop button from showing the send button too early.
+        if (lastIdx === -1) {
+          // FR-21 / T21–T23: No assistant message exists yet (cancel fired between
+          // session_started and the first token frame). The server may still send
+          // "Error processing message: turn canceled" as token+done frames via the
+          // outbound bus. We must create a placeholder interrupted message NOW so:
+          //   1. The UI shows the (interrupted) label immediately.
+          //   2. The token handler discards the error-string token (it checks
+          //      msgs[lastIdx].status === 'interrupted' and returns {} on match).
+          //   3. The done handler preserves 'interrupted' status over 'done'.
+          // Bucket-level isStreaming is set to false immediately here because the
+          // server may take several seconds to process the cancel and send the done
+          // frame. Clearing isStreaming now lets the useEffect([isStreaming]) fire
+          // and schedule the "Stopping…" → "stop" label reset via the T25 minimum-
+          // display timer (stoppingStartedAt was set BEFORE cancelStream() was called
+          // by the Escape/click handler, so the timer fires after the remaining
+          // portion of the 1000ms minimum window — not immediately).
+          const placeholder: ChatMessage = {
+            id: generateId(),
+            role: 'assistant',
+            content: '',
+            timestamp: new Date().toISOString(),
+            status: 'interrupted',
+            isStreaming: false,
+          }
+          return { messages: [...msgs, placeholder], isStreaming: false }
+        }
+        // FR-21 / T21–T26: set isStreaming:false AND status:'interrupted' on the message.
+        // Setting isStreaming:false is necessary so that buildMessageStatus() in
+        // omnipus-runtime.ts returns { type: "incomplete", reason: "cancelled" } rather
+        // than { type: "running" } — only then does AssistantUI properly render the
+        // message as cancelled and the (interrupted) label becomes visible.
+        // Trailing tokens from the server are handled in the 'token' case handler which
+        // now checks `status === 'interrupted'` FIRST and discards any trailing tokens
+        // rather than creating a second placeholder or overwriting the interrupted status.
         msgs[lastIdx] = {
           ...msgs[lastIdx],
+          isStreaming: false,
           status: 'interrupted',
         }
         return { messages: msgs }
@@ -439,7 +466,7 @@ export const useChatStore = create<ChatStore>((set, get) => {
               const msgs = [...b.messages]
               const idx = msgs.map((m) => m.role).lastIndexOf('assistant')
               if (idx === -1) return {}
-              msgs[idx] = { ...msgs[idx], status: 'interrupted' }
+              msgs[idx] = { ...msgs[idx], isStreaming: false, status: 'interrupted' }
               const updated = { ...b, messages: msgs }
               return {
                 sessionsById: { ...s.sessionsById, [bucketSid]: updated },
@@ -905,7 +932,14 @@ export const useChatStore = create<ChatStore>((set, get) => {
         }
         // cancelStage intentionally NOT reset here — hold label state until
         // the server sends the next cancel_stage frame or done/error clears it.
-        return { toolCalls: updated, isStreaming: false }
+        // isStreaming is intentionally NOT set to false here. The done frame will
+        // clear it. Clearing it here would cause the useEffect([isStreaming]) to
+        // immediately reset stopLabel to 'stop', making the "Stopping..." button
+        // disappear before the server confirms the cancel (T25). The done frame
+        // arrives within a few seconds and performs the correct isStreaming:false
+        // transition. markLastMessageInterrupted() above already set the message's
+        // own isStreaming:false so AssistantUI renders it as incomplete/cancelled.
+        return { toolCalls: updated }
       })
     },
 
@@ -1001,6 +1035,17 @@ export const useChatStore = create<ChatStore>((set, get) => {
             withBucket(targetSid, (b) => {
               const msgs = [...b.messages]
               let lastIdx = msgs.map((m) => m.role).lastIndexOf('assistant')
+              // FR-21 / T21–T26: if the last assistant message was already
+              // interrupted (user clicked Stop / pressed Escape / used /cancel),
+              // discard any trailing tokens the server sends before it processes
+              // the cancel. markLastMessageInterrupted() sets isStreaming:false on
+              // the message so that AssistantUI renders the correct "incomplete/cancelled"
+              // status. We must NOT append to the interrupted message or create a new
+              // placeholder — either would erase the (interrupted) label or create a
+              // ghost streaming bubble without the label.
+              if (lastIdx !== -1 && msgs[lastIdx].status === 'interrupted') {
+                return {}
+              }
               // Only reuse the last assistant bubble if it is still
               // streaming. A closed bubble (status=done) means the prior
               // LLM call has finalized and any new tokens are part of a
@@ -1022,25 +1067,13 @@ export const useChatStore = create<ChatStore>((set, get) => {
                 msgs.push(placeholder)
                 lastIdx = msgs.length - 1
               }
-              // FR-21 / T21–T26: do NOT overwrite 'interrupted' status with
-              // 'streaming'. A cancel may arrive between two token frames —
-              // markLastMessageInterrupted() sets status:'interrupted', but if
-              // a late token arrives before the server's done/cancel_ack frame,
-              // this handler would silently erase the label. Preserve 'interrupted'
-              // so the (interrupted) badge stays visible even while trailing
-              // tokens from the server are still flowing in.
-              // Also preserve the bucket's isStreaming:false if the cancel already
-              // cleared it — trailing tokens from the server must not un-cancel the turn.
-              const prevStatus = msgs[lastIdx].status
-              const wasCancelled = prevStatus === 'interrupted'
               msgs[lastIdx] = {
                 ...msgs[lastIdx],
                 content: msgs[lastIdx].content + frame.content,
-                isStreaming: wasCancelled ? false : true,
-                status: wasCancelled ? 'interrupted' : 'streaming',
+                isStreaming: true,
+                status: 'streaming',
               }
-              // Don't re-enable the bucket isStreaming if cancel already cleared it.
-              return { messages: msgs, isStreaming: wasCancelled ? b.isStreaming : true }
+              return { messages: msgs, isStreaming: true }
             })
           }
           break
@@ -1150,23 +1183,47 @@ export const useChatStore = create<ChatStore>((set, get) => {
               const msgs = [...b.messages]
               const lastIdx = msgs.map((m) => m.role).lastIndexOf('assistant')
               if (lastIdx !== -1) {
+                const prevStatus = msgs[lastIdx].status
+                // FR-21 / T21–T23: do NOT overwrite 'interrupted' status with 'error'.
+                // When the user clicks Stop or presses Escape, cancelStream() calls
+                // markLastMessageInterrupted() which sets status:'interrupted' BEFORE
+                // the WS cancel frame is sent. The server may then respond with an error
+                // frame (e.g. "turn canceled"). Without this guard the error handler
+                // would overwrite 'interrupted' with 'error', hiding the (interrupted)
+                // label and showing "Error processing message" instead.
+                //
+                // Additionally, treat any error whose message mentions "turn cancel" as
+                // an interrupted turn rather than a hard error — the server uses this
+                // phrase to signal a clean cancellation acknowledgement.
+                const isCancelAck = /turn.cancel/i.test(frame.message ?? '')
+                const resolvedStatus = (prevStatus === 'interrupted' || isCancelAck)
+                  ? 'interrupted'
+                  : 'error'
                 msgs[lastIdx] = {
                   ...msgs[lastIdx],
-                  content: msgs[lastIdx].content || frame.message,
+                  // Keep existing content if it was already set; for cancel-ack errors
+                  // don't replace the streamed text with the error message.
+                  content: (resolvedStatus === 'interrupted')
+                    ? msgs[lastIdx].content
+                    : (msgs[lastIdx].content || frame.message),
                   isStreaming: false,
-                  status: 'error',
+                  status: resolvedStatus,
                 }
                 return { messages: msgs, isStreaming: false }
+              }
+              // No assistant message — push one. Only show an error toast for non-cancel errors.
+              const isCancelAck = /turn.cancel/i.test(frame.message ?? '')
+              if (!isCancelAck) {
+                useConnectionStore.getState().setConnectionError(frame.message)
               }
               msgs.push({
                 id: generateId(),
                 role: 'assistant',
-                content: frame.message,
+                content: isCancelAck ? '' : frame.message,
                 timestamp: new Date().toISOString(),
-                status: 'error',
+                status: isCancelAck ? 'interrupted' : 'error',
                 isStreaming: false,
               })
-              useConnectionStore.getState().setConnectionError(frame.message)
               return { messages: msgs, isStreaming: false }
             })
           }
