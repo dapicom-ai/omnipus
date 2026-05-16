@@ -71,9 +71,14 @@ async function globalSetup(): Promise<void> {
   // 200 = fresh onboard, 409 = already complete — both succeed.
   await onboardViaAPI({ baseURL });
 
-  // Step 2: Obtain a valid bearer token via REST.
+  // Step 2: Obtain a valid bearer token + CSRF cookie via REST.
+  // We keep the context alive until we extract cookies so the CSRF cookie set
+  // by the login response can be included in the storageState. Without the
+  // CSRF cookie, SPA tests that call state-changing API endpoints (like
+  // createAgent) fail the client-side cookie-presence gate before fetch fires.
   const ctx = await request.newContext({ baseURL });
   let token: string;
+  let csrfCookieValue: string | null = null;
   try {
     const res = await ctx.post('/api/v1/auth/login', {
       data: { username: 'admin', password: 'admin123' },
@@ -85,6 +90,17 @@ async function globalSetup(): Promise<void> {
     const json = (await res.json()) as { token: string };
     if (!json.token) throw new Error('Login response missing token field');
     token = json.token;
+
+    // Extract the CSRF cookie from the context's cookie store.
+    // The login endpoint issues either __Host-csrf (TLS) or csrf (HTTP).
+    // We include it in storageState so browser page contexts have it on startup.
+    const ctxState = await ctx.storageState();
+    for (const cookie of ctxState.cookies) {
+      if (cookie.name === '__Host-csrf' || cookie.name === 'csrf') {
+        csrfCookieValue = cookie.value;
+        break;
+      }
+    }
   } finally {
     await ctx.dispose();
   }
@@ -94,13 +110,39 @@ async function globalSetup(): Promise<void> {
   // The `origins` array contains one entry per origin.  Playwright injects
   // the `localStorage` items into the browser context for that origin before
   // each test's page navigation, so the SPA sees the token on first load.
+  //
+  // Cookies are also included so the browser context has the CSRF cookie that
+  // was issued by the login endpoint. Without it, SPA mutations (createAgent,
+  // etc.) fail the client-side CSRF-cookie-presence gate before fetch fires.
   const authDir = path.dirname(AUTH_FILE);
   if (!fs.existsSync(authDir)) {
     fs.mkdirSync(authDir, { recursive: true });
   }
 
+  // Build the URL object so we can derive the correct cookie domain/path.
+  const url = new URL(baseURL);
+  const cookieDomain = url.hostname; // e.g. "localhost"
+  const cookieSecure = url.protocol === 'https:';
+
+  // Include both __Host-csrf (TLS) and csrf (HTTP) cookie names so the cookie
+  // is present regardless of which flavor the gateway issued.
+  const csrfCookies = csrfCookieValue
+    ? [
+        {
+          name: cookieSecure ? '__Host-csrf' : 'csrf',
+          value: csrfCookieValue,
+          domain: cookieDomain,
+          path: '/',
+          expires: -1, // session cookie
+          httpOnly: false,
+          secure: cookieSecure,
+          sameSite: 'Strict' as const,
+        },
+      ]
+    : [];
+
   const storageState = {
-    cookies: [],
+    cookies: csrfCookies,
     origins: [
       {
         origin: baseURL,
