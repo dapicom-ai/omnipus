@@ -81,6 +81,7 @@ describe('chat.unknown-target — T1.14: done for unknown targetSid force-clears
             sessionTokens: 0,
             sessionCost: 0,
             rateLimitEvent: null,
+            cancelStage: null,
             // null = no user message sent recently → stale spinner
             lastUserMessageAt: null,
           },
@@ -149,6 +150,7 @@ describe('chat.unknown-target — T1.14: done for unknown targetSid force-clears
             sessionTokens: 0,
             sessionCost: 0,
             rateLimitEvent: null,
+            cancelStage: null,
             // RECENT user message → guard must preserve this spinner
             lastUserMessageAt: recentUserMessageAt,
           },

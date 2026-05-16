@@ -13,7 +13,7 @@
 // If Finish() fires between steps 2 and 3, it sees cancelFired==true but
 // onCancelFinish==nil and returns immediately. The callback is then registered
 // (step 3) but Finish() never runs a second time, so the callback is
-// permanently orphaned: no turn_cancelled transcript entry, no audit event.
+// permanently orphaned: no turn_canceled transcript entry, no audit event.
 //
 // Fix (Option A): collectDescendantTurnIDs + SetOnCancelFinish BEFORE
 // InterruptSession so the callback is always registered before any goroutine
@@ -41,7 +41,7 @@ import (
 // TestRequestCancel_CallbackFiresWhenFinishRacesRegistration — drives the
 // race where Finish() is called synchronously from inside InterruptSession's
 // providerCancel callback, BEFORE the old code would have registered
-// SetOnCancelFinish. The fix registers the callback first, so the turn_cancelled
+// SetOnCancelFinish. The fix registers the callback first, so the turn_canceled
 // transcript entry must always be written regardless of when Finish() fires.
 func TestRequestCancel_CallbackFiresWhenFinishRacesRegistration(t *testing.T) {
 	t.Parallel()
@@ -87,7 +87,7 @@ func TestRequestCancel_CallbackFiresWhenFinishRacesRegistration(t *testing.T) {
 		transcriptStore:     store,
 	}
 	// Wire providerCancel to immediately call Finish(false), simulating the
-	// agent goroutine unwinding instantly when its HTTP stream is cancelled.
+	// agent goroutine unwinding instantly when its HTTP stream is canceled.
 	ts.providerCancel = func() {
 		ts.Finish(false)
 	}
@@ -121,7 +121,7 @@ func TestRequestCancel_CallbackFiresWhenFinishRacesRegistration(t *testing.T) {
 	// fileutil.WriteFileAtomic which is also synchronous — 100ms is ample).
 	time.Sleep(100 * time.Millisecond)
 
-	// Assert: the turn_cancelled transcript entry must be written despite the race.
+	// Assert: the turn_canceled transcript entry must be written despite the race.
 	// With the bug this entry would be missing (callback was orphaned).
 	entries, err := store.ReadTranscript(sessionID)
 	require.NoError(t, err, "transcript must be readable after cancel + race-Finish")
@@ -136,14 +136,14 @@ func TestRequestCancel_CallbackFiresWhenFinishRacesRegistration(t *testing.T) {
 	}
 
 	require.NotNil(t, cancelledEntry,
-		"BUG REGRESSION: turn_cancelled TranscriptEntry was not written — "+
+		"BUG REGRESSION: turn_canceled TranscriptEntry was not written — "+
 			"callback was orphaned (Finish ran before SetOnCancelFinish). "+
 			"Fix: register callback before calling InterruptSession. "+
 			"entries found: %v", entries)
 
 	assert.Equal(t, session.EntryTypeTurnCancelled, cancelledEntry.Type)
 	assert.Equal(t, "turn-race-001", cancelledEntry.TurnID,
-		"TurnID must match the cancelled turn")
+		"TurnID must match the canceled turn")
 	assert.Equal(t, "race-user", cancelledEntry.CancelledByUser,
 		"CancelledByUser must match the canceller passed to RequestCancel")
 	assert.Equal(t, "web", cancelledEntry.CancelledByChannel,

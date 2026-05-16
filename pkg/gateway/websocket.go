@@ -783,7 +783,7 @@ func sendCancelStageFrame(wc *wsConn, sessionID, stage string) {
 
 // handleCancel delegates to agentLoop.RequestCancel — the canonical cancel
 // state machine that provides uniform audit, transcript, abuse-detection, and
-// 2-stage timer behaviour across all four cancel entry points (web SPA,
+// 2-stage timer behavior across all four cancel entry points (web SPA,
 // Tier A /cancel command, Tier B text-parsing, CLI). FR-10, FR-11, FR-12,
 // FR-13a, FR-15, FR-17, FR-18-21, FR-25a, FR-35, FR-36.
 //
@@ -829,7 +829,7 @@ func (h *WSHandler) handleCancel(wc *wsConn, sessionID string) {
 		return
 	}
 	if !outcome.Fired {
-		slog.Debug("ws: cancel — no active turn or already cancelled", "session_id", sessionID)
+		slog.Debug("ws: cancel — no active turn or already canceled", "session_id", sessionID)
 	}
 }
 

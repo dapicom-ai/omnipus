@@ -771,10 +771,10 @@ func (d *AgentDefaults) GetModelName() string {
 }
 
 type ChannelsConfig struct {
-	WhatsApp   WhatsAppConfig   `json:"whatsapp"    yaml:"-"`
-	Telegram   TelegramConfig   `json:"telegram"    yaml:"telegram,omitempty"`
-	Feishu     FeishuConfig     `json:"feishu"      yaml:"feishu,omitempty"`
-	Discord    DiscordConfig    `json:"discord"     yaml:"discord,omitempty"`
+	WhatsApp WhatsAppConfig `json:"whatsapp" yaml:"-"`
+	Telegram TelegramConfig `json:"telegram" yaml:"telegram,omitempty"`
+	Feishu   FeishuConfig   `json:"feishu"   yaml:"feishu,omitempty"`
+	Discord  DiscordConfig  `json:"discord"  yaml:"discord,omitempty"`
 
 	QQ         QQConfig         `json:"qq"          yaml:"qq,omitempty"`
 	DingTalk   DingTalkConfig   `json:"dingtalk"    yaml:"dingtalk,omitempty"`
@@ -873,7 +873,6 @@ type DiscordConfig struct {
 	Placeholder        PlaceholderConfig   `json:"placeholder,omitempty"   yaml:"-"`
 	ReasoningChannelID string              `json:"reasoning_channel_id"    yaml:"-" env:"OMNIPUS_CHANNELS_DISCORD_REASONING_CHANNEL_ID"`
 }
-
 
 type QQConfig struct {
 	Enabled              bool                `json:"enabled"                  yaml:"-" env:"OMNIPUS_CHANNELS_QQ_ENABLED"`

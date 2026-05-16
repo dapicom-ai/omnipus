@@ -88,7 +88,7 @@ func runEscapeReadLoop(ctx context.Context, cancelFn context.CancelFunc, r byteR
 	buf := make([]byte, 1)
 
 	for {
-		// Check whether the caller has signalled us to stop.
+		// Check whether the caller has signaled us to stop.
 		select {
 		case <-ctx.Done():
 			return
@@ -117,7 +117,7 @@ func runEscapeReadLoop(ctx context.Context, cancelFn context.CancelFunc, r byteR
 
 		cancel, _ := det.feed(buf[0])
 		if cancel {
-			slog.Info("double-Escape detected; cancelling current inference turn")
+			slog.Info("double-Escape detected; canceling current inference turn")
 			cancelFn()
 			// Keep the goroutine alive until ctx.Done() so we don't
 			// leave the terminal in raw mode prematurely. The caller

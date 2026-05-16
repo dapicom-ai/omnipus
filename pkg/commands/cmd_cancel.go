@@ -31,7 +31,7 @@ func cancelCommand() Definition {
 			switch {
 			case err == nil:
 				// Interrupt successfully fired.
-				return req.Reply("⏸ Cancelling...")
+				return req.Reply("⏸ Canceling...")
 			case errors.Is(err, ErrNoActiveTurn):
 				// Informational — nothing was running; not a failure.
 				return req.Reply("Nothing to cancel")

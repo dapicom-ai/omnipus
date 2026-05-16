@@ -57,7 +57,12 @@ func newCancelAbuseDetector() *cancelAbuseDetector {
 // a disk-backed write operation.
 //
 // auditLogger may be nil (audit disabled); the emit is a no-op in that case.
-func (d *cancelAbuseDetector) recordAttempt(ctx context.Context, user, channel string, at time.Time, auditLogger *audit.Logger) {
+func (d *cancelAbuseDetector) recordAttempt(
+	ctx context.Context,
+	user, channel string,
+	at time.Time,
+	auditLogger *audit.Logger,
+) {
 	key := abuseKey{User: user, Channel: channel}
 	cutoff := at.Add(-d.window)
 

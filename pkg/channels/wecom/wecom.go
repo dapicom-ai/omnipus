@@ -594,7 +594,15 @@ func (c *WeComChannel) dispatchIncoming(reqID string, msg wecomIncomingMessage) 
 		metadata["quote_text"] = quoteText
 	}
 
-	if channels.DispatchCancelIfRecognized(c.ctx, content, "wecom", actualChatID, senderID, c.GetCancelInterceptor(), channels.CancelSendFn(c)) {
+	if channels.DispatchCancelIfRecognized(
+		c.ctx,
+		content,
+		"wecom",
+		actualChatID,
+		senderID,
+		c.GetCancelInterceptor(),
+		channels.CancelSendFn(c),
+	) {
 		return nil
 	}
 	c.HandleMessage(c.ctx, peer, msg.MsgID, senderID, actualChatID, content, mediaRefs, metadata, sender)

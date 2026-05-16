@@ -112,9 +112,9 @@ const (
 	// actual interrupt or was a no-op (e.g. turn already finished).
 	EventTurnCancelAttempt = "turn.cancel.attempt"
 
-	// EventTurnCancelled — INFO. A cancelled turn has fully exited and the
+	// EventTurnCancelled — INFO. A canceled turn has fully exited and the
 	// transcript has been marked. Contains the cancel_method ("graceful" or
-	// "hard") and the list of descendant turn IDs that were also cancelled
+	// "hard") and the list of descendant turn IDs that were also canceled
 	// (FR-15, FR-17, FR-18).
 	EventTurnCancelled = "turn.cancelled"
 

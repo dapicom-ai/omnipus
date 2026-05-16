@@ -69,7 +69,7 @@ func DispatchCancelIfRecognized(
 	}
 
 	if sendFn != nil {
-		if err := sendFn(ctx, chatID, "⏸ Cancelling..."); err != nil {
+		if err := sendFn(ctx, chatID, "⏸ Canceling..."); err != nil {
 			logger.WarnCF("channels", "cancel ack send failed", map[string]any{
 				"channel": channelName,
 				"chat_id": chatID,

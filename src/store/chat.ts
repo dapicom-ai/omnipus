@@ -5,7 +5,7 @@ import { useConnectionStore } from '@/store/connection'
 import { useSessionStore, registerChatSetReplaying, registerChatResetForReplay } from '@/store/session'
 import { queryClient } from '@/lib/queryClient'
 import type { Message, ToolCall } from '@/lib/api'
-import type { WsReceiveFrame, WsExecApprovalRequestFrame, WsReplayMessageFrame, WsRateLimitFrame, WsSubagentStartFrame, WsSubagentEndFrame, WsCancelStageFrame } from '@/lib/ws'
+import type { WsReceiveFrame, WsExecApprovalRequestFrame, WsReplayMessageFrame, WsRateLimitFrame, WsSubagentStartFrame, WsSubagentEndFrame } from '@/lib/ws'
 import { useToolApprovalStore } from '@/store/toolApproval'
 import { registerSyncChatForeground } from '@/store/session'
 

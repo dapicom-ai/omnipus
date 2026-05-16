@@ -142,13 +142,13 @@ func TestRequestCancel_NoActiveTurn_FiredFalse(t *testing.T) {
 	}
 	assert.Equal(t, 1, attempts, "must emit exactly one turn_cancel_attempt audit event")
 	assert.NotContains(t, events, audit.EventTurnCancelled,
-		"no active turn must not emit turn_cancelled")
+		"no active turn must not emit turn_canceled")
 }
 
 // TestRequestCancel_ActiveTurn_FiredTrue — registers a synthetic active turnState,
 // calls RequestCancel, and verifies Fired:true + TurnID returned. The
 // turn_cancel_attempt audit with was_fired=true must be emitted immediately.
-// The turn_cancelled audit fires only when the onCancelFinish callback runs.
+// The turn_canceled audit fires only when the onCancelFinish callback runs.
 func TestRequestCancel_ActiveTurn_FiredTrue(t *testing.T) {
 	t.Parallel()
 
@@ -180,15 +180,15 @@ func TestRequestCancel_ActiveTurn_FiredTrue(t *testing.T) {
 	assert.Contains(t, events, audit.EventTurnCancelAttempt,
 		"must emit turn_cancel_attempt")
 
-	// Trigger the finish callback manually to produce the turn_cancelled audit.
+	// Trigger the finish callback manually to produce the turn_canceled audit.
 	if ts.onCancelFinish != nil {
 		ts.onCancelFinish("graceful")
 	}
 
-	// Re-read to include the turn_cancelled event.
+	// Re-read to include the turn_canceled event.
 	events2 := readCancelAuditEvents(t, auditDir)
 	assert.Contains(t, events2, audit.EventTurnCancelled,
-		"onCancelFinish must emit turn_cancelled audit")
+		"onCancelFinish must emit turn_canceled audit")
 }
 
 // TestRequestCancel_TierBPath_ResolvesByChannelChat — when SessionID is empty

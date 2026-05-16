@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -24,8 +23,8 @@ type capturingHandler struct {
 }
 
 func (h *capturingHandler) Enabled(_ context.Context, l slog.Level) bool { return l >= h.level }
-func (h *capturingHandler) WithAttrs(attrs []slog.Attr) slog.Handler      { return h }
-func (h *capturingHandler) WithGroup(name string) slog.Handler            { return h }
+func (h *capturingHandler) WithAttrs(attrs []slog.Attr) slog.Handler     { return h }
+func (h *capturingHandler) WithGroup(name string) slog.Handler           { return h }
 func (h *capturingHandler) Handle(_ context.Context, r slog.Record) error {
 	rec := slogRecord{Level: r.Level, Message: r.Message, Attrs: map[string]any{}}
 	r.Attrs(func(a slog.Attr) bool {
@@ -58,9 +57,6 @@ func (e *errorReader) Read(_ []byte) (int, error) { return 0, e.err }
 type eofReader struct{}
 
 func (e *eofReader) Read(_ []byte) (int, error) { return 0, io.EOF }
-
-// bytesReader wraps a bytes.Buffer as a byteReader.
-type bytesReader struct{ *bytes.Buffer }
 
 // TestRawStdinHandler_NonEOFErrorLogged verifies that a non-EOF read error from
 // the stdin watcher emits a WARN log containing "stdin read failed" (H-4 fix).
@@ -102,12 +98,12 @@ func TestRawStdinHandler_EOFIsSilent(t *testing.T) {
 	}
 }
 
-// TestRawStdinHandler_ContextCancellationExitsCleanly verifies that cancelling
+// TestRawStdinHandler_ContextCancellationExitsCleanly verifies that canceling
 // the context causes runEscapeReadLoop to return without logging an error.
 func TestRawStdinHandler_ContextCancellationExitsCleanly(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// A reader that blocks until context is cancelled by returning io.EOF after
+	// A reader that blocks until context is canceled by returning io.EOF after
 	// cancel — simulating the goroutine exiting on context done.
 	blockingReader := &eofReader{}
 

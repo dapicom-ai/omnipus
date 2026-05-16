@@ -45,7 +45,7 @@ type CancelCanceller struct {
 // CancelOutcome is returned to the caller after a cancel attempt.
 type CancelOutcome struct {
 	Fired       bool     // true if a turn was actually targeted (ClaimCancel succeeded)
-	Descendants []string // turn IDs cancelled (parent + sub-turns)
+	Descendants []string // turn IDs canceled (parent + sub-turns)
 	TurnID      string   // root turn ID; empty when Fired is false
 }
 
@@ -56,7 +56,7 @@ type CancelHooks struct {
 	// (stage values: "graceful", "hard", "detached").
 	SendStageFrame func(sessionID, stage string)
 
-	// CancelPendingApprovals auto-denies pending approvals on the cancelled
+	// CancelPendingApprovals auto-denies pending approvals on the canceled
 	// session (FR-7). Called once at graceful stage.
 	CancelPendingApprovals func(sessionID, reason string)
 
@@ -77,8 +77,8 @@ type CancelHooks struct {
 //   - approval auto-deny (via hooks.CancelPendingApprovals)
 //   - cancel_stage frame emission (via hooks.SendStageFrame)
 //   - session status → interrupted (via hooks.SetSessionInterrupted)
-//   - transcript MarkLastEntryTruncated + turn_cancelled entry on Finish
-//   - turn_cancelled audit on Finish
+//   - transcript MarkLastEntryTruncated + turn_canceled entry on Finish
+//   - turn_canceled audit on Finish
 //   - 3s timer → hard abort (InterruptSessionHard)
 //   - 5s timer → detached / MarkAbandoned + turn_cancel_stuck audit
 //
@@ -102,7 +102,7 @@ func (al *AgentLoop) RequestCancel(
 
 	at := time.Now()
 	auditLogger := al.AuditLogger()
-	hint := fmt.Sprintf("cancelled by %s via %s", canceller.UserID, canceller.Channel)
+	hint := fmt.Sprintf("canceled by %s via %s", canceller.UserID, canceller.Channel)
 
 	// --- Resolve session ID from (channel, chatID) when SessionID is not set (Tier B) ---
 	sessionID := scope.SessionID
@@ -156,7 +156,7 @@ func (al *AgentLoop) RequestCancel(
 	})
 
 	if !wasFired {
-		slog.Debug("agent: RequestCancel — no active turn or already cancelled",
+		slog.Debug("agent: RequestCancel — no active turn or already canceled",
 			"session_id", sessionID,
 			"channel", scope.Channel,
 			"chat_id", scope.ChatID,
@@ -187,9 +187,9 @@ func (al *AgentLoop) RequestCancel(
 				slog.Warn("agent: RequestCancel: MarkLastEntryTruncated failed",
 					"session_id", sessionID, "turn_id", turnID, "error", err)
 			}
-			// Append a turn_cancelled entry to the transcript.
+			// Append a turn_canceled entry to the transcript.
 			appendErr := store.AppendTranscript(sessionID, session.TranscriptEntry{
-				ID:                   sessionID + "_cancelled",
+				ID:                   sessionID + "_canceled",
 				Type:                 session.EntryTypeTurnCancelled,
 				TurnID:               turnID,
 				CancelledByUser:      canceller.UserID,
@@ -199,18 +199,18 @@ func (al *AgentLoop) RequestCancel(
 				Timestamp:            time.Now().UTC(),
 			})
 			if appendErr != nil {
-				slog.Warn("agent: RequestCancel: could not append turn_cancelled transcript entry",
+				slog.Warn("agent: RequestCancel: could not append turn_canceled transcript entry",
 					"session_id", sessionID, "error", appendErr)
 			}
 		}
-		// Audit: turn_cancelled (fired once when the turn exits).
+		// Audit: turn_canceled (fired once when the turn exits).
 		audit.Emit(ctx, auditLogger, audit.EventTurnCancelled, audit.SeverityInfo, map[string]any{
-			"session_id":            sessionID,
-			"turn_id":               turnID,
-			"canceller_user":        canceller.UserID,
-			"canceller_channel":     canceller.Channel,
-			"cancel_method":         cancelMethod,
-			"descendants_cancelled": descendants,
+			"session_id":           sessionID,
+			"turn_id":              turnID,
+			"canceller_user":       canceller.UserID,
+			"canceller_channel":    canceller.Channel,
+			"cancel_method":        cancelMethod,
+			"descendants_canceled": descendants,
 		})
 	})
 
@@ -234,7 +234,7 @@ func (al *AgentLoop) RequestCancel(
 	}
 
 	if hooks.CancelPendingApprovals != nil {
-		hooks.CancelPendingApprovals(sessionID, "session cancelled")
+		hooks.CancelPendingApprovals(sessionID, "session canceled")
 	}
 	if hooks.SendStageFrame != nil {
 		hooks.SendStageFrame(sessionID, "graceful")

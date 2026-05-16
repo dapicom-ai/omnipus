@@ -113,6 +113,7 @@ describe('chat.dedup — T1.7: sendMessage merges duplicate tool_call ids', () =
           sessionTokens: 0,
           sessionCost: 0,
           rateLimitEvent: null,
+          cancelStage: null,
           lastUserMessageAt: null,
         }
         return {
@@ -179,6 +180,7 @@ describe('chat.dedup — T1.8: replay_message tail dedup drops identical re-emit
             sessionTokens: 0,
             sessionCost: 0,
             rateLimitEvent: null,
+            cancelStage: null,
             lastUserMessageAt: null,
           },
         },
@@ -237,6 +239,7 @@ describe('chat.dedup — T1.8: replay_message tail dedup drops identical re-emit
             sessionTokens: 0,
             sessionCost: 0,
             rateLimitEvent: null,
+            cancelStage: null,
             lastUserMessageAt: null,
           },
         },

@@ -82,7 +82,6 @@ func (s *stubAgentLoop) RequestCancelForSession(ctx context.Context, sessionID, 
 	return s.callCount > 0, nil
 }
 
-
 // TestCancelHandler_CallsInterruptSession verifies that the /cancel handler
 // invokes InterruptSession on the agent loop with the correct session ID and a
 // hint that contains the canceller identity (spec FR-27, FR-1).
@@ -134,8 +133,8 @@ func TestCancelHandler_CallsInterruptSession(t *testing.T) {
 		}
 	}
 
-	if reply != "⏸ Cancelling..." {
-		t.Errorf("reply = %q, want %q", reply, "⏸ Cancelling...")
+	if reply != "⏸ Canceling..." {
+		t.Errorf("reply = %q, want %q", reply, "⏸ Canceling...")
 	}
 }
 
@@ -163,7 +162,7 @@ func TestCancelHandler_NilRuntimeRepliesUnavailable(t *testing.T) {
 
 // TestCancelHandler_NilAgentLoopRepliesNothingToCancel verifies that
 // CancelActiveTurn with no agent loop wired returns ErrNoActiveTurn, causing
-// the handler to reply "Nothing to cancel" (C-3 fix: was previously "⏸ Cancelling...").
+// the handler to reply "Nothing to cancel" (C-3 fix: was previously "⏸ Canceling...").
 func TestCancelHandler_NilAgentLoopRepliesNothingToCancel(t *testing.T) {
 	rt := &Runtime{
 		SessionID: func() string { return "some-session" },
@@ -256,7 +255,7 @@ func TestCancelHandler_ReplyMatchesErrorState(t *testing.T) {
 		{
 			name:      "success",
 			loopErr:   nil,
-			wantReply: "⏸ Cancelling...",
+			wantReply: "⏸ Canceling...",
 		},
 		{
 			// No active turn: loop returns (fired=false, nil).

@@ -234,8 +234,6 @@ func (v *discordConfigV0) ToDiscordConfig() DiscordConfig {
 	}
 }
 
-
-
 type dingtalkConfigV0 struct {
 	Enabled            bool                `json:"enabled"                 env:"OMNIPUS_CHANNELS_DINGTALK_ENABLED"`
 	ClientID           string              `json:"client_id"               env:"OMNIPUS_CHANNELS_DINGTALK_CLIENT_ID"`

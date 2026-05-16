@@ -407,7 +407,15 @@ func (c *LINEChannel) processEvent(event lineEvent) {
 		return
 	}
 
-	if channels.DispatchCancelIfRecognized(c.ctx, content, "line", chatID, senderID, c.GetCancelInterceptor(), channels.CancelSendFn(c)) {
+	if channels.DispatchCancelIfRecognized(
+		c.ctx,
+		content,
+		"line",
+		chatID,
+		senderID,
+		c.GetCancelInterceptor(),
+		channels.CancelSendFn(c),
+	) {
 		return
 	}
 	c.HandleMessage(c.ctx, peer, msg.ID, senderID, chatID, content, mediaPaths, metadata, sender)

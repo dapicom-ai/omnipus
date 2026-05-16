@@ -413,7 +413,7 @@ func (r *approvalRegistryV2) cancelAllPendingForRestart() []approvalEntry {
 // loop goroutine blocked on a resultCh select is unblocked immediately (FR-7).
 //
 // reason is the human-readable explanation delivered in ApprovalOutcome.Reason;
-// callers SHOULD pass "session cancelled" (per FR-7 / EC-8).
+// callers SHOULD pass "session canceled" (per FR-7 / EC-8).
 //
 // Returns the count of approvals auto-denied (for audit / observability).
 // Approvals that are already terminal when this function runs are unaffected

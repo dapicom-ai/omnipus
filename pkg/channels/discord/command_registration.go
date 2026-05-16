@@ -45,13 +45,17 @@ func (c *DiscordChannel) RegisterCommands(ctx context.Context, defs []commands.D
 		// FR-28: slash-command registration failures must not crash channel
 		// startup. Other Tier A channels (Slack, Teams, Feishu, DingTalk,
 		// GoogleChat) log WARN and return nil on platform API errors. Discord
-		// matches that behaviour: the channel continues to receive messages and
+		// matches that behavior: the channel continues to receive messages and
 		// parses /cancel via text matching as a fallback.
-		logger.WarnCF("discord", "Discord command registration failed; text parsing still works (FR-28)", map[string]any{
-			"error": err.Error(),
-			"count": len(appCmds),
-		})
-		return nil
+		logger.WarnCF(
+			"discord",
+			"Discord command registration failed; text parsing still works (FR-28)",
+			map[string]any{
+				"error": err.Error(),
+				"count": len(appCmds),
+			},
+		)
+		return nil //nolint:nilerr // FR-28: log WARN and continue; text parsing still works
 	}
 
 	logger.InfoCF("discord", "Discord slash commands registered globally", map[string]any{

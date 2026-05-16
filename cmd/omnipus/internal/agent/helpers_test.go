@@ -52,7 +52,7 @@ func TestRawStdinHandler_SingleEscapeNoOp(t *testing.T) {
 	d.firstEscAt = time.Now().Add(-600 * time.Millisecond)
 
 	// Feed an unrelated byte. The expired window should clear pending state
-	// and pass the byte through without cancelling.
+	// and pass the byte through without canceling.
 	cancel, pass := d.feed('a')
 	if cancel {
 		t.Fatal("single Escape followed by timeout should not cancel")
@@ -285,11 +285,11 @@ func TestCli_DoubleEscapeDuringInferenceCancels(t *testing.T) {
 		t.Fatalf("failed to write double-Escape to PTY master: %v", writeErr)
 	}
 
-	// Wait for ctx to be cancelled (watcher fires cancelFn), with a timeout.
+	// Wait for ctx to be canceled (watcher fires cancelFn), with a timeout.
 	select {
 	case <-ctx.Done():
 		// Success: cancel was fired.
 	case <-time.After(2 * time.Second):
-		t.Fatal("context was not cancelled within 2s after double-Escape; cancel may not have fired")
+		t.Fatal("context was not canceled within 2s after double-Escape; cancel may not have fired")
 	}
 }

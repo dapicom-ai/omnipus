@@ -2121,16 +2121,16 @@ func TestSubTurnInheritsTranscriptSessionID(t *testing.T) {
 	// Mirror the production processOptions construction from spawnSubTurn (subturn.go).
 	// This is the exact code path patched by FR-6a.
 	childOpts := processOptions{
-		SessionKey:          "child-session",
-		Channel:             parentTS.channel,
-		ChatID:              parentTS.chatID,
-		SenderID:            parentTS.opts.SenderID,
-		SenderDisplayName:   parentTS.opts.SenderDisplayName,
-		UserMessage:         "child task",
-		NoHistory:           true,
+		SessionKey:              "child-session",
+		Channel:                 parentTS.channel,
+		ChatID:                  parentTS.chatID,
+		SenderID:                parentTS.opts.SenderID,
+		SenderDisplayName:       parentTS.opts.SenderDisplayName,
+		UserMessage:             "child task",
+		NoHistory:               true,
 		SkipInitialSteeringPoll: true,
-		TranscriptSessionID: parentTS.transcriptSessionID, // FR-6a: must be set
-		TranscriptStore:     parentTS.transcriptStore,
+		TranscriptSessionID:     parentTS.transcriptSessionID, // FR-6a: must be set
+		TranscriptStore:         parentTS.transcriptStore,
 	}
 
 	// Build the child turnState.

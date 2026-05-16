@@ -22,7 +22,7 @@ import (
 type registrarChannel struct {
 	mockChannel
 
-	mu   sync.Mutex
+	mu    sync.Mutex
 	calls [][]commands.Definition
 }
 
@@ -41,8 +41,10 @@ func (r *registrarChannel) callCount() int {
 
 // Compile-time assertion: registrarChannel implements both Channel and
 // CommandRegistrarCapable.
-var _ Channel = (*registrarChannel)(nil)
-var _ CommandRegistrarCapable = (*registrarChannel)(nil)
+var (
+	_ Channel                 = (*registrarChannel)(nil)
+	_ CommandRegistrarCapable = (*registrarChannel)(nil)
+)
 
 // TestStartAll_InvokesRegisterCommands verifies that StartAll calls
 // RegisterCommands on channels implementing CommandRegistrarCapable within

@@ -176,7 +176,7 @@ func (m *BrowserManager) ensureStarted() error {
 	}
 
 	// Clean up stale SingletonLock files. When Chromium exits ungracefully
-	// (kill -9, crash, or the gateway's chromedp allocator cancelling mid-
+	// (kill -9, crash, or the gateway's chromedp allocator canceling mid-
 	// startup), `SingletonLock` / `SingletonCookie` / `SingletonSocket`
 	// stay behind in the profile dir. The next launch refuses to start with:
 	//   "Failed to create .../SingletonLock: File exists (17)

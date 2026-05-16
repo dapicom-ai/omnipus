@@ -351,7 +351,6 @@ func TestConvertToOmnipusWithQQAndDingTalk(t *testing.T) {
 		t.Errorf("expected dingtalk client ID 'ding-app-id', got '%s'", picoCfg.Channels.DingTalk.ClientID)
 	}
 
-
 	if !picoCfg.Channels.Slack.Enabled {
 		t.Error("slack should be enabled")
 	}

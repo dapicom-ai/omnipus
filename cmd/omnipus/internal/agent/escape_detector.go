@@ -23,7 +23,7 @@ import (
 // CSI sequence — the buffered ESC is silently discarded and the new byte starts
 // fresh processing (FR-31a).
 //
-// This type is NOT goroutine-safe; the caller must serialise calls.
+// This type is NOT goroutine-safe; the caller must serialize calls.
 type escapeDetector struct {
 	// waitingForSecond is true after we have seen a first 0x1B and are
 	// waiting to see whether the next byte is another 0x1B (cancel), a CSI/SS3

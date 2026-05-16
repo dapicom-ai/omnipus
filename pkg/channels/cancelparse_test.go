@@ -48,8 +48,8 @@ func TestDispatchCancelIfRecognized_NilInterceptorSafe(t *testing.T) {
 	if !got {
 		t.Fatal("expected true (message consumed) even with nil interceptor")
 	}
-	if sent != "⏸ Cancelling..." {
-		t.Errorf("expected ack %q; got %q", "⏸ Cancelling...", sent)
+	if sent != "⏸ Canceling..." {
+		t.Errorf("expected ack %q; got %q", "⏸ Canceling...", sent)
 	}
 }
 
@@ -61,7 +61,15 @@ func TestDispatchCancelIfRecognized_NilSendFnSafe(t *testing.T) {
 		interrupted = true
 		return nil
 	}}
-	got := channels.DispatchCancelIfRecognized(context.Background(), "/cancel", "matrix", "!room:server", "bob", interceptor, nil)
+	got := channels.DispatchCancelIfRecognized(
+		context.Background(),
+		"/cancel",
+		"matrix",
+		"!room:server",
+		"bob",
+		interceptor,
+		nil,
+	)
 	if !got {
 		t.Fatal("expected true (message consumed)")
 	}
@@ -79,7 +87,15 @@ func TestDispatchCancelIfRecognized_PassthroughOnNonCancel(t *testing.T) {
 		return nil
 	}}
 	for _, msg := range []string{"hello", "/cancel my order", "cancel", ""} {
-		got := channels.DispatchCancelIfRecognized(context.Background(), msg, "line", "chatid", "user1", interceptor, nil)
+		got := channels.DispatchCancelIfRecognized(
+			context.Background(),
+			msg,
+			"line",
+			"chatid",
+			"user1",
+			interceptor,
+			nil,
+		)
 		if got {
 			t.Errorf("DispatchCancelIfRecognized(%q) returned true; expected false (passthrough)", msg)
 		}
@@ -98,7 +114,15 @@ func TestDispatchCancelIfRecognized_InterceptorCalledWithCorrectArgs(t *testing.
 		gotChatID = chatID
 		return nil
 	}}
-	channels.DispatchCancelIfRecognized(context.Background(), "  /CANCEL  ", "telegram", "chat123", "user42", interceptor, nil)
+	channels.DispatchCancelIfRecognized(
+		context.Background(),
+		"  /CANCEL  ",
+		"telegram",
+		"chat123",
+		"user42",
+		interceptor,
+		nil,
+	)
 	if gotChannel != "telegram" {
 		t.Errorf("channel = %q; want %q", gotChannel, "telegram")
 	}

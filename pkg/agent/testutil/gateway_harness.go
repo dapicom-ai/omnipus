@@ -51,7 +51,7 @@ var runContextMu sync.RWMutex
 // The provider-override hook (RegisterProviderOverrideFuncs) was removed
 // 2026-05-10 along with the test_harness build tag. The harness now boots
 // the gateway with the real provider config seeded by buildConfig +
-// seedTestCredentials; tests that exercise LLM behaviour hit real OpenRouter.
+// seedTestCredentials; tests that exercise LLM behavior hit real OpenRouter.
 func RegisterGatewayRunner(fn func(context.Context, bool, string, string, bool) error) {
 	runContextMu.Lock()
 	defer runContextMu.Unlock()
@@ -128,7 +128,7 @@ func (g *TestGateway) Token() string { return g.bearerToken }
 //   - Polls GET /health until 200 (max 5 s) before returning.
 //   - Registers t.Cleanup to call Close, which cancels ctx and waits up to 10 s.
 //
-// Tests that exercise LLM behaviour require OPENROUTER_API_KEY in the env;
+// Tests that exercise LLM behavior require OPENROUTER_API_KEY in the env;
 // the scripted-scenario override hook was removed 2026-05-10.
 func StartTestGateway(t *testing.T, opts ...Option) *TestGateway {
 	t.Helper()
@@ -193,7 +193,7 @@ func StartTestGateway(t *testing.T, opts ...Option) *TestGateway {
 	// credential, boot fails with "fatal: provider credential injection failed".
 	// The real key MUST be in env (OPENROUTER_API_KEY) — there is no longer a
 	// scripted-scenario fallback (the test_harness override hook was removed
-	// 2026-05-10). Tests that exercise LLM behaviour hit real OpenRouter.
+	// 2026-05-10). Tests that exercise LLM behavior hit real OpenRouter.
 	if err = seedTestCredentials(homeDir); err != nil {
 		t.Fatalf("testutil.StartTestGateway: seed credentials: %v", err)
 	}

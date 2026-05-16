@@ -404,7 +404,7 @@ func (al *AgentLoop) collectDescendantTurnIDs(sessionID string) []string {
 // waiting for the stream to drain naturally within the 3s graceful window.
 //
 // Returns the list of turn IDs that received the cancel signal (parent + sub-turns).
-// The cancel handler includes this in the turn_cancelled audit/transcript entry.
+// The cancel handler includes this in the turn_canceled audit/transcript entry.
 // Returns an error only if sessionID is empty. A session with no active turns is
 // not an error — cancel handlers treat it as a no-op (was_fired=false).
 func (al *AgentLoop) InterruptSession(sessionID, hint string) (descendants []string, err error) {
@@ -430,7 +430,7 @@ func (al *AgentLoop) InterruptSession(sessionID, hint string) (descendants []str
 
 	var wg sync.WaitGroup
 	for _, ts := range matches {
-		ts := ts // capture loop variable
+		// capture loop variable
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -484,7 +484,6 @@ func (al *AgentLoop) InterruptSessionHard(sessionID, hint string) (descendants [
 
 	var wg sync.WaitGroup
 	for _, ts := range matches {
-		ts := ts
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

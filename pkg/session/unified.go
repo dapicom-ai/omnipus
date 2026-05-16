@@ -363,8 +363,11 @@ func (us *UnifiedStore) MarkLastEntryTruncated(sessionID, turnID string) error {
 		return err
 	}
 	if turnID == "" {
-		slog.Warn("unified_store: MarkLastEntryTruncated called with empty turnID — falling back to last-assistant-entry behavior",
-			"session_id", sessionID)
+		slog.Warn(
+			"unified_store: MarkLastEntryTruncated called with empty turnID — falling back to last-assistant-entry behavior",
+			"session_id",
+			sessionID,
+		)
 	}
 
 	us.mu.Lock()
@@ -402,7 +405,15 @@ func (us *UnifiedStore) MarkLastEntryTruncated(sessionID, turnID string) error {
 		var e TranscriptEntry
 		if jsonErr := json.Unmarshal(entries[i], &e); jsonErr != nil {
 			// Skip malformed lines.
-			slog.Warn("unified_store: mark truncated: skipping malformed line", "session_id", sessionID, "index", i, "error", jsonErr)
+			slog.Warn(
+				"unified_store: mark truncated: skipping malformed line",
+				"session_id",
+				sessionID,
+				"index",
+				i,
+				"error",
+				jsonErr,
+			)
 			continue
 		}
 		if e.Role != "assistant" {

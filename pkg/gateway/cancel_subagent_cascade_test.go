@@ -12,7 +12,7 @@
 //   pkg/agent/cancel_subagent_cascade_test.go::TestCancel_SubAgentCascade
 //
 // This file exists to document the test location and to provide a thin
-// gateway-level coverage exercise: we verify that cancelling a session with
+// gateway-level coverage exercise: we verify that canceling a session with
 // multiple active turns (as seen through the exported API) returns both
 // turn IDs in the Descendants slice — without needing access to unexported
 // turnState fields.

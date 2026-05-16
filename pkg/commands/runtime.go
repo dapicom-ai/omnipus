@@ -20,8 +20,8 @@ var ErrNoActiveTurn = errors.New("no active turn")
 type AgentLoopInterface interface {
 	// InterruptSession requests a graceful interrupt for the turn associated with
 	// the given session ID, attaching hint to the audit trail. Returns the list
-	// of cancelled turn IDs (parent + sub-turns) which the gateway uses for the
-	// turn_cancelled audit entry; the commands runtime discards it.
+	// of canceled turn IDs (parent + sub-turns) which the gateway uses for the
+	// turn_canceled audit entry; the commands runtime discards it.
 	InterruptSession(sessionID, hint string) ([]string, error)
 	// InterruptByChannelChat requests a graceful interrupt for all active turns
 	// whose channel and chatID match the supplied values. Used by Tier B
@@ -94,7 +94,7 @@ func (rt *Runtime) CancelActiveTurn(ctx context.Context, sessionID string, cance
 // agent loop's buildCommandsRuntime to inject the loop reference without
 // exporting the field directly.
 func (rt *Runtime) WithAgentLoop(al AgentLoopInterface) *Runtime {
-	copy := *rt
-	copy.agentLoop = al
-	return &copy
+	clone := *rt
+	clone.agentLoop = al
+	return &clone
 }

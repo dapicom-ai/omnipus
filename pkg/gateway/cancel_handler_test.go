@@ -44,7 +44,7 @@ func TestCancelAllPendingForSession_DeniesOnlyMatchingSession(t *testing.T) {
 	// Run cancelAllPendingForSession in a goroutine so we can drain resultCh.
 	done := make(chan int, 1)
 	go func() {
-		n := reg.cancelAllPendingForSession("sess-A", "session cancelled")
+		n := reg.cancelAllPendingForSession("sess-A", "session canceled")
 		done <- n
 	}()
 

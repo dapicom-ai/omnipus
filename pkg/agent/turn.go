@@ -91,8 +91,8 @@ type turnState struct {
 	// Cancel dedup / callback fields (FR-10, FR-11, FR-15).
 	// cancelMu guards cancelFired to make the first-cancel-wins check atomic.
 	cancelMu       sync.Mutex
-	cancelFired    atomic.Bool // true once handleCancel has claimed this turn
-	abandoned      atomic.Bool // true once the stuck-watchdog gives up on the goroutine
+	cancelFired    atomic.Bool               // true once handleCancel has claimed this turn
+	abandoned      atomic.Bool               // true once the stuck-watchdog gives up on the goroutine
 	onCancelFinish func(cancelMethod string) // called exactly once by Finish when cancelFired
 
 	restorePointHistory []providers.Message
@@ -150,7 +150,6 @@ type turnState struct {
 	// a system message {type: "turn_aborted", reason: "synthetic_error_loop"}.
 	// The counter resets per turn (initialized to zero here).
 	syntheticErrorCount int
-
 }
 
 func newTurnState(agent *AgentInstance, opts processOptions, scope turnEventScope) *turnState {
@@ -258,7 +257,7 @@ type TurnCancelHook interface {
 	SetOnCancelFinish(fn func(cancelMethod string))
 	// ClaimCancel performs the atomic first-cancel-wins check. Returns true
 	// if this call is the first to claim the cancel (i.e. cancelFired was false
-	// and has now been set to true). Returns false if already cancelled.
+	// and has now been set to true). Returns false if already canceled.
 	ClaimCancel() bool
 	// MarkAbandoned sets the abandoned flag so the gateway can stop tracking
 	// a stuck goroutine (FR-19, FR-20, FR-21).

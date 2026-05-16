@@ -1,8 +1,8 @@
 // Package agent — cancel_transcript_test.go
 //
 // T3: Drives cancel through the real RequestCancel path and asserts a
-// turn_cancelled TranscriptEntry lands in the day-partitioned JSONL with
-// the correct cancelled_by_user, cancelled_by_channel, and cancel_method.
+// turn_canceled TranscriptEntry lands in the day-partitioned JSONL with
+// the correct canceled_by_user, canceled_by_channel, and cancel_method.
 //
 // Theater smell fixed: old test built a transcript entry by hand and wrote it
 // directly — it never called RequestCancel at all. This version calls
@@ -13,7 +13,7 @@
 //   - The gateway-level test relies on WebSocket infrastructure and a blocking
 //     LLM provider. The blocking provider returns when ctx.Done() fires, but
 //     when run in sequence with other tests (e.g. -count=N or the full test
-//     suite), the context can be pre-cancelled, causing the turn to finish before
+//     suite), the context can be pre-canceled, causing the turn to finish before
 //     the cancel claim. The result is a flaky test: passes in isolation, fails
 //     when preceded by another gateway cancel test.
 //   - This version injects a synthetic turnState directly into activeTurnStates,
@@ -42,10 +42,10 @@ import (
 
 // TestCancel_TranscriptTurnCancelledEntry (T3) — calls RequestCancel on a
 // session with an active turnState (depth=0) and asserts that:
-//   1. The onCancelFinish callback fires when Finish(false) is called.
-//   2. A turn_cancelled TranscriptEntry is written to the JSONL.
-//   3. The entry has CancelledByUser, CancelledByChannel, CancelMethod "graceful".
-//   4. The TurnID matches the cancelled turn.
+//  1. The onCancelFinish callback fires when Finish(false) is called.
+//  2. A turn_canceled TranscriptEntry is written to the JSONL.
+//  3. The entry has CancelledByUser, CancelledByChannel, CancelMethod "graceful".
+//  4. The TurnID matches the canceled turn.
 //
 // This test is deterministic: it does not rely on network or timer races.
 // The onCancelFinish callback runs synchronously in the Finish() call.
@@ -131,7 +131,7 @@ func TestCancel_TranscriptTurnCancelledEntry(t *testing.T) {
 	// fileutil.WriteFileAtomic (temp-file + rename). 100ms is ample.
 	time.Sleep(100 * time.Millisecond)
 
-	// ASSERT: a turn_cancelled entry is written to the JSONL transcript.
+	// ASSERT: a turn_canceled entry is written to the JSONL transcript.
 	entries, err := store.ReadTranscript(sessionID)
 	require.NoError(t, err, "transcript must be readable after cancel+Finish")
 
@@ -145,14 +145,14 @@ func TestCancel_TranscriptTurnCancelledEntry(t *testing.T) {
 	}
 
 	require.NotNil(t, cancelledEntry,
-		"a turn_cancelled TranscriptEntry must be written to the JSONL by the onCancelFinish callback; "+
+		"a turn_canceled TranscriptEntry must be written to the JSONL by the onCancelFinish callback; "+
 			"entries found: %v", entries)
 
 	// ASSERT: entry fields match the cancel call parameters.
 	assert.Equal(t, session.EntryTypeTurnCancelled, cancelledEntry.Type,
 		"entry type must be 'turn_cancelled'")
 	assert.Equal(t, "turn-T3-transcript", cancelledEntry.TurnID,
-		"TurnID must match the cancelled turn")
+		"TurnID must match the canceled turn")
 	assert.Equal(t, "dev-token", cancelledEntry.CancelledByUser,
 		"CancelledByUser must match the canceller.UserID from RequestCancel")
 	assert.Equal(t, "web", cancelledEntry.CancelledByChannel,

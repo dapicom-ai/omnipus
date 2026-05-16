@@ -324,9 +324,9 @@ func (m *Manager) SetStreamFallback(d bus.StreamDelegate) {
 func (m *Manager) SetCancelInterceptor(ci CancelInterceptor) {
 	m.mu.Lock()
 	m.cancelInterceptor = ci
-	// Propagate to all channels already initialised.
+	// Propagate to all channels already initialized.
 	for _, ch := range m.channels {
-		if setter, ok := ch.(interface{ SetCancelInterceptor(CancelInterceptor) }); ok {
+		if setter, ok := ch.(interface{ SetCancelInterceptor(ci CancelInterceptor) }); ok {
 			setter.SetCancelInterceptor(ci)
 		}
 	}
@@ -424,7 +424,7 @@ func (m *Manager) initChannel(name, displayName string) error {
 	// Inject CancelInterceptor if one has been registered (may be nil at init time;
 	// SetCancelInterceptor propagates to all channels when called later).
 	if m.cancelInterceptor != nil {
-		if setter, ok := ch.(interface{ SetCancelInterceptor(CancelInterceptor) }); ok {
+		if setter, ok := ch.(interface{ SetCancelInterceptor(ci CancelInterceptor) }); ok {
 			setter.SetCancelInterceptor(m.cancelInterceptor)
 		}
 	}

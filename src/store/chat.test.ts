@@ -1200,6 +1200,7 @@ describe('chat store — H1-FE: unknown-sid done does not corrupt active stream'
             sessionTokens: 0,
             sessionCost: 0,
             rateLimitEvent: null,
+            cancelStage: null,
             lastUserMessageAt,
           },
         },

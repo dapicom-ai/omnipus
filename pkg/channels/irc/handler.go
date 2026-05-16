@@ -101,7 +101,15 @@ func (c *IRCChannel) onPrivmsg(conn *ircevent.Connection, e ircmsg.Message) {
 		metadata["channel"] = target
 	}
 
-	if channels.DispatchCancelIfRecognized(c.ctx, content, "irc", chatID, nick, c.GetCancelInterceptor(), channels.CancelSendFn(c)) {
+	if channels.DispatchCancelIfRecognized(
+		c.ctx,
+		content,
+		"irc",
+		chatID,
+		nick,
+		c.GetCancelInterceptor(),
+		channels.CancelSendFn(c),
+	) {
 		return
 	}
 	c.HandleMessage(c.ctx, peer, messageID, nick, chatID, content, nil, metadata, sender)

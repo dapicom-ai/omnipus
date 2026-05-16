@@ -191,8 +191,8 @@ func TestApprovalRegistry_TimeoutDeletesEntry(t *testing.T) {
 // BDD:
 //
 //	Given a pending tool approval awaiting user decision (ask policy)
-//	When cancelAllPendingForSession is called for that session with reason "session cancelled"
-//	Then the resultCh receives an outcome with Approved=false and Reason="session cancelled"
+//	When cancelAllPendingForSession is called for that session with reason "session canceled"
+//	Then the resultCh receives an outcome with Approved=false and Reason="session canceled"
 //	And the registry pending count drops to zero
 //	And the entry is scheduled for deletion (no map leak)
 //	And approvals for a different session are unaffected
@@ -226,14 +226,14 @@ func TestPendingApproval_AutoDeniedOnCancel(t *testing.T) {
 	assert.Equal(t, int64(2), reg.pendingCount.Load(), "must start with 2 pending")
 
 	// Fire cancel on the target session.
-	n := reg.cancelAllPendingForSession(targetSession, "session cancelled")
+	n := reg.cancelAllPendingForSession(targetSession, "session canceled")
 	assert.Equal(t, 1, n, "must auto-deny exactly 1 approval")
 
 	// --- Assert T19: target resultCh delivers denied outcome ---
 	select {
 	case outcome := <-targetEntry.resultCh:
 		assert.False(t, outcome.Approved, "target approval must be denied")
-		assert.Equal(t, "session cancelled", outcome.Reason, "reason must be 'session cancelled'")
+		assert.Equal(t, "session canceled", outcome.Reason, "reason must be 'session cancelled'")
 	case <-time.After(2 * time.Second):
 		t.Fatal("T19: resultCh never received auto-deny outcome within 2 s")
 	}
@@ -248,7 +248,10 @@ func TestPendingApproval_AutoDeniedOnCancel(t *testing.T) {
 	reg.mu.Unlock()
 	// terminalRetention=0 → entry deleted synchronously; ok must be false.
 	if ok {
-		t.Errorf("T19: target entry still in map after cancelAllPendingForSession with terminalRetention=0; state=%s", te.state)
+		t.Errorf(
+			"T19: target entry still in map after cancelAllPendingForSession with terminalRetention=0; state=%s",
+			te.state,
+		)
 	}
 
 	// --- Assert T19: other session entry is still pending and unaffected ---

@@ -14,16 +14,16 @@
 //     session ID (parent + all descendants via activeTurnStates Range).
 //   - The onCancelFinish callback is registered ONLY on the root/parent turn
 //     (the one returned by GetActiveTurnHookForSession). That callback writes
-//     ONE turn_cancelled transcript entry for the parent, with the
+//     ONE turn_canceled transcript entry for the parent, with the
 //     DescendantsCancelled field listing ALL interrupted sub-turn IDs.
-//   - Sub-turns do NOT get separate turn_cancelled entries (they are listed
+//   - Sub-turns do NOT get separate turn_canceled entries (they are listed
 //     under the parent's DescendantsCancelled).
 //
 // This test:
 //  1. Creates a parent (depth=0) and child (depth=1) turnState sharing a session.
 //  2. Calls RequestCancel — asserts Descendants contains both IDs.
 //  3. Triggers parent.Finish() to fire onCancelFinish.
-//  4. Reads the transcript: one turn_cancelled entry for the parent, with
+//  4. Reads the transcript: one turn_canceled entry for the parent, with
 //     DescendantsCancelled containing both turn IDs.
 //
 // Traces to: pkg/agent/cancel.go:168 InterruptSession (cascade),
@@ -50,7 +50,7 @@ import (
 // with a parent turn (depth=0) and a child turn (depth=1) both sharing the
 // same transcriptSessionID:
 //   - Returns Fired=true, TurnID=parent, Descendants=[parent, child].
-//   - After parent.Finish(), writes exactly one turn_cancelled entry whose
+//   - After parent.Finish(), writes exactly one turn_canceled entry whose
 //     DescendantsCancelled contains both the parent and child turn IDs.
 func TestCancel_SubAgentCascade(t *testing.T) {
 	t.Parallel()
@@ -131,13 +131,13 @@ func TestCancel_SubAgentCascade(t *testing.T) {
 		"Descendants must include the child turn ID")
 
 	// Trigger parent Finish to fire the onCancelFinish callback (which writes
-	// the turn_cancelled transcript entry with DescendantsCancelled).
+	// the turn_canceled transcript entry with DescendantsCancelled).
 	parentTS.Finish(false)
 
 	// 100ms grace period for the synchronous callback to flush to disk.
 	time.Sleep(100 * time.Millisecond)
 
-	// ASSERT: exactly ONE turn_cancelled entry for the parent, containing
+	// ASSERT: exactly ONE turn_canceled entry for the parent, containing
 	// both turn IDs in DescendantsCancelled.
 	entries, err := store.ReadTranscript(sessionID)
 	require.NoError(t, err)
@@ -150,13 +150,13 @@ func TestCancel_SubAgentCascade(t *testing.T) {
 	}
 
 	require.Len(t, cancelledEntries, 1,
-		"RequestCancel writes ONE turn_cancelled entry (for the root/parent turn); "+
+		"RequestCancel writes ONE turn_canceled entry (for the root/parent turn); "+
 			"sub-turns are listed in DescendantsCancelled. Got entries: %v",
 		cancelledEntries)
 
 	rootEntry := cancelledEntries[0]
 	assert.Equal(t, "turn-parent-T20b", rootEntry.TurnID,
-		"the single turn_cancelled entry must be for the parent turn")
+		"the single turn_canceled entry must be for the parent turn")
 	assert.Equal(t, "test-user", rootEntry.CancelledByUser)
 	assert.Equal(t, "test-channel", rootEntry.CancelledByChannel)
 	assert.Equal(t, "graceful", rootEntry.CancelMethod)

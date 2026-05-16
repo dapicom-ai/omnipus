@@ -9,15 +9,15 @@
 // The original gateway-level test used a blocking LLM provider and a WebSocket
 // cancel frame to drive the cancel state machine. It was flaky: when run in
 // sequence with other gateway cancel tests (or with -count>1), the blocking
-// provider's ctx was occasionally pre-cancelled, causing the turn to finish
+// provider's ctx was occasionally pre-canceled, causing the turn to finish
 // before the cancel claim. The result was a non-deterministic test that passed
 // in isolation but failed in CI.
 //
 // Root cause: the provider blocked on <-ctx.Done(), but the providerCtx could
-// be already-cancelled by a previous test's deferred cleanup (or by a leaked
+// be already-canceled by a previous test's deferred cleanup (or by a leaked
 // timer callback). The turn then exited with status=completed before
 // ClaimCancel() fired, so the onCancelFinish callback was never registered and
-// no turn_cancelled entry was written.
+// no turn_canceled entry was written.
 //
 // The real test therefore lives in pkg/agent, where turnState (unexported) can
 // be directly injected into activeTurnStates. RequestCancel is called directly

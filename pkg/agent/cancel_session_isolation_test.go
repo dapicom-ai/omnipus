@@ -16,7 +16,7 @@
 //   1. RequestCancel on session A fires (Fired=true, TurnID=turn-A).
 //   2. Session B's cancelFired field is still false — RequestCancel did NOT
 //      touch it.
-//   3. Session B's turnState can still be cancelled independently (its
+//   3. Session B's turnState can still be canceled independently (its
 //      ClaimCancel returns true), confirming isolation.
 //   4. A second cancel on session A returns Fired=false, while session B
 //      is still uncancelled — proving the scoping is per-session, not global.
@@ -120,7 +120,7 @@ func TestCancel_SessionIsolation(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// ASSERT 1: Session A was cancelled.
+	// ASSERT 1: Session A was canceled.
 	assert.True(t, outcomeA.Fired, "cancel on session A must fire (Fired=true)")
 	assert.Equal(t, "turn-A-T18", outcomeA.TurnID,
 		"outcome.TurnID must be the session A turn ID")
@@ -132,7 +132,7 @@ func TestCancel_SessionIsolation(t *testing.T) {
 		"ISOLATION VIOLATION: cancel on session A must NOT set cancelFired on session B "+
 			"(sidA=%s, sidB=%s)", sidA, sidB)
 
-	// ASSERT 3: Session B can still be independently cancelled (ClaimCancel returns true).
+	// ASSERT 3: Session B can still be independently canceled (ClaimCancel returns true).
 	// This confirms its cancel state is pristine — not already consumed.
 	canClaimB := tsB.ClaimCancel()
 	assert.True(t, canClaimB,
@@ -150,11 +150,11 @@ func TestCancel_SessionIsolation(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.False(t, outcomeA2.Fired,
-		"second cancel on the already-cancelled session A must return Fired=false")
+		"second cancel on the already-canceled session A must return Fired=false")
 }
 
 // TestCancel_SessionIsolation_TranscriptWrittenOnlyForA verifies that after
-// cancelling session A and triggering its Finish, the turn_cancelled transcript
+// canceling session A and triggering its Finish, the turn_canceled transcript
 // entry is written ONLY to session A's JSONL — session B has no such entry.
 //
 // This prevents a class of bugs where a cancel callback is wired to the wrong
@@ -226,12 +226,12 @@ func TestCancel_SessionIsolation_TranscriptWrittenOnlyForA(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, outcomeA.Fired, "cancel on session A must fire")
 
-	// Trigger Finish on A to write the turn_cancelled transcript entry.
+	// Trigger Finish on A to write the turn_canceled transcript entry.
 	tsA.Finish(false)
 	// Allow the synchronous onCancelFinish callback to flush to disk.
 	time.Sleep(100 * time.Millisecond)
 
-	// ASSERT: Session A's transcript has a turn_cancelled entry.
+	// ASSERT: Session A's transcript has a turn_canceled entry.
 	entriesA, err := store.ReadTranscript(sidA)
 	require.NoError(t, err)
 	var cancelledA []session.TranscriptEntry
@@ -241,19 +241,19 @@ func TestCancel_SessionIsolation_TranscriptWrittenOnlyForA(t *testing.T) {
 		}
 	}
 	require.Len(t, cancelledA, 1,
-		"session A must have exactly one turn_cancelled transcript entry after cancel+Finish")
+		"session A must have exactly one turn_canceled transcript entry after cancel+Finish")
 	assert.Equal(t, "turn-A-transcript-T18", cancelledA[0].TurnID)
 	assert.Equal(t, "test-user-A", cancelledA[0].CancelledByUser)
 
-	// ASSERT: Session B's transcript has NO turn_cancelled entry.
+	// ASSERT: Session B's transcript has NO turn_canceled entry.
 	entriesB, err := store.ReadTranscript(sidB)
 	// ReadTranscript may return an error if no JSONL file exists yet (session B
 	// never had a turn complete). Both cases — empty entries and an error — mean
-	// no turn_cancelled entry exists, which is the correct outcome.
+	// no turn_canceled entry exists, which is the correct outcome.
 	if err == nil {
 		for _, e := range entriesB {
 			if e.Type == session.EntryTypeTurnCancelled {
-				t.Errorf("ISOLATION VIOLATION: session B must NOT have a turn_cancelled entry; "+
+				t.Errorf("ISOLATION VIOLATION: session B must NOT have a turn_canceled entry; "+
 					"got entry: %+v", e)
 			}
 		}

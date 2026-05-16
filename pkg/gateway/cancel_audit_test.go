@@ -31,7 +31,7 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/providers"
 )
 
-// blockingCancelProvider blocks Chat until its context is cancelled. Signals
+// blockingCancelProvider blocks Chat until its context is canceled. Signals
 // via ready when the provider has entered Chat so tests know a turn is in flight.
 type blockingCancelProvider struct {
 	ready chan struct{} // closed once on first Chat entry
@@ -60,7 +60,7 @@ func (b *blockingCancelProvider) Chat(
 func (b *blockingCancelProvider) GetDefaultModel() string { return "blocking-cancel-provider" }
 
 // newCancelTestWSHandler creates a WSHandler backed by an agent loop that:
-//   - uses a blocking provider (turns block until cancelled)
+//   - uses a blocking provider (turns block until canceled)
 //   - has audit logging enabled
 //
 // Returns the handler, msgBus, auditDir, and the blocking provider.
@@ -167,7 +167,7 @@ func splitCancelAuditTestLines(data []byte) [][]byte {
 // fakeTurn.ClaimCancel() directly — it never invoked handleCancel at all.
 //
 // This version:
-//  1. Starts a real turn via WebSocket (blocking provider blocks until cancelled)
+//  1. Starts a real turn via WebSocket (blocking provider blocks until canceled)
 //  2. Issues a WebSocket cancel frame (routes through WSHandler.handleCancel →
 //     AgentLoop.RequestCancel → audit.Emit)
 //  3. Asserts the real audit JSONL file contains turn_cancel_attempt with

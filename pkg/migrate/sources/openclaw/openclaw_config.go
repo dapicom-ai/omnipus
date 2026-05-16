@@ -128,7 +128,6 @@ type OpenClawChannels struct {
 	BlueBubbles *OpenClawBlueBubblesConfig `json:"bluebubbles"`
 	QQ          *OpenClawQQConfig          `json:"qq"`
 	DingTalk    *OpenClawDingTalkConfig    `json:"dingtalk"`
-
 }
 
 type OpenClawTelegramConfig struct {
@@ -266,7 +265,6 @@ type OpenClawDingTalkConfig struct {
 	AllowFrom []string `json:"allowFrom"`
 	Enabled   *bool    `json:"enabled"`
 }
-
 
 type OpenClawSkills struct {
 	Entries map[string]json.RawMessage `json:"entries"`
@@ -662,7 +660,6 @@ type DiscordConfig struct {
 	AllowFrom   []string `json:"allow_from"`
 }
 
-
 type QQConfig struct {
 	Enabled   bool     `json:"enabled"`
 	AppID     string   `json:"app_id"`
@@ -858,7 +855,6 @@ func (c *OpenClawConfig) convertChannels(warnings *[]string) ChannelsConfig {
 			channels.DingTalk.ClientSecret = *c.Channels.DingTalk.AppSecret
 		}
 	}
-
 
 	if c.Channels.Matrix != nil && supportedChannels["matrix"] {
 		enabled := c.Channels.Matrix.Enabled == nil || *c.Channels.Matrix.Enabled

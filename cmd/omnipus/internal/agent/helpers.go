@@ -153,11 +153,11 @@ func interactiveMode(agentLoop *agent.AgentLoop, sessionKey string) {
 		// Transfer stdin ownership back to readline: stop the watcher and
 		// restore canonical mode before calling rl.Readline() again.
 		stopWatcher()
-		cancel() // ensure ctx is always cancelled so the goroutine exits
+		cancel() // ensure ctx is always canceled so the goroutine exits
 
 		if procesErr != nil {
 			if ctx.Err() != nil {
-				// Cancelled by double-Escape. Fire the full cancel state machine so
+				// Canceled by double-Escape. Fire the full cancel state machine so
 				// audit, transcript marking, abuse detection, and the 2-stage timer
 				// apply uniformly (cancel-centralization, resolves finding B2).
 				if _, err := agentLoop.RequestCancel(

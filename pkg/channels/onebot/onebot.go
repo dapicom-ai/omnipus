@@ -1084,7 +1084,15 @@ func (c *OneBotChannel) handleMessage(raw *oneBotRawEvent) {
 		return
 	}
 
-	if channels.DispatchCancelIfRecognized(c.ctx, content, "onebot", chatID, senderID, c.GetCancelInterceptor(), channels.CancelSendFn(c)) {
+	if channels.DispatchCancelIfRecognized(
+		c.ctx,
+		content,
+		"onebot",
+		chatID,
+		senderID,
+		c.GetCancelInterceptor(),
+		channels.CancelSendFn(c),
+	) {
 		return
 	}
 	c.HandleMessage(c.ctx, peer, messageID, senderID, chatID, content, parsed.Media, metadata, senderInfo)
