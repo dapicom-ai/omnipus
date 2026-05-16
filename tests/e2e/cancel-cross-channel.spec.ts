@@ -79,7 +79,7 @@ async function apiHeaders(page: Page): Promise<Record<string, string>> {
 async function createSession(page: Page): Promise<string> {
   const resp = await page.request.post(`${BASE_URL}/api/v1/sessions`, {
     headers: await apiHeaders(page),
-    data: { agent_id: 'main', type: 'chat' },
+    data: { agent_id: 'jim', type: 'chat' },
   })
   if (!resp.ok()) {
     const body = await resp.text()
@@ -289,13 +289,12 @@ test(
     const input = chatInput(page)
     await expect(input).toBeEnabled({ timeout: 20_000 })
 
-    // Get the session ID from the URL before sending (it changes after navigation).
-    // The SPA URL is /#/<sessionId> after a session is created.
-    // We also create a session explicitly so we have the ID for fs reads.
+    // We create a session explicitly so we have the ID for fs reads.
+    // TanStack Router session URL is /#/sessions/<sessionId> (not /#/<sessionId>).
     const sessionId = await createSession(page)
 
     // Navigate to the new session.
-    await page.goto(`/#/${sessionId}`)
+    await page.goto(`/#/sessions/${sessionId}`)
     await expect(input).toBeEnabled({ timeout: 20_000 })
 
     // Switch to Jim for deterministic spawn behaviour.
@@ -433,8 +432,9 @@ test(
     await page.goto('/')
 
     // Create a fresh session so we can match session_id in audit log.
+    // TanStack Router session URL is /#/sessions/<sessionId> (not /#/<sessionId>).
     const sessionId = await createSession(page)
-    await page.goto(`/#/${sessionId}`)
+    await page.goto(`/#/sessions/${sessionId}`)
 
     const input = chatInput(page)
     await expect(input).toBeEnabled({ timeout: 20_000 })

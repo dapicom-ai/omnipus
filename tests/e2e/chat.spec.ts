@@ -31,6 +31,13 @@ test(
 test(
   '(b) multi-turn retention: turn 3 references content from turn 1',
   async ({ page }) => {
+    // test.slow() triples the global 90s test timeout to 270s. This test makes
+    // three sequential LLM calls (3 turns), each with a 60s assertion timeout.
+    // The sum of assertion timeouts (180s) exceeds the base 90s test timeout,
+    // so test.slow() is required to prevent a premature test-level timeout
+    // that fires even when each individual turn succeeds within its 60s window.
+    test.slow();
+
     const input = chatInput(page);
     await expect(input).toBeVisible({ timeout: 15_000 });
 
@@ -45,14 +52,16 @@ test(
 
     await input.fill('What is 2 + 2?');
     await input.press('Enter');
-    await expect(assistantMessages(page)).toHaveCount(2, { timeout: 60_000 });
+    // 90s: z-ai/glm-5v-turbo enters extended thinking mode for follow-up turns
+    // with growing context, which consistently exceeds the 60s default.
+    await expect(assistantMessages(page)).toHaveCount(2, { timeout: 90_000 });
 
     await input.fill(
       'Look back at my first message in THIS conversation — what serial number ' +
         'did I mention? Echo it back verbatim.',
     );
     await input.press('Enter');
-    await expect(assistantMessages(page)).toHaveCount(3, { timeout: 60_000 });
+    await expect(assistantMessages(page)).toHaveCount(3, { timeout: 90_000 });
 
     await expect(assistantMessages(page).nth(2)).toContainText(/XYZQUUX7734/i, {
       timeout: 30_000,

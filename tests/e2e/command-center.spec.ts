@@ -88,11 +88,12 @@ test('(b) approval-queue: policy=ask tool call triggers approval modal and Appro
   await input.press('Enter');
 
   // Wait for the approval modal (data-testid="approval-modal" from ExecApprovalBlock).
-  // 60s timeout: under real-LLM determinism and prolonged suite load
-  // (~10 min wall-clock by the time this test runs), OpenRouter sometimes
-  // takes 30-50s to emit the tool call. The fast-path is still ~5s alone.
+  // 120s timeout: under real-LLM determinism and prolonged suite load
+  // (~10 min wall-clock by the time this test runs), z-ai/glm-5v-turbo enters
+  // extended thinking mode and can take 60-90s before calling exec.
+  // test.slow() gives 270s total; 120s here leaves ample time for approval.
   const approvalModal = page.getByTestId('approval-modal');
-  await expect(approvalModal).toBeVisible({ timeout: 60_000 });
+  await expect(approvalModal).toBeVisible({ timeout: 120_000 });
 
   // Click Allow (the approval button in ExecApprovalBlock)
   const allowBtn = approvalModal.getByRole('button', { name: /allow/i }).first();

@@ -83,10 +83,14 @@ function seedTranscript(sessionId: string, entries: TranscriptEntry[]): void {
  * storageState — we extract it from the auth file here.
  */
 function getStoredAuthToken(): string | null {
-  const authFile = path.join(
-    path.dirname(new URL(import.meta.url).pathname),
-    'fixtures/.auth/admin.json',
-  )
+  // Respect OMNIPUS_AUTH_FILE env var set by isolated test runs (e.g. port 6062)
+  // to avoid using a token minted for a different gateway instance.
+  const authFile = process.env.OMNIPUS_AUTH_FILE
+    ? path.resolve(process.env.OMNIPUS_AUTH_FILE)
+    : path.join(
+        path.dirname(new URL(import.meta.url).pathname),
+        'fixtures/.auth/admin.json',
+      )
   if (!fs.existsSync(authFile)) {
     return null
   }
@@ -299,7 +303,8 @@ test(
     const userMsgs = page.locator('[data-message-id].flex-row-reverse')
     await expect(userMsgs).toHaveCount(1, { timeout: 15_000 })
 
-    const asstMsgs = page.locator('[data-message-id]:not(.flex-row-reverse)')
+    // Exclude data-status="running" — only count completed messages, not in-progress placeholders.
+    const asstMsgs = page.locator('[data-message-id]:not(.flex-row-reverse):not([data-status="running"])')
     await expect(asstMsgs).toHaveCount(1, { timeout: 15_000 })
 
     // SC-I-004(i): badge count — two tool calls must produce two tool-call-badge elements.
@@ -434,10 +439,14 @@ test(
 
 // ── Test (c): attach-during-active-turn no event loss ─────────────────────────
 
-const AUTH_FILE = path.join(
-  path.dirname(new URL(import.meta.url).pathname),
-  'fixtures/.auth/admin.json',
-)
+// Respect OMNIPUS_AUTH_FILE env var set by isolated test runs (e.g. port 6062)
+// to avoid using a token minted for a different gateway instance.
+const AUTH_FILE = process.env.OMNIPUS_AUTH_FILE
+  ? path.resolve(process.env.OMNIPUS_AUTH_FILE)
+  : path.join(
+      path.dirname(new URL(import.meta.url).pathname),
+      'fixtures/.auth/admin.json',
+    )
 
 test(
   '(c) attach-during-active-turn: second browser context receives all events without loss',
@@ -589,7 +598,8 @@ test(
     // W2-9: Replace loose GreaterThanOrEqual(1) with exact count.
     // The fixture seeds exactly 1 assistant message — fidelity tests assert fidelity, not tolerance.
     // Traces to: temporal-puzzling-melody.md W2-9
-    const asstMsgs = page.locator('[data-message-id]:not(.flex-row-reverse)')
+    // Exclude data-status="running" to only count completed messages, not in-progress placeholders.
+    const asstMsgs = page.locator('[data-message-id]:not(.flex-row-reverse):not([data-status="running"])')
     await expect(asstMsgs).toHaveCount(1, { timeout: 15_000 })
     const countAfterReplay = 1
 
@@ -608,11 +618,13 @@ test(
     await input.press('Enter')
 
     // A new assistant message appears (total count increases by 1).
-    await expect(asstMsgs).toHaveCount(countAfterReplay + 1, { timeout: 60_000 })
+    // 90s: z-ai/glm-5v-turbo enters extended thinking mode for prompts with
+    // existing context, which consistently exceeds the 60s default under load.
+    await expect(asstMsgs).toHaveCount(countAfterReplay + 1, { timeout: 90_000 })
 
     // The last assistant message should contain the expected reply.
     const lastAsstMsg = asstMsgs.last()
-    await expect(lastAsstMsg).toContainText(/continuation confirmed/i, { timeout: 60_000 })
+    await expect(lastAsstMsg).toContainText(/continuation confirmed/i, { timeout: 90_000 })
 
     // No messages are duplicated: the replayed messages remain exactly as seeded.
     // SC-I-004(iv): user messages still show exactly 1 (the replayed one + new one we sent = 2).

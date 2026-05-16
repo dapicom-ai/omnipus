@@ -1,13 +1,15 @@
-import { chromium } from '@playwright/test';
+import { request } from '@playwright/test';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { loginAs } from './fixtures/login.js';
 import { onboardViaAPI } from './fixtures/onboard-via-api.js';
 
-const AUTH_FILE = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  'fixtures/.auth/admin.json',
-);
+const AUTH_FILE = process.env.OMNIPUS_AUTH_FILE
+  ? path.resolve(process.env.OMNIPUS_AUTH_FILE)
+  : path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    'fixtures/.auth/admin.json',
+  );
 
 // T0.4: Preflight — fail fast if required environment variables are missing.
 // OPENROUTER_API_KEY_CI is required. Its absence is a CI configuration failure,
@@ -29,20 +31,35 @@ function preflightCheck(): void {
 }
 
 /**
- * Global setup: authenticate once and persist the storage state.
+ * Global setup: seed admin + provider via REST and write the auth storage
+ * state file directly — no browser-rendered login flow required.
  *
- * Idempotency guard: if the banner landmark is already visible after
- * navigation to `/`, we are already authenticated — save state and return.
- * This prevents accidental double-onboarding on test retries.
+ * Motivation for the API-only approach (vs. the original browser-based login):
  *
- * TOKEN MIGRATION: The SPA stores omnipus_auth_token in sessionStorage (XSS
- * protection), but Playwright's storageState only captures localStorage.
- * After successful login we copy the token from sessionStorage to localStorage
- * so it is included in the storageState snapshot and survives across test contexts.
+ * The original global-setup navigated a headless Chromium browser to `/`, waited
+ * for the React SPA to load its ~5 MB JS bundle, parse it, bootstrap the router,
+ * redirect to `/login`, and render the login form — then drove the form inputs.
+ * On this server the SPA cold-start takes >5 s in headless mode, which exceeded
+ * the 5 s `isVisible({ timeout: 5_000 })` guard in `loginAs()`, causing
+ * consistent global-setup failures.
  *
- * NOTE: nav[aria-label="Main navigation"] is NOT used here — the sidebar is an
- * overlay drawer and only renders while open. The top-level <header> (implicit
- * ARIA role "banner") is the canonical auth indicator.
+ * The replacement strategy:
+ *   1. `onboardViaAPI` — idempotent REST call to seed admin credentials
+ *      (200 = fresh onboard, 409 = already complete, both succeed).
+ *   2. `POST /api/v1/auth/login` — obtain a valid bearer token.
+ *   3. Write a Playwright storageState JSON directly to the auth file with the
+ *      token in the `localStorage` of the correct origin.  Playwright reads this
+ *      file at test startup and injects the localStorage entries into every test
+ *      page before navigation, so the SPA's `beforeLoad()` guard finds the
+ *      token without a login redirect.
+ *
+ * TOKEN MIGRATION NOTE: The SPA reads omnipus_auth_token from sessionStorage
+ * first, then localStorage (src/routes/_app.tsx:23). Playwright storageState
+ * captures localStorage but NOT sessionStorage. Writing the token to localStorage
+ * is sufficient — the SPA's `beforeLoad()` will pick it up.
+ *
+ * The auth store (src/store/auth.ts) replicates the token from localStorage to
+ * sessionStorage on mount, so after the first render sessionStorage is also set.
  */
 async function globalSetup(): Promise<void> {
   // T0.4: Run preflight checks before any browser/gateway interaction.
@@ -50,37 +67,53 @@ async function globalSetup(): Promise<void> {
 
   const baseURL = process.env.OMNIPUS_URL || 'http://localhost:6060';
 
-  // Seed the admin user + provider via the REST onboarding endpoint so the
-  // browser flow enters straight into the login form rather than the 4-step
-  // wizard. The wizard's "Continue" button stays disabled when no model is
-  // auto-selected in CI, which was the local-run blocker. The API call is
-  // idempotent: 200 or 409 both mean "admin exists, proceed".
+  // Step 1: Seed admin user + provider idempotently.
+  // 200 = fresh onboard, 409 = already complete — both succeed.
   await onboardViaAPI({ baseURL });
 
-  const browser = await chromium.launch();
-  const context = await browser.newContext({ baseURL });
-  const page = await context.newPage();
-
-  await page.goto('/');
-
-  // Idempotency: if already authenticated, skip login flow
-  if (!(await page.getByRole('banner').isVisible({ timeout: 3_000 }))) {
-    await loginAs(page, 'admin', 'admin123');
+  // Step 2: Obtain a valid bearer token via REST.
+  const ctx = await request.newContext({ baseURL });
+  let token: string;
+  try {
+    const res = await ctx.post('/api/v1/auth/login', {
+      data: { username: 'admin', password: 'admin123' },
+    });
+    if (!res.ok()) {
+      const body = await res.text();
+      throw new Error(`POST /api/v1/auth/login failed: ${res.status()} — ${body}`);
+    }
+    const json = (await res.json()) as { token: string };
+    if (!json.token) throw new Error('Login response missing token field');
+    token = json.token;
+  } finally {
+    await ctx.dispose();
   }
 
-  // Copy the auth token from sessionStorage to localStorage so storageState captures it.
-  // The SPA stores omnipus_auth_token in sessionStorage for XSS protection, but
-  // Playwright storageState cannot capture sessionStorage. We mirror it to localStorage
-  // at setup time so authenticated tests can bootstrap from storageState.
-  await page.evaluate(() => {
-    const token = sessionStorage.getItem('omnipus_auth_token');
-    if (token) {
-      localStorage.setItem('omnipus_auth_token', token);
-    }
-  });
+  // Step 3: Write the Playwright storageState file directly.
+  // Format: https://playwright.dev/docs/auth#reuse-signed-in-state
+  // The `origins` array contains one entry per origin.  Playwright injects
+  // the `localStorage` items into the browser context for that origin before
+  // each test's page navigation, so the SPA sees the token on first load.
+  const authDir = path.dirname(AUTH_FILE);
+  if (!fs.existsSync(authDir)) {
+    fs.mkdirSync(authDir, { recursive: true });
+  }
 
-  await context.storageState({ path: AUTH_FILE });
-  await browser.close();
+  const storageState = {
+    cookies: [],
+    origins: [
+      {
+        origin: baseURL,
+        localStorage: [
+          { name: 'omnipus_auth_token', value: token },
+          { name: 'omnipus_auth_role', value: 'admin' },
+          { name: 'omnipus_auth_username', value: 'admin' },
+        ],
+      },
+    ],
+  };
+
+  fs.writeFileSync(AUTH_FILE, JSON.stringify(storageState, null, 2));
 }
 
 export default globalSetup;

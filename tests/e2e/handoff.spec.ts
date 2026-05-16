@@ -45,10 +45,14 @@ function seedTranscript(sessionId: string, entries: TranscriptEntry[]): void {
 }
 
 function getStoredAuthToken(): string | null {
-  const authFile = path.join(
-    path.dirname(new URL(import.meta.url).pathname),
-    'fixtures/.auth/admin.json',
-  )
+  // Respect OMNIPUS_AUTH_FILE env var set by isolated test runs (e.g. port 6062)
+  // to avoid using a token minted for a different gateway instance.
+  const authFile = process.env.OMNIPUS_AUTH_FILE
+    ? path.resolve(process.env.OMNIPUS_AUTH_FILE)
+    : path.join(
+        path.dirname(new URL(import.meta.url).pathname),
+        'fixtures/.auth/admin.json',
+      )
   if (!fs.existsSync(authFile)) return null
   try {
     const raw = fs.readFileSync(authFile, 'utf-8')
@@ -241,12 +245,15 @@ test(
     );
     await input.press('Enter');
 
-    // Wait up to 60s for a subagent-collapsed block to appear under
-    // real-LLM determinism — 30s was tight when this test runs after
-    // ~10 min of suite-induced OpenRouter load (2026-05-11).
+    // Wait up to 150s for a subagent-collapsed block to appear under
+    // real-LLM determinism — spawn requires two LLM round-trips (parent
+    // tool call + subagent execution). z-ai/glm-5v-turbo enters extended
+    // thinking mode before tool dispatch; combined latency can exceed 90s
+    // under OpenRouter load. test.slow() gives 270s total; 150s here leaves
+    // 120s for the click + expand assertions below.
     // Structural assertion: if no spawn occurred the test fails honestly.
     const collapsedBlock = page.locator('[data-testid="subagent-collapsed"]');
-    await expect(collapsedBlock).toBeVisible({ timeout: 60_000 });
+    await expect(collapsedBlock).toBeVisible({ timeout: 150_000 });
 
     // Assert: at least one collapsed block is present with correct structure.
     const blockCount = await collapsedBlock.count();
