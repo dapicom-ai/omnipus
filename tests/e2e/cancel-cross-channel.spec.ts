@@ -36,10 +36,12 @@ const OMNIPUS_HOME =
 // ── Auth helpers (mirrored from handoff.spec.ts) ──────────────────────────────
 
 function getStoredAuthToken(): string | null {
-  const authFile = path.join(
-    path.dirname(new URL(import.meta.url).pathname),
-    'fixtures/.auth/admin.json',
-  )
+  const authFile = process.env.OMNIPUS_AUTH_FILE
+    ? path.resolve(process.env.OMNIPUS_AUTH_FILE)
+    : path.join(
+        path.dirname(new URL(import.meta.url).pathname),
+        'fixtures/.auth/admin.json',
+      )
   if (!fs.existsSync(authFile)) return null
   try {
     const raw = fs.readFileSync(authFile, 'utf-8')
@@ -62,7 +64,7 @@ function getStoredAuthToken(): string | null {
 
 async function getCsrfToken(page: Page): Promise<string | null> {
   const cookies = await page.context().cookies()
-  const csrfCookie = cookies.find((c) => c.name === '__Host-csrf')
+  const csrfCookie = cookies.find((c) => c.name === '__Host-csrf' || c.name === 'csrf')
   return csrfCookie?.value ?? null
 }
 
@@ -94,9 +96,13 @@ async function createSession(page: Page): Promise<string> {
 
 interface AuditEntry {
   event?: string
-  was_fired?: boolean
-  session_id?: string
-  // allow any extra fields
+  // Audit entries nest their payload under "fields" (see pkg/audit/audit.go Emit).
+  fields?: {
+    was_fired?: boolean
+    session_id?: string
+    [key: string]: unknown
+  }
+  // allow any extra top-level fields
   [key: string]: unknown
 }
 
@@ -282,7 +288,9 @@ test(
 test(
   'T24 — cancel cascades to subagent: transcript.jsonl records turn_cancelled with descendants',
   async ({ page }) => {
-    test.slow()
+    // 300s: spawn wait (120s) + subagent execution + cancel + assertions + settling window.
+    // test.slow() only gives 270s which is insufficient when GLM enters extended thinking.
+    test.setTimeout(300_000)
 
     await page.goto('/')
 
@@ -304,17 +312,23 @@ test(
     await page.getByRole('menuitem', { name: /Jim/i }).click()
     await expect(picker).toContainText(/Jim/i, { timeout: 5_000 })
 
-    // Trigger a turn that uses the spawn tool.
+    // Trigger a turn that uses the spawn tool. The prompt must be explicit enough
+    // to overcome GLM-5v-turbo's tendency to reply in prose on short prompts.
     await input.fill(
       [
-        'Call the `spawn` tool ONCE with task="echo hello". After spawn returns, reply with \'done\'.',
-      ].join(''),
+        'Call the `spawn` tool exactly once, now, with these arguments:',
+        '  label: "cancel cascade test"',
+        '  task: "You are a subagent. Call read_file with path=\\"/etc/hostname\\" three times, pausing briefly between calls. After all three calls, reply with the word \\"done\\"."',
+        'Do not reply in prose. Call the spawn tool immediately.',
+      ].join('\n'),
     )
     await input.press('Enter')
 
     // Wait for the subagent collapsed block to appear — confirms spawn fired.
+    // 120s: GLM-5v-turbo enters extended thinking mode under suite load, taking
+    // 60-90s before emitting the spawn tool call. 90s was insufficient in practice.
     const collapsedBlock = page.locator('[data-testid="subagent-collapsed"]')
-    await expect(collapsedBlock).toBeVisible({ timeout: 60_000 })
+    await expect(collapsedBlock).toBeVisible({ timeout: 120_000 })
 
     // Click Stop while the subagent is running.
     const stopBtn = page.locator('[data-testid="stop-btn"]')
@@ -477,13 +491,14 @@ test(
 
     // Assert: turn_cancel_attempt entry with was_fired: true.
     // events.go: EventTurnCancelAttempt = "turn.cancel.attempt"; struct tag json:"event"
+    // Audit entries nest their payload under "fields" (pkg/audit/audit.go Emit).
     const attemptEntry = newEntries.find(
-      (e) => e.event === 'turn.cancel.attempt' && e.was_fired === true,
+      (e) => e.event === 'turn.cancel.attempt' && e.fields?.was_fired === true,
     )
     if (!attemptEntry) {
       throw new Error(
         'INCOMPLETE: audit log does not contain a turn.cancel.attempt entry with was_fired:true. ' +
-          `New entries found: ${JSON.stringify(newEntries.map((e) => ({ event: e.event, was_fired: e.was_fired })))}. ` +
+          `New entries found: ${JSON.stringify(newEntries.map((e) => ({ event: e.event, was_fired: e.fields?.was_fired })))}. ` +
           'Traces to: cancel-cross-channel-spec.md T26, US-5.1, FR-18.',
       )
     }
@@ -500,8 +515,9 @@ test(
     }
 
     // Assert: session_id matches between the two entries.
-    expect(attemptEntry.session_id).toBeTruthy()
-    expect(cancelledEntry.session_id).toBeTruthy()
-    expect(attemptEntry.session_id).toEqual(cancelledEntry.session_id)
+    // session_id is nested under fields (pkg/audit/audit.go Emit structure).
+    expect(attemptEntry.fields?.session_id).toBeTruthy()
+    expect(cancelledEntry.fields?.session_id).toBeTruthy()
+    expect(attemptEntry.fields?.session_id).toEqual(cancelledEntry.fields?.session_id)
   },
 )
