@@ -9,14 +9,24 @@ function SessionRoute() {
   const { sessionId } = Route.useParams()
   const setActiveSession = useSessionStore((s) => s.setActiveSession)
 
+  // Loader pre-fetches session detail and activates the session synchronously
+  // in the Zustand store before this component renders. The useQuery below is
+  // kept for live data updates (e.g. agent_removed flag changing) but the
+  // activeSessionId is guaranteed to be set by loader before first render.
+  const loaderData = Route.useLoaderData()
+
   const { data: detail } = useQuery({
     queryKey: ['session-detail', sessionId],
+    // Loader already fetched session detail — use it as initialData so
+    // the query doesn't fire a redundant network request on mount.
+    initialData: loaderData ?? undefined,
     queryFn: () => fetchSessionDetail(sessionId),
     enabled: !!sessionId,
     retry: false,
+    staleTime: 10_000,
   })
 
-  // Activate the session in the store so the WebSocket attaches to it
+  // Keep the store in sync when detail refreshes (e.g. agent_removed toggles).
   useEffect(() => {
     if (detail?.session) {
       setActiveSession(detail.session.id, detail.session.agent_id, null)
@@ -28,4 +38,23 @@ function SessionRoute() {
 
 export const Route = createFileRoute('/_app/sessions/$sessionId')({
   component: SessionRoute,
+  loader: async ({ params }) => {
+    // Pre-fetch session detail and activate the session in the Zustand store
+    // BEFORE the component renders. This guarantees that activeSessionId is
+    // set when the ChatScreen mounts — eliminating the race where a quickly
+    // typed message is routed by the gateway to a new orphan session instead
+    // of the URL session (because activeSessionId was still null from useEffect
+    // firing after the first render).
+    try {
+      const detail = await fetchSessionDetail(params.sessionId)
+      if (detail?.session) {
+        useSessionStore.getState().setActiveSession(detail.session.id, detail.session.agent_id, null)
+      }
+      return detail ?? null
+    } catch {
+      // Session not found or API error — return null and let ChatScreen
+      // render with an empty/default state.
+      return null
+    }
+  },
 })
