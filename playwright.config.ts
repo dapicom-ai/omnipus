@@ -26,7 +26,7 @@ export default defineConfig({
   reporter: [['html'], ['list']],
   use: {
     baseURL: process.env.OMNIPUS_URL || 'http://localhost:6060',
-    storageState: './tests/e2e/fixtures/.auth/admin.json',
+    storageState: process.env.OMNIPUS_AUTH_FILE || './tests/e2e/fixtures/.auth/admin.json',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',

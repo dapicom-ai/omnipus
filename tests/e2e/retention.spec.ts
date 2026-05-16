@@ -40,10 +40,12 @@ import { agedTranscript, agedSessionExists } from './fixtures/aging';
 
 // ── Auth helpers ─────────────────────────────────────────────────────────────
 
-const AUTH_FILE = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  'fixtures/.auth/admin.json',
-);
+const AUTH_FILE = process.env.OMNIPUS_AUTH_FILE
+  ? path.resolve(process.env.OMNIPUS_AUTH_FILE)
+  : path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      'fixtures/.auth/admin.json',
+    );
 
 /**
  * Read the admin Bearer token from the global-setup storageState file.
