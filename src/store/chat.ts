@@ -407,20 +407,26 @@ export const useChatStore = create<ChatStore>((set, get) => {
         const msgs = [...b.messages]
         const lastIdx = msgs.map((m) => m.role).lastIndexOf('assistant')
         if (lastIdx === -1) return {}
+        // FR-21 / T21–T26: do NOT set isStreaming:false on the message here.
+        // Keeping isStreaming:true on the message prevents the token handler from
+        // creating a new placeholder when trailing tokens arrive after the cancel
+        // (the check `!msgs[lastIdx].isStreaming` would reset lastIdx to -1, causing
+        // a second assistant bubble that doesn't have the interrupted status).
+        // The bucket-level isStreaming is cleared by cancelStream()'s own withBucket
+        // call, which also stops the stop button from showing the send button too early.
         msgs[lastIdx] = {
           ...msgs[lastIdx],
-          isStreaming: false,
           status: 'interrupted',
         }
-        return { messages: msgs, isStreaming: false }
+        return { messages: msgs }
       })
       // If no streaming assistant message was found in the active bucket, search
       // all buckets. This handles scenarios where a message was appended to a
       // different bucket before the active session was set (e.g. in test scaffolding).
       const state = get()
       const activeBucket = sid ? state.sessionsById[sid] : undefined
-      const hasStreamingInActive = activeBucket?.messages.some((m: ChatMessage) => m.role === 'assistant' && m.isStreaming)
-      if (!hasStreamingInActive) {
+      const hasInterruptedInActive = activeBucket?.messages.some((m: ChatMessage) => m.role === 'assistant' && m.status === 'interrupted')
+      if (!hasInterruptedInActive) {
         for (const [bucketSid, bucket] of Object.entries(state.sessionsById)) {
           if (bucketSid === sid) continue
           const lastIdx = bucket.messages.map((m) => m.role).lastIndexOf('assistant')
@@ -433,13 +439,12 @@ export const useChatStore = create<ChatStore>((set, get) => {
               const msgs = [...b.messages]
               const idx = msgs.map((m) => m.role).lastIndexOf('assistant')
               if (idx === -1) return {}
-              msgs[idx] = { ...msgs[idx], isStreaming: false, status: 'interrupted' }
-              const updated = { ...b, messages: msgs, isStreaming: false }
+              msgs[idx] = { ...msgs[idx], status: 'interrupted' }
+              const updated = { ...b, messages: msgs }
               return {
                 sessionsById: { ...s.sessionsById, [bucketSid]: updated },
                 // Propagate to flat foreground so observers see the interrupted message.
                 messages: msgs,
-                isStreaming: false,
               }
             })
             break
@@ -861,24 +866,35 @@ export const useChatStore = create<ChatStore>((set, get) => {
       const { activeSessionId } = useSessionStore.getState()
       const { isStreaming } = get()
 
-      if (!connection || !isStreaming) return
+      // FR-21 / T21–T25: always mark the last assistant message as interrupted
+      // when the user explicitly invokes cancel (stop button, Escape, /cancel).
+      // We do this BEFORE the isStreaming guard so that a stop-button click that
+      // races a done frame still produces the (interrupted) label. Without this,
+      // a turn that completes in <100ms after the stop button appears but before
+      // Playwright (or a real user) clicks it would silently do nothing because
+      // isStreaming flips to false between render and click.
+      get().markLastMessageInterrupted()
+
+      if (!connection) return
       if (!activeSessionId) {
         // No server-side session established yet — just clear local streaming state.
         withBucket(getActiveSid(), () => ({ isStreaming: false }))
-        get().markLastMessageInterrupted()
         return
       }
 
-      const sent = connection.send({ type: 'cancel', session_id: activeSessionId })
-      if (!sent) {
-        console.warn('[chat] cancelStream: send failed — connection may be closed')
-        useUiStore.getState().addToast({
-          message: 'Could not send cancel — connection dropped. The response may continue briefly.',
-          variant: 'error',
-        })
+      if (isStreaming) {
+        // Only send the cancel frame to the server if the turn is still active.
+        // Sending cancel for a completed turn is a no-op on the server but wastes
+        // a round-trip and may confuse the audit log.
+        const sent = connection.send({ type: 'cancel', session_id: activeSessionId })
+        if (!sent) {
+          console.warn('[chat] cancelStream: send failed — connection may be closed')
+          useUiStore.getState().addToast({
+            message: 'Could not send cancel — connection dropped. The response may continue briefly.',
+            variant: 'error',
+          })
+        }
       }
-
-      get().markLastMessageInterrupted()
 
       withBucket(activeSessionId, (b) => {
         const updated = { ...b.toolCalls }
@@ -965,10 +981,15 @@ export const useChatStore = create<ChatStore>((set, get) => {
           useSessionStore.getState().setActiveSession(newSid, frame.agent_id ?? useSessionStore.getState().activeAgentId)
           // Bucket is lazily created by first withBucket call; ensure it exists now
           // so the foreground syncs immediately.
+          // FR-21 / T21–T25: session_started fires when the server begins a new turn
+          // for a message sent without a session_id. The agent is about to stream —
+          // pre-set isStreaming:true so the Stop button appears immediately without
+          // waiting for the first token or tool_call_start frame.
           set((state) => {
             if (state.sessionsById[newSid]) return {}
-            const sessionsById = { ...state.sessionsById, [newSid]: emptySessionState() }
-            return { sessionsById, ...emptySessionState() }
+            const newBucket: SessionChatState = { ...emptySessionState(), isStreaming: true }
+            const sessionsById = { ...state.sessionsById, [newSid]: newBucket }
+            return { sessionsById, ...newBucket }
           })
           // Invalidate sessions list so SessionPanel shows the new session.
           queryClient.invalidateQueries({ queryKey: ['sessions'] })
@@ -1001,13 +1022,25 @@ export const useChatStore = create<ChatStore>((set, get) => {
                 msgs.push(placeholder)
                 lastIdx = msgs.length - 1
               }
+              // FR-21 / T21–T26: do NOT overwrite 'interrupted' status with
+              // 'streaming'. A cancel may arrive between two token frames —
+              // markLastMessageInterrupted() sets status:'interrupted', but if
+              // a late token arrives before the server's done/cancel_ack frame,
+              // this handler would silently erase the label. Preserve 'interrupted'
+              // so the (interrupted) badge stays visible even while trailing
+              // tokens from the server are still flowing in.
+              // Also preserve the bucket's isStreaming:false if the cancel already
+              // cleared it — trailing tokens from the server must not un-cancel the turn.
+              const prevStatus = msgs[lastIdx].status
+              const wasCancelled = prevStatus === 'interrupted'
               msgs[lastIdx] = {
                 ...msgs[lastIdx],
                 content: msgs[lastIdx].content + frame.content,
-                isStreaming: true,
-                status: 'streaming',
+                isStreaming: wasCancelled ? false : true,
+                status: wasCancelled ? 'interrupted' : 'streaming',
               }
-              return { messages: msgs, isStreaming: true }
+              // Don't re-enable the bucket isStreaming if cancel already cleared it.
+              return { messages: msgs, isStreaming: wasCancelled ? b.isStreaming : true }
             })
           }
           break
@@ -1080,10 +1113,15 @@ export const useChatStore = create<ChatStore>((set, get) => {
               const msgs = [...b.messages]
               const lastIdx = msgs.map((m) => m.role).lastIndexOf('assistant')
               if (lastIdx !== -1) {
+                // FR-21 / T21–T25: do NOT overwrite 'interrupted' status with 'done'.
+                // A done frame can arrive after the user clicked Stop (because the
+                // server was already finishing the turn when the cancel request arrived).
+                // Preserving 'interrupted' keeps the "(interrupted)" label visible.
+                const prevStatus = msgs[lastIdx].status
                 msgs[lastIdx] = {
                   ...msgs[lastIdx],
                   isStreaming: false,
-                  status: 'done',
+                  status: prevStatus === 'interrupted' ? 'interrupted' : 'done',
                 }
               }
               const tokenDelta = frame.stats?.tokens ?? 0
@@ -1228,8 +1266,16 @@ export const useChatStore = create<ChatStore>((set, get) => {
               const orderHasCall = b.toolCallOrder.includes(frame.call_id)
               const existingSnapshot = b.textAtToolCallStart[frame.call_id]
               const existingTC = b.toolCalls[frame.call_id]
+              // FR-21 / T21–T25: a tool_call_start for a top-level (non-subagent)
+              // tool means the agent is actively working — set isStreaming:true so
+              // the Stop button appears even when the LLM emits a tool call without
+              // streaming any text first (e.g. glm-5v-turbo immediately calling
+              // write_file).  Do not set it during replay (b.isReplaying) because
+              // replay frames reconstruct history and should not trigger the spinner.
+              const shouldMarkStreaming = !b.isReplaying
               return {
                 messages: msgs,
+                ...(shouldMarkStreaming && { isStreaming: true }),
                 toolCalls: existingTC && existingTC.status !== 'running'
                   ? b.toolCalls
                   : {

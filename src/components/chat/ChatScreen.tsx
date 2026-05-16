@@ -42,8 +42,9 @@ import { cn } from '@/lib/utils'
 // ── Message components ────────────────────────────────────────────────────────
 
 function UserMessage() {
+  const message = useMessage()
   return (
-    <MessagePrimitive.Root data-testid="user-message" className="group flex gap-3 px-4 py-3 flex-row-reverse">
+    <MessagePrimitive.Root data-testid="user-message" data-message-id={message.id} className="group flex gap-3 px-4 py-3 flex-row-reverse">
       <div className="shrink-0 w-7 h-7 rounded-full flex items-center justify-center bg-[var(--color-accent)]/20 text-[var(--color-accent)]">
         <User size={14} weight="bold" />
       </div>
@@ -293,9 +294,16 @@ function AssistantMessage() {
   const agent = agents.find((a) => a.id === messageAgentId)
   // Fallback to the raw agentId string if the agent isn't in the list yet
   const agentDisplayName = agent?.name ?? (messageAgentId || null)
+  // FR-21: show (interrupted) suffix when the store marks this message interrupted.
+  const isInterrupted = storeMsg?.status === 'interrupted'
 
   return (
-    <MessagePrimitive.Root data-testid="assistant-message" className="group flex gap-3 px-4 py-3">
+    <MessagePrimitive.Root
+      data-testid="assistant-message"
+      data-message-id={message.id}
+      data-status={message.status?.type ?? 'complete'}
+      className="group flex gap-3 px-4 py-3"
+    >
       <AssistantMessageAvatar />
       <div className="flex flex-col gap-1 max-w-[85%] min-w-0 flex-1">
         {agentDisplayName && (
@@ -351,6 +359,10 @@ function AssistantMessage() {
           </ActionBarPrimitive.Copy>
           <AssistantMessageRetryButton />
         </ActionBarPrimitive.Root>
+        {/* FR-21: interrupted status label — shown when the turn was cancelled */}
+        {isInterrupted && (
+          <span className="text-[10px] text-[var(--color-muted)] italic px-1">(interrupted)</span>
+        )}
       </div>
     </MessagePrimitive.Root>
   )
@@ -453,6 +465,10 @@ export function OmnipusComposer({ agentRemoved = false }: { agentRemoved?: boole
   const [pendingFiles, setPendingFiles] = useState<File[]>([])
   const [isUploading, setIsUploading] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
+  // EC-15 / FR-21: stop button label progression:
+  //   'stop'     — idle, button shows Stop icon
+  //   'stopping' — user clicked, button shows "Stopping..." (synchronous, no network RTT)
+  const [stopLabel, setStopLabel] = useState<'stop' | 'stopping'>('stop')
   const fileInputRef = useRef<HTMLInputElement>(null)
   // Tracks whether we already warned for the current large-input threshold crossing,
   // so we only fire one toast per paste/input event that exceeds 1MB.
@@ -468,6 +484,12 @@ export function OmnipusComposer({ agentRemoved = false }: { agentRemoved?: boole
     return all
   })()
   const shouldShowSlash = visibleSlashCommands.length > 0 && (inputValue.startsWith('/')) && !isReplaying && isConnected
+
+  // EC-15: reset the stop label back to 'stop' whenever streaming ends so the
+  // button is fresh for the next turn.
+  useEffect(() => {
+    if (!isStreaming) setStopLabel('stop')
+  }, [isStreaming])
 
   function closeSlash() {
     setSlashOpen(false)
@@ -503,7 +525,13 @@ export function OmnipusComposer({ agentRemoved = false }: { agentRemoved?: boole
     }
 
     // FR-3a: /cancel uses the same cancelStream() as the Stop button.
+    // Only morph the button to "Stopping..." if the turn is actively streaming.
+    // If the turn already completed, cancelStream() marks the last message as
+    // interrupted but there is no streaming button to morph — setting 'stopping'
+    // when isStreaming is already false would leave the button stuck because the
+    // useEffect([isStreaming]) will not fire again (no state change) to reset it.
     if (cmd === '/cancel') {
+      if (isStreaming) setStopLabel('stopping')
       cancelStream()
       return
     }
@@ -527,6 +555,26 @@ export function OmnipusComposer({ agentRemoved = false }: { agentRemoved?: boole
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
+    // US-1.4 / FR-23: Escape cancels a turn.
+    // Only morph the button to "Stopping..." if the turn is actively streaming
+    // (same logic as the /cancel command and the stop button click). Pressing
+    // Escape on a completed turn still marks the message as interrupted via
+    // cancelStream() → markLastMessageInterrupted(), but there is no streaming
+    // button to morph — setting 'stopping' when isStreaming is false would leave
+    // the button stuck because the useEffect([isStreaming]) does not fire again.
+    if (e.key === 'Escape' && (isStreaming || stopLabel === 'stopping')) {
+      e.preventDefault()
+      if (isStreaming) setStopLabel('stopping')
+      cancelStream()
+      return
+    }
+
+    // Block Enter submission while streaming — slash menu Enter still works below.
+    if (e.key === 'Enter' && isStreaming && !slashOpen) {
+      e.preventDefault()
+      return
+    }
+
     if (!shouldShowSlash) return
 
     if (e.key === 'ArrowDown') {
@@ -546,6 +594,25 @@ export function OmnipusComposer({ agentRemoved = false }: { agentRemoved?: boole
       closeSlash()
     }
   }
+
+  // US-1.4 / FR-23: Global Escape key handler — cancels a turn.
+  // Fires even when the input does not have focus (e.g. user
+  // clicked somewhere else on the page). The input-level handler above covers
+  // the focused-input case; this effect covers the unfocused case (T23).
+  // Do NOT guard with isStreaming — same race-condition reasoning as the stop
+  // button: cancelStream() internally gates the server WS send on isStreaming,
+  // but always calls markLastMessageInterrupted() so the label appears.
+  useEffect(() => {
+    function handleGlobalEscape(e: KeyboardEvent) {
+      if (e.key === 'Escape' && isStreaming) {
+        e.preventDefault()
+        setStopLabel('stopping')
+        cancelStream()
+      }
+    }
+    document.addEventListener('keydown', handleGlobalEscape)
+    return () => document.removeEventListener('keydown', handleGlobalEscape)
+  }, [isStreaming, cancelStream])
 
   async function handleSendWithFiles(text: string) {
     if (pendingFiles.length === 0) {
@@ -679,6 +746,12 @@ export function OmnipusComposer({ agentRemoved = false }: { agentRemoved?: boole
       <ComposerPrimitive.Root
         className="flex items-end gap-2 flex-1"
         onSubmit={(e) => {
+          // Block submission while streaming — slash commands are handled via
+          // handleKeyDown, and normal sends must wait for the turn to complete.
+          if (isStreaming) {
+            e.preventDefault()
+            return
+          }
           if (pendingFiles.length === 0) return // Let AssistantUI handle the standard send path
           e.preventDefault()
           const text = composerRuntime.getState().text.trim()
@@ -690,7 +763,7 @@ export function OmnipusComposer({ agentRemoved = false }: { agentRemoved?: boole
         <ComposerPrimitive.Input
           data-testid="chat-input"
           placeholder={agentRemoved ? 'Agent has been removed — this session is read-only' : composerPlaceholder(isConnected, isStreaming || isUploading, isReplaying, activeAgentName)}
-          disabled={agentRemoved || !isConnected || isStreaming || isUploading || isReplaying}
+          disabled={agentRemoved || !isConnected || isUploading || isReplaying}
           rows={1}
           className={cn(
             'flex-1 resize-none rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-2)] px-4 py-2.5 text-sm text-[var(--color-secondary)] outline-none',
@@ -739,22 +812,36 @@ export function OmnipusComposer({ agentRemoved = false }: { agentRemoved?: boole
           }}
         />
 
-        {isStreaming || isUploading ? (
+        {isStreaming || isUploading || stopLabel === 'stopping' ? (
           <button
             type="button"
             data-testid="stop-btn"
-            onClick={isStreaming ? cancelStream : undefined}
+            onClick={() => {
+              // EC-15 / FR-21: set label synchronously so the UI updates
+              // within the same React render tick, before the cancel
+              // network round-trip starts (no perceived latency).
+              // Do NOT guard with isStreaming here — cancelStream() handles the
+              // server-send gate internally. Guarding here would silently no-op
+              // when the turn races to completion between render and click,
+              // preventing the (interrupted) label from appearing.
+              setStopLabel('stopping')
+              cancelStream()
+            }}
             disabled={isUploading}
             className={cn(
-              'shrink-0 w-11 h-11 rounded-xl flex items-center justify-center transition-colors',
+              'shrink-0 rounded-xl flex items-center justify-center transition-colors',
+              stopLabel === 'stopping'
+                ? 'px-3 h-11 gap-1.5 text-xs font-medium bg-[var(--color-error)]/20 text-[var(--color-error)] hover:bg-[var(--color-error)]/30'
+                : 'w-11 h-11',
               isStreaming
                 ? 'bg-[var(--color-error)]/20 text-[var(--color-error)] hover:bg-[var(--color-error)]/30'
                 : 'bg-[var(--color-surface-3)] text-[var(--color-muted)] cursor-wait',
             )}
-            aria-label={isUploading ? 'Uploading...' : 'Stop generation'}
+            aria-label={isUploading ? 'Uploading...' : stopLabel === 'stopping' ? 'Stopping...' : 'Stop generation'}
             title={isUploading ? 'Uploading files...' : 'Stop (Escape)'}
           >
             <Stop size={15} weight="fill" />
+            {stopLabel === 'stopping' && <span>Stopping...</span>}
           </button>
         ) : (
           // FR-I-014: also disabled during replay (isReplaying) so user cannot send out-of-order

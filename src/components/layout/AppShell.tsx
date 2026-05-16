@@ -39,8 +39,12 @@ export function AppShell() {
     queryClient.prefetchQuery({ queryKey: ['agents'], queryFn: fetchAgents, staleTime: 30_000 })
   }, [])
 
-  // Show SessionBar only on the chat screen (root route)
-  const isChatScreen = location.pathname === '/' || location.pathname === ''
+  // Show SessionBar on the root chat route and on named session routes
+  // (/#/sessions/:sessionId deep-links should also show the agent picker).
+  const isChatScreen =
+    location.pathname === '/' ||
+    location.pathname === '' ||
+    location.pathname.startsWith('/sessions/')
 
   return (
     <div className="flex h-dvh w-full overflow-hidden bg-[var(--color-primary)]">
