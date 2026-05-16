@@ -553,9 +553,13 @@ test(
     //
     // IMPORTANT: This test requires a real LLM (OPENROUTER_API_KEY_CI) to send a live message.
 
-    // test.slow() triples the global 90s test timeout to 270s. The LLM
-    // continuation reply can take 30-60s under suite load.
-    test.slow()
+    // Bump per-test timeout to 360s. test.slow() triples the global 90s to 270s,
+    // which has proven insufficient under full-suite LLM contention (this test
+    // runs late in the suite after ~45 prior tests have hit OpenRouter,
+    // backlogging GLM-4.6's extended-thinking queue). In isolation the test
+    // completes in ~6s; in-suite it routinely needs 90-150s for the assistant
+    // reply to materialize, so the 90s assertion timeout below was over budget.
+    test.setTimeout(360_000)
 
     await page.goto('/')
     await expect(page.getByRole('banner')).toBeVisible({ timeout: 15_000 })
@@ -618,9 +622,11 @@ test(
     await input.press('Enter')
 
     // A new assistant message appears (total count increases by 1).
-    // 90s: z-ai/glm-5v-turbo enters extended thinking mode for prompts with
-    // existing context, which consistently exceeds the 60s default under load.
-    await expect(asstMsgs).toHaveCount(countAfterReplay + 1, { timeout: 90_000 })
+    // 180s: GLM-4.6 routinely takes 90-150s under full-suite load (extended
+    // thinking + the OpenRouter queue backlogged by prior tests). 90s was
+    // insufficient — failed all 3 retries in the 2026-05-16 full-suite run
+    // while passing in 6s in isolation.
+    await expect(asstMsgs).toHaveCount(countAfterReplay + 1, { timeout: 180_000 })
 
     // The last assistant message should contain the expected reply.
     const lastAsstMsg = asstMsgs.last()
