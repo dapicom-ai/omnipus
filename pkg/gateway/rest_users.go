@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	gen "github.com/dapicom-ai/omnipus/pkg/api/generated"
 	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 )
@@ -67,15 +68,14 @@ func (a *restAPI) HandleUsersList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := a.agentLoop.GetConfig()
-	out := make([]map[string]any, 0, len(cfg.Gateway.Users))
+	out := make([]gen.User, 0, len(cfg.Gateway.Users))
 	for _, u := range cfg.Gateway.Users {
-		entry := map[string]any{
-			"username":         u.Username,
-			"role":             string(u.Role),
-			"has_password":     u.PasswordHash != "",
-			"has_active_token": !u.TokenHash.IsZero(),
-		}
-		out = append(out, entry)
+		out = append(out, gen.User{
+			Username:       u.Username,
+			Role:           gen.UserRole(u.Role),
+			HasPassword:    u.PasswordHash != "",
+			HasActiveToken: !u.TokenHash.IsZero(),
+		})
 	}
 	jsonOK(w, out)
 }
@@ -181,12 +181,14 @@ func (a *restAPI) HandleUserCreate(w http.ResponseWriter, r *http.Request) {
 			"password": body.Password,
 		})
 		slog.Info("rest: user created (restart required)", "username", body.Username, "role", body.Role)
+		reqRestart := true
+		warningMsg := "config saved to disk but hot-reload failed; restart the gateway to apply"
 		w.WriteHeader(http.StatusCreated)
-		jsonBodyOnlyCreated(w, map[string]any{
-			"username":         body.Username,
-			"role":             body.Role,
-			"requires_restart": true,
-			"warning":          "config saved to disk but hot-reload failed; restart the gateway to apply",
+		jsonBodyOnlyCreated(w, gen.UserCreateResponse{
+			Username:        body.Username,
+			Role:            gen.UserCreateResponseRole(body.Role),
+			RequiresRestart: &reqRestart,
+			Warning:         &warningMsg,
 		})
 		return
 	}
@@ -198,9 +200,9 @@ func (a *restAPI) HandleUserCreate(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("rest: user created", "username", body.Username, "role", body.Role)
 	w.WriteHeader(http.StatusCreated)
-	jsonBodyOnlyCreated(w, map[string]any{
-		"username": body.Username,
-		"role":     body.Role,
+	jsonBodyOnlyCreated(w, gen.UserCreateResponse{
+		Username: body.Username,
+		Role:     gen.UserCreateResponseRole(body.Role),
 	})
 }
 
@@ -291,11 +293,13 @@ func (a *restAPI) HandleUserDelete(w http.ResponseWriter, r *http.Request) {
 			"role":     removedRole,
 		}, nil)
 		slog.Info("rest: user deleted (restart required)", "username", username)
-		jsonOK(w, map[string]any{
-			"username":         username,
-			"deleted":          true,
-			"requires_restart": true,
-			"warning":          "config saved to disk but hot-reload failed; restart the gateway to apply",
+		reqRestart := true
+		warningMsg := "config saved to disk but hot-reload failed; restart the gateway to apply"
+		jsonOK(w, gen.UserDeleteResponse{
+			Username:        username,
+			Deleted:         true,
+			RequiresRestart: &reqRestart,
+			Warning:         &warningMsg,
 		})
 		return
 	}
@@ -308,9 +312,9 @@ func (a *restAPI) HandleUserDelete(w http.ResponseWriter, r *http.Request) {
 	}, nil)
 
 	slog.Info("rest: user deleted", "username", username)
-	jsonOK(w, map[string]any{
-		"username": username,
-		"deleted":  true,
+	jsonOK(w, gen.UserDeleteResponse{
+		Username: username,
+		Deleted:  true,
 	})
 }
 
@@ -385,20 +389,22 @@ func (a *restAPI) HandleUserChangeRole(w http.ResponseWriter, r *http.Request) {
 	if reloadErr := a.awaitReload(); reloadErr != nil {
 		emitUserAudit(r, a, "gateway.users."+username+".role", oldRole, body.Role)
 		slog.Info("rest: user role changed (restart required)", "username", username, "old", oldRole, "new", body.Role)
-		jsonOK(w, map[string]any{
-			"username":         username,
-			"role":             body.Role,
-			"requires_restart": true,
-			"warning":          "config saved to disk but hot-reload failed; restart the gateway to apply",
+		reqRestart := true
+		warningMsg := "config saved to disk but hot-reload failed; restart the gateway to apply"
+		jsonOK(w, gen.UserRoleChangeResponse{
+			Username:        username,
+			Role:            gen.UserRoleChangeResponseRole(body.Role),
+			RequiresRestart: &reqRestart,
+			Warning:         &warningMsg,
 		})
 		return
 	}
 	emitUserAudit(r, a, "gateway.users."+username+".role", oldRole, body.Role)
 
 	slog.Info("rest: user role changed", "username", username, "old", oldRole, "new", body.Role)
-	jsonOK(w, map[string]any{
-		"username": username,
-		"role":     body.Role,
+	jsonOK(w, gen.UserRoleChangeResponse{
+		Username: username,
+		Role:     gen.UserRoleChangeResponseRole(body.Role),
 	})
 }
 
@@ -478,11 +484,13 @@ func (a *restAPI) HandleUserResetPassword(w http.ResponseWriter, r *http.Request
 			map[string]any{"password": body.Password},
 		)
 		slog.Info("rest: user password reset by admin (restart required)", "username", username)
-		jsonOK(w, map[string]any{
-			"username":         username,
-			"password_reset":   true,
-			"requires_restart": true,
-			"warning":          "config saved to disk but hot-reload failed; restart the gateway to apply",
+		reqRestart := true
+		warningMsg := "config saved to disk but hot-reload failed; restart the gateway to apply"
+		jsonOK(w, gen.UserResetPasswordResponse{
+			Username:        username,
+			PasswordReset:   true,
+			RequiresRestart: &reqRestart,
+			Warning:         &warningMsg,
 		})
 		return
 	}
@@ -492,9 +500,9 @@ func (a *restAPI) HandleUserResetPassword(w http.ResponseWriter, r *http.Request
 	)
 
 	slog.Info("rest: user password reset by admin", "username", username)
-	jsonOK(w, map[string]any{
-		"username":       username,
-		"password_reset": true,
+	jsonOK(w, gen.UserResetPasswordResponse{
+		Username:      username,
+		PasswordReset: true,
 	})
 }
 

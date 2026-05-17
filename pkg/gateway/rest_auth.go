@@ -24,6 +24,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/dapicom-ai/omnipus/pkg/agent"
+	gen "github.com/dapicom-ai/omnipus/pkg/api/generated"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 )
@@ -402,10 +403,10 @@ func (a *restAPI) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jsonOK(w, map[string]any{
-		"token":    token,
-		"role":     foundRole,
-		"username": body.Username,
+	jsonOK(w, gen.LoginResponse{
+		Token:    token,
+		Role:     gen.LoginResponseRole(foundRole),
+		Username: body.Username,
 	})
 }
 
@@ -553,10 +554,10 @@ func (a *restAPI) HandleRegisterAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("auth: admin user registered", "username", body.Username)
-	jsonOK(w, map[string]any{
-		"token":    token,
-		"role":     config.UserRoleAdmin,
-		"username": body.Username,
+	jsonOK(w, gen.LoginResponse{
+		Token:    token,
+		Role:     gen.LoginResponseRole(config.UserRoleAdmin),
+		Username: body.Username,
 	})
 }
 

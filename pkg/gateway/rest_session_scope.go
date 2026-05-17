@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	gen "github.com/dapicom-ai/omnipus/pkg/api/generated"
 	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/routing"
 )
@@ -49,8 +50,8 @@ func (a *restAPI) HandleSessionScope(w http.ResponseWriter, r *http.Request) {
 		if scope == "" {
 			scope = string(routing.DMScopePerChannelPeer)
 		}
-		jsonOK(w, map[string]any{
-			"dm_scope": scope,
+		jsonOK(w, gen.SessionScopeResponse{
+			DmScope: gen.SessionScopeResponseDmScope(scope),
 		})
 
 	case http.MethodPut:

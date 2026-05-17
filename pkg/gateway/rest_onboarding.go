@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
+	gen "github.com/dapicom-ai/omnipus/pkg/api/generated"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 	"github.com/dapicom-ai/omnipus/pkg/onboarding"
@@ -320,13 +321,14 @@ func (a *restAPI) HandleCompleteOnboarding(w http.ResponseWriter, r *http.Reques
 	}
 
 	slog.Info("onboarding: completed", "username", body.Admin.Username)
-	resp := map[string]any{
-		"token":    token,
-		"role":     config.UserRoleAdmin,
-		"username": body.Admin.Username,
+	resp := gen.OnboardingCompleteResponse{
+		Token:    token,
+		Role:     gen.OnboardingCompleteResponseRole(config.UserRoleAdmin),
+		Username: body.Admin.Username,
 	}
 	if credRefName == "" {
-		resp["warning"] = "API key stored in plaintext — set OMNIPUS_MASTER_KEY for encrypted storage"
+		warningMsg := "API key stored in plaintext — set OMNIPUS_MASTER_KEY for encrypted storage"
+		resp.Warning = &warningMsg
 	}
 	jsonOK(w, resp)
 }
@@ -409,9 +411,10 @@ func (a *restAPI) HandleOnboardingProbeProvider(w http.ResponseWriter, r *http.R
 		// Upstream probe failure is a 200 with success=false — symmetrical
 		// with POST /providers/{id}/test, so the SPA's error-handling branch
 		// is identical for both flows.
-		jsonOK(w, map[string]any{"success": false, "error": fetchErr.Error()})
+		errMsg := fetchErr.Error()
+		jsonOK(w, gen.ProbeProviderResponse{Success: false, Error: &errMsg})
 		return
 	}
 
-	jsonOK(w, map[string]any{"success": true, "models": models})
+	jsonOK(w, gen.ProbeProviderResponse{Success: true, Models: &models})
 }
