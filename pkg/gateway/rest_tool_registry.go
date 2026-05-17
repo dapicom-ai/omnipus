@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"strings"
 
+	gen "github.com/dapicom-ai/omnipus/pkg/api/generated"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/coreagent"
 	"github.com/dapicom-ai/omnipus/pkg/tools"
@@ -98,15 +99,7 @@ func (a *restAPI) HandleToolsRegistry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type toolEntry struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Scope       string `json:"scope"`
-		Category    string `json:"category"`
-		Source      string `json:"source"`
-	}
-
-	var entries []toolEntry
+	var entries []gen.ToolRegistryEntry
 	seen := make(map[string]struct{})
 
 	addTool := func(t tools.Tool, source string) {
@@ -115,12 +108,12 @@ func (a *restAPI) HandleToolsRegistry(w http.ResponseWriter, r *http.Request) {
 			return // dedup: first registration wins
 		}
 		seen[name] = struct{}{}
-		entries = append(entries, toolEntry{
+		entries = append(entries, gen.ToolRegistryEntry{
 			Name:        name,
 			Description: t.Description(),
-			Scope:       string(t.Scope()),
+			Scope:       gen.ToolRegistryEntryScope(t.Scope()),
 			Category:    toolCategoryFromTool(t),
-			Source:      source,
+			Source:      gen.ToolRegistryEntrySource(source),
 		})
 	}
 
@@ -159,7 +152,7 @@ func (a *restAPI) HandleToolsRegistry(w http.ResponseWriter, r *http.Request) {
 
 	// Return an empty array — never null.
 	if entries == nil {
-		entries = []toolEntry{}
+		entries = []gen.ToolRegistryEntry{}
 	}
 
 	jsonOK(w, entries)
@@ -211,6 +204,9 @@ func (a *restAPI) HandleAgentToolsRegistry(w http.ResponseWriter, r *http.Reques
 		policyCfg.GlobalDefaultPolicy = sandboxDefault
 	}
 
+	// agentToolEntry carries the per-tool effective policy view for GET /api/v1/agents/{id}/tools.
+	// It is a local type because the spec (GetAgentTools200JSONResponseBodyTools*) only defines
+	// the policy enum values; the compound response object has no canonical generated struct.
 	type agentToolEntry struct {
 		Name             string `json:"name"`
 		ConfiguredPolicy string `json:"configured_policy"`

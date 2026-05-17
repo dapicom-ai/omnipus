@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	gen "github.com/dapicom-ai/omnipus/pkg/api/generated"
 	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/gateway/ctxkey"
@@ -98,15 +99,16 @@ func (a *restAPI) getSandboxConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := a.agentLoop.GetConfig()
 
-	allowedPaths := cfg.Sandbox.AllowedPaths
+	// Coerce nil slices to empty slices — never null (Ava-chat bug class).
+	allowedPaths := append([]string(nil), cfg.Sandbox.AllowedPaths...)
 	if allowedPaths == nil {
 		allowedPaths = []string{}
 	}
-	allowInternal := cfg.Sandbox.SSRF.AllowInternal
+	allowInternal := append([]string(nil), cfg.Sandbox.SSRF.AllowInternal...)
 	if allowInternal == nil {
 		allowInternal = []string{}
 	}
-	shellDenyPatterns := cfg.Sandbox.ShellDenyPatterns
+	shellDenyPatterns := append([]string(nil), cfg.Sandbox.ShellDenyPatterns...)
 	if shellDenyPatterns == nil {
 		shellDenyPatterns = []string{}
 	}
@@ -118,23 +120,32 @@ func (a *restAPI) getSandboxConfig(w http.ResponseWriter, r *http.Request) {
 		applied = string(a.sandboxResult.ApplyState.Mode)
 	}
 
+	// Collect scalar values into pointers for the generated type.
+	resolvedMode := gen.SandboxConfigMode(cfg.Sandbox.ResolvedMode())
+	allowNetOut := cfg.Sandbox.AllowNetworkOutbound
+	ssrfEnabled := cfg.Sandbox.SSRF.Enabled
+	defaultProfile := gen.SandboxConfigDefaultProfile(cfg.Sandbox.DefaultProfile)
+
 	// Return both the flat-field shape and the nested ssrf object.
 	// The flat fields are the canonical wire format; the nested ssrf block is
 	// included for backward-compatible clients. Both are safe to include — JSON
 	// consumers pick what they need.
-	jsonOK(w, map[string]any{
-		"mode":                   cfg.Sandbox.ResolvedMode(),
-		"allow_network_outbound": cfg.Sandbox.AllowNetworkOutbound,
-		"allowed_paths":          allowedPaths,
-		"ssrf_enabled":           cfg.Sandbox.SSRF.Enabled,
-		"ssrf_allow_internal":    allowInternal,
-		"applied_mode":           applied,
-		"default_profile":        string(cfg.Sandbox.DefaultProfile),
-		"shell_deny_patterns":    shellDenyPatterns,
+	jsonOK(w, gen.SandboxConfig{
+		Mode:                 &resolvedMode,
+		AllowNetworkOutbound: &allowNetOut,
+		AllowedPaths:         &allowedPaths,
+		SsrfEnabled:          &ssrfEnabled,
+		SsrfAllowInternal:    &allowInternal,
+		AppliedMode:          &applied,
+		DefaultProfile:       &defaultProfile,
+		ShellDenyPatterns:    &shellDenyPatterns,
 		// Nested ssrf object for backward-compatible clients.
-		"ssrf": map[string]any{
-			"enabled":        cfg.Sandbox.SSRF.Enabled,
-			"allow_internal": allowInternal,
+		Ssrf: &struct {
+			AllowInternal *[]string `json:"allow_internal,omitempty"`
+			Enabled       *bool     `json:"enabled,omitempty"`
+		}{
+			Enabled:       &ssrfEnabled,
+			AllowInternal: &allowInternal,
 		},
 	})
 }
@@ -368,47 +379,55 @@ func (a *restAPI) putSandboxConfig(w http.ResponseWriter, r *http.Request) {
 
 	// Return the updated config so the UI can cache-update without a follow-up GET.
 	// Include both flat fields and nested ssrf object for backward-compatible clients.
+	saved := true
 	if a.agentLoop != nil {
-		cfg := a.agentLoop.GetConfig()
-		allowedPaths := cfg.Sandbox.AllowedPaths
-		if allowedPaths == nil {
-			allowedPaths = []string{}
+		updatedCfg := a.agentLoop.GetConfig()
+		updatedAllowedPaths := append([]string(nil), updatedCfg.Sandbox.AllowedPaths...)
+		if updatedAllowedPaths == nil {
+			updatedAllowedPaths = []string{}
 		}
-		allowInternal := cfg.Sandbox.SSRF.AllowInternal
-		if allowInternal == nil {
-			allowInternal = []string{}
+		updatedAllowInternal := append([]string(nil), updatedCfg.Sandbox.SSRF.AllowInternal...)
+		if updatedAllowInternal == nil {
+			updatedAllowInternal = []string{}
 		}
-		applied := ""
+		updatedApplied := ""
 		if a.sandboxResult != nil {
-			applied = string(a.sandboxResult.ApplyState.Mode)
+			updatedApplied = string(a.sandboxResult.ApplyState.Mode)
 		}
-		shellDenyPatterns := cfg.Sandbox.ShellDenyPatterns
-		if shellDenyPatterns == nil {
-			shellDenyPatterns = []string{}
+		updatedShellDenyPatterns := append([]string(nil), updatedCfg.Sandbox.ShellDenyPatterns...)
+		if updatedShellDenyPatterns == nil {
+			updatedShellDenyPatterns = []string{}
 		}
-		jsonOK(w, map[string]any{
-			"saved":                  true,
-			"mode":                   cfg.Sandbox.ResolvedMode(),
-			"allow_network_outbound": cfg.Sandbox.AllowNetworkOutbound,
-			"allowed_paths":          allowedPaths,
-			"ssrf_enabled":           cfg.Sandbox.SSRF.Enabled,
-			"ssrf_allow_internal":    allowInternal,
-			"applied_mode":           applied,
-			"default_profile":        string(cfg.Sandbox.DefaultProfile),
-			"shell_deny_patterns":    shellDenyPatterns,
-			"requires_restart":       partialRestartRequired,
-			"ssrf": map[string]any{
-				"enabled":        cfg.Sandbox.SSRF.Enabled,
-				"allow_internal": allowInternal,
+		updatedMode := gen.SandboxConfigMode(updatedCfg.Sandbox.ResolvedMode())
+		updatedAllowNetOut := updatedCfg.Sandbox.AllowNetworkOutbound
+		updatedSsrfEnabled := updatedCfg.Sandbox.SSRF.Enabled
+		updatedDefaultProfile := gen.SandboxConfigDefaultProfile(updatedCfg.Sandbox.DefaultProfile)
+		jsonOK(w, gen.SandboxConfig{
+			Saved:                &saved,
+			Mode:                 &updatedMode,
+			AllowNetworkOutbound: &updatedAllowNetOut,
+			AllowedPaths:         &updatedAllowedPaths,
+			SsrfEnabled:          &updatedSsrfEnabled,
+			SsrfAllowInternal:    &updatedAllowInternal,
+			AppliedMode:          &updatedApplied,
+			DefaultProfile:       &updatedDefaultProfile,
+			ShellDenyPatterns:    &updatedShellDenyPatterns,
+			RequiresRestart:      &partialRestartRequired,
+			Ssrf: &struct {
+				AllowInternal *[]string `json:"allow_internal,omitempty"`
+				Enabled       *bool     `json:"enabled,omitempty"`
+			}{
+				Enabled:       &updatedSsrfEnabled,
+				AllowInternal: &updatedAllowInternal,
 			},
 		})
 		return
 	}
 
 	// Fallback when agentLoop is nil (test harness or startup race).
-	jsonOK(w, map[string]any{
-		"saved":            true,
-		"requires_restart": partialRestartRequired,
+	jsonOK(w, gen.SandboxConfig{
+		Saved:           &saved,
+		RequiresRestart: &partialRestartRequired,
 	})
 }
 

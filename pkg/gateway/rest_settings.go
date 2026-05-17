@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	gen "github.com/dapicom-ai/omnipus/pkg/api/generated"
 	"github.com/dapicom-ai/omnipus/pkg/credentials"
 )
 
@@ -504,24 +505,24 @@ func (a *restAPI) HandleAbout(w http.ResponseWriter, r *http.Request) {
 	// strict embedding control (T-04) is degraded. The SPA can show a banner.
 	mainOrigin := resolveMainOrigin(cfg)
 	frameAncestorsFallback := mainOrigin == ""
-	resp := map[string]any{
-		"version":        Version,
-		"go_version":     runtime.Version(),
-		"os":             runtime.GOOS,
-		"arch":           runtime.GOARCH,
-		"uptime":         uptime.String(),
-		"uptime_seconds": int(uptime.Seconds()),
-		"pid":            os.Getpid(),
+	resp := gen.AboutResponse{
+		Version:       Version,
+		GoVersion:     runtime.Version(),
+		Os:            runtime.GOOS,
+		Arch:          runtime.GOARCH,
+		Uptime:        uptime.String(),
+		UptimeSeconds: int(uptime.Seconds()),
+		Pid:           os.Getpid(),
 		// FR-009: preview listener fields for SPA iframe URL construction.
-		"preview_port":             cfg.Gateway.PreviewPort,
-		"preview_listener_enabled": cfg.Gateway.IsPreviewListenerEnabled(),
-		"warmup_timeout_seconds":   cfg.Tools.RunInWorkspace.WarmupTimeoutSeconds,
+		PreviewPort:            int(cfg.Gateway.PreviewPort),
+		PreviewListenerEnabled: cfg.Gateway.IsPreviewListenerEnabled(),
+		WarmupTimeoutSeconds:   int(cfg.Tools.RunInWorkspace.WarmupTimeoutSeconds),
 		// F-8: signals to the SPA that frame-ancestors is '*' (degraded T-04 defense).
-		"frame_ancestors_fallback": frameAncestorsFallback,
+		FrameAncestorsFallback: frameAncestorsFallback,
 	}
 	// preview_origin is optional — only include when the operator set it.
 	if cfg.Gateway.PreviewOrigin != "" {
-		resp["preview_origin"] = cfg.Gateway.PreviewOrigin
+		resp.PreviewOrigin = &cfg.Gateway.PreviewOrigin
 	}
 	jsonOK(w, resp)
 }

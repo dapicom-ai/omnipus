@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	gen "github.com/dapicom-ai/omnipus/pkg/api/generated"
 	"github.com/dapicom-ai/omnipus/pkg/audit"
 )
 
@@ -45,9 +46,12 @@ func (a *restAPI) HandleRetention(w http.ResponseWriter, r *http.Request) {
 func (a *restAPI) getRetention(w http.ResponseWriter, r *http.Request) {
 	cfg := a.agentLoop.GetConfig()
 	ret := cfg.Storage.Retention
-	jsonOK(w, map[string]any{
-		"session_days": ret.SessionDays,
-		"disabled":     ret.Disabled,
+	// Use pointers so both fields are always present in the JSON response.
+	sessionDays := ret.SessionDays
+	disabled := ret.Disabled
+	jsonOK(w, gen.RetentionConfig{
+		SessionDays: &sessionDays,
+		Disabled:    &disabled,
 	})
 }
 
@@ -179,9 +183,10 @@ func (a *restAPI) postRetentionSweep(w http.ResponseWriter, r *http.Request) {
 	ret := cfg.Storage.Retention
 
 	if ret.IsDisabled() {
-		jsonOK(w, map[string]any{
-			"removed":        0,
-			"skipped_reason": "disabled",
+		skippedReason := "disabled"
+		jsonOK(w, gen.RetentionSweepResult{
+			Removed:       0,
+			SkippedReason: &skippedReason,
 		})
 		return
 	}
@@ -216,8 +221,8 @@ func (a *restAPI) postRetentionSweep(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("rest: on-demand retention sweep completed", "removed", removed, "days", days)
 
-	jsonOK(w, map[string]any{
-		"removed": removed,
+	jsonOK(w, gen.RetentionSweepResult{
+		Removed: removed,
 	})
 }
 

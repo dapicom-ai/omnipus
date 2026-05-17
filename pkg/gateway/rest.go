@@ -32,6 +32,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/dapicom-ai/omnipus/pkg/agent"
+	gen "github.com/dapicom-ai/omnipus/pkg/api/generated"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/coreagent"
 	"github.com/dapicom-ai/omnipus/pkg/credentials"
@@ -3641,82 +3642,75 @@ func (a *restAPI) HandleChannels(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := a.agentLoop.GetConfig()
 	ch := cfg.Channels
-	type channelEntry struct {
-		ID          string `json:"id"`
-		Name        string `json:"name"`
-		Transport   string `json:"transport"`
-		Enabled     bool   `json:"enabled"`
-		Description string `json:"description"`
-	}
-	channels := []channelEntry{
-		{ID: "webchat", Name: "Web Chat", Transport: "websocket", Enabled: true, Description: "Built-in browser chat"},
+	channels := []gen.ChannelEntry{
+		{Id: "webchat", Name: "Web Chat", Transport: "websocket", Enabled: true, Description: "Built-in browser chat"},
 		{
-			ID:          "telegram",
+			Id:          "telegram",
 			Name:        "Telegram",
 			Transport:   "webhook",
 			Enabled:     ch.Telegram.Enabled,
 			Description: "Telegram Bot API",
 		},
 		{
-			ID:          "discord",
+			Id:          "discord",
 			Name:        "Discord",
 			Transport:   "websocket",
 			Enabled:     ch.Discord.Enabled,
 			Description: "Discord Gateway",
 		},
 		{
-			ID:          "slack",
+			Id:          "slack",
 			Name:        "Slack",
 			Transport:   "websocket",
 			Enabled:     ch.Slack.Enabled,
 			Description: "Slack Socket Mode",
 		},
 		{
-			ID:          "whatsapp",
+			Id:          "whatsapp",
 			Name:        "WhatsApp",
 			Transport:   "bridge",
 			Enabled:     ch.WhatsApp.Enabled,
 			Description: "WhatsApp via bridge or native",
 		},
 		{
-			ID:          "feishu",
+			Id:          "feishu",
 			Name:        "Feishu / Lark",
 			Transport:   "webhook",
 			Enabled:     ch.Feishu.Enabled,
 			Description: "Feishu (Lark) Bot",
 		},
 		{
-			ID:          "dingtalk",
+			Id:          "dingtalk",
 			Name:        "DingTalk",
 			Transport:   "webhook",
 			Enabled:     ch.DingTalk.Enabled,
 			Description: "DingTalk Bot",
 		},
 		{
-			ID:          "wecom",
+			Id:          "wecom",
 			Name:        "WeCom",
 			Transport:   "webhook",
 			Enabled:     ch.WeCom.Enabled,
 			Description: "WeCom (WeChat Work) Bot",
 		},
 		{
-			ID:          "weixin",
+			Id:          "weixin",
 			Name:        "Weixin",
 			Transport:   "webhook",
 			Enabled:     ch.Weixin.Enabled,
 			Description: "Weixin (WeChat) Official Account",
 		},
-		{ID: "line", Name: "LINE", Transport: "webhook", Enabled: ch.LINE.Enabled, Description: "LINE Messaging API"},
-		{ID: "qq", Name: "QQ", Transport: "websocket", Enabled: ch.QQ.Enabled, Description: "QQ via napcat"},
+		{Id: "line", Name: "LINE", Transport: "webhook", Enabled: ch.LINE.Enabled, Description: "LINE Messaging API"},
+		{Id: "qq", Name: "QQ", Transport: "websocket", Enabled: ch.QQ.Enabled, Description: "QQ via napcat"},
 		{
-			ID:          "onebot",
+			Id:          "onebot",
 			Name:        "OneBot",
 			Transport:   "websocket",
 			Enabled:     ch.OneBot.Enabled,
 			Description: "OneBot v11 protocol",
 		},
-		{ID: "irc", Name: "IRC", Transport: "tcp", Enabled: ch.IRC.Enabled, Description: "Internet Relay Chat"},
-		{ID: "matrix", Name: "Matrix", Transport: "http", Enabled: ch.Matrix.Enabled, Description: "Matrix protocol"},
+		{Id: "irc", Name: "IRC", Transport: "tcp", Enabled: ch.IRC.Enabled, Description: "Internet Relay Chat"},
+		{Id: "matrix", Name: "Matrix", Transport: "http", Enabled: ch.Matrix.Enabled, Description: "Matrix protocol"},
 	}
 	jsonOK(w, channels)
 }

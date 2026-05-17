@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	gen "github.com/dapicom-ai/omnipus/pkg/api/generated"
 	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 )
@@ -50,8 +51,8 @@ func (a *restAPI) HandleSkillTrust(w http.ResponseWriter, r *http.Request) {
 		if level == "" {
 			level = string(config.SkillTrustWarnUnverified)
 		}
-		jsonOK(w, map[string]any{
-			"level": level,
+		jsonOK(w, gen.SkillTrustResponse{
+			Level: gen.SkillTrustResponseLevel(level),
 		})
 
 	case http.MethodPut:

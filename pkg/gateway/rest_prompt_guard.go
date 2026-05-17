@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	gen "github.com/dapicom-ai/omnipus/pkg/api/generated"
 	"github.com/dapicom-ai/omnipus/pkg/audit"
 )
 
@@ -33,9 +34,9 @@ func (a *restAPI) HandlePromptGuard(w http.ResponseWriter, r *http.Request) {
 		if level == "" {
 			level = "medium"
 		}
-		jsonOK(w, map[string]any{
-			"level":            level,
-			"requires_restart": false,
+		jsonOK(w, gen.PromptGuardResponse{
+			Level:           gen.PromptGuardResponseLevel(level),
+			RequiresRestart: false,
 		})
 
 	case http.MethodPut:

@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	gen "github.com/dapicom-ai/omnipus/pkg/api/generated"
 	"github.com/dapicom-ai/omnipus/pkg/audit"
 	"github.com/dapicom-ai/omnipus/pkg/gateway/middleware"
 )
@@ -39,15 +40,14 @@ func (a *restAPI) HandleToolPolicies(w http.ResponseWriter, r *http.Request) {
 		if defaultPolicy == "" {
 			defaultPolicy = "allow"
 		}
-		// Return a non-nil map even when empty so the frontend always gets a
-		// consistent object shape rather than null.
-		policies := cfg.Sandbox.ToolPolicies
-		if policies == nil {
-			policies = map[string]string{}
+		// Coerce policies to the generated map type — never null (Ava-chat bug class).
+		policies := make(map[string]gen.GlobalToolPoliciesPolicies)
+		for k, v := range cfg.Sandbox.ToolPolicies {
+			policies[k] = gen.GlobalToolPoliciesPolicies(v)
 		}
-		jsonOK(w, map[string]any{
-			"default_policy": defaultPolicy,
-			"policies":       policies,
+		jsonOK(w, gen.GlobalToolPolicies{
+			DefaultPolicy: gen.GlobalToolPoliciesDefaultPolicy(defaultPolicy),
+			Policies:      policies,
 		})
 
 	case http.MethodPut:
@@ -148,8 +148,13 @@ func (a *restAPI) putToolPolicies(w http.ResponseWriter, r *http.Request) {
 
 	// Return the persisted state. Changes take effect immediately because
 	// safeUpdateConfigJSON hot-reloads the in-memory config after the write.
-	jsonOK(w, map[string]any{
-		"default_policy": body.DefaultPolicy,
-		"policies":       body.Policies,
+	// Coerce body.Policies to the generated map type — never null (Ava-chat bug class).
+	respPolicies := make(map[string]gen.GlobalToolPoliciesPolicies)
+	for k, v := range body.Policies {
+		respPolicies[k] = gen.GlobalToolPoliciesPolicies(v)
+	}
+	jsonOK(w, gen.GlobalToolPolicies{
+		DefaultPolicy: gen.GlobalToolPoliciesDefaultPolicy(body.DefaultPolicy),
+		Policies:      respPolicies,
 	})
 }

@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	gen "github.com/dapicom-ai/omnipus/pkg/api/generated"
 	"github.com/dapicom-ai/omnipus/pkg/audit"
 )
 
@@ -35,8 +36,8 @@ func (a *restAPI) HandleSandboxAuditLog(w http.ResponseWriter, r *http.Request) 
 	switch r.Method {
 	case http.MethodGet:
 		cfg := a.agentLoop.GetConfig()
-		jsonOK(w, map[string]any{
-			"enabled": cfg.Sandbox.AuditLog,
+		jsonOK(w, gen.AuditLogToggle{
+			Enabled: cfg.Sandbox.AuditLog,
 		})
 
 	case http.MethodPut:

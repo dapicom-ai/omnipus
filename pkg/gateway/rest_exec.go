@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"strings"
 
+	gen "github.com/dapicom-ai/omnipus/pkg/api/generated"
 	"github.com/dapicom-ai/omnipus/pkg/audit"
 )
 
@@ -38,10 +39,17 @@ func (a *restAPI) HandleExecAllowlist(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		cfg := a.agentLoop.GetConfig()
-		jsonOK(w, map[string]any{
-			"allowed_binaries": append([]string(nil), cfg.Tools.Exec.AllowedBinaries...),
-			"approval":         cfg.Tools.Exec.Approval,
-			"restart_required": false,
+		// Coerce nil slice to empty slice — never null (Ava-chat bug class).
+		allowedBinaries := append([]string(nil), cfg.Tools.Exec.AllowedBinaries...)
+		if allowedBinaries == nil {
+			allowedBinaries = []string{}
+		}
+		approval := cfg.Tools.Exec.Approval
+		restartRequired := false
+		jsonOK(w, gen.ExecAllowlist{
+			AllowedBinaries: allowedBinaries,
+			Approval:        &approval,
+			RestartRequired: &restartRequired,
 		})
 	case http.MethodPut:
 		var body struct {
@@ -110,9 +118,10 @@ func (a *restAPI) HandleExecAllowlist(w http.ResponseWriter, r *http.Request) {
 		// config is NOT hot-reloaded — changes take effect on next agent loop
 		// restart per SEC-12. `restart_required: true` tells the UI to surface
 		// a badge so operators are not confused about enforcement state.
-		jsonOK(w, map[string]any{
-			"allowed_binaries": sanitized,
-			"restart_required": true,
+		restartRequired := true
+		jsonOK(w, gen.ExecAllowlist{
+			AllowedBinaries: sanitized,
+			RestartRequired: &restartRequired,
 		})
 	default:
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
