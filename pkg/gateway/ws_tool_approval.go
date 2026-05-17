@@ -73,12 +73,20 @@ func (h *WSHandler) broadcastToolApprovalRequired(entry *approvalEntry) {
 	if entry == nil {
 		return
 	}
+	// Force args to a non-nil map so json.Marshal produces "args": {} not "args": null.
+	// SPA's ToolApprovalModal calls Object.keys(args) directly; null would crash it.
+	// cloneStringAnyMap (pkg/agent/hooks.go) returns nil for empty input, so a tool
+	// invoked without parameters lands here with entry.Args == nil.
+	args := entry.Args
+	if args == nil {
+		args = map[string]any{}
+	}
 	payload := toolApprovalRequiredPayload{
 		Type:        "tool_approval_required",
 		ApprovalID:  entry.ApprovalID,
 		ToolCallID:  entry.ToolCallID,
 		ToolName:    entry.ToolName,
-		Args:        entry.Args,
+		Args:        args,
 		AgentID:     entry.AgentID,
 		SessionID:   entry.SessionID,
 		TurnID:      entry.TurnID,
