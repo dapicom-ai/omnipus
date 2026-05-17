@@ -162,17 +162,51 @@ describe('MessageInput — stop button label morphing (B3)', () => {
 
   it('clicking Stop sets label to "Stopping..." optimistically (before done frame clears isStreaming)', () => {
     // Traces to: B3 — immediate optimistic update on click without waiting for graceful frame.
-    // We set no connection so cancelStream hits the early-return guard and leaves
-    // isStreaming: true. This simulates the window between clicking Stop and the
-    // done frame arriving from the server.
+    // We seed an assistant message so markLastMessageInterrupted (called from cancelStream)
+    // updates the message in place WITHOUT flipping isStreaming. The no-message path of
+    // markLastMessageInterrupted creates an interrupted placeholder AND sets
+    // isStreaming:false — that immediately triggers the useEffect that resets the label
+    // to "stop", which would defeat this optimistic-UI assertion.
     act(() => {
-      useChatStore.setState({ isStreaming: true, cancelStage: null })
-      // No connection — cancelStream returns early, isStreaming stays true
+      // The bucket needs an assistant message so markLastMessageInterrupted
+      // updates it in place (preserving bucket.isStreaming) instead of falling
+      // through to the no-message branch that flips isStreaming:false (which
+      // would defeat this optimistic-UI assertion).
+      const seededMsg = {
+        id: 'asst-1',
+        role: 'assistant' as const,
+        content: 'partial response so far',
+        timestamp: new Date().toISOString(),
+        status: 'streaming' as const,
+        isStreaming: true,
+      }
+      useSessionStore.setState({ activeSessionId: 'sess_1' })
+      useChatStore.setState({
+        isStreaming: true,
+        cancelStage: null,
+        messages: [seededMsg],
+        sessionsById: {
+          sess_1: {
+            messages: [seededMsg],
+            toolCalls: {},
+            toolCallOrder: [],
+            textAtToolCallStart: {},
+            pendingApprovals: [],
+            isStreaming: true,
+            isReplaying: false,
+            replayCompletedForSession: null,
+            sessionTokens: 0,
+            sessionCost: 0,
+            rateLimitEvent: null,
+            cancelStage: null,
+            lastUserMessageAt: null,
+          },
+        },
+      })
       useConnectionStore.setState({
         isConnected: true,
         connection: null,
       })
-      useSessionStore.setState({ activeSessionId: 'sess_1' })
     })
     render(<MessageInput />)
     // Before click: no label text shown (just icon); aria-label is "Stop" (FR-21 idle state)

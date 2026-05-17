@@ -80,14 +80,16 @@ describe('chat.multisession — (a) two session_started frames create two distin
     expect(bucketB).toBeDefined()
     expect(bucketA).not.toBe(bucketB)
 
-    // Each bucket has independent empty defaults
+    // Each bucket has independent empty defaults.
+    // FR-21 / T21-T25: session_started pre-sets isStreaming=true so the Stop
+    // button appears immediately without waiting for the first token frame.
     expect(bucketA.messages).toEqual([])
-    expect(bucketA.isStreaming).toBe(false)
+    expect(bucketA.isStreaming).toBe(true)
     expect(bucketA.sessionTokens).toBe(0)
     expect(bucketA.sessionCost).toBe(0)
 
     expect(bucketB.messages).toEqual([])
-    expect(bucketB.isStreaming).toBe(false)
+    expect(bucketB.isStreaming).toBe(true)
     expect(bucketB.sessionTokens).toBe(0)
     expect(bucketB.sessionCost).toBe(0)
   })
@@ -123,10 +125,11 @@ describe('chat.multisession — (b) token frame routes to correct bucket only', 
     const lastMsgA = bucketA.messages[bucketA.messages.length - 1]
     expect(lastMsgA.content).toBe('hello from A')
 
-    // BDD: And B's bucket is completely unchanged — content isolation
+    // BDD: And B's bucket is content-isolated — no token leaked across.
+    // (B's isStreaming is true because session_started pre-set it for B; this
+    // test asserts content isolation, not streaming-flag isolation.)
     const bucketB = state.sessionsById[SID_B]
     expect(bucketB.messages).toHaveLength(0)
-    expect(bucketB.isStreaming).toBe(false)
   })
 })
 
