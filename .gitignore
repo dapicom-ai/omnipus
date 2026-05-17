@@ -92,3 +92,6 @@ gateway.pid
 # manual run) configures a workspace under pkg/agent/. Auto-mutates daily
 # (date rollover) and pollutes git status; not seed data.
 pkg/agent/system/cost.json
+
+# Contract codegen temp files
+*.generated.tmp.*
