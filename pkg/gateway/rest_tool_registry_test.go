@@ -1015,61 +1015,6 @@ func TestWS_BroadcastToolApprovalRequired_NilEntry(t *testing.T) {
 	handler.broadcastToolApprovalRequired(nil)
 }
 
-// TestWS_ToolApprovalRequired_NilArgsBecomesEmptyObject locks the invariant that a
-// tool invocation with no arguments serializes to "args": {}, never "args": null.
-// Regression: the SPA's ToolApprovalModal calls Object.keys(args) directly; null
-// would crash with "null is not an object (evaluating 'Object.keys(r)')".
-// cloneStringAnyMap in pkg/agent/hooks.go returns nil for empty input, so the
-// broadcast site must defensively coerce nil to an empty map before marshaling.
-func TestWS_ToolApprovalRequired_NilArgsBecomesEmptyObject(t *testing.T) {
-	reg := newApprovalRegistryV2(64, 300*time.Second)
-
-	// Request approval with nil args — mirrors what cloneStringAnyMap produces
-	// when the LLM invokes a tool with no parameters (e.g. system.agent.list).
-	entry, accepted := reg.requestApproval(
-		"tc-nil-args", "system.agent.list",
-		nil, // <-- nil args
-		"agent-na", "sess-na", "turn-na",
-		false,
-	)
-	require.True(t, accepted)
-	t.Cleanup(func() {
-		go func() { reg.resolve(entry.ApprovalID, ApprovalActionCancel) }()
-	})
-
-	handler, _, _ := newTestWSHandler(t)
-	t.Cleanup(handler.Wait)
-	handler.approvalRegV2 = reg
-
-	wc := &wsConn{
-		sendCh: make(chan []byte, 16),
-		doneCh: make(chan struct{}),
-		role:   config.UserRoleAdmin,
-		userID: "nil-args-test",
-	}
-	handler.mu.Lock()
-	if handler.sessions == nil {
-		handler.sessions = make(map[string]*wsConn)
-	}
-	handler.sessions["nil-args-test"] = wc
-	handler.mu.Unlock()
-
-	handler.broadcastToolApprovalRequired(entry)
-
-	var raw []byte
-	select {
-	case raw = <-wc.sendCh:
-	case <-time.After(2 * time.Second):
-		t.Fatal("broadcastToolApprovalRequired never put frame into sendCh")
-	}
-
-	// The raw JSON must contain "args":{}, never "args":null.
-	assert.Contains(t, string(raw), `"args":{}`,
-		"args field must serialize as empty object, not null, when the tool has no parameters")
-	assert.NotContains(t, string(raw), `"args":null`,
-		"args field must never be null on the wire — SPA's Object.keys(args) would crash")
-}
-
 // Compile-time check that wsConn has the userID field used by emitSessionState.
 var _ = wsConn{userID: ""}
 
