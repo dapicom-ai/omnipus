@@ -1,4 +1,4 @@
-.PHONY: all build install uninstall clean help test
+.PHONY: all build install uninstall clean help test gen-contracts verify-contracts
 
 # Build variables
 BINARY_NAME=omnipus
@@ -330,6 +330,14 @@ build-macos-app:
 	@cd web && $(MAKE) build && cd ..
 	@./scripts/build-macos-app.sh $(BINARY_NAME)-$(PLATFORM)-$(ARCH)
 	@echo "macOS .app bundle created: $(BUILD_DIR)/Omnipus.app"
+
+## gen-contracts: Regenerate all contract artifacts (TS types, zod schemas, Go types)
+gen-contracts:
+	./scripts/gen-contracts.sh
+
+## verify-contracts: Regenerate contracts and fail if generated files have drifted from spec
+verify-contracts: gen-contracts
+	git diff --exit-code -- contracts/ pkg/api/generated/ src/lib/api/generated/
 
 ## help: Show this help message
 help:
