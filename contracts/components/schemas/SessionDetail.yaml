@@ -1,0 +1,15 @@
+type: object
+description: >
+  Full session detail as returned by GET /sessions/{id}.
+  Contains the session metadata plus the complete ordered transcript.
+required:
+  - session
+  - messages
+properties:
+  session:
+    $ref: './Session.yaml'
+  messages:
+    type: array
+    items:
+      $ref: './Message.yaml'
+    description: Ordered list of transcript entries for this session.
