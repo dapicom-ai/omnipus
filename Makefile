@@ -1,4 +1,4 @@
-.PHONY: all build install uninstall clean help test gen-contracts verify-contracts
+.PHONY: all build install uninstall clean help test gen-contracts verify-contracts lint-wire-types
 
 # Build variables
 BINARY_NAME=omnipus
@@ -335,8 +335,14 @@ build-macos-app:
 gen-contracts:
 	./scripts/gen-contracts.sh
 
-## verify-contracts: Regenerate contracts and fail if generated files have drifted from spec
-verify-contracts: gen-contracts
+## lint-wire-types: Fail if hand-written wire-format types exist outside generated directories
+## Enforces hard-constraint #8 (CLAUDE.md contract-first rule).
+## Add `// not-wire-format` on the struct/interface declaration line to suppress a false positive.
+lint-wire-types:
+	bash scripts/check-no-handwritten-wire-types.sh
+
+## verify-contracts: Regenerate contracts, run wire-type lint, fail if anything has drifted
+verify-contracts: gen-contracts lint-wire-types
 	git diff --exit-code -- contracts/ pkg/api/generated/ src/lib/api/generated/
 
 ## help: Show this help message

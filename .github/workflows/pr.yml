@@ -8,6 +8,33 @@ defaults:
     shell: bash
 
 jobs:
+  wire-types-lint:
+    name: Wire-Types Lint
+    # Enforces hard-constraint #8 (CLAUDE.md contract-first rule): every wire-
+    # format type that crosses the gateway/SPA boundary must live in the contract
+    # spec and be generated — not hand-written. A hand-written struct in
+    # pkg/gateway/*.go (name ending in Frame/Response/Request/Payload, ≥2 json
+    # tags) or a hand-written `export interface …Frame|…Response` in src/lib/
+    # fails this job.
+    #
+    # The baseline (existing pre-Phase-7 findings) will fail until Phase 7 cleans
+    # them up. This job intentionally does NOT use continue-on-error — violations
+    # must be visible as red on every PR.
+    #
+    # Developer opt-out for confirmed false positives:
+    #   Go:  add `// not-wire-format` on the `type Foo struct {` line
+    #   TS:  add `// not-wire-format` on the `export interface Foo` line
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run wire-types lint
+        # No language runtimes needed beyond bash + python3 (both present on
+        # ubuntu-latest). The script exits 1 if any hand-written wire-format
+        # types are found; exit 0 means clean.
+        run: bash scripts/check-no-handwritten-wire-types.sh
+
   verify-contracts:
     name: Verify Contracts
     # Ensure generated wire-format types (TS + Go) match the spec files.
