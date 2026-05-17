@@ -88,9 +88,9 @@ function baseRun(overrides: Partial<RunInWorkspaceResult> = {}): RunInWorkspaceR
 // ── describe.each: null result for each kind ──────────────────────────────────
 
 describe.each([
-  ['kind=serve_workspace, result=null', { kind: 'serve_workspace', result: null }],
-  ['kind=web_serve, result=null', { kind: 'web_serve', result: null }],
-  ['kind=run_in_workspace, result=null', { kind: 'run_in_workspace', result: null }],
+  ['kind=serve_workspace, result=null', { kind: 'serve_workspace' as const, result: null }],
+  ['kind=web_serve, result=null', { kind: 'web_serve' as const, result: null }],
+  ['kind=run_in_workspace, result=null', { kind: 'run_in_workspace' as const, result: null }],
 ])(
   'IframePreview renders %s without throwing',
   (_label: string, props: { kind: IframePreviewProps['kind']; result: null }) => {

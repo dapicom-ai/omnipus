@@ -219,7 +219,13 @@ export function parseFrameSafe(data: unknown): WsFrame | null {
 
   const result = WsFrameSchema.safeParse(raw)
   if (result.success) {
-    return result.data
+    // Zod 3 infers z.unknown() as `unknown`, and `undefined extends unknown`
+    // is true, so addQuestionMarks() makes every z.unknown() field optional in
+    // the inferred type. The ToolCallResultFrame.result field in asyncapi-types
+    // is required (required: [result] in the JSON Schema spec). The cast is safe:
+    // the Zod schema IS the contract — if it parsed successfully, the data
+    // matches the spec and result was present in the JSON payload.
+    return result.data as WsFrame
   }
 
   _droppedFrameCount++

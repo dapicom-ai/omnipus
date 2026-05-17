@@ -6,7 +6,7 @@
  * edge-case payload crashes the component.
  */
 
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { render } from '@testing-library/react'
 import { GenericToolCall } from './GenericToolCall'
 import type { MessagePartStatus } from '@assistant-ui/react'
@@ -21,7 +21,7 @@ import type {
 
 const COMPLETE_STATUS: MessagePartStatus = { type: 'complete' }
 const RUNNING_STATUS: MessagePartStatus = { type: 'running' }
-const ERROR_STATUS: MessagePartStatus = { type: 'incomplete' }
+const ERROR_STATUS: MessagePartStatus = { type: 'incomplete', reason: 'error' }
 
 // Minimal valid ToolCallStartFrame (from generated spec)
 const validStartFrame: ToolCallStartFrame = {

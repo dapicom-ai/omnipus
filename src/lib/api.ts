@@ -52,21 +52,34 @@ export function resetApiSchemaErrorCount(): void {
 // ── Re-exports from generated types ───────────────────────────────────────────
 //
 // Wire-format types come from the generated openapi-types.ts. The hand-written
-// aliases below replace the old duplicate interface declarations.
+// interfaces below replace the generated types only when the SPA-internal shape
+// differs from the wire shape (e.g. Session flattens nested stats, ToolCall uses
+// `params` while the wire uses `parameters`).
+//
+// RULE: types with hand-written bodies below are imported aliased and NOT
+// re-exported from generated — the local export interface is canonical.
+// Types without local bodies are imported and immediately re-exported.
 // See CLAUDE.md hard-constraint #8.
 
-export type {
+// Types where local hand-written body diverges from generated — imported aliased
+// for any internal-file use only. NOT in the re-export block below.
+import type {
+  Agent as _GAgent,
+  AgentToolsCfg as _GAgentToolsCfg,
+  Session as _GSession,
+  SessionDetail as _GSessionDetail,
+  Message as _GMessage,
+  ToolCall as _GToolCall,
+} from '@/lib/api/generated/openapi-types'
+
+// Types whose generated shape is canonical (no local body) — import into scope
+// so function return-type annotations compile, then re-export for consumers.
+import type {
   LoginResponse,
   ProbeProviderResponse,
-  Agent,
-  AgentToolsCfg,
   AgentSession,
   AgentToolEntry,
-  Session,
   SessionStats,
-  SessionDetail,
-  Message,
-  ToolCall,
   Attachment,
   User,
   UserCreateRequest,
@@ -96,6 +109,42 @@ export type {
   PendingRestartEntry,
   AboutResponse,
 } from '@/lib/api/generated/openapi-types'
+
+export type {
+  LoginResponse,
+  ProbeProviderResponse,
+  AgentSession,
+  AgentToolEntry,
+  SessionStats,
+  Attachment,
+  User,
+  UserCreateRequest,
+  UserCreateResponse,
+  UserDeleteResponse,
+  UserRoleChangeRequest,
+  UserRoleChangeResponse,
+  UserResetPasswordRequest,
+  UserResetPasswordResponse,
+  SessionScopeRequest,
+  SessionScopeResponse,
+  ToolRegistryEntry,
+  GlobalToolPolicies,
+  ToolPolicy,
+  ChannelEntry,
+  RetentionConfig,
+  RetentionSweepResult,
+  SandboxConfig,
+  SandboxStatus,
+  AuditEntry,
+  AuditLogToggle,
+  RateLimitConfig,
+  ExecAllowlist,
+  ExecProxyStatus,
+  SkillTrustResponse,
+  PromptGuardResponse,
+  PendingRestartEntry,
+  AboutResponse,
+}
 
 const BASE_URL = import.meta.env.VITE_API_URL ?? ''
 
@@ -329,12 +378,7 @@ export function updateAgent(id: string, data: Partial<Agent>): Promise<Agent> {
   return request<Agent>(`/agents/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(data) })
 }
 
-export interface AgentSession {
-  id: string
-  title: string
-  created_at: string
-  updated_at: string
-}
+// AgentSession — re-exported from generated openapi-types (no local body needed).
 
 export function fetchAgentSessions(agentId: string): Promise<AgentSession[]> {
   return request<AgentSession[]>(`/agents/${encodeURIComponent(agentId)}/sessions`)
@@ -1138,18 +1182,8 @@ export function isPreviewListenerEnabled(info: AboutInfo | undefined): boolean {
 export type AuditEventType = 'tool_call' | 'exec' | 'file_op' | 'llm_call' | 'policy_eval' | 'rate_limit' | 'ssrf' | 'startup' | 'shutdown'
 export type AuditDecision = 'allow' | 'deny' | 'error'
 
-export interface AuditEntry {
-  timestamp: string
-  event: AuditEventType | (string & {})
-  decision?: AuditDecision | (string & {})
-  agent_id?: string
-  session_id?: string
-  tool?: string
-  command?: string
-  parameters?: Record<string, unknown>
-  policy_rule?: string
-  details?: Record<string, unknown>
-}
+// AuditEntry — re-exported from generated openapi-types (no local body needed).
+// AuditEventType and AuditDecision remain as local type aliases for UI use.
 
 export function fetchAuditLog(): Promise<AuditEntry[]> {
   return request<AuditEntry[]>('/audit-log')
@@ -1242,13 +1276,7 @@ export function changePassword(currentPassword: string, newPassword: string): Pr
 
 // ── Exec Allowlist ────────────────────────────────────────────────────────────
 
-export interface ExecAllowlist {
-  allowed_binaries: string[]
-  // restart_required is true on a successful PUT: the in-memory agent loop
-  // still uses the previous allowlist until Omnipus restarts (SEC-12). The UI
-  // surfaces this via a "Restart required" badge in ExecAllowlistSection.
-  restart_required?: boolean
-}
+// ExecAllowlist — re-exported from generated openapi-types (no local body needed).
 
 export function fetchExecAllowlist(): Promise<ExecAllowlist> {
   return request<ExecAllowlist>('/security/exec-allowlist')
@@ -1271,14 +1299,7 @@ export type SkillTrustLevel = 'block_unverified' | 'warn_unverified' | 'allow_al
 export type PromptInjectionLevel = 'low' | 'medium' | 'high'
 export type DMScope = 'main' | 'per-peer' | 'per-channel-peer' | 'per-account-channel-peer'
 
-// PendingRestartEntry represents one config key that has been written to disk
-// but not yet applied to the running process — the running value differs from
-// the persisted value and a restart is required to reconcile them.
-export interface PendingRestartEntry {
-  key: string
-  applied_value: unknown
-  persisted_value: unknown
-}
+// PendingRestartEntry — re-exported from generated openapi-types (no local body needed).
 
 export function fetchPendingRestart(): Promise<PendingRestartEntry[]> {
   return request<PendingRestartEntry[]>('/config/pending-restart')
@@ -1586,12 +1607,7 @@ export function updateUserRole(username: string, role: UserRole): Promise<Update
 }
 
 // ── Exec Proxy ────────────────────────────────────────────────────────────────
-
-export interface ExecProxyStatus {
-  running: boolean
-  enabled: boolean
-  address?: string
-}
+// ExecProxyStatus — re-exported from generated openapi-types (no local body needed).
 
 export function fetchExecProxyStatus(): Promise<ExecProxyStatus> {
   return request<ExecProxyStatus>('/security/exec-proxy-status')
@@ -1625,20 +1641,7 @@ export interface AgentToolsCfg {
   mcp?: { servers: { id: string; tools?: string[] }[] }
 }
 
-/**
- * Per-tool entry returned by GET /agents/{id}/tools (FR-086, MAJ-008).
- * Exposes both the configured policy and the effective (post-fence) policy
- * so the UI can display policy downgrades.
- */
-export interface AgentToolEntry {
-  name: string
-  configured_policy: 'allow' | 'ask' | 'deny'
-  effective_policy: 'allow' | 'ask' | 'deny'
-  /** True when the tool is admin-required and the agent type is 'custom' — policy was downgraded to 'ask'. */
-  fence_applied: boolean
-  /** True when the tool requires admin approval regardless of configured policy. */
-  requires_admin_ask: boolean
-}
+// AgentToolEntry — re-exported from generated openapi-types (no local body needed).
 
 /** Fetch all tools from the central registry (FR-027). Includes both builtin and MCP tools. */
 export function fetchRegistryTools(): Promise<RegistryTool[]> {
@@ -1675,11 +1678,7 @@ export function postToolApproval(approvalId: string, action: 'approve' | 'deny' 
 }
 
 // ── Global Tool Policies ──────────────────────────────────────────────────────
-
-export interface GlobalToolPolicies {
-  default_policy: 'allow' | 'ask' | 'deny'
-  policies: Record<string, 'allow' | 'ask' | 'deny'>
-}
+// GlobalToolPolicies — re-exported from generated openapi-types (no local body needed).
 
 export function fetchGlobalToolPolicies(): Promise<GlobalToolPolicies> {
   return request<GlobalToolPolicies>('/security/tool-policies')
@@ -1693,25 +1692,8 @@ export function updateGlobalToolPolicies(cfg: GlobalToolPolicies): Promise<Globa
 }
 
 // ── Sandbox Status ────────────────────────────────────────────────────────────
-
-export interface SandboxStatus {
-  backend: string
-  available: boolean
-  // kernel_level reports the CAPABILITY — the backend can enforce at the
-  // kernel level if Apply() is called. policy_applied reports whether the
-  // enforcement is actually live on this process. A kernel-capable backend
-  // without policy_applied has status notes explaining the gap.
-  kernel_level: boolean
-  policy_applied: boolean
-  abi_version?: number
-  // issue_ref is set by the server when a known kernel incompatibility is flagged
-  // (currently ABI v4+). Do NOT hard-code the literal issue number in the UI.
-  issue_ref?: string
-  blocked_syscalls?: string[]
-  seccomp_enabled: boolean
-  landlock_features?: string[]
-  notes?: string[]
-}
+// SandboxStatus — re-exported from generated openapi-types (no local body needed).
+// The generated schema is a superset of the previous hand-written shape.
 
 export function fetchSandboxStatus(): Promise<SandboxStatus> {
   return request<SandboxStatus>('/security/sandbox-status')

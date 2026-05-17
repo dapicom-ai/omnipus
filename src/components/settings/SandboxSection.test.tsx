@@ -60,6 +60,7 @@ const baseStatus: SandboxStatus = {
   kernel_level: true,
   policy_applied: true,
   seccomp_enabled: true,
+  bind_ports_count: 0,
 }
 
 const baseConfig: SandboxConfigResponse = {
