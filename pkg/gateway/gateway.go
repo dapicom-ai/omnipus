@@ -438,7 +438,7 @@ func RunContextWithOptions(ctx context.Context, opts RunOptions) error {
 
 	// Only override ModelName if it was empty (first boot / migration).
 	// Don't overwrite an alias (e.g. "openrouter-auto") with the raw model slug
-	// (e.g. "z-ai/glm-5-turbo") — the alias is what GetModelConfig looks up by.
+	// (e.g. "z-ai/glm-5v-turbo") — the alias is what GetModelConfig looks up by.
 	if modelID != "" && cfg.Agents.Defaults.ModelName == "" {
 		cfg.Agents.Defaults.ModelName = modelID
 	}

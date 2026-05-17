@@ -424,7 +424,7 @@ func (g *TestGateway) SeedUser(ctx context.Context, u config.UserConfig, beforeW
 
 // buildConfig assembles a minimal config.Config from the harness options.
 //
-// The Providers list is seeded with a single OpenRouter+glm-5-turbo entry that
+// The Providers list is seeded with a single OpenRouter+glm-5v-turbo entry that
 // matches the e2e Playwright setup in .github/workflows/pr.yml. The gateway's
 // boot path validates `len(cfg.Providers) > 0` (pkg/providers/legacy_provider.go);
 // without an entry every test using StartTestGateway fails to boot. Tests that
@@ -448,7 +448,7 @@ func buildConfig(hc *harnessConfig, homeDir string, port int) *config.Config {
 		Providers: []*config.ModelConfig{
 			{
 				ModelName: "openrouter-glm",
-				Model:     "openrouter/z-ai/glm-5-turbo",
+				Model:     "openrouter/z-ai/glm-5v-turbo",
 				Provider:  "openrouter",
 				APIBase:   "https://openrouter.ai/api/v1",
 				APIKeyRef: "OPENROUTER_API_KEY",
