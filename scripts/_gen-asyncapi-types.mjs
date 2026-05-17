@@ -31,8 +31,10 @@ function resolveJsYaml() {
     const gitCommonDir = execSync("git rev-parse --git-common-dir", {
       cwd: ROOT, encoding: "utf8"
     }).trim();
-    // git-common-dir is something like /path/to/repo/.git
-    const mainRepoRoot = dirname(gitCommonDir);
+    // git-common-dir may be a relative path like ".git"; resolve against ROOT
+    // so the returned candidate is always absolute (require() needs absolute
+    // paths when invoked from a script directory other than node's cwd).
+    const mainRepoRoot = resolve(ROOT, dirname(gitCommonDir));
     const candidate = join(mainRepoRoot, "node_modules", "js-yaml", "index.js");
     if (existsSync(candidate)) return candidate;
   } catch (_) {
@@ -61,7 +63,8 @@ function resolveContractsDir() {
     const gitCommonDir = execSync("git rev-parse --git-common-dir", {
       cwd: ROOT, encoding: "utf8"
     }).trim();
-    const mainRepoRoot = dirname(gitCommonDir);
+    // Resolve against ROOT so a relative ".git" becomes absolute.
+    const mainRepoRoot = resolve(ROOT, dirname(gitCommonDir));
     const contractsPath = join(mainRepoRoot, "contracts");
     if (existsSync(contractsPath)) return contractsPath;
   } catch (_) {

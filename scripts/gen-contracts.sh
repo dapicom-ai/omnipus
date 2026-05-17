@@ -1,24 +1,33 @@
 #!/usr/bin/env bash
 # gen-contracts.sh — Single source-of-truth codegen for all wire-format types.
 #
-# Runs four steps:
-#   1. Lint both contract specs (openapi.yaml + asyncapi.yaml)
-#   2. Generate TypeScript types from openapi.yaml (Agent A output)
-#   3. Generate Go types from openapi.yaml + asyncapi.yaml (Agent B output)
-#   4. Format generated Go files
+# Drives both _gen-ts.sh (Agent A — openapi-typescript, openapi-zod-client,
+# custom AsyncAPI converter) and _gen-go.sh equivalent commands (Agent B —
+# oapi-codegen + custom AsyncAPI Go converter).
 #
 # Idempotent: running twice in a clean tree produces no git diff.
-# set -euo pipefail ensures any failure stops the chain immediately.
+# Used by `make gen-contracts` and `make verify-contracts` (the latter adds a
+# git-diff-exit-code gate on top).
 #
-# Usage:
-#   ./scripts/gen-contracts.sh           # regenerate everything
-#   make gen-contracts                   # same via Makefile target
-#   make verify-contracts                # gen + git diff --exit-code (CI gate)
+# Required tools (verified at top, fails fast if missing):
+#   - npx + node_modules (openapi-typescript, openapi-zod-client, js-yaml, @asyncapi/parser, @redocly/cli)
+#   - /usr/local/go/bin/go (or `go` in PATH)
+#   - /home/Daniel/go/bin/oapi-codegen (or `oapi-codegen` in PATH — install via
+#       `GOBIN=/home/Daniel/go/bin go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.7.0`)
+#   - /usr/local/go/bin/gofmt (or `gofmt` in PATH)
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
+
+# Make sure Go toolchain is on PATH for child processes (oapi-codegen, gofmt)
+if [ -d /usr/local/go/bin ] && ! echo "$PATH" | grep -q "/usr/local/go/bin"; then
+  export PATH="/usr/local/go/bin:$PATH"
+fi
+if [ -d /home/Daniel/go/bin ] && ! echo "$PATH" | grep -q "/home/Daniel/go/bin"; then
+  export PATH="/home/Daniel/go/bin:$PATH"
+fi
 
 echo "[gen-contracts] Working directory: ${REPO_ROOT}"
 
@@ -45,83 +54,37 @@ node -e "
 "
 
 # ---------------------------------------------------------------------------
-# Step 2: TypeScript types (Agent A delivers openapi-typescript + zod)
+# Step 2: TypeScript types + Zod (delegated to Agent A's idempotent helper)
 # ---------------------------------------------------------------------------
-echo "[gen-contracts] Step 2/4: Generating TypeScript types from openapi.yaml..."
-mkdir -p src/lib/api/generated
-
-npx --no-install openapi-typescript contracts/openapi.yaml \
-  -o src/lib/api/generated/openapi-types.ts
-
-echo "[gen-contracts] Step 2/4: Generating TypeScript types from asyncapi.yaml..."
-# AsyncAPI → TypeScript: use @asyncapi/modelina if available, otherwise a
-# hand-crafted node script that Agent A ships alongside the generated file.
-# The generated file is committed; this step regenerates it from the spec.
-if npx --no-install @asyncapi/cli version >/dev/null 2>&1; then
-  npx --no-install @asyncapi/cli generate models typescript \
-    contracts/asyncapi.yaml \
-    -o src/lib/api/generated/asyncapi-types/
-  # Merge all files produced by modelina into a single barrel file
-  node -e "
-    const fs = require('fs');
-    const path = require('path');
-    const dir = 'src/lib/api/generated/asyncapi-types';
-    if (!fs.existsSync(dir)) { console.log('no asyncapi-types dir — skipping merge'); process.exit(0); }
-    const files = fs.readdirSync(dir).filter(f => f.endsWith('.ts') && f !== 'index.ts');
-    const exports = files.map(f => \`export * from './asyncapi-types/\${f.replace(/\\.ts$/, '')}';\`).join('\n');
-    fs.writeFileSync('src/lib/api/generated/asyncapi-types.ts', exports + '\n');
-    console.log('asyncapi-types.ts barrel written');
-  "
-else
-  echo "[gen-contracts]   @asyncapi/cli not found — asyncapi-types.ts regeneration skipped (committed file retained)"
-fi
-
-echo "[gen-contracts] Step 2/4: Generating Zod schemas from openapi.yaml..."
-if npx --no-install openapi-zod-client --version >/dev/null 2>&1; then
-  npx --no-install openapi-zod-client contracts/openapi.yaml \
-    -o src/lib/api/generated/schemas.ts \
-    --export-schemas \
-    --strict-objects
-else
-  echo "[gen-contracts]   openapi-zod-client not found — schemas.ts regeneration skipped (committed file retained)"
-fi
+echo "[gen-contracts] Step 2/4: Generating TypeScript types + Zod schemas..."
+bash scripts/_gen-ts.sh
 
 # ---------------------------------------------------------------------------
-# Step 3: Go types (Agent B delivers oapi-codegen + asyncapi converter)
+# Step 3: Go types — REST via oapi-codegen + WS via custom converter
 # ---------------------------------------------------------------------------
 echo "[gen-contracts] Step 3/4: Generating Go types from openapi.yaml..."
 mkdir -p pkg/api/generated
 
-if command -v oapi-codegen >/dev/null 2>&1; then
-  oapi-codegen \
-    --package=generated \
-    --generate=types \
-    -o pkg/api/generated/openapi_types.gen.go \
-    contracts/openapi.yaml
-else
-  echo "[gen-contracts]   oapi-codegen not found in PATH — openapi_types.gen.go regeneration skipped (committed file retained)"
+if ! command -v oapi-codegen >/dev/null 2>&1; then
+  echo "[gen-contracts] ERROR: oapi-codegen not in PATH. Install with:" >&2
+  echo "  GOBIN=/home/Daniel/go/bin go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.7.0" >&2
+  exit 1
 fi
+oapi-codegen -config pkg/api/generated/oapi-codegen-config.yaml contracts/openapi.yaml
 
 echo "[gen-contracts] Step 3/4: Generating Go types from asyncapi.yaml..."
-# Agent B ships a converter at scripts/asyncapi_to_go.go (or similar).
-# Invoke it if present; otherwise fall back to the committed file.
-if [ -f scripts/asyncapi_to_go.go ]; then
-  go run scripts/asyncapi_to_go.go \
-    -input contracts/asyncapi.yaml \
-    -output pkg/api/generated/asyncapi_types.gen.go \
-    -package generated
-elif [ -f scripts/gen_asyncapi_types.sh ]; then
-  bash scripts/gen_asyncapi_types.sh
-else
-  echo "[gen-contracts]   No asyncapi→Go converter found — asyncapi_types.gen.go regeneration skipped (committed file retained)"
+if [ ! -d scripts/gen-asyncapi-go ]; then
+  echo "[gen-contracts] ERROR: scripts/gen-asyncapi-go/ missing — Agent B's AsyncAPI Go converter not committed." >&2
+  exit 1
 fi
+CGO_ENABLED=0 go run ./scripts/gen-asyncapi-go/ \
+  contracts/asyncapi.yaml \
+  pkg/api/generated/asyncapi_types.gen.go
 
 # ---------------------------------------------------------------------------
-# Step 4: Format generated Go files
+# Step 4: Format generated Go files (deterministic gofmt)
 # ---------------------------------------------------------------------------
 echo "[gen-contracts] Step 4/4: Formatting generated Go files..."
-if [ -d pkg/api/generated ]; then
-  gofmt -w pkg/api/generated/
-fi
+gofmt -w pkg/api/generated/
 
 echo "[gen-contracts] Done. All contract artifacts are up to date."
