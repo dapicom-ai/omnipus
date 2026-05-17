@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { WsConnection } from './ws'
+import { WsConnection, parseFrameSafe, getDroppedFrameCount, resetDroppedFrameCount } from './ws'
 
 // ── Mock WebSocket ─────────────────────────────────────────────────────────────
 
@@ -315,5 +315,144 @@ describe('WsConnection — persistent banner for non-1000/1001 close (B1.3c)', (
 
     // onError must not be called for a 1000 close initiated by the client
     expect(cbs.onError).not.toHaveBeenCalled()
+  })
+})
+
+// ── parseFrameSafe ─────────────────────────────────────────────────────────────
+//
+// Traces to: CLAUDE.md hard-constraint #8 — SPA edge validates every incoming
+// payload through the matching Zod schema. Drop + counter + dev toast on failure.
+//
+// Covers the original bug: tool_approval_required with args: null crashed the
+// ToolApprovalModal with "Object.keys(null)". parseFrameSafe rejects that frame
+// before it reaches any component.
+
+describe('parseFrameSafe', () => {
+  beforeEach(() => {
+    resetDroppedFrameCount()
+  })
+
+  it('returns a typed WsFrame for a valid token frame string', () => {
+    const result = parseFrameSafe('{"type":"token","session_id":"s1","content":"Hello"}')
+    expect(result).not.toBeNull()
+    expect(result?.type).toBe('token')
+    if (result?.type === 'token') {
+      expect(result.content).toBe('Hello')
+    }
+    expect(getDroppedFrameCount()).toBe(0)
+  })
+
+  it('returns a typed WsFrame for a valid done frame string', () => {
+    const result = parseFrameSafe(
+      '{"type":"done","session_id":"s1","stats":{"tokens":100,"cost":0.01}}'
+    )
+    expect(result).not.toBeNull()
+    expect(result?.type).toBe('done')
+    expect(getDroppedFrameCount()).toBe(0)
+  })
+
+  it('returns a typed WsFrame when given a pre-parsed object', () => {
+    // parseFrameSafe must accept already-parsed objects, not just JSON strings.
+    const raw = { type: 'error', message: 'something went wrong' }
+    const result = parseFrameSafe(raw)
+    expect(result).not.toBeNull()
+    expect(result?.type).toBe('error')
+    expect(getDroppedFrameCount()).toBe(0)
+  })
+
+  // ── Original bug repro ───────────────────────────────────────────────────────
+  // tool_approval_required with args: null used to crash ToolApprovalModal via
+  // Object.keys(null). The generated Zod schema has args: z.record(z.unknown())
+  // which requires a plain object, so this frame is now rejected at the edge.
+
+  it('drops tool_approval_required with args: null and increments counter', () => {
+    const frame = {
+      type: 'tool_approval_required',
+      approval_id: 'appr_1',
+      tool_call_id: 'tc_1',
+      tool_name: 'workspace.shell',
+      args: null, // ← the original bug: Go emitted null instead of {}
+      agent_id: 'agent-jim',
+      session_id: 'sess_1',
+      turn_id: 'turn_1',
+      expires_in_ms: 30000,
+    }
+    const result = parseFrameSafe(frame)
+    expect(result).toBeNull()
+    expect(getDroppedFrameCount()).toBe(1)
+  })
+
+  it('accepts tool_approval_required with args: {} (correct form)', () => {
+    const frame = {
+      type: 'tool_approval_required',
+      approval_id: 'appr_1',
+      tool_call_id: 'tc_1',
+      tool_name: 'workspace.shell',
+      args: {},
+      agent_id: 'agent-jim',
+      session_id: 'sess_1',
+      turn_id: 'turn_1',
+      expires_in_ms: 30000,
+    }
+    const result = parseFrameSafe(frame)
+    expect(result).not.toBeNull()
+    expect(result?.type).toBe('tool_approval_required')
+    expect(getDroppedFrameCount()).toBe(0)
+  })
+
+  // ── Malformed / invalid inputs ───────────────────────────────────────────────
+
+  it('returns null and increments counter for malformed JSON string', () => {
+    const result = parseFrameSafe('not valid json {{{')
+    expect(result).toBeNull()
+    expect(getDroppedFrameCount()).toBe(1)
+  })
+
+  it('returns null and increments counter for unknown frame type', () => {
+    const result = parseFrameSafe('{"type":"future_frame_type","data":"x"}')
+    expect(result).toBeNull()
+    expect(getDroppedFrameCount()).toBe(1)
+  })
+
+  it('returns null and increments counter for frame missing required field', () => {
+    // token frame requires session_id and content
+    const result = parseFrameSafe('{"type":"token"}')
+    expect(result).toBeNull()
+    expect(getDroppedFrameCount()).toBe(1)
+  })
+
+  it('returns null and increments counter for non-object input', () => {
+    const result = parseFrameSafe(42)
+    expect(result).toBeNull()
+    expect(getDroppedFrameCount()).toBe(1)
+  })
+
+  it('returns null and increments counter for null input', () => {
+    const result = parseFrameSafe(null)
+    expect(result).toBeNull()
+    expect(getDroppedFrameCount()).toBe(1)
+  })
+
+  // ── Counter accumulation and reset ──────────────────────────────────────────
+
+  it('accumulates counter across multiple dropped frames', () => {
+    parseFrameSafe('bad json')
+    parseFrameSafe('also bad')
+    parseFrameSafe('{"type":"unknown_1"}')
+    expect(getDroppedFrameCount()).toBe(3)
+  })
+
+  it('resetDroppedFrameCount resets to 0', () => {
+    parseFrameSafe('bad json')
+    parseFrameSafe('bad json 2')
+    expect(getDroppedFrameCount()).toBe(2)
+    resetDroppedFrameCount()
+    expect(getDroppedFrameCount()).toBe(0)
+  })
+
+  it('does not increment counter on valid frames', () => {
+    parseFrameSafe('{"type":"token","session_id":"s1","content":"a"}')
+    parseFrameSafe('{"type":"error","message":"err"}')
+    expect(getDroppedFrameCount()).toBe(0)
   })
 })

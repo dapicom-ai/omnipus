@@ -1,6 +1,277 @@
 // WebSocket connection manager for /api/v1/chat/ws
 // Handles: connect, authenticate, streaming frames, reconnect with exponential backoff
 
+// ── Generated type imports ────────────────────────────────────────────────────
+//
+// All wire-format frame types are sourced from the generated AsyncAPI types.
+// Hand-written interface declarations for wire-format frames are FORBIDDEN —
+// see CLAUDE.md hard-constraint #8. This file re-exports and aliases only.
+
+import { WsFrame as WsFrameSchema } from '@/lib/api/generated/schemas'
+import type {
+  WsFrameType,
+  WsFrame,
+  ServerFrame,
+  ClientFrame,
+  // Server → client frames
+  SessionStartedFrame,
+  TokenFrame,
+  DoneFrame,
+  DoneStats,
+  ErrorFrame,
+  ToolCallStartFrame,
+  ToolCallResultFrame,
+  TruncatedResult,
+  MarshalErrorResult,
+  SubagentStartFrame,
+  SubagentEndFrame,
+  ExecApprovalRequestFrame,
+  TaskStatusChangedFrame,
+  ReplayMessageFrame,
+  RateLimitFrame,
+  MediaFrame,
+  MediaPart,
+  AgentSwitchedFrame,
+  ToolApprovalRequiredFrame,
+  SessionStatePendingApproval,
+  SessionStateFrame,
+  SystemOverloadFrame,
+  ReplayWarningFrame,
+  ReplayWarningStats,
+  CancelStageFrame,
+  SessionCloseAckFrame,
+  ExecApprovalResponseAckFrame,
+  DevicePairingRequestFrame,
+  // Client → server frames
+  AuthFrame,
+  MessageFrame,
+  CancelFrame,
+  ExecApprovalResponseFrame,
+  PingFrame,
+  AttachSessionFrame,
+  DevicePairingResponseFrame,
+} from '@/lib/api/generated/asyncapi-types'
+
+// Re-export canonical names from generated file
+export type {
+  WsFrameType,
+  WsFrame,
+  ServerFrame,
+  ClientFrame,
+  SessionStartedFrame,
+  TokenFrame,
+  DoneFrame,
+  DoneStats,
+  ErrorFrame,
+  ToolCallStartFrame,
+  ToolCallResultFrame,
+  TruncatedResult,
+  MarshalErrorResult,
+  SubagentStartFrame,
+  SubagentEndFrame,
+  ExecApprovalRequestFrame,
+  TaskStatusChangedFrame,
+  ReplayMessageFrame,
+  RateLimitFrame,
+  MediaFrame,
+  MediaPart,
+  AgentSwitchedFrame,
+  ToolApprovalRequiredFrame,
+  SessionStatePendingApproval,
+  SessionStateFrame,
+  SystemOverloadFrame,
+  ReplayWarningFrame,
+  ReplayWarningStats,
+  CancelStageFrame,
+  SessionCloseAckFrame,
+  ExecApprovalResponseAckFrame,
+  DevicePairingRequestFrame,
+  AuthFrame,
+  MessageFrame,
+  CancelFrame,
+  ExecApprovalResponseFrame,
+  PingFrame,
+  AttachSessionFrame,
+  DevicePairingResponseFrame,
+}
+
+// ── WsXxx legacy aliases ──────────────────────────────────────────────────────
+//
+// Existing consumers (stores, components, tests) use Ws-prefixed type names.
+// These aliases let them keep their current imports. New code should use the
+// canonical names above.
+
+export type WsAuthFrame = AuthFrame
+export type WsMessageFrame = MessageFrame
+export type WsCancelFrame = CancelFrame
+export type WsExecApprovalResponseFrame = ExecApprovalResponseFrame
+export type WsPingFrame = PingFrame
+export type WsAttachSessionFrame = AttachSessionFrame
+export type WsDevicePairingResponseFrame = DevicePairingResponseFrame
+
+export type WsSessionStartedFrame = SessionStartedFrame
+export type WsTokenFrame = TokenFrame
+export type WsDoneFrame = DoneFrame
+export type WsErrorFrame = ErrorFrame
+export type WsToolCallStartFrame = ToolCallStartFrame
+export type WsToolCallResultFrame = ToolCallResultFrame
+export type WsSubagentStartFrame = SubagentStartFrame
+export type WsSubagentEndFrame = SubagentEndFrame
+export type WsExecApprovalRequestFrame = ExecApprovalRequestFrame
+export type WsTaskStatusChangedFrame = TaskStatusChangedFrame
+export type WsReplayMessageFrame = ReplayMessageFrame
+export type WsRateLimitFrame = RateLimitFrame
+export type WsMediaFrame = MediaFrame
+export type WsMediaPart = MediaPart
+export type WsAgentSwitchedFrame = AgentSwitchedFrame
+export type WsToolApprovalRequiredFrame = ToolApprovalRequiredFrame
+export type WsSessionStatePendingApproval = SessionStatePendingApproval
+export type WsSessionStateFrame = SessionStateFrame
+export type WsSystemOverloadFrame = SystemOverloadFrame
+export type WsReplayWarningFrame = ReplayWarningFrame
+export type WsCancelStageFrame = CancelStageFrame
+export type WsSessionCloseAckFrame = SessionCloseAckFrame
+export type WsExecApprovalResponseAckFrame = ExecApprovalResponseAckFrame
+export type WsDevicePairingRequestFrame = DevicePairingRequestFrame
+
+// WsSendFrame: union of all client→server frames.
+export type WsSendFrame = ClientFrame
+
+// WsReceiveFrame: union of all server→client frames.
+export type WsReceiveFrame = ServerFrame
+
+// ── Dropped-frame counter ─────────────────────────────────────────────────────
+//
+// Module-level mutable counter. No locking needed in single-threaded JS.
+// Exported for tests and telemetry.
+
+let _droppedFrameCount = 0
+
+export function getDroppedFrameCount(): number {
+  return _droppedFrameCount
+}
+
+export function resetDroppedFrameCount(): void {
+  _droppedFrameCount = 0
+}
+
+// ── Dev-mode toast helper ─────────────────────────────────────────────────────
+//
+// Throttled: at most one toast per frame type per second to avoid flooding the
+// UI when a burst of malformed frames arrives.
+
+const _toastThrottleMap: Record<string, number> = {}
+const TOAST_THROTTLE_MS = 1000
+
+function _maybeDevToast(frameType: string, message: string): void {
+  if (!import.meta.env.DEV) return
+  const now = Date.now()
+  if (now - (_toastThrottleMap[frameType] ?? 0) < TOAST_THROTTLE_MS) return
+  _toastThrottleMap[frameType] = now
+  try {
+    // Zustand stores expose getState() for non-React callers.
+    // Dynamic require avoids circular-dep issues at module init time.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { useUiStore } = require('@/store/ui') as {
+      useUiStore: { getState: () => { addToast: (t: { message: string; variant: 'warning' }) => void } }
+    }
+    useUiStore.getState().addToast({ message, variant: 'warning' })
+  } catch {
+    console.warn('[ws]', message)
+  }
+}
+
+// ── parseFrameSafe ────────────────────────────────────────────────────────────
+//
+// Validates an incoming WebSocket payload against the generated WsFrame Zod
+// discriminated-union schema. Returns the typed WsFrame on success, null on
+// any failure. Never throws.
+//
+// Failure modes:
+//   - Non-JSON string              → null, counter++
+//   - No/bad `type` field          → null, counter++
+//   - Known type, missing field    → null, counter++, dev toast
+//   - Unknown type                 → null, counter++
+//
+// This is the strict public API for callers (including tests) that want
+// contract-validated frames only. The internal _parseFrameOrPassthrough
+// function (below) additionally accepts unknown-type frames for
+// forward-compatibility with new server frame types not yet in the spec.
+
+export function parseFrameSafe(data: unknown): WsFrame | null {
+  let raw: unknown
+  if (typeof data === 'string') {
+    try {
+      raw = JSON.parse(data)
+    } catch {
+      _droppedFrameCount++
+      _maybeDevToast('_json_parse', '[ws] Dropped frame: JSON parse error')
+      return null
+    }
+  } else {
+    raw = data
+  }
+
+  const frameType =
+    raw !== null && typeof raw === 'object' && 'type' in (raw as object)
+      ? String((raw as Record<string, unknown>).type)
+      : '_unknown'
+
+  const result = WsFrameSchema.safeParse(raw)
+  if (result.success) {
+    return result.data
+  }
+
+  _droppedFrameCount++
+  const first = result.error.issues[0]
+  const desc = first
+    ? `${first.path.join('.') || 'root'}: ${first.message}`
+    : result.error.message
+  _maybeDevToast(frameType, `[ws] Dropped invalid frame (${frameType}): ${desc}`)
+  return null
+}
+
+// ── _parseFrameOrPassthrough ──────────────────────────────────────────────────
+//
+// Used internally by WsConnection.onmessage. Like parseFrameSafe but passes
+// through any object that has a string `type` field even when Zod fails, to
+// preserve forward-compat for frame types not yet described in the spec.
+
+function _parseFrameOrPassthrough(data: unknown): ServerFrame | null {
+  let raw: unknown
+  if (typeof data === 'string') {
+    try {
+      raw = JSON.parse(data)
+    } catch {
+      _droppedFrameCount++
+      return null
+    }
+  } else {
+    raw = data
+  }
+
+  // Try strict schema validation first
+  const result = WsFrameSchema.safeParse(raw)
+  if (result.success) {
+    return result.data as ServerFrame
+  }
+
+  // Fall back: pass through any object with a string `type` field so the
+  // store's handleFrame switch can silently ignore unknown types.
+  if (
+    raw !== null &&
+    typeof raw === 'object' &&
+    typeof (raw as Record<string, unknown>).type === 'string'
+  ) {
+    return raw as ServerFrame
+  }
+
+  _droppedFrameCount++
+  return null
+}
+
+// ── URL helper ────────────────────────────────────────────────────────────────
+
 const BASE_URL = import.meta.env.VITE_API_URL ?? ''
 
 function getWsUrl(): string {
@@ -9,330 +280,10 @@ function getWsUrl(): string {
   return `${wsBase}/api/v1/chat/ws`
 }
 
-// ── Frame types ───────────────────────────────────────────────────────────────
-
-export interface WsAuthFrame {
-  type: 'auth'
-  token: string
-}
-
-// F-S6: discriminated union separates "mint new session" (no session_id) from
-// "continue existing session" (session_id present). Callers narrow via
-// `'session_id' in frame` to determine which path applies.
-export type WsMessageFrame =
-  | { type: 'message'; content: string; agent_id?: string }
-  | { type: 'message'; content: string; session_id: string; agent_id?: string }
-
-export interface WsCancelFrame {
-  type: 'cancel'
-  session_id: string
-}
-
-export interface WsExecApprovalResponseFrame {
-  type: 'exec_approval_response'
-  id: string
-  decision: 'allow' | 'deny' | 'always'
-}
-
-export interface WsPingFrame {
-  type: 'ping'
-}
-
-export interface WsAttachSessionFrame {
-  type: 'attach_session'
-  session_id: string
-}
-
-export interface WsDevicePairingResponseFrame {
-  type: 'device_pairing_response'
-  device_id: string
-  decision: 'approve' | 'reject'
-}
-
-// F-S9: append session_close to the WsClientFrame.SessionID usage list (it mirrors cancel)
-
-export type WsSendFrame = WsAuthFrame | WsMessageFrame | WsCancelFrame | WsExecApprovalResponseFrame | WsPingFrame | WsAttachSessionFrame | WsDevicePairingResponseFrame
-
-// Emitted by the server immediately after it mints a new session_id
-// (i.e. when the SPA sent a message frame without a session_id).
-// The SPA stores this id as the new activeSessionId.
-export interface WsSessionStartedFrame {
-  type: 'session_started'
-  session_id: string
-  agent_id?: string
-}
-
-// F-S5: session-scoped frames require session_id (non-optional).
-// The compile-time requirement prevents future frames from accidentally omitting it.
-// Global frames (error, pong, session_state, device_pairing_*) keep session_id optional.
-
-export interface WsTokenFrame {
-  type: 'token'
-  session_id: string
-  content: string
-}
-
-export interface WsDoneFrame {
-  type: 'done'
-  session_id: string
-  stats?: { tokens: number; cost: number; duration_ms: number; tokens_dropped?: number }
-}
-
-export interface WsErrorFrame {
-  type: 'error'
-  // Global error frames need not be session-scoped; session_id optional.
-  session_id?: string
-  message: string
-}
-
-export interface WsToolCallStartFrame {
-  type: 'tool_call_start'
-  session_id: string
-  tool: string
-  call_id: string
-  params: Record<string, unknown>
-  parent_call_id?: string
-  agent_id?: string
-}
-
-export interface WsToolCallResultFrame {
-  type: 'tool_call_result'
-  session_id: string
-  tool: string
-  call_id: string
-  result: unknown
-  status: 'success' | 'error'
-  duration_ms?: number
-  error?: string
-  parent_call_id?: string
-  agent_id?: string
-}
-
-// FR-H-004: subagent span bracket frames
-export interface WsSubagentStartFrame {
-  type: 'subagent_start'
-  session_id: string
-  span_id: string
-  parent_call_id: string
-  task_label: string
-  agent_id?: string
-}
-
-export interface WsSubagentEndFrame {
-  type: 'subagent_end'
-  session_id: string
-  span_id: string
-  status: 'success' | 'error' | 'cancelled' | 'interrupted' | 'timeout'
-  duration_ms?: number
-  final_result?: string
-  /**
-   * Coordination with wave-1a-go W1-9: optional reason for interrupted status.
-   * Backend populates this when the sub-turn was interrupted by the parent.
-   */
-  reason?: 'parent_timeout' | 'parent_cancelled' | 'parent_done_early' | 'unknown'
-}
-
-/**
- * Truncation sentinel emitted by pkg/gateway/replay.go:truncateResult when a
- * tool result exceeds 10 KiB. The result field of WsToolCallResultFrame will
- * be an object matching this shape instead of the raw result.
- *
- * Also see TruncatedResult helper type below for UI narrowing.
- */
-export interface TruncatedResult {
-  _truncated: true
-  original_size_bytes: number
-  preview: string
-}
-
-/**
- * Marshal-error sentinel emitted when json.Marshal fails on the tool result.
- * The result field of WsToolCallResultFrame will be an object matching this shape.
- */
-export interface MarshalErrorResult {
-  _marshal_error: string
-}
-
-export interface WsExecApprovalRequestFrame {
-  type: 'exec_approval_request'
-  session_id: string
-  id: string
-  command: string
-  working_dir?: string
-  matched_policy?: string
-}
-
-export interface WsTaskStatusChangedFrame {
-  type: 'task_status_changed'
-  session_id: string
-  task_id: string
-  status: string
-  agent_id?: string
-}
-
-export interface WsReplayMessageFrame {
-  type: 'replay_message'
-  session_id: string
-  content: string
-  role: string
-  /** Server-assigned message id, used for dedup on reconnect (optional for back-compat). */
-  id?: string
-  timestamp?: string
-  /** Agent that produced this message (omitted when empty). */
-  agent_id?: string
-}
-
-export interface WsRateLimitFrame {
-  type: 'rate_limit'
-  session_id: string
-  scope: 'agent' | 'channel' | 'global'
-  resource: string
-  policy_rule: string
-  retry_after_seconds: number
-  agent_id?: string
-  tool?: string
-}
-
-export interface WsMediaPart {
-  type: 'image' | 'audio' | 'video' | 'file'
-  url: string
-  filename: string
-  content_type: string
-  caption?: string
-}
-
-export interface WsMediaFrame {
-  type: 'media'
-  session_id: string
-  parts: WsMediaPart[]
-}
-
-export interface WsAgentSwitchedFrame {
-  type: 'agent_switched'
-  session_id: string
-  agent_id: string
-  agent_name?: string  // included by backend for display without an extra lookup
-}
-
-// FR-011, FR-082: tool-policy approval request
-export interface WsToolApprovalRequiredFrame {
-  type: 'tool_approval_required'
-  approval_id: string
-  tool_call_id: string
-  tool_name: string
-  args: Record<string, unknown>
-  agent_id: string
-  session_id: string
-  turn_id: string
-  /** Relative expiry in milliseconds from receipt. Client computes expiresAt = Date.now() + expires_in_ms. */
-  expires_in_ms: number
-}
-
-// FR-052, FR-073, FR-081: session state reset on WS reconnect
-export interface WsSessionStatePendingApproval {
-  approval_id: string
-  session_id: string
-  tool_name: string
-  agent_id: string
-  expires_in_ms: number
-}
-
-export interface WsSessionStateFrame {
-  type: 'session_state'
-  user_id: string
-  pending_approvals: WsSessionStatePendingApproval[]
-  emitted_at: string
-}
-
-// FR-016, MAJ-009: system overload notification
-export interface WsSystemOverloadFrame {
-  type: 'system_overload'
-  session_id: string
-  message?: string
-}
-
-// V1.B: emitted by replay.go just before `done` when the transcript contained
-// duplicate tool_call_ids (older copies are silently overwritten on disk;
-// only the latest one is replayed). Surfacing the count as a one-shot toast
-// gives the operator visible feedback that something irregular was detected
-// — server-only `slog.Warn` was invisible before this frame existed.
-export interface WsReplayWarningFrame {
-  type: 'replay_warning'
-  session_id: string
-  message: string
-  stats?: {
-    duplicate_tool_call_id_count?: number
-  }
-}
-
-// B3: cancel progress notifications sent by the gateway after the SPA sends
-// a cancel frame. Three stages:
-//   graceful  — cancel request acknowledged; agent is completing the current
-//               tool call and will stop at the next safe checkpoint.
-//   hard      — graceful deadline expired; the agent turn is being force-killed.
-//   detached  — the session has been detached from the running turn; the SPA
-//               can now treat the session as idle.
-// Field name is 'stage' (not 'status') — see parallel gateway fix.
-export interface WsCancelStageFrame {
-  type: 'cancel_stage'
-  session_id: string
-  stage: 'graceful' | 'hard' | 'detached'
-}
-
-// F-S5: session_id contract — session-scoped frames have session_id: string (required);
-// global frames (error, session_state, device_pairing_*) may omit it.
-// WsSessionStartedFrame carries session_id as the minted id, not as routing context.
-export type WsReceiveFrame =
-  | WsSessionStartedFrame
-  | WsTokenFrame
-  | WsDoneFrame
-  | WsErrorFrame
-  | WsToolCallStartFrame
-  | WsToolCallResultFrame
-  | WsExecApprovalRequestFrame
-  | WsTaskStatusChangedFrame
-  | WsReplayMessageFrame
-  | WsRateLimitFrame
-  | WsMediaFrame
-  | WsAgentSwitchedFrame
-  | WsSubagentStartFrame
-  | WsSubagentEndFrame
-  | WsToolApprovalRequiredFrame
-  | WsSessionStateFrame
-  | WsSystemOverloadFrame
-  | WsReplayWarningFrame
-  | WsCancelStageFrame
-
-/** Allowed status values for subagent_end frames. */
-const SUBAGENT_END_STATUSES = new Set<string>(['success', 'error', 'cancelled', 'interrupted', 'timeout'])
-
-/** Allowed stage values for cancel_stage frames (B3). */
-const CANCEL_STAGE_VALUES = new Set<string>(['graceful', 'hard', 'detached'])
-
-function isValidFrame(frame: unknown): frame is WsReceiveFrame {
-  if (typeof frame !== 'object' || frame === null) return false
-  const f = frame as Record<string, unknown>
-  if (typeof f.type !== 'string') return false
-  // W4-6: validate subagent_end status to prevent unknown-status render crashes.
-  if (f.type === 'subagent_end') {
-    if (typeof f.status !== 'string' || !SUBAGENT_END_STATUSES.has(f.status)) {
-      return false
-    }
-  }
-  // B3: validate cancel_stage.stage to prevent unknown-stage falling into the
-  // default handler and incrementing unknownFrameCount.
-  if (f.type === 'cancel_stage') {
-    if (typeof f.stage !== 'string' || !CANCEL_STAGE_VALUES.has(f.stage)) {
-      return false
-    }
-  }
-  return true
-}
-
 // ── Connection ────────────────────────────────────────────────────────────────
 
 export interface WsConnectionCallbacks {
-  onFrame: (frame: WsReceiveFrame) => void
+  onFrame: (frame: ServerFrame) => void
   onConnected: () => void
   onDisconnected: () => void
   onError: (error: string) => void
@@ -375,7 +326,7 @@ export class WsConnection {
     this.ws = null
   }
 
-  send(frame: WsSendFrame): boolean {
+  send(frame: ClientFrame): boolean {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(frame))
       return true
@@ -422,22 +373,8 @@ export class WsConnection {
     }
 
     this.ws.onmessage = (event: MessageEvent) => {
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(event.data as string)
-      } catch {
-        // Malformed JSON — log and discard, don't swallow downstream errors
-        console.warn('[ws] Malformed frame:', event.data)
-        this.droppedFrameCount++
-        if (this.droppedFrameCount >= this.droppedFrameThreshold) {
-          this.callbacks.onError(
-            `Received ${this.droppedFrameCount} malformed frames in a row — the connection may be unstable.`,
-          )
-        }
-        return
-      }
-      if (!isValidFrame(parsed)) {
-        console.warn('[ws] Invalid frame — missing type field:', parsed)
+      const parsed = _parseFrameOrPassthrough(event.data as string)
+      if (parsed === null) {
         this.droppedFrameCount++
         if (this.droppedFrameCount >= this.droppedFrameThreshold) {
           this.callbacks.onError(

@@ -15,6 +15,88 @@
 import { ApiError } from './api-error'
 export { ApiError, isApiError } from './api-error'
 
+import type { ZodType } from 'zod'
+
+// ── Schema validation error ────────────────────────────────────────────────────
+//
+// Thrown when an API response does not conform to the expected Zod schema.
+// Only thrown when a schema was explicitly passed to request() — unvalidated
+// calls fall back to the old untyped behaviour.
+//
+// In dev mode, a toast is emitted as well (see request() below).
+
+export class ApiSchemaError extends Error {
+  readonly endpoint: string
+  readonly zodIssues: Array<{ path: (string | number)[]; message: string }>
+  readonly rawBody: unknown
+
+  constructor(endpoint: string, zodIssues: Array<{ path: (string | number)[]; message: string }>, rawBody: unknown) {
+    super(`API response schema mismatch for ${endpoint}: ${zodIssues[0]?.message ?? 'unknown'}`)
+    this.name = 'ApiSchemaError'
+    this.endpoint = endpoint
+    this.zodIssues = zodIssues
+    this.rawBody = rawBody
+  }
+}
+
+let _apiSchemaErrorCount = 0
+
+export function getApiSchemaErrorCount(): number {
+  return _apiSchemaErrorCount
+}
+
+export function resetApiSchemaErrorCount(): void {
+  _apiSchemaErrorCount = 0
+}
+
+// ── Re-exports from generated types ───────────────────────────────────────────
+//
+// Wire-format types come from the generated openapi-types.ts. The hand-written
+// aliases below replace the old duplicate interface declarations.
+// See CLAUDE.md hard-constraint #8.
+
+export type {
+  LoginResponse,
+  ProbeProviderResponse,
+  Agent,
+  AgentToolsCfg,
+  AgentSession,
+  AgentToolEntry,
+  Session,
+  SessionStats,
+  SessionDetail,
+  Message,
+  ToolCall,
+  Attachment,
+  User,
+  UserCreateRequest,
+  UserCreateResponse,
+  UserDeleteResponse,
+  UserRoleChangeRequest,
+  UserRoleChangeResponse,
+  UserResetPasswordRequest,
+  UserResetPasswordResponse,
+  SessionScopeRequest,
+  SessionScopeResponse,
+  ToolRegistryEntry,
+  GlobalToolPolicies,
+  ToolPolicy,
+  ChannelEntry,
+  RetentionConfig,
+  RetentionSweepResult,
+  SandboxConfig,
+  SandboxStatus,
+  AuditEntry,
+  AuditLogToggle,
+  RateLimitConfig,
+  ExecAllowlist,
+  ExecProxyStatus,
+  SkillTrustResponse,
+  PromptGuardResponse,
+  PendingRestartEntry,
+  AboutResponse,
+} from '@/lib/api/generated/openapi-types'
+
 const BASE_URL = import.meta.env.VITE_API_URL ?? ''
 
 // The server issues one of two cookie names depending on the request's TLS
@@ -100,7 +182,7 @@ function isPathCSRFExempt(apiPath: string): boolean {
   return CSRF_EXEMPT_PATHS.has(`/api/v1${apiPath}`)
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, schema?: ZodType<T>): Promise<T> {
   // Client-side CSRF gate: reject state-changing calls that would be
   // guaranteed to 403 at the server. This gives a clear error immediately
   // instead of a cryptic "403 csrf cookie missing" from the network tab
@@ -140,7 +222,43 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     throw await ApiError.fromResponse(res)
   }
-  return res.json() as Promise<T>
+
+  const body = await res.json() as unknown
+
+  // When a Zod schema is provided, validate the response body against it.
+  // On failure: throw ApiSchemaError (+ dev toast). Never silently return
+  // schema-invalid data — callers that need the old unchecked behaviour
+  // should not pass a schema.
+  if (schema !== undefined) {
+    const result = schema.safeParse(body)
+    if (!result.success) {
+      _apiSchemaErrorCount++
+      const schemaErr = new ApiSchemaError(
+        `${method} /api/v1${path}`,
+        result.error.issues.map((i) => ({ path: i.path as (string | number)[], message: i.message })),
+        body,
+      )
+      if (import.meta.env.DEV) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-require-imports
+          const { useUiStore } = require('@/store/ui') as {
+            useUiStore: { getState: () => { addToast: (t: { message: string; variant: 'warning' }) => void } }
+          }
+          const first = schemaErr.zodIssues[0]
+          useUiStore.getState().addToast({
+            message: `[api] Schema mismatch: ${path} — ${first?.message ?? 'unknown'}`,
+            variant: 'warning',
+          })
+        } catch {
+          console.warn('[api] Schema mismatch:', schemaErr.message)
+        }
+      }
+      throw schemaErr
+    }
+    return result.data
+  }
+
+  return body as T
 }
 
 // ── Agents ────────────────────────────────────────────────────────────────────
@@ -776,12 +894,9 @@ export function completeOnboarding(): Promise<void> {
 }
 
 // ── Auth / Login ─────────────────────────────────────────────────────────────────
-
-export interface LoginResponse {
-  token: string
-  role: UserRole
-  username: string
-}
+//
+// LoginResponse is re-exported from @/lib/api/generated/openapi-types at the
+// top of this file. The hand-written interface has been removed.
 
 export async function login(username: string, password: string): Promise<LoginResponse> {
   return request<LoginResponse>('/auth/login', {
@@ -826,11 +941,8 @@ export async function completeOnboardingTransaction(req: CompleteOnboardingReque
 // Admins who want to add providers post-onboarding use configureProvider
 // (PUT /providers/{id}) + fetchProviders (GET /providers) — both work
 // because the browser has the __Host-csrf cookie at that point.
-export interface ProbeProviderResponse {
-  success: boolean
-  models?: string[]
-  error?: string
-}
+//
+// ProbeProviderResponse is re-exported from @/lib/api/generated/openapi-types.
 export async function probeProvider(
   id: string,
   apiKey: string,
@@ -842,7 +954,9 @@ export async function probeProvider(
   })
 }
 
-export interface ValidateTokenResponse {
+// ValidateTokenResponse: type alias for the auth validate endpoint response.
+// Not in the generated openapi-types; kept as a local type.
+export type ValidateTokenResponse = {
   username: string
   role: UserRole
 }
@@ -932,7 +1046,8 @@ export interface DevicePaired {
   status: 'active' | 'revoked'
 }
 
-export interface DevicesResponse {
+// DevicesResponse: SPA-internal response shape not described in the contract.
+export type DevicesResponse = {
   pending: DevicePending[]
   paired: DevicePaired[]
 }
@@ -1171,11 +1286,10 @@ export function fetchPendingRestart(): Promise<PendingRestartEntry[]> {
 
 // Audit log toggle — distinct from GET /audit-log (which returns AuditEntry[]).
 // This endpoint controls whether audit logging is enabled at all.
-export interface AuditLogToggle {
-  enabled: boolean
-}
+// AuditLogToggle is re-exported from generated openapi-types above.
 
-export interface AuditLogUpdateResponse {
+// SPA-internal update response — not a wire type, no generated counterpart.
+export type AuditLogUpdateResponse = {
   saved: boolean
   requires_restart: boolean
   applied_enabled: boolean
@@ -1193,11 +1307,10 @@ export function updateAuditLog(enabled: boolean): Promise<AuditLogUpdateResponse
 }
 
 // Skill trust — controls how unverified community skills are handled.
-export interface SkillTrustResponse {
-  level: SkillTrustLevel
-}
+// SkillTrustResponse is re-exported from generated openapi-types above.
 
-export interface SkillTrustUpdateResponse {
+// SPA-internal update response — not a wire type, no generated counterpart.
+export type SkillTrustUpdateResponse = {
   saved: boolean
   requires_restart: boolean
   applied_level: SkillTrustLevel
@@ -1219,11 +1332,10 @@ export function updateSkillTrust(level: SkillTrustLevel): Promise<SkillTrustUpda
 }
 
 // Prompt guard — uses `level` field, aligns with PromptInjectionLevel.
-export interface PromptGuardResponse {
-  level: PromptInjectionLevel
-}
+// PromptGuardResponse is re-exported from generated openapi-types above.
 
-export interface PromptGuardUpdateResponse {
+// SPA-internal update response — not a wire type, no generated counterpart.
+export type PromptGuardUpdateResponse = {
   saved: boolean
   requires_restart: boolean
   applied_level: PromptInjectionLevel
@@ -1245,7 +1357,9 @@ export function updatePromptGuardLevel(level: PromptInjectionLevel): Promise<Pro
 }
 
 // Rate limits — adds write support and configures spending/throughput caps.
-export interface RateLimitsResponse {
+// SPA-internal read response — not a generated wire type. The generated
+// RateLimitConfig schema is used for the full config shape.
+export type RateLimitsResponse = {
   daily_cost_cap_usd?: number
   max_agent_llm_calls_per_hour?: number
   max_agent_tool_calls_per_minute?: number
@@ -1272,7 +1386,9 @@ export function updateRateLimits(body: RateLimitsUpdateBody): Promise<RateLimits
 // agent defaults (default_profile, shell_deny_patterns).
 // allow_internal is []string matching OmnipusSSRFConfig.AllowInternal in pkg/config/sandbox.go.
 // Entries may be hostname, exact IP, or CIDR range. Empty slice means "block all".
-export interface SandboxConfigResponse {
+// SandboxConfigResponse is a richer SPA-internal read shape. The generated SandboxConfig
+// type is the wire schema; this adds SPA-specific fields.
+export type SandboxConfigResponse = {
   mode?: string
   // applied_mode is the value the gateway is currently enforcing. It differs
   // from `mode` when the operator saved a change but hasn't restarted.
@@ -1320,15 +1436,14 @@ export function updateSandboxConfig(body: SandboxConfigUpdateBody): Promise<Sand
 }
 
 // Session scope — controls DM conversation isolation granularity.
-export interface SessionScopeResponse {
-  dm_scope: DMScope
-}
+// SessionScopeResponse is re-exported from generated openapi-types above.
 
 export interface SessionScopeUpdateBody {
   dm_scope: DMScope
 }
 
-export interface SessionScopeUpdateResponse {
+// SPA-internal update response — not a wire type, no generated counterpart.
+export type SessionScopeUpdateResponse = {
   saved: boolean
   requires_restart: boolean
   // applied_dm_scope reflects the value currently in effect. Since DM scope is
@@ -1363,7 +1478,8 @@ export function retentionMode(resp: {
   return 'default'
 }
 
-export interface RetentionResponse {
+// SPA-internal retention read response — not a generated wire type.
+export type RetentionResponse = {
   session_days?: number
   disabled?: boolean
 }
@@ -1376,7 +1492,8 @@ export interface RetentionUpdateBody {
 // Matches the handler at pkg/gateway/rest_retention.go's putRetention response:
 // flat {saved, requires_restart, session_days, disabled}. An earlier nested
 // `applied: {...}` shape never shipped — the handler always wrote flat.
-export interface RetentionUpdateResponse {
+// SPA-internal update response — not a generated wire type.
+export type RetentionUpdateResponse = {
   saved: boolean
   requires_restart: boolean
   session_days: number
@@ -1395,10 +1512,9 @@ export function updateRetention(body: RetentionUpdateBody): Promise<RetentionUpd
 }
 
 // Retention sweep — immediately purge sessions beyond the retention window.
-export interface RetentionSweepResponse {
-  removed: number
-  skipped_reason?: string
-}
+// RetentionSweepResult is re-exported from generated openapi-types above.
+// RetentionSweepResponse is a backward-compat alias.
+export type RetentionSweepResponse = RetentionSweepResult
 
 export function triggerRetentionSweep(): Promise<RetentionSweepResponse> {
   return request<RetentionSweepResponse>('/security/retention/sweep', { method: 'POST' })
@@ -1418,40 +1534,23 @@ export interface CreateUserBody {
   password: string
 }
 
-export interface CreateUserResponse {
-  username: string
-  role: UserRole
-  warning?: string
-  requires_restart?: boolean
-}
-
-export interface DeleteUserResponse {
-  deleted: true
-  warning?: string
-  requires_restart?: boolean
-}
+// UserCreateResponse, UserDeleteResponse, UserResetPasswordResponse, UserRoleChangeResponse
+// are re-exported from generated openapi-types above.
+// These backward-compat aliases allow existing callers to use the old names.
+export type CreateUserResponse = UserCreateResponse
+export type DeleteUserResponse = UserDeleteResponse
 
 export interface ResetUserPasswordBody {
   password: string
 }
 
-export interface ResetUserPasswordResponse {
-  username: string
-  password_reset: true
-  warning?: string
-  requires_restart?: boolean
-}
+export type ResetUserPasswordResponse = UserResetPasswordResponse
 
 export interface UpdateUserRoleBody {
   role: UserRole
 }
 
-export interface UpdateUserRoleResponse {
-  username: string
-  role: UserRole
-  warning?: string
-  requires_restart?: boolean
-}
+export type UpdateUserRoleResponse = UserRoleChangeResponse
 
 export function fetchUsers(): Promise<UserEntry[]> {
   return request<UserEntry[]>('/users')

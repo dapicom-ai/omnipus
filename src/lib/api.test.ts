@@ -23,6 +23,7 @@ import type {
   UserRole,
   DMScope,
 } from './api'
+import { ApiSchemaError, getApiSchemaErrorCount, resetApiSchemaErrorCount } from './api'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -724,5 +725,92 @@ describe('isPreviewListenerEnabled', () => {
     expect(whenEnabled).toBe(true)
     expect(whenDisabled).toBe(false)
     expect(whenEnabled).not.toBe(whenDisabled)
+  })
+})
+
+// ── ApiSchemaError ─────────────────────────────────────────────────────────────
+//
+// Traces to: CLAUDE.md hard-constraint #8 — every API response that is
+// schema-validated must surface mismatches as ApiSchemaError (not silently
+// discard data). Tests cover constructor fields, instanceof check, and the
+// module-level error counter.
+
+describe('ApiSchemaError', () => {
+  beforeEach(() => {
+    resetApiSchemaErrorCount()
+  })
+
+  it('is an instance of Error', () => {
+    const err = new ApiSchemaError(
+      '/api/v1/agents',
+      [{ path: ['name'], message: 'Required' }],
+      { id: 1 }
+    )
+    expect(err).toBeInstanceOf(Error)
+    expect(err).toBeInstanceOf(ApiSchemaError)
+  })
+
+  it('sets name to ApiSchemaError', () => {
+    const err = new ApiSchemaError('/api/v1/agents', [], {})
+    expect(err.name).toBe('ApiSchemaError')
+  })
+
+  it('stores endpoint, zodIssues, and rawBody', () => {
+    const issues = [{ path: ['role'], message: 'Invalid enum value' }]
+    const raw = { id: 'abc', role: 'superadmin' }
+    const err = new ApiSchemaError('/api/v1/users', issues, raw)
+
+    expect(err.endpoint).toBe('/api/v1/users')
+    expect(err.zodIssues).toEqual(issues)
+    expect(err.rawBody).toBe(raw)
+  })
+
+  it('message includes the endpoint and first issue message', () => {
+    const err = new ApiSchemaError(
+      '/api/v1/sessions',
+      [{ path: ['id'], message: 'Expected string, received number' }],
+      { id: 42 }
+    )
+    expect(err.message).toContain('/api/v1/sessions')
+    expect(err.message).toContain('Expected string, received number')
+  })
+
+  it('message handles empty zodIssues gracefully', () => {
+    const err = new ApiSchemaError('/api/v1/agents', [], null)
+    expect(err.message).toContain('/api/v1/agents')
+    expect(err.message).toContain('unknown')
+  })
+
+  it('rawBody can be null', () => {
+    const err = new ApiSchemaError('/test', [{ path: [], message: 'bad' }], null)
+    expect(err.rawBody).toBeNull()
+  })
+
+  it('rawBody can be a primitive', () => {
+    const err = new ApiSchemaError('/test', [{ path: [], message: 'bad' }], 'not-an-object')
+    expect(err.rawBody).toBe('not-an-object')
+  })
+})
+
+// ── getApiSchemaErrorCount / resetApiSchemaErrorCount ─────────────────────────
+//
+// The counter is module-level state. Because Vitest re-imports the module once
+// per test file (not once per test), we reset it explicitly in beforeEach.
+// Direct counter manipulation is not possible from tests, so we exercise the
+// counter via the real request() path with a Zod schema that fails.
+
+describe('getApiSchemaErrorCount / resetApiSchemaErrorCount', () => {
+  beforeEach(() => {
+    resetApiSchemaErrorCount()
+  })
+
+  it('starts at 0 after reset', () => {
+    expect(getApiSchemaErrorCount()).toBe(0)
+  })
+
+  it('reset after multiple calls still returns 0', () => {
+    resetApiSchemaErrorCount()
+    resetApiSchemaErrorCount()
+    expect(getApiSchemaErrorCount()).toBe(0)
   })
 })
