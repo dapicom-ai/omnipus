@@ -1,0 +1,34 @@
+title: ExecApprovalRequestFrame
+description: >
+  Server → client. Sent when a tool call requires explicit admin approval before
+  execution (exec-level sandbox policy). The SPA displays an approval modal and
+  waits for an exec_approval_response from the user.
+type: object
+required:
+  - type
+  - session_id
+  - id
+  - command
+additionalProperties: false
+properties:
+  type:
+    type: string
+    const: exec_approval_request
+  session_id:
+    type: string
+    minLength: 1
+    description: Session in which approval is needed.
+  id:
+    type: string
+    minLength: 1
+    description: Unique UUID for this approval request. Used in exec_approval_response.
+  command:
+    type: string
+    minLength: 1
+    description: The shell command or executable that requires approval.
+  working_dir:
+    type: string
+    description: Working directory in which the command will be executed.
+  matched_policy:
+    type: string
+    description: The policy rule that triggered this approval requirement.
