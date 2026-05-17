@@ -21,6 +21,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
+
 	"github.com/dapicom-ai/omnipus/pkg/agent"
 	"github.com/dapicom-ai/omnipus/pkg/api/generated"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
@@ -29,8 +32,6 @@ import (
 	"github.com/dapicom-ai/omnipus/pkg/pairing"
 	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/validation"
-	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
 )
 
 // replayLiveBufferCap is the capacity of replayDivertCh (FR-I-009).

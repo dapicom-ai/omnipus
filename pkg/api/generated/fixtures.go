@@ -787,6 +787,184 @@ func FixtureHealthResponse_ZeroValue() HealthResponse {
 	return HealthResponse{}
 }
 
+// ── Client → server frame fixtures (AsyncAPI) ────────────────────────────────
+
+// AttachSessionFrame — client → server request transcript replay.
+// Traces to: contracts/asyncapi.yaml AttachSessionFrame schema.
+
+func FixtureAttachSessionFrame_Populated() AttachSessionFrame {
+	return AttachSessionFrame{
+		Type:      "attach_session",
+		SessionId: "sess-550e8400-e29b-41d4-a716-446655440000",
+	}
+}
+
+// FixtureAttachSessionFrame_ZeroValue — Go zero values.
+// Expected: FAIL because type="" and session_id="" (both required, minLength:1).
+func FixtureAttachSessionFrame_ZeroValue() AttachSessionFrame {
+	return AttachSessionFrame{}
+}
+
+// FixtureAttachSessionFrame_Edge — unicode session ID at a reasonable length.
+func FixtureAttachSessionFrame_Edge() AttachSessionFrame {
+	return AttachSessionFrame{
+		Type:      "attach_session",
+		SessionId: "sess-" + repeatStr("a", 60),
+	}
+}
+
+// AuthFrame — client → server authentication frame.
+// Traces to: contracts/asyncapi.yaml AuthFrame schema.
+
+func FixtureAuthFrame_Populated() AuthFrame {
+	return AuthFrame{
+		Type:  "auth",
+		Token: "omnipus_" + repeatStr("t", 64),
+	}
+}
+
+// FixtureAuthFrame_ZeroValue — Go zero values.
+// Expected: FAIL because type="" and token="" (both required; token has minLength:1).
+func FixtureAuthFrame_ZeroValue() AuthFrame {
+	return AuthFrame{}
+}
+
+// FixtureAuthFrame_Edge — minimum valid token (single char).
+func FixtureAuthFrame_Edge() AuthFrame {
+	return AuthFrame{
+		Type:  "auth",
+		Token: "x", // minLength:1 — single character is valid
+	}
+}
+
+// CancelFrame — client → server cancel in-progress turn.
+// Traces to: contracts/asyncapi.yaml CancelFrame schema.
+
+func FixtureCancelFrame_Populated() CancelFrame {
+	return CancelFrame{
+		Type:      "cancel",
+		SessionId: "sess-550e8400-e29b-41d4-a716-446655440001",
+	}
+}
+
+// FixtureCancelFrame_ZeroValue — Go zero values.
+// Expected: FAIL because type="" and session_id="" (both required, minLength:1).
+func FixtureCancelFrame_ZeroValue() CancelFrame {
+	return CancelFrame{}
+}
+
+// FixtureCancelFrame_Edge — session_id with special chars (valid).
+func FixtureCancelFrame_Edge() CancelFrame {
+	return CancelFrame{
+		Type:      "cancel",
+		SessionId: "sess-" + repeatStr("b", 60),
+	}
+}
+
+// DevicePairingResponseFrame — client → server device pairing decision.
+// Traces to: contracts/asyncapi.yaml DevicePairingResponseFrame schema.
+
+func FixtureDevicePairingResponseFrame_Populated() DevicePairingResponseFrame {
+	return DevicePairingResponseFrame{
+		Type:     "device_pairing_response",
+		DeviceId: "device-uuid-550e8400-e29b-41d4-a716-446655440002",
+		Decision: "approve",
+	}
+}
+
+// FixtureDevicePairingResponseFrame_ZeroValue — Go zero values.
+// Expected: FAIL because type="", device_id="", decision="" (none match enum).
+func FixtureDevicePairingResponseFrame_ZeroValue() DevicePairingResponseFrame {
+	return DevicePairingResponseFrame{}
+}
+
+// FixtureDevicePairingResponseFrame_Edge — reject decision (other valid enum value).
+func FixtureDevicePairingResponseFrame_Edge() DevicePairingResponseFrame {
+	return DevicePairingResponseFrame{
+		Type:     "device_pairing_response",
+		DeviceId: "device-" + repeatStr("d", 36),
+		Decision: "reject",
+	}
+}
+
+// ExecApprovalResponseFrame — client → server exec approval decision.
+// Traces to: contracts/asyncapi.yaml ExecApprovalResponseFrame schema.
+
+func FixtureExecApprovalResponseFrame_Populated() ExecApprovalResponseFrame {
+	return ExecApprovalResponseFrame{
+		Type:     "exec_approval_response",
+		Id:       "exec-req-550e8400-e29b-41d4-a716-446655440003",
+		Decision: "allow",
+	}
+}
+
+// FixtureExecApprovalResponseFrame_ZeroValue — Go zero values.
+// Expected: FAIL because type="", id="" (minLength:1), decision="" (not in enum).
+func FixtureExecApprovalResponseFrame_ZeroValue() ExecApprovalResponseFrame {
+	return ExecApprovalResponseFrame{}
+}
+
+// FixtureExecApprovalResponseFrame_Edge — deny decision (other valid enum value).
+func FixtureExecApprovalResponseFrame_Edge() ExecApprovalResponseFrame {
+	return ExecApprovalResponseFrame{
+		Type:     "exec_approval_response",
+		Id:       "exec-req-" + repeatStr("e", 36),
+		Decision: "deny",
+	}
+}
+
+// MessageFrame — client → server user chat message.
+// Traces to: contracts/asyncapi.yaml MessageFrame schema.
+
+func FixtureMessageFrame_Populated() MessageFrame {
+	sessId := "sess-1"
+	agentId := "jim"
+	return MessageFrame{
+		Type:      "message",
+		Content:   "Hello, what can you help me with today?",
+		SessionId: &sessId,
+		AgentId:   &agentId,
+	}
+}
+
+// FixtureMessageFrame_ZeroValue — Go zero values.
+// Expected: FAIL because type="" and content="" (content has minLength:1).
+func FixtureMessageFrame_ZeroValue() MessageFrame {
+	return MessageFrame{}
+}
+
+// FixtureMessageFrame_Edge — new session (no session_id), max-length-ish content.
+func FixtureMessageFrame_Edge() MessageFrame {
+	return MessageFrame{
+		Type:    "message",
+		Content: repeatStr("x", 5000), // well under maxLength:5242880
+		// no session_id — starts a new session
+	}
+}
+
+// PingFrame — client → server heartbeat.
+// Traces to: contracts/asyncapi.yaml PingFrame schema.
+
+func FixturePingFrame_Populated() PingFrame {
+	return PingFrame{
+		Type: "ping",
+	}
+}
+
+// FixturePingFrame_ZeroValue — Go zero values.
+// Expected: FAIL because type="" (const: "ping" requires the literal value "ping").
+func FixturePingFrame_ZeroValue() PingFrame {
+	return PingFrame{}
+}
+
+// FixturePingFrame_Edge is the same as Populated — PingFrame has only one field.
+// The edge case is that even a frame with no payload beyond type is valid.
+func FixturePingFrame_Edge() PingFrame {
+	return PingFrame{
+		Type: "ping",
+	}
+}
+
 // ── helper functions ─────────────────────────────────────────────────────────
 
 func strPtr(s string) *string { return &s }

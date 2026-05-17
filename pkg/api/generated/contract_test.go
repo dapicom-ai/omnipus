@@ -1,3 +1,5 @@
+//go:build !windows
+
 // Bidirectional contract tests — run with go test ./pkg/api/generated/...
 //
 // Verifies Go structs marshal to schema-valid JSON (contracts/asyncapi.yaml
@@ -7,6 +9,11 @@
 //
 // Manual break test: change cloneStringAnyMap to return nil, run the tests,
 // observe the regression guard fail, restore, observe it pass.
+//
+// Build constraint: !windows because the yamlLoader uses file:// URLs with
+// POSIX paths (/absolute/path). Windows file:// URLs require drive-letter
+// handling (file:///C:/path) which is not implemented — this project is
+// Linux-primary (see CLAUDE.md hard constraints).
 
 package generated
 
@@ -64,11 +71,9 @@ type yamlLoader struct{}
 
 func (yamlLoader) Load(rawURL string) (any, error) {
 	// Strip the file:// prefix to get the file path.
-	path := rawURL
-	path = strings.TrimPrefix(path, "file://")
-	// On Linux, file:///absolute/path → after trim: /absolute/path (correct).
-	// On Windows, file:///C:/path → /C:/path → needs further trimming.
-	// We only target Linux in this project, so no special Windows handling.
+	// On Linux: file:///absolute/path → after trim: /absolute/path (correct).
+	// Windows is excluded via the //go:build !windows tag at the top of this file.
+	path := strings.TrimPrefix(rawURL, "file://")
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -101,6 +106,16 @@ func initSchemas(t *testing.T) *jsonschema.Compiler {
 		cdir := contractsDir()
 		asyncapiFilePath = filepath.Join(cdir, "asyncapi.yaml")
 		componentSchemaDir = filepath.Join(cdir, "components", "schemas")
+
+		// Verify the contracts directory is accessible before building the compiler.
+		if _, statErr := os.Stat(asyncapiFilePath); statErr != nil {
+			errSchemaSetup = fmt.Errorf("contracts/asyncapi.yaml not found at %s: %w", asyncapiFilePath, statErr)
+			return
+		}
+		if _, statErr := os.Stat(componentSchemaDir); statErr != nil {
+			errSchemaSetup = fmt.Errorf("contracts/components/schemas/ not found at %s: %w", componentSchemaDir, statErr)
+			return
+		}
 
 		c := jsonschema.NewCompiler()
 
@@ -907,4 +922,136 @@ func TestContract_NilSlicesSerializeAsNull(t *testing.T) {
 		"initialized empty []string marshals to [] (correct)")
 
 	assert.NotEqual(t, string(raw1), string(raw2))
+}
+
+// ── Client → server frames (AsyncAPI) ────────────────────────────────────────
+//
+// These tests cover the 7 client→server frame types that the SPA sends to the
+// gateway. Each test validates the schema in both directions (populated passes,
+// zero value fails) using mustPassAsyncAPI / mustFailAsyncAPI so both helper
+// functions have live callers.
+
+// ── AttachSessionFrame ────────────────────────────────────────────────────────
+// Traces to: contracts/asyncapi.yaml components.schemas.AttachSessionFrame
+
+func TestContract_AttachSessionFrame_Populated(t *testing.T) {
+	mustPassAsyncAPI(t, "AttachSessionFrame", FixtureAttachSessionFrame_Populated())
+}
+
+func TestContract_AttachSessionFrame_ZeroValue(t *testing.T) {
+	// type="" and session_id="" — both required, session_id has minLength:1
+	mustFailAsyncAPI(t, "AttachSessionFrame", FixtureAttachSessionFrame_ZeroValue(),
+		"zero value has empty required type and session_id fields")
+}
+
+func TestContract_AttachSessionFrame_Edge(t *testing.T) {
+	// Long session_id is still valid
+	mustPassAsyncAPI(t, "AttachSessionFrame", FixtureAttachSessionFrame_Edge())
+}
+
+// ── AuthFrame ─────────────────────────────────────────────────────────────────
+// Traces to: contracts/asyncapi.yaml components.schemas.AuthFrame
+
+func TestContract_AuthFrame_Populated(t *testing.T) {
+	mustPassAsyncAPI(t, "AuthFrame", FixtureAuthFrame_Populated())
+}
+
+func TestContract_AuthFrame_ZeroValue(t *testing.T) {
+	// type="" and token="" — both required; token has minLength:1
+	mustFailAsyncAPI(t, "AuthFrame", FixtureAuthFrame_ZeroValue(),
+		"zero value has empty required type and token fields (token has minLength:1)")
+}
+
+func TestContract_AuthFrame_Edge(t *testing.T) {
+	// Single-char token satisfies minLength:1
+	mustPassAsyncAPI(t, "AuthFrame", FixtureAuthFrame_Edge())
+}
+
+// ── CancelFrame ───────────────────────────────────────────────────────────────
+// Traces to: contracts/asyncapi.yaml components.schemas.CancelFrame
+
+func TestContract_CancelFrame_Populated(t *testing.T) {
+	mustPassAsyncAPI(t, "CancelFrame", FixtureCancelFrame_Populated())
+}
+
+func TestContract_CancelFrame_ZeroValue(t *testing.T) {
+	// type="" and session_id="" — both required, minLength:1
+	mustFailAsyncAPI(t, "CancelFrame", FixtureCancelFrame_ZeroValue(),
+		"zero value has empty required type and session_id fields")
+}
+
+func TestContract_CancelFrame_Edge(t *testing.T) {
+	mustPassAsyncAPI(t, "CancelFrame", FixtureCancelFrame_Edge())
+}
+
+// ── DevicePairingResponseFrame ────────────────────────────────────────────────
+// Traces to: contracts/asyncapi.yaml components.schemas.DevicePairingResponseFrame
+
+func TestContract_DevicePairingResponseFrame_Populated(t *testing.T) {
+	mustPassAsyncAPI(t, "DevicePairingResponseFrame", FixtureDevicePairingResponseFrame_Populated())
+}
+
+func TestContract_DevicePairingResponseFrame_ZeroValue(t *testing.T) {
+	// type="", device_id="", decision="" — all required; decision must be enum value
+	mustFailAsyncAPI(t, "DevicePairingResponseFrame", FixtureDevicePairingResponseFrame_ZeroValue(),
+		"zero value has empty required fields and decision is not a valid enum value")
+}
+
+func TestContract_DevicePairingResponseFrame_Edge(t *testing.T) {
+	// reject is the other valid enum value
+	mustPassAsyncAPI(t, "DevicePairingResponseFrame", FixtureDevicePairingResponseFrame_Edge())
+}
+
+// ── ExecApprovalResponseFrame ─────────────────────────────────────────────────
+// Traces to: contracts/asyncapi.yaml components.schemas.ExecApprovalResponseFrame
+
+func TestContract_ExecApprovalResponseFrame_Populated(t *testing.T) {
+	mustPassAsyncAPI(t, "ExecApprovalResponseFrame", FixtureExecApprovalResponseFrame_Populated())
+}
+
+func TestContract_ExecApprovalResponseFrame_ZeroValue(t *testing.T) {
+	// type="", id="", decision="" — all required; id has minLength:1; decision not in enum
+	mustFailAsyncAPI(t, "ExecApprovalResponseFrame", FixtureExecApprovalResponseFrame_ZeroValue(),
+		"zero value has empty required fields and decision is not a valid enum value")
+}
+
+func TestContract_ExecApprovalResponseFrame_Edge(t *testing.T) {
+	// deny is a valid enum value; always is also valid but tested implicitly
+	mustPassAsyncAPI(t, "ExecApprovalResponseFrame", FixtureExecApprovalResponseFrame_Edge())
+}
+
+// ── MessageFrame ──────────────────────────────────────────────────────────────
+// Traces to: contracts/asyncapi.yaml components.schemas.MessageFrame
+
+func TestContract_MessageFrame_Populated(t *testing.T) {
+	mustPassAsyncAPI(t, "MessageFrame", FixtureMessageFrame_Populated())
+}
+
+func TestContract_MessageFrame_ZeroValue(t *testing.T) {
+	// type="" and content="" — both required; content has minLength:1
+	mustFailAsyncAPI(t, "MessageFrame", FixtureMessageFrame_ZeroValue(),
+		"zero value has empty required type and content fields (content has minLength:1)")
+}
+
+func TestContract_MessageFrame_Edge(t *testing.T) {
+	// Large content without session_id (starts a new session) — valid
+	mustPassAsyncAPI(t, "MessageFrame", FixtureMessageFrame_Edge())
+}
+
+// ── PingFrame ─────────────────────────────────────────────────────────────────
+// Traces to: contracts/asyncapi.yaml components.schemas.PingFrame
+
+func TestContract_PingFrame_Populated(t *testing.T) {
+	mustPassAsyncAPI(t, "PingFrame", FixturePingFrame_Populated())
+}
+
+func TestContract_PingFrame_ZeroValue(t *testing.T) {
+	// type="" — required, must be const "ping"
+	mustFailAsyncAPI(t, "PingFrame", FixturePingFrame_ZeroValue(),
+		"zero value has empty type field (must be const 'ping')")
+}
+
+func TestContract_PingFrame_Edge(t *testing.T) {
+	// PingFrame has only the type field; edge = populated (both are minimal)
+	mustPassAsyncAPI(t, "PingFrame", FixturePingFrame_Edge())
 }
