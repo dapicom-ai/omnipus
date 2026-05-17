@@ -2,116 +2,167 @@ openapi: 3.1.0
 info:
   title: Omnipus REST API
   version: 0.1.0
-  description: >
-    REST API surface for the Omnipus agentic gateway. All endpoints are under /api/v1.
-    Authentication uses Bearer tokens issued by /auth/login, /auth/register-admin,
-    or /onboarding/complete. State-changing requests must include the X-CSRF-Token
-    header echoing the __Host-csrf cookie value (double-submit cookie, issue #97).
-    See src/lib/api.ts for the CSRF_EXEMPT_PATHS list (endpoints that issue the cookie
-    and cannot require it to be present yet).
+  description: 'REST API surface for the Omnipus agentic gateway. All endpoints are under /api/v1. Authentication uses Bearer tokens issued by /auth/login, /auth/register-admin, or /onboarding/complete. State-changing requests must include the X-CSRF-Token header echoing the __Host-csrf cookie value (double-submit cookie, issue #97). See src/lib/api.ts for the CSRF_EXEMPT_PATHS list (endpoints that issue the cookie and cannot require it to be present yet).
+
+    '
   contact:
     name: Omnipus contributors
     url: https://omnipus.ai
   license:
     name: MIT
     url: https://opensource.org/licenses/MIT
-
 servers:
-  - url: http://localhost:6060/api/v1
-    description: Local development gateway (default port 6060)
-
+- url: http://localhost:6060/api/v1
+  description: Local development gateway (default port 6060)
 tags:
-  - name: auth
-    description: Authentication — login, logout, token validation, password management.
-  - name: onboarding
-    description: First-run onboarding wizard — provider probe and atomic setup.
-  - name: sessions
-    description: Chat/task/channel session CRUD and transcript access.
-  - name: users
-    description: User account management (admin-only). Separate from self-service auth.
-  - name: agents
-    description: Agent configuration CRUD and per-agent session listing.
-  - name: security
-    description: Security configuration endpoints (session scope, etc.).
-
+- name: auth
+  description: "Authentication \u2014 login, logout, token validation, password management."
+- name: onboarding
+  description: "First-run onboarding wizard \u2014 provider probe and atomic setup."
+- name: sessions
+  description: Chat/task/channel session CRUD and transcript access.
+- name: users
+  description: User account management (admin-only). Separate from self-service auth.
+- name: agents
+  description: Agent configuration CRUD and per-agent session listing.
+- name: security
+  description: Security configuration endpoints (session scope, etc.).
+- name: Health
+  description: Health check endpoint
+- name: About
+  description: Gateway metadata and version information
+- name: Tools
+  description: Tool registry, per-agent tool policies, and tool approval resolution
+- name: Security
+  description: Security configuration endpoints (exec allowlist, skill trust, prompt guard, rate limits, sandbox, retention)
+- name: Audit
+  description: Audit log entries and audit logging toggle
+- name: Channels
+  description: Communication channel configuration and management
+- name: Config
+  description: Config state introspection (pending restarts)
+- name: Workspace
+  description: Agent workspace file access
+- name: Preview
+  description: Agent-generated iframe preview content (token-authenticated)
+- name: Agents
+  description: Agent management endpoints
+- name: Settings
+  description: Credentials, backup/restore, and storage management
 components:
   securitySchemes:
     BearerAuth:
       type: http
       scheme: bearer
-      description: >
-        Bearer token issued by /auth/login, /auth/register-admin, or
-        /onboarding/complete. Store in sessionStorage under "omnipus_auth_token".
+      description: 'Bearer token issued by /auth/login, /auth/register-admin, or /onboarding/complete. Store in sessionStorage under "omnipus_auth_token".
+
+        '
   schemas:
     ErrorResponse:
-      $ref: './components/schemas/ErrorResponse.yaml'
+      $ref: ./components/schemas/ErrorResponse.yaml
     LoginRequest:
-      $ref: './components/schemas/LoginRequest.yaml'
+      $ref: ./components/schemas/LoginRequest.yaml
     LoginResponse:
-      $ref: './components/schemas/LoginResponse.yaml'
+      $ref: ./components/schemas/LoginResponse.yaml
     RegisterAdminRequest:
-      $ref: './components/schemas/RegisterAdminRequest.yaml'
+      $ref: ./components/schemas/RegisterAdminRequest.yaml
     ChangePasswordRequest:
-      $ref: './components/schemas/ChangePasswordRequest.yaml'
+      $ref: ./components/schemas/ChangePasswordRequest.yaml
     OnboardingCompleteRequest:
-      $ref: './components/schemas/OnboardingCompleteRequest.yaml'
+      $ref: ./components/schemas/OnboardingCompleteRequest.yaml
     OnboardingCompleteResponse:
-      $ref: './components/schemas/LoginResponse.yaml'
+      $ref: ./components/schemas/LoginResponse.yaml
     ProbeProviderRequest:
-      $ref: './components/schemas/ProbeProviderRequest.yaml'
+      $ref: ./components/schemas/ProbeProviderRequest.yaml
     ProbeProviderResponse:
-      $ref: './components/schemas/ProbeProviderResponse.yaml'
+      $ref: ./components/schemas/ProbeProviderResponse.yaml
     User:
-      $ref: './components/schemas/User.yaml'
+      $ref: ./components/schemas/User.yaml
     UserCreateRequest:
-      $ref: './components/schemas/UserCreateRequest.yaml'
+      $ref: ./components/schemas/UserCreateRequest.yaml
     UserCreateResponse:
-      $ref: './components/schemas/UserCreateResponse.yaml'
+      $ref: ./components/schemas/UserCreateResponse.yaml
     UserDeleteResponse:
-      $ref: './components/schemas/UserDeleteResponse.yaml'
+      $ref: ./components/schemas/UserDeleteResponse.yaml
     UserRoleChangeRequest:
-      $ref: './components/schemas/UserRoleChangeRequest.yaml'
+      $ref: ./components/schemas/UserRoleChangeRequest.yaml
     UserRoleChangeResponse:
-      $ref: './components/schemas/UserRoleChangeResponse.yaml'
+      $ref: ./components/schemas/UserRoleChangeResponse.yaml
     UserResetPasswordRequest:
-      $ref: './components/schemas/UserResetPasswordRequest.yaml'
+      $ref: ./components/schemas/UserResetPasswordRequest.yaml
     UserResetPasswordResponse:
-      $ref: './components/schemas/UserResetPasswordResponse.yaml'
+      $ref: ./components/schemas/UserResetPasswordResponse.yaml
     Session:
-      $ref: './components/schemas/Session.yaml'
+      $ref: ./components/schemas/Session.yaml
     SessionStats:
-      $ref: './components/schemas/SessionStats.yaml'
+      $ref: ./components/schemas/SessionStats.yaml
     SessionDetail:
-      $ref: './components/schemas/SessionDetail.yaml'
+      $ref: ./components/schemas/SessionDetail.yaml
     SessionCreateRequest:
-      $ref: './components/schemas/SessionCreateRequest.yaml'
+      $ref: ./components/schemas/SessionCreateRequest.yaml
     SessionRenameRequest:
-      $ref: './components/schemas/SessionRenameRequest.yaml'
+      $ref: ./components/schemas/SessionRenameRequest.yaml
     Message:
-      $ref: './components/schemas/Message.yaml'
+      $ref: ./components/schemas/Message.yaml
     ToolCall:
-      $ref: './components/schemas/ToolCall.yaml'
+      $ref: ./components/schemas/ToolCall.yaml
     Attachment:
-      $ref: './components/schemas/Attachment.yaml'
+      $ref: ./components/schemas/Attachment.yaml
     Agent:
-      $ref: './components/schemas/Agent.yaml'
+      $ref: ./components/schemas/Agent.yaml
     AgentToolsCfg:
-      $ref: './components/schemas/AgentToolsCfg.yaml'
+      $ref: ./components/schemas/AgentToolsCfg.yaml
     AgentCreateRequest:
-      $ref: './components/schemas/AgentCreateRequest.yaml'
+      $ref: ./components/schemas/AgentCreateRequest.yaml
     AgentUpdateRequest:
-      $ref: './components/schemas/AgentUpdateRequest.yaml'
+      $ref: ./components/schemas/AgentUpdateRequest.yaml
     AgentSession:
-      $ref: './components/schemas/AgentSession.yaml'
+      $ref: ./components/schemas/AgentSession.yaml
     SessionScopeRequest:
-      $ref: './components/schemas/SessionScopeRequest.yaml'
+      $ref: ./components/schemas/SessionScopeRequest.yaml
     SessionScopeResponse:
-      $ref: './components/schemas/SessionScopeResponse.yaml'
-
-# ── Reusable responses ────────────────────────────────────────────────────────
+      $ref: ./components/schemas/SessionScopeResponse.yaml
+    ToolRegistryEntry:
+      $ref: ./components/schemas/ToolRegistryEntry.yaml
+    AgentToolEntry:
+      $ref: ./components/schemas/AgentToolEntry.yaml
+    ToolPolicy:
+      $ref: ./components/schemas/ToolPolicy.yaml
+    GlobalToolPolicies:
+      $ref: ./components/schemas/GlobalToolPolicies.yaml
+    ChannelEntry:
+      $ref: ./components/schemas/ChannelEntry.yaml
+    RetentionConfig:
+      $ref: ./components/schemas/RetentionConfig.yaml
+    RetentionSweepResult:
+      $ref: ./components/schemas/RetentionSweepResult.yaml
+    SandboxConfig:
+      $ref: ./components/schemas/SandboxConfig.yaml
+    SandboxStatus:
+      $ref: ./components/schemas/SandboxStatus.yaml
+    AuditEntry:
+      $ref: ./components/schemas/AuditEntry.yaml
+    AuditLogToggle:
+      $ref: ./components/schemas/AuditLogToggle.yaml
+    RateLimitConfig:
+      $ref: ./components/schemas/RateLimitConfig.yaml
+    ExecAllowlist:
+      $ref: ./components/schemas/ExecAllowlist.yaml
+    ExecProxyStatus:
+      $ref: ./components/schemas/ExecProxyStatus.yaml
+    SkillTrustResponse:
+      $ref: ./components/schemas/SkillTrustResponse.yaml
+    PromptGuardResponse:
+      $ref: ./components/schemas/PromptGuardResponse.yaml
+    PendingRestartEntry:
+      $ref: ./components/schemas/PendingRestartEntry.yaml
+    AboutResponse:
+      $ref: ./components/schemas/AboutResponse.yaml
+    HealthResponse:
+      $ref: ./components/schemas/HealthResponse.yaml
   responses:
     400BadRequest:
-      description: Bad request — missing or invalid field.
+      description: "Bad request \u2014 missing or invalid field."
       content:
         application/json:
           schema:
@@ -135,13 +186,13 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
     409Conflict:
-      description: Conflict — e.g. resource already exists, or last-admin guard triggered.
+      description: "Conflict \u2014 e.g. resource already exists, or last-admin guard triggered."
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
     422UnprocessableEntity:
-      description: Validation failed — semantically invalid input.
+      description: "Validation failed \u2014 semantically invalid input."
       content:
         application/json:
           schema:
@@ -164,30 +215,19 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
     503ServiceUnavailable:
-      description: Service unavailable — e.g. credential store locked.
+      description: "Service unavailable \u2014 e.g. credential store locked."
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Paths
-# ─────────────────────────────────────────────────────────────────────────────
 paths:
-
-  # ── Auth ──────────────────────────────────────────────────────────────────
-
   /auth/login:
     post:
       operationId: login
       summary: Authenticate with username and password
-      description: >
-        Validates credentials against the bcrypt hashes in config.json. On success,
-        issues a bearer token, an HttpOnly session cookie (omnipus-session), and a
-        __Host-csrf cookie. CSRF-exempt (cookie cannot pre-exist before login).
-        Rate-limited: 5 failures per IP+username per 15 minutes → 429.
+      description: "Validates credentials against the bcrypt hashes in config.json. On success, issues a bearer token, an HttpOnly session cookie (omnipus-session), and a __Host-csrf cookie. CSRF-exempt (cookie cannot pre-exist before login). Rate-limited: 5 failures per IP+username per 15 minutes \u2192 429.\n"
       tags:
-        - auth
+      - auth
       security: []
       requestBody:
         required: true
@@ -210,19 +250,17 @@ paths:
           $ref: '#/components/responses/429TooManyRequests'
         '500':
           $ref: '#/components/responses/500InternalServerError'
-
   /auth/logout:
     post:
       operationId: logout
       summary: Revoke the authenticated user's session
-      description: >
-        Clears the user's token_hash and session_token_hash in config.json,
-        then revokes the omnipus-session and __Host-csrf browser cookies.
-        Requires authentication.
+      description: 'Clears the user''s token_hash and session_token_hash in config.json, then revokes the omnipus-session and __Host-csrf browser cookies. Requires authentication.
+
+        '
       tags:
-        - auth
+      - auth
       security:
-        - BearerAuth: []
+      - BearerAuth: []
       responses:
         '204':
           description: Session revoked successfully. No response body.
@@ -230,18 +268,16 @@ paths:
           $ref: '#/components/responses/401Unauthorized'
         '500':
           $ref: '#/components/responses/500InternalServerError'
-
   /auth/validate:
     get:
       operationId: validateToken
       summary: Validate the current bearer token
-      description: >
-        Returns the authenticated user's username and role when the token is valid.
-        Rate-limited: 30 requests per IP per minute.
+      description: 'Returns the authenticated user''s username and role when the token is valid. Rate-limited: 30 requests per IP per minute.
+
+        '
       tags:
-        - auth
-      security:
-        - BearerAuth: []
+      - auth
+      security: []
       responses:
         '200':
           description: Token is valid.
@@ -250,34 +286,31 @@ paths:
               schema:
                 type: object
                 required:
-                  - username
-                  - role
+                - username
+                - role
                 properties:
                   username:
                     type: string
-                    example: "admin"
+                    example: admin
                   role:
                     type: string
                     enum:
-                      - admin
-                      - user
-                    example: "admin"
+                    - admin
+                    - user
+                    example: admin
         '401':
           $ref: '#/components/responses/401Unauthorized'
         '429':
           $ref: '#/components/responses/429TooManyRequests'
-
   /auth/register-admin:
     post:
       operationId: registerAdmin
       summary: Create the first admin account
-      description: >
-        Creates the first admin user. Returns 409 if any admin already exists.
-        The check-create sequence is atomic (TOCTOU-safe via safeUpdateConfigJSON).
-        Issues bearer token, session cookie, and CSRF cookie on success.
-        CSRF-exempt. Rate-limited: 3 requests per IP per minute.
+      description: 'Creates the first admin user. Returns 409 if any admin already exists. The check-create sequence is atomic (TOCTOU-safe via safeUpdateConfigJSON). Issues bearer token, session cookie, and CSRF cookie on success. CSRF-exempt. Rate-limited: 3 requests per IP per minute.
+
+        '
       tags:
-        - auth
+      - auth
       security: []
       requestBody:
         required: true
@@ -300,19 +333,17 @@ paths:
           $ref: '#/components/responses/429TooManyRequests'
         '500':
           $ref: '#/components/responses/500InternalServerError'
-
   /auth/change-password:
     post:
       operationId: changePassword
       summary: Change the authenticated user's own password
-      description: >
-        Self-service password change. Requires the current password for verification.
-        Different from PUT /users/{username}/password which is the admin-reset path.
-        Requires authentication.
+      description: 'Self-service password change. Requires the current password for verification. Different from PUT /users/{username}/password which is the admin-reset path. Requires authentication.
+
+        '
       tags:
-        - auth
+      - auth
       security:
-        - BearerAuth: []
+      - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -327,7 +358,7 @@ paths:
               schema:
                 type: object
                 required:
-                  - success
+                - success
                 properties:
                   success:
                     type: boolean
@@ -340,22 +371,15 @@ paths:
           $ref: '#/components/responses/404NotFound'
         '500':
           $ref: '#/components/responses/500InternalServerError'
-
-  # ── Onboarding ────────────────────────────────────────────────────────────
-
   /onboarding/complete:
     post:
       operationId: completeOnboarding
       summary: Finalize first-run onboarding
-      description: >
-        Two-phase commit: writes the LLM provider config and admin user to config.json
-        atomically, then marks onboarding complete in state.json. Returns 409 when
-        onboarding is already complete. CSRF-exempt (no cookie exists yet).
-        Rate-limited: 3 requests per IP per minute.
-        On success, issues a __Host-csrf cookie so the SPA can immediately make
-        CSRF-protected requests.
+      description: 'Two-phase commit: writes the LLM provider config and admin user to config.json atomically, then marks onboarding complete in state.json. Returns 409 when onboarding is already complete. CSRF-exempt (no cookie exists yet). Rate-limited: 3 requests per IP per minute. On success, issues a __Host-csrf cookie so the SPA can immediately make CSRF-protected requests.
+
+        '
       tags:
-        - onboarding
+      - onboarding
       security: []
       requestBody:
         required: true
@@ -380,18 +404,15 @@ paths:
           $ref: '#/components/responses/500InternalServerError'
         '503':
           $ref: '#/components/responses/503ServiceUnavailable'
-
   /onboarding/probe-provider:
     post:
       operationId: probeProvider
       summary: Test a provider API key and list available models
-      description: >
-        Non-persistent probe: accepts an API key in the request body, tests it
-        against the provider's /models endpoint, and returns the model list.
-        Nothing is written to disk. Available only during onboarding (returns 409
-        after onboarding completes). CSRF-exempt.
+      description: 'Non-persistent probe: accepts an API key in the request body, tests it against the provider''s /models endpoint, and returns the model list. Nothing is written to disk. Available only during onboarding (returns 409 after onboarding completes). CSRF-exempt.
+
+        '
       tags:
-        - onboarding
+      - onboarding
       security: []
       requestBody:
         required: true
@@ -401,9 +422,9 @@ paths:
               $ref: '#/components/schemas/ProbeProviderRequest'
       responses:
         '200':
-          description: >
-            Always HTTP 200. Check success field to determine if the probe
-            succeeded or failed at the provider level.
+          description: 'Always HTTP 200. Check success field to determine if the probe succeeded or failed at the provider level.
+
+            '
           content:
             application/json:
               schema:
@@ -412,81 +433,74 @@ paths:
           $ref: '#/components/responses/400BadRequest'
         '409':
           $ref: '#/components/responses/409Conflict'
-
-  # ── Sessions ──────────────────────────────────────────────────────────────
-
   /sessions:
     get:
       operationId: listSessions
       summary: List sessions across all agents
-      description: >
-        Returns all sessions visible to the authenticated user. Supports optional
-        filtering by agent_id and type. When some agents fail to list their sessions
-        (e.g. filesystem error), the response still returns HTTP 200 but includes
-        a partial_errors array alongside the sessions array.
+      description: 'Returns all sessions visible to the authenticated user. Supports optional filtering by agent_id and type. When some agents fail to list their sessions (e.g. filesystem error), the response still returns HTTP 200 but includes a partial_errors array alongside the sessions array.
+
+        '
       tags:
-        - sessions
+      - sessions
       security:
-        - BearerAuth: []
+      - BearerAuth: []
       parameters:
-        - name: agent_id
-          in: query
-          description: Filter by agent ID.
-          schema:
-            type: string
-          example: "jim"
-        - name: type
-          in: query
-          description: Filter by session type.
-          schema:
-            type: string
-            enum:
-              - chat
-              - task
-              - channel
-          example: "chat"
+      - name: agent_id
+        in: query
+        description: Filter by agent ID.
+        schema:
+          type: string
+        example: jim
+      - name: type
+        in: query
+        description: Filter by session type.
+        schema:
+          type: string
+          enum:
+          - chat
+          - task
+          - channel
+        example: chat
       responses:
         '200':
-          description: >
-            List of sessions. When partial errors occur, the response body is
-            {"sessions": [...], "partial_errors": ["agent=X: session_list_failed"]}.
-            When no errors, the response body is a plain JSON array of Session objects.
+          description: 'List of sessions. When partial errors occur, the response body is {"sessions": [...], "partial_errors": ["agent=X: session_list_failed"]}. When no errors, the response body is a plain JSON array of Session objects.
+
+            '
           content:
             application/json:
               schema:
                 oneOf:
-                  - type: array
-                    items:
-                      $ref: '#/components/schemas/Session'
-                  - type: object
-                    required:
-                      - sessions
-                      - partial_errors
-                    properties:
-                      sessions:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/Session'
-                      partial_errors:
-                        type: array
-                        items:
-                          type: string
-                        description: Opaque error tokens (agent ID + sanitized reason).
+                - type: array
+                  items:
+                    $ref: '#/components/schemas/Session'
+                - type: object
+                  required:
+                  - sessions
+                  - partial_errors
+                  properties:
+                    sessions:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/Session'
+                    partial_errors:
+                      type: array
+                      items:
+                        type: string
+                      description: Opaque error tokens (agent ID + sanitized reason).
         '401':
           $ref: '#/components/responses/401Unauthorized'
         '500':
           $ref: '#/components/responses/500InternalServerError'
-
     post:
       operationId: createSession
       summary: Create a new session
-      description: >
-        Creates a new session for the specified agent. Returns HTTP 201 on success.
-        The agent must exist (400 if not found).
+      description: 'Creates a new session for the specified agent. Returns HTTP 201 on success. The agent must exist (400 if not found).
+
+        '
       tags:
-        - sessions
+      - sessions
       security:
-        - BearerAuth: []
+      - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -506,26 +520,25 @@ paths:
           $ref: '#/components/responses/401Unauthorized'
         '500':
           $ref: '#/components/responses/500InternalServerError'
-
   /sessions/{id}:
     get:
       operationId: getSession
       summary: Get session detail including full transcript
-      description: >
-        Returns the session metadata and complete ordered transcript.
-        Used by the SPA to render the chat history.
+      description: 'Returns the session metadata and complete ordered transcript. Used by the SPA to render the chat history.
+
+        '
       tags:
-        - sessions
+      - sessions
       security:
-        - BearerAuth: []
+      - BearerAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Session ID.
-          example: "550e8400-e29b-41d4-a716-446655440000"
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Session ID.
+        example: 550e8400-e29b-41d4-a716-446655440000
       responses:
         '200':
           description: Session detail with transcript.
@@ -541,22 +554,21 @@ paths:
           $ref: '#/components/responses/404NotFound'
         '500':
           $ref: '#/components/responses/500InternalServerError'
-
     put:
       operationId: renameSession
       summary: Rename a session
       description: Updates the session title. Returns the updated session metadata.
       tags:
-        - sessions
+      - sessions
       security:
-        - BearerAuth: []
+      - BearerAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Session ID.
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Session ID.
       requestBody:
         required: true
         content:
@@ -578,24 +590,23 @@ paths:
           $ref: '#/components/responses/404NotFound'
         '500':
           $ref: '#/components/responses/500InternalServerError'
-
     delete:
       operationId: deleteSession
       summary: Delete a session and all its data
-      description: >
-        Permanently removes the session directory including transcript and context.
-        Returns {"success": true} on success.
+      description: 'Permanently removes the session directory including transcript and context. Returns {"success": true} on success.
+
+        '
       tags:
-        - sessions
+      - sessions
       security:
-        - BearerAuth: []
+      - BearerAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Session ID.
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Session ID.
       responses:
         '200':
           description: Session deleted.
@@ -604,7 +615,7 @@ paths:
               schema:
                 type: object
                 required:
-                  - success
+                - success
                 properties:
                   success:
                     type: boolean
@@ -617,25 +628,24 @@ paths:
           $ref: '#/components/responses/404NotFound'
         '500':
           $ref: '#/components/responses/500InternalServerError'
-
   /sessions/{id}/messages:
     get:
       operationId: getSessionMessages
       summary: Get session transcript messages
-      description: >
-        Returns the ordered transcript entries for a session without the metadata wrapper.
-        Lighter than GET /sessions/{id} when only the message list is needed.
+      description: 'Returns the ordered transcript entries for a session without the metadata wrapper. Lighter than GET /sessions/{id} when only the message list is needed.
+
+        '
       tags:
-        - sessions
+      - sessions
       security:
-        - BearerAuth: []
+      - BearerAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Session ID.
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Session ID.
       responses:
         '200':
           description: Ordered list of transcript entries.
@@ -653,21 +663,15 @@ paths:
           $ref: '#/components/responses/404NotFound'
         '500':
           $ref: '#/components/responses/500InternalServerError'
-
-  # ── Users ─────────────────────────────────────────────────────────────────
-
   /users:
     get:
       operationId: listUsers
       summary: List all user accounts
-      description: >
-        Returns all registered gateway users. Admin-only.
-        Password and token hashes are never included — only boolean presence flags.
-        dev_mode_bypass=true disables this endpoint (503).
+      description: "Returns all registered gateway users. Admin-only. Password and token hashes are never included \u2014 only boolean presence flags. dev_mode_bypass=true disables this endpoint (503).\n"
       tags:
-        - users
+      - users
       security:
-        - BearerAuth: []
+      - BearerAuth: []
       responses:
         '200':
           description: Array of user accounts.
@@ -685,18 +689,14 @@ paths:
           $ref: '#/components/responses/500InternalServerError'
         '503':
           $ref: '#/components/responses/503ServiceUnavailable'
-
     post:
       operationId: createUser
       summary: Create a new user account
-      description: >
-        Creates a new user with hashed password. No bearer token is issued at creation
-        time — the user must log in via POST /auth/login to obtain one. Admin-only.
-        dev_mode_bypass=true disables this endpoint (503).
+      description: "Creates a new user with hashed password. No bearer token is issued at creation time \u2014 the user must log in via POST /auth/login to obtain one. Admin-only. dev_mode_bypass=true disables this endpoint (503).\n"
       tags:
-        - users
+      - users
       security:
-        - BearerAuth: []
+      - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -722,28 +722,26 @@ paths:
           $ref: '#/components/responses/500InternalServerError'
         '503':
           $ref: '#/components/responses/503ServiceUnavailable'
-
   /users/{username}:
     delete:
       operationId: deleteUser
       summary: Delete a user account
-      description: >
-        Permanently removes the user from config.json. The last-admin guard prevents
-        deleting the final admin account (409). Admin-only.
-        dev_mode_bypass=true disables this endpoint (503).
+      description: 'Permanently removes the user from config.json. The last-admin guard prevents deleting the final admin account (409). Admin-only. dev_mode_bypass=true disables this endpoint (503).
+
+        '
       tags:
-        - users
+      - users
       security:
-        - BearerAuth: []
+      - BearerAuth: []
       parameters:
-        - name: username
-          in: path
-          required: true
-          schema:
-            type: string
-            pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{1,62}$'
-          description: Username to delete.
-          example: "alice"
+      - name: username
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9][A-Za-z0-9._-]{1,62}$
+        description: Username to delete.
+        example: alice
       responses:
         '200':
           description: User deleted.
@@ -765,27 +763,26 @@ paths:
           $ref: '#/components/responses/500InternalServerError'
         '503':
           $ref: '#/components/responses/503ServiceUnavailable'
-
   /users/{username}/role:
     patch:
       operationId: changeUserRole
       summary: Change a user's RBAC role
-      description: >
-        Changes the role of the target user. The last-admin guard prevents demoting
-        the final admin (409). Admin-only. dev_mode_bypass=true disables this endpoint (503).
+      description: 'Changes the role of the target user. The last-admin guard prevents demoting the final admin (409). Admin-only. dev_mode_bypass=true disables this endpoint (503).
+
+        '
       tags:
-        - users
+      - users
       security:
-        - BearerAuth: []
+      - BearerAuth: []
       parameters:
-        - name: username
-          in: path
-          required: true
-          schema:
-            type: string
-            pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{1,62}$'
-          description: Username whose role will change.
-          example: "alice"
+      - name: username
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9][A-Za-z0-9._-]{1,62}$
+        description: Username whose role will change.
+        example: alice
       requestBody:
         required: true
         content:
@@ -813,29 +810,24 @@ paths:
           $ref: '#/components/responses/500InternalServerError'
         '503':
           $ref: '#/components/responses/503ServiceUnavailable'
-
   /users/{username}/password:
     put:
       operationId: resetUserPassword
       summary: Admin-reset a user's password
-      description: >
-        Resets the target user's password and invalidates their current bearer token.
-        The user must log in again with the new password.
-        This is the admin-reset path — the self-change path is POST /auth/change-password.
-        Admin-only. dev_mode_bypass=true disables this endpoint (503).
+      description: "Resets the target user's password and invalidates their current bearer token. The user must log in again with the new password. This is the admin-reset path \u2014 the self-change path is POST /auth/change-password. Admin-only. dev_mode_bypass=true disables this endpoint (503).\n"
       tags:
-        - users
+      - users
       security:
-        - BearerAuth: []
+      - BearerAuth: []
       parameters:
-        - name: username
-          in: path
-          required: true
-          schema:
-            type: string
-            pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{1,62}$'
-          description: Username whose password will be reset.
-          example: "alice"
+      - name: username
+        in: path
+        required: true
+        schema:
+          type: string
+          pattern: ^[A-Za-z0-9][A-Za-z0-9._-]{1,62}$
+        description: Username whose password will be reset.
+        example: alice
       requestBody:
         required: true
         content:
@@ -861,22 +853,17 @@ paths:
           $ref: '#/components/responses/500InternalServerError'
         '503':
           $ref: '#/components/responses/503ServiceUnavailable'
-
-  # ── Agents ────────────────────────────────────────────────────────────────
-
   /agents:
     get:
       operationId: listAgents
       summary: List all configured agents
-      description: >
-        Returns all agents from config.json (core + custom). Core agents return
-        empty soul/heartbeat/instructions (compiled-in prompts are not exposed).
-        Custom agents return SOUL.md content only (not heartbeat/instructions) for
-        efficient list rendering.
+      description: 'Returns all agents from config.json (core + custom). Core agents return empty soul/heartbeat/instructions (compiled-in prompts are not exposed). Custom agents return SOUL.md content only (not heartbeat/instructions) for efficient list rendering.
+
+        '
       tags:
-        - agents
+      - agents
       security:
-        - BearerAuth: []
+      - BearerAuth: []
       responses:
         '200':
           description: Array of agent configurations.
@@ -890,18 +877,16 @@ paths:
           $ref: '#/components/responses/401Unauthorized'
         '500':
           $ref: '#/components/responses/500InternalServerError'
-
     post:
       operationId: createAgent
       summary: Create a new custom agent
-      description: >
-        Creates a new custom agent with a server-assigned UUID. Returns HTTP 201.
-        The agent starts in "draft" status (no SOUL.md written yet).
-        Triggers a config reload after successful persistence.
+      description: 'Creates a new custom agent with a server-assigned UUID. Returns HTTP 201. The agent starts in "draft" status (no SOUL.md written yet). Triggers a config reload after successful persistence.
+
+        '
       tags:
-        - agents
+      - agents
       security:
-        - BearerAuth: []
+      - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -923,26 +908,25 @@ paths:
           $ref: '#/components/responses/422UnprocessableEntity'
         '500':
           $ref: '#/components/responses/500InternalServerError'
-
   /agents/{id}:
     get:
       operationId: getAgent
       summary: Get a single agent configuration
-      description: >
-        Returns the full agent configuration including soul, heartbeat, and instructions.
-        Core (locked) agents return empty soul (compiled-in prompt not exposed).
+      description: 'Returns the full agent configuration including soul, heartbeat, and instructions. Core (locked) agents return empty soul (compiled-in prompt not exposed).
+
+        '
       tags:
-        - agents
+      - agents
       security:
-        - BearerAuth: []
+      - BearerAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Agent ID.
-          example: "jim"
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Agent ID.
+        example: jim
       responses:
         '200':
           description: Agent configuration.
@@ -956,28 +940,24 @@ paths:
           $ref: '#/components/responses/401Unauthorized'
         '404':
           $ref: '#/components/responses/404NotFound'
-
     put:
       operationId: updateAgent
       summary: Update agent configuration
-      description: >
-        Updates the specified agent. All fields are optional (only provided fields change).
-        Locked core agents reject mutations to name, description, soul, heartbeat,
-        instructions (403). Writing soul/heartbeat/instructions triggers a config reload.
-        Model, timeout, max_tool_iterations, steering_mode, tool_feedback,
-        heartbeat_enabled, heartbeat_interval changes do NOT trigger a reload.
+      description: 'Updates the specified agent. All fields are optional (only provided fields change). Locked core agents reject mutations to name, description, soul, heartbeat, instructions (403). Writing soul/heartbeat/instructions triggers a config reload. Model, timeout, max_tool_iterations, steering_mode, tool_feedback, heartbeat_enabled, heartbeat_interval changes do NOT trigger a reload.
+
+        '
       tags:
-        - agents
+      - agents
       security:
-        - BearerAuth: []
+      - BearerAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Agent ID.
-          example: "550e8400-e29b-41d4-a716-446655440000"
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Agent ID.
+        example: 550e8400-e29b-41d4-a716-446655440000
       requestBody:
         required: true
         content:
@@ -1001,26 +981,25 @@ paths:
           $ref: '#/components/responses/404NotFound'
         '500':
           $ref: '#/components/responses/500InternalServerError'
-
   /agents/{id}/sessions:
     get:
       operationId: listAgentSessions
       summary: List sessions for a specific agent
-      description: >
-        Returns all sessions owned by the specified agent.
-        Returns an empty array when the agent has no session store.
+      description: 'Returns all sessions owned by the specified agent. Returns an empty array when the agent has no session store.
+
+        '
       tags:
-        - agents
+      - agents
       security:
-        - BearerAuth: []
+      - BearerAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Agent ID.
-          example: "jim"
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Agent ID.
+        example: jim
       responses:
         '200':
           description: Array of session summaries for this agent.
@@ -1036,27 +1015,25 @@ paths:
           $ref: '#/components/responses/401Unauthorized'
         '500':
           $ref: '#/components/responses/500InternalServerError'
-
   /agents/{id}/tools:
     get:
       operationId: getAgentTools
       summary: Get per-agent tool registry view and effective policies
-      description: >
-        Returns the agent's current tool policy configuration (AgentToolsCfg)
-        plus the effective per-tool policy after fence application.
-        Used by the Tools & Permissions panel in the Agent Profile UI.
+      description: 'Returns the agent''s current tool policy configuration (AgentToolsCfg) plus the effective per-tool policy after fence application. Used by the Tools & Permissions panel in the Agent Profile UI.
+
+        '
       tags:
-        - agents
+      - agents
       security:
-        - BearerAuth: []
+      - BearerAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Agent ID.
-          example: "jim"
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Agent ID.
+        example: jim
       responses:
         '200':
           description: Agent tool configuration and effective policy list.
@@ -1065,8 +1042,8 @@ paths:
               schema:
                 type: object
                 required:
-                  - config
-                  - tools
+                - config
+                - tools
                 properties:
                   config:
                     $ref: '#/components/schemas/AgentToolsCfg'
@@ -1076,29 +1053,29 @@ paths:
                     items:
                       type: object
                       required:
-                        - name
-                        - configured_policy
-                        - effective_policy
-                        - fence_applied
-                        - requires_admin_ask
+                      - name
+                      - configured_policy
+                      - effective_policy
+                      - fence_applied
+                      - requires_admin_ask
                       properties:
                         name:
                           type: string
                           description: Tool name.
-                          example: "workspace.shell"
+                          example: workspace.shell
                         configured_policy:
                           type: string
                           enum:
-                            - allow
-                            - ask
-                            - deny
+                          - allow
+                          - ask
+                          - deny
                           description: Policy as stored in the agent's tools_cfg.
                         effective_policy:
                           type: string
                           enum:
-                            - allow
-                            - ask
-                            - deny
+                          - allow
+                          - ask
+                          - deny
                           description: Actual policy after fence rules are applied.
                         fence_applied:
                           type: boolean
@@ -1114,26 +1091,24 @@ paths:
           $ref: '#/components/responses/404NotFound'
         '500':
           $ref: '#/components/responses/500InternalServerError'
-
     put:
       operationId: updateAgentTools
       summary: Replace per-agent tool policy configuration
-      description: >
-        Replaces the agent's tools_cfg in config.json. Locked (core/system) agents
-        cannot have their tool policy overwritten via this endpoint (403).
-        Triggers a config reload on success.
+      description: 'Replaces the agent''s tools_cfg in config.json. Locked (core/system) agents cannot have their tool policy overwritten via this endpoint (403). Triggers a config reload on success.
+
+        '
       tags:
-        - agents
+      - agents
       security:
-        - BearerAuth: []
+      - BearerAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-          description: Agent ID.
-          example: "550e8400-e29b-41d4-a716-446655440000"
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+        description: Agent ID.
+        example: 550e8400-e29b-41d4-a716-446655440000
       requestBody:
         required: true
         content:
@@ -1148,8 +1123,8 @@ paths:
               schema:
                 type: object
                 required:
-                  - config
-                  - tools
+                - config
+                - tools
                 properties:
                   config:
                     $ref: '#/components/schemas/AgentToolsCfg'
@@ -1158,20 +1133,26 @@ paths:
                     items:
                       type: object
                       required:
-                        - name
-                        - configured_policy
-                        - effective_policy
-                        - fence_applied
-                        - requires_admin_ask
+                      - name
+                      - configured_policy
+                      - effective_policy
+                      - fence_applied
+                      - requires_admin_ask
                       properties:
                         name:
                           type: string
                         configured_policy:
                           type: string
-                          enum: [allow, ask, deny]
+                          enum:
+                          - allow
+                          - ask
+                          - deny
                         effective_policy:
                           type: string
-                          enum: [allow, ask, deny]
+                          enum:
+                          - allow
+                          - ask
+                          - deny
                         fence_applied:
                           type: boolean
                         requires_admin_ask:
@@ -1186,21 +1167,17 @@ paths:
           $ref: '#/components/responses/404NotFound'
         '500':
           $ref: '#/components/responses/500InternalServerError'
-
-  # ── Security / Session Scope ──────────────────────────────────────────────
-
   /security/session-scope:
     get:
       operationId: getSessionScope
       summary: Get the current DM session scoping strategy
-      description: >
-        Returns the dm_scope configuration value. Controls how incoming direct
-        messages from channels are routed to session threads. Defaults to
-        "per-channel-peer" when not explicitly configured.
+      description: 'Returns the dm_scope configuration value. Controls how incoming direct messages from channels are routed to session threads. Defaults to "per-channel-peer" when not explicitly configured.
+
+        '
       tags:
-        - security
+      - security
       security:
-        - BearerAuth: []
+      - BearerAuth: []
       responses:
         '200':
           description: Current session scope configuration.
@@ -1210,18 +1187,16 @@ paths:
                 $ref: '#/components/schemas/SessionScopeResponse'
         '401':
           $ref: '#/components/responses/401Unauthorized'
-
     put:
       operationId: updateSessionScope
       summary: Update the DM session scoping strategy
-      description: >
-        Persists the new dm_scope to config.json. Session routing is cached at boot
-        so all changes require a gateway restart. The response always includes
-        requires_restart=true. Admin-only. Emits a security audit log entry.
+      description: 'Persists the new dm_scope to config.json. Session routing is cached at boot so all changes require a gateway restart. The response always includes requires_restart=true. Admin-only. Emits a security audit log entry.
+
+        '
       tags:
-        - security
+      - security
       security:
-        - BearerAuth: []
+      - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -1236,21 +1211,21 @@ paths:
               schema:
                 type: object
                 required:
-                  - saved
-                  - requires_restart
-                  - applied_dm_scope
+                - saved
+                - requires_restart
+                - applied_dm_scope
                 properties:
                   saved:
                     type: boolean
                     example: true
                   requires_restart:
                     type: boolean
-                    description: Always true — session routing requires a gateway restart.
+                    description: "Always true \u2014 session routing requires a gateway restart."
                     example: true
                   applied_dm_scope:
                     type: string
                     description: The dm_scope currently active (before restart).
-                    example: "per-channel-peer"
+                    example: per-channel-peer
                   warning:
                     type: string
                     description: Present when hot-reload failed (config saved, restart required).
@@ -1262,3 +1237,1673 @@ paths:
           $ref: '#/components/responses/403Forbidden'
         '500':
           $ref: '#/components/responses/500InternalServerError'
+  /health:
+    get:
+      operationId: getHealth
+      summary: Health check
+      description: 'Returns HTTP 200 when the gateway is running. No authentication required.
+
+        '
+      security: []
+      tags:
+      - Health
+      responses:
+        '200':
+          description: Gateway is healthy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '404':
+          description: "Not used \u2014 gateway is always healthy or not reachable."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /about:
+    get:
+      operationId: getAbout
+      summary: Gateway metadata
+      description: 'Returns version, runtime, uptime, PID, and preview listener fields. Used by the SPA to construct iframe preview URLs (FR-009).
+
+        '
+      tags:
+      - About
+      responses:
+        '200':
+          description: Gateway metadata.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AboutResponse'
+        '405':
+          description: Method not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+      security: []
+  /tools:
+    get:
+      operationId: getToolRegistry
+      summary: Central tool registry snapshot (FR-027)
+      description: "Returns all registered tools with name, description, scope, category, and source discriminator (builtin | mcp). Always returns an array \u2014 never null even when empty.\n"
+      tags:
+      - Tools
+      responses:
+        '200':
+          description: Array of tool registry entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ToolRegistryEntry'
+        '405':
+          description: Method not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /tools/builtin:
+    get:
+      operationId: getBuiltinToolsDeprecated
+      summary: Deprecated builtin tool catalog (FR-029)
+      description: 'This endpoint was removed in the central tool registry redesign. Always returns HTTP 404. Use GET /api/v1/tools instead.
+
+        '
+      tags:
+      - Tools
+      responses:
+        '200':
+          description: "Not returned \u2014 this endpoint always returns 404."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: "Endpoint removed \u2014 use GET /api/v1/tools instead.\n"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /tool-approvals/{approval_id}:
+    post:
+      operationId: postToolApproval
+      summary: Resolve a pending tool approval (FR-011, FR-082)
+      description: 'Approve, deny, or cancel a pending tool call approval. For tools with RequiresAdminAsk=true, the caller must hold the admin role (FR-015).
+
+        '
+      tags:
+      - Tools
+      parameters:
+      - name: approval_id
+        in: path
+        required: true
+        description: The approval ID from the WS tool_approval_request frame.
+        schema:
+          type: string
+        example: appr_abc123
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - action
+              properties:
+                action:
+                  type: string
+                  description: Action to take on this approval.
+                  enum:
+                  - approve
+                  - deny
+                  - cancel
+                  example: approve
+      responses:
+        '200':
+          description: Action processed successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - approval_id
+                - action
+                - status
+                properties:
+                  approval_id:
+                    type: string
+                    example: appr_abc123
+                  action:
+                    type: string
+                    enum:
+                    - approve
+                    - deny
+                    - cancel
+                    example: approve
+                  status:
+                    type: string
+                    enum:
+                    - ok
+                    example: ok
+        '400':
+          description: Malformed body or unknown action.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Missing or invalid bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Admin role required (RequiresAdminAsk tool).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Approval ID not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '410':
+          description: Approval already resolved (FR-018).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /security/tool-policies:
+    get:
+      operationId: getGlobalToolPolicies
+      summary: Get global tool policies
+      description: 'Returns the current global tool policy configuration from sandbox.tool_policies and sandbox.default_tool_policy.
+
+        '
+      tags:
+      - Security
+      responses:
+        '200':
+          description: Current global tool policies.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GlobalToolPolicies'
+        '401':
+          description: Missing or invalid bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      operationId: updateGlobalToolPolicies
+      summary: Update global tool policies (admin only)
+      description: 'Persists new global tool policies to config.json under the sandbox key. Changes are audit-logged (SEC-15). Admin-only; non-admin returns 403.
+
+        '
+      tags:
+      - Security
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GlobalToolPolicies'
+      responses:
+        '200':
+          description: Updated global tool policies.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GlobalToolPolicies'
+        '400':
+          description: Invalid policy values.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Admin role required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /security/exec-allowlist:
+    get:
+      operationId: getExecAllowlist
+      summary: Get exec binary allowlist (SEC-05)
+      description: 'Returns the current exec allowlist and approval mode.
+
+        '
+      tags:
+      - Security
+      responses:
+        '200':
+          description: Current exec allowlist.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecAllowlist'
+        '401':
+          description: Missing or invalid bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      operationId: updateExecAllowlist
+      summary: Update exec binary allowlist (SEC-05)
+      description: 'Atomically updates the exec binary allowlist. Patterns are trimmed, validated, and deduplicated. Changes are audit-logged (SEC-15). Note: requires_restart=true in the response because the in-memory agent loop uses the previous allowlist until the gateway restarts (SEC-12).
+
+        '
+      tags:
+      - Security
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - allowed_binaries
+              properties:
+                allowed_binaries:
+                  type: array
+                  items:
+                    type: string
+                  description: List of allowed binary name patterns.
+      responses:
+        '200':
+          description: Updated allowlist (restart required).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecAllowlist'
+        '400':
+          description: Invalid pattern (empty, too long, or too many entries).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /security/exec-proxy-status:
+    get:
+      operationId: getExecProxyStatus
+      summary: Get exec SSRF proxy runtime state (SEC-28)
+      description: 'Returns whether the exec proxy is configured and currently bound. Operators use this to distinguish "disabled by config" from "failed to bind" from "running normally".
+
+        '
+      tags:
+      - Security
+      responses:
+        '200':
+          description: Exec proxy runtime state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExecProxyStatus'
+        '405':
+          description: Method not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /security/skill-trust:
+    get:
+      operationId: getSkillTrust
+      summary: Get skill trust level
+      description: 'Returns the current skill trust level from sandbox.skill_trust. Default is "warn_unverified" when not set.
+
+        '
+      tags:
+      - Security
+      responses:
+        '200':
+          description: Current skill trust level.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SkillTrustResponse'
+        '401':
+          description: Missing or invalid bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      operationId: updateSkillTrust
+      summary: Update skill trust level (admin only)
+      description: 'Persists the new skill trust level to config.sandbox.skill_trust. Only the three canonical values are accepted (case-sensitive). Changes are audit-logged.
+
+        '
+      tags:
+      - Security
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - level
+              properties:
+                level:
+                  type: string
+                  enum:
+                  - block_unverified
+                  - warn_unverified
+                  - allow_all
+      responses:
+        '200':
+          description: Updated skill trust level.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - saved
+                - requires_restart
+                - applied_level
+                properties:
+                  saved:
+                    type: boolean
+                    example: true
+                  requires_restart:
+                    type: boolean
+                    example: false
+                  applied_level:
+                    type: string
+                    enum:
+                    - block_unverified
+                    - warn_unverified
+                    - allow_all
+                    example: block_unverified
+                  warning:
+                    type: string
+                    description: "Present when allow_all is selected \u2014 warns that hash verification is disabled.\n"
+        '400':
+          description: Invalid trust level value.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Admin role required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /security/prompt-guard:
+    get:
+      operationId: getPromptGuard
+      summary: Get prompt injection guard level
+      description: 'Returns the current prompt injection detection strictness level. Default is "medium". Requires restart is always false (hot-reloaded).
+
+        '
+      tags:
+      - Security
+      responses:
+        '200':
+          description: Current prompt guard level.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromptGuardResponse'
+        '401':
+          description: Missing or invalid bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      operationId: updatePromptGuard
+      summary: Update prompt injection guard level (admin only)
+      description: "Persists the new prompt injection level to config and hot-reloads. Changes take effect immediately \u2014 requires_restart is false on successful hot-reload.\n"
+      tags:
+      - Security
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - level
+              properties:
+                level:
+                  type: string
+                  enum:
+                  - low
+                  - medium
+                  - high
+      responses:
+        '200':
+          description: Updated prompt guard level.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - saved
+                - requires_restart
+                - applied_level
+                properties:
+                  saved:
+                    type: boolean
+                    example: true
+                  requires_restart:
+                    type: boolean
+                    example: false
+                  applied_level:
+                    type: string
+                    enum:
+                    - low
+                    - medium
+                    - high
+                    example: medium
+                  warning:
+                    type: string
+                    description: 'Present when hot-reload failed. Restart required to apply.
+
+                      '
+        '400':
+          description: Invalid level value.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Admin role required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /security/rate-limits:
+    get:
+      operationId: getRateLimits
+      summary: Get rate limit configuration and live daily cost
+      description: "Returns the current rate-limit config and the live daily LLM cost. Hot-reloaded \u2014 requires_restart is always false on PUT.\n"
+      tags:
+      - Security
+      responses:
+        '200':
+          description: Current rate limits and live cost.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - enabled
+                - daily_cost_usd
+                - daily_cost_cap
+                - max_agent_llm_calls_per_hour
+                - max_agent_tool_calls_per_minute
+                properties:
+                  enabled:
+                    type: boolean
+                    example: true
+                  daily_cost_usd:
+                    type: number
+                    format: double
+                    minimum: 0
+                    example: 0.42
+                  daily_cost_cap:
+                    type: number
+                    format: double
+                    minimum: 0
+                    example: 5.0
+                  max_agent_llm_calls_per_hour:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    example: 100
+                  max_agent_tool_calls_per_minute:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    example: 60
+        '401':
+          description: Missing or invalid bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      operationId: updateRateLimits
+      summary: Update rate limit configuration (admin only)
+      description: "Partial update \u2014 any subset of the three cap fields. Strict type validation rejects JSON strings in numeric fields, floats in integer fields, negative values, NaN/Inf, and overflow. Changes are hot-reloaded (requires_restart: false).\n"
+      tags:
+      - Security
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                daily_cost_cap_usd:
+                  type: number
+                  format: double
+                  minimum: 0
+                  description: 0 = unlimited.
+                max_agent_llm_calls_per_hour:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                  description: 0 = unlimited.
+                max_agent_tool_calls_per_minute:
+                  type: integer
+                  format: int64
+                  minimum: 0
+                  description: 0 = unlimited.
+      responses:
+        '200':
+          description: Updated rate limit configuration.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - saved
+                - requires_restart
+                properties:
+                  saved:
+                    type: boolean
+                    example: true
+                  requires_restart:
+                    type: boolean
+                    example: false
+                  applied:
+                    type: object
+                    properties:
+                      daily_cost_cap_usd:
+                        type: number
+                        format: double
+                      max_agent_llm_calls_per_hour:
+                        type: integer
+                        format: int64
+                      max_agent_tool_calls_per_minute:
+                        type: integer
+                        format: int64
+                  warning:
+                    type: string
+                    description: Present when hot-reload failed.
+        '400':
+          description: Invalid field types or values.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Admin role required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /security/sandbox-config:
+    get:
+      operationId: getSandboxConfig
+      summary: Get sandbox configuration
+      description: 'Returns the full sandbox configuration including mode, network settings, SSRF controls, and agent defaults.
+
+        '
+      tags:
+      - Security
+      responses:
+        '200':
+          description: Current sandbox configuration.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxConfig'
+        '401':
+          description: Missing or invalid bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Agent loop not initialized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      operationId: updateSandboxConfig
+      summary: Update sandbox configuration (admin only)
+      description: "Partial update \u2014 any subset of mode, allow_network_outbound, allowed_paths, ssrf_enabled, ssrf_allow_internal, ssrf.allow_internal, default_profile, shell_deny_patterns. At least one field required. mode, allowed_paths, and default_profile are restart-gated (requires_restart=true). SSRF and shell_deny_patterns are hot-reloaded. Admin-only; non-admin returns 403. Protected by RequireNotBypass middleware (returns 503 when dev_mode_bypass is active).\n"
+      tags:
+      - Security
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mode:
+                  type: string
+                  enum:
+                  - 'off'
+                  - permissive
+                  - enforce
+                allow_network_outbound:
+                  type: boolean
+                allowed_paths:
+                  type: array
+                  items:
+                    type: string
+                ssrf_enabled:
+                  type: boolean
+                ssrf_allow_internal:
+                  type: array
+                  items:
+                    type: string
+                ssrf:
+                  type: object
+                  properties:
+                    allow_internal:
+                      type: array
+                      items:
+                        type: string
+                default_profile:
+                  type: string
+                  enum:
+                  - ''
+                  - none
+                  - workspace
+                  - workspace+net
+                  - host
+                  - 'off'
+                shell_deny_patterns:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '200':
+          description: Updated sandbox configuration.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxConfig'
+        '400':
+          description: Validation error (invalid mode, profile, or path).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Admin role required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: dev_mode_bypass is active (RequireNotBypass guard).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /security/sandbox-status:
+    get:
+      operationId: getSandboxStatus
+      summary: Get sandbox backend runtime status (SEC-01/02/03)
+      description: 'Returns the active sandbox backend, kernel capabilities, enforcement flags, and bind-port-rule count. Lets operators distinguish enforce from permissive from off states.
+
+        '
+      tags:
+      - Security
+      responses:
+        '200':
+          description: Sandbox backend runtime status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxStatus'
+        '401':
+          description: Missing or invalid bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Agent loop not initialized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /audit-log:
+    get:
+      operationId: getAuditLog
+      summary: Get recent audit log entries
+      description: "Returns the last 100 audit log entries in reverse-chronological order, read from ~/.omnipus/system/audit.jsonl. Always returns an array \u2014 empty array when no entries exist.\n"
+      tags:
+      - Audit
+      responses:
+        '200':
+          description: Audit log entries (reverse-chronological, max 100).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AuditEntry'
+        '405':
+          description: Method not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /security/audit-log:
+    get:
+      operationId: getAuditLogToggle
+      summary: Get audit logging enable/disable state
+      description: 'Returns whether audit logging is currently enabled. Note: this is distinct from GET /api/v1/audit-log which returns entries. This endpoint controls the audit_log config flag.
+
+        '
+      tags:
+      - Audit
+      responses:
+        '200':
+          description: Audit log enable state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditLogToggle'
+        '401':
+          description: Missing or invalid bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      operationId: updateAuditLogToggle
+      summary: Enable or disable audit logging (admin only)
+      description: "Persists sandbox.audit_log to config.json. Requires restart \u2014 the response includes applied_enabled which reflects the value before this save (currently running state). Changes are audit-logged before disabling.\n"
+      tags:
+      - Audit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - enabled
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          description: Audit log state saved (restart required).
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - saved
+                - requires_restart
+                - applied_enabled
+                properties:
+                  saved:
+                    type: boolean
+                    example: true
+                  requires_restart:
+                    type: boolean
+                    example: true
+                  applied_enabled:
+                    type: boolean
+                    description: Value currently in effect (before this save).
+                    example: true
+        '400':
+          description: Missing or invalid enabled field.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Admin role required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /security/retention:
+    get:
+      operationId: getRetention
+      summary: Get session retention configuration
+      description: 'Returns session_days and disabled flag from storage.retention.
+
+        '
+      tags:
+      - Security
+      responses:
+        '200':
+          description: Current retention configuration.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetentionConfig'
+        '401':
+          description: Missing or invalid bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    put:
+      operationId: updateRetention
+      summary: Update session retention configuration (admin only)
+      description: "Partial update \u2014 any subset of session_days and disabled. session_days must be a non-negative integer (floats and strings rejected). disabled must be a JSON boolean (string \"true\"/\"false\" rejected). Empty body is accepted as a no-op. Hot-reloaded (requires_restart: false). Admin-only (non-admin returns 403).\n"
+      tags:
+      - Security
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetentionConfig'
+      responses:
+        '200':
+          description: Updated retention configuration.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - saved
+                - requires_restart
+                - session_days
+                - disabled
+                properties:
+                  saved:
+                    type: boolean
+                    example: true
+                  requires_restart:
+                    type: boolean
+                    example: false
+                  session_days:
+                    type: integer
+                    minimum: 0
+                    example: 30
+                  disabled:
+                    type: boolean
+                    example: false
+        '400':
+          description: Type mismatch (float for session_days, string for disabled).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Admin role required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /security/retention/sweep:
+    post:
+      operationId: triggerRetentionSweep
+      summary: Trigger on-demand retention sweep (admin only)
+      description: 'Immediately purges session directories older than the configured retention window. Returns 409 if a sweep is already in progress. Returns skipped_reason="disabled" when retention is disabled. Admin-only; emits audit with resource="storage.retention.sweep".
+
+        '
+      tags:
+      - Security
+      responses:
+        '200':
+          description: Sweep result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RetentionSweepResult'
+        '403':
+          description: Admin role required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '405':
+          description: Method not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Sweep already in progress.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /channels:
+    get:
+      operationId: listChannels
+      summary: List all channels
+      description: 'Returns the full list of communication channels with their ID, name, transport, enabled state, and description. webchat is always enabled.
+
+        '
+      tags:
+      - Channels
+      responses:
+        '200':
+          description: Array of channel entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ChannelEntry'
+        '405':
+          description: Method not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /channels/{id}:
+    get:
+      operationId: getChannelConfig
+      summary: Get a channel's configuration
+      description: 'Returns the channel''s config with credential fields redacted (replaced with "[configured]" if set).
+
+        '
+      tags:
+      - Channels
+      parameters:
+      - name: id
+        in: path
+        required: true
+        description: Channel ID.
+        schema:
+          type: string
+        example: telegram
+      responses:
+        '200':
+          description: Channel configuration (credentials redacted).
+          content:
+            application/json:
+              schema:
+                type: object
+                description: 'Channel-specific configuration object. Structure varies by channel type. Credential fields contain "[configured]" when set.
+
+                  '
+                additionalProperties: true
+        '404':
+          description: Channel ID not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /channels/{id}/enable:
+    put:
+      operationId: enableChannel
+      summary: Enable a channel
+      description: Sets the channel's enabled flag to true in config.
+      tags:
+      - Channels
+      parameters:
+      - name: id
+        in: path
+        required: true
+        description: Channel ID.
+        schema:
+          type: string
+        example: telegram
+      responses:
+        '200':
+          description: Channel enable state updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - id
+                - enabled
+                properties:
+                  id:
+                    type: string
+                    example: telegram
+                  enabled:
+                    type: boolean
+                    example: true
+        '404':
+          description: Channel ID not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /channels/{id}/disable:
+    put:
+      operationId: disableChannel
+      summary: Disable a channel
+      description: Sets the channel's enabled flag to false in config.
+      tags:
+      - Channels
+      parameters:
+      - name: id
+        in: path
+        required: true
+        description: Channel ID.
+        schema:
+          type: string
+        example: telegram
+      responses:
+        '200':
+          description: Channel disable state updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - id
+                - enabled
+                properties:
+                  id:
+                    type: string
+                    example: telegram
+                  enabled:
+                    type: boolean
+                    example: false
+        '404':
+          description: Channel ID not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /channels/{id}/configure:
+    put:
+      operationId: configureChannel
+      summary: Configure a channel
+      description: 'Merges request body fields into the channel''s config section. Fields absent from the request body are not touched (merge, not replace). The "enabled" field is reserved and ignored if sent. Returns the updated config with credential fields redacted.
+
+        '
+      tags:
+      - Channels
+      parameters:
+      - name: id
+        in: path
+        required: true
+        description: Channel ID.
+        schema:
+          type: string
+        example: telegram
+      requestBody:
+        required: true
+        description: 'Channel-specific configuration fields to merge. Structure varies by channel type.
+
+          '
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+              example:
+                token: your-telegram-bot-token
+      responses:
+        '200':
+          description: Updated channel configuration (credentials redacted).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: Invalid JSON body.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Channel ID not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /channels/{id}/test:
+    post:
+      operationId: testChannel
+      summary: Test a channel configuration
+      description: 'Verifies required credential fields are configured without starting the channel. Returns success=false with missing field list if required credentials are absent.
+
+        '
+      tags:
+      - Channels
+      parameters:
+      - name: id
+        in: path
+        required: true
+        description: Channel ID.
+        schema:
+          type: string
+        example: telegram
+      responses:
+        '200':
+          description: Test result.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - success
+                - message
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: channel "telegram" is configured
+        '404':
+          description: Channel ID not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /config/pending-restart:
+    get:
+      operationId: getPendingRestart
+      summary: Get pending restart-gated config changes (admin only)
+      description: 'Returns an array of config keys whose persisted (disk) value differs from the boot-time applied value. Only RestartGatedKeys are checked; hot-reload keys never appear here. An empty array means no restart is needed. Admin-only; non-admin returns 403.
+
+        '
+      tags:
+      - Config
+      responses:
+        '200':
+          description: Array of pending restart entries (may be empty).
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PendingRestartEntry'
+        '403':
+          description: Admin role required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '405':
+          description: Method not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /workspace/{agent_id}/{path}:
+    get:
+      operationId: getWorkspaceFile
+      summary: Read a file from an agent's workspace
+      description: 'Serves the file at the given path within the agent''s workspace. Requires session-cookie-or-bearer authentication and ownership check. Returns 503 when the agent has no owner (ErrAgentOrphan). Path traversal beyond the agent workspace returns 403. Security headers: Referrer-Policy, Content-Security-Policy, X-Content-Type-Options. Files > 1MB are streamed; smaller files are buffered.
+
+        '
+      tags:
+      - Workspace
+      parameters:
+      - name: agent_id
+        in: path
+        required: true
+        description: Agent ID.
+        schema:
+          type: string
+        example: jim
+      - name: path
+        in: path
+        required: true
+        description: 'File path relative to the agent''s workspace root.
+
+          '
+        schema:
+          type: string
+        example: output/report.html
+      responses:
+        '200':
+          description: File content with appropriate Content-Type header.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Invalid agent ID or missing file path.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Not authenticated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Path outside agent workspace or access denied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Agent or file not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Agent has no owner and must be reassigned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /preview/{agent_id}/{token}/{path}:
+    get:
+      operationId: getPreview
+      summary: Serve agent-generated preview content (token-auth)
+      description: "Serves static files or proxies dev-server requests for the given agent and token. No bearer authentication required \u2014 the path token IS the credential (FR-023). Served on the separate preview listener (default port gateway.port + 1). Unknown or expired tokens return 404. Static files: path-traversal guard, MIME detection, buffered/streaming. Dev-server: reverse-proxied to loopback port with CSP injection.\n"
+      security: []
+      tags:
+      - Preview
+      parameters:
+      - name: agent_id
+        in: path
+        required: true
+        description: Agent ID.
+        schema:
+          type: string
+        example: jim
+      - name: token
+        in: path
+        required: true
+        description: 'One-time preview token minted by the web_serve tool. The token is the only credential required.
+
+          '
+        schema:
+          type: string
+        example: abc123def456ghij
+      - name: path
+        in: path
+        required: true
+        description: File path or sub-path within the preview root.
+        schema:
+          type: string
+        example: index.html
+      responses:
+        '200':
+          description: Preview file content.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Malformed URL.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Token does not match the agent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Token not found or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /credentials:
+    get:
+      operationId: listCredentials
+      summary: List credential key names
+      description: 'Lists all credential key names without values. Returns an empty array when no credentials are stored.
+
+        '
+      tags:
+      - Settings
+      responses:
+        '200':
+          description: Array of credential key names.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+                example:
+                - OPENAI_API_KEY
+                - TELEGRAM_TOKEN
+        '401':
+          description: Missing or invalid bearer token.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    post:
+      operationId: setCredential
+      summary: Add or update a credential
+      description: 'Stores an encrypted credential. The key must be non-empty. Returns 201 Created on success.
+
+        '
+      tags:
+      - Settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - key
+              - value
+              properties:
+                key:
+                  type: string
+                  description: Credential key name.
+                  example: OPENAI_API_KEY
+                value:
+                  type: string
+                  description: Credential value (stored encrypted).
+                  example: sk-...
+      responses:
+        '201':
+          description: Credential stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - key
+                properties:
+                  key:
+                    type: string
+                    example: OPENAI_API_KEY
+        '400':
+          description: Invalid JSON body.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Key field is required (empty key).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Credential store locked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /credentials/{key}:
+    delete:
+      operationId: deleteCredential
+      summary: Delete a credential
+      description: Removes a credential by key. Returns 404 if not found.
+      tags:
+      - Settings
+      parameters:
+      - name: key
+        in: path
+        required: true
+        description: Credential key name.
+        schema:
+          type: string
+        example: OPENAI_API_KEY
+      responses:
+        '200':
+          description: Credential removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - status
+                - key
+                properties:
+                  status:
+                    type: string
+                    enum:
+                    - removed
+                    example: removed
+                  key:
+                    type: string
+                    example: OPENAI_API_KEY
+        '404':
+          description: Credential key not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Credential store locked.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /backup:
+    post:
+      operationId: createBackup
+      summary: Create a backup archive
+      description: 'Creates a tar.gz of ~/.omnipus/ excluding logs and backups directories. The archive is written atomically to ~/.omnipus/backups/.
+
+        '
+      tags:
+      - Settings
+      responses:
+        '200':
+          description: Backup created.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - path
+                - size_bytes
+                - created_at
+                properties:
+                  path:
+                    type: string
+                    description: Absolute path to the backup file.
+                    example: /home/user/.omnipus/backups/backup-20260516T103000Z.tar.gz
+                  size_bytes:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    description: Size of the backup file in bytes.
+                    example: 1048576
+                  created_at:
+                    type: string
+                    format: date-time
+                    example: '2026-05-16T10:30:00Z'
+        '405':
+          description: Method not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /backups:
+    get:
+      operationId: listBackups
+      summary: List backup archives
+      description: 'Lists all .tar.gz files in ~/.omnipus/backups/ with filename, size, and creation time. Returns an empty array when no backups exist.
+
+        '
+      tags:
+      - Settings
+      responses:
+        '200':
+          description: List of backup archive entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required:
+                  - filename
+                  - size_bytes
+                  - created_at
+                  properties:
+                    filename:
+                      type: string
+                      example: backup-20260516T103000Z.tar.gz
+                    size_bytes:
+                      type: integer
+                      format: int64
+                      minimum: 0
+                      example: 1048576
+                    created_at:
+                      type: string
+                      format: date-time
+                      example: '2026-05-16T10:30:00Z'
+        '405':
+          description: Method not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /restore:
+    post:
+      operationId: restoreBackup
+      summary: Restore from a backup archive
+      description: 'Extracts a backup tar.gz over ~/.omnipus/, skipping config.json to preserve current settings. The filename must not contain path separators or traversal sequences.
+
+        '
+      tags:
+      - Settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - filename
+              properties:
+                filename:
+                  type: string
+                  description: Name of the backup file (without path).
+                  example: backup-20260516T103000Z.tar.gz
+      responses:
+        '200':
+          description: Backup restored.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - status
+                - filename
+                properties:
+                  status:
+                    type: string
+                    enum:
+                    - restored
+                    example: restored
+                  filename:
+                    type: string
+                    example: backup-20260516T103000Z.tar.gz
+        '400':
+          description: Invalid filename (path traversal, missing .tar.gz).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Backup file not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Filename field is required.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /storage/stats:
+    get:
+      operationId: getStorageStats
+      summary: Get storage statistics
+      description: 'Returns session count and workspace size. May include partial warnings if some agent stores could not be read.
+
+        '
+      tags:
+      - Settings
+      responses:
+        '200':
+          description: Storage statistics.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - session_count
+                - workspace_size_bytes
+                properties:
+                  session_count:
+                    type: integer
+                    minimum: 0
+                    example: 42
+                  workspace_size_bytes:
+                    type: integer
+                    format: int64
+                    minimum: 0
+                    example: 52428800
+                  warnings:
+                    type: array
+                    items:
+                      type: string
+                    description: 'Non-fatal errors encountered while collecting stats.
+
+                      '
+        '405':
+          description: Method not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /sessions/all:
+    delete:
+      operationId: clearAllSessions
+      summary: Delete all sessions for all agents
+      description: 'Removes all session directories across all agent stores. Returns the count of removed sessions and any per-agent warnings.
+
+        '
+      tags:
+      - Settings
+      responses:
+        '200':
+          description: Sessions cleared.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - status
+                - count
+                properties:
+                  status:
+                    type: string
+                    enum:
+                    - cleared
+                    example: cleared
+                  count:
+                    type: integer
+                    minimum: 0
+                    example: 15
+                  warnings:
+                    type: array
+                    items:
+                      type: string
+                    description: "Per-agent errors (non-fatal \u2014 partial removal possible).\n"
+        '405':
+          description: Method not allowed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+security:
+- BearerAuth: []
