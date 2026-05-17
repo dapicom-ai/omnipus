@@ -115,6 +115,10 @@ func streamReplay(
 	// buildStart returns a tool_call_start frame for tc, setting AgentID and
 	// optionally ParentCallID.  Extracted to avoid duplicating the same 6-field
 	// construction in the spawn-parent branch and the flat-emission branch.
+	//
+	// TODO(contract-first): migrate to generated.ToolCallStartFrame when the
+	// streamReplay emit callback type is updated (blocked by replay_test.go sliceSink
+	// which directly accesses wsServerFrame.CallID / .AgentID / .SpanID fields).
 	buildStart := func(tc session.ToolCall, agentID, parentCallID string) wsServerFrame {
 		f := wsServerFrame{
 			Type:      "tool_call_start",
@@ -134,6 +138,9 @@ func streamReplay(
 
 	// buildResult returns a tool_call_result frame for tc, setting AgentID and
 	// optionally ParentCallID.
+	//
+	// TODO(contract-first): migrate to generated.ToolCallResultFrame when the
+	// streamReplay emit callback type is updated (blocked by replay_test.go sliceSink).
 	buildResult := func(tc session.ToolCall, agentID, parentCallID string) wsServerFrame {
 		resultPayload := truncateResult(sessionID, tc)
 		f := wsServerFrame{

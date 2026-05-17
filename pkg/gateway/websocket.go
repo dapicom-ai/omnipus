@@ -21,16 +21,16 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/gorilla/websocket"
-
 	"github.com/dapicom-ai/omnipus/pkg/agent"
+	"github.com/dapicom-ai/omnipus/pkg/api/generated"
 	"github.com/dapicom-ai/omnipus/pkg/bus"
 	"github.com/dapicom-ai/omnipus/pkg/config"
 	"github.com/dapicom-ai/omnipus/pkg/media"
 	"github.com/dapicom-ai/omnipus/pkg/pairing"
 	"github.com/dapicom-ai/omnipus/pkg/session"
 	"github.com/dapicom-ai/omnipus/pkg/validation"
+	"github.com/google/uuid"
+	"github.com/gorilla/websocket"
 )
 
 // replayLiveBufferCap is the capacity of replayDivertCh (FR-I-009).
@@ -52,7 +52,24 @@ type wsClientFrame struct {
 	DeviceID  string `json:"device_id,omitempty"`  // for "device_pairing_response"
 }
 
-// wsServerFrame is a message sent from the server to the browser over WebSocket.
+// wsServerFrame is the internal discriminated-union frame type used by the send pipeline
+// and replay subsystem.  Live event construction sites have been migrated to the generated
+// types in pkg/api/generated (see sendConnGenFrame).  This struct is kept because:
+//
+//  1. sendConnFrame and sendRawFrameBytes use it as a channel type for the backpressure
+//     and replay-divert logic (the type of wc.sendCh is chan []byte, not chan wsServerFrame,
+//     so the actual channel is unaffected — but callers such as readLoop error paths and
+//     wsApprovalHook still build wsServerFrame values and call sendConnFrame).
+//
+//  2. streamReplay (replay.go) accepts func(wsServerFrame) error as its emit callback.
+//     The replay_test.go sliceSink captures wsServerFrame values and tests access named
+//     fields (e.g. f.CallID, f.SpanID).  Changing the signature would require rewriting
+//     all 17 TDD rows of replay tests.
+//
+// TODO(contract-first): when replay_test.go is migrated to use generated types, remove
+// this struct and replace all remaining sendConnFrame callers with sendConnGenFrame.
+//
+// Deprecated: new frame construction sites must use pkg/api/generated types and sendConnGenFrame.
 type wsServerFrame struct {
 	Type      string `json:"type"`
 	SessionID string `json:"session_id,omitempty"` // present on all session-scoped frames
@@ -1145,21 +1162,47 @@ func (h *WSHandler) pingPump(wc *wsConn) {
 // frames after which a "connection degraded" error is sent to the browser.
 const droppedFramesWarnThreshold = 20
 
+// sendConnFrame marshals a wsServerFrame and routes it to the connection.
+// Deprecated: construction sites should use sendConnGenFrame with the appropriate
+// generated type from pkg/api/generated. This function is kept for internal use
+// by replay.go (streamReplay signature is locked by test code) and pre-migration
+// call sites in the readLoop error path.
+// TODO(contract-first): remove once all callers migrate to sendConnGenFrame.
 func sendConnFrame(wc *wsConn, frame wsServerFrame) {
 	data, err := json.Marshal(frame)
 	if err != nil {
 		slog.Error("ws: marshal frame failed", "error", err)
 		return
 	}
+	sendRawFrameBytes(wc, frame.Type, data)
+}
 
+// sendConnGenFrame marshals any generated frame type (from pkg/api/generated) and
+// routes it to the connection with the same backpressure and replay-divert logic as
+// sendConnFrame.  frameType is the string value of the frame's "type" field, used
+// to determine whether the frame is critical (never dropped, blocks briefly).
+func sendConnGenFrame(wc *wsConn, frameType string, frame any) {
+	data, err := json.Marshal(frame)
+	if err != nil {
+		slog.Error("ws: marshal generated frame failed", "type", frameType, "error", err)
+		return
+	}
+	sendRawFrameBytes(wc, frameType, data)
+}
+
+// sendRawFrameBytes routes pre-marshaled frame bytes to the connection's send channel.
+// It implements the replay-divert logic (W1-1), critical-frame blocking, and
+// backpressure drop logic shared by sendConnFrame and sendConnGenFrame.
+// frameType is used to determine criticality (done, error, exec_approval_*).
+func sendRawFrameBytes(wc *wsConn, frameType string, data []byte) {
 	// W1-1: if replay mode is active, divert live frames into the replay buffer
 	// instead of wc.sendCh, so writePump never sees them while replay is running.
 	// "done", "error", and critical control frames are always sent to the canonical
 	// sendCh regardless of replay state — they are emitted by streamReplay itself
 	// and must reach writePump immediately.
 	targetCh := wc.sendCh
-	isCritical := frame.Type == "done" || frame.Type == "error" ||
-		frame.Type == "exec_approval_request" || frame.Type == "exec_approval_expired"
+	isCritical := frameType == "done" || frameType == "error" ||
+		frameType == "exec_approval_request" || frameType == "exec_approval_expired"
 	if !isCritical && wc.isReplayingLive.Load() && wc.replayDivertCh != nil {
 		targetCh = wc.replayDivertCh
 	}
@@ -1172,7 +1215,7 @@ func sendConnFrame(wc *wsConn, frame wsServerFrame) {
 		select {
 		case targetCh <- data:
 		case <-time.After(5 * time.Second):
-			slog.Warn("ws: send channel full after timeout for critical frame, closing connection", "type", frame.Type)
+			slog.Warn("ws: send channel full after timeout for critical frame, closing connection", "type", frameType)
 			wc.close()
 		}
 	default:
@@ -1200,7 +1243,7 @@ func sendConnFrame(wc *wsConn, frame wsServerFrame) {
 		}
 
 		// All attempts exhausted — drop the frame and record backpressure.
-		slog.Warn("ws: send channel full after backoff, frame dropped", "type", frame.Type)
+		slog.Warn("ws: send channel full after backoff, frame dropped", "type", frameType)
 		wc.droppedTokens.Add(1)
 		wc.droppedFrames.Add(1)
 
@@ -1352,15 +1395,24 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 						"reason", reason,
 					)
 				}
-				sendConnFrame(wc, wsServerFrame{
-					Type:         "subagent_end",
-					SessionID:    entry.sessionID,
-					SpanID:       entry.spanID,
-					ParentCallID: entry.parentCallID,
-					AgentID:      entry.agentID,
-					Status:       "interrupted",
-					Message:      reason,
-				})
+				// Use generated.SubagentEndFrame (contract-first migration).
+				reason_ := reason // capture for pointer
+				agentID_ := entry.agentID
+				endFrame := generated.SubagentEndFrame{
+					Type:      string(generated.WsFrameTypeSubagentEnd),
+					SessionId: entry.sessionID,
+					SpanId:    entry.spanID,
+					Status:    "interrupted",
+					Message:   &reason_,
+				}
+				if agentID_ != "" {
+					endFrame.AgentId = &agentID_
+				}
+				if entry.parentCallID != "" {
+					pc := entry.parentCallID
+					endFrame.ParentCallId = &pc
+				}
+				sendConnGenFrame(wc, string(generated.WsFrameTypeSubagentEnd), endFrame)
 			}
 		}()
 	}
@@ -1383,14 +1435,19 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 			if spawnSID == "" {
 				spawnSID = sessionIDForChat(p.ChatID)
 			}
-			sendConnFrame(wc, wsServerFrame{
-				Type:         "subagent_start",
-				SessionID:    spawnSID,
-				SpanID:       p.SpanID,
-				ParentCallID: string(p.ParentSpawnCallID),
-				AgentID:      p.AgentID,
+			// Use generated.SubagentStartFrame (contract-first migration).
+			spawnFrame := generated.SubagentStartFrame{
+				Type:         string(generated.WsFrameTypeSubagentStart),
+				SessionId:    spawnSID,
+				SpanId:       p.SpanID,
+				ParentCallId: string(p.ParentSpawnCallID),
 				TaskLabel:    p.TaskLabel,
-			})
+			}
+			if p.AgentID != "" {
+				aid := p.AgentID
+				spawnFrame.AgentId = &aid
+			}
+			sendConnGenFrame(wc, string(generated.WsFrameTypeSubagentStart), spawnFrame)
 			// Register the span in openSpans for orphan watchdog tracking.
 			entry := &openSpanEntry{
 				spanID:       p.SpanID,
@@ -1417,15 +1474,26 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 			if endSID == "" {
 				endSID = sessionIDForChat(p.ChatID)
 			}
-			sendConnFrame(wc, wsServerFrame{
-				Type:         "subagent_end",
-				SessionID:    endSID,
-				SpanID:       p.SpanID,
-				ParentCallID: string(p.ParentSpawnCallID),
-				AgentID:      p.AgentID,
-				Status:       string(p.Status),
-				DurationMs:   p.DurationMS,
-			})
+			// Use generated.SubagentEndFrame (contract-first migration).
+			endFrameEnd := generated.SubagentEndFrame{
+				Type:      string(generated.WsFrameTypeSubagentEnd),
+				SessionId: endSID,
+				SpanId:    p.SpanID,
+				Status:    string(p.Status),
+			}
+			if p.DurationMS != 0 {
+				dm := int(p.DurationMS)
+				endFrameEnd.DurationMs = &dm
+			}
+			if p.AgentID != "" {
+				aid := p.AgentID
+				endFrameEnd.AgentId = &aid
+			}
+			if p.ParentSpawnCallID != "" {
+				pc := string(p.ParentSpawnCallID)
+				endFrameEnd.ParentCallId = &pc
+			}
+			sendConnGenFrame(wc, string(generated.WsFrameTypeSubagentEnd), endFrameEnd)
 			// Signal the watchdog that the span closed normally.
 			closeSpan(string(p.ParentSpawnCallID))
 
@@ -1469,15 +1537,28 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 			}
 			// FR-H-005: propagate parent_call_id when the tool fires inside a sub-turn.
 			// FR-I-008: propagate agent_id so live frames match replay frame parity.
-			sendConnFrame(wc, wsServerFrame{
-				Type:         "tool_call_start",
-				SessionID:    startSID,
-				CallID:       string(p.ToolCallID),
-				Tool:         p.Tool,
-				Params:       p.Arguments,
-				ParentCallID: string(p.ParentSpawnCallID),
-				AgentID:      p.AgentID,
-			})
+			// Nil-safety: params MUST be object (never null) — SPA calls Object.keys(params).
+			startArgs := p.Arguments
+			if startArgs == nil {
+				startArgs = map[string]any{}
+			}
+			// Use generated.ToolCallStartFrame (contract-first migration).
+			startF := generated.ToolCallStartFrame{
+				Type:      string(generated.WsFrameTypeToolCallStart),
+				SessionId: startSID,
+				CallId:    string(p.ToolCallID),
+				Tool:      p.Tool,
+				Params:    startArgs,
+			}
+			if p.AgentID != "" {
+				aid := p.AgentID
+				startF.AgentId = &aid
+			}
+			if p.ParentSpawnCallID != "" {
+				pc := string(p.ParentSpawnCallID)
+				startF.ParentCallId = &pc
+			}
+			sendConnGenFrame(wc, string(generated.WsFrameTypeToolCallStart), startF)
 		case agent.EventKindToolExecEnd:
 			p, ok := evt.Payload.(agent.ToolExecEndPayload)
 			if !ok || !matchesChatID(p.ChatID) {
@@ -1494,28 +1575,45 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 			}
 			// FR-H-005: propagate parent_call_id when the tool fires inside a sub-turn.
 			// FR-I-008: propagate agent_id so live frames match replay frame parity.
-			sendConnFrame(wc, wsServerFrame{
-				Type:         "tool_call_result",
-				SessionID:    evtSID,
-				CallID:       string(p.ToolCallID),
-				Tool:         p.Tool,
-				Result:       p.Result,
-				Status:       status,
-				DurationMs:   p.Duration.Milliseconds(),
-				ParentCallID: string(p.ParentSpawnCallID),
-				AgentID:      p.AgentID,
-			})
+			// Use generated.ToolCallResultFrame (contract-first migration).
+			resultF := generated.ToolCallResultFrame{
+				Type:      string(generated.WsFrameTypeToolCallResult),
+				SessionId: evtSID,
+				CallId:    string(p.ToolCallID),
+				Tool:      p.Tool,
+				Result:    p.Result,
+				Status:    status,
+			}
+			if p.Duration != 0 {
+				dm := int(p.Duration.Milliseconds())
+				resultF.DurationMs = &dm
+			}
+			if p.AgentID != "" {
+				aid := p.AgentID
+				resultF.AgentId = &aid
+			}
+			if p.ParentSpawnCallID != "" {
+				pc := string(p.ParentSpawnCallID)
+				resultF.ParentCallId = &pc
+			}
+			sendConnGenFrame(wc, string(generated.WsFrameTypeToolCallResult), resultF)
 			// When the handoff tool succeeds, notify the frontend to switch agents.
 			// Use evtSID (the session ID from the payload) to key the lookup, not chatID.
 			if p.Tool == "handoff" && status == "success" {
 				if activeAgent, ok := h.agentLoop.GetSessionActiveAgent(evtSID); ok {
 					agentName, _ := h.agentLoop.GetRegistry().GetAgentName(activeAgent)
-					sendConnFrame(wc, wsServerFrame{
-						Type:      "agent_switched",
-						SessionID: evtSID,
-						AgentID:   activeAgent,
-						Message:   agentName,
-					})
+					// Use generated.AgentSwitchedFrame (contract-first migration).
+					switchF := generated.AgentSwitchedFrame{
+						Type:      string(generated.WsFrameTypeAgentSwitched),
+						SessionId: evtSID,
+					}
+					if activeAgent != "" {
+						switchF.AgentId = &activeAgent
+					}
+					if agentName != "" {
+						switchF.Message = &agentName
+					}
+					sendConnGenFrame(wc, string(generated.WsFrameTypeAgentSwitched), switchF)
 				}
 			}
 			if p.Tool == "return_to_default" && status == "success" {
@@ -1524,12 +1622,16 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 				if defaultAgent != nil {
 					defaultName = defaultAgent.Name
 				}
-				sendConnFrame(wc, wsServerFrame{
-					Type:      "agent_switched",
-					SessionID: evtSID,
-					AgentID:   "", // empty = return to default
-					Message:   defaultName,
-				})
+				// Use generated.AgentSwitchedFrame (contract-first migration).
+				switchF := generated.AgentSwitchedFrame{
+					Type:      string(generated.WsFrameTypeAgentSwitched),
+					SessionId: evtSID,
+					// AgentId omitted (nil ptr) = return to default agent
+				}
+				if defaultName != "" {
+					switchF.Message = &defaultName
+				}
+				sendConnGenFrame(wc, string(generated.WsFrameTypeAgentSwitched), switchF)
 			}
 		case agent.EventKindRateLimit:
 			// SEC-26: forward rate-limit denials to the browser so the chat UI
@@ -1543,16 +1645,25 @@ func (h *WSHandler) eventForwarder(wc *wsConn, chatID string, sub agent.EventSub
 			if p.Scope != "global" && !matchesChatID(p.ChatID) {
 				continue
 			}
-			sendConnFrame(wc, wsServerFrame{
-				Type:              "rate_limit",
-				SessionID:         sessionIDForChat(p.ChatID),
+			// Use generated.RateLimitFrame (contract-first migration).
+			rateSID := sessionIDForChat(p.ChatID)
+			rateF := generated.RateLimitFrame{
+				Type:              string(generated.WsFrameTypeRateLimit),
+				SessionId:         rateSID,
 				Scope:             p.Scope,
 				Resource:          p.Resource,
 				PolicyRule:        p.PolicyRule,
 				RetryAfterSeconds: p.RetryAfterSeconds,
-				AgentID:           p.AgentID,
-				Tool:              p.Tool,
-			})
+			}
+			if p.AgentID != "" {
+				aid := p.AgentID
+				rateF.AgentId = &aid
+			}
+			if p.Tool != "" {
+				tool := p.Tool
+				rateF.Tool = &tool
+			}
+			sendConnGenFrame(wc, string(generated.WsFrameTypeRateLimit), rateF)
 		}
 	}
 }
